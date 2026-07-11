@@ -1,0 +1,7 @@
+{
+  "api": "Test",
+  "language": "en",
+  "baseUrl": "https://example.com",
+  "engine": "generic",
+  "usesCaptureHeaders": true
+}

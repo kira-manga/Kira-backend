@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "revision": 1,
+  "sources": [
+    {
+      "api": "Azora",
+      "icon": {
+        "resourceKey": "azora"
+      },
+      "language": "(AR)",
+      "displayName": "Azora",
+      "baseUrl": "https://api.azorafly.com",
+      "imageBase": "https://api.azorafly.com",
+      "engine": "generic",
+      "usesCapturedHeaders": false,
+      "pagination": {
+        "type": "page-number",
+        "param": "page",
+        "start": 1
+      },
+      "endpoints": {
+        "home": {
+          "url": "{baseUrl}/api/query?page={page}&perPage=24&orderBy=lastChapterAddedAt&orderDirection=desc",
+          "format": "json",
+          "root": "posts"
+        },
+        "featured": {
+          "url": "{baseUrl}/api/query?page={page}&perPage=24&orderBy=totalViews&orderDirection=desc",
+          "format": "json",
+          "root": "posts"
+        },
+        "search": {
+          "url": "{baseUrl}/api/query?searchTerm={queryEncoded}&perPage=24",
+          "format": "json",
+          "root": "posts"
+        },
+        "details": {
+          "url": "{itemUrl}",
+          "format": "json"
+        },
+        "pages": {
+          "url": "{chapterUrl}",
+          "format": "json",
+          "root": "chapter.images"
+        }
+      },
+      "fields": {
+        "item.title": {
+          "path": "postTitle"
+        },
+        "item.url": {
+          "template": "{baseUrl}/api/post/?postId={id}",
+          "vars": {
+            "id": "id"
+          }
+        },
+        "item.cover": {
+          "path": "featuredImage"
+        },
+        "item.rating": {
+          "path": "averageRating",
+          "transform": [
+            {
+              "fn": "default",
+              "args": {
+                "value": "0"
+              }
+            }
+          ]
+        },
+        "item.genres": {
+          "listPath": "genres[*].name"
+        },
+        "item.recentChapters": {
+          "listPath": "chapters"
+        },
+        "detail.title": {
+          "path": "post.postTitle"
+        },
+        "detail.cover": {
+          "path": "post.featuredImage"
+        },
+        "detail.rating": {
+          "path": "post.averageRating",
+          "transform": [
+            {
+              "fn": "decimal"
+            },
+            {
+              "fn": "default",
+              "args": {
+                "value": "0"
+              }
+            }
+          ]
+        },
+        "detail.description": {
+          "path": "post.postContent",
+          "transform": [
+            {
+              "fn": "clean-html"
+            }
+          ]
+        },
+        "detail.author": {
+          "path": "post.author"
+        },
+        "detail.status": {
+          "path": "post.seriesStatus",
+          "transform": [
+            {
+              "fn": "default",
+              "args": {
+                "value": "Unknown"
+              }
+            }
+          ]
+        },
+        "detail.genres": {
+          "listPath": "post.genres[*].name"
+        },
+        "detail.chapters": {
+          "listPath": "post.chapters"
+        },
+        "chapter.number": {
+          "path": "number",
+          "transform": [
+            {
+              "fn": "format-number"
+            },
+            {
+              "fn": "prepend",
+              "args": {
+                "value": "Chapter "
+              }
+            }
+          ]
+        },
+        "chapter.name": {
+          "path": "title",
+          "template": "Chapter {num}",
+          "vars": {
+            "num": "number|format-number"
+          }
+        },
+        "chapter.url": {
+          "template": "{baseUrl}/api/chapter?chapterId={id}",
+          "vars": {
+            "id": "id"
+          }
+        },
+        "chapter.date": {
+          "path": "createdAt",
+          "dateStrategy": "iso"
+        },
+        "chapter.locked": {
+          "path": "isLocked"
+        },
+        "page.image": {
+          "path": "url"
+        },
+        "page.order": {
+          "path": "order"
+        }
+      }
+    }
+  ]
+}

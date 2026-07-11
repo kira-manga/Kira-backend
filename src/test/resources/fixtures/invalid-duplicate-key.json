@@ -1,0 +1,7 @@
+{
+  "api": "Test",
+  "api": "Test2",
+  "language": "en",
+  "baseUrl": "https://example.com",
+  "engine": "generic"
+}
