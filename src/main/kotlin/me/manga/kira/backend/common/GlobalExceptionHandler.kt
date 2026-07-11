@@ -10,7 +10,9 @@ import org.springframework.http.converter.HttpMessageNotReadableException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.server.ResponseStatusException
+import org.springframework.web.servlet.resource.NoResourceFoundException
 
 /**
  * The single problem-envelope mapper (PLAN §2). Every response it produces is
@@ -60,11 +62,27 @@ class GlobalExceptionHandler {
         // Deliberately generic — the malformed body is never echoed back (§4.5 / §6).
         problem(HttpStatus.BAD_REQUEST, "Malformed or unreadable request body.", emptyList())
 
+    @ExceptionHandler(MethodArgumentTypeMismatchException::class)
+    fun handleTypeMismatch(ex: MethodArgumentTypeMismatchException): ResponseEntity<ApiError> =
+        // A non-numeric page/size or a malformed path id (e.g. bad UUID) is a 400, not a 500
+        // (§4.5). Only the parameter NAME is surfaced — never the rejected value.
+        problem(
+            HttpStatus.BAD_REQUEST,
+            "Invalid value for parameter '${ex.name}'.",
+            listOf(ApiFieldError(code = "INVALID", path = ex.name, message = "invalid value")),
+        )
+
     @ExceptionHandler(ResponseStatusException::class)
     fun handleResponseStatus(ex: ResponseStatusException): ResponseEntity<ApiError> {
         val status = HttpStatus.valueOf(ex.statusCode.value())
         return problem(status, ex.reason ?: status.reasonPhrase, emptyList())
     }
+
+    @ExceptionHandler(NoResourceFoundException::class)
+    fun handleNoResource(ex: NoResourceFoundException): ResponseEntity<ApiError> =
+        // An unmatched route is a 404, NOT the catch-all 500 below. The raw path is never echoed
+        // (§6). This keeps permitted-but-not-yet-implemented routes rendering as a clean 404.
+        problem(HttpStatus.NOT_FOUND, "The requested resource was not found.", emptyList())
 
     @ExceptionHandler(Exception::class)
     fun handleUnexpected(ex: Exception): ResponseEntity<ApiError> {

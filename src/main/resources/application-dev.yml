@@ -10,3 +10,18 @@ spring:
     properties:
       hibernate:
         format_sql: true
+
+kira:
+  security:
+    # DEV-ONLY, CLEARLY-INSECURE default JWT signing key (PLAN §6 "a documented dev-profile default
+    # clearly marked insecure"). Base64 that decodes to the ASCII string
+    # "kira-backend-LOCAL-DEV-insecure-jwt-secret-do-not-ship!" (55 bytes >= 256 bits). NEVER ship
+    # this — production sets KIRA_JWT_SECRET from the environment (openssl rand -base64 32).
+    jwt-secret: a2lyYS1iYWNrZW5kLUxPQ0FMLURFVi1pbnNlY3VyZS1qd3Qtc2VjcmV0LWRvLW5vdC1zaGlwIQ==
+  auth:
+    # Open registration is convenient in local dev (PLAN §4.2 / Open Q5: true in dev).
+    registration-enabled: true
+  admin:
+    # Dev still seeds an ADMIN; supply KIRA_ADMIN_EMAIL / KIRA_ADMIN_PASSWORD via the gitignored
+    # .env (PLAN §6). To run dev without seeding, set kira.admin.seed-enabled=false.
+    seed-enabled: true

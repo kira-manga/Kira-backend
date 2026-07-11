@@ -1,0 +1,20 @@
+# Test profile (activated by @ActiveProfiles("test") on AbstractIntegrationTest).
+#
+# Profile-specific config MERGES on top of the main application.yml (it does NOT shadow it), so the
+# base JPA/Flyway/actuator settings still apply; only the keys below are added/overridden.
+#
+# The JWT secret here is a THROWAWAY, OBVIOUSLY TEST-ONLY value — Base64 that decodes to the ASCII
+# string "kira-backend-TEST-ONLY-jwt-secret-do-not-use-in-prod!" (53 bytes >= 256 bits). It exists
+# only so the JwtService/decoder construct in integration tests; it is NOT a real secret and must
+# never be used anywhere else. (Kept byte-identical to JwtTestSupport.TEST_JWT_SECRET_BASE64 so the
+# negative-token tests can mint tokens with the same key.)
+kira:
+  security:
+    jwt-secret: a2lyYS1iYWNrZW5kLVRFU1QtT05MWS1qd3Qtc2VjcmV0LWRvLW5vdC11c2UtaW4tcHJvZCE=
+  auth:
+    # Registration is exercised by AuthFlowIT, so keep it on in tests.
+    registration-enabled: true
+  admin:
+    # Integration tests boot WITHOUT admin-seed credentials, so seeding must be off by default here
+    # (an enabled seeder without creds fail-fasts). AdminSeederIT flips this on with test creds.
+    seed-enabled: false

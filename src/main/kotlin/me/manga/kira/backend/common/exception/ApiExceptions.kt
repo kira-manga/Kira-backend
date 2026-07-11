@@ -19,14 +19,51 @@ abstract class ApiException(
     val errors: List<ApiFieldError> = emptyList(),
 ) : RuntimeException(detail)
 
-/** 404 — a requested entity does not exist (PLAN §2). */
-class NotFoundException(
+/**
+ * 400 — a structurally/semantically invalid request the caller must fix (PLAN §4.5). Used for the
+ * password-policy violation and (in later phases) the Tier-1 structural authoring gate (§8). The
+ * [detail]/[code] never echo the submitted value (§6 log-hygiene).
+ */
+class BadRequestException(
+    detail: String,
+    code: String = "BAD_REQUEST",
+    errors: List<me.manga.kira.backend.common.ApiFieldError> = emptyList(),
+) : ApiException(HttpStatus.BAD_REQUEST, code, detail, errors)
+
+/**
+ * 401 — authentication failed at an application boundary (e.g. bad login credentials). The message
+ * is deliberately generic and identical for unknown-user / wrong-password / disabled account so it
+ * cannot be used as an account-existence oracle (PLAN §4.2 / §6). Distinct from the security
+ * pipeline's own 401 for missing/invalid bearer tokens.
+ */
+class UnauthorizedException(
+    detail: String,
+    code: String = "UNAUTHORIZED",
+) : ApiException(HttpStatus.UNAUTHORIZED, code, detail)
+
+/** 403 — the request is understood and authenticated-or-anonymous but not permitted (PLAN §4.2). */
+class ForbiddenException(
+    detail: String,
+    code: String = "FORBIDDEN",
+) : ApiException(HttpStatus.FORBIDDEN, code, detail)
+
+/**
+ * 429 — the caller is throttled (PLAN §6 auth throttling). The body is the SAME generic shape as an
+ * auth failure so throttling reveals no username-exists oracle.
+ */
+class TooManyRequestsException(
+    detail: String,
+    code: String = "TOO_MANY_REQUESTS",
+) : ApiException(HttpStatus.TOO_MANY_REQUESTS, code, detail)
+
+/** 404 — a requested entity does not exist (PLAN §2). `open` so feature domains can subclass it. */
+open class NotFoundException(
     detail: String,
     code: String = "NOT_FOUND",
 ) : ApiException(HttpStatus.NOT_FOUND, code, detail)
 
-/** 409 — a request conflicts with current state (e.g. duplicate `api`/email) (PLAN §2). */
-class ConflictException(
+/** 409 — a request conflicts with current state (e.g. duplicate `api`/email) (PLAN §2). `open` for subclassing. */
+open class ConflictException(
     detail: String,
     code: String = "CONFLICT",
 ) : ApiException(HttpStatus.CONFLICT, code, detail)
