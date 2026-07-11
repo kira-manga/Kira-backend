@@ -1,5 +1,7 @@
 package me.manga.kira.backend.user.application
 
+import me.manga.kira.backend.audit.application.AuditService
+import me.manga.kira.backend.audit.domain.AuditAction
 import me.manga.kira.backend.common.exception.ForbiddenException
 import me.manga.kira.backend.common.exception.UnauthorizedException
 import me.manga.kira.backend.config.KiraAuthProperties
@@ -27,6 +29,7 @@ class AuthService(
     private val jwtService: JwtService,
     private val throttle: AuthThrottleService,
     private val authProperties: KiraAuthProperties,
+    private val audit: AuditService,
 ) {
     /** Public self-registration → a USER. 403 when disabled; 429 when the per-IP limit is hit. */
     fun register(
@@ -40,6 +43,14 @@ class AuthService(
         throttle.checkRegistrationAllowed(clientIp)
         val user = userService.createUser(email, rawPassword, Role.USER)
         log.info("User registered id={}", user.id)
+        // Self-registration has no authenticated actor (PLAN §5 — actor NULL = anonymous/system).
+        audit.record(
+            AuditAction.USER_REGISTERED,
+            AuditService.ENTITY_USER,
+            user.id.toString(),
+            mapOf("role" to user.role.name),
+            actorUserId = null,
+        )
         return user
     }
 
@@ -57,6 +68,9 @@ class AuthService(
         if (user == null || !user.enabled || !passwordEncoder.matches(rawPassword, user.passwordHash)) {
             throttle.recordLoginFailure(normalized, clientIp)
             log.warn("Login failed (generic reason category)")
+            // Audit the failed attempt (no credential material — the normalized email is an identifier,
+            // never the password; PLAN §5/§6). Anonymous actor.
+            audit.record(AuditAction.LOGIN_FAILED, AuditService.ENTITY_USER, normalized, actorUserId = null)
             throw UnauthorizedException("Invalid email or password.", code = "INVALID_CREDENTIALS")
         }
 

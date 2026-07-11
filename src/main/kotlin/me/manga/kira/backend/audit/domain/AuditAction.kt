@@ -1,0 +1,28 @@
+package me.manga.kira.backend.audit.domain
+
+/**
+ * The bounded set of audited actions (PLAN §5 `audit_log.action`). [wire] is the stable `varchar(64)`
+ * value stored in the column and is part of the audit contract, so the strings must not drift.
+ *
+ * Pure domain — no framework types. `SOURCE_*`/`REVISION_*`/`DOCUMENT_PUBLISHED` are written by the
+ * Phase-6 source-config mutations; `BUNDLED_IMPORTED` by the Phase-8 import; the `USER_*`/`LOGIN_FAILED`
+ * events by the auth/user services (wired in Phase 6 when `AuditService` is born).
+ */
+enum class AuditAction(val wire: String) {
+    SOURCE_CREATED("SOURCE_CREATED"),
+    REVISION_CREATED("REVISION_CREATED"),
+    REVISION_PUBLISHED("REVISION_PUBLISHED"),
+    SOURCE_DISABLED("SOURCE_DISABLED"),
+    SOURCE_ENABLED("SOURCE_ENABLED"),
+    SOURCE_RETIRED("SOURCE_RETIRED"),
+    SOURCE_REMOVED("SOURCE_REMOVED"),
+    SOURCE_ROLLBACK("SOURCE_ROLLBACK"),
+    DOCUMENT_PUBLISHED("DOCUMENT_PUBLISHED"),
+    BUNDLED_IMPORTED("BUNDLED_IMPORTED"),
+    USER_REGISTERED("USER_REGISTERED"),
+    USER_CREATED("USER_CREATED"),
+    USER_DISABLED("USER_DISABLED"),
+    USER_ENABLED("USER_ENABLED"),
+    USER_PASSWORD_RESET("USER_PASSWORD_RESET"),
+    LOGIN_FAILED("LOGIN_FAILED"),
+}

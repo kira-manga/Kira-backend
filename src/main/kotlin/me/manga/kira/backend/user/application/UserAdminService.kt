@@ -1,5 +1,7 @@
 package me.manga.kira.backend.user.application
 
+import me.manga.kira.backend.audit.application.AuditService
+import me.manga.kira.backend.audit.domain.AuditAction
 import me.manga.kira.backend.security.CurrentUser
 import me.manga.kira.backend.user.domain.LastAdminException
 import me.manga.kira.backend.user.domain.PagedUsers
@@ -30,6 +32,7 @@ class UserAdminService(
     private val passwordPolicy: PasswordPolicy,
     private val passwordEncoder: org.springframework.security.crypto.password.PasswordEncoder,
     private val currentUser: CurrentUser,
+    private val audit: AuditService,
 ) {
     /** Admin-create a user with an explicit role (prod onboarding path — PLAN §4.4). */
     @Transactional
@@ -40,6 +43,7 @@ class UserAdminService(
     ): User {
         val user = userService.createUser(email, rawPassword, role)
         log.info("Admin created user id={} role={} actor={}", user.id, role, actor())
+        audit.record(AuditAction.USER_CREATED, AuditService.ENTITY_USER, user.id.toString(), mapOf("role" to role.name))
         return user
     }
 
@@ -57,6 +61,7 @@ class UserAdminService(
         if (!user.enabled) {
             users.setEnabled(id, true)
             log.info("User enabled id={} actor={}", id, actor())
+            audit.record(AuditAction.USER_ENABLED, AuditService.ENTITY_USER, id.toString())
         }
     }
 
@@ -74,6 +79,7 @@ class UserAdminService(
         }
         users.setEnabled(id, false)
         log.info("User disabled id={} actor={}", id, actor())
+        audit.record(AuditAction.USER_DISABLED, AuditService.ENTITY_USER, id.toString())
     }
 
     /** Explicit admin password reset (PLAN §4.4). Policy-checked; the new password is never logged. */
@@ -86,6 +92,8 @@ class UserAdminService(
         passwordPolicy.validate(newRawPassword)
         users.updatePasswordHash(user.id, passwordEncoder.encode(newRawPassword))
         log.info("User password reset id={} actor={}", id, actor())
+        // Never the password — actor + target only (PLAN §4.4/§6).
+        audit.record(AuditAction.USER_PASSWORD_RESET, AuditService.ENTITY_USER, id.toString())
     }
 
     private fun actor(): String = currentUser.getOrNull()?.id?.toString() ?: "system"
