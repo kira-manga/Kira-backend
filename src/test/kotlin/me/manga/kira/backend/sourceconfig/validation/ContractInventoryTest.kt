@@ -186,6 +186,38 @@ class ContractInventoryTest {
         assertTrue(ServerStrategyCatalog.IMAGE_STRATEGIES.isEmpty(), "image-strategy whitelist must be empty")
     }
 
+    // --- Packaged-icon catalog (§8 rule 33 — advisory) ---
+
+    @Test
+    fun `rule 33 - packaged-icon catalog is the app-sourced set and warns only on unknown keys`() {
+        // The catalog is the app SourceIconRegistry key set (read-only inspection, 2026-07-11): 40 keys.
+        val catalog = PackagedIconCatalog()
+        assertEquals(40, catalog.size)
+        assertTrue(catalog.hasKey("azora")) // referenced by the real bundled document
+        assertTrue(catalog.hasKey("mangahub")) // packaged-only (not referenced by any current stanza)
+        assertTrue(catalog.hasKey("webtoon_tr"))
+        assertFalse(catalog.hasKey("definitely_not_a_packaged_icon"))
+
+        // A catalog key → no warning.
+        val known =
+            validator.validate(
+                SourceConfigFixtures.document(
+                    SourceConfigFixtures.validGenericSource().copy(icon = IconSpec(resourceKey = "mangahub")),
+                ),
+            )
+        assertTrue(known.warnings.none { it.code == ValidationCodes.UNKNOWN_ICON_KEY })
+
+        // An unknown key (regex-valid) with no remoteUrl fallback → advisory warning, NEVER an error.
+        val unknown =
+            validator.validate(
+                SourceConfigFixtures.document(
+                    SourceConfigFixtures.validGenericSource().copy(icon = IconSpec(resourceKey = "not_a_real_key")),
+                ),
+            )
+        assertTrue(unknown.isValid, "an unknown icon key must not block publish (rule 33 is advisory)")
+        assertTrue(unknown.warnings.any { it.code == ValidationCodes.UNKNOWN_ICON_KEY })
+    }
+
     // --- Enum vocabularies (behavioral pinning through the validator) ---
 
     @Test

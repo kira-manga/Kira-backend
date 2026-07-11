@@ -13,13 +13,12 @@ package me.manga.kira.backend.sourceconfig.validation
  * **Update procedure (PLAN §8 rule 33):** when the app adds a packaged icon, add the same key here
  * in the same release train.
  *
- * **Provenance / maintenance note (this backend is read-only w.r.t. the mobile repo):** the seed
- * below is the exact set of `icon.resourceKey`s referenced by the real production
- * `CONFIG_BACKED_SOURCES_JSON` (the committed `bundled-full.json` fixture, 12 distinct keys) — so no
- * real bundled stanza ever produces a spurious warning. The app's full `SourceIconRegistry` ships
- * **44+ keys**; the remaining packaged-only keys (not referenced by any current stanza) should be
- * reconciled into [KEYS] in a maintenance pass with mobile-repo access. Because the rule is
- * warning-only, an under-populated catalog is safe (it can only over-warn, never over-block).
+ * **Provenance (this backend is read-only w.r.t. the mobile repo):** [KEYS] is the exact packaged-icon
+ * key set of the app's `SourceIconRegistry`, extracted by read-only inspection of the app repo
+ * (40 keys as of 2026-07-11). This is a superset of the 12 keys referenced by the current
+ * `CONFIG_BACKED_SOURCES_JSON` (the committed `bundled-full.json` fixture), so no real bundled stanza
+ * ever produces a spurious warning. Because the rule is warning-only, even a stale catalog is safe (it
+ * can only over-warn, never over-block a valid publish).
  */
 class PackagedIconCatalog(
     private val keys: Set<String> = KEYS,
@@ -29,20 +28,48 @@ class PackagedIconCatalog(
     val size: Int get() = keys.size
 
     companion object {
-        /** Verbatim from the real bundled document's referenced `icon.resourceKey` values. */
+        /** The app `SourceIconRegistry` packaged-icon key set, verbatim (read-only inspection, 2026-07-11). */
         val KEYS: Set<String> =
             linkedSetOf(
                 "3asq",
                 "azora",
+                "batcave",
+                "batoto",
+                "comick",
                 "demonicscans",
+                "desu",
                 "dilar",
+                "flowermanga",
+                "inmanga",
+                "komikcast",
+                "komiku",
+                "lavatoons",
                 "lekmanga",
+                "manga_origines",
                 "mangabuddy",
+                "mangahub",
                 "mangamello",
                 "mangamello_plus",
+                "mangapark",
+                "mangatuk",
+                "mangaworld",
+                "manhastro",
+                "manhwatop",
+                "manhwaweb",
+                "mediocretoons",
+                "olympus",
+                "prochan",
+                "promanga",
+                "raijinscan",
+                "senkuro",
+                "sussytoons",
                 "swatmanga",
                 "tapas",
+                "taurusfansub",
                 "team_x",
+                "timenaight",
+                "webtoon_tr",
+                "webtoonhatti",
                 "zazamanga",
             )
     }

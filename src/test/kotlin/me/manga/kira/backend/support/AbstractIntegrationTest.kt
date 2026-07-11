@@ -25,9 +25,14 @@ import org.testcontainers.utility.DockerImageName
  * seeding by default (PLAN §6). `@AutoConfigureMockMvc` gives HTTP-level ITs a MockMvc with the real
  * security filter chain applied.
  *
- * Because the container is shared across test classes, [resetState] clears the only mutable Phase-3
- * state between test methods: the `users` table and the in-memory auth-throttle store. `security_state`
- * is a seeded singleton and is left untouched.
+ * Because the container is shared across test classes, [resetState] clears every mutable table between
+ * test methods. Since Phase 5 the source-config + published-document tables are cleared too, in
+ * **FK-safe order** (all FKs are `ON DELETE RESTRICT`, PLAN §5): the two self/pointer references
+ * (`source_configs.current_published_revision_id`, `document_publication_state.latest_document_revision`)
+ * are nulled first, then children are deleted before parents, and `users` last (revisions/snapshots
+ * reference it). The `seq_document_revision` sequence is restarted so every test sees the fresh seed
+ * state (`StartupConsistencyIT` manipulates it). The seeded singletons (`security_state`,
+ * `document_publication_state`) are kept — only their mutable pointer is reset.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -42,7 +47,17 @@ abstract class AbstractIntegrationTest {
 
     @BeforeEach
     fun resetState() {
+        // 1) Break the pointer/self references that would block RESTRICT deletes.
+        jdbcTemplate.update("UPDATE document_publication_state SET latest_document_revision = NULL WHERE id = 1")
+        jdbcTemplate.update("UPDATE source_configs SET current_published_revision_id = NULL")
+        // 2) Children → parents (respecting the RESTRICT FKs).
+        jdbcTemplate.update("DELETE FROM source_validation_results")
+        jdbcTemplate.update("DELETE FROM source_config_revisions")
+        jdbcTemplate.update("DELETE FROM source_configs")
+        jdbcTemplate.update("DELETE FROM published_documents")
         jdbcTemplate.update("DELETE FROM users")
+        // 3) Fresh sequence state (last_value NULL → next = START value 100).
+        jdbcTemplate.execute("ALTER SEQUENCE seq_document_revision RESTART")
         authThrottleService.clearAll()
     }
 
