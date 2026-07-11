@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: kira-backend
+
+  # DB credentials come from the environment in every non-dev context:
+  #   SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME / SPRING_DATASOURCE_PASSWORD
+  # Spring Boot relaxed binding maps those env vars straight onto spring.datasource.* — no
+  # placeholders are declared here (an unresolved placeholder would fail context startup).
+  # The `dev` profile (application-dev.yml) supplies concrete docker-compose coordinates;
+  # integration tests inject the datasource via Testcontainers @ServiceConnection.
+
+  jpa:
+    open-in-view: false            # PLAN §5 JPA discipline — no lazy loading across request boundary
+    hibernate:
+      ddl-auto: validate           # Flyway owns the schema; Hibernate only validates against it
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+
+  flyway:
+    enabled: true                  # applies classpath:db/migration/V*.sql (V1__users.sql …)
+
+server:
+  shutdown: graceful               # PLAN §6 operational hardening
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health            # PLAN §6: explicit allowlist — only health is exposed
+  endpoint:
+    health:
+      show-details: never          # never leak component details (status only for callers)
+      probes:
+        enabled: true              # expose /actuator/health/{liveness,readiness}
+      group:
+        # Liveness stays process-only (survives a transient DB outage); readiness reflects DB.
+        readiness:
+          include:
+            - readinessState
+            - db

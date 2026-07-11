@@ -1,0 +1,12 @@
+# Local development profile (run with SPRING_PROFILES_ACTIVE=dev).
+# Points at the docker-compose PostgreSQL (see docker-compose.yml). These are LOCAL-ONLY
+# throwaway credentials — real deployments inject SPRING_DATASOURCE_* from the environment.
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5433/kira
+    username: kira
+    password: kira
+  jpa:
+    properties:
+      hibernate:
+        format_sql: true

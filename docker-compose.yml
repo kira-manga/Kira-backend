@@ -1,0 +1,25 @@
+# Local development PostgreSQL for kira-backend.
+#
+# LOCAL-ONLY throwaway credentials (kira/kira) — never used in any real deployment. Production
+# DB credentials come from the SPRING_DATASOURCE_* environment variables (see .env.example and
+# PLAN §6 / hard-constraint 3). Host port 5433 avoids clashing with a local 5432.
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    container_name: kira-postgres
+    environment:
+      POSTGRES_USER: kira
+      POSTGRES_PASSWORD: kira        # local-only throwaway credential (see header)
+      POSTGRES_DB: kira
+    ports:
+      - "5433:5432"
+    volumes:
+      - kira_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kira -d kira"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  kira_pgdata:

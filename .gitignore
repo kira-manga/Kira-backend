@@ -2,3 +2,12 @@
 *.bak
 .env
 .DS_Store
+
+# Build / Gradle
+build/
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+*.iml
+.idea/

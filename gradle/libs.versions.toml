@@ -1,0 +1,38 @@
+# Version catalog — the single place versions are pinned (PLAN.md §3 version-pinning rule).
+#
+# These versions were verified mutually compatible once at scaffold (Phase 1) and are now
+# reproducible: builds resolve exactly these versions. After Phase 1 they change only as
+# deliberate commits, never by floating ranges. Spring Boot 3.5.x is intentional — do NOT
+# auto-switch to 4.x (a major upgrade is a separate, fully-tested change).
+#
+# BOM-managed (versions supplied by the Spring Boot dependency BOM, recorded in README):
+#   - org.postgresql:postgresql (JDBC driver)
+#   - org.testcontainers:{postgresql,junit-jupiter}
+#   - Kotlin stdlib/reflect are forced to the `kotlin` version below via the BOM
+#     property override (`extra["kotlin.version"]`) in build.gradle.kts so the runtime
+#     stdlib matches the compiler.
+
+[versions]
+kotlin = "2.1.21"                       # Kotlin plugins + stdlib (PLAN §3: "Kotlin 2.1+")
+springBoot = "3.5.16"                   # Spring Boot 3.5.x line (NOT 4.x — PLAN §3 hard pin)
+springDependencyManagement = "1.1.7"    # io.spring.dependency-management (applies the Boot BOM)
+kotlinxSerialization = "1.8.1"          # kotlinx-serialization-json runtime (PLAN §3: "1.7+")
+springdoc = "2.8.17"                    # springdoc-openapi 2.8.x = the Spring Boot 3.x line
+
+# Non-Gradle pins (recorded here for provenance; referenced textually where used):
+#   Gradle wrapper .......... 8.14.5   (gradle/wrapper/gradle-wrapper.properties)
+#   Java toolchain .......... 21       (build.gradle.kts)
+#   PostgreSQL Docker image . postgres:17.6-alpine  (docker-compose.yml + Testcontainers base)
+
+[plugins]
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
+kotlin-jpa = { id = "org.jetbrains.kotlin.plugin.jpa", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+
+[libraries]
+# Explicitly-versioned libraries (everything else is Boot-BOM-managed and versionless below).
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+springdoc-openapi-starter-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
