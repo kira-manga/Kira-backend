@@ -1,0 +1,14 @@
+# Production profile (run with SPRING_PROFILES_ACTIVE=prod).
+#
+# Emits structured JSON logs via Spring Boot 3.4+ NATIVE structured logging (the built-in
+# "logstash" format) — no external logstash-encoder dependency is added (PLAN §3 dependency
+# discipline; §6 "logstash-style encoder"). The MDC fields set by RequestDiagnosticsFilter
+# (requestId, httpMethod, route, status, durationMs) appear as top-level JSON fields; the readable
+# `logging.pattern.level` from application.yml is ignored by the structured encoder.
+#
+# Base/dev profiles keep readable console logs. DEBUG is off in prod by default (root INFO), per
+# PLAN §6. DB credentials come from SPRING_DATASOURCE_* env (see application.yml header / .env.example).
+logging:
+  structured:
+    format:
+      console: logstash

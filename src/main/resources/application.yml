@@ -24,6 +24,14 @@ spring:
 server:
   shutdown: graceful               # PLAN §6 operational hardening
 
+logging:
+  # Base/dev: readable console (PLAN §6 "dev profile emits readable console"). The `prod` profile
+  # switches to structured JSON (application-prod.yml). Surface the correlation id set by
+  # RequestDiagnosticsFilter on every readable line; the full set of MDC fields (httpMethod, route,
+  # status, durationMs) becomes JSON fields under the prod structured encoder.
+  pattern:
+    level: "%5p [%X{requestId:-}]"
+
 management:
   endpoints:
     web:
