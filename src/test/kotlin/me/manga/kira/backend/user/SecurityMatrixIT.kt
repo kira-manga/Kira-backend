@@ -74,9 +74,13 @@ class SecurityMatrixIT
             mockMvc
                 .get("/api/v1/admin/users") { header("Authorization", "Bearer $adminToken") }
                 .andExpect { status { isOk() } }
-            // A not-yet-built admin endpoint: ADMIN passes the guard (reaches dispatch → 404, NOT 403).
+            // Phase-6 admin-sources endpoint now exists → ADMIN gets a real 200 (empty list when no sources).
             mockMvc
                 .get("/api/v1/admin/sources") { header("Authorization", "Bearer $adminToken") }
-                .andExpect { status { isNotFound() } }
+                .andExpect { status { isOk() } }
+            // Phase-6 admin-documents endpoint → 200 (empty list when nothing published).
+            mockMvc
+                .get("/api/v1/admin/documents") { header("Authorization", "Bearer $adminToken") }
+                .andExpect { status { isOk() } }
         }
     }
