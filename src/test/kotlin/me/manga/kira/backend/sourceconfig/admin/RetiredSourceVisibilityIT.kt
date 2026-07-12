@@ -9,8 +9,8 @@ import org.junit.jupiter.api.Test
  * `lifecycle:"removed"`; un-retire (`retired → active`) succeeds for a generic source and is 409
  * `UNRETIRE_UNSUPPORTED_FOR_ENGINE` for a legacy source (PLAN §9 engine-gated un-retire).
  *
- * The `GET /sources/{api}` → 200-with-`removed` half is asserted through the assembled snapshot here;
- * the public per-api route is the Phase-7 extension.
+ * The `GET /sources/{api}` → 200-with-`removed` half is asserted through BOTH the assembled snapshot
+ * and the public per-api route (Phase-7 extension).
  */
 class RetiredSourceVisibilityIT : AbstractAdminSourceIT() {
 
@@ -33,6 +33,13 @@ class RetiredSourceVisibilityIT : AbstractAdminSourceIT() {
 
         val retiredDoc = latestPointer()!!
         assertEquals("removed", servedDocument(retiredDoc).sources.first { it.api == api }.lifecycle)
+
+        // Phase 7 — the public per-api route serves the retired stanza as 200 with lifecycle:"removed".
+        getPublicSource(api).andExpect {
+            status { isOk() }
+            jsonPath("$.api") { value(api) }
+            jsonPath("$.lifecycle") { value("removed") }
+        }
 
         // Un-retire (generic only): retired -> active.
         val enabledDoc = docRevisionOf(enable(api).andExpect { status { isOk() } })

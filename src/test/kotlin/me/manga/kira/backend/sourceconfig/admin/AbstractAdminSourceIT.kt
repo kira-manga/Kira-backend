@@ -49,6 +49,9 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     /** Emits exactly the mirrored model's keys (no unknown keys) — accepted by the STRICT parser (PLAN §7). */
     protected val modelJson: Json = Json { encodeDefaults = false; explicitNulls = false }
 
+    /** Reads a served document body back into the model, leniently — exactly as the app parses (PLAN §7). */
+    protected val servedJson: Json = Json { ignoreUnknownKeys = true; isLenient = true }
+
     @BeforeEach
     fun seedAdmin() {
         admin = users.create("admin-${UUID.randomUUID()}@test.local", "{noop}not-a-real-hash", Role.ADMIN)
@@ -105,6 +108,33 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected fun getRawDocument(revision: Long): ResultActionsDsl =
         mockMvc.get("/api/v1/admin/documents/$revision") { header("Authorization", "Bearer $adminToken") }
 
+    // --- Public app-facing routes (Phase 7 — no auth) ----------------------------------------------
+
+    /** `GET /source-config/document`, optionally conditional (`If-None-Match`) / carrying `appVersion`. */
+    protected fun getPublicDocument(
+        ifNoneMatch: String? = null,
+        appVersion: String? = null,
+    ): ResultActionsDsl =
+        mockMvc.get("/api/v1/source-config/document") {
+            if (ifNoneMatch != null) header("If-None-Match", ifNoneMatch)
+            if (appVersion != null) param("appVersion", appVersion)
+        }
+
+    protected fun getPublicDocumentMeta(): ResultActionsDsl = mockMvc.get("/api/v1/source-config/document/meta")
+
+    /** `GET /sources`, with optional comma-separated `lifecycle`/`engine` filter params. */
+    protected fun getPublicSources(vararg queryParams: Pair<String, String>): ResultActionsDsl =
+        mockMvc.get("/api/v1/sources") { queryParams.forEach { (k, v) -> param(k, v) } }
+
+    protected fun getPublicSource(api: String): ResultActionsDsl = mockMvc.get("/api/v1/sources/$api")
+
+    /** The public document body (raw bytes) parsed back into the model — for served-content assertions. */
+    protected fun publicServedDocument(): SourceConfigDocument {
+        val body =
+            getPublicDocument().andReturn().response.contentAsByteArray.toString(Charsets.UTF_8)
+        return servedJson.decodeFromString(SourceConfigDocument.serializer(), body)
+    }
+
     /** The `documentRevision` from a publish / lifecycle response body. */
     protected fun docRevisionOf(actions: ResultActionsDsl): Long =
         objectMapper.readTree(actions.andReturn().response.contentAsString).get("documentRevision").asLong()
@@ -113,8 +143,7 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected fun servedDocument(revision: Long): SourceConfigDocument {
         val body =
             getRawDocument(revision).andReturn().response.contentAsByteArray.toString(Charsets.UTF_8)
-        return Json { ignoreUnknownKeys = true; isLenient = true }
-            .decodeFromString(SourceConfigDocument.serializer(), body)
+        return servedJson.decodeFromString(SourceConfigDocument.serializer(), body)
     }
 
     protected fun latestPointer(): Long? =

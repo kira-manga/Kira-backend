@@ -40,8 +40,41 @@ class SecurityMatrixIT
 
         @Test
         fun `anonymous can reach the public read surface (permitted through security)`() {
-            // permitAll → passes the filter chain; no controller yet in Phase 3 → 404 (NOT 401/403).
+            // permitAll → passes the filter chain; with nothing published the Phase-7 controller returns
+            // a clean 404 (NO_PUBLISHED_DOCUMENT), NOT a security 401/403.
             mockMvc.get("/api/v1/source-config/document").andExpect { status { isNotFound() } }
+            // /sources is likewise public and returns an empty array (not 401/403) before any publish.
+            mockMvc.get("/api/v1/sources").andExpect { status { isOk() } }
+        }
+
+        @Test
+        fun `anonymous gets 200 on the public document and sources once one is published`() {
+            val adminToken = token(createUser("matrix-pub-admin@example.com", Role.ADMIN))
+            val sourceJson =
+                """
+                {"api":"MatrixSrc","language":"en","baseUrl":"https://example.com",
+                 "imageBase":"https://img.example.com","engine":"generic","endpoints":{
+                 "home":{"url":"{baseUrl}/home?page={page}","format":"json"},
+                 "search":{"url":"{baseUrl}/search?q={queryEncoded}&page={page}","format":"json"},
+                 "details":{"url":"{itemUrl}","format":"json"},
+                 "pages":{"url":"{chapterUrl}","format":"json"}}}
+                """.trimIndent()
+            mockMvc
+                .post("/api/v1/admin/sources") {
+                    header("Authorization", "Bearer $adminToken")
+                    contentType = MediaType.APPLICATION_JSON
+                    content = sourceJson
+                }.andExpect { status { isCreated() } }
+            mockMvc
+                .post("/api/v1/admin/sources/MatrixSrc/revisions/1/publish") {
+                    header("Authorization", "Bearer $adminToken")
+                }.andExpect { status { isOk() } }
+
+            // Anonymous (no token) now reads the published document + sources through permitAll.
+            mockMvc.get("/api/v1/source-config/document").andExpect { status { isOk() } }
+            mockMvc.get("/api/v1/source-config/document/meta").andExpect { status { isOk() } }
+            mockMvc.get("/api/v1/sources").andExpect { status { isOk() } }
+            mockMvc.get("/api/v1/sources/MatrixSrc").andExpect { status { isOk() } }
         }
 
         @Test

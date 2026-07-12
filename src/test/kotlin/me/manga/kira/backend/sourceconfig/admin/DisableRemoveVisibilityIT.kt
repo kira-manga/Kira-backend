@@ -10,8 +10,9 @@ import org.junit.jupiter.api.Test
  * `lifecycle:"disabled"` (NOT absent, NOT active); retire (from disabled) → `lifecycle:"removed"`;
  * remove drops the stanza entirely; a direct `active → retired` and `active → removed` are each 409.
  *
- * The stanza content is asserted through the assembled snapshot (admin raw-bytes endpoint); the public
- * `GET /sources/{api}` → 410 assertion is the Phase-7 visibility half of this test.
+ * The stanza content is asserted through BOTH the assembled snapshot (admin raw-bytes endpoint) AND
+ * the public routes (Phase-7 visibility half): the public `GET /source-config/document` carries the
+ * injected lifecycle, and a removed source is absent from it AND `GET /sources/{api}` → 410.
  */
 class DisableRemoveVisibilityIT : AbstractAdminSourceIT() {
 
@@ -19,6 +20,10 @@ class DisableRemoveVisibilityIT : AbstractAdminSourceIT() {
         documentRevision: Long,
         api: String,
     ): String? = servedDocument(documentRevision).sources.firstOrNull { it.api == api }?.lifecycle
+
+    /** The injected lifecycle for [api] as seen through the PUBLIC latest-document endpoint. */
+    private fun publicLifecycle(api: String): String? =
+        publicServedDocument().sources.firstOrNull { it.api == api }?.lifecycle
 
     @Test
     fun `disable then retire then remove walk the stanza through the document`() {
@@ -28,13 +33,25 @@ class DisableRemoveVisibilityIT : AbstractAdminSourceIT() {
 
         val disabledRev = docRevisionOf(disable(api).andExpect { status { isOk() } })
         assertEquals("disabled", lifecycleInDocument(disabledRev, api))
+        assertEquals("disabled", publicLifecycle(api), "the public document must carry lifecycle:\"disabled\"")
+        getPublicSource(api).andExpect {
+            status { isOk() }
+            jsonPath("$.lifecycle") { value("disabled") }
+        }
 
         val retiredRev = docRevisionOf(retire(api).andExpect { status { isOk() } })
         assertEquals("removed", lifecycleInDocument(retiredRev, api))
+        assertEquals("removed", publicLifecycle(api), "a retired stanza is served as lifecycle:\"removed\"")
 
         val removedRev = docRevisionOf(remove(api).andExpect { status { isOk() } })
         assertNull(lifecycleInDocument(removedRev, api), "a removed source must be absent from the document")
         assertEquals(0, servedDocument(removedRev).sources.size)
+        // Public visibility: absent from the served document AND GET /sources/{api} → 410.
+        assertNull(publicLifecycle(api), "a removed source must be absent from the PUBLIC document")
+        getPublicSource(api).andExpect {
+            status { isGone() }
+            jsonPath("$.errors[0].code") { value("SOURCE_REMOVED") }
+        }
     }
 
     @Test

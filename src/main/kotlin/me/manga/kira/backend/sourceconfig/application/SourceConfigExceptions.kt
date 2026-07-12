@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.application
 
 import me.manga.kira.backend.common.exception.ConflictException
+import me.manga.kira.backend.common.exception.GoneException
 import me.manga.kira.backend.common.exception.NotFoundException
 
 /**
@@ -22,6 +23,18 @@ class RevisionNotFoundException(api: String, revisionNumber: Int) :
 /** 404 — no published document snapshot with the given revision. */
 class DocumentNotFoundException(revision: Long) :
     NotFoundException("published document revision $revision not found.", code = "DOCUMENT_NOT_FOUND")
+
+/** 404 — no source-config document has ever been published (public `GET /source-config/document`; PLAN §4.1). */
+class NoPublishedDocumentException :
+    NotFoundException("no source-config document has been published yet.", code = "NO_PUBLISHED_DOCUMENT")
+
+/**
+ * 410 — the source is terminally `removed`, so it is absent from the served document (PLAN §4.1
+ * `GET /sources/{api}`). Distinct from a 404 (unknown/never-published) so the app can distinguish
+ * "gone for good" from "no such source". The `{api}` is a caller-supplied path value, not a secret.
+ */
+class SourceRemovedException(api: String) :
+    GoneException("source '$api' has been removed.", code = "SOURCE_REMOVED")
 
 /** 409 — a source with this api already exists (`uq_source_configs_api`; PLAN §4.3). */
 class SourceAlreadyExistsException(api: String) :

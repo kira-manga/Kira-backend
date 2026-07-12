@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test
  * document. Walk the only published source through disable→retire→remove → a new snapshot publishes with
  * zero sources; the canonical bytes omit the default-empty `sources`; re-parsing yields an empty list
  * (PLAN §9 empty-document rule). (The public `/document` + `/document/meta` serving is Phase 7 — asserted
- * here through the admin raw-bytes endpoint.)
+ * here through the admin raw-bytes endpoint AND, in Phase 7, through the public routes.)
  */
 class EmptyDocumentPublishIT : AbstractAdminSourceIT() {
 
@@ -45,5 +45,21 @@ class EmptyDocumentPublishIT : AbstractAdminSourceIT() {
         // Served + re-parsed → empty list; the pointer + ETag are fresh.
         assertEquals(emptyDoc, latestPointer())
         assertTrue(servedDocument(emptyDoc).sources.isEmpty())
+
+        // Phase 7 — the PUBLIC endpoints serve the empty document with a fresh ETag/revision, and
+        // /document/meta reports it.
+        val etag =
+            getPublicDocument()
+                .andExpect {
+                    status { isOk() }
+                    header { string("X-Config-Revision", emptyDoc.toString()) }
+                }.andReturn().response.getHeader("ETag")!!
+        assertTrue(etag.matches(Regex("\"[0-9a-f]{64}\"")), "empty document still carries a strong quoted ETag")
+        assertTrue(publicServedDocument().sources.isEmpty(), "the public empty document re-parses to an empty list")
+        getPublicDocumentMeta().andExpect {
+            status { isOk() }
+            jsonPath("$.revision") { value(emptyDoc) }
+            jsonPath("$.checksum") { value(etag.trim('"')) }
+        }
     }
 }

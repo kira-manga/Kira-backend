@@ -13,9 +13,9 @@ import org.springframework.test.web.servlet.post
  * appears in the served document with `lifecycle:"active"`; the document revision is a real server
  * revision (> the bundled floor); the served bytes re-checksum to the ETag/checksum.
  *
- * The served-document assertion goes through the admin raw-bytes endpoint (`GET /admin/documents/{rev}`,
- * the Phase-6 surface); Phase 7 extends this to assert the same through the public `GET
- * /source-config/document` route.
+ * The served-document assertion goes through BOTH the admin raw-bytes endpoint (`GET
+ * /admin/documents/{rev}`) AND the public `GET /source-config/document` route: the published stanza
+ * appears in the public document, and the public body bytes re-checksum to the ETag/checksum (Phase 7).
  */
 class SourcePublishFlowIT : AbstractAdminSourceIT() {
 
@@ -61,5 +61,20 @@ class SourcePublishFlowIT : AbstractAdminSourceIT() {
         assertNotNull(stanza, "the published stanza must appear in the served document")
         assertEquals("active", stanza!!.lifecycle)
         assertEquals(1, document.sources.size)
+
+        // Phase 7 — the PUBLIC document serves the same stanza, and its raw body bytes re-checksum to
+        // the ETag / X-Config-Checksum (SHA-256 of the public body == the published checksum).
+        val publicBody =
+            getPublicDocument()
+                .andExpect {
+                    status { isOk() }
+                    header { string("ETag", "\"$checksum\"") }
+                    header { string("X-Config-Revision", documentRevision.toString()) }
+                    header { string("X-Config-Checksum", checksum) }
+                }.andReturn().response.contentAsByteArray
+        assertEquals(checksum, Sha256.hexUtf8(publicBody.toString(Charsets.UTF_8)))
+        val publicStanza = publicServedDocument().sources.firstOrNull { it.api == api }
+        assertNotNull(publicStanza, "the published stanza must appear in the PUBLIC document")
+        assertEquals("active", publicStanza!!.lifecycle)
     }
 }

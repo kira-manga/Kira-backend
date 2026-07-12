@@ -69,6 +69,16 @@ open class ConflictException(
 ) : ApiException(HttpStatus.CONFLICT, code, detail)
 
 /**
+ * 410 — the resource existed but is permanently gone (PLAN §4.1). Used for a terminally `removed`
+ * source at `GET /sources/{api}` — distinct from a 404 (unknown/never-published), so the app can tell
+ * "this source is gone for good" from "no such source". `open` so feature domains can subclass it.
+ */
+open class GoneException(
+    detail: String,
+    code: String = "GONE",
+) : ApiException(HttpStatus.GONE, code, detail)
+
+/**
  * 409 — a source-config lifecycle transition is not permitted by the §9 state machine
  * (`INVALID_LIFECYCLE_TRANSITION`). The state machine itself lands in Phase 5; this is its
  * boundary error type.

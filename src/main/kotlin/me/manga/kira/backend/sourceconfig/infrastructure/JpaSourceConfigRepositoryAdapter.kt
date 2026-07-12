@@ -2,6 +2,7 @@ package me.manga.kira.backend.sourceconfig.infrastructure
 
 import me.manga.kira.backend.sourceconfig.domain.AssemblySource
 import me.manga.kira.backend.sourceconfig.domain.NewSourceConfig
+import me.manga.kira.backend.sourceconfig.domain.PublishedRevisionMetadata
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigHead
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
@@ -73,6 +74,15 @@ class JpaSourceConfigRepositoryAdapter(
                 "WHERE s.status IN ('active', 'disabled', 'retired') " +
                 "ORDER BY s.position ASC, s.api ASC",
             ASSEMBLY_MAPPER,
+        )
+
+    override fun findPublishedRevisionMetadata(): List<PublishedRevisionMetadata> =
+        jdbcTemplate.query(
+            "SELECT s.api, r.revision_number, r.published_at " +
+                "FROM source_configs s " +
+                "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
+                "WHERE s.status IN ('active', 'disabled', 'retired')",
+            METADATA_MAPPER,
         )
 
     override fun applyPublishedRevision(
@@ -150,6 +160,15 @@ class JpaSourceConfigRepositoryAdapter(
                     engine = rs.getString("engine"),
                     status = SourceLifecycleStatus.fromWire(rs.getString("status")),
                     canonicalContent = rs.getString("config_canonical_json"),
+                )
+            }
+
+        val METADATA_MAPPER =
+            RowMapper { rs: ResultSet, _: Int ->
+                PublishedRevisionMetadata(
+                    api = rs.getString("api"),
+                    revisionNumber = rs.getInt("revision_number"),
+                    publishedAt = rs.getObject("published_at", OffsetDateTime::class.java).toInstant(),
                 )
             }
     }

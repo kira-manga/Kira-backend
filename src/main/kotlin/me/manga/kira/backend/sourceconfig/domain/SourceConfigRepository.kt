@@ -51,6 +51,14 @@ interface SourceConfigRepository {
     fun findSourcesForAssembly(): List<AssemblySource>
 
     /**
+     * Per-source published-revision metadata for the sources in the served document
+     * (`active|disabled|retired`): the api, its currently-published revision number, and that revision's
+     * publish time. Feeds the `GET /sources` summary's `revisionNumber`/`publishedAt` (PLAN §4.1) — the
+     * served-document fields come from the snapshot bytes; these two are not carried there.
+     */
+    fun findPublishedRevisionMetadata(): List<PublishedRevisionMetadata>
+
+    /**
      * Apply a publish to the head (PLAN §9 step 3): set the published-revision pointer, the resulting
      * [status], `published_at` (first publish), and refresh the denormalized fields from the just
      * published revision's content. Executed as a direct DB update so the change is visible to the
@@ -105,4 +113,15 @@ data class AssemblySource(
     val engine: String,
     val status: SourceLifecycleStatus,
     val canonicalContent: String,
+)
+
+/**
+ * The `GET /sources` summary metadata NOT derivable from the served document bytes (PLAN §4.1):
+ * [revisionNumber] is the source's currently-published revision number and [publishedAt] is that
+ * revision's publish time (both from `source_config_revisions`).
+ */
+data class PublishedRevisionMetadata(
+    val api: String,
+    val revisionNumber: Int,
+    val publishedAt: Instant,
 )
