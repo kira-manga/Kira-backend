@@ -74,7 +74,8 @@ class CompletionService(
         val effectiveModel = model?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
 
         val id = persistence.createPending(userId, provider.name, effectiveModel, prompt)
-        log.info("Completion {} PENDING provider={} model={}", id, provider.name, effectiveModel)
+        // `model` is client-supplied — sanitize control chars before it reaches the log line (§6 log-hygiene).
+        log.info("Completion {} PENDING provider={} model={}", id, provider.name, sanitizeForLog(effectiveModel))
 
         persistence.markRunning(id)
         log.info("Completion {} RUNNING", id)
@@ -248,8 +249,11 @@ class CompletionService(
 
         fun elapsedMs(startNanos: Long): Int = ((System.nanoTime() - startNanos) / 1_000_000L).toInt()
 
+        /** Replace ALL control characters (newlines included) and bound the length — §6 log-hygiene. */
+        val CONTROL_CHARS = Regex("\\p{Cntrl}")
+
         fun sanitizeForLog(value: String?): String =
-            value?.replace('\n', ' ')?.replace('\r', ' ')?.take(256) ?: "none"
+            value?.replace(CONTROL_CHARS, " ")?.take(256) ?: "none"
 
         fun namedThreadFactory(prefix: String): ThreadFactory {
             val counter = AtomicInteger(0)
