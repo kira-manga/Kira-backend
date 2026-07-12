@@ -113,6 +113,29 @@ class SecurityMatrixIT
         }
 
         @Test
+        fun `USER and ADMIN tokens are allowed on completions`() {
+            // §6 matrix: POST/GET /completions is authenticated (USER own-only, ADMIN). Anon → 401 is
+            // proven above; here an authenticated caller passes security and reaches the Phase-9 controller.
+            val userToken = token(createUser("matrix-completion-user@example.com", Role.USER))
+            val adminToken = token(createUser("matrix-completion-admin@example.com", Role.ADMIN))
+            mockMvc
+                .post("/api/v1/completions") {
+                    header("Authorization", "Bearer $userToken")
+                    contentType = MediaType.APPLICATION_JSON
+                    content = "{\"prompt\":\"hello\"}"
+                }.andExpect { status { isCreated() } }
+            mockMvc
+                .post("/api/v1/completions") {
+                    header("Authorization", "Bearer $adminToken")
+                    contentType = MediaType.APPLICATION_JSON
+                    content = "{\"prompt\":\"hello\"}"
+                }.andExpect { status { isCreated() } }
+            mockMvc
+                .get("/api/v1/completions") { header("Authorization", "Bearer $userToken") }
+                .andExpect { status { isOk() } }
+        }
+
+        @Test
         fun `ADMIN token is allowed on admin endpoints`() {
             val adminToken = token(createUser("matrix-admin@example.com", Role.ADMIN))
             // Real Phase-3 admin endpoint → 200.
