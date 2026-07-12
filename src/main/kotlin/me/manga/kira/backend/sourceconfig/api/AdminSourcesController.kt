@@ -3,8 +3,10 @@ package me.manga.kira.backend.sourceconfig.api
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.validation.Valid
 import me.manga.kira.backend.common.exception.BadRequestException
+import me.manga.kira.backend.common.exception.PayloadTooLargeException
 import me.manga.kira.backend.security.AuthenticatedUser
 import me.manga.kira.backend.sourceconfig.api.dto.AdminSourceResponse
+import me.manga.kira.backend.sourceconfig.api.dto.ImportBundledResponse
 import me.manga.kira.backend.sourceconfig.api.dto.PublishResponse
 import me.manga.kira.backend.sourceconfig.api.dto.RemoveRequest
 import me.manga.kira.backend.sourceconfig.api.dto.RevisionDetailResponse
@@ -13,6 +15,7 @@ import me.manga.kira.backend.sourceconfig.api.dto.RollbackRequest
 import me.manga.kira.backend.sourceconfig.api.dto.RollbackResponse
 import me.manga.kira.backend.sourceconfig.api.dto.SourceMutationResponse
 import me.manga.kira.backend.sourceconfig.api.dto.ValidationResultDto
+import me.manga.kira.backend.sourceconfig.application.BundledImportService
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import org.springframework.http.HttpStatus
@@ -39,6 +42,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1/admin/sources")
 class AdminSourcesController(
     private val sourceAdminService: SourceAdminService,
+    private val bundledImportService: BundledImportService,
 ) {
 
     @PostMapping
@@ -48,6 +52,20 @@ class AdminSourcesController(
         @AuthenticationPrincipal admin: AuthenticatedUser,
     ): SourceMutationResponse =
         SourceMutationResponse.of(sourceAdminService.createSource(httpRequest.readBody(), admin.id))
+
+    /**
+     * `POST /admin/sources/import-bundled` (PLAN §4.3 / §12.2) — seed/re-sync from the app's bundled
+     * document JSON. Read as the RAW body (COMPATIBILITY-parsed by the service, NOT Jackson-bound) with
+     * a **5 MiB** cap for THIS endpoint (the §4.5 default elsewhere is 256 KB): over-limit → 413. A 200
+     * (including the no-op case) carries the structured summary; a validation failure is a 422 with the
+     * full error list; malformed JSON is the parser's 400.
+     */
+    @PostMapping("/import-bundled")
+    fun importBundled(
+        httpRequest: HttpServletRequest,
+        @AuthenticationPrincipal admin: AuthenticatedUser,
+    ): ImportBundledResponse =
+        ImportBundledResponse.of(bundledImportService.import(httpRequest.readBoundedBody(MAX_IMPORT_BODY_BYTES), admin.id))
 
     @GetMapping
     fun list(
@@ -135,10 +153,32 @@ class AdminSourcesController(
     /** Read the raw request body (UTF-8) for the STRICT authoring parser (PLAN §7). */
     private fun HttpServletRequest.readBody(): String = inputStream.readBytes().toString(Charsets.UTF_8)
 
+    /**
+     * Read the raw request body (UTF-8) bounded to [maxBytes], enforcing the §4.5 `import-bundled` 5 MiB
+     * limit → **413** (PLAN §4.5). The declared `Content-Length` is checked first for a fast reject, but
+     * the read itself is also bounded (`readNBytes(maxBytes + 1)`) so an absent/chunked or under-reporting
+     * Content-Length cannot smuggle a larger body past the cap. The message never echoes any submitted
+     * content (§6 log-hygiene).
+     */
+    private fun HttpServletRequest.readBoundedBody(maxBytes: Int): String {
+        if (contentLengthLong > maxBytes) throw payloadTooLarge(maxBytes)
+        val bytes = inputStream.readNBytes(maxBytes + 1)
+        if (bytes.size > maxBytes) throw payloadTooLarge(maxBytes)
+        return bytes.toString(Charsets.UTF_8)
+    }
+
+    private fun payloadTooLarge(maxBytes: Int): PayloadTooLargeException =
+        PayloadTooLargeException("request body exceeds the ${maxBytes / (1024 * 1024)} MiB import limit.")
+
     /** Parse the optional `?status=` filter into the enum; an unknown value is a 400 (PLAN §4.5). */
     private fun parseStatus(status: String?): SourceLifecycleStatus? =
         status?.let { raw ->
             SourceLifecycleStatus.entries.firstOrNull { it.wire == raw }
                 ?: throw BadRequestException("unknown status filter '$raw'.", code = "INVALID_STATUS_FILTER")
         }
+
+    private companion object {
+        /** `import-bundled` request-body cap (PLAN §4.5): 5 MiB (the real document is well under 1 MiB). */
+        const val MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024
+    }
 }

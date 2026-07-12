@@ -60,6 +60,19 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     protected fun toJson(model: SourceConfig): String = modelJson.encodeToString(SourceConfig.serializer(), model)
 
+    protected fun toJson(document: SourceConfigDocument): String =
+        modelJson.encodeToString(SourceConfigDocument.serializer(), document)
+
+    /** `POST /admin/sources/import-bundled` with a raw document body (PLAN §4.3 / §12.2). */
+    protected fun importBundled(json: String): ResultActionsDsl =
+        mockMvc.post("/api/v1/admin/sources/import-bundled") {
+            header("Authorization", "Bearer $adminToken")
+            contentType = MediaType.APPLICATION_JSON
+            content = json
+        }
+
+    protected fun importBundled(document: SourceConfigDocument): ResultActionsDsl = importBundled(toJson(document))
+
     protected fun createSource(model: SourceConfig): ResultActionsDsl = createSourceRaw(toJson(model))
 
     protected fun createSourceRaw(json: String): ResultActionsDsl =
@@ -162,6 +175,23 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
             Long::class.java,
             api,
         )!!
+
+    /** Count of ALL revisions (any status) for a source — proves import creates zero new ones (PLAN §12.2). */
+    protected fun revisionCount(api: String): Long =
+        jdbcTemplate.queryForObject(
+            "SELECT count(*) FROM source_config_revisions r JOIN source_configs s ON s.id = r.source_config_id " +
+                "WHERE s.api = ?",
+            Long::class.java,
+            api,
+        )!!
+
+    /** The `source_configs.status` wire value for an api (DB truth), or null if the source does not exist. */
+    protected fun sourceStatus(api: String): String? =
+        jdbcTemplate.query(
+            "SELECT status FROM source_configs WHERE api = ?",
+            { rs, _ -> rs.getString("status") },
+            api,
+        ).firstOrNull()
 
     protected fun sourceRowCount(): Long =
         jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs", Long::class.java)!!

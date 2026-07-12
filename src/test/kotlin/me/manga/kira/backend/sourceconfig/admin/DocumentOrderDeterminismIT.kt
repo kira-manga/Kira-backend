@@ -6,7 +6,6 @@ import me.manga.kira.backend.sourceconfig.application.DocumentAssemblyService
 import me.manga.kira.backend.sourceconfig.domain.AssemblySource
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
-import me.manga.kira.backend.support.AbstractIntegrationTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
@@ -15,9 +14,10 @@ import org.springframework.beans.factory.annotation.Autowired
  * PLAN §11 test 40 — `DocumentOrderDeterminismIT`: one normative source order. The same source set fed
  * to the assembly in multiple shuffled orders produces byte-identical canonical documents (identical
  * checksum/ETag); the assembled order is `(position ASC, api ASC)` (PLAN §5 source ordering — kcj-1 key
- * sorting never reorders the sources array). (The bundled-import-payload-order half is Phase 8.)
+ * sorting never reorders the sources array). The Phase-8 half proves a bundled import assigns positions
+ * from payload order so the served document preserves the bundled stanza order end-to-end (§5/§12.2).
  */
-class DocumentOrderDeterminismIT : AbstractIntegrationTest() {
+class DocumentOrderDeterminismIT : AbstractAdminSourceIT() {
 
     @Autowired
     private lateinit var assembly: DocumentAssemblyService
@@ -66,5 +66,17 @@ class DocumentOrderDeterminismIT : AbstractIntegrationTest() {
         // And identical checksums (the ETag) follow from identical bytes.
         val checksums = canonicalForms.map { CanonicalJson.checksum(it) }.toSet()
         assertEquals(1, checksums.size, "all shuffles must share one checksum")
+    }
+
+    @Test
+    fun `a bundled import serves stanzas in payload order`() {
+        // Positions are assigned from payload order on create (PLAN §5(c)/§12.2), so the served document
+        // preserves the exact bundled stanza order — the app's de-facto tab order.
+        importBundled(SourceConfigFixtures.loadFixture("bundled-trimmed.json")).andExpect { status { isOk() } }
+        assertEquals(
+            listOf("Azora", "SwatManga", "Lavatoons", "Manhwatop"),
+            publicServedDocument().sources.map { it.api },
+            "served document must preserve the bundled payload order",
+        )
     }
 }

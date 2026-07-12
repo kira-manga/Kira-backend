@@ -1,0 +1,311 @@
+{
+  "schemaVersion": 1,
+  "revision": 4,
+  "sources": [
+    {
+      "api": "Azora",
+      "icon": {
+        "resourceKey": "azora"
+      },
+      "language": "(AR)",
+      "displayName": "Azora",
+      "baseUrl": "https://api.azorafly.com",
+      "imageBase": "https://api.azorafly.com",
+      "engine": "generic",
+      "usesCapturedHeaders": false,
+      "pagination": {
+        "type": "page-number",
+        "param": "page",
+        "start": 1
+      },
+      "endpoints": {
+        "home": {
+          "url": "{baseUrl}/api/query?page={page}&perPage=24&orderBy=lastChapterAddedAt&orderDirection=desc",
+          "format": "json",
+          "root": "posts"
+        },
+        "featured": {
+          "url": "{baseUrl}/api/query?page={page}&perPage=24&orderBy=totalViews&orderDirection=desc",
+          "format": "json",
+          "root": "posts"
+        },
+        "search": {
+          "url": "{baseUrl}/api/query?searchTerm={queryEncoded}&perPage=24",
+          "format": "json",
+          "root": "posts"
+        },
+        "details": {
+          "url": "{itemUrl}",
+          "format": "json"
+        },
+        "pages": {
+          "url": "{chapterUrl}",
+          "format": "json",
+          "root": "chapter.images"
+        }
+      },
+      "fields": {
+        "item.title": {
+          "path": "postTitle"
+        },
+        "item.url": {
+          "template": "{baseUrl}/api/post/?postId={id}",
+          "vars": {
+            "id": "id"
+          }
+        },
+        "item.cover": {
+          "path": "featuredImage"
+        },
+        "item.rating": {
+          "path": "averageRating",
+          "transform": [
+            {
+              "fn": "default",
+              "args": {
+                "value": "0"
+              }
+            }
+          ]
+        },
+        "item.genres": {
+          "listPath": "genres[*].name"
+        },
+        "item.recentChapters": {
+          "listPath": "chapters"
+        },
+        "detail.title": {
+          "path": "post.postTitle"
+        },
+        "detail.cover": {
+          "path": "post.featuredImage"
+        },
+        "detail.rating": {
+          "path": "post.averageRating",
+          "transform": [
+            {
+              "fn": "decimal"
+            },
+            {
+              "fn": "default",
+              "args": {
+                "value": "0"
+              }
+            }
+          ]
+        },
+        "detail.description": {
+          "path": "post.postContent",
+          "transform": [
+            {
+              "fn": "clean-html"
+            }
+          ]
+        },
+        "detail.author": {
+          "path": "post.author"
+        },
+        "detail.status": {
+          "path": "post.seriesStatus",
+          "transform": [
+            {
+              "fn": "default",
+              "args": {
+                "value": "Unknown"
+              }
+            }
+          ]
+        },
+        "detail.genres": {
+          "listPath": "post.genres[*].name"
+        },
+        "detail.chapters": {
+          "listPath": "post.chapters"
+        },
+        "chapter.number": {
+          "path": "number",
+          "transform": [
+            {
+              "fn": "format-number"
+            },
+            {
+              "fn": "prepend",
+              "args": {
+                "value": "Chapter "
+              }
+            }
+          ]
+        },
+        "chapter.name": {
+          "path": "title",
+          "template": "Chapter {num}",
+          "vars": {
+            "num": "number|format-number"
+          }
+        },
+        "chapter.url": {
+          "template": "{baseUrl}/api/chapter?chapterId={id}",
+          "vars": {
+            "id": "id"
+          }
+        },
+        "chapter.date": {
+          "path": "createdAt",
+          "dateStrategy": "iso"
+        },
+        "chapter.locked": {
+          "path": "isLocked"
+        },
+        "page.image": {
+          "path": "url"
+        },
+        "page.order": {
+          "path": "order"
+        }
+      }
+    },
+    {
+      "api": "SwatManga",
+      "icon": {
+        "resourceKey": "swatmanga"
+      },
+      "language": "(AR)",
+      "displayName": "SwatManga",
+      "baseUrl": "https://appswat.com/v2/api/v1",
+      "imageBase": "https://appswat.com",
+      "engine": "generic",
+      "usesCapturedHeaders": false,
+      "pagination": {
+        "type": "page-number",
+        "param": "page",
+        "start": 1
+      },
+      "endpoints": {
+        "home": {
+          "url": "{baseUrl}/series/releases/?page={page}&page_size=20",
+          "format": "json",
+          "root": "results"
+        },
+        "featured": {
+          "url": "{baseUrl}/chapters/?limit=20&offset=1&created_last=week&order_by=-views_count",
+          "format": "json",
+          "root": "results"
+        },
+        "search": {
+          "url": "{baseUrl}/series/?search={queryEncoded}&page=1&page_size=20",
+          "format": "json",
+          "root": "results"
+        },
+        "details": {
+          "url": "{baseUrl}/series/{id}/",
+          "format": "json"
+        },
+        "chapters": {
+          "url": "{baseUrl}/series/{id}/chapters/?page={page}&page_size=200",
+          "format": "json",
+          "root": "results",
+          "pageParam": "page",
+          "lastPageLocator": "next"
+        },
+        "pages": {
+          "url": "{chapterUrl}",
+          "format": "json",
+          "root": "images"
+        }
+      },
+      "fields": {
+        "item.title": {
+          "path": "serie.title",
+          "fallbackPath": "title"
+        },
+        "item.url": {
+          "template": "{baseUrl}/{id}",
+          "vars": {
+            "id": "serie_id, serie.id, id"
+          }
+        },
+        "item.cover": {
+          "path": "serie.poster.medium",
+          "fallbackPath": "poster.medium"
+        },
+        "item.rating": {
+          "path": "rating",
+          "transform": [
+            {
+              "fn": "default",
+              "args": {
+                "value": "0"
+              }
+            }
+          ]
+        },
+        "item.genres": {
+          "listPath": "genres[*].name"
+        },
+        "detail.title": {
+          "path": "title"
+        },
+        "detail.cover": {
+          "path": "poster.medium"
+        },
+        "detail.rating": {
+          "path": "rating"
+        },
+        "detail.description": {
+          "path": "story"
+        },
+        "detail.status": {
+          "path": "status.name",
+          "transform": [
+            {
+              "fn": "enum-map",
+              "args": {
+                "ongoing": "Ongoing",
+                "completed": "Completed",
+                "hiatus": "Hiatus",
+                "cancelled": "Cancelled",
+                "__default__": "Unknown"
+              }
+            }
+          ]
+        },
+        "detail.genres": {
+          "listPath": "genres[*].name"
+        },
+        "chapter.number": {
+          "path": "chapter"
+        },
+        "chapter.name": {
+          "path": "title"
+        },
+        "chapter.url": {
+          "template": "{baseUrl}/chapters/{id}/",
+          "vars": {
+            "id": "id|format-number"
+          }
+        },
+        "chapter.date": {
+          "path": "created_at",
+          "dateStrategy": "iso"
+        },
+        "page.image": {
+          "path": "image"
+        }
+      }
+    },
+    {
+      "api": "Lavatoons",
+      "language": "(AR)",
+      "baseUrl": "https://lavascans.com",
+      "imageBase": "https://lavascans.com",
+      "engine": "legacy"
+    },
+    {
+      "api": "Manhwatop",
+      "language": "(EN)",
+      "baseUrl": "https://manhwatop.com/",
+      "imageBase": "https://manhwatop.com/",
+      "engine": "legacy"
+    }
+  ]
+}

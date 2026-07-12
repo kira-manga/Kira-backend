@@ -3,13 +3,15 @@ package me.manga.kira.backend.sourceconfig.admin
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * PLAN §11 test 45 (non-import halves) — `LifecycleNeutralStorageIT`: stored revision content NEVER
- * carries server lifecycle. The stored canonical revision bytes contain no `lifecycle` key; the assembled
- * document injects `disabled`/retired-as-`removed` at materialization only (PLAN §9). (Importing a
- * `disabled` stanza + no-op re-import are the Phase-8 import halves.)
+ * PLAN §11 test 45 — `LifecycleNeutralStorageIT`: stored revision content NEVER carries server lifecycle.
+ * The stored canonical revision bytes contain no `lifecycle` key; the assembled document injects
+ * `disabled`/retired-as-`removed` at materialization only (PLAN §9). The import halves (Phase 8) prove
+ * that importing a `disabled` stanza stores neutral content + initial status `disabled`, and re-importing
+ * it is a no-op (the §9 neutral normalization is what makes that idempotency hold — §12.2).
  */
 class LifecycleNeutralStorageIT : AbstractAdminSourceIT() {
 
@@ -38,5 +40,28 @@ class LifecycleNeutralStorageIT : AbstractAdminSourceIT() {
             publishedRevisionJson(api).contains("lifecycle"),
             "the stored published revision bytes must STILL omit lifecycle after disable",
         )
+    }
+
+    @Test
+    fun `importing a disabled stanza stores neutral content with initial status disabled, and re-import is a no-op`() {
+        val api = "ImportNeutral"
+        val document = SourceConfigFixtures.document(SourceConfigFixtures.validGenericSource(api).copy(lifecycle = "disabled"))
+
+        val created =
+            objectMapper.readTree(importBundled(document).andExpect { status { isOk() } }.andReturn().response.contentAsString)
+        assertTrue(created.get("created").map { it.asText() }.contains(api), "the disabled stanza is created")
+
+        // Stored content is lifecycle-NEUTRAL (no lifecycle key), and the payload lifecycle set the status.
+        assertFalse(publishedRevisionJson(api).contains("lifecycle"), "imported content must be stored lifecycle-neutral")
+        assertEquals("disabled", sourceStatus(api), "the payload lifecycle sets the initial status")
+        // The assembled document injects lifecycle:"disabled" at materialization only.
+        assertEquals("disabled", publicServedDocument().sources.first { it.api == api }.lifecycle)
+
+        // Re-import is a no-op — the neutralized content compares equal to its stored twin (PLAN §9/§12.2).
+        val snapshotsBefore = snapshotCount()
+        val reimport =
+            objectMapper.readTree(importBundled(document).andExpect { status { isOk() } }.andReturn().response.contentAsString)
+        assertTrue(reimport.get("unchanged").map { it.asText() }.contains(api), "re-import reports unchanged")
+        assertEquals(snapshotsBefore, snapshotCount(), "re-import materializes no new snapshot")
     }
 }

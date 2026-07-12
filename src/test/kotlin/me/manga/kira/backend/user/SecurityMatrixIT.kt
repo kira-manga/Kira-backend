@@ -86,6 +86,12 @@ class SecurityMatrixIT
                 }.andExpect { status { isUnauthorized() } }
             mockMvc.get("/api/v1/auth/me").andExpect { status { isUnauthorized() } }
             mockMvc.get("/api/v1/admin/users").andExpect { status { isUnauthorized() } }
+            // The bundled-import endpoint is admin-only — anonymous is rejected before dispatch (Phase 8).
+            mockMvc
+                .post("/api/v1/admin/sources/import-bundled") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = """{"schemaVersion":1,"sources":[]}"""
+                }.andExpect { status { isUnauthorized() } }
         }
 
         @Test
@@ -98,6 +104,12 @@ class SecurityMatrixIT
             mockMvc
                 .get("/api/v1/admin/sources") { header("Authorization", "Bearer $userToken") }
                 .andExpect { status { isForbidden() } }
+            mockMvc
+                .post("/api/v1/admin/sources/import-bundled") {
+                    header("Authorization", "Bearer $userToken")
+                    contentType = MediaType.APPLICATION_JSON
+                    content = """{"schemaVersion":1,"sources":[]}"""
+                }.andExpect { status { isForbidden() } }
         }
 
         @Test
@@ -115,5 +127,12 @@ class SecurityMatrixIT
             mockMvc
                 .get("/api/v1/admin/documents") { header("Authorization", "Bearer $adminToken") }
                 .andExpect { status { isOk() } }
+            // Phase-8 bundled-import endpoint is reachable for ADMIN → 200 (a no-op empty-document import).
+            mockMvc
+                .post("/api/v1/admin/sources/import-bundled") {
+                    header("Authorization", "Bearer $adminToken")
+                    contentType = MediaType.APPLICATION_JSON
+                    content = """{"schemaVersion":1,"sources":[]}"""
+                }.andExpect { status { isOk() } }
         }
     }

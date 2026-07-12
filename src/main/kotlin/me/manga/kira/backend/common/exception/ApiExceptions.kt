@@ -56,6 +56,16 @@ class TooManyRequestsException(
     code: String = "TOO_MANY_REQUESTS",
 ) : ApiException(HttpStatus.TOO_MANY_REQUESTS, code, detail)
 
+/**
+ * 413 — the request body exceeds the endpoint's size limit (PLAN §4.5). The `import-bundled` endpoint
+ * caps the body at 5 MiB (the §4.5 default elsewhere is 256 KB); an over-limit body is one consistent
+ * status, never a 400. The [detail] never echoes any submitted content (§6 log-hygiene).
+ */
+class PayloadTooLargeException(
+    detail: String,
+    code: String = "PAYLOAD_TOO_LARGE",
+) : ApiException(HttpStatus.PAYLOAD_TOO_LARGE, code, detail)
+
 /** 404 — a requested entity does not exist (PLAN §2). `open` so feature domains can subclass it. */
 open class NotFoundException(
     detail: String,

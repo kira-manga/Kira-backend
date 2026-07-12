@@ -4,6 +4,8 @@ import com.fasterxml.jackson.annotation.JsonInclude
 import com.fasterxml.jackson.annotation.JsonRawValue
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Positive
+import me.manga.kira.backend.sourceconfig.application.BundledImportResult
+import me.manga.kira.backend.sourceconfig.application.LifecycleConflict
 import me.manga.kira.backend.sourceconfig.application.PublishOutcome
 import me.manga.kira.backend.sourceconfig.application.RevisionView
 import me.manga.kira.backend.sourceconfig.application.RollbackOutcome
@@ -219,6 +221,49 @@ data class DocumentValidationResponse(
     companion object {
         fun of(result: ValidationResult) =
             DocumentValidationResponse(result.isValid, result.errors.map { FindingDto.of(it) })
+    }
+}
+
+/** One `{api, payloadLifecycle, serverLifecycle}` lifecycle conflict (PLAN §12.2). */
+data class LifecycleConflictDto(
+    val api: String,
+    val payloadLifecycle: String,
+    val serverLifecycle: String,
+) {
+    companion object {
+        fun of(c: LifecycleConflict) = LifecycleConflictDto(c.api, c.payloadLifecycle, c.serverLifecycle)
+    }
+}
+
+/**
+ * `POST /admin/sources/import-bundled` response (PLAN §4.3 / §12.2). The `created/updated/unchanged/
+ * skippedRemoved/skippedRetired` arrays are api strings (payload order); `lifecycleConflicts` are the
+ * informational payload-vs-server lifecycle mismatches; `warnings` mirrors the validation-DTO finding
+ * shape. `documentRevision` is **absent on the no-op case** (`NON_NULL` — nothing changed → no snapshot).
+ */
+@JsonInclude(JsonInclude.Include.NON_NULL)
+data class ImportBundledResponse(
+    val created: List<String>,
+    val updated: List<String>,
+    val unchanged: List<String>,
+    val skippedRemoved: List<String>,
+    val skippedRetired: List<String>,
+    val lifecycleConflicts: List<LifecycleConflictDto>,
+    val warnings: List<FindingDto>,
+    val documentRevision: Long?,
+) {
+    companion object {
+        fun of(result: BundledImportResult) =
+            ImportBundledResponse(
+                created = result.created,
+                updated = result.updated,
+                unchanged = result.unchanged,
+                skippedRemoved = result.skippedRemoved,
+                skippedRetired = result.skippedRetired,
+                lifecycleConflicts = result.lifecycleConflicts.map { LifecycleConflictDto.of(it) },
+                warnings = result.warnings.map { FindingDto.of(it) },
+                documentRevision = result.documentRevision,
+            )
     }
 }
 
