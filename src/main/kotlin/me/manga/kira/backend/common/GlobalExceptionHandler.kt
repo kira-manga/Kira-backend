@@ -39,7 +39,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(ApiException::class)
     fun handleApi(ex: ApiException): ResponseEntity<ApiError> {
         val errors = ex.errors.ifEmpty { listOf(ApiFieldError(code = ex.code, message = ex.detail)) }
-        return problem(ex.status, ex.detail, errors)
+        val headers = HttpHeaders()
+        if (ex is me.manga.kira.backend.common.exception.TooManyRequestsException) {
+            headers.set(HttpHeaders.RETRY_AFTER, ex.retryAfterSeconds.toString())
+        }
+        if (ex is me.manga.kira.backend.common.exception.ServiceUnavailableException) {
+            headers.set(HttpHeaders.RETRY_AFTER, ex.retryAfterSeconds.toString())
+        }
+        return problem(ex.status, ex.detail, errors, headers)
     }
 
     @ExceptionHandler(MethodArgumentNotValidException::class)

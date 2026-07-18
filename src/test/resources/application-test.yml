@@ -11,6 +11,9 @@
 kira:
   security:
     jwt-secret: a2lyYS1iYWNrZW5kLVRFU1QtT05MWS1qd3Qtc2VjcmV0LWRvLW5vdC11c2UtaW4tcHJvZCE=
+    throttle:
+      backend: memory
+      instance-count: 1
   auth:
     # Registration is exercised by AuthFlowIT, so keep it on in tests.
     registration-enabled: true
@@ -18,3 +21,11 @@ kira:
     # Integration tests boot WITHOUT admin-seed credentials, so seeding must be off by default here
     # (an enabled seeder without creds fail-fasts). AdminSeederIT flips this on with test creds.
     seed-enabled: false
+  completion:
+    enabled: true
+    provider: echo
+    coordination-backend: memory
+    instance-count: 1
+    per-user-per-minute: 0
+    global-per-minute: 0
+    per-user-daily-quota: 0

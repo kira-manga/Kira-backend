@@ -13,6 +13,35 @@ logging:
     format:
       console: logstash
 
+spring:
+  # Production migrations run as a separate one-shot job with a dedicated migration identity.
+  # Application pods use the lower-privilege runtime identity and never execute DDL.
+  flyway:
+    enabled: false
+
+management:
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  server:
+    port: 9090
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  health:
+    redis:
+      enabled: true
+  endpoint:
+    health:
+      group:
+        readiness:
+          include:
+            - readinessState
+            - db
+            - redis
+
 kira:
   auth:
     # Prod onboarding is admin-created users (PLAN §4.4); open self-registration is OFF
@@ -22,5 +51,9 @@ kira:
     # Required and validated at startup. TLS terminates at the production ingress; the application
     # advertises only this HTTPS origin and never accepts a plain-HTTP public base URL.
     external-base-url: ${KIRA_SECURITY_EXTERNAL_BASE_URL}
+    throttle:
+      # Production must state its topology explicitly. More than one replica requires Redis.
+      backend: ${KIRA_SECURITY_THROTTLE_BACKEND}
+      instance-count: ${KIRA_SECURITY_THROTTLE_INSTANCE_COUNT}
   # kira.security.jwt-secret and kira.admin.email/password come from the environment
   # (KIRA_JWT_SECRET / KIRA_ADMIN_EMAIL / KIRA_ADMIN_PASSWORD). No secret is defaulted here.

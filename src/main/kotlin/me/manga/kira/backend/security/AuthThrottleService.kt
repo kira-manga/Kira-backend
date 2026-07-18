@@ -3,7 +3,9 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.config.KiraSecurityProperties
+import me.manga.kira.backend.observability.KiraMetrics
 import org.slf4j.LoggerFactory
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Service
 import java.time.Clock
 import java.time.Duration
@@ -28,7 +30,8 @@ import java.time.Instant
  * eviction removes dead entries first, then the oldest by last-update.
  */
 @Service
-class AuthThrottleService(private val properties: KiraSecurityProperties, private val clock: Clock) {
+@ConditionalOnProperty(prefix = "kira.security.throttle", name = ["backend"], havingValue = "memory", matchIfMissing = true)
+class AuthThrottleService(private val properties: KiraSecurityProperties, private val clock: Clock, private val metrics: KiraMetrics? = null) : AuthThrottle {
     private val throttle get() = properties.throttle
 
     private val lock = Any()
@@ -36,7 +39,7 @@ class AuthThrottleService(private val properties: KiraSecurityProperties, privat
     private val registrationBuckets = HashMap<String, RegistrationBucket>()
 
     /** Throws 429 if either the (email, IP) identity or aggregate IP bucket is blocked. */
-    fun checkLoginAllowed(normalizedEmail: String, clientIp: String) {
+    override fun checkLoginAllowed(normalizedEmail: String, clientIp: String) {
         val now = clock.instant()
         synchronized(lock) {
             for (key in listOf(loginIdentityKey(normalizedEmail, clientIp), loginIpKey(clientIp))) {
@@ -49,7 +52,7 @@ class AuthThrottleService(private val properties: KiraSecurityProperties, privat
     }
 
     /** Record a failed login; may arm the temporary block. */
-    fun recordLoginFailure(normalizedEmail: String, clientIp: String) {
+    override fun recordLoginFailure(normalizedEmail: String, clientIp: String) {
         val now = clock.instant()
         synchronized(lock) {
             recordFailure(
@@ -68,12 +71,12 @@ class AuthThrottleService(private val properties: KiraSecurityProperties, privat
     }
 
     /** Successful login clears the identity bucket; it cannot erase aggregate IP spray history. */
-    fun recordLoginSuccess(normalizedEmail: String, clientIp: String) {
+    override fun recordLoginSuccess(normalizedEmail: String, clientIp: String) {
         synchronized(lock) { loginBuckets.remove(loginIdentityKey(normalizedEmail, clientIp)) }
     }
 
     /** Count a registration attempt for [clientIp]; throws 429 when the per-IP window cap is exceeded. */
-    fun checkRegistrationAllowed(clientIp: String) {
+    override fun checkRegistrationAllowed(clientIp: String) {
         val now = clock.instant()
         synchronized(lock) {
             val bucket =
@@ -122,6 +125,7 @@ class AuthThrottleService(private val properties: KiraSecurityProperties, privat
             bucket.failures = 0
             bucket.nextBlock = minOf(bucket.nextBlock.multipliedBy(2), throttle.loginMaxBlock)
             log.warn("Auth throttle engaged for login dimension={}", dimension)
+            metrics?.authenticationThrottle(dimension, "blocked")
         }
     }
 

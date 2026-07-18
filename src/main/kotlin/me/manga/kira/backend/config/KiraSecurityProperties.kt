@@ -72,6 +72,11 @@ data class KiraSecurityProperties(
      * — there is no permanent lockout an attacker could weaponize against a victim account.
      */
     data class Throttle(
+        /** `memory` is explicitly single-instance; `redis` is required when [instanceCount] exceeds one. */
+        val backend: String = "memory",
+        /** Expected application replica count, validated at production startup. */
+        @field:Positive
+        val instanceCount: Int = 1,
         /** Maximum tracked throttle entries before deterministic eviction (PLAN §6). */
         @field:Positive
         val maxEntries: Int = 100_000,
@@ -98,6 +103,9 @@ data class KiraSecurityProperties(
         val registrationWindow: Duration = Duration.ofHours(1),
     ) {
         init {
+            require(backend in setOf("memory", "redis")) {
+                "kira.security.throttle.backend must be memory or redis"
+            }
             require(!loginInitialBlock.isZero && !loginInitialBlock.isNegative) {
                 "kira.security.throttle.login-initial-block must be positive"
             }

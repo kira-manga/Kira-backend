@@ -10,6 +10,7 @@ import me.manga.kira.backend.completion.application.CompletionService
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.security.AuthenticatedUser
 import me.manga.kira.backend.user.domain.Role
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
@@ -30,6 +31,7 @@ import java.util.UUID
  */
 @RestController
 @RequestMapping("/api/v1/completions")
+@ConditionalOnProperty(prefix = "kira.completion", name = ["enabled"], havingValue = "true")
 class CompletionController(private val completionService: CompletionService, private val properties: KiraCompletionProperties) {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)

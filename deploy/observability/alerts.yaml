@@ -1,0 +1,80 @@
+groups:
+  - name: kira-backend
+    rules:
+      - alert: KiraBackendUnavailable
+        expr: up{job="kira-backend"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Kira backend is unavailable"}
+
+      - alert: KiraBackendHighErrorRate
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="kira-backend",status=~"5.."}[5m]))
+          / clamp_min(sum(rate(http_server_requests_seconds_count{job="kira-backend"}[5m])), 0.001) > 0.05
+        for: 10m
+        labels: {severity: critical}
+        annotations: {summary: "Kira backend 5xx rate exceeds 5%"}
+
+      - alert: KiraBackendHighLatency
+        expr: |
+          histogram_quantile(0.95,
+            sum by (le) (rate(http_server_requests_seconds_bucket{job="kira-backend"}[10m]))) > 1
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Kira backend p95 latency exceeds one second"}
+
+      - alert: KiraDatabasePoolExhaustion
+        expr: hikaricp_connections_active{job="kira-backend"} / clamp_min(hikaricp_connections_max{job="kira-backend"}, 1) > 0.9
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Kira database pool is over 90% utilized"}
+
+      - alert: KiraMigrationFailed
+        expr: kube_job_status_failed{namespace="kira",job_name=~"kira-backend-migrate.*"} > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations: {summary: "Kira Flyway migration Job failed"}
+
+      - alert: KiraAuthenticationThrottleSpike
+        expr: sum(rate(kira_auth_throttle_events_total{job="kira-backend",outcome=~"blocked|unavailable"}[5m])) > 1
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Authentication throttling is elevated"}
+
+      - alert: KiraCompletionQueueSaturated
+        expr: kira_completion_queue_remaining{job="kira-backend"} == 0
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Completion provider queue is saturated"}
+
+      - alert: KiraCompletionQuotaSpike
+        expr: sum(rate(kira_completion_admission_events_total{job="kira-backend"}[5m])) > 0.5
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Completion admission rejections are elevated"}
+
+      - alert: KiraPublicationFailures
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="kira-backend",uri=~".*/publish|.*/rollback",status=~"5.."}[10m])) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Source publication or rollback is failing"}
+
+      - alert: KiraImportFailures
+        expr: |
+          sum(rate(http_server_requests_seconds_count{job="kira-backend",uri=~".*/import-bundled",status=~"5.."}[10m])) > 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "Bundled source imports are failing"}
+
+      - alert: KiraBackupStale
+        expr: time() - kira_backup_last_success_timestamp_seconds > 900
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "No verified Kira backup has completed within the 15-minute RPO"}
+
+      - alert: KiraRestoreVerificationStale
+        expr: time() - kira_restore_test_last_success_timestamp_seconds > 2678400
+        for: 1h
+        labels: {severity: warning}
+        annotations: {summary: "Kira disposable restore verification is older than 31 days"}

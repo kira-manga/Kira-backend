@@ -38,7 +38,12 @@ class ForbiddenException(detail: String, code: String = "FORBIDDEN") : ApiExcept
  * 429 — the caller is throttled (PLAN §6 auth throttling). The body is the SAME generic shape as an
  * auth failure so throttling reveals no username-exists oracle.
  */
-class TooManyRequestsException(detail: String, code: String = "TOO_MANY_REQUESTS") : ApiException(HttpStatus.TOO_MANY_REQUESTS, code, detail)
+class TooManyRequestsException(detail: String, code: String = "TOO_MANY_REQUESTS", val retryAfterSeconds: Long = 60) :
+    ApiException(HttpStatus.TOO_MANY_REQUESTS, code, detail)
+
+/** 503 — bounded backend capacity or a required dependency is temporarily unavailable. */
+class ServiceUnavailableException(detail: String, code: String = "SERVICE_UNAVAILABLE", val retryAfterSeconds: Long = 5) :
+    ApiException(HttpStatus.SERVICE_UNAVAILABLE, code, detail)
 
 /**
  * 413 — the request body exceeds the endpoint's size limit (PLAN §4.5). The `import-bundled` endpoint

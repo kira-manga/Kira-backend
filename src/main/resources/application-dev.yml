@@ -25,3 +25,8 @@ kira:
     # Dev still seeds an ADMIN; supply KIRA_ADMIN_EMAIL / KIRA_ADMIN_PASSWORD via the gitignored
     # .env (PLAN §6). To run dev without seeding, set kira.admin.seed-enabled=false.
     seed-enabled: true
+  completion:
+    enabled: true
+    provider: echo
+    coordination-backend: memory
+    instance-count: 1

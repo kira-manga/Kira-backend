@@ -21,7 +21,7 @@ spec:
               kubernetes.io/metadata.name: monitoring
       ports:
         - protocol: TCP
-          port: 8080
+          port: 9090
   egress:
     - to:
         - namespaceSelector:

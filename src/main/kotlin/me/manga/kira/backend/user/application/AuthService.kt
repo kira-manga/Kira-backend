@@ -5,7 +5,7 @@ import me.manga.kira.backend.audit.domain.AuditAction
 import me.manga.kira.backend.common.exception.ForbiddenException
 import me.manga.kira.backend.common.exception.UnauthorizedException
 import me.manga.kira.backend.config.KiraAuthProperties
-import me.manga.kira.backend.security.AuthThrottleService
+import me.manga.kira.backend.security.AuthThrottle
 import me.manga.kira.backend.security.IssuedToken
 import me.manga.kira.backend.security.JwtService
 import me.manga.kira.backend.user.domain.Role
@@ -26,7 +26,7 @@ class AuthService(
     private val userService: UserService,
     private val credentialVerifier: CredentialVerifier,
     private val jwtService: JwtService,
-    private val throttle: AuthThrottleService,
+    private val throttle: AuthThrottle,
     private val authProperties: KiraAuthProperties,
     private val audit: AuditService,
 ) {

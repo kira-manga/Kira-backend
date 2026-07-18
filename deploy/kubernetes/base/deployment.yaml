@@ -46,6 +46,8 @@ spec:
           ports:
             - name: http
               containerPort: 8080
+            - name: management
+              containerPort: 9090
           envFrom:
             - configMapRef:
                 name: kira-backend-config
@@ -70,24 +72,29 @@ spec:
                 secretKeyRef:
                   name: kira-backend-secrets
                   key: jwt-secret-base64
+            - name: SPRING_DATA_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: kira-backend-secrets
+                  key: redis-url
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: http
+              port: management
             failureThreshold: 30
             periodSeconds: 5
             timeoutSeconds: 2
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
-              port: http
+              port: management
             periodSeconds: 15
             timeoutSeconds: 3
             failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
-              port: http
+              port: management
             periodSeconds: 10
             timeoutSeconds: 3
             failureThreshold: 3

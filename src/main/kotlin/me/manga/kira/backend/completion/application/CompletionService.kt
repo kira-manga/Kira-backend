@@ -1,6 +1,7 @@
 package me.manga.kira.backend.completion.application
 
 import jakarta.annotation.PreDestroy
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
@@ -10,10 +11,13 @@ import me.manga.kira.backend.completion.domain.InvalidProviderResponseException
 import me.manga.kira.backend.completion.domain.PagedCompletions
 import me.manga.kira.backend.completion.domain.ProviderUnavailableException
 import me.manga.kira.backend.config.KiraCompletionProperties
+import me.manga.kira.backend.observability.KiraMetrics
 import org.slf4j.LoggerFactory
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
@@ -43,10 +47,13 @@ import java.util.concurrent.atomic.AtomicInteger
  * raw provider exceptions are logged server-side only (request-id-correlated) and never stored/returned.
  */
 @Service
+@ConditionalOnProperty(prefix = "kira.completion", name = ["enabled"], havingValue = "true")
 class CompletionService(
     providers: List<CompletionProvider>,
     private val properties: KiraCompletionProperties,
     private val persistence: CompletionPersistence,
+    private val admission: CompletionAdmission,
+    private val metrics: KiraMetrics,
 ) {
     /** The selected provider, resolved once at construction — an unknown name fails startup (PLAN §10). */
     private val provider: CompletionProvider =
@@ -64,62 +71,72 @@ class CompletionService(
             threadFactory = namedThreadFactory("completion-provider"),
         )
 
+    init {
+        metrics.bindCompletionExecutor(executor)
+    }
+
     /**
      * Submit a completion (PLAN §4.6/§10): insert `PENDING`, mark `RUNNING`, invoke the provider with a
      * timeout OUTSIDE any transaction, then store the sanitized outcome. Returns the composed view.
      * [prompt] is assumed already validated (non-blank, within max length) by the controller boundary.
      */
     fun create(userId: UUID, prompt: String, model: String?): CompletionView {
-        checkQuota(userId)
-        val effectiveModel = model?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
+        admission.acquire(userId).use {
+            val effectiveModel = model?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
 
-        val id = persistence.createPending(userId, provider.name, effectiveModel, prompt)
-        // `model` is client-supplied — sanitize control chars before it reaches the log line (§6 log-hygiene).
-        log.info("Completion {} PENDING provider={} model={}", id, provider.name, sanitizeForLog(effectiveModel))
+            val id = persistence.createPending(userId, provider.name, effectiveModel, prompt)
+            // `model` is client-supplied — sanitize control chars before it reaches the log line (§6 log-hygiene).
+            log.info("Completion {} PENDING provider={} model={}", id, provider.name, sanitizeForLog(effectiveModel))
 
-        persistence.markRunning(id)
-        log.info("Completion {} RUNNING", id)
-
-        val resolved = invokeProvider(prompt, effectiveModel)
-        val view =
-            when (resolved) {
-                is Resolved.Success -> {
-                    val (stored, truncated) = truncate(resolved.result)
-                    if (truncated) {
-                        // Server-log only, lengths only — never the result text (PLAN §6/§10).
-                        log.warn(
-                            "Completion {} result truncated from {} to {} chars",
-                            id,
-                            resolved.result.length,
-                            properties.maxResultLength,
+            val resolved = invokeProvider(id, prompt, effectiveModel)
+            val view =
+                when (resolved) {
+                    is Resolved.Success -> {
+                        val (stored, truncated) = truncate(resolved.result)
+                        if (truncated) {
+                            // Server-log only, lengths only — never the result text (PLAN §6/§10).
+                            log.warn(
+                                "Completion {} result truncated from {} to {} chars",
+                                id,
+                                resolved.result.length,
+                                properties.maxResultLength,
+                            )
+                        }
+                        persistence.storeOutcome(
+                            id = id,
+                            status = CompletionStatus.SUCCEEDED,
+                            result = stored,
+                            error = null,
+                            errorCode = null,
+                            latencyMs = resolved.latencyMs,
                         )
                     }
-                    persistence.storeOutcome(
-                        id = id,
-                        status = CompletionStatus.SUCCEEDED,
-                        result = stored,
-                        error = null,
-                        errorCode = null,
-                        latencyMs = resolved.latencyMs,
-                    )
+
+                    is Resolved.Failure -> {
+                        logFailure(id, resolved)
+                        persistence.storeOutcome(
+                            id = id,
+                            status = CompletionStatus.FAILED,
+                            result = null,
+                            error = SANITIZED_FAILURE_MESSAGE,
+                            errorCode = resolved.code,
+                            latencyMs = resolved.latencyMs,
+                        )
+                    }
                 }
 
-                is Resolved.Failure -> {
-                    logFailure(id, resolved)
-                    persistence.storeOutcome(
-                        id = id,
-                        status = CompletionStatus.FAILED,
-                        result = null,
-                        error = SANITIZED_FAILURE_MESSAGE,
-                        errorCode = resolved.code,
-                        latencyMs = resolved.latencyMs,
-                    )
-                }
+            val latencyMs = if (resolved is Resolved.Success) resolved.latencyMs else (resolved as Resolved.Failure).latencyMs
+            log.info("Completion {} {} errorCode={} latencyMs={}", id, view.status, view.errorCode, latencyMs)
+            metrics.completionFinished(view.status.name, view.errorCode?.name ?: "none")
+            if (resolved is Resolved.Failure && resolved.overloaded) {
+                throw ServiceUnavailableException(
+                    "Completion capacity is currently exhausted. Try again later.",
+                    code = "COMPLETION_OVERLOADED",
+                    retryAfterSeconds = 1,
+                )
             }
-
-        val latencyMs = if (resolved is Resolved.Success) resolved.latencyMs else (resolved as Resolved.Failure).latencyMs
-        log.info("Completion {} {} errorCode={} latencyMs={}", id, view.status, view.errorCode, latencyMs)
-        return view
+            return view
+        }
     }
 
     /** Fetch one completion, enforcing owner-or-ADMIN visibility (others → null → 404, PLAN §4.6). */
@@ -138,29 +155,45 @@ class CompletionService(
         return persistence.listViews(targetUserId, page, size)
     }
 
-    /**
-     * Quota seam (PLAN §10) — NO-OP in v1, single call site. A real quota needs only a count query over
-     * the per-user request history already persisted; documented future work.
-     */
-    @Suppress("UNUSED_PARAMETER")
-    private fun checkQuota(userId: UUID) {
-        // Intentionally empty: rate limits / quotas are not implemented in v1 (PLAN §10).
-    }
-
     /** Run the provider on the bounded executor with the configured timeout, mapping every failure mode. */
-    private fun invokeProvider(prompt: String, model: String): Resolved {
+    private fun invokeProvider(id: UUID, prompt: String, model: String): Resolved {
         val startNanos = System.nanoTime()
+        val started = CountDownLatch(1)
         val future =
             try {
-                executor.submit(Callable { provider.complete(prompt, model) })
+                executor.submit(
+                    Callable {
+                        started.countDown()
+                        persistence.markRunning(id)
+                        log.info("Completion {} RUNNING", id)
+                        provider.complete(prompt, model)
+                    },
+                )
             } catch (ex: RejectedExecutionException) {
                 return Resolved.Failure(
                     CompletionErrorCode.PROVIDER_UNAVAILABLE,
                     "provider execution capacity is exhausted",
                     ex,
                     elapsedMs(startNanos),
+                    overloaded = true,
                 )
             }
+        try {
+            if (!started.await(properties.queueTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                future.cancel(true)
+                return Resolved.Failure(
+                    CompletionErrorCode.PROVIDER_UNAVAILABLE,
+                    "provider queue timeout",
+                    null,
+                    elapsedMs(startNanos),
+                    overloaded = true,
+                )
+            }
+        } catch (ex: InterruptedException) {
+            Thread.currentThread().interrupt()
+            future.cancel(true)
+            return Resolved.Failure(CompletionErrorCode.INTERNAL_COMPLETION_ERROR, "interrupted in provider queue", ex, elapsedMs(startNanos))
+        }
         return try {
             when (val outcome = future.get(properties.timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 is CompletionOutcome.Success -> Resolved.Success(outcome.result, outcome.latencyMs)
@@ -220,7 +253,13 @@ class CompletionService(
     private sealed interface Resolved {
         data class Success(val result: String, val latencyMs: Int) : Resolved
 
-        data class Failure(val code: CompletionErrorCode, val providerDetail: String?, val cause: Throwable?, val latencyMs: Int?) : Resolved
+        data class Failure(
+            val code: CompletionErrorCode,
+            val providerDetail: String?,
+            val cause: Throwable?,
+            val latencyMs: Int?,
+            val overloaded: Boolean = false,
+        ) : Resolved
     }
 
     private companion object {

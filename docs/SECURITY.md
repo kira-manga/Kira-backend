@@ -72,8 +72,11 @@ completion ownership check.
 
 ## Auth throttling + trusted client-IP resolution
 
-`AuthThrottleService` is a bounded **in-memory** store. **Single-instance only** — correct for one JVM;
-a multi-instance deployment MUST move to a shared backend (Redis) first, and this class is that seam.
+Authentication throttling is selected explicitly with `kira.security.throttle.backend`. The bounded
+in-memory implementation is accepted only when `instance-count=1`; production with multiple replicas
+must use the shared Redis implementation and a `rediss://` URL. The Redis path uses an atomic Lua
+operation, server time, expiring bounded counters, and hashed identities. Redis errors fail closed with
+503 instead of silently bypassing throttling.
 
 - **Login:** an identity bucket covers each normalized-email/client-IP pair (`≥ 5` failures by default),
   and a separate aggregate IP bucket covers attempts spread across emails (`≥ 25` by default). Blocks
@@ -92,7 +95,8 @@ a multi-instance deployment MUST move to a shared backend (Redis) first, and thi
   deterministic eviction when full (dead entries first, then oldest-by-last-update); keys hash the
   (capped) email; each entry stores only counters/timestamps — no credentials, no payloads.
 
-Tuning lives under `kira.security.throttle.*` (`login-failure-threshold`, `login-initial-block`,
+Both implementations preserve the same policy. Tuning lives under `kira.security.throttle.*`
+(`login-failure-threshold`, `login-initial-block`,
 `login-max-block`, `login-failure-window`, `registration-max-per-window`, `registration-window`).
 
 ## Secrets policy
@@ -154,13 +158,27 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   bounded to codes + paths. There is no request-body logging for auth, config-authoring, or completion
   endpoints, and no SQL/parameter logging in any profile.
 
+## Completion admission, provider, and retention
+
+Completions are disabled by default. Production startup fails if they are enabled without the HTTPS
+provider endpoint and API key. Echo exists only in explicit `dev`/`test` profiles. Admission applies
+atomic per-user/global minute limits, a per-user daily quota, and a global concurrency lease before a
+request can enter the bounded executor. A multi-instance deployment must use Redis coordination;
+single-instance memory coordination must be declared explicitly. Overload returns 429 for rate/quota
+limits or 503 with `Retry-After` for queue/concurrency/provider availability failures.
+
+Queue wait and provider execution have separate timeouts. A request is marked running only after the
+worker begins, canceled work cannot later overwrite its terminal state, and every acquired concurrency
+lease is released. Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention,
+and cleanup batch size are bounded configuration.
+
 ## Retention & privacy
 
 - **Completion data** (`completion_requests.prompt`, `completion_results.result`/`error`) is the only
-  place prompts/results live. In v1 they are **kept indefinitely** and are `ON DELETE RESTRICT`-protected
-  evidence; a retention window (and any redaction) is a **future admin policy**, and final log/data
-  retention windows are a deployment-platform concern outside this repo. Prompt/result contents never
-  appear in audit rows or logs. Provider credentials / `Authorization` are never logged.
+  place prompts/results live. The scheduled bounded retention job expires stale in-flight requests and
+  deletes terminal prompt/result rows older than `kira.completion.retention` (default seven days).
+  Prompt/result contents never appear in audit rows or logs. Provider credentials / `Authorization`
+  are never logged.
 - **Audit rows** (`audit_log.detail`, jsonb) contain **identifiers, revision numbers, and checksums
   only** — never config bodies, header values, completion prompts/results, or passwords. This is enforced
   structurally: the audit encoder accepts only scalar values (String/Int/Long/Boolean/null) and throws
@@ -173,15 +191,13 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
 
 ## Operational notes / seams (v1)
 
-- **Actuator:** only `/actuator/health` (+ `/liveness`, `/readiness`) is exposed and public
-  (`management.endpoints.web.exposure.include=health`, `show-details: never`). Liveness stays process-only
-  (survives a transient DB outage); readiness includes the DB. No other actuator endpoint is exposed.
-- **Completion quota** is a no-op seam (`CompletionService.checkQuota`) — not implemented in v1; the
-  persisted per-user request history makes a future quota a small count query.
+- **Actuator:** production exposes health and Prometheus only on the internal management port 9090.
+  Liveness stays process-only; readiness includes PostgreSQL and Redis. The Kubernetes service and
+  network policy allow metrics only from the monitoring namespace.
 - **Completion error-code catalog** (`completion_results.error_code`): `PROVIDER_TIMEOUT`,
   `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`, `INVALID_PROVIDER_RESPONSE`, `RESULT_TOO_LARGE`
-  (**reserved, unused in v1**), `INTERNAL_COMPLETION_ERROR` (every unexpected exception maps here). The
-  client `error` message is always a sanitized bounded generic string; the default model is `echo-1`.
+  `REQUEST_EXPIRED`, `INTERNAL_COMPLETION_ERROR` (every unexpected exception maps here). The client
+  `error` message is always a sanitized bounded generic string. Production has no echo default model.
 - **Refresh tokens** are future work — `POST /auth/refresh` is unregistered (standard 404); the
   `refresh_tokens` table is reserved but not created.
 - **Graceful shutdown** is enabled (`server.shutdown=graceful`).

@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.ApiFieldError
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.ValidationFailedException
+import me.manga.kira.backend.observability.KiraMetrics
 import me.manga.kira.backend.sourceconfig.domain.LifecycleStateMachine
 import me.manga.kira.backend.sourceconfig.domain.NewRevision
 import me.manga.kira.backend.sourceconfig.domain.NewSourceConfig
@@ -69,6 +70,7 @@ class BundledImportService(
     private val validator: SourceConfigValidator,
     private val audit: AuditService,
     private val clock: Clock,
+    private val metrics: KiraMetrics,
 ) {
 
     /** `POST /admin/sources/import-bundled` (PLAN §4.3 / §12.2). See the class KDoc for the flow. */
@@ -113,6 +115,7 @@ class BundledImportService(
                 null
             }
 
+        metrics.bundledImport(if (changed) "changed" else "noop")
         return acc.toResult(warnings, documentRevision)
     }
 

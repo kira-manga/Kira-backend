@@ -26,11 +26,11 @@ WORKDIR /app
 COPY --from=builder --chown=kira:kira /workspace/build/libs/kira-backend-*.jar /app/app.jar
 
 USER 10001:10001
-EXPOSE 8080
+EXPOSE 8080 9090
 ENV SPRING_PROFILES_ACTIVE=prod \
     JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/urandom"
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \
-  CMD wget -q -O /dev/null http://127.0.0.1:8080/actuator/health/liveness || exit 1
+  CMD wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/liveness || exit 1
 
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

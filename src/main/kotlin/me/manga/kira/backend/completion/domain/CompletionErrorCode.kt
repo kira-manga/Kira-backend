@@ -26,6 +26,9 @@ enum class CompletionErrorCode {
      */
     RESULT_TOO_LARGE,
 
+    /** A stale or terminal request was removed by the configured retention policy. */
+    REQUEST_EXPIRED,
+
     /** Every unknown/unexpected exception maps here — never a leaked message (PLAN §10). */
     INTERNAL_COMPLETION_ERROR,
 }

@@ -13,6 +13,8 @@ class ProductionSecurityPolicyTest {
                 auth = KiraAuthProperties(registrationEnabled = false),
                 security = secureProperties(),
                 datasourceUrl = "jdbc:postgresql://db.internal/kira?sslmode=verify-full",
+                redisUrl = null,
+                completion = KiraCompletionProperties(),
             )
         }
     }
@@ -25,6 +27,8 @@ class ProductionSecurityPolicyTest {
                 auth = KiraAuthProperties(registrationEnabled = true),
                 security = secureProperties(),
                 datasourceUrl = "jdbc:postgresql://db.internal/kira?sslmode=verify-full",
+                redisUrl = null,
+                completion = KiraCompletionProperties(),
             )
         }
     }
@@ -40,6 +44,8 @@ class ProductionSecurityPolicyTest {
                     "a2lyYS1iYWNrZW5kLUxPQ0FMLURFVi1pbnNlY3VyZS1qd3Qtc2VjcmV0LWRvLW5vdC1zaGlwIQ==",
                 ),
                 datasourceUrl = "jdbc:postgresql://db.internal/kira?sslmode=verify-full",
+                redisUrl = null,
+                completion = KiraCompletionProperties(),
             )
         }
     }
@@ -52,6 +58,38 @@ class ProductionSecurityPolicyTest {
                 auth = KiraAuthProperties(),
                 security = secureProperties().copy(externalBaseUrl = "http://api.example.com"),
                 datasourceUrl = "jdbc:postgresql://db.internal/kira?sslmode=require",
+                redisUrl = null,
+                completion = KiraCompletionProperties(),
+            )
+        }
+    }
+
+    @Test
+    fun `multiple production instances require TLS Redis throttling`() {
+        assertThrows<IllegalArgumentException> {
+            ProductionSecurityPolicy.validate(
+                activeProfiles = setOf("prod"),
+                auth = KiraAuthProperties(),
+                security = secureProperties().copy(
+                    throttle = KiraSecurityProperties.Throttle(backend = "memory", instanceCount = 2),
+                ),
+                datasourceUrl = "jdbc:postgresql://db.internal/kira?sslmode=verify-full",
+                redisUrl = null,
+                completion = KiraCompletionProperties(),
+            )
+        }
+    }
+
+    @Test
+    fun `enabled production completion rejects echo and missing provider credentials`() {
+        assertThrows<IllegalArgumentException> {
+            ProductionSecurityPolicy.validate(
+                activeProfiles = setOf("prod"),
+                auth = KiraAuthProperties(),
+                security = secureProperties(),
+                datasourceUrl = "jdbc:postgresql://db.internal/kira?sslmode=verify-full",
+                redisUrl = null,
+                completion = KiraCompletionProperties(enabled = true, provider = "echo"),
             )
         }
     }

@@ -40,3 +40,21 @@ appended here as work completes.
   manifest `sha256:4641d9a86017b5be5bb2d0bbe31ab48489c5f3e741e00492fa7e7e5b27632178`.
 - Docker runtime repair: started installed Colima and installed the missing Homebrew Buildx plugin.
   Testcontainers requires the documented Colima socket environment variables in this sandbox.
+
+## Batches 2–5 — fail-closed security and operations
+
+- Added explicit single-/multi-instance topology validation and a shared Redis authentication
+  throttle using atomic, expiring, bounded counters. Redis failures fail closed.
+- Disabled completions by default; isolated echo to dev/test; added a production HTTPS provider,
+  per-user/global rate limits, daily quota, global concurrency, a bounded queue, corrected queue and
+  provider timeouts/cancellation, and scheduled prompt/result retention. Multi-instance admission is
+  coordinated atomically through Redis.
+- Separated runtime and Flyway migration identities, disabled runtime migrations in production, added
+  a one-shot migration entry point/job, least-privilege role SQL, TLS validation, backup/restore
+  automation, a disposable two-database restoration test, and documented RPO/RTO/PITR/forward recovery.
+- Added Prometheus metrics for HTTP/JVM/Hikari/auth/completion/publication/import, an internal management
+  port, corrected readiness/liveness and network policy, structured correlation logging, scrape config,
+  alert rules, and operator response guidance.
+- Focused verification: formatting and detekt passed; 19 focused unit/integration tests across 10 suites
+  passed with real PostgreSQL and Redis containers; database backup/restore and Prometheus scrape tests
+  passed.

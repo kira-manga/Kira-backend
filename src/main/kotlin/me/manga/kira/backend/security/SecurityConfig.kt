@@ -103,6 +103,9 @@ class SecurityConfig(private val environment: Environment) {
                 // Actuator: only liveness/readiness/health are exposed and public (status only, §6).
                 authorize("/actuator/health", permitAll)
                 authorize("/actuator/health/**", permitAll)
+                // In production this is served only on the internal management port (9090), which
+                // is not routed by the public ingress and is network-policy restricted to monitoring.
+                authorize("/actuator/prometheus", permitAll)
 
                 // Public, read-only app config surface (controllers arrive in Phase 7).
                 authorize(HttpMethod.GET, "/api/v1/source-config/**", permitAll)

@@ -38,6 +38,8 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-oauth2-resource-server") // pulls spring-security-oauth2-jose (Nimbus)
     implementation("org.springframework.boot:spring-boot-starter-validation")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    implementation("io.micrometer:micrometer-registry-prometheus")
 
     // --- Migrations ---
     implementation("org.flywaydb:flyway-core")

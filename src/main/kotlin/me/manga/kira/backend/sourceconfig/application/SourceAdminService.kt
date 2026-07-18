@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.ApiFieldError
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.exception.InvalidLifecycleTransitionException
 import me.manga.kira.backend.common.exception.ValidationFailedException
+import me.manga.kira.backend.observability.KiraMetrics
 import me.manga.kira.backend.sourceconfig.domain.IllegalLifecycleTransitionException
 import me.manga.kira.backend.sourceconfig.domain.LifecycleAction
 import me.manga.kira.backend.sourceconfig.domain.LifecycleStateMachine
@@ -55,6 +56,7 @@ class SourceAdminService(
     private val validator: SourceConfigValidator,
     private val audit: AuditService,
     private val clock: Clock,
+    private val metrics: KiraMetrics,
 ) {
 
     // --- Authoring (create + revisions) -------------------------------------------------------------
@@ -204,6 +206,7 @@ class SourceAdminService(
         if (!validation.isValid) throw ValidationFailedException(validation.errors.map { it.toFieldError() })
 
         val snapshot = mappingLifecycleErrors { doPublishDraft(head, revision, model, actorId) }
+        metrics.publication("published")
         return PublishOutcome(snapshot.documentRevision, snapshot.checksum, noOp = false)
     }
 
@@ -295,6 +298,7 @@ class SourceAdminService(
         publishedDocuments.lockPublicationState()
         val snapshot = assembly.materialize(actorId)
         auditDocumentPublished(snapshot, actorId)
+        metrics.publication("rollback")
         return PublishOutcome(snapshot.documentRevision, snapshot.checksum, noOp = false)
     }
 
@@ -354,6 +358,7 @@ class SourceAdminService(
             actorId,
         )
         auditDocumentPublished(snapshot, actorId)
+        metrics.publication("lifecycle")
         return PublishOutcome(snapshot.documentRevision, snapshot.checksum, noOp = false)
     }
 
@@ -365,6 +370,7 @@ class SourceAdminService(
         val current = checkNotNull(publishedDocuments.findByRevision(pointer)) {
             "latest-document pointer $pointer references a missing snapshot (inconsistent state)"
         }
+        metrics.publication("noop")
         return PublishOutcome(current.documentRevision, current.checksum, noOp = true)
     }
 

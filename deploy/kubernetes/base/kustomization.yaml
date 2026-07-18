@@ -7,6 +7,7 @@ resources:
   - config-map.yaml
   - deployment.yaml
   - service.yaml
+  - migration-job.yaml
   - ingress.yaml
   - ingress-import.yaml
   - pod-disruption-budget.yaml

@@ -4,9 +4,9 @@ This is the practical, start-to-finish workflow for the current backend. Run eve
 `kira-backend/` directory. The exhaustive endpoint contract is in [`API.md`](API.md); source lifecycle
 rules are in [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md).
 
-The backend currently provides source-config publication, JWT users/admin, audit records, and a fake
-authenticated `echo` completion provider. The Kira app is **not yet wired to fetch this backend**, and
-the backend checksum/ETag is not a detached signature.
+The backend provides source-config publication, JWT users/admin, audit records, and an optional
+authenticated completion provider. Completions are disabled by default; the echo implementation is
+available only in explicit development and test profiles.
 
 ## 1. Start locally
 
@@ -159,9 +159,10 @@ curl --fail-with-body -sS -X POST "$KIRA_API_URL/admin/users/$USER_ID/enable" \
 Disabling a user invalidates their existing token on its next request. The API refuses to disable the
 last enabled admin.
 
-## 6. Use the echo completion API
+## 6. Use the development completion API
 
-The current provider is a test foundation, not an AI service:
+The dev profile enables the explicit echo provider. Production must configure the HTTPS provider and
+all admission/retention controls described in [`SECURITY.md`](SECURITY.md):
 
 ```bash
 COMPLETION_JSON=$(curl --fail-with-body -sS -X POST "$KIRA_API_URL/completions" \

@@ -2,6 +2,7 @@ package me.manga.kira.backend.completion.infrastructure
 
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import org.springframework.context.annotation.Profile
 import org.springframework.stereotype.Component
 
 /**
@@ -14,6 +15,7 @@ import org.springframework.stereotype.Component
  * not part of the echoed text — the echoed result is exactly `"echo: $prompt"`).
  */
 @Component
+@Profile("dev", "test")
 class EchoCompletionProvider : CompletionProvider {
     override val name: String = "echo"
 
