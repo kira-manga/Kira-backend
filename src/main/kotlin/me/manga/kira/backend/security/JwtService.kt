@@ -25,10 +25,7 @@ import java.time.Instant
  * DB role by [DbUserJwtAuthenticationConverter] (PLAN §6), never trusted from the token.
  */
 @Service
-class JwtService(
-    keyProvider: JwtKeyProvider,
-    private val properties: KiraSecurityProperties,
-) {
+class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecurityProperties) {
     // The signing JWK carries the kid, so a JwsHeader specifying that kid selects it deterministically.
     private val encoder: NimbusJwtEncoder =
         NimbusJwtEncoder(
@@ -44,10 +41,7 @@ class JwtService(
         )
 
     /** Mint a signed access token for [user]. Returns the compact token plus its lifetime. */
-    fun issue(
-        user: User,
-        issuedAt: Instant = Instant.now(),
-    ): IssuedToken {
+    fun issue(user: User, issuedAt: Instant = Instant.now()): IssuedToken {
         val expiresAt = issuedAt.plus(properties.accessTokenTtl)
         val header = JwsHeader.with(MacAlgorithm.HS256).keyId(KEY_ID).build()
         val claims =
@@ -73,7 +67,4 @@ class JwtService(
 }
 
 /** A minted access token and its lifetime in seconds (PLAN §4.2 login response). */
-data class IssuedToken(
-    val value: String,
-    val expiresInSeconds: Long,
-)
+data class IssuedToken(val value: String, val expiresInSeconds: Long)

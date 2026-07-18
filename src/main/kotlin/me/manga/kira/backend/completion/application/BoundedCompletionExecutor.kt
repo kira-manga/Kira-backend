@@ -8,11 +8,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
 /** Fixed provider workers plus a hard queue bound; saturation rejects instead of growing memory. */
-internal class BoundedCompletionExecutor(
-    threads: Int,
-    queueCapacity: Int,
-    threadFactory: ThreadFactory,
-) {
+internal class BoundedCompletionExecutor(threads: Int, queueCapacity: Int, threadFactory: ThreadFactory) {
     private val delegate =
         ThreadPoolExecutor(
             threads,

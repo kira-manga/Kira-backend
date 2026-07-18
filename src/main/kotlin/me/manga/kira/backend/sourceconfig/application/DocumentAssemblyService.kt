@@ -109,11 +109,7 @@ class DocumentAssemblyService(
      * from its stored lifecycle-neutral content and has the SERVED lifecycle injected. Public for the
      * order-determinism test (PLAN §11 test 40).
      */
-    fun buildDocument(
-        assemblySources: List<AssemblySource>,
-        generatedAt: String,
-        revision: Long,
-    ): SourceConfigDocument {
+    fun buildDocument(assemblySources: List<AssemblySource>, generatedAt: String, revision: Long): SourceConfigDocument {
         val stanzas =
             assemblySources
                 .sortedWith(compareBy({ it.position }, { it.api }))
@@ -136,14 +132,16 @@ class DocumentAssemblyService(
      * (rendered as an ABSENT key by kcj-1 default-omission), `disabled`→`"disabled"`, retired→`"removed"`.
      * `draft`/`removed` never reach assembly (they are excluded by [SourceConfigRepository.findSourcesForAssembly]).
      */
-    private fun servedLifecycle(status: SourceLifecycleStatus): String =
-        when (status) {
-            SourceLifecycleStatus.ACTIVE -> "active"
-            SourceLifecycleStatus.DISABLED -> "disabled"
-            SourceLifecycleStatus.RETIRED -> "removed"
-            SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.REMOVED ->
-                error("status $status must never reach document assembly (PLAN §9)")
-        }
+    private fun servedLifecycle(status: SourceLifecycleStatus): String = when (status) {
+        SourceLifecycleStatus.ACTIVE -> "active"
+
+        SourceLifecycleStatus.DISABLED -> "disabled"
+
+        SourceLifecycleStatus.RETIRED -> "removed"
+
+        SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.REMOVED ->
+            error("status $status must never reach document assembly (PLAN §9)")
+    }
 
     companion object {
         /** The document schema version (PLAN §7 / §8 rule 1 — `SUPPORTED_SCHEMA_VERSION`). */

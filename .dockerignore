@@ -1,0 +1,16 @@
+.git
+.github
+.gradle
+.idea
+.vscode
+.agent
+build
+out
+secrets
+.env
+.env.*
+!.env.example
+*.iml
+*.log
+*.bak
+docs/*.opus-partial.bak

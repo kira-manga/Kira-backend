@@ -18,12 +18,11 @@ import org.springframework.context.annotation.Configuration
 class SourceConfigValidationConfig {
 
     @Bean
-    fun sourceConfigValidator(properties: KiraValidationProperties): SourceConfigValidator =
-        SourceConfigValidator(
-            strategies = ServerStrategyCatalog(),
-            iconCatalog = PackagedIconCatalog(),
-            publicHeaderPlaceholderValues = properties.publicHeaderPlaceholderValues.toSet(),
-        )
+    fun sourceConfigValidator(properties: KiraValidationProperties): SourceConfigValidator = SourceConfigValidator(
+        strategies = ServerStrategyCatalog(),
+        iconCatalog = PackagedIconCatalog(),
+        publicHeaderPlaceholderValues = properties.publicHeaderPlaceholderValues.toSet(),
+    )
 
     companion object {
         /** Lets a stored "valid" be recognized as stale after a rule change (PLAN §5 `rules_version`). */

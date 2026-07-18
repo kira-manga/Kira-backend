@@ -3,7 +3,7 @@ package me.manga.kira.backend.completion.domain
 import java.time.Instant
 import java.util.UUID
 
-/**
+/*
  * Immutable domain records for the completion feature (PLAN §10). These are pure Kotlin — they never
  * carry JPA/Spring types — mirroring the `:domain` discipline of the rest of the backend.
  */
@@ -31,10 +31,7 @@ data class CompletionResultRecord(
 )
 
 /** A page of request rows from the repository (composed into [CompletionView]s by the service). */
-data class CompletionRequestPage(
-    val items: List<CompletionRequestRecord>,
-    val total: Long,
-)
+data class CompletionRequestPage(val items: List<CompletionRequestRecord>, val total: Long)
 
 /**
  * The composite read model returned to the API (PLAN §4.6): the request plus its optional outcome. On
@@ -54,26 +51,19 @@ data class CompletionView(
     val createdAt: Instant,
 ) {
     companion object {
-        fun of(
-            request: CompletionRequestRecord,
-            result: CompletionResultRecord?,
-        ): CompletionView =
-            CompletionView(
-                id = request.id,
-                userId = request.userId,
-                provider = request.provider,
-                model = request.model,
-                status = request.status,
-                result = result?.result,
-                error = result?.error,
-                errorCode = result?.errorCode,
-                createdAt = request.createdAt,
-            )
+        fun of(request: CompletionRequestRecord, result: CompletionResultRecord?): CompletionView = CompletionView(
+            id = request.id,
+            userId = request.userId,
+            provider = request.provider,
+            model = request.model,
+            status = request.status,
+            result = result?.result,
+            error = result?.error,
+            errorCode = result?.errorCode,
+            createdAt = request.createdAt,
+        )
     }
 }
 
 /** A page of composed completion views for the list endpoint (PLAN §4.6). */
-data class PagedCompletions(
-    val items: List<CompletionView>,
-    val total: Long,
-)
+data class PagedCompletions(val items: List<CompletionView>, val total: Long)

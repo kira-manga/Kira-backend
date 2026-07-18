@@ -54,22 +54,15 @@ class FlywayIncrementalOrderIT {
         }
     }
 
-    private fun flyway(
-        database: String,
-        target: MigrationVersion,
-    ): Flyway =
-        Flyway
-            .configure()
-            .dataSource(databaseUrl(database), user, password)
-            .locations("classpath:db/migration")
-            .target(target)
-            .load()
+    private fun flyway(database: String, target: MigrationVersion): Flyway = Flyway
+        .configure()
+        .dataSource(databaseUrl(database), user, password)
+        .locations("classpath:db/migration")
+        .target(target)
+        .load()
 
     /** Create a throwaway database, run [block] against it, and always drop it afterward. */
-    private fun withFreshDatabase(
-        database: String,
-        block: (String) -> Unit,
-    ) {
+    private fun withFreshDatabase(database: String, block: (String) -> Unit) {
         adminExec("DROP DATABASE IF EXISTS $database WITH (FORCE)")
         adminExec("CREATE DATABASE $database")
         try {

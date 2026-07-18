@@ -28,8 +28,7 @@ enum class SourceLifecycleStatus(val wire: String) {
 
     companion object {
         /** Parse a stored wire value, or fail loudly on an unknown one (a schema/data defect). */
-        fun fromWire(wire: String): SourceLifecycleStatus =
-            entries.firstOrNull { it.wire == wire }
-                ?: error("Unknown source lifecycle status wire value: '$wire'")
+        fun fromWire(wire: String): SourceLifecycleStatus = entries.firstOrNull { it.wire == wire }
+            ?: error("Unknown source lifecycle status wire value: '$wire'")
     }
 }

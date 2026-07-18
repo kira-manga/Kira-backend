@@ -23,9 +23,7 @@ import java.util.UUID
  *     grant outdated access; a server-side role change takes effect on the next request);
  *  4. exposes the loaded [AuthenticatedUser] as the principal (so [CurrentUser] is a context read).
  */
-class DbUserJwtAuthenticationConverter(
-    private val users: UserRepository,
-) : Converter<Jwt, AbstractAuthenticationToken> {
+class DbUserJwtAuthenticationConverter(private val users: UserRepository) : Converter<Jwt, AbstractAuthenticationToken> {
 
     override fun convert(jwt: Jwt): AbstractAuthenticationToken {
         val subject = jwt.subject ?: throw InvalidBearerTokenException("Token is missing a subject.")

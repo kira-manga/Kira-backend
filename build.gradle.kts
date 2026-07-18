@@ -5,10 +5,15 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.spring.boot)
     alias(libs.plugins.spring.dependency.management)
+    alias(libs.plugins.ktlint)
+    alias(libs.plugins.detekt)
+    alias(libs.plugins.dependency.check)
+    alias(libs.plugins.cyclonedx)
+    jacoco
 }
 
 group = "me.manga.kira"
-version = "0.0.1-SNAPSHOT"
+version = "1.0.0"
 
 // Force the Spring Boot BOM's Kotlin stdlib/reflect to match the compiler version above.
 // Boot 3.5.x's BOM pins an older Kotlin; overriding this BOM property keeps the runtime
@@ -72,4 +77,80 @@ allOpen {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+    finalizedBy(tasks.jacocoTestReport)
+}
+
+dependencyLocking {
+    lockAllConfigurations()
+}
+
+ktlint {
+    version.set("1.8.0")
+    verbose.set(true)
+    outputToConsole.set(true)
+    filter {
+        exclude("**/build/**")
+    }
+}
+
+detekt {
+    buildUponDefaultConfig = true
+    allRules = false
+    config.setFrom(files("config/detekt/detekt.yml"))
+}
+
+// The Spring dependency-management plugin aligns the project's Kotlin runtime to 2.1.x.
+// Detekt 1.23.8 embeds the Kotlin 2.0.21 compiler and must retain that isolated tool runtime.
+configurations.matching { it.name == "detekt" }.configureEach {
+    resolutionStrategy.eachDependency {
+        if (requested.group == "org.jetbrains.kotlin") {
+            useVersion("2.0.21")
+            because("detekt 1.23.8 is compiled against Kotlin 2.0.21")
+        }
+    }
+}
+
+jacoco {
+    toolVersion = "0.8.13"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+    }
+}
+
+tasks.jacocoTestCoverageVerification {
+    dependsOn(tasks.test)
+    violationRules {
+        rule {
+            limit {
+                minimum = "0.60".toBigDecimal()
+            }
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn("ktlintCheck", "detekt", tasks.jacocoTestCoverageVerification)
+}
+
+dependencyCheck {
+    failBuildOnCVSS = 7.0f
+    suppressionFile = "config/dependency-check-suppressions.xml"
+    analyzers {
+        nodeEnabled = false
+        assemblyEnabled = false
+    }
+}
+
+tasks.withType<AbstractArchiveTask>().configureEach {
+    isPreserveFileTimestamps = false
+    isReproducibleFileOrder = true
+}
+
+tasks.jar {
+    enabled = false
 }

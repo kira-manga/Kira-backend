@@ -46,10 +46,7 @@ interface PublishedDocumentRepository {
     fun insertSnapshot(spec: NewPublishedDocument): PublishedDocument
 
     /** Move the authoritative latest-document pointer to [revision] (PLAN §9 step 9). */
-    fun updatePointer(
-        revision: Long,
-        at: Instant,
-    )
+    fun updatePointer(revision: Long, at: Instant)
 
     /** A stored snapshot by its document revision, or null (admin `GET /documents/{revision}`). */
     fun findByRevision(revision: Long): PublishedDocument?

@@ -32,39 +32,20 @@ interface UserRepository {
      * Insert a new user (id + timestamps assigned by the adapter). The caller supplies an already
      * policy-checked password **hash** (never a plaintext password). Returns the stored model.
      */
-    fun create(
-        normalizedEmail: String,
-        passwordHash: String,
-        role: Role,
-    ): User
+    fun create(normalizedEmail: String, passwordHash: String, role: Role): User
 
     /** Set the enabled flag. Idempotent. */
-    fun setEnabled(
-        id: UUID,
-        enabled: Boolean,
-    )
+    fun setEnabled(id: UUID, enabled: Boolean)
 
     /** Replace the password hash (explicit admin reset — PLAN §4.4). */
-    fun updatePasswordHash(
-        id: UUID,
-        passwordHash: String,
-    )
+    fun updatePasswordHash(id: UUID, passwordHash: String)
 
     /** Replace the role (used by tests and any future role-mutation surface). */
-    fun updateRole(
-        id: UUID,
-        role: Role,
-    )
+    fun updateRole(id: UUID, role: Role)
 
     /** One page of users ordered by `created_at` ascending, plus the total count (PLAN §4.4). */
-    fun findPage(
-        page: Int,
-        size: Int,
-    ): PagedUsers
+    fun findPage(page: Int, size: Int): PagedUsers
 }
 
 /** A single page of [User]s plus the total row count (PLAN §4.5 pagination). */
-data class PagedUsers(
-    val items: List<User>,
-    val total: Long,
-)
+data class PagedUsers(val items: List<User>, val total: Long)

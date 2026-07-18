@@ -25,14 +25,10 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/v1/admin/documents")
-class AdminDocumentsController(
-    private val sourceAdminService: SourceAdminService,
-    private val documentResponseWriter: DocumentResponseWriter,
-) {
+class AdminDocumentsController(private val sourceAdminService: SourceAdminService, private val documentResponseWriter: DocumentResponseWriter) {
 
     @GetMapping
-    fun list(): List<DocumentSummaryResponse> =
-        sourceAdminService.listDocuments().map { DocumentSummaryResponse.of(it) }
+    fun list(): List<DocumentSummaryResponse> = sourceAdminService.listDocuments().map { DocumentSummaryResponse.of(it) }
 
     @GetMapping("/{revision}")
     fun getRaw(
@@ -42,11 +38,8 @@ class AdminDocumentsController(
     ) = documentResponseWriter.write(sourceAdminService.getDocument(revision), ifNoneMatch, cacheable = false, response = response)
 
     @PostMapping("/validate")
-    fun validateCandidate(): DocumentValidationResponse =
-        DocumentValidationResponse.of(sourceAdminService.validateCandidateDocument())
+    fun validateCandidate(): DocumentValidationResponse = DocumentValidationResponse.of(sourceAdminService.validateCandidateDocument())
 
     @PostMapping("/republish")
-    fun republish(
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): PublishResponse = PublishResponse.of(sourceAdminService.republish(admin.id))
+    fun republish(@AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse = PublishResponse.of(sourceAdminService.republish(admin.id))
 }

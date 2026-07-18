@@ -16,10 +16,7 @@ interface RevisionRepository {
     fun findById(id: UUID): SourceRevision?
 
     /** Find a source's revision by its per-source number, or null. */
-    fun findBySourceAndNumber(
-        sourceConfigId: UUID,
-        revisionNumber: Int,
-    ): SourceRevision?
+    fun findBySourceAndNumber(sourceConfigId: UUID, revisionNumber: Int): SourceRevision?
 
     /**
      * Insert a new immutable revision row and return the stored model (id + `created_at` assigned by
@@ -50,10 +47,7 @@ interface RevisionRepository {
      * Flip a `draft` revision to `published`, stamping `published_at` (PLAN §9). Called AFTER
      * [markSuperseded] so `uq_one_published_per_source` is never momentarily violated.
      */
-    fun markPublished(
-        revisionId: UUID,
-        publishedAt: Instant,
-    )
+    fun markPublished(revisionId: UUID, publishedAt: Instant)
 }
 
 /** The fields needed to insert a `source_config_revisions` row (PLAN §5). */

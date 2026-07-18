@@ -9,10 +9,7 @@ import java.util.UUID
  * `model`; blank-prompt (400) and over-length (413) are enforced at the controller boundary, not by
  * bean-validation annotations, so the length breach can be a 413 rather than a 400 (PLAN §4.5/§4.6).
  */
-data class CompletionRequestDto(
-    val prompt: String = "",
-    val model: String? = null,
-)
+data class CompletionRequestDto(val prompt: String = "", val model: String? = null)
 
 /**
  * The completion response (PLAN §4.6). On success `result` is set and `errorCode`/`error` are null; on
@@ -30,16 +27,15 @@ data class CompletionResponse(
     val createdAt: Instant,
 ) {
     companion object {
-        fun from(view: CompletionView): CompletionResponse =
-            CompletionResponse(
-                id = view.id,
-                status = view.status.name,
-                model = view.model,
-                provider = view.provider,
-                result = view.result,
-                errorCode = view.errorCode?.name,
-                error = view.error,
-                createdAt = view.createdAt,
-            )
+        fun from(view: CompletionView): CompletionResponse = CompletionResponse(
+            id = view.id,
+            status = view.status.name,
+            model = view.model,
+            provider = view.provider,
+            result = view.result,
+            errorCode = view.errorCode?.name,
+            error = view.error,
+            createdAt = view.createdAt,
+        )
     }
 }

@@ -73,10 +73,7 @@ class BundledImportService(
 
     /** `POST /admin/sources/import-bundled` (PLAN §4.3 / §12.2). See the class KDoc for the flow. */
     @Transactional
-    fun import(
-        rawJson: String,
-        actorId: UUID,
-    ): BundledImportResult {
+    fun import(rawJson: String, actorId: UUID): BundledImportResult {
         // 1) COMPATIBILITY parse — malformed JSON surfaces as the parser's 400 (PLAN §7).
         val document = SourceConfigParser.parseCompatibleDocument(rawJson)
 
@@ -120,13 +117,7 @@ class BundledImportService(
     }
 
     /** Apply one payload stanza (PLAN §12.2 point 4/5); mutates [acc]. */
-    private fun importStanza(
-        stanza: SourceConfig,
-        payloadIndex: Int,
-        actorId: UUID,
-        now: Instant,
-        acc: Accumulator,
-    ) {
+    private fun importStanza(stanza: SourceConfig, payloadIndex: Int, actorId: UUID, now: Instant, acc: Accumulator) {
         val payloadLifecycle = stanza.lifecycle
         // Normalize content to lifecycle-NEUTRAL BEFORE any comparison/checksum/storage (PLAN §9/§12.2).
         val neutral = stanza.copy(lifecycle = NEUTRAL_LIFECYCLE)
@@ -138,6 +129,7 @@ class BundledImportService(
             // ABSENT → create (unless the payload marks it removed — no terminal husk, PLAN §12.2).
             when (payloadLifecycle) {
                 APP_REMOVED -> acc.skippedRemoved += stanza.api
+
                 else -> {
                     val initialStatus =
                         if (payloadLifecycle == APP_DISABLED) SourceLifecycleStatus.DISABLED else SourceLifecycleStatus.ACTIVE
@@ -159,11 +151,14 @@ class BundledImportService(
         when (head.status) {
             // Terminal: never revived by import (PLAN §12.2). Nothing stored.
             SourceLifecycleStatus.REMOVED -> acc.skippedRemoved += stanza.api
+
             // Retired: content is never imported (publish-on-retired is 409); a difference is skipped.
             SourceLifecycleStatus.RETIRED ->
                 if (identical) acc.unchanged += stanza.api else acc.skippedRetired += stanza.api
+
             // Import is a migration/re-sync path, never an implicit approval path for admin WIP.
             SourceLifecycleStatus.DRAFT -> acc.skippedDraft += stanza.api
+
             // Active/disabled content can be updated; publishing on disabled preserves that lifecycle.
             SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.DISABLED ->
                 if (identical) {
@@ -229,14 +224,7 @@ class BundledImportService(
      * active→active, disabled→disabled, first-publish draft→active). NO per-source snapshot here — the
      * single snapshot is materialized once after the whole batch.
      */
-    private fun publishNewRevision(
-        head: SourceConfigHead,
-        neutral: SourceConfig,
-        canonical: String,
-        checksum: String,
-        actorId: UUID,
-        now: Instant,
-    ) {
+    private fun publishNewRevision(head: SourceConfigHead, neutral: SourceConfig, canonical: String, checksum: String, actorId: UUID, now: Instant) {
         val number = revisions.nextRevisionNumber(head.id)
         val revision = insertNeutralRevision(head.id, number, canonical, checksum, actorId)
         storeValidation(revision.id, neutral)
@@ -257,13 +245,7 @@ class BundledImportService(
         )
     }
 
-    private fun insertNeutralRevision(
-        sourceConfigId: UUID,
-        number: Int,
-        canonical: String,
-        checksum: String,
-        actorId: UUID,
-    ) = revisions.create(
+    private fun insertNeutralRevision(sourceConfigId: UUID, number: Int, canonical: String, checksum: String, actorId: UUID) = revisions.create(
         NewRevision(
             sourceConfigId = sourceConfigId,
             revisionNumber = number,
@@ -281,10 +263,7 @@ class BundledImportService(
      * revision keeps a stored validation result (the invariant the admin read paths rely on). The whole
      * document already validated clean above, so a single stanza validates clean too.
      */
-    private fun storeValidation(
-        revisionId: UUID,
-        neutral: SourceConfig,
-    ) {
+    private fun storeValidation(revisionId: UUID, neutral: SourceConfig) {
         val result =
             validator.validate(
                 SourceConfigDocument(schemaVersion = DocumentAssemblyService.SCHEMA_VERSION, sources = listOf(neutral)),
@@ -305,10 +284,7 @@ class BundledImportService(
      * (detected by diffing the lenient parse against a STRICT re-parse attempt, PLAN §7) — so suspicious
      * structures are visible, not silent. The strict-parse message names the offending key, never a value.
      */
-    private fun collectWarnings(
-        rawJson: String,
-        validatorWarnings: List<ValidationWarning>,
-    ): List<ValidationWarning> {
+    private fun collectWarnings(rawJson: String, validatorWarnings: List<ValidationWarning>): List<ValidationWarning> {
         val warnings = validatorWarnings.toMutableList()
         try {
             SourceConfigParser.parseStrictDocument(rawJson)
@@ -318,20 +294,14 @@ class BundledImportService(
                     code = NON_SCHEMA_KEYS_WARNING,
                     path = "document",
                     message =
-                        "the document contains fields not in the current schema or duplicate keys and was " +
-                            "imported leniently (${ex.detail})",
+                    "the document contains fields not in the current schema or duplicate keys and was " +
+                        "imported leniently (${ex.detail})",
                 )
         }
         return warnings
     }
 
-    private fun recordImportAudit(
-        document: SourceConfigDocument,
-        acc: Accumulator,
-        documentRevision: Long?,
-        at: Instant,
-        actorId: UUID,
-    ) {
+    private fun recordImportAudit(document: SourceConfigDocument, acc: Accumulator, documentRevision: Long?, at: Instant, actorId: UUID) {
         // Detail carries COUNTS + payload provenance only — never config bodies, apis, or header values (§6).
         audit.recordAt(
             AuditAction.BUNDLED_IMPORTED,
@@ -358,12 +328,11 @@ class BundledImportService(
     private fun SourceConfig.isAdult(): Boolean = siteState == ADULT_SITE_STATE
 
     /** The app's 3-value lifecycle for a server status (PLAN §9 mapping) — the vocabulary the payload speaks. */
-    private fun SourceLifecycleStatus.toAppLifecycle(): String =
-        when (this) {
-            SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.DRAFT -> APP_ACTIVE
-            SourceLifecycleStatus.DISABLED -> APP_DISABLED
-            SourceLifecycleStatus.RETIRED, SourceLifecycleStatus.REMOVED -> APP_REMOVED
-        }
+    private fun SourceLifecycleStatus.toAppLifecycle(): String = when (this) {
+        SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.DRAFT -> APP_ACTIVE
+        SourceLifecycleStatus.DISABLED -> APP_DISABLED
+        SourceLifecycleStatus.RETIRED, SourceLifecycleStatus.REMOVED -> APP_REMOVED
+    }
 
     /** Mutable per-import accumulator; api strings collected in payload order. */
     private class Accumulator {
@@ -375,10 +344,7 @@ class BundledImportService(
         val skippedDraft = mutableListOf<String>()
         val lifecycleConflicts = mutableListOf<LifecycleConflict>()
 
-        fun toResult(
-            warnings: List<ValidationWarning>,
-            documentRevision: Long?,
-        ) = BundledImportResult(
+        fun toResult(warnings: List<ValidationWarning>, documentRevision: Long?) = BundledImportResult(
             created = created.toList(),
             updated = updated.toList(),
             unchanged = unchanged.toList(),
@@ -408,11 +374,7 @@ class BundledImportService(
  * retired/removed exception). [payloadLifecycle] is the incoming app value; [serverLifecycle] is the
  * source's current server status wire value.
  */
-data class LifecycleConflict(
-    val api: String,
-    val payloadLifecycle: String,
-    val serverLifecycle: String,
-)
+data class LifecycleConflict(val api: String, val payloadLifecycle: String, val serverLifecycle: String)
 
 /**
  * The structured result of a bundled import (PLAN §4.3 / §12.2). Each list holds api strings (in payload

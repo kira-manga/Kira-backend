@@ -25,11 +25,10 @@ import org.springframework.core.Ordered
 class WebDiagnosticsConfig {
 
     @Bean
-    fun requestDiagnosticsFilter(): FilterRegistrationBean<RequestDiagnosticsFilter> =
-        FilterRegistrationBean(RequestDiagnosticsFilter()).apply {
-            order = Ordered.HIGHEST_PRECEDENCE
-            addUrlPatterns("/*")
-        }
+    fun requestDiagnosticsFilter(): FilterRegistrationBean<RequestDiagnosticsFilter> = FilterRegistrationBean(RequestDiagnosticsFilter()).apply {
+        order = Ordered.HIGHEST_PRECEDENCE
+        addUrlPatterns("/*")
+    }
 
     @Bean
     fun requestBodySizeLimitFilter(objectMapper: ObjectMapper): FilterRegistrationBean<RequestBodySizeLimitFilter> =
@@ -40,9 +39,8 @@ class WebDiagnosticsConfig {
         }
 
     @Bean
-    fun authenticatedMdcFilter(): FilterRegistrationBean<AuthenticatedMdcFilter> =
-        FilterRegistrationBean(AuthenticatedMdcFilter()).apply {
-            order = SecurityProperties.DEFAULT_FILTER_ORDER + 1 // after the security chain (auth populated)
-            addUrlPatterns("/*")
-        }
+    fun authenticatedMdcFilter(): FilterRegistrationBean<AuthenticatedMdcFilter> = FilterRegistrationBean(AuthenticatedMdcFilter()).apply {
+        order = SecurityProperties.DEFAULT_FILTER_ORDER + 1 // after the security chain (auth populated)
+        addUrlPatterns("/*")
+    }
 }

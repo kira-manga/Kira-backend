@@ -47,27 +47,26 @@ object CanonicalJson {
         }
 
     /** Canonicalize a serializable model to its `kcj-1` string form. */
-    fun <T> canonicalize(serializer: SerializationStrategy<T>, value: T): String =
-        canonicalize(json.encodeToJsonElement(serializer, value))
+    fun <T> canonicalize(serializer: SerializationStrategy<T>, value: T): String = canonicalize(json.encodeToJsonElement(serializer, value))
 
     /** Canonicalize an already-parsed [JsonElement] to its `kcj-1` string form. */
-    fun canonicalize(element: JsonElement): String =
-        json.encodeToString(JsonElement.serializer(), sortKeys(element))
+    fun canonicalize(element: JsonElement): String = json.encodeToString(JsonElement.serializer(), sortKeys(element))
 
     /** SHA-256 hex over the canonical UTF-8 bytes — the document/revision checksum (PLAN §5). */
     fun checksum(canonicalJson: String): String = Sha256.hexUtf8(canonicalJson)
 
-    private fun sortKeys(element: JsonElement): JsonElement =
-        when (element) {
-            is JsonObject ->
-                JsonObject(
-                    element.entries
-                        .sortedWith(compareBy(CODE_POINT_ORDER) { it.key })
-                        .associateTo(LinkedHashMap()) { (key, value) -> key to sortKeys(value) },
-                )
-            is JsonArray -> JsonArray(element.map { sortKeys(it) })
-            else -> element
-        }
+    private fun sortKeys(element: JsonElement): JsonElement = when (element) {
+        is JsonObject ->
+            JsonObject(
+                element.entries
+                    .sortedWith(compareBy(CODE_POINT_ORDER) { it.key })
+                    .associateTo(LinkedHashMap()) { (key, value) -> key to sortKeys(value) },
+            )
+
+        is JsonArray -> JsonArray(element.map { sortKeys(it) })
+
+        else -> element
+    }
 
     /**
      * Lexicographic ordering by Unicode **code point** (PLAN §5). This differs from Kotlin's

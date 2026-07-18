@@ -22,11 +22,7 @@ object SourceRules {
     /** Substrings that make ANY header name sensitive (PLAN §8 rule 32b). */
     private val SENSITIVE_HEADER_SUBSTRINGS = listOf("token", "secret", "password")
 
-    fun check(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-    ) {
+    fun check(source: SourceConfig, ctx: RuleContext, findings: Findings) {
         val base = sourcePath(source.api)
 
         // Rule 3 — api non-blank.
@@ -70,15 +66,9 @@ object SourceRules {
         }
     }
 
-    private fun isKnownEngine(engine: String): Boolean =
-        engine == "generic" || engine == "legacy" || engine.startsWith("kotlin:")
+    private fun isKnownEngine(engine: String): Boolean = engine == "generic" || engine == "legacy" || engine.startsWith("kotlin:")
 
-    private fun checkHeaders(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-        base: String,
-    ) {
+    private fun checkHeaders(source: SourceConfig, ctx: RuleContext, findings: Findings, base: String) {
         for ((name, value) in source.headers) {
             val normalized = name.trim()
             if (name != normalized || !isHttpFieldName(normalized)) {
@@ -111,17 +101,15 @@ object SourceRules {
     }
 
     /** RFC 9110 field-name = `token`; tokens are non-empty and ASCII-only. */
-    private fun isHttpFieldName(name: String): Boolean =
-        name.isNotEmpty() &&
-            name.all { char ->
-                char in 'a'..'z' ||
-                    char in 'A'..'Z' ||
-                    char in '0'..'9' ||
-                    char in HTTP_TOKEN_PUNCTUATION
-            }
+    private fun isHttpFieldName(name: String): Boolean = name.isNotEmpty() &&
+        name.all { char ->
+            char in 'a'..'z' ||
+                char in 'A'..'Z' ||
+                char in '0'..'9' ||
+                char in HTTP_TOKEN_PUNCTUATION
+        }
 
-    private fun isSensitiveName(lowerName: String): Boolean =
-        lowerName in SENSITIVE_HEADER_NAMES || SENSITIVE_HEADER_SUBSTRINGS.any { it in lowerName }
+    private fun isSensitiveName(lowerName: String): Boolean = lowerName in SENSITIVE_HEADER_NAMES || SENSITIVE_HEADER_SUBSTRINGS.any { it in lowerName }
 
     private const val HTTP_TOKEN_PUNCTUATION = "!#\$%&'*+-.^_`|~"
 }

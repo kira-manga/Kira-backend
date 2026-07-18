@@ -10,9 +10,7 @@ import org.springframework.stereotype.Repository
  * log-hygiene — identifiers/numbers/checksums only — in one place, PLAN §6).
  */
 @Repository
-class JpaAuditRepositoryAdapter(
-    private val jpa: SpringDataAuditLogRepository,
-) : AuditRepository {
+class JpaAuditRepositoryAdapter(private val jpa: SpringDataAuditLogRepository) : AuditRepository {
 
     override fun record(entry: NewAuditEntry) {
         jpa.save(

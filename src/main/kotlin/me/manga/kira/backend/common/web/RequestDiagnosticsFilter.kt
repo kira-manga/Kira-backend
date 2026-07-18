@@ -30,11 +30,7 @@ import java.util.UUID
  */
 class RequestDiagnosticsFilter : OncePerRequestFilter() {
 
-    override fun doFilterInternal(
-        request: HttpServletRequest,
-        response: HttpServletResponse,
-        filterChain: FilterChain,
-    ) {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
         val requestId = resolveRequestId(request.getHeader(REQUEST_ID_HEADER))
         response.setHeader(REQUEST_ID_HEADER, requestId)
         MDC.put(MDC_REQUEST_ID, requestId)

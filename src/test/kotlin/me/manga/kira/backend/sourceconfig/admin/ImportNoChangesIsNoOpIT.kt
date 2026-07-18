@@ -16,16 +16,12 @@ import org.junit.jupiter.api.Test
 class ImportNoChangesIsNoOpIT : AbstractAdminSourceIT() {
 
     // An active source + a source carrying an EXPLICIT non-neutral lifecycle:"disabled" (§9/§12.2).
-    private fun document() =
-        SourceConfigFixtures.document(
-            SourceConfigFixtures.validGenericSource("ActiveOne"),
-            SourceConfigFixtures.validGenericSource("DisabledOne").copy(lifecycle = "disabled"),
-        )
+    private fun document() = SourceConfigFixtures.document(
+        SourceConfigFixtures.validGenericSource("ActiveOne"),
+        SourceConfigFixtures.validGenericSource("DisabledOne").copy(lifecycle = "disabled"),
+    )
 
-    private fun apis(
-        body: JsonNode,
-        field: String,
-    ): List<String> = body.get(field).map { it.asText() }
+    private fun apis(body: JsonNode, field: String): List<String> = body.get(field).map { it.asText() }
 
     @Test
     fun `re-importing an identical document with explicit lifecycle values is a no-op`() {

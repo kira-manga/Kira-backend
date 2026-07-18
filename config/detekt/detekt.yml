@@ -1,0 +1,54 @@
+build:
+  maxIssues: 0
+
+config:
+  validation: true
+  warningsAsErrors: true
+
+complexity:
+  CyclomaticComplexMethod:
+    threshold: 25
+  LongMethod:
+    threshold: 100
+  LongParameterList:
+    functionThreshold: 15
+    constructorThreshold: 15
+  NestedBlockDepth:
+    threshold: 5
+  TooManyFunctions:
+    thresholdInFiles: 40
+    thresholdInClasses: 40
+    thresholdInInterfaces: 20
+    thresholdInObjects: 40
+
+exceptions:
+  SwallowedException:
+    ignoredExceptionTypes:
+      - IllegalArgumentException
+      - IllegalLifecycleTransitionException
+      - UnretireNotAllowedForEngineException
+      - StreamReadException
+      - DatabindException
+      - SerializationException
+      - DataIntegrityViolationException
+  TooGenericExceptionThrown:
+    active: false
+
+performance:
+  SpreadOperator:
+    active: false
+
+style:
+  LoopWithTooManyJumpStatements:
+    maxJumpCount: 3
+  MagicNumber:
+    active: false
+  MaxLineLength:
+    maxLineLength: 160
+    excludeCommentStatements: true
+  ReturnCount:
+    max: 6
+  ThrowsCount:
+    max: 6
+  UnusedParameter:
+    allowedNames: '^(ctx|ex|now)$'

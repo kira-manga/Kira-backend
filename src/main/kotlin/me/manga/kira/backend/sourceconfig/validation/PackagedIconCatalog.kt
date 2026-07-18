@@ -20,9 +20,7 @@ package me.manga.kira.backend.sourceconfig.validation
  * ever produces a spurious warning. Because the rule is warning-only, even a stale catalog is safe (it
  * can only over-warn, never over-block a valid publish).
  */
-class PackagedIconCatalog(
-    private val keys: Set<String> = KEYS,
-) {
+class PackagedIconCatalog(private val keys: Set<String> = KEYS) {
     fun hasKey(resourceKey: String): Boolean = resourceKey in keys
 
     val size: Int get() = keys.size

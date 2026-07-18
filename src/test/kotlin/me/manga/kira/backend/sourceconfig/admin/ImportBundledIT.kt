@@ -22,8 +22,7 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
     private fun trimmed(): String = SourceConfigFixtures.loadFixture("bundled-trimmed.json")
 
-    private fun result(actions: ResultActionsDsl): JsonNode =
-        objectMapper.readTree(actions.andReturn().response.contentAsString)
+    private fun result(actions: ResultActionsDsl): JsonNode = objectMapper.readTree(actions.andReturn().response.contentAsString)
 
     private fun JsonNode.apis(field: String): List<String> = this.get(field).map { it.asText() }
 

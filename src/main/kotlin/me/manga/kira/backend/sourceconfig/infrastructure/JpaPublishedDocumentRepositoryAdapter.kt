@@ -25,8 +25,7 @@ class JpaPublishedDocumentRepositoryAdapter(
     private val jdbcTemplate: JdbcTemplate,
 ) : PublishedDocumentRepository {
 
-    override fun latestPointer(): Long? =
-        publicationState.findById(SINGLETON_ID).orElse(null)?.latestDocumentRevision
+    override fun latestPointer(): Long? = publicationState.findById(SINGLETON_ID).orElse(null)?.latestDocumentRevision
 
     override fun snapshotCount(): Long = documents.count()
 
@@ -45,18 +44,16 @@ class JpaPublishedDocumentRepositoryAdapter(
         return lastValue + incrementBy
     }
 
-    override fun lockPublicationState(): Long? =
-        jdbcTemplate
-            .queryForList(
-                "SELECT latest_document_revision FROM document_publication_state WHERE id = ? FOR UPDATE",
-                Long::class.javaObjectType,
-                SINGLETON_ID,
-            ).firstOrNull()
+    override fun lockPublicationState(): Long? = jdbcTemplate
+        .queryForList(
+            "SELECT latest_document_revision FROM document_publication_state WHERE id = ? FOR UPDATE",
+            Long::class.javaObjectType,
+            SINGLETON_ID,
+        ).firstOrNull()
 
-    override fun nextDocumentRevision(): Long =
-        requireNotNull(jdbcTemplate.queryForObject("SELECT nextval('$SEQUENCE_NAME')", Long::class.java)) {
-            "nextval('$SEQUENCE_NAME') returned null"
-        }
+    override fun nextDocumentRevision(): Long = requireNotNull(jdbcTemplate.queryForObject("SELECT nextval('$SEQUENCE_NAME')", Long::class.java)) {
+        "nextval('$SEQUENCE_NAME') returned null"
+    }
 
     override fun insertSnapshot(spec: NewPublishedDocument): PublishedDocument {
         val entity =
@@ -74,30 +71,24 @@ class JpaPublishedDocumentRepositoryAdapter(
         return documents.saveAndFlush(entity).toDomain()
     }
 
-    override fun updatePointer(
-        revision: Long,
-        at: Instant,
-    ) = publicationState.updatePointer(revision, at)
+    override fun updatePointer(revision: Long, at: Instant) = publicationState.updatePointer(revision, at)
 
-    override fun findByRevision(revision: Long): PublishedDocument? =
-        documents.findByDocumentRevision(revision)?.toDomain()
+    override fun findByRevision(revision: Long): PublishedDocument? = documents.findByDocumentRevision(revision)?.toDomain()
 
-    override fun findAllOrderedByRevision(): List<PublishedDocument> =
-        documents.findAllByOrderByDocumentRevisionAsc().map { it.toDomain() }
+    override fun findAllOrderedByRevision(): List<PublishedDocument> = documents.findAllByOrderByDocumentRevisionAsc().map { it.toDomain() }
 
-    private fun PublishedDocumentEntity.toDomain(): PublishedDocument =
-        PublishedDocument(
-            id = requireNotNull(id) { "persisted PublishedDocumentEntity must have an id" },
-            documentRevision = documentRevision,
-            schemaVersion = schemaVersion,
-            documentJson = documentJson,
-            checksum = checksum,
-            canonVersion = canonVersion,
-            sourceCount = sourceCount,
-            createdBy = requireNotNull(createdBy),
-            createdAt = createdAt,
-            notes = notes,
-        )
+    private fun PublishedDocumentEntity.toDomain(): PublishedDocument = PublishedDocument(
+        id = requireNotNull(id) { "persisted PublishedDocumentEntity must have an id" },
+        documentRevision = documentRevision,
+        schemaVersion = schemaVersion,
+        documentJson = documentJson,
+        checksum = checksum,
+        canonVersion = canonVersion,
+        sourceCount = sourceCount,
+        createdBy = requireNotNull(createdBy),
+        createdAt = createdAt,
+        notes = notes,
+    )
 
     private companion object {
         const val SINGLETON_ID = 1

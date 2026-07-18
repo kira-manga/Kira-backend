@@ -38,7 +38,9 @@ verification it:
    (no second DB query per request).
 
 Sessions are `STATELESS`; CSRF is disabled (pure bearer-token API); HTTP Basic / form login are
-disabled; no CORS in v1. Method security is on for the completion ownership check.
+disabled. CORS is disabled by default and, when explicitly configured, permits only HTTPS origins
+from `kira.security.allowed-origins` (never `*`, never credentials). Method security is on for the
+completion ownership check.
 
 ## Passwords
 
@@ -56,7 +58,8 @@ disabled; no CORS in v1. Method security is on for the completion ownership chec
 ## Onboarding, registration gating, and the last-admin guard
 
 - `POST /auth/register` is gated by `kira.auth.registration-enabled` — **`true` in dev, `false` in
-  prod**. Prod onboarding is via the admin user API (`POST /admin/users`), not open registration.
+  prod and false by default in every unspecified profile**. Prod onboarding is via the admin user API
+  (`POST /admin/users`), not open registration.
 - **Admin seeding** (`AdminSeeder`, an `ApplicationRunner`): if no `ADMIN` exists, create one from
   `KIRA_ADMIN_EMAIL` + `KIRA_ADMIN_PASSWORD`. Missing env while seeding is enabled → **fail startup**
   with a clear message (dev included; export them directly or source the gitignored `.env` first — it
@@ -93,6 +96,12 @@ Tuning lives under `kira.security.throttle.*` (`login-failure-threshold`, `login
 `login-max-block`, `login-failure-window`, `registration-max-per-window`, `registration-window`).
 
 ## Secrets policy
+
+The `prod` profile has an explicit startup policy and fails before serving traffic when it is mixed
+with `dev`, registration is enabled, a known development/test JWT key is used, the public/CORS origin
+is not a credential-free HTTPS origin, the datasource is not PostgreSQL, or PostgreSQL does not use
+`sslmode=verify-full`. JWT issuer and audience must differ, token TTL is positive and no more than 24
+hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fail startup.
 
 - **All secrets come from the environment**, never hardcoded, never committed: `KIRA_JWT_SECRET`, DB
   creds (`SPRING_DATASOURCE_*`), admin seed creds (`KIRA_ADMIN_EMAIL`/`KIRA_ADMIN_PASSWORD`), and any

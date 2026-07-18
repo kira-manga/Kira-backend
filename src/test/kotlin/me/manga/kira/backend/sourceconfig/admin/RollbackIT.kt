@@ -16,18 +16,14 @@ class RollbackIT : AbstractAdminSourceIT() {
     private val urlA = "https://a.example.com"
     private val urlB = "https://b.example.com"
 
-    private fun servedBaseUrl(
-        documentRevision: Long,
-        api: String,
-    ): String = servedDocument(documentRevision).sources.first { it.api == api }.baseUrl
+    private fun servedBaseUrl(documentRevision: Long, api: String): String = servedDocument(documentRevision).sources.first { it.api == api }.baseUrl
 
-    private fun latestRevisionNumber(api: String): Int =
-        jdbcTemplate.queryForObject(
-            "SELECT max(r.revision_number) FROM source_config_revisions r " +
-                "JOIN source_configs s ON s.id = r.source_config_id WHERE s.api = ?",
-            Int::class.java,
-            api,
-        )!!
+    private fun latestRevisionNumber(api: String): Int = jdbcTemplate.queryForObject(
+        "SELECT max(r.revision_number) FROM source_config_revisions r " +
+            "JOIN source_configs s ON s.id = r.source_config_id WHERE s.api = ?",
+        Int::class.java,
+        api,
+    )!!
 
     @Test
     fun `rollback copies old content into a new published revision`() {

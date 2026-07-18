@@ -14,11 +14,7 @@ import me.manga.kira.backend.sourceconfig.validation.sourcePath
  */
 object FieldRules {
 
-    fun check(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-    ) {
+    fun check(source: SourceConfig, ctx: RuleContext, findings: Findings) {
         val base = sourcePath(source.api)
         for ((key, field) in source.fields) {
             val path = "$base.fields[$key]"

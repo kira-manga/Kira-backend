@@ -19,6 +19,9 @@ hand-authored bundled JSON.
 > Before production use, read the open implementation cautions in
 > [`docs/USAGE.md`](docs/USAGE.md#10-remaining-known-limitations).
 
+Current release line: **1.0.0**. Releases are built from immutable tags and published with both the
+semantic version and full Git SHA; see [`docs/RELEASE.md`](docs/RELEASE.md).
+
 ## Architecture
 
 Clean, layered architecture with one dependency direction, per feature package:
@@ -118,6 +121,8 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 | [`docs/SOURCE_CONFIG_LIFECYCLE.md`](docs/SOURCE_CONFIG_LIFECYCLE.md) | The 5 server states, app 3-value mapping, publish rules, the 10-step publication sequence + locks, revision numbering, startup consistency + recovery runbook. |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | JWT scheme, DB-backed per-request checks, password policy, throttling + trusted client-IP, secrets policy, and the §6 logging + retention + privacy expectations. |
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | Prerequisites, docker-compose, `.env`, running the app + tests, Swagger, seeding, common gotchas. |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production Kubernetes topology, rollout, drain, rollback, and forward-recovery procedure. |
+| [`docs/RELEASE.md`](docs/RELEASE.md) | Reproducible build, immutable image, semantic tag, SBOM, provenance, and publishing procedure. |
 | [`docs/MIGRATION_BUNDLED_TO_REMOTE.md`](docs/MIGRATION_BUNDLED_TO_REMOTE.md) | The bundled→remote migration contract, two-floor revision model, app acceptance chain, cutover checklist, future work. |
 
 ## Project layout
@@ -150,7 +155,7 @@ src/test/kotlin/me/manga/kira/backend/
 
 ## Test suite
 
-**252 tests across 59 suites** (0 failures / 0 errors / 0 skipped on `./gradlew clean build`).
+**256 tests across 60 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
 Pure-unit tests (validator, canonical JSON, JWT, password hashing, state machine, echo provider,
 contract inventory) run without a Spring context. Integration tests use **Testcontainers PostgreSQL**
 (`postgres:17.6-alpine`, one shared container via `@ServiceConnection`) rather than H2, because the

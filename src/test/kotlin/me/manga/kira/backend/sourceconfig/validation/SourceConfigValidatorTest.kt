@@ -23,8 +23,7 @@ class SourceConfigValidatorTest {
 
     private val validator = SourceConfigValidator()
 
-    private fun codes(source: SourceConfig): Set<String> =
-        validator.validate(SourceConfigFixtures.document(source)).errors.map { it.code }.toSet()
+    private fun codes(source: SourceConfig): Set<String> = validator.validate(SourceConfigFixtures.document(source)).errors.map { it.code }.toSet()
 
     // --- Test 1: fully-valid documents pass with zero errors ---
 
@@ -128,8 +127,14 @@ class SourceConfigValidatorTest {
 
     @Test
     fun `rule 10 - icon bad resourceKey, non-https remoteUrl, empty block`() {
-        assertTrue(ValidationCodes.ICON_RESOURCE_KEY_INVALID in codes(SourceConfigFixtures.validGenericSource().copy(icon = IconSpec(resourceKey = "Bad Key!"))))
-        assertTrue(ValidationCodes.ICON_REMOTE_URL_NOT_HTTPS in codes(SourceConfigFixtures.validGenericSource().copy(icon = IconSpec(remoteUrl = "http://x.co/i.png"))))
+        assertTrue(
+            ValidationCodes.ICON_RESOURCE_KEY_INVALID in codes(SourceConfigFixtures.validGenericSource().copy(icon = IconSpec(resourceKey = "Bad Key!"))),
+        )
+        assertTrue(
+            ValidationCodes.ICON_REMOTE_URL_NOT_HTTPS in codes(
+                SourceConfigFixtures.validGenericSource().copy(icon = IconSpec(remoteUrl = "http://x.co/i.png")),
+            ),
+        )
         assertTrue(ValidationCodes.ICON_EMPTY in codes(SourceConfigFixtures.validGenericSource().copy(icon = IconSpec())))
     }
 
@@ -172,14 +177,32 @@ class SourceConfigValidatorTest {
     fun `rule 14 - blank url, raw query in url and jsonBody, unknown method and format, listFilter op and mode`() {
         val base = SourceConfigFixtures.validGenericSource()
         assertTrue(ValidationCodes.ENDPOINT_URL_BLANK in codes(base.copy(endpoints = base.endpoints + ("home" to EndpointSpec(url = "")))))
-        assertTrue(ValidationCodes.ENDPOINT_URL_RAW_QUERY in codes(base.copy(endpoints = base.endpoints + ("search" to EndpointSpec(url = "{baseUrl}/s?q={query}", format = "json")))))
+        assertTrue(
+            ValidationCodes.ENDPOINT_URL_RAW_QUERY in
+                codes(base.copy(endpoints = base.endpoints + ("search" to EndpointSpec(url = "{baseUrl}/s?q={query}", format = "json")))),
+        )
         assertTrue(
             ValidationCodes.ENDPOINT_JSONBODY_RAW_QUERY in
-                codes(base.copy(endpoints = base.endpoints + ("search" to EndpointSpec(url = "{baseUrl}/s", method = "post-json", format = "json", jsonBody = "{\"q\":\"{query}\"}")))),
+                codes(
+                    base.copy(
+                        endpoints =
+                        base.endpoints +
+                            ("search" to EndpointSpec(url = "{baseUrl}/s", method = "post-json", format = "json", jsonBody = "{\"q\":\"{query}\"}")),
+                    ),
+                ),
         )
-        assertTrue(ValidationCodes.ENDPOINT_UNKNOWN_METHOD in codes(base.copy(endpoints = base.endpoints + ("home" to EndpointSpec(url = "{baseUrl}/h", method = "PUT")))))
-        assertTrue(ValidationCodes.ENDPOINT_UNKNOWN_FORMAT in codes(base.copy(endpoints = base.endpoints + ("home" to EndpointSpec(url = "{baseUrl}/h", format = "xml")))))
-        val listFilterBad = base.copy(endpoints = base.endpoints + ("home" to EndpointSpec(url = "{baseUrl}/h", listFilters = listOf(FilterSpec(path = "p", op = "matches", mode = "keep")))))
+        assertTrue(
+            ValidationCodes.ENDPOINT_UNKNOWN_METHOD in
+                codes(base.copy(endpoints = base.endpoints + ("home" to EndpointSpec(url = "{baseUrl}/h", method = "PUT")))),
+        )
+        assertTrue(
+            ValidationCodes.ENDPOINT_UNKNOWN_FORMAT in
+                codes(base.copy(endpoints = base.endpoints + ("home" to EndpointSpec(url = "{baseUrl}/h", format = "xml")))),
+        )
+        val listFilterBad = base.copy(
+            endpoints =
+            base.endpoints + ("home" to EndpointSpec(url = "{baseUrl}/h", listFilters = listOf(FilterSpec(path = "p", op = "matches", mode = "keep")))),
+        )
         assertTrue(ValidationCodes.LISTFILTER_UNKNOWN_OP in codes(listFilterBad))
         assertTrue(ValidationCodes.LISTFILTER_UNKNOWN_MODE in codes(listFilterBad))
     }
@@ -187,7 +210,9 @@ class SourceConfigValidatorTest {
     @Test
     fun `rule 15 - unknown transform, unknown dateStrategy, any imageStrategy`() {
         val base = SourceConfigFixtures.validGenericSource()
-        assertTrue(ValidationCodes.UNKNOWN_TRANSFORM in codes(base.copy(fields = mapOf("item.title" to FieldSpec(transform = listOf(TransformSpec(fn = "explode")))))))
+        assertTrue(
+            ValidationCodes.UNKNOWN_TRANSFORM in codes(base.copy(fields = mapOf("item.title" to FieldSpec(transform = listOf(TransformSpec(fn = "explode")))))),
+        )
         assertTrue(ValidationCodes.UNKNOWN_DATE_STRATEGY in codes(base.copy(fields = mapOf("chapter.date" to FieldSpec(dateStrategy = "rfc822")))))
         assertTrue(ValidationCodes.IMAGE_STRATEGY_NOT_ALLOWED in codes(base.copy(fields = mapOf("page.image" to FieldSpec(imageStrategy = "anything")))))
     }

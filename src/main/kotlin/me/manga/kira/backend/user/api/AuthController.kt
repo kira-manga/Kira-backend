@@ -26,25 +26,16 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/v1/auth")
-class AuthController(
-    private val authService: AuthService,
-    private val clientIpResolver: ClientIpResolver,
-) {
+class AuthController(private val authService: AuthService, private val clientIpResolver: ClientIpResolver) {
     @PostMapping("/register")
     @ResponseStatus(HttpStatus.CREATED)
-    fun register(
-        @Valid @RequestBody request: RegisterRequest,
-        httpRequest: HttpServletRequest,
-    ): RegisterResponse {
+    fun register(@Valid @RequestBody request: RegisterRequest, httpRequest: HttpServletRequest): RegisterResponse {
         val user = authService.register(request.email, request.password, clientIpResolver.resolve(httpRequest))
         return RegisterResponse(id = user.id, email = user.email, role = user.role)
     }
 
     @PostMapping("/login")
-    fun login(
-        @Valid @RequestBody request: LoginRequest,
-        httpRequest: HttpServletRequest,
-    ): LoginResponse {
+    fun login(@Valid @RequestBody request: LoginRequest, httpRequest: HttpServletRequest): LoginResponse {
         val result = authService.login(request.email, request.password, clientIpResolver.resolve(httpRequest))
         return LoginResponse(
             accessToken = result.token.value,
@@ -55,13 +46,10 @@ class AuthController(
     }
 
     @GetMapping("/me")
-    fun me(
-        @AuthenticationPrincipal principal: AuthenticatedUser,
-    ): MeResponse =
-        MeResponse(
-            id = principal.id,
-            email = principal.email,
-            role = principal.role,
-            createdAt = principal.createdAt,
-        )
+    fun me(@AuthenticationPrincipal principal: AuthenticatedUser): MeResponse = MeResponse(
+        id = principal.id,
+        email = principal.email,
+        role = principal.role,
+        createdAt = principal.createdAt,
+    )
 }

@@ -36,11 +36,7 @@ class UserAdminService(
 ) {
     /** Admin-create a user with an explicit role (prod onboarding path — PLAN §4.4). */
     @Transactional
-    fun createUser(
-        email: String,
-        rawPassword: String,
-        role: Role,
-    ): User {
+    fun createUser(email: String, rawPassword: String, role: Role): User {
         val user = userService.createUser(email, rawPassword, role)
         log.info("Admin created user id={} role={} actor={}", user.id, role, actor())
         audit.record(AuditAction.USER_CREATED, AuditService.ENTITY_USER, user.id.toString(), mapOf("role" to role.name))
@@ -48,10 +44,7 @@ class UserAdminService(
     }
 
     @Transactional(readOnly = true)
-    fun list(
-        page: Int,
-        size: Int,
-    ): PagedUsers = users.findPage(page, size)
+    fun list(page: Int, size: Int): PagedUsers = users.findPage(page, size)
 
     /** Enable a user. Locks `security_state` first for consistency with the disable guard (PLAN §4.4). */
     @Transactional
@@ -84,10 +77,7 @@ class UserAdminService(
 
     /** Explicit admin password reset (PLAN §4.4). Policy-checked; the new password is never logged. */
     @Transactional
-    fun resetPassword(
-        id: UUID,
-        newRawPassword: String,
-    ) {
+    fun resetPassword(id: UUID, newRawPassword: String) {
         val user = users.findById(id) ?: throw UserNotFoundException()
         passwordPolicy.validate(newRawPassword)
         users.updatePasswordHash(user.id, passwordEncoder.encode(newRawPassword))

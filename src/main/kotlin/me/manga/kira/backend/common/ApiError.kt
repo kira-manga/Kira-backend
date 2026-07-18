@@ -26,8 +26,4 @@ data class ApiError(
  * is the offending location when applicable (e.g. `sources[Azora].filters[genres].request.encode`).
  */
 @JsonInclude(JsonInclude.Include.NON_EMPTY)
-data class ApiFieldError(
-    val code: String,
-    val path: String? = null,
-    val message: String,
-)
+data class ApiFieldError(val code: String, val path: String? = null, val message: String)

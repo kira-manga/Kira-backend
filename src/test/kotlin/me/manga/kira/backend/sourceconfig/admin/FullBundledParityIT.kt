@@ -52,7 +52,10 @@ class FullBundledParityIT : AbstractAdminSourceIT() {
         // Serve it via the PUBLIC endpoint → 45 sources, payload order preserved end-to-end.
         val servedResponse = getPublicDocument().andExpect { status { isOk() } }.andReturn().response
         val servedBytes = servedResponse.contentAsByteArray
-        val served = servedJson.decodeFromString(me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument.serializer(), servedBytes.toString(Charsets.UTF_8))
+        val served = servedJson.decodeFromString(
+            me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument.serializer(),
+            servedBytes.toString(Charsets.UTF_8),
+        )
         assertEquals(45, served.sources.size)
         assertEquals(payloadApis, served.sources.map { it.api }, "served document preserves the bundled payload order")
 

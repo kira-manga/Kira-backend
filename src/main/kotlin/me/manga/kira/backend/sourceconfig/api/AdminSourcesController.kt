@@ -40,17 +40,11 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/v1/admin/sources")
-class AdminSourcesController(
-    private val sourceAdminService: SourceAdminService,
-    private val bundledImportService: BundledImportService,
-) {
+class AdminSourcesController(private val sourceAdminService: SourceAdminService, private val bundledImportService: BundledImportService) {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun create(
-        httpRequest: HttpServletRequest,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): SourceMutationResponse =
+    fun create(httpRequest: HttpServletRequest, @AuthenticationPrincipal admin: AuthenticatedUser): SourceMutationResponse =
         SourceMutationResponse.of(sourceAdminService.createSource(httpRequest.readBody(), admin.id))
 
     /**
@@ -61,87 +55,55 @@ class AdminSourcesController(
      * full error list; malformed JSON is the parser's 400.
      */
     @PostMapping("/import-bundled")
-    fun importBundled(
-        httpRequest: HttpServletRequest,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): ImportBundledResponse =
+    fun importBundled(httpRequest: HttpServletRequest, @AuthenticationPrincipal admin: AuthenticatedUser): ImportBundledResponse =
         ImportBundledResponse.of(bundledImportService.import(httpRequest.readBoundedBody(MAX_IMPORT_BODY_BYTES), admin.id))
 
     @GetMapping
-    fun list(
-        @RequestParam(required = false) status: String?,
-    ): List<AdminSourceResponse> =
+    fun list(@RequestParam(required = false) status: String?): List<AdminSourceResponse> =
         sourceAdminService.listSources(parseStatus(status)).map { AdminSourceResponse.of(it) }
 
     @GetMapping("/{api}")
-    fun get(
-        @PathVariable api: String,
-    ): AdminSourceResponse = AdminSourceResponse.of(sourceAdminService.getSource(api))
+    fun get(@PathVariable api: String): AdminSourceResponse = AdminSourceResponse.of(sourceAdminService.getSource(api))
 
     @PostMapping("/{api}/revisions")
     @ResponseStatus(HttpStatus.CREATED)
-    fun createRevision(
-        @PathVariable api: String,
-        httpRequest: HttpServletRequest,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): SourceMutationResponse =
+    fun createRevision(@PathVariable api: String, httpRequest: HttpServletRequest, @AuthenticationPrincipal admin: AuthenticatedUser): SourceMutationResponse =
         SourceMutationResponse.of(sourceAdminService.createRevision(api, httpRequest.readBody(), admin.id))
 
     @GetMapping("/{api}/revisions")
-    fun listRevisions(
-        @PathVariable api: String,
-    ): List<RevisionSummaryResponse> =
-        sourceAdminService.listRevisions(api).map { RevisionSummaryResponse.of(it) }
+    fun listRevisions(@PathVariable api: String): List<RevisionSummaryResponse> = sourceAdminService.listRevisions(api).map { RevisionSummaryResponse.of(it) }
 
     @GetMapping("/{api}/revisions/{number}")
-    fun getRevision(
-        @PathVariable api: String,
-        @PathVariable number: Int,
-    ): RevisionDetailResponse = RevisionDetailResponse.of(sourceAdminService.getRevision(api, number))
+    fun getRevision(@PathVariable api: String, @PathVariable number: Int): RevisionDetailResponse =
+        RevisionDetailResponse.of(sourceAdminService.getRevision(api, number))
 
     @PostMapping("/{api}/revisions/{number}/validate")
-    fun validateRevision(
-        @PathVariable api: String,
-        @PathVariable number: Int,
-    ): ValidationResultDto = ValidationResultDto.of(sourceAdminService.validateRevision(api, number))
+    fun validateRevision(@PathVariable api: String, @PathVariable number: Int): ValidationResultDto =
+        ValidationResultDto.of(sourceAdminService.validateRevision(api, number))
 
     @GetMapping("/{api}/revisions/{number}/validation")
-    fun getValidation(
-        @PathVariable api: String,
-        @PathVariable number: Int,
-    ): ValidationResultDto = ValidationResultDto.of(sourceAdminService.getLatestValidation(api, number))
+    fun getValidation(@PathVariable api: String, @PathVariable number: Int): ValidationResultDto =
+        ValidationResultDto.of(sourceAdminService.getLatestValidation(api, number))
 
     @PostMapping("/{api}/revisions/{number}/publish")
-    fun publish(
-        @PathVariable api: String,
-        @PathVariable number: Int,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): PublishResponse = PublishResponse.of(sourceAdminService.publish(api, number, admin.id))
+    fun publish(@PathVariable api: String, @PathVariable number: Int, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =
+        PublishResponse.of(sourceAdminService.publish(api, number, admin.id))
 
     @PostMapping("/{api}/disable")
-    fun disable(
-        @PathVariable api: String,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): PublishResponse = PublishResponse.of(sourceAdminService.disable(api, admin.id))
+    fun disable(@PathVariable api: String, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =
+        PublishResponse.of(sourceAdminService.disable(api, admin.id))
 
     @PostMapping("/{api}/enable")
-    fun enable(
-        @PathVariable api: String,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): PublishResponse = PublishResponse.of(sourceAdminService.enable(api, admin.id))
+    fun enable(@PathVariable api: String, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =
+        PublishResponse.of(sourceAdminService.enable(api, admin.id))
 
     @PostMapping("/{api}/retire")
-    fun retire(
-        @PathVariable api: String,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): PublishResponse = PublishResponse.of(sourceAdminService.retire(api, admin.id))
+    fun retire(@PathVariable api: String, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =
+        PublishResponse.of(sourceAdminService.retire(api, admin.id))
 
     @PostMapping("/{api}/remove")
-    fun remove(
-        @PathVariable api: String,
-        @Valid @RequestBody request: RemoveRequest,
-        @AuthenticationPrincipal admin: AuthenticatedUser,
-    ): PublishResponse = PublishResponse.of(sourceAdminService.remove(api, request.confirm, admin.id))
+    fun remove(@PathVariable api: String, @Valid @RequestBody request: RemoveRequest, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =
+        PublishResponse.of(sourceAdminService.remove(api, request.confirm, admin.id))
 
     @PostMapping("/{api}/rollback")
     fun rollback(
@@ -171,11 +133,10 @@ class AdminSourcesController(
         PayloadTooLargeException("request body exceeds the ${maxBytes / (1024 * 1024)} MiB import limit.")
 
     /** Parse the optional `?status=` filter into the enum; an unknown value is a 400 (PLAN §4.5). */
-    private fun parseStatus(status: String?): SourceLifecycleStatus? =
-        status?.let { raw ->
-            SourceLifecycleStatus.entries.firstOrNull { it.wire == raw }
-                ?: throw BadRequestException("unknown status filter '$raw'.", code = "INVALID_STATUS_FILTER")
-        }
+    private fun parseStatus(status: String?): SourceLifecycleStatus? = status?.let { raw ->
+        SourceLifecycleStatus.entries.firstOrNull { it.wire == raw }
+            ?: throw BadRequestException("unknown status filter '$raw'.", code = "INVALID_STATUS_FILTER")
+    }
 
     private companion object {
         /** `import-bundled` request-body cap (PLAN §4.5): 5 MiB (the real document is well under 1 MiB). */

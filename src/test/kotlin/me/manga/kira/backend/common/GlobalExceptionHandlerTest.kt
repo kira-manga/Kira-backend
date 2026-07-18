@@ -104,19 +104,13 @@ class GlobalExceptionHandlerTest {
 @RequestMapping("/test")
 private class ExceptionTestController {
     @GetMapping("/required")
-    fun required(
-        @RequestParam id: Int,
-    ): Int = id
+    fun required(@RequestParam id: Int): Int = id
 
     @GetMapping("/header")
-    fun header(
-        @RequestHeader("X-Required") value: String,
-    ): String = value
+    fun header(@RequestHeader("X-Required") value: String): String = value
 
     @PostMapping("/json", consumes = [MediaType.APPLICATION_JSON_VALUE])
-    fun json(
-        @RequestBody body: Map<String, Any>,
-    ): Map<String, Any> = body
+    fun json(@RequestBody body: Map<String, Any>): Map<String, Any> = body
 
     @GetMapping("/json-response", produces = [MediaType.APPLICATION_JSON_VALUE])
     fun jsonResponse(): Map<String, Any> = mapOf("ok" to true)

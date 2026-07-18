@@ -16,14 +16,11 @@ import java.util.UUID
  * never escape this layer).
  */
 @Repository
-class JpaUserRepositoryAdapter(
-    private val jpa: SpringDataUserRepository,
-) : UserRepository {
+class JpaUserRepositoryAdapter(private val jpa: SpringDataUserRepository) : UserRepository {
 
     override fun findById(id: UUID): User? = jpa.findById(id).map { it.toDomain() }.orElse(null)
 
-    override fun findByEmail(normalizedEmail: String): User? =
-        jpa.findByEmailIgnoreCase(normalizedEmail)?.toDomain()
+    override fun findByEmail(normalizedEmail: String): User? = jpa.findByEmailIgnoreCase(normalizedEmail)?.toDomain()
 
     override fun existsByEmail(normalizedEmail: String): Boolean = jpa.existsByEmailIgnoreCase(normalizedEmail)
 
@@ -31,11 +28,7 @@ class JpaUserRepositoryAdapter(
 
     override fun countEnabledAdmins(): Long = jpa.countEnabledByRole(Role.ADMIN)
 
-    override fun create(
-        normalizedEmail: String,
-        passwordHash: String,
-        role: Role,
-    ): User {
+    override fun create(normalizedEmail: String, passwordHash: String, role: Role): User {
         val entity =
             UserEntity(
                 email = normalizedEmail,
@@ -46,49 +39,36 @@ class JpaUserRepositoryAdapter(
         return jpa.save(entity).toDomain()
     }
 
-    override fun setEnabled(
-        id: UUID,
-        enabled: Boolean,
-    ) {
+    override fun setEnabled(id: UUID, enabled: Boolean) {
         val entity = jpa.findById(id).orElseThrow { UserNotFoundException() }
         entity.enabled = enabled
         jpa.save(entity)
     }
 
-    override fun updatePasswordHash(
-        id: UUID,
-        passwordHash: String,
-    ) {
+    override fun updatePasswordHash(id: UUID, passwordHash: String) {
         val entity = jpa.findById(id).orElseThrow { UserNotFoundException() }
         entity.passwordHash = passwordHash
         jpa.save(entity)
     }
 
-    override fun updateRole(
-        id: UUID,
-        role: Role,
-    ) {
+    override fun updateRole(id: UUID, role: Role) {
         val entity = jpa.findById(id).orElseThrow { UserNotFoundException() }
         entity.role = role
         jpa.save(entity)
     }
 
-    override fun findPage(
-        page: Int,
-        size: Int,
-    ): PagedUsers {
+    override fun findPage(page: Int, size: Int): PagedUsers {
         val result = jpa.findAll(PageRequest.of(page, size, Sort.by(Sort.Direction.ASC, "createdAt")))
         return PagedUsers(items = result.content.map { it.toDomain() }, total = result.totalElements)
     }
 
-    private fun UserEntity.toDomain(): User =
-        User(
-            id = requireNotNull(id) { "persisted UserEntity must have an id" },
-            email = email,
-            passwordHash = passwordHash,
-            role = role,
-            enabled = enabled,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
-        )
+    private fun UserEntity.toDomain(): User = User(
+        id = requireNotNull(id) { "persisted UserEntity must have an id" },
+        email = email,
+        passwordHash = passwordHash,
+        role = role,
+        enabled = enabled,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+    )
 }

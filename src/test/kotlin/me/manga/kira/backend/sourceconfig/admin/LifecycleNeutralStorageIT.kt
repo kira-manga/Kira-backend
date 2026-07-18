@@ -15,14 +15,13 @@ import org.junit.jupiter.api.Test
  */
 class LifecycleNeutralStorageIT : AbstractAdminSourceIT() {
 
-    private fun publishedRevisionJson(api: String): String =
-        jdbcTemplate.queryForObject(
-            "SELECT r.config_canonical_json FROM source_config_revisions r " +
-                "JOIN source_configs s ON s.id = r.source_config_id " +
-                "WHERE s.api = ? AND r.status = 'published'",
-            String::class.java,
-            api,
-        )!!
+    private fun publishedRevisionJson(api: String): String = jdbcTemplate.queryForObject(
+        "SELECT r.config_canonical_json FROM source_config_revisions r " +
+            "JOIN source_configs s ON s.id = r.source_config_id " +
+            "WHERE s.api = ? AND r.status = 'published'",
+        String::class.java,
+        api,
+    )!!
 
     @Test
     fun `stored content is lifecycle-neutral while the assembled document injects the served value`() {

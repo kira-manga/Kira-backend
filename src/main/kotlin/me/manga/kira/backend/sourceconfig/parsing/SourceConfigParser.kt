@@ -75,37 +75,28 @@ object SourceConfigParser {
     // --- STRICT authoring ---
 
     /** Parse a single authoring [SourceConfig] strictly (PLAN §7 admin authoring). */
-    fun parseStrictSource(json: String): SourceConfig =
-        strictDecode(json, SourceConfig.serializer())
+    fun parseStrictSource(json: String): SourceConfig = strictDecode(json, SourceConfig.serializer())
 
     /** Parse a whole authoring [SourceConfigDocument] strictly. */
-    fun parseStrictDocument(json: String): SourceConfigDocument =
-        strictDecode(json, SourceConfigDocument.serializer())
+    fun parseStrictDocument(json: String): SourceConfigDocument = strictDecode(json, SourceConfigDocument.serializer())
 
     // --- COMPATIBILITY import ---
 
     /** Parse a bundled [SourceConfigDocument] leniently, exactly as the app does (PLAN §12.2). */
-    fun parseCompatibleDocument(json: String): SourceConfigDocument =
-        compatibilityDecode(json, SourceConfigDocument.serializer())
+    fun parseCompatibleDocument(json: String): SourceConfigDocument = compatibilityDecode(json, SourceConfigDocument.serializer())
 
     /** Parse a single [SourceConfig] leniently (compatibility mode). */
-    fun parseCompatibleSource(json: String): SourceConfig =
-        compatibilityDecode(json, SourceConfig.serializer())
+    fun parseCompatibleSource(json: String): SourceConfig = compatibilityDecode(json, SourceConfig.serializer())
 
     // --- Canonical outbound (delegates to the common kcj-1 implementation) ---
 
     /** Canonical `kcj-1` bytes of a document (PLAN §5). */
-    fun canonicalDocument(document: SourceConfigDocument): String =
-        CanonicalJson.canonicalize(SourceConfigDocument.serializer(), document)
+    fun canonicalDocument(document: SourceConfigDocument): String = CanonicalJson.canonicalize(SourceConfigDocument.serializer(), document)
 
     /** Canonical `kcj-1` bytes of a single stanza (PLAN §5). */
-    fun canonicalSource(source: SourceConfig): String =
-        CanonicalJson.canonicalize(SourceConfig.serializer(), source)
+    fun canonicalSource(source: SourceConfig): String = CanonicalJson.canonicalize(SourceConfig.serializer(), source)
 
-    private fun <T> strictDecode(
-        json: String,
-        serializer: kotlinx.serialization.DeserializationStrategy<T>,
-    ): T {
+    private fun <T> strictDecode(json: String, serializer: kotlinx.serialization.DeserializationStrategy<T>): T {
         // 1) Structural pre-pass: duplicate keys / trailing garbage / malformed JSON.
         try {
             strictStructureMapper.readValue(json, Any::class.java)
@@ -126,15 +117,11 @@ object SourceConfigParser {
         }
     }
 
-    private fun <T> compatibilityDecode(
-        json: String,
-        serializer: kotlinx.serialization.DeserializationStrategy<T>,
-    ): T =
-        try {
-            compatibilityJson.decodeFromString(serializer, json)
-        } catch (ex: SerializationException) {
-            throw BadRequestException(sanitize(ex.message ?: "Invalid source config."), code = CODE_MALFORMED)
-        }
+    private fun <T> compatibilityDecode(json: String, serializer: kotlinx.serialization.DeserializationStrategy<T>): T = try {
+        compatibilityJson.decodeFromString(serializer, json)
+    } catch (ex: SerializationException) {
+        throw BadRequestException(sanitize(ex.message ?: "Invalid source config."), code = CODE_MALFORMED)
+    }
 
     /**
      * Strip the raw-input snippet kotlinx/Jackson append to their messages (everything from a
@@ -148,8 +135,5 @@ object SourceConfigParser {
         return if (collapsed.length > MAX_DETAIL_LENGTH) collapsed.take(MAX_DETAIL_LENGTH) + "…" else collapsed
     }
 
-    private fun locationSuffix(
-        line: Int?,
-        column: Int?,
-    ): String = if (line != null && line > 0) " (line $line, column ${column ?: 0})" else ""
+    private fun locationSuffix(line: Int?, column: Int?): String = if (line != null && line > 0) " (line $line, column ${column ?: 0})" else ""
 }

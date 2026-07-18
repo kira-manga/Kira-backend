@@ -28,10 +28,7 @@ import java.time.Instant
  * currently-published revision row.
  */
 @Service
-class SourceQueryService(
-    private val publishedDocuments: PublishedDocumentRepository,
-    private val sources: SourceConfigRepository,
-) {
+class SourceQueryService(private val publishedDocuments: PublishedDocumentRepository, private val sources: SourceConfigRepository) {
 
     /** The latest published snapshot resolved through the authoritative pointer, or null before any publish. */
     @Transactional(readOnly = true)
@@ -47,10 +44,7 @@ class SourceQueryService(
      * document). No document ever published → empty list.
      */
     @Transactional(readOnly = true)
-    fun listSummaries(
-        lifecycles: Set<String>?,
-        engines: Set<String>?,
-    ): List<SourceSummary> {
+    fun listSummaries(lifecycles: Set<String>?, engines: Set<String>?): List<SourceSummary> {
         val document = latestDocument() ?: return emptyList()
         val parsed = SourceConfigParser.parseCompatibleDocument(document.documentJson)
         val metadata = sources.findPublishedRevisionMetadata().associateBy { it.api }
@@ -102,10 +96,7 @@ class SourceQueryService(
     }
 
     /** Extract the `sources[]` element whose `api` equals [api] from the stored document bytes, or null. */
-    private fun findStanza(
-        documentJson: String,
-        api: String,
-    ): JsonObject? {
+    private fun findStanza(documentJson: String, api: String): JsonObject? {
         val root = CanonicalJson.json.parseToJsonElement(documentJson) as? JsonObject ?: return null
         val array = root["sources"] as? JsonArray ?: return null
         return array

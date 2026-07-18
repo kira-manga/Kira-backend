@@ -31,11 +31,7 @@ class AuthService(
     private val audit: AuditService,
 ) {
     /** Public self-registration → a USER. 403 when disabled; 429 when the per-IP limit is hit. */
-    fun register(
-        email: String,
-        rawPassword: String,
-        clientIp: String,
-    ): User {
+    fun register(email: String, rawPassword: String, clientIp: String): User {
         if (!authProperties.registrationEnabled) {
             throw ForbiddenException("Registration is disabled.", code = "REGISTRATION_DISABLED")
         }
@@ -54,11 +50,7 @@ class AuthService(
     }
 
     /** Verify credentials and issue an access token. Generic 401 / 429 on failure/throttle. */
-    fun login(
-        email: String,
-        rawPassword: String,
-        clientIp: String,
-    ): LoginResult {
+    fun login(email: String, rawPassword: String, clientIp: String): LoginResult {
         val normalized = userService.normalizeEmail(email)
         throttle.checkLoginAllowed(normalized, clientIp)
 
@@ -85,7 +77,4 @@ class AuthService(
 }
 
 /** Result of a successful login — the controller maps it to the API DTO (PLAN §4.2). */
-data class LoginResult(
-    val token: IssuedToken,
-    val role: Role,
-)
+data class LoginResult(val token: IssuedToken, val role: Role)

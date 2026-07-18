@@ -23,19 +23,10 @@ import java.util.UUID
  * into the trail. Callers pass small maps of stable keys → scalar identifiers.
  */
 @Service
-class AuditService(
-    private val audit: AuditRepository,
-    private val currentUser: CurrentUser,
-    private val clock: Clock,
-) {
+class AuditService(private val audit: AuditRepository, private val currentUser: CurrentUser, private val clock: Clock) {
     /** Record an audit row, stamping `created_at` from the injected clock. */
-    fun record(
-        action: AuditAction,
-        entityType: String,
-        entityId: String,
-        detail: Map<String, Any?> = emptyMap(),
-        actorUserId: UUID? = currentActor(),
-    ) = recordAt(action, entityType, entityId, clock.instant(), detail, actorUserId)
+    fun record(action: AuditAction, entityType: String, entityId: String, detail: Map<String, Any?> = emptyMap(), actorUserId: UUID? = currentActor()) =
+        recordAt(action, entityType, entityId, clock.instant(), detail, actorUserId)
 
     /**
      * Record an audit row at a SPECIFIC instant (PLAN §9 steps 7–8 — the publication audit detail must
@@ -64,22 +55,26 @@ class AuditService(
     private fun currentActor(): UUID? = currentUser.getOrNull()?.id
 
     /** Encode a scalars-only detail map into a canonical JSON object string (PLAN §6 hygiene). */
-    private fun encode(detail: Map<String, Any?>): String =
-        JsonObject(
-            detail.mapValues { (key, value) ->
-                when (value) {
-                    null -> JsonNull
-                    is String -> JsonPrimitive(value)
-                    is Boolean -> JsonPrimitive(value)
-                    is Int -> JsonPrimitive(value)
-                    is Long -> JsonPrimitive(value)
-                    else -> error(
-                        "audit detail '$key' must be a scalar identifier/number/checksum " +
-                            "(String/Int/Long/Boolean/null) — never an object body (PLAN §6 log-hygiene)",
-                    )
-                }
-            },
-        ).toString()
+    private fun encode(detail: Map<String, Any?>): String = JsonObject(
+        detail.mapValues { (key, value) ->
+            when (value) {
+                null -> JsonNull
+
+                is String -> JsonPrimitive(value)
+
+                is Boolean -> JsonPrimitive(value)
+
+                is Int -> JsonPrimitive(value)
+
+                is Long -> JsonPrimitive(value)
+
+                else -> error(
+                    "audit detail '$key' must be a scalar identifier/number/checksum " +
+                        "(String/Int/Long/Boolean/null) — never an object body (PLAN §6 log-hygiene)",
+                )
+            }
+        },
+    ).toString()
 
     companion object {
         const val ENTITY_SOURCE = "source"

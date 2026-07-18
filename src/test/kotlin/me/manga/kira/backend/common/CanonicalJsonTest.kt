@@ -27,16 +27,10 @@ class CanonicalJsonTest {
     )
 
     @Serializable
-    data class Nested(
-        val beta: String = "",
-        val alpha: String = "",
-    )
+    data class Nested(val beta: String = "", val alpha: String = "")
 
     @Serializable
-    data class Item(
-        val id: String,
-        val tags: Map<String, String> = emptyMap(),
-    )
+    data class Item(val id: String, val tags: Map<String, String> = emptyMap())
 
     @Test
     fun `canonical bytes are deterministic across repeated encodings`() {
@@ -121,13 +115,12 @@ class CanonicalJsonTest {
         assertTrue(Regex("^[0-9a-f]{64}$").matches(checksum), "got: $checksum")
     }
 
-    private fun fullyPopulated() =
-        Doc(
-            schemaVersion = 1,
-            revision = 7,
-            name = "Example",
-            headers = linkedMapOf("b" to "2", "a" to "1"),
-            nested = Nested(beta = "y", alpha = "x"),
-            items = listOf(Item(id = "i1", tags = linkedMapOf("t" to "1")), Item(id = "i2")),
-        )
+    private fun fullyPopulated() = Doc(
+        schemaVersion = 1,
+        revision = 7,
+        name = "Example",
+        headers = linkedMapOf("b" to "2", "a" to "1"),
+        nested = Nested(beta = "y", alpha = "x"),
+        items = listOf(Item(id = "i1", tags = linkedMapOf("t" to "1")), Item(id = "i2")),
+    )
 }

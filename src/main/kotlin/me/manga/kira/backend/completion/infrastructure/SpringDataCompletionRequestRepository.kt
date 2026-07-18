@@ -21,14 +21,7 @@ interface SpringDataCompletionRequestRepository : JpaRepository<CompletionReques
         value = "UPDATE completion_requests SET status = :status, updated_at = :at WHERE id = :id",
         nativeQuery = true,
     )
-    fun updateStatus(
-        @Param("id") id: UUID,
-        @Param("status") status: String,
-        @Param("at") at: Instant,
-    )
+    fun updateStatus(@Param("id") id: UUID, @Param("status") status: String, @Param("at") at: Instant)
 
-    fun findByUserId(
-        userId: UUID,
-        pageable: Pageable,
-    ): Page<CompletionRequestEntity>
+    fun findByUserId(userId: UUID, pageable: Pageable): Page<CompletionRequestEntity>
 }

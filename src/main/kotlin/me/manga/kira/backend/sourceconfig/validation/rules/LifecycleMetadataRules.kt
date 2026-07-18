@@ -17,11 +17,7 @@ object LifecycleMetadataRules {
     private val LIFECYCLES = setOf("active", "disabled", "removed")
     private val RESOURCE_KEY_REGEX = Regex("[a-z0-9_]{1,64}")
 
-    fun check(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-    ) {
+    fun check(source: SourceConfig, ctx: RuleContext, findings: Findings) {
         val base = sourcePath(source.api)
 
         // Rule 7 — siteState vocabulary.
@@ -50,11 +46,7 @@ object LifecycleMetadataRules {
         checkIcon(source, ctx, findings, base)
     }
 
-    private fun checkHosts(
-        hosts: List<String>,
-        path: String,
-        findings: Findings,
-    ) {
+    private fun checkHosts(hosts: List<String>, path: String, findings: Findings) {
         hosts.forEachIndexed { i, host ->
             if (!isBareHost(host)) {
                 findings.error(
@@ -67,19 +59,13 @@ object LifecycleMetadataRules {
     }
 
     /** Bare host: non-blank, no `://`, no `/`, no `:` (so no port), no whitespace (PLAN §8 rule 9). */
-    private fun isBareHost(host: String): Boolean =
-        host.isNotBlank() &&
-            !host.contains("://") &&
-            !host.contains('/') &&
-            !host.contains(':') &&
-            host.none { it.isWhitespace() }
+    private fun isBareHost(host: String): Boolean = host.isNotBlank() &&
+        !host.contains("://") &&
+        !host.contains('/') &&
+        !host.contains(':') &&
+        host.none { it.isWhitespace() }
 
-    private fun checkIcon(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-        base: String,
-    ) {
+    private fun checkIcon(source: SourceConfig, ctx: RuleContext, findings: Findings, base: String) {
         val icon = source.icon ?: return
         val iconPath = "$base.icon"
 

@@ -33,12 +33,7 @@ class DocumentResponseWriter {
      * Write [document] to [response]: a bodiless **304** (same ETag + headers) when [ifNoneMatch]
      * strongly matches the checksum, otherwise **200** with the verbatim stored bytes.
      */
-    fun write(
-        document: PublishedDocument,
-        ifNoneMatch: String?,
-        cacheable: Boolean,
-        response: HttpServletResponse,
-    ) {
+    fun write(document: PublishedDocument, ifNoneMatch: String?, cacheable: Boolean, response: HttpServletResponse) {
         response.setHeader(HttpHeaders.ETAG, "\"${document.checksum}\"")
         response.setHeader(HEADER_CONFIG_REVISION, document.documentRevision.toString())
         response.setHeader(HEADER_CONFIG_CHECKSUM, document.checksum)
@@ -64,10 +59,7 @@ class DocumentResponseWriter {
      * comma-separated list is parsed and each entry compared with quotes stripped; a **weak validator
      * `W/"…"` never strongly matches** even with an identical opaque hash → full 200 body.
      */
-    private fun matchesIfNoneMatch(
-        ifNoneMatch: String?,
-        checksum: String,
-    ): Boolean {
+    private fun matchesIfNoneMatch(ifNoneMatch: String?, checksum: String): Boolean {
         val header = ifNoneMatch?.trim() ?: return false
         if (header.isEmpty()) return false
         if (header == "*") return true

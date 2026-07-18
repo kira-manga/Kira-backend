@@ -20,8 +20,7 @@ enum class RevisionStatus(val wire: String) {
     ;
 
     companion object {
-        fun fromWire(wire: String): RevisionStatus =
-            entries.firstOrNull { it.wire == wire }
-                ?: error("Unknown revision status wire value: '$wire'")
+        fun fromWire(wire: String): RevisionStatus = entries.firstOrNull { it.wire == wire }
+            ?: error("Unknown revision status wire value: '$wire'")
     }
 }

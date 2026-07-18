@@ -18,5 +18,9 @@ kira:
     # Prod onboarding is admin-created users (PLAN §4.4); open self-registration is OFF
     # (PLAN §4.2 / Open Q5: false in prod).
     registration-enabled: false
+  security:
+    # Required and validated at startup. TLS terminates at the production ingress; the application
+    # advertises only this HTTPS origin and never accepts a plain-HTTP public base URL.
+    external-base-url: ${KIRA_SECURITY_EXTERNAL_BASE_URL}
   # kira.security.jwt-secret and kira.admin.email/password come from the environment
   # (KIRA_JWT_SECRET / KIRA_ADMIN_EMAIL / KIRA_ADMIN_PASSWORD). No secret is defaulted here.

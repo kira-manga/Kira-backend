@@ -69,11 +69,7 @@ class CompletionService(
      * timeout OUTSIDE any transaction, then store the sanitized outcome. Returns the composed view.
      * [prompt] is assumed already validated (non-blank, within max length) by the controller boundary.
      */
-    fun create(
-        userId: UUID,
-        prompt: String,
-        model: String?,
-    ): CompletionView {
+    fun create(userId: UUID, prompt: String, model: String?): CompletionView {
         checkQuota(userId)
         val effectiveModel = model?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
 
@@ -107,6 +103,7 @@ class CompletionService(
                         latencyMs = resolved.latencyMs,
                     )
                 }
+
                 is Resolved.Failure -> {
                     logFailure(id, resolved)
                     persistence.storeOutcome(
@@ -126,11 +123,7 @@ class CompletionService(
     }
 
     /** Fetch one completion, enforcing owner-or-ADMIN visibility (others → null → 404, PLAN §4.6). */
-    fun getForReader(
-        id: UUID,
-        readerId: UUID,
-        readerIsAdmin: Boolean,
-    ): CompletionView? {
+    fun getForReader(id: UUID, readerId: UUID, readerIsAdmin: Boolean): CompletionView? {
         val view = persistence.findView(id) ?: return null
         return view.takeIf { readerIsAdmin || it.userId == readerId }
     }
@@ -140,13 +133,7 @@ class CompletionService(
      * another user via [userIdParam]. For a non-admin the parameter is ignored (own list only) so it
      * can never be used to read another user's history.
      */
-    fun list(
-        readerId: UUID,
-        readerIsAdmin: Boolean,
-        userIdParam: UUID?,
-        page: Int,
-        size: Int,
-    ): PagedCompletions {
+    fun list(readerId: UUID, readerIsAdmin: Boolean, userIdParam: UUID?, page: Int, size: Int): PagedCompletions {
         val targetUserId = if (readerIsAdmin && userIdParam != null) userIdParam else readerId
         return persistence.listViews(targetUserId, page, size)
     }
@@ -161,10 +148,7 @@ class CompletionService(
     }
 
     /** Run the provider on the bounded executor with the configured timeout, mapping every failure mode. */
-    private fun invokeProvider(
-        prompt: String,
-        model: String,
-    ): Resolved {
+    private fun invokeProvider(prompt: String, model: String): Resolved {
         val startNanos = System.nanoTime()
         val future =
             try {
@@ -180,6 +164,7 @@ class CompletionService(
         return try {
             when (val outcome = future.get(properties.timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 is CompletionOutcome.Success -> Resolved.Success(outcome.result, outcome.latencyMs)
+
                 // A deliberate refusal — the provider's own reason is logged server-side, never returned.
                 is CompletionOutcome.Failure ->
                     Resolved.Failure(CompletionErrorCode.PROVIDER_REJECTED, outcome.error, null, elapsedMs(startNanos))
@@ -203,14 +188,12 @@ class CompletionService(
         }
     }
 
-    private fun logFailure(
-        id: UUID,
-        failure: Resolved.Failure,
-    ) {
+    private fun logFailure(id: UUID, failure: Resolved.Failure) {
         when (failure.code) {
             // The ONLY place a full stack trace is recorded (secured server log, request-id-correlated, §6).
             CompletionErrorCode.INTERNAL_COMPLETION_ERROR ->
                 log.error("Completion {} FAILED code={} — unexpected provider error", id, failure.code, failure.cause)
+
             // Recoverable/expected provider failures — code + a sanitized provider reason, no prompt/result (§6).
             else ->
                 log.warn(
@@ -222,12 +205,11 @@ class CompletionService(
         }
     }
 
-    private fun truncate(result: String): Pair<String, Boolean> =
-        if (result.length > properties.maxResultLength) {
-            result.take(properties.maxResultLength) to true
-        } else {
-            result to false
-        }
+    private fun truncate(result: String): Pair<String, Boolean> = if (result.length > properties.maxResultLength) {
+        result.take(properties.maxResultLength) to true
+    } else {
+        result to false
+    }
 
     @PreDestroy
     fun shutdown() {
@@ -236,17 +218,9 @@ class CompletionService(
 
     /** Internal normalized outcome of the provider call — [providerDetail]/[cause] are server-log-only. */
     private sealed interface Resolved {
-        data class Success(
-            val result: String,
-            val latencyMs: Int,
-        ) : Resolved
+        data class Success(val result: String, val latencyMs: Int) : Resolved
 
-        data class Failure(
-            val code: CompletionErrorCode,
-            val providerDetail: String?,
-            val cause: Throwable?,
-            val latencyMs: Int?,
-        ) : Resolved
+        data class Failure(val code: CompletionErrorCode, val providerDetail: String?, val cause: Throwable?, val latencyMs: Int?) : Resolved
     }
 
     private companion object {
@@ -263,8 +237,7 @@ class CompletionService(
         /** Replace ALL control characters (newlines included) and bound the length — §6 log-hygiene. */
         val CONTROL_CHARS = Regex("\\p{Cntrl}")
 
-        fun sanitizeForLog(value: String?): String =
-            value?.replace(CONTROL_CHARS, " ")?.take(256) ?: "none"
+        fun sanitizeForLog(value: String?): String = value?.replace(CONTROL_CHARS, " ")?.take(256) ?: "none"
 
         fun namedThreadFactory(prefix: String): ThreadFactory {
             val counter = AtomicInteger(0)

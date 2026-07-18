@@ -82,7 +82,16 @@ class PublicConfigSecretsRejectedIT : AbstractAdminSourceIT() {
     fun `the full real bundled document passes all secret-safety rules`() {
         val document = SourceConfigParser.parseCompatibleDocument(SourceConfigFixtures.loadFixture("bundled-full.json"))
         val result = validator.validate(document)
-        val secretCodes = setOf("FORBIDDEN_HEADER", "SECRET_LIKE_HEADER", "URL_USERINFO_FORBIDDEN", "URL_INVALID", "URL_SCHEME_INVALID", "URL_FRAGMENT_FORBIDDEN", "URL_HOST_MISSING")
+        val secretCodes =
+            setOf(
+                "FORBIDDEN_HEADER",
+                "SECRET_LIKE_HEADER",
+                "URL_USERINFO_FORBIDDEN",
+                "URL_INVALID",
+                "URL_SCHEME_INVALID",
+                "URL_FRAGMENT_FORBIDDEN",
+                "URL_HOST_MISSING",
+            )
         val offending = result.errors.filter { it.code in secretCodes }
         assertTrue(offending.isEmpty(), "bundled document must have zero secret-safety errors, got: $offending")
     }

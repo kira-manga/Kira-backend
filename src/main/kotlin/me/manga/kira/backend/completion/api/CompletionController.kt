@@ -30,16 +30,10 @@ import java.util.UUID
  */
 @RestController
 @RequestMapping("/api/v1/completions")
-class CompletionController(
-    private val completionService: CompletionService,
-    private val properties: KiraCompletionProperties,
-) {
+class CompletionController(private val completionService: CompletionService, private val properties: KiraCompletionProperties) {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun create(
-        @RequestBody request: CompletionRequestDto,
-        @AuthenticationPrincipal user: AuthenticatedUser,
-    ): CompletionResponse {
+    fun create(@RequestBody request: CompletionRequestDto, @AuthenticationPrincipal user: AuthenticatedUser): CompletionResponse {
         val prompt = request.prompt
         if (prompt.isBlank()) {
             throw BadRequestException("prompt must not be blank.", code = "BLANK_PROMPT")
@@ -60,14 +54,10 @@ class CompletionController(
     }
 
     @GetMapping("/{id}")
-    fun get(
-        @PathVariable id: UUID,
-        @AuthenticationPrincipal user: AuthenticatedUser,
-    ): CompletionResponse =
-        completionService
-            .getForReader(id, user.id, user.role == Role.ADMIN)
-            ?.let(CompletionResponse::from)
-            ?: throw NotFoundException("No completion with that id.", code = "COMPLETION_NOT_FOUND")
+    fun get(@PathVariable id: UUID, @AuthenticationPrincipal user: AuthenticatedUser): CompletionResponse = completionService
+        .getForReader(id, user.id, user.role == Role.ADMIN)
+        ?.let(CompletionResponse::from)
+        ?: throw NotFoundException("No completion with that id.", code = "COMPLETION_NOT_FOUND")
 
     @GetMapping
     fun list(

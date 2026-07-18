@@ -23,10 +23,7 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/v1/source-config")
-class SourceDocumentController(
-    private val sourceQueryService: SourceQueryService,
-    private val documentResponseWriter: DocumentResponseWriter,
-) {
+class SourceDocumentController(private val sourceQueryService: SourceQueryService, private val documentResponseWriter: DocumentResponseWriter) {
 
     /**
      * `GET /source-config/document` — the app document. Optional `appVersion` is validated (semver-ish,

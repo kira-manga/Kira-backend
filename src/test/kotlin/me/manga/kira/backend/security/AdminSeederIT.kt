@@ -1,10 +1,10 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.support.AbstractIntegrationTest
-import org.junit.jupiter.api.Test
-import org.springframework.beans.factory.annotation.Autowired
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.test.context.TestPropertySource
 
 /**
@@ -22,36 +22,33 @@ import org.springframework.test.context.TestPropertySource
     ],
 )
 class AdminSeederIT
-    @Autowired
-    constructor(
-        private val adminSeeder: AdminSeeder,
-    ) : AbstractIntegrationTest() {
+@Autowired
+constructor(private val adminSeeder: AdminSeeder) : AbstractIntegrationTest() {
 
-        private fun adminCount(): Long =
-            jdbcTemplate.queryForObject("SELECT count(*) FROM users WHERE role = 'ADMIN'", Long::class.java)!!
+    private fun adminCount(): Long = jdbcTemplate.queryForObject("SELECT count(*) FROM users WHERE role = 'ADMIN'", Long::class.java)!!
 
-        @Test
-        fun `seeds exactly one admin and is idempotent`() {
-            adminSeeder.run(null)
-            assertEquals(1L, adminCount())
-            assertEquals(
-                1L,
-                jdbcTemplate.queryForObject(
-                    "SELECT count(*) FROM users WHERE lower(email) = 'seed-admin@example.com'",
-                    Long::class.java,
-                ),
-            )
+    @Test
+    fun `seeds exactly one admin and is idempotent`() {
+        adminSeeder.run(null)
+        assertEquals(1L, adminCount())
+        assertEquals(
+            1L,
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM users WHERE lower(email) = 'seed-admin@example.com'",
+                Long::class.java,
+            ),
+        )
 
-            // Idempotent: a second run (a "restart") creates no second admin and resets no password.
-            adminSeeder.run(null)
-            assertEquals(1L, adminCount())
-        }
-
-        @Test
-        fun `an admin already present short-circuits (no duplicate)`() {
-            adminSeeder.run(null)
-            val before = adminCount()
-            adminSeeder.run(null)
-            assertTrue(before == 1L && adminCount() == 1L)
-        }
+        // Idempotent: a second run (a "restart") creates no second admin and resets no password.
+        adminSeeder.run(null)
+        assertEquals(1L, adminCount())
     }
+
+    @Test
+    fun `an admin already present short-circuits (no duplicate)`() {
+        adminSeeder.run(null)
+        val before = adminCount()
+        adminSeeder.run(null)
+        assertTrue(before == 1L && adminCount() == 1L)
+    }
+}

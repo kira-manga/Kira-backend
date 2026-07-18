@@ -14,10 +14,8 @@ import org.springframework.stereotype.Component
 class CurrentUser {
 
     /** The authenticated principal, or null when the request is anonymous. */
-    fun getOrNull(): AuthenticatedUser? =
-        SecurityContextHolder.getContext().authentication?.principal as? AuthenticatedUser
+    fun getOrNull(): AuthenticatedUser? = SecurityContextHolder.getContext().authentication?.principal as? AuthenticatedUser
 
     /** The authenticated principal; throws 401 when absent (a programming error on a protected path). */
-    fun require(): AuthenticatedUser =
-        getOrNull() ?: throw UnauthorizedException("Authentication required.")
+    fun require(): AuthenticatedUser = getOrNull() ?: throw UnauthorizedException("Authentication required.")
 }

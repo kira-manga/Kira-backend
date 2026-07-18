@@ -9,12 +9,6 @@ package me.manga.kira.backend.completion.domain
  * Any OTHER unexpected `Throwable` maps to `INTERNAL_COMPLETION_ERROR` and is never leaked to a client.
  * A deliberate *refusal* is NOT an exception — it is a [CompletionOutcome.Failure] (→ `PROVIDER_REJECTED`).
  */
-class ProviderUnavailableException(
-    message: String,
-    cause: Throwable? = null,
-) : RuntimeException(message, cause)
+class ProviderUnavailableException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
-class InvalidProviderResponseException(
-    message: String,
-    cause: Throwable? = null,
-) : RuntimeException(message, cause)
+class InvalidProviderResponseException(message: String, cause: Throwable? = null) : RuntimeException(message, cause)

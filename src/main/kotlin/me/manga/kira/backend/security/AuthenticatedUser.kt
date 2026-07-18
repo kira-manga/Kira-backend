@@ -11,14 +11,8 @@ import java.util.UUID
  * [CurrentUser] resolver, `@AuthenticationPrincipal`, `/auth/me`) are pure SecurityContext reads
  * with no second DB query per request.
  */
-data class AuthenticatedUser(
-    val id: UUID,
-    val email: String,
-    val role: Role,
-    val createdAt: Instant,
-) {
+data class AuthenticatedUser(val id: UUID, val email: String, val role: Role, val createdAt: Instant) {
     companion object {
-        fun from(user: User): AuthenticatedUser =
-            AuthenticatedUser(id = user.id, email = user.email, role = user.role, createdAt = user.createdAt)
+        fun from(user: User): AuthenticatedUser = AuthenticatedUser(id = user.id, email = user.email, role = user.role, createdAt = user.createdAt)
     }
 }

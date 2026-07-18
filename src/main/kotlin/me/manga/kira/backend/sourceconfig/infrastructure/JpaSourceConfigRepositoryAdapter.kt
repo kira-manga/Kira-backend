@@ -25,10 +25,7 @@ import java.util.UUID
  * query, ordered by `(position ASC, api ASC)` (PLAN §5/§9).
  */
 @Repository
-class JpaSourceConfigRepositoryAdapter(
-    private val jpa: SpringDataSourceConfigRepository,
-    private val jdbcTemplate: JdbcTemplate,
-) : SourceConfigRepository {
+class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRepository, private val jdbcTemplate: JdbcTemplate) : SourceConfigRepository {
 
     override fun findByApi(api: String): SourceConfigHead? = jpa.findByApi(api)?.toDomain()
 
@@ -51,39 +48,34 @@ class JpaSourceConfigRepositoryAdapter(
         return jpa.save(entity).toDomain()
     }
 
-    override fun lockByApiForUpdate(api: String): SourceConfigHead? =
-        jdbcTemplate
-            .query("SELECT * FROM source_configs WHERE api = ? FOR UPDATE", HEAD_MAPPER, api)
-            .firstOrNull()
+    override fun lockByApiForUpdate(api: String): SourceConfigHead? = jdbcTemplate
+        .query("SELECT * FROM source_configs WHERE api = ? FOR UPDATE", HEAD_MAPPER, api)
+        .firstOrNull()
 
-    override fun nextPosition(): Int =
-        jdbcTemplate.queryForObject("SELECT COALESCE(MAX(position) + 1, 0) FROM source_configs", Int::class.java) ?: 0
+    override fun nextPosition(): Int = jdbcTemplate.queryForObject("SELECT COALESCE(MAX(position) + 1, 0) FROM source_configs", Int::class.java) ?: 0
 
-    override fun findAll(status: SourceLifecycleStatus?): List<SourceConfigHead> =
-        if (status == null) {
-            jpa.findAllByOrderByPositionAscApiAsc()
-        } else {
-            jpa.findAllByStatusOrderByPositionAscApiAsc(status)
-        }.map { it.toDomain() }
+    override fun findAll(status: SourceLifecycleStatus?): List<SourceConfigHead> = if (status == null) {
+        jpa.findAllByOrderByPositionAscApiAsc()
+    } else {
+        jpa.findAllByStatusOrderByPositionAscApiAsc(status)
+    }.map { it.toDomain() }
 
-    override fun findSourcesForAssembly(): List<AssemblySource> =
-        jdbcTemplate.query(
-            "SELECT s.api, s.position, s.engine, s.status, r.config_canonical_json " +
-                "FROM source_configs s " +
-                "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
-                "WHERE s.status IN ('active', 'disabled', 'retired') " +
-                "ORDER BY s.position ASC, s.api ASC",
-            ASSEMBLY_MAPPER,
-        )
+    override fun findSourcesForAssembly(): List<AssemblySource> = jdbcTemplate.query(
+        "SELECT s.api, s.position, s.engine, s.status, r.config_canonical_json " +
+            "FROM source_configs s " +
+            "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
+            "WHERE s.status IN ('active', 'disabled', 'retired') " +
+            "ORDER BY s.position ASC, s.api ASC",
+        ASSEMBLY_MAPPER,
+    )
 
-    override fun findPublishedRevisionMetadata(): List<PublishedRevisionMetadata> =
-        jdbcTemplate.query(
-            "SELECT s.api, r.revision_number, r.published_at " +
-                "FROM source_configs s " +
-                "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
-                "WHERE s.status IN ('active', 'disabled', 'retired')",
-            METADATA_MAPPER,
-        )
+    override fun findPublishedRevisionMetadata(): List<PublishedRevisionMetadata> = jdbcTemplate.query(
+        "SELECT s.api, r.revision_number, r.published_at " +
+            "FROM source_configs s " +
+            "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
+            "WHERE s.status IN ('active', 'disabled', 'retired')",
+        METADATA_MAPPER,
+    )
 
     override fun applyPublishedRevision(
         id: UUID,
@@ -109,28 +101,23 @@ class JpaSourceConfigRepositoryAdapter(
         updatedAt = updatedAt,
     )
 
-    override fun updateStatus(
-        id: UUID,
-        status: SourceLifecycleStatus,
-        updatedAt: Instant,
-    ) = jpa.updateStatusNative(id, status.wire, updatedAt)
+    override fun updateStatus(id: UUID, status: SourceLifecycleStatus, updatedAt: Instant) = jpa.updateStatusNative(id, status.wire, updatedAt)
 
-    private fun SourceConfigEntity.toDomain(): SourceConfigHead =
-        SourceConfigHead(
-            id = requireNotNull(id) { "persisted SourceConfigEntity must have an id" },
-            api = api,
-            displayName = displayName,
-            language = language,
-            engine = engine,
-            status = status,
-            position = position,
-            baseUrl = baseUrl,
-            adult = adult,
-            currentPublishedRevisionId = currentPublishedRevisionId,
-            createdAt = createdAt,
-            updatedAt = updatedAt,
-            publishedAt = publishedAt,
-        )
+    private fun SourceConfigEntity.toDomain(): SourceConfigHead = SourceConfigHead(
+        id = requireNotNull(id) { "persisted SourceConfigEntity must have an id" },
+        api = api,
+        displayName = displayName,
+        language = language,
+        engine = engine,
+        status = status,
+        position = position,
+        baseUrl = baseUrl,
+        adult = adult,
+        currentPublishedRevisionId = currentPublishedRevisionId,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+        publishedAt = publishedAt,
+    )
 
     private companion object {
         val HEAD_MAPPER =

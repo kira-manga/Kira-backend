@@ -71,18 +71,11 @@ data class SourceConfig(
 
 /** `resourceKey` regex `[a-z0-9_]{1,64}`; `remoteUrl` absolute **HTTPS-only** (PLAN §7 / §8 rule 10). */
 @Serializable
-data class IconSpec(
-    val resourceKey: String = "",
-    val remoteUrl: String = "",
-)
+data class IconSpec(val resourceKey: String = "", val remoteUrl: String = "")
 
 /** Only `page-number` exists in the app registry (PLAN §7 / §8 rule 12). */
 @Serializable
-data class PaginationSpec(
-    val type: String = "page-number",
-    val param: String = "page",
-    val start: Int = 1,
-)
+data class PaginationSpec(val type: String = "page-number", val param: String = "page", val start: Int = 1)
 
 /**
  * One endpoint (verb) template. `url` supports `{baseUrl}`, `{imageBase}`, `{page}`,
@@ -137,11 +130,7 @@ data class FieldSpec(
 
 /** A single transform step; `fn` is validated against the transform whitelist (PLAN §8 rule 15). */
 @Serializable
-data class TransformSpec(
-    val fn: String,
-    val args: Map<String, String> = emptyMap(),
-    val list: List<String> = emptyList(),
-)
+data class TransformSpec(val fn: String, val args: Map<String, String> = emptyMap(), val list: List<String> = emptyList())
 
 /**
  * User-facing search filter (PLAN §7 / §8 rules 16–27). `request` is REQUIRED (no default).
@@ -168,10 +157,7 @@ data class FilterDefinition(
 
 /** One selectable option for a select/multiselect filter (PLAN §7). */
 @Serializable
-data class FilterOptionSpec(
-    val value: String,
-    val label: String = "",
-)
+data class FilterOptionSpec(val value: String, val label: String = "")
 
 /**
  * How a filter value is composed into the request (PLAN §7 / §8 rules 22–24). `target` and `param`
@@ -192,7 +178,4 @@ data class FilterRequestSpec(
 
 /** A `visibleWhen` condition (PLAN §7 / §8 rule 25). `filter` and `anyOf` are REQUIRED. */
 @Serializable
-data class FilterConditionSpec(
-    val filter: String,
-    val anyOf: List<String>,
-)
+data class FilterConditionSpec(val filter: String, val anyOf: List<String>)

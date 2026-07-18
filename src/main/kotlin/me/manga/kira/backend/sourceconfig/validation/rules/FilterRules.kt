@@ -32,11 +32,7 @@ object FilterRules {
     /** Standard ids that must be select-or-multiselect (PLAN §8 rule 19). */
     private val SELECT_OR_MULTISELECT_IDS = setOf("genres", "status", "language", "type")
 
-    fun check(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-    ) {
+    fun check(source: SourceConfig, ctx: RuleContext, findings: Findings) {
         val filters = source.filters
         if (filters.isEmpty()) return
         val base = sourcePath(source.api)
@@ -62,13 +58,7 @@ object FilterRules {
         detectCycle(filters, byId, findings, base)
     }
 
-    private fun checkFilter(
-        source: SourceConfig,
-        f: FilterDefinition,
-        byId: Map<String, FilterDefinition>,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkFilter(source: SourceConfig, f: FilterDefinition, byId: Map<String, FilterDefinition>, findings: Findings, path: String) {
         // Rule 16 — id non-blank + regex.
         if (f.id.isBlank() || !ID_REGEX.matches(f.id)) {
             findings.error(ValidationCodes.FILTER_ID_INVALID, "$path.id", "filter id must match [a-z0-9_]{1,64}.")
@@ -103,11 +93,7 @@ object FilterRules {
     }
 
     // Rule 20 — options presence/absence + value validity.
-    private fun checkOptions(
-        f: FilterDefinition,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkOptions(f: FilterDefinition, findings: Findings, path: String) {
         val isSelectLike = f.type == "select" || f.type == "multiselect"
         val isValueless = f.type == "toggle" || f.type == "text" || f.type == "number"
         if (isSelectLike && f.options.isEmpty()) {
@@ -131,11 +117,7 @@ object FilterRules {
     }
 
     // Rule 21 — defaults.
-    private fun checkDefaults(
-        f: FilterDefinition,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkDefaults(f: FilterDefinition, findings: Findings, path: String) {
         val optionValues = f.options.map { it.value }.toSet()
         if (f.type == "multiselect") {
             if (f.default.isNotEmpty()) {
@@ -155,10 +137,12 @@ object FilterRules {
                     if (f.default.isNotEmpty() && f.default !in optionValues) {
                         findings.error(ValidationCodes.FILTER_DEFAULT_NOT_OPTION, "$path.default", "default '${f.default}' is not a declared option value.")
                     }
+
                 "toggle" ->
                     if (f.default !in setOf("", "true", "false")) {
                         findings.error(ValidationCodes.FILTER_TOGGLE_DEFAULT_INVALID, "$path.default", "toggle default must be '', 'true', or 'false'.")
                     }
+
                 "number" ->
                     if (f.default.isNotEmpty() && f.default.toDoubleOrNull() == null) {
                         findings.error(ValidationCodes.FILTER_NUMBER_DEFAULT_INVALID, "$path.default", "number default must parse as a number.")
@@ -175,11 +159,7 @@ object FilterRules {
     }
 
     // Rules 22 & 23 — request spec + placeholder/reserved-var checks.
-    private fun checkRequest(
-        f: FilterDefinition,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkRequest(f: FilterDefinition, findings: Findings, path: String) {
         val r = f.request
         val rp = "$path.request"
         val knownTarget = r.target in TARGETS
@@ -220,12 +200,7 @@ object FilterRules {
     }
 
     // Rule 24 — appliesTo verbs + per-verb endpoint coherence.
-    private fun checkAppliesTo(
-        source: SourceConfig,
-        f: FilterDefinition,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkAppliesTo(source: SourceConfig, f: FilterDefinition, findings: Findings, path: String) {
         if (f.appliesTo.isEmpty()) {
             findings.error(ValidationCodes.FILTER_APPLIES_TO_EMPTY, "$path.appliesTo", "appliesTo must be non-empty.")
         }
@@ -245,28 +220,55 @@ object FilterRules {
             when (r.target) {
                 "form" -> {
                     if (!HttpMethods.isPostForm(endpoint.method)) {
-                        findings.error(ValidationCodes.FILTER_FORM_METHOD_MISMATCH, "$path.request.target", "form target requires a post-form endpoint '$verb'.")
+                        findings.error(
+                            ValidationCodes.FILTER_FORM_METHOD_MISMATCH,
+                            "$path.request.target",
+                            "form target requires a post-form endpoint '$verb'.",
+                        )
                     }
                     if (r.param in endpoint.formBody.keys) {
-                        findings.error(ValidationCodes.FILTER_FORM_PARAM_COLLISION, "$path.request.param", "param '${r.param}' collides with a static formBody key on '$verb'.")
+                        findings.error(
+                            ValidationCodes.FILTER_FORM_PARAM_COLLISION,
+                            "$path.request.param",
+                            "param '${r.param}' collides with a static formBody key on '$verb'.",
+                        )
                     }
                 }
+
                 "body-json" -> {
                     if (!HttpMethods.isPostJson(endpoint.method)) {
-                        findings.error(ValidationCodes.FILTER_BODYJSON_METHOD_MISMATCH, "$path.request.target", "body-json target requires a post-json endpoint '$verb'.")
+                        findings.error(
+                            ValidationCodes.FILTER_BODYJSON_METHOD_MISMATCH,
+                            "$path.request.target",
+                            "body-json target requires a post-json endpoint '$verb'.",
+                        )
                     }
                     if (!endpoint.jsonBody.contains("{${r.param}}")) {
-                        findings.error(ValidationCodes.FILTER_BODYJSON_MISSING_PLACEHOLDER, "$path.request.param", "endpoint '$verb' jsonBody must contain {${r.param}}.")
+                        findings.error(
+                            ValidationCodes.FILTER_BODYJSON_MISSING_PLACEHOLDER,
+                            "$path.request.param",
+                            "endpoint '$verb' jsonBody must contain {${r.param}}.",
+                        )
                     }
                 }
+
                 "path" -> {
                     if (!endpoint.url.contains("{${r.param}}")) {
-                        findings.error(ValidationCodes.FILTER_PATH_PLACEHOLDER_MISSING, "$path.request.param", "endpoint '$verb' url must contain {${r.param}}.")
+                        findings.error(
+                            ValidationCodes.FILTER_PATH_PLACEHOLDER_MISSING,
+                            "$path.request.param",
+                            "endpoint '$verb' url must contain {${r.param}}.",
+                        )
                     }
                 }
+
                 "query" -> {
                     if (endpoint.url.contains("?${r.param}=") || endpoint.url.contains("&${r.param}=")) {
-                        findings.error(ValidationCodes.FILTER_QUERY_PARAM_HARDCODED, "$path.request.param", "query param '${r.param}' is already hardcoded in endpoint '$verb' url.")
+                        findings.error(
+                            ValidationCodes.FILTER_QUERY_PARAM_HARDCODED,
+                            "$path.request.param",
+                            "query param '${r.param}' is already hardcoded in endpoint '$verb' url.",
+                        )
                     }
                 }
             }
@@ -274,12 +276,7 @@ object FilterRules {
     }
 
     // Rule 25 — visibleWhen references.
-    private fun checkVisibleWhen(
-        f: FilterDefinition,
-        byId: Map<String, FilterDefinition>,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkVisibleWhen(f: FilterDefinition, byId: Map<String, FilterDefinition>, findings: Findings, path: String) {
         f.visibleWhen.forEachIndexed { i, cond ->
             val cp = "$path.visibleWhen[$i]"
             if (cond.filter == f.id) {
@@ -310,12 +307,7 @@ object FilterRules {
     }
 
     // Rule 26 — excludeOf.
-    private fun checkExcludeOf(
-        f: FilterDefinition,
-        byId: Map<String, FilterDefinition>,
-        findings: Findings,
-        path: String,
-    ) {
+    private fun checkExcludeOf(f: FilterDefinition, byId: Map<String, FilterDefinition>, findings: Findings, path: String) {
         if (f.excludeOf.isEmpty()) return
         val ep = "$path.excludeOf"
         if (f.type != "multiselect") {
@@ -342,47 +334,40 @@ object FilterRules {
     }
 
     // Rule 27 — visibleWhen dependency-cycle detection (DFS; one report per source).
-    private fun detectCycle(
-        filters: List<FilterDefinition>,
-        byId: Map<String, FilterDefinition>,
-        findings: Findings,
-        base: String,
-    ) {
+    private fun detectCycle(filters: List<FilterDefinition>, byId: Map<String, FilterDefinition>, findings: Findings, base: String) {
         val adjacency: Map<String, List<String>> =
             filters.associate { f ->
                 f.id to f.visibleWhen.map { it.filter }.filter { byId.containsKey(it) }
             }
-        val WHITE = 0
-        val GRAY = 1
-        val BLACK = 2
+        val white = 0
+        val gray = 1
+        val black = 2
         val color = HashMap<String, Int>()
 
         fun dfs(node: String): Boolean {
-            color[node] = GRAY
+            color[node] = gray
             for (next in adjacency[node].orEmpty()) {
                 if (next == node) continue // self-reference is a rule-25 finding, not a cycle
-                when (color[next] ?: WHITE) {
-                    GRAY -> return true
-                    WHITE -> if (dfs(next)) return true
+                when (color[next] ?: white) {
+                    gray -> return true
+                    white -> if (dfs(next)) return true
                 }
             }
-            color[node] = BLACK
+            color[node] = black
             return false
         }
 
-        val cycle = filters.any { (color[it.id] ?: WHITE) == WHITE && dfs(it.id) }
+        val cycle = filters.any { (color[it.id] ?: white) == white && dfs(it.id) }
         if (cycle) {
             findings.error(ValidationCodes.FILTER_CYCLE, "$base.filters", "visibleWhen dependency cycle detected among filters.")
         }
     }
 
-    private fun hasUsableDefault(f: FilterDefinition): Boolean =
-        if (f.type == "multiselect") f.defaults.isNotEmpty() else f.default.isNotEmpty()
+    private fun hasUsableDefault(f: FilterDefinition): Boolean = if (f.type == "multiselect") f.defaults.isNotEmpty() else f.default.isNotEmpty()
 
-    private fun vocabulary(f: FilterDefinition): Set<String>? =
-        when (f.type) {
-            "select", "multiselect" -> f.options.map { it.value }.toSet()
-            "toggle" -> setOf("true", "false")
-            else -> null
-        }
+    private fun vocabulary(f: FilterDefinition): Set<String>? = when (f.type) {
+        "select", "multiselect" -> f.options.map { it.value }.toSet()
+        "toggle" -> setOf("true", "false")
+        else -> null
+    }
 }

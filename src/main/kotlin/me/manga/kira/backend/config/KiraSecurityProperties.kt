@@ -44,11 +44,28 @@ data class KiraSecurityProperties(
     val trustForwardedHeaders: Boolean = false,
     /** Trusted reverse-proxy CIDRs/addresses (PLAN §6). Empty = no proxy trusted. */
     val trustedProxies: List<String> = emptyList(),
+    /** Public HTTPS origin advertised to app clients; mandatory in the production profile. */
+    val externalBaseUrl: String? = null,
+    /** Explicit browser origins. Empty keeps CORS disabled, which is correct for mobile-only use. */
+    val allowedOrigins: List<String> = emptyList(),
     /** In-memory auth-throttle store bounds + tuning (PLAN §6). */
     @field:Valid
     @field:NotNull
     val throttle: Throttle = Throttle(),
 ) {
+    init {
+        require(!accessTokenTtl.isZero && !accessTokenTtl.isNegative && accessTokenTtl <= Duration.ofHours(24)) {
+            "kira.security.access-token-ttl must be greater than zero and no more than 24 hours"
+        }
+        require(!clockSkew.isNegative && clockSkew < accessTokenTtl) {
+            "kira.security.clock-skew must be non-negative and shorter than the access-token TTL"
+        }
+        require(issuer != audience) { "kira.security.issuer and audience must be distinct" }
+        require(allowedOrigins.none { it.isBlank() || it == "*" }) {
+            "kira.security.allowed-origins must contain explicit non-blank origins; wildcard is forbidden"
+        }
+    }
+
     /**
      * Auth-throttle tuning (PLAN §6). Login has both a normalized-email/client-IP identity bucket and
      * a separate client-IP spray bucket; registration is a per-IP rate limit. Everything is TTL-bounded
@@ -79,5 +96,20 @@ data class KiraSecurityProperties(
         /** Registration rate-limit window (PLAN §6). */
         @field:NotNull
         val registrationWindow: Duration = Duration.ofHours(1),
-    )
+    ) {
+        init {
+            require(!loginInitialBlock.isZero && !loginInitialBlock.isNegative) {
+                "kira.security.throttle.login-initial-block must be positive"
+            }
+            require(loginMaxBlock >= loginInitialBlock) {
+                "kira.security.throttle.login-max-block must be at least login-initial-block"
+            }
+            require(!loginFailureWindow.isZero && !loginFailureWindow.isNegative) {
+                "kira.security.throttle.login-failure-window must be positive"
+            }
+            require(!registrationWindow.isZero && !registrationWindow.isNegative) {
+                "kira.security.throttle.registration-window must be positive"
+            }
+        }
+    }
 }

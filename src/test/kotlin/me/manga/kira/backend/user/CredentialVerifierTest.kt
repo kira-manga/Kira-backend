@@ -26,10 +26,7 @@ class CredentialVerifierTest {
         assertEquals(listOf("decoy-hash", "decoy-hash", "enabled-real-hash"), encoder.verifiedHashes)
     }
 
-    private fun user(
-        enabled: Boolean,
-        hash: String,
-    ) = User(
+    private fun user(enabled: Boolean, hash: String) = User(
         id = UUID.randomUUID(),
         email = "reader@example.com",
         passwordHash = hash,
@@ -44,10 +41,7 @@ class CredentialVerifierTest {
 
         override fun encode(rawPassword: CharSequence): String = "decoy-hash"
 
-        override fun matches(
-            rawPassword: CharSequence,
-            encodedPassword: String,
-        ): Boolean {
+        override fun matches(rawPassword: CharSequence, encodedPassword: String): Boolean {
             verifiedHashes += encodedPassword
             return encodedPassword == "enabled-real-hash"
         }

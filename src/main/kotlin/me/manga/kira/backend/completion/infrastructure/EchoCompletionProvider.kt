@@ -17,10 +17,7 @@ import org.springframework.stereotype.Component
 class EchoCompletionProvider : CompletionProvider {
     override val name: String = "echo"
 
-    override fun complete(
-        prompt: String,
-        model: String,
-    ): CompletionOutcome {
+    override fun complete(prompt: String, model: String): CompletionOutcome {
         require(prompt.isNotBlank()) { "prompt must not be blank" }
         val start = System.nanoTime()
         val result = "echo: $prompt"

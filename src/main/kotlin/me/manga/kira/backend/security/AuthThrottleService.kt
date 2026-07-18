@@ -28,10 +28,7 @@ import java.time.Instant
  * eviction removes dead entries first, then the oldest by last-update.
  */
 @Service
-class AuthThrottleService(
-    private val properties: KiraSecurityProperties,
-    private val clock: Clock,
-) {
+class AuthThrottleService(private val properties: KiraSecurityProperties, private val clock: Clock) {
     private val throttle get() = properties.throttle
 
     private val lock = Any()
@@ -39,10 +36,7 @@ class AuthThrottleService(
     private val registrationBuckets = HashMap<String, RegistrationBucket>()
 
     /** Throws 429 if either the (email, IP) identity or aggregate IP bucket is blocked. */
-    fun checkLoginAllowed(
-        normalizedEmail: String,
-        clientIp: String,
-    ) {
+    fun checkLoginAllowed(normalizedEmail: String, clientIp: String) {
         val now = clock.instant()
         synchronized(lock) {
             for (key in listOf(loginIdentityKey(normalizedEmail, clientIp), loginIpKey(clientIp))) {
@@ -55,10 +49,7 @@ class AuthThrottleService(
     }
 
     /** Record a failed login; may arm the temporary block. */
-    fun recordLoginFailure(
-        normalizedEmail: String,
-        clientIp: String,
-    ) {
+    fun recordLoginFailure(normalizedEmail: String, clientIp: String) {
         val now = clock.instant()
         synchronized(lock) {
             recordFailure(
@@ -77,10 +68,7 @@ class AuthThrottleService(
     }
 
     /** Successful login clears the identity bucket; it cannot erase aggregate IP spray history. */
-    fun recordLoginSuccess(
-        normalizedEmail: String,
-        clientIp: String,
-    ) {
+    fun recordLoginSuccess(normalizedEmail: String, clientIp: String) {
         synchronized(lock) { loginBuckets.remove(loginIdentityKey(normalizedEmail, clientIp)) }
     }
 
@@ -116,12 +104,7 @@ class AuthThrottleService(
     /** Total tracked entries across both stores (for tests / diagnostics). */
     fun size(): Int = synchronized(lock) { loginBuckets.size + registrationBuckets.size }
 
-    private fun recordFailure(
-        key: String,
-        threshold: Int,
-        now: Instant,
-        dimension: String,
-    ) {
+    private fun recordFailure(key: String, threshold: Int, now: Instant, dimension: String) {
         val bucket =
             loginBuckets.getOrPut(key) {
                 evictIfNeeded(loginBuckets, now) { it.isDead(now, throttle) }
@@ -143,10 +126,7 @@ class AuthThrottleService(
     }
 
     /** Key = hash(capped email) + IP — bounded and credential-free (PLAN §6 bounded keys). */
-    private fun loginIdentityKey(
-        normalizedEmail: String,
-        clientIp: String,
-    ): String {
+    private fun loginIdentityKey(normalizedEmail: String, clientIp: String): String {
         val capped = normalizedEmail.take(EMAIL_KEY_CAP)
         return "identity|" + Sha256.hexUtf8(capped) + "|" + clientIp
     }
@@ -157,11 +137,7 @@ class AuthThrottleService(
      * Ensure there is room for one more key: drop dead entries first, then the oldest by last-update,
      * until under the cap (PLAN §6 deterministic eviction).
      */
-    private fun <B : TrackedBucket> evictIfNeeded(
-        map: MutableMap<String, B>,
-        now: Instant,
-        isDead: (B) -> Boolean,
-    ) {
+    private fun <B : TrackedBucket> evictIfNeeded(map: MutableMap<String, B>, now: Instant, isDead: (B) -> Boolean) {
         if (map.size < throttle.maxEntries) return
         map.entries.removeIf { isDead(it.value) }
         while (map.size >= throttle.maxEntries) {
@@ -174,31 +150,17 @@ class AuthThrottleService(
         val lastUpdate: Instant
     }
 
-    private class LoginBucket(
-        var failures: Int = 0,
-        var blockedUntil: Instant? = null,
-        var nextBlock: Duration,
-        override var lastUpdate: Instant,
-    ) : TrackedBucket {
-        fun isDead(
-            now: Instant,
-            throttle: KiraSecurityProperties.Throttle,
-        ): Boolean {
+    private class LoginBucket(var failures: Int = 0, var blockedUntil: Instant? = null, var nextBlock: Duration, override var lastUpdate: Instant) :
+        TrackedBucket {
+        fun isDead(now: Instant, throttle: KiraSecurityProperties.Throttle): Boolean {
             val blockOver = blockedUntil?.let { !now.isBefore(it) } ?: true
             val windowOver = Duration.between(lastUpdate, now) > throttle.loginFailureWindow
             return blockOver && windowOver
         }
     }
 
-    private class RegistrationBucket(
-        var windowStart: Instant,
-        var count: Int = 0,
-        override var lastUpdate: Instant,
-    ) : TrackedBucket {
-        fun isDead(
-            now: Instant,
-            throttle: KiraSecurityProperties.Throttle,
-        ): Boolean = Duration.between(windowStart, now) > throttle.registrationWindow
+    private class RegistrationBucket(var windowStart: Instant, var count: Int = 0, override var lastUpdate: Instant) : TrackedBucket {
+        fun isDead(now: Instant, throttle: KiraSecurityProperties.Throttle): Boolean = Duration.between(windowStart, now) > throttle.registrationWindow
     }
 
     private companion object {

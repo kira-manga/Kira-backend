@@ -34,80 +34,74 @@ object LifecycleStateMachine {
      * Apply a lifecycle [action] to [current] for a source whose (published) revision has engine
      * [engine]; return the resulting status. Throws on any disallowed transition (§9).
      */
-    fun transition(
-        current: SourceLifecycleStatus,
-        action: LifecycleAction,
-        engine: String,
-    ): SourceLifecycleStatus =
-        when (action) {
-            LifecycleAction.DISABLE ->
-                if (current == SourceLifecycleStatus.ACTIVE) {
-                    SourceLifecycleStatus.DISABLED
-                } else {
-                    illegal(current, action)
-                }
+    fun transition(current: SourceLifecycleStatus, action: LifecycleAction, engine: String): SourceLifecycleStatus = when (action) {
+        LifecycleAction.DISABLE ->
+            if (current == SourceLifecycleStatus.ACTIVE) {
+                SourceLifecycleStatus.DISABLED
+            } else {
+                illegal(current, action)
+            }
 
-            LifecycleAction.ENABLE ->
-                when (current) {
-                    SourceLifecycleStatus.DISABLED -> SourceLifecycleStatus.ACTIVE
-                    SourceLifecycleStatus.RETIRED ->
-                        if (canUnretire(engine)) {
-                            SourceLifecycleStatus.ACTIVE
-                        } else {
-                            throw UnretireNotAllowedForEngineException(
-                                engine,
-                                "Un-retire (retired -> active) is supported only for engine=\"generic\" " +
-                                    "sources (engine '$engine' would stay permanently invisible on clients " +
-                                    "that synced during retirement); its only path out of retired is remove.",
-                            )
-                        }
-                    else -> illegal(current, action)
-                }
+        LifecycleAction.ENABLE ->
+            when (current) {
+                SourceLifecycleStatus.DISABLED -> SourceLifecycleStatus.ACTIVE
 
-            LifecycleAction.RETIRE ->
-                if (current == SourceLifecycleStatus.DISABLED) {
-                    SourceLifecycleStatus.RETIRED
-                } else {
-                    illegal(current, action)
-                }
+                SourceLifecycleStatus.RETIRED ->
+                    if (canUnretire(engine)) {
+                        SourceLifecycleStatus.ACTIVE
+                    } else {
+                        throw UnretireNotAllowedForEngineException(
+                            engine,
+                            "Un-retire (retired -> active) is supported only for engine=\"generic\" " +
+                                "sources (engine '$engine' would stay permanently invisible on clients " +
+                                "that synced during retirement); its only path out of retired is remove.",
+                        )
+                    }
 
-            LifecycleAction.REMOVE ->
-                if (current == SourceLifecycleStatus.RETIRED) {
-                    SourceLifecycleStatus.REMOVED
-                } else {
-                    illegal(current, action)
-                }
-        }
+                else -> illegal(current, action)
+            }
+
+        LifecycleAction.RETIRE ->
+            if (current == SourceLifecycleStatus.DISABLED) {
+                SourceLifecycleStatus.RETIRED
+            } else {
+                illegal(current, action)
+            }
+
+        LifecycleAction.REMOVE ->
+            if (current == SourceLifecycleStatus.RETIRED) {
+                SourceLifecycleStatus.REMOVED
+            } else {
+                illegal(current, action)
+            }
+    }
 
     /**
      * The source status after publishing a (valid) revision (PLAN §9 publish × status). Publishing
      * never re-enables: `draft`/`active` -> `active`, `disabled` -> `disabled`; `retired`/`removed`
      * throw [IllegalLifecycleTransitionException] (publish is forbidden on those).
      */
-    fun statusAfterPublish(current: SourceLifecycleStatus): SourceLifecycleStatus =
-        when (current) {
-            SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.ACTIVE -> SourceLifecycleStatus.ACTIVE
-            SourceLifecycleStatus.DISABLED -> SourceLifecycleStatus.DISABLED
-            SourceLifecycleStatus.RETIRED, SourceLifecycleStatus.REMOVED ->
-                throw IllegalLifecycleTransitionException(
-                    current,
-                    "publish",
-                    "Cannot publish a ${current.wire} source (PLAN §9 publish × status).",
-                )
-        }
+    fun statusAfterPublish(current: SourceLifecycleStatus): SourceLifecycleStatus = when (current) {
+        SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.ACTIVE -> SourceLifecycleStatus.ACTIVE
+
+        SourceLifecycleStatus.DISABLED -> SourceLifecycleStatus.DISABLED
+
+        SourceLifecycleStatus.RETIRED, SourceLifecycleStatus.REMOVED ->
+            throw IllegalLifecycleTransitionException(
+                current,
+                "publish",
+                "Cannot publish a ${current.wire} source (PLAN §9 publish × status).",
+            )
+    }
 
     /** Whether un-retire (retired -> active) is permitted for [engine] — generic only (PLAN §9). */
     fun canUnretire(engine: String): Boolean = engine == GENERIC_ENGINE
 
-    private fun illegal(
-        current: SourceLifecycleStatus,
-        action: LifecycleAction,
-    ): Nothing =
-        throw IllegalLifecycleTransitionException(
-            current,
-            action.wire,
-            "Lifecycle transition '${action.wire}' is not allowed from status '${current.wire}' (PLAN §9).",
-        )
+    private fun illegal(current: SourceLifecycleStatus, action: LifecycleAction): Nothing = throw IllegalLifecycleTransitionException(
+        current,
+        action.wire,
+        "Lifecycle transition '${action.wire}' is not allowed from status '${current.wire}' (PLAN §9).",
+    )
 }
 
 /** A lifecycle-changing admin action (PLAN §4.3 / §9). [wire] labels the transition in error paths. */
@@ -122,17 +116,10 @@ enum class LifecycleAction(val wire: String) {
  * A disallowed lifecycle transition (PLAN §9). **Pure domain** exception — carries no framework types.
  * Phase 6 maps it to 409 `INVALID_LIFECYCLE_TRANSITION`.
  */
-class IllegalLifecycleTransitionException(
-    val from: SourceLifecycleStatus,
-    val action: String,
-    message: String,
-) : RuntimeException(message)
+class IllegalLifecycleTransitionException(val from: SourceLifecycleStatus, val action: String, message: String) : RuntimeException(message)
 
 /**
  * Un-retire attempted for a non-generic engine (PLAN §9). **Pure domain** exception. Phase 6 maps it
  * to 409 `UNRETIRE_UNSUPPORTED_FOR_ENGINE` (a distinct code from the generic invalid-transition 409).
  */
-class UnretireNotAllowedForEngineException(
-    val engine: String,
-    message: String,
-) : RuntimeException(message)
+class UnretireNotAllowedForEngineException(val engine: String, message: String) : RuntimeException(message)

@@ -22,17 +22,13 @@ class DocumentOrderDeterminismIT : AbstractAdminSourceIT() {
     @Autowired
     private lateinit var assembly: DocumentAssemblyService
 
-    private fun assemblySource(
-        position: Int,
-        api: String,
-    ): AssemblySource =
-        AssemblySource(
-            api = api,
-            position = position,
-            engine = "generic",
-            status = SourceLifecycleStatus.ACTIVE,
-            canonicalContent = SourceConfigParser.canonicalSource(SourceConfigFixtures.validGenericSource(api)),
-        )
+    private fun assemblySource(position: Int, api: String): AssemblySource = AssemblySource(
+        api = api,
+        position = position,
+        engine = "generic",
+        status = SourceLifecycleStatus.ACTIVE,
+        canonicalContent = SourceConfigParser.canonicalSource(SourceConfigFixtures.validGenericSource(api)),
+    )
 
     @Test
     fun `shuffled repository orders assemble to byte-identical canonical documents`() {

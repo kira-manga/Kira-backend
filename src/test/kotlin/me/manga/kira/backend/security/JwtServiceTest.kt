@@ -31,16 +31,15 @@ class JwtServiceTest {
     private val jwtService = JwtService(keyProvider, properties)
     private val decoder = buildDecoder()
 
-    private fun user(role: Role = Role.USER): User =
-        User(
-            id = UUID.randomUUID(),
-            email = "person@example.com",
-            passwordHash = "{bcrypt}irrelevant",
-            role = role,
-            enabled = true,
-            createdAt = Instant.parse("2026-01-01T00:00:00Z"),
-            updatedAt = Instant.parse("2026-01-01T00:00:00Z"),
-        )
+    private fun user(role: Role = Role.USER): User = User(
+        id = UUID.randomUUID(),
+        email = "person@example.com",
+        passwordHash = "{bcrypt}irrelevant",
+        role = role,
+        enabled = true,
+        createdAt = Instant.parse("2026-01-01T00:00:00Z"),
+        updatedAt = Instant.parse("2026-01-01T00:00:00Z"),
+    )
 
     private fun buildDecoder(): NimbusJwtDecoder {
         val d = NimbusJwtDecoder.withSecretKey(keyProvider.secretKey).macAlgorithm(MacAlgorithm.HS256).build()

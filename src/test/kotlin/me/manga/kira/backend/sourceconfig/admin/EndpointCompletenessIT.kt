@@ -12,10 +12,7 @@ import org.junit.jupiter.api.Test
  */
 class EndpointCompletenessIT : AbstractAdminSourceIT() {
 
-    private fun generic(
-        api: String,
-        drop: String,
-    ): SourceConfig {
+    private fun generic(api: String, drop: String): SourceConfig {
         val full = SourceConfigFixtures.validGenericSource(api)
         return full.copy(endpoints = full.endpoints.filterKeys { it != drop })
     }

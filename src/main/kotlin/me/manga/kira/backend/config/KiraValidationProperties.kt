@@ -13,6 +13,4 @@ import org.springframework.boot.context.properties.ConfigurationProperties
  * is a `SECRET_LIKE_HEADER` rejection. Extending this list is a deliberate, reviewed server-config change.
  */
 @ConfigurationProperties(prefix = "kira.validation")
-data class KiraValidationProperties(
-    val publicHeaderPlaceholderValues: List<String> = listOf("Bearer null"),
-)
+data class KiraValidationProperties(val publicHeaderPlaceholderValues: List<String> = listOf("Bearer null"))

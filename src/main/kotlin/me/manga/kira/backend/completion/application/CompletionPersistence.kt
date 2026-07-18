@@ -23,19 +23,11 @@ import java.util.UUID
  * All timestamps come from the injected [Clock] so application and DB time never diverge.
  */
 @Component
-class CompletionPersistence(
-    private val requests: CompletionRequestRepository,
-    private val results: CompletionResultRepository,
-    private val clock: Clock,
-) {
+class CompletionPersistence(private val requests: CompletionRequestRepository, private val results: CompletionResultRepository, private val clock: Clock) {
     /** Transaction 1 — insert the `PENDING` request row and commit; returns its id. */
     @Transactional
-    fun createPending(
-        userId: UUID,
-        provider: String,
-        model: String,
-        prompt: String,
-    ): UUID = requests.insertPending(userId, provider, model, prompt, clock.instant())
+    fun createPending(userId: UUID, provider: String, model: String, prompt: String): UUID =
+        requests.insertPending(userId, provider, model, prompt, clock.instant())
 
     /** Transaction 2 — flip the request to `RUNNING` and commit (before the provider call). */
     @Transactional
@@ -48,14 +40,7 @@ class CompletionPersistence(
      * CHECKs `chk_result_xor_error` / `chk_completion_error_code_pairing` enforce this too, PLAN §5/§10).
      */
     @Transactional
-    fun storeOutcome(
-        id: UUID,
-        status: CompletionStatus,
-        result: String?,
-        error: String?,
-        errorCode: CompletionErrorCode?,
-        latencyMs: Int?,
-    ): CompletionView {
+    fun storeOutcome(id: UUID, status: CompletionStatus, result: String?, error: String?, errorCode: CompletionErrorCode?, latencyMs: Int?): CompletionView {
         val now = clock.instant()
         requests.updateStatus(id, status, now)
         val resultRecord =
@@ -81,11 +66,7 @@ class CompletionPersistence(
 
     /** A page of a user's completions, newest first, each composed with its outcome (PLAN §4.6). */
     @Transactional(readOnly = true)
-    fun listViews(
-        userId: UUID,
-        page: Int,
-        size: Int,
-    ): PagedCompletions {
+    fun listViews(userId: UUID, page: Int, size: Int): PagedCompletions {
         val pageData = requests.findPageByUser(userId, page, size)
         val resultsById = results.findByRequestIds(pageData.items.map { it.id })
         return PagedCompletions(

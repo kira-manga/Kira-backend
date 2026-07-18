@@ -3,8 +3,8 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.support.MutableClock
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -20,14 +20,10 @@ import java.time.Duration
  */
 class ClientIpResolutionIT {
 
-    private fun request(
-        remoteAddr: String,
-        headers: Map<String, String> = emptyMap(),
-    ): MockHttpServletRequest =
-        MockHttpServletRequest().apply {
-            this.remoteAddr = remoteAddr
-            headers.forEach { (name, value) -> addHeader(name, value) }
-        }
+    private fun request(remoteAddr: String, headers: Map<String, String> = emptyMap()): MockHttpServletRequest = MockHttpServletRequest().apply {
+        this.remoteAddr = remoteAddr
+        headers.forEach { (name, value) -> addHeader(name, value) }
+    }
 
     // ---- client-IP resolution ----
 
@@ -83,16 +79,15 @@ class ClientIpResolutionIT {
         threshold: Int = 3,
         window: Duration = Duration.ofMinutes(15),
         initialBlock: Duration = Duration.ofMinutes(1),
-    ): KiraSecurityProperties =
-        KiraSecurityProperties(
-            throttle =
-                KiraSecurityProperties.Throttle(
-                    maxEntries = maxEntries,
-                    loginFailureThreshold = threshold,
-                    loginInitialBlock = initialBlock,
-                    loginFailureWindow = window,
-                ),
-        )
+    ): KiraSecurityProperties = KiraSecurityProperties(
+        throttle =
+        KiraSecurityProperties.Throttle(
+            maxEntries = maxEntries,
+            loginFailureThreshold = threshold,
+            loginInitialBlock = initialBlock,
+            loginFailureWindow = window,
+        ),
+    )
 
     @Test
     fun `login throttle engages after the threshold and clears after the block window`() {

@@ -18,12 +18,9 @@ interface SpringDataDocumentPublicationStateRepository : JpaRepository<DocumentP
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
         value =
-            "UPDATE document_publication_state SET latest_document_revision = :revision, " +
-                "updated_at = :at WHERE id = 1",
+        "UPDATE document_publication_state SET latest_document_revision = :revision, " +
+            "updated_at = :at WHERE id = 1",
         nativeQuery = true,
     )
-    fun updatePointer(
-        @Param("revision") revision: Long,
-        @Param("at") at: Instant,
-    )
+    fun updatePointer(@Param("revision") revision: Long, @Param("at") at: Instant)
 }

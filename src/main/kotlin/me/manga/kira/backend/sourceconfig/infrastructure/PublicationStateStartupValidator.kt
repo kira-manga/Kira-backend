@@ -16,9 +16,7 @@ import org.springframework.stereotype.Component
  *  - (c) the sequence's next value `>` the pointer (a future publish must not collide or rewind).
  */
 @Component
-class PublicationStateStartupValidator(
-    private val publishedDocuments: PublishedDocumentRepository,
-) {
+class PublicationStateStartupValidator(private val publishedDocuments: PublishedDocumentRepository) {
     /** Throws [IllegalStateException] with the recovery-runbook message on any inconsistency (PLAN §5). */
     fun validate() {
         val pointer = publishedDocuments.latestPointer()
@@ -62,11 +60,10 @@ class PublicationStateStartupValidator(
         )
     }
 
-    private fun runbook(problem: String): String =
-        "Publication-state consistency check FAILED: $problem " +
-            "The backend refuses to start; this is never auto-repaired. See the recovery runbook in " +
-            "docs/SOURCE_CONFIG_LIFECYCLE.md (inspect published_documents vs document_publication_state, " +
-            "decide the true latest, repair with a single audited SQL UPDATE, record it in audit_log, restart)."
+    private fun runbook(problem: String): String = "Publication-state consistency check FAILED: $problem " +
+        "The backend refuses to start; this is never auto-repaired. See the recovery runbook in " +
+        "docs/SOURCE_CONFIG_LIFECYCLE.md (inspect published_documents vs document_publication_state, " +
+        "decide the true latest, repair with a single audited SQL UPDATE, record it in audit_log, restart)."
 
     private companion object {
         val log = LoggerFactory.getLogger(PublicationStateStartupValidator::class.java)

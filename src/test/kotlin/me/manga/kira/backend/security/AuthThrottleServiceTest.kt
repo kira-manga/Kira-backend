@@ -15,10 +15,10 @@ class AuthThrottleServiceTest {
         val properties =
             KiraSecurityProperties(
                 throttle =
-                    KiraSecurityProperties.Throttle(
-                        loginFailureThreshold = 5,
-                        loginIpFailureThreshold = 3,
-                    ),
+                KiraSecurityProperties.Throttle(
+                    loginFailureThreshold = 5,
+                    loginIpFailureThreshold = 3,
+                ),
             )
         val service = AuthThrottleService(properties, Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC))
 

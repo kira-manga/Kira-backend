@@ -18,11 +18,7 @@ import org.springframework.web.filter.OncePerRequestFilter
  */
 class AuthenticatedMdcFilter : OncePerRequestFilter() {
 
-    override fun doFilterInternal(
-        request: HttpServletRequest,
-        response: HttpServletResponse,
-        filterChain: FilterChain,
-    ) {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
         val principal = SecurityContextHolder.getContext().authentication?.principal
         val added = mutableListOf<String>()
         if (principal is AuthenticatedUser) {

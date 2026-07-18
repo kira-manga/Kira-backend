@@ -40,10 +40,7 @@ object StructuralAuthoringGate {
      * immutable and path-bound → check (b)); null for a create. Throws [BadRequestException] on the
      * first violation; nothing has been persisted at this point.
      */
-    fun check(
-        source: SourceConfig,
-        pathApi: String?,
-    ) {
+    fun check(source: SourceConfig, pathApi: String?) {
         // (b) API_ID_MISMATCH — body.api must equal the path {api} on later revisions.
         if (pathApi != null && source.api != pathApi) {
             throw BadRequestException(
@@ -82,10 +79,7 @@ object StructuralAuthoringGate {
      * whole-document 422 all-or-nothing list. [path] is a stanza-position prefix (e.g. `sources[3]`) the
      * caller supplies so no potentially-invalid api value is echoed into the finding path (PLAN §6).
      */
-    fun importStructuralErrors(
-        source: SourceConfig,
-        path: String,
-    ): List<ApiFieldError> {
+    fun importStructuralErrors(source: SourceConfig, path: String): List<ApiFieldError> {
         val errors = mutableListOf<ApiFieldError>()
         if (apiIdentifierInvalid(source.api)) {
             errors += ApiFieldError(code = API_IDENTIFIER_INVALID, path = "$path.api", message = apiIdentifierMessage())
@@ -95,45 +89,33 @@ object StructuralAuthoringGate {
     }
 
     /** True when [api] violates check (d) — blank / over-128 / control chars / `/` or `\` / edge whitespace. */
-    private fun apiIdentifierInvalid(api: String): Boolean =
-        api.isBlank() ||
-            api.length > API_MAX ||
-            api != api.trim() ||
-            api.any { it.isControlChar() } ||
-            api.contains('/') ||
-            api.contains('\\')
+    private fun apiIdentifierInvalid(api: String): Boolean = api.isBlank() ||
+        api.length > API_MAX ||
+        api != api.trim() ||
+        api.any { it.isControlChar() } ||
+        api.contains('/') ||
+        api.contains('\\')
 
-    private fun apiIdentifierMessage(): String =
-        "api identifier is invalid: it must be non-blank, at most $API_MAX characters, free of " +
-            "control characters, without '/' or '\\', and without leading/trailing whitespace."
+    private fun apiIdentifierMessage(): String = "api identifier is invalid: it must be non-blank, at most $API_MAX characters, free of " +
+        "control characters, without '/' or '\\', and without leading/trailing whitespace."
 
     /** Check (e) as findings: every identity/denormalized value over its DB column limit. */
-    private fun fieldTooLongErrors(
-        source: SourceConfig,
-        path: String?,
-    ): List<ApiFieldError> =
-        buildList {
-            fieldTooLong(path, "displayName", source.displayName.length, DISPLAY_NAME_MAX)?.let { add(it) }
-            fieldTooLong(path, "language", source.language.length, LANGUAGE_MAX)?.let { add(it) }
-            fieldTooLong(path, "engine", source.engine.length, ENGINE_MAX)?.let { add(it) }
-            fieldTooLong(path, "baseUrl", source.baseUrl.length, BASE_URL_MAX)?.let { add(it) }
-        }
+    private fun fieldTooLongErrors(source: SourceConfig, path: String?): List<ApiFieldError> = buildList {
+        fieldTooLong(path, "displayName", source.displayName.length, DISPLAY_NAME_MAX)?.let { add(it) }
+        fieldTooLong(path, "language", source.language.length, LANGUAGE_MAX)?.let { add(it) }
+        fieldTooLong(path, "engine", source.engine.length, ENGINE_MAX)?.let { add(it) }
+        fieldTooLong(path, "baseUrl", source.baseUrl.length, BASE_URL_MAX)?.let { add(it) }
+    }
 
-    private fun fieldTooLong(
-        path: String?,
-        field: String,
-        length: Int,
-        max: Int,
-    ): ApiFieldError? =
-        if (length > max) {
-            ApiFieldError(
-                code = FIELD_TOO_LONG,
-                path = path?.let { "$it.$field" } ?: field,
-                message = "$field exceeds its maximum length of $max characters.",
-            )
-        } else {
-            null
-        }
+    private fun fieldTooLong(path: String?, field: String, length: Int, max: Int): ApiFieldError? = if (length > max) {
+        ApiFieldError(
+            code = FIELD_TOO_LONG,
+            path = path?.let { "$it.$field" } ?: field,
+            message = "$field exceeds its maximum length of $max characters.",
+        )
+    } else {
+        null
+    }
 
     // Control characters: U+0000–U+001F and U+007F (PLAN §8 check (d)).
     private fun Char.isControlChar(): Boolean = this.code in 0x00..0x1F || this.code == 0x7F

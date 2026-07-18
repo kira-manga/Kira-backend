@@ -64,10 +64,7 @@ class SourceAdminService(
      * Tier-2 validation (invalid drafts ARE stored) → 201 with the inline result (PLAN §4.3/§8).
      */
     @Transactional
-    fun createSource(
-        rawJson: String,
-        actorId: UUID,
-    ): SourceMutationResult {
+    fun createSource(rawJson: String, actorId: UUID): SourceMutationResult {
         val model = SourceConfigParser.parseStrictSource(rawJson)
         StructuralAuthoringGate.check(model, pathApi = null)
         if (sources.existsByApi(model.api)) throw SourceAlreadyExistsException(model.api)
@@ -105,11 +102,7 @@ class SourceAdminService(
      * (PLAN §4.3/§5). No global publication lock: draft creation is not state-visible (PLAN §17).
      */
     @Transactional
-    fun createRevision(
-        api: String,
-        rawJson: String,
-        actorId: UUID,
-    ): SourceMutationResult {
+    fun createRevision(api: String, rawJson: String, actorId: UUID): SourceMutationResult {
         val model = SourceConfigParser.parseStrictSource(rawJson)
         StructuralAuthoringGate.check(model, pathApi = api)
         // Lock the head FOR UPDATE so concurrent revision creations for this source serialize (PLAN §5).
@@ -133,12 +126,11 @@ class SourceAdminService(
     }
 
     @Transactional(readOnly = true)
-    fun listSources(status: SourceLifecycleStatus?): List<SourceAdminView> =
-        sources.findAll(status).map { head ->
-            val currentPublishedNumber =
-                head.currentPublishedRevisionId?.let { revisions.findById(it)?.revisionNumber }
-            SourceAdminView(head, currentPublishedNumber, revisions.latestRevisionNumber(head.id))
-        }
+    fun listSources(status: SourceLifecycleStatus?): List<SourceAdminView> = sources.findAll(status).map { head ->
+        val currentPublishedNumber =
+            head.currentPublishedRevisionId?.let { revisions.findById(it)?.revisionNumber }
+        SourceAdminView(head, currentPublishedNumber, revisions.latestRevisionNumber(head.id))
+    }
 
     @Transactional(readOnly = true)
     fun listRevisions(api: String): List<RevisionView> {
@@ -147,19 +139,13 @@ class SourceAdminService(
     }
 
     @Transactional(readOnly = true)
-    fun getRevision(
-        api: String,
-        number: Int,
-    ): RevisionView {
+    fun getRevision(api: String, number: Int): RevisionView {
         val revision = findRevisionOrThrow(api, number)
         return RevisionView(revision, latestValid(revision.id))
     }
 
     @Transactional(readOnly = true)
-    fun getLatestValidation(
-        api: String,
-        number: Int,
-    ): ValidationResult {
+    fun getLatestValidation(api: String, number: Int): ValidationResult {
         val revision = findRevisionOrThrow(api, number)
         val stored = validationResults.findLatestForRevision(revision.id)
         return if (stored != null) {
@@ -176,10 +162,7 @@ class SourceAdminService(
      * change is storing the fresh result) and return it, even when invalid (PLAN §4.3).
      */
     @Transactional
-    fun validateRevision(
-        api: String,
-        number: Int,
-    ): ValidationResult {
+    fun validateRevision(api: String, number: Int): ValidationResult {
         val revision = findRevisionOrThrow(api, number)
         return validateAndStore(revision.id, decodeStored(revision))
     }
@@ -192,11 +175,7 @@ class SourceAdminService(
      * live (422 if invalid), and publishes with supersede-then-publish ordering + a new snapshot.
      */
     @Transactional
-    fun publish(
-        api: String,
-        number: Int,
-        actorId: UUID,
-    ): PublishOutcome {
+    fun publish(api: String, number: Int, actorId: UUID): PublishOutcome {
         publishedDocuments.lockPublicationState() // §9 step 1 — global lock FIRST
         val head = sources.lockByApiForUpdate(api) ?: throw SourceNotFoundException(api) // step 2
         val revision = revisions.findBySourceAndNumber(head.id, number) ?: throw RevisionNotFoundException(api, number)
@@ -206,8 +185,11 @@ class SourceAdminService(
         mappingLifecycleErrors { LifecycleStateMachine.statusAfterPublish(head.status) }
 
         when (revision.status) {
-            RevisionStatus.PUBLISHED -> return currentPublishedNoOp() // idempotent 200, no new snapshot
+            RevisionStatus.PUBLISHED -> return currentPublishedNoOp()
+
+            // idempotent 200, no new snapshot
             RevisionStatus.SUPERSEDED -> throw RevisionSupersededException(api, number)
+
             RevisionStatus.DRAFT -> {
                 val publishedNumber = head.currentPublishedRevisionId?.let { revisions.findById(it)?.revisionNumber }
                 if (publishedNumber != null && number <= publishedNumber) {
@@ -228,29 +210,16 @@ class SourceAdminService(
     // --- Lifecycle transitions ----------------------------------------------------------------------
 
     @Transactional
-    fun disable(
-        api: String,
-        actorId: UUID,
-    ): PublishOutcome = transition(api, LifecycleAction.DISABLE, AuditAction.SOURCE_DISABLED, actorId)
+    fun disable(api: String, actorId: UUID): PublishOutcome = transition(api, LifecycleAction.DISABLE, AuditAction.SOURCE_DISABLED, actorId)
 
     @Transactional
-    fun enable(
-        api: String,
-        actorId: UUID,
-    ): PublishOutcome = transition(api, LifecycleAction.ENABLE, AuditAction.SOURCE_ENABLED, actorId)
+    fun enable(api: String, actorId: UUID): PublishOutcome = transition(api, LifecycleAction.ENABLE, AuditAction.SOURCE_ENABLED, actorId)
 
     @Transactional
-    fun retire(
-        api: String,
-        actorId: UUID,
-    ): PublishOutcome = transition(api, LifecycleAction.RETIRE, AuditAction.SOURCE_RETIRED, actorId)
+    fun retire(api: String, actorId: UUID): PublishOutcome = transition(api, LifecycleAction.RETIRE, AuditAction.SOURCE_RETIRED, actorId)
 
     @Transactional
-    fun remove(
-        api: String,
-        confirm: String?,
-        actorId: UUID,
-    ): PublishOutcome {
+    fun remove(api: String, confirm: String?, actorId: UUID): PublishOutcome {
         if (confirm != api) {
             throw me.manga.kira.backend.common.exception.BadRequestException(
                 "remove requires a matching confirmation of the source api.",
@@ -268,11 +237,7 @@ class SourceAdminService(
      * is never mutated; the server lifecycle is NOT restored (it follows the publish rules).
      */
     @Transactional
-    fun rollback(
-        api: String,
-        toRevision: Int,
-        actorId: UUID,
-    ): RollbackOutcome {
+    fun rollback(api: String, toRevision: Int, actorId: UUID): RollbackOutcome {
         publishedDocuments.lockPublicationState()
         val head = sources.lockByApiForUpdate(api) ?: throw SourceNotFoundException(api)
         if (head.status == SourceLifecycleStatus.RETIRED || head.status == SourceLifecycleStatus.REMOVED) {
@@ -316,8 +281,7 @@ class SourceAdminService(
     fun listDocuments(): List<PublishedDocument> = publishedDocuments.findAllOrderedByRevision()
 
     @Transactional(readOnly = true)
-    fun getDocument(revision: Long): PublishedDocument =
-        publishedDocuments.findByRevision(revision) ?: throw DocumentNotFoundException(revision)
+    fun getDocument(revision: Long): PublishedDocument = publishedDocuments.findByRevision(revision) ?: throw DocumentNotFoundException(revision)
 
     @Transactional(readOnly = true)
     fun validateCandidateDocument(): ValidationResult = assembly.validateCandidate()
@@ -337,12 +301,7 @@ class SourceAdminService(
     // --- internals ----------------------------------------------------------------------------------
 
     /** Supersede the current published revision (if any), publish [draft], update the head, materialize. */
-    private fun doPublishDraft(
-        head: SourceConfigHead,
-        draft: SourceRevision,
-        model: SourceConfig,
-        actorId: UUID,
-    ): PublishedDocument {
+    private fun doPublishDraft(head: SourceConfigHead, draft: SourceRevision, model: SourceConfig, actorId: UUID): PublishedDocument {
         // Compute the resulting status FIRST (throws for retired/removed → mapped to 409) before any write.
         val newStatus = LifecycleStateMachine.statusAfterPublish(head.status)
         val now = clock.instant()
@@ -379,12 +338,7 @@ class SourceAdminService(
         return snapshot
     }
 
-    private fun transition(
-        api: String,
-        action: LifecycleAction,
-        auditAction: AuditAction,
-        actorId: UUID,
-    ): PublishOutcome {
+    private fun transition(api: String, action: LifecycleAction, auditAction: AuditAction, actorId: UUID): PublishOutcome {
         publishedDocuments.lockPublicationState()
         val head = sources.lockByApiForUpdate(api) ?: throw SourceNotFoundException(api)
         val newStatus = mappingLifecycleErrors { LifecycleStateMachine.transition(head.status, action, head.engine) }
@@ -414,13 +368,7 @@ class SourceAdminService(
         return PublishOutcome(current.documentRevision, current.checksum, noOp = true)
     }
 
-    private fun insertDraftRevision(
-        sourceConfigId: UUID,
-        number: Int,
-        model: SourceConfig,
-        actorId: UUID,
-        notes: String?,
-    ): SourceRevision {
+    private fun insertDraftRevision(sourceConfigId: UUID, number: Int, model: SourceConfig, actorId: UUID, notes: String?): SourceRevision {
         // Content is stored lifecycle-NEUTRAL (PLAN §9): the gate guarantees lifecycle == "active", which
         // kcj-1 default-omission renders as an ABSENT key; normalize defensively.
         val neutral = model.copy(lifecycle = "active")
@@ -440,10 +388,7 @@ class SourceAdminService(
     }
 
     /** Validate a stanza (errors + warnings) via a single-source candidate document, and store it. */
-    private fun validateAndStore(
-        revisionId: UUID,
-        model: SourceConfig,
-    ): ValidationResult {
+    private fun validateAndStore(revisionId: UUID, model: SourceConfig): ValidationResult {
         val result = validateStanza(model)
         validationResults.save(
             NewValidationResult(
@@ -462,30 +407,20 @@ class SourceAdminService(
      * Cross-source `api` uniqueness (rule 2) is structurally guaranteed by `uq_source_configs_api`, so a
      * single-source doc is faithful; whole-document uniqueness is exercised by [validateCandidateDocument].
      */
-    private fun validateStanza(model: SourceConfig): ValidationResult =
-        validator.validate(
-            SourceConfigDocument(schemaVersion = DocumentAssemblyService.SCHEMA_VERSION, sources = listOf(model)),
-        )
+    private fun validateStanza(model: SourceConfig): ValidationResult = validator.validate(
+        SourceConfigDocument(schemaVersion = DocumentAssemblyService.SCHEMA_VERSION, sources = listOf(model)),
+    )
 
-    private fun decodeStored(revision: SourceRevision): SourceConfig =
-        SourceConfigParser.parseCompatibleSource(revision.configCanonicalJson)
+    private fun decodeStored(revision: SourceRevision): SourceConfig = SourceConfigParser.parseCompatibleSource(revision.configCanonicalJson)
 
-    private fun findRevisionOrThrow(
-        api: String,
-        number: Int,
-    ): SourceRevision {
+    private fun findRevisionOrThrow(api: String, number: Int): SourceRevision {
         val head = sources.findByApi(api) ?: throw SourceNotFoundException(api)
         return revisions.findBySourceAndNumber(head.id, number) ?: throw RevisionNotFoundException(api, number)
     }
 
     private fun latestValid(revisionId: UUID): Boolean? = validationResults.findLatestForRevision(revisionId)?.valid
 
-    private fun auditRevisionCreated(
-        api: String,
-        revision: SourceRevision,
-        validation: ValidationResult,
-        actorId: UUID,
-    ) = audit.record(
+    private fun auditRevisionCreated(api: String, revision: SourceRevision, validation: ValidationResult, actorId: UUID) = audit.record(
         AuditAction.REVISION_CREATED,
         AuditService.ENTITY_REVISION,
         revision.id.toString(),
@@ -493,10 +428,7 @@ class SourceAdminService(
         actorId,
     )
 
-    private fun auditDocumentPublished(
-        snapshot: PublishedDocument,
-        actorId: UUID,
-    ) = audit.recordAt(
+    private fun auditDocumentPublished(snapshot: PublishedDocument, actorId: UUID) = audit.recordAt(
         AuditAction.DOCUMENT_PUBLISHED,
         AuditService.ENTITY_DOCUMENT,
         snapshot.documentRevision.toString(),
@@ -511,14 +443,13 @@ class SourceAdminService(
     )
 
     /** Translate the pure domain lifecycle exceptions into the boundary 409s (PLAN §9). */
-    private inline fun <T> mappingLifecycleErrors(block: () -> T): T =
-        try {
-            block()
-        } catch (e: IllegalLifecycleTransitionException) {
-            throw InvalidLifecycleTransitionException(e.message ?: "invalid lifecycle transition.")
-        } catch (e: UnretireNotAllowedForEngineException) {
-            throw UnretireUnsupportedForEngineException(e.message ?: "un-retire is unsupported for this engine.")
-        }
+    private inline fun <T> mappingLifecycleErrors(block: () -> T): T = try {
+        block()
+    } catch (e: IllegalLifecycleTransitionException) {
+        throw InvalidLifecycleTransitionException(e.message ?: "invalid lifecycle transition.")
+    } catch (e: UnretireNotAllowedForEngineException) {
+        throw UnretireUnsupportedForEngineException(e.message ?: "un-retire is unsupported for this engine.")
+    }
 
     private fun SourceConfig.isAdult(): Boolean = siteState == ADULT_SITE_STATE
 
@@ -532,36 +463,16 @@ private fun me.manga.kira.backend.sourceconfig.validation.ValidationError.toFiel
     ApiFieldError(code = code, path = path, message = message)
 
 /** Result of a create/revision authoring call (PLAN §4.3 — 201 even when Tier-2-invalid). */
-data class SourceMutationResult(
-    val api: String,
-    val status: SourceLifecycleStatus,
-    val revisionNumber: Int,
-    val validation: ValidationResult,
-)
+data class SourceMutationResult(val api: String, val status: SourceLifecycleStatus, val revisionNumber: Int, val validation: ValidationResult)
 
 /** Result of a publish / lifecycle mutation (PLAN §4.3). [noOp] = the idempotent re-publish case. */
-data class PublishOutcome(
-    val documentRevision: Long,
-    val checksum: String,
-    val noOp: Boolean,
-)
+data class PublishOutcome(val documentRevision: Long, val checksum: String, val noOp: Boolean)
 
 /** Result of a rollback (PLAN §4.3). */
-data class RollbackOutcome(
-    val newRevisionNumber: Int,
-    val documentRevision: Long,
-    val checksum: String,
-)
+data class RollbackOutcome(val newRevisionNumber: Int, val documentRevision: Long, val checksum: String)
 
 /** The admin view of a source head plus its published/latest revision numbers (PLAN §4.3). */
-data class SourceAdminView(
-    val head: SourceConfigHead,
-    val currentPublishedRevisionNumber: Int?,
-    val latestRevisionNumber: Int?,
-)
+data class SourceAdminView(val head: SourceConfigHead, val currentPublishedRevisionNumber: Int?, val latestRevisionNumber: Int?)
 
 /** A revision plus its latest stored validity flag (PLAN §4.3 revision list). */
-data class RevisionView(
-    val revision: SourceRevision,
-    val valid: Boolean?,
-)
+data class RevisionView(val revision: SourceRevision, val valid: Boolean?)

@@ -30,11 +30,11 @@ interface SpringDataSourceConfigRepository : JpaRepository<SourceConfigEntity, U
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
         value =
-            "UPDATE source_configs SET status = :status, " +
-                "current_published_revision_id = :revId, " +
-                "published_at = COALESCE(published_at, :publishedAt), " +
-                "display_name = :displayName, language = :language, engine = :engine, " +
-                "base_url = :baseUrl, adult = :adult, updated_at = :updatedAt WHERE id = :id",
+        "UPDATE source_configs SET status = :status, " +
+            "current_published_revision_id = :revId, " +
+            "published_at = COALESCE(published_at, :publishedAt), " +
+            "display_name = :displayName, language = :language, engine = :engine, " +
+            "base_url = :baseUrl, adult = :adult, updated_at = :updatedAt WHERE id = :id",
         nativeQuery = true,
     )
     @Suppress("LongParameterList")
@@ -56,9 +56,5 @@ interface SpringDataSourceConfigRepository : JpaRepository<SourceConfigEntity, U
         value = "UPDATE source_configs SET status = :status, updated_at = :updatedAt WHERE id = :id",
         nativeQuery = true,
     )
-    fun updateStatusNative(
-        @Param("id") id: UUID,
-        @Param("status") status: String,
-        @Param("updatedAt") updatedAt: Instant,
-    )
+    fun updateStatusNative(@Param("id") id: UUID, @Param("status") status: String, @Param("updatedAt") updatedAt: Instant)
 }

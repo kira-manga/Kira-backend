@@ -69,10 +69,7 @@ class SourceConfigValidator(
      * (`DUPLICATE_API`) for a single-stanza validate/publish preview. Returns errors only (the app
      * signature); warnings surface only through [validate].
      */
-    fun validateSource(
-        source: SourceConfig,
-        otherApis: Set<String>,
-    ): List<ValidationError> {
+    fun validateSource(source: SourceConfig, otherApis: Set<String>): List<ValidationError> {
         val findings = Findings()
         if (source.api in otherApis) {
             findings.error(
@@ -86,10 +83,7 @@ class SourceConfigValidator(
     }
 
     /** Compose every per-source rule group for one stanza into [findings]. */
-    private fun collectSourceFindings(
-        source: SourceConfig,
-        findings: Findings,
-    ) {
+    private fun collectSourceFindings(source: SourceConfig, findings: Findings) {
         val isGeneric = source.engine == "generic"
 
         // All engines: identity (3–6), secret-safety (32), metadata (7–10), icon advisory (33).
@@ -130,29 +124,17 @@ class Findings {
     val errors: List<ValidationError> get() = _errors
     val warnings: List<ValidationWarning> get() = _warnings
 
-    fun error(
-        code: String,
-        path: String,
-        message: String,
-    ) {
+    fun error(code: String, path: String, message: String) {
         _errors += ValidationError(code, path, message)
     }
 
-    fun warn(
-        code: String,
-        path: String,
-        message: String,
-    ) {
+    fun warn(code: String, path: String, message: String) {
         _warnings += ValidationWarning(code, path, message)
     }
 }
 
 /** Immutable per-validation context handed to every rule group (PLAN §8). */
-data class RuleContext(
-    val strategies: StrategyCatalog,
-    val iconCatalog: PackagedIconCatalog,
-    val publicHeaderPlaceholderValues: Set<String>,
-)
+data class RuleContext(val strategies: StrategyCatalog, val iconCatalog: PackagedIconCatalog, val publicHeaderPlaceholderValues: Set<String>)
 
 /** The normative pinpoint prefix for a source (PLAN §8 error `path`), e.g. `sources[Azora]`. */
 fun sourcePath(api: String): String = "sources[$api]"

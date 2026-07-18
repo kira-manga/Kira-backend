@@ -15,11 +15,7 @@ import org.springframework.transaction.annotation.Transactional
  * Keeps that logic in one place so registration and admin-creation behave identically (PLAN §4.2/§4.4).
  */
 @Service
-class UserService(
-    private val users: UserRepository,
-    private val passwordEncoder: PasswordEncoder,
-    private val passwordPolicy: PasswordPolicy,
-) {
+class UserService(private val users: UserRepository, private val passwordEncoder: PasswordEncoder, private val passwordPolicy: PasswordPolicy) {
     /** Email is trim+lowercased before store and matching (PLAN §5). Password is NOT normalized. */
     fun normalizeEmail(email: String): String = email.trim().lowercase()
 
@@ -29,11 +25,7 @@ class UserService(
      * The raw password never leaves this method and is never logged (PLAN §6).
      */
     @Transactional
-    fun createUser(
-        email: String,
-        rawPassword: String,
-        role: Role,
-    ): User {
+    fun createUser(email: String, rawPassword: String, role: Role): User {
         val normalized = normalizeEmail(email)
         passwordPolicy.validate(rawPassword)
         if (users.existsByEmail(normalized)) throw DuplicateEmailException()

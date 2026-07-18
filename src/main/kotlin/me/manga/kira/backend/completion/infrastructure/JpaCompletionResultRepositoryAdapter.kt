@@ -11,9 +11,7 @@ import java.util.UUID
  * (PLAN §2). `error_code` is stored as its stable enum name and mapped back to [CompletionErrorCode].
  */
 @Repository
-class JpaCompletionResultRepositoryAdapter(
-    private val jpa: SpringDataCompletionResultRepository,
-) : CompletionResultRepository {
+class JpaCompletionResultRepositoryAdapter(private val jpa: SpringDataCompletionResultRepository) : CompletionResultRepository {
     override fun insert(result: CompletionResultRecord) {
         jpa.save(
             CompletionResultEntity(
@@ -29,20 +27,18 @@ class JpaCompletionResultRepositoryAdapter(
 
     override fun findByRequestId(requestId: UUID): CompletionResultRecord? = jpa.findByRequestId(requestId)?.toDomain()
 
-    override fun findByRequestIds(requestIds: List<UUID>): Map<UUID, CompletionResultRecord> =
-        if (requestIds.isEmpty()) {
-            emptyMap()
-        } else {
-            jpa.findByRequestIdIn(requestIds).associate { requireNotNull(it.requestId) to it.toDomain() }
-        }
+    override fun findByRequestIds(requestIds: List<UUID>): Map<UUID, CompletionResultRecord> = if (requestIds.isEmpty()) {
+        emptyMap()
+    } else {
+        jpa.findByRequestIdIn(requestIds).associate { requireNotNull(it.requestId) to it.toDomain() }
+    }
 
-    private fun CompletionResultEntity.toDomain(): CompletionResultRecord =
-        CompletionResultRecord(
-            requestId = requireNotNull(requestId),
-            result = result,
-            error = error,
-            errorCode = errorCode?.let { CompletionErrorCode.valueOf(it) },
-            latencyMs = latencyMs,
-            createdAt = createdAt,
-        )
+    private fun CompletionResultEntity.toDomain(): CompletionResultRecord = CompletionResultRecord(
+        requestId = requireNotNull(requestId),
+        result = result,
+        error = error,
+        errorCode = errorCode?.let { CompletionErrorCode.valueOf(it) },
+        latencyMs = latencyMs,
+        createdAt = createdAt,
+    )
 }

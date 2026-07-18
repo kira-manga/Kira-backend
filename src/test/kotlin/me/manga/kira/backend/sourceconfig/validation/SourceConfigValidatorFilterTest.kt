@@ -19,14 +19,10 @@ class SourceConfigValidatorFilterTest {
 
     private val validator = SourceConfigValidator()
 
-    private fun codes(source: SourceConfig): Set<String> =
-        validator.validate(SourceConfigFixtures.document(source)).errors.map { it.code }.toSet()
+    private fun codes(source: SourceConfig): Set<String> = validator.validate(SourceConfigFixtures.document(source)).errors.map { it.code }.toSet()
 
     /** A generic source carrying [filters], optionally overriding the search endpoint. */
-    private fun gen(
-        vararg filters: FilterDefinition,
-        search: EndpointSpec? = null,
-    ): SourceConfig {
+    private fun gen(vararg filters: FilterDefinition, search: EndpointSpec? = null): SourceConfig {
         val base = SourceConfigFixtures.validGenericSource()
         val endpoints = if (search != null) base.endpoints + ("search" to search) else base.endpoints
         return base.copy(filters = filters.toList(), endpoints = endpoints)
@@ -46,20 +42,19 @@ class SourceConfigValidatorFilterTest {
         visibleWhen: List<FilterConditionSpec> = emptyList(),
         appliesTo: List<String> = listOf("search"),
         label: String = "Label",
-    ): FilterDefinition =
-        FilterDefinition(
-            id = id,
-            label = label,
-            type = type,
-            options = options.map { FilterOptionSpec(it) },
-            default = default,
-            defaults = defaults,
-            required = required,
-            excludeOf = excludeOf,
-            visibleWhen = visibleWhen,
-            request = FilterRequestSpec(target = target, param = param, encode = encode),
-            appliesTo = appliesTo,
-        )
+    ): FilterDefinition = FilterDefinition(
+        id = id,
+        label = label,
+        type = type,
+        options = options.map { FilterOptionSpec(it) },
+        default = default,
+        defaults = defaults,
+        required = required,
+        excludeOf = excludeOf,
+        visibleWhen = visibleWhen,
+        request = FilterRequestSpec(target = target, param = param, encode = encode),
+        appliesTo = appliesTo,
+    )
 
     @Test
     fun `a valid filter set is accepted`() {
@@ -87,7 +82,10 @@ class SourceConfigValidatorFilterTest {
 
     @Test
     fun `rule 19 - type pinning for sort and genres`() {
-        assertTrue(ValidationCodes.FILTER_TYPE_PINNING in codes(gen(filter(id = "sort", type = "multiselect", options = listOf("a"), defaults = listOf("a"), param = "s"))))
+        assertTrue(
+            ValidationCodes.FILTER_TYPE_PINNING in
+                codes(gen(filter(id = "sort", type = "multiselect", options = listOf("a"), defaults = listOf("a"), param = "s"))),
+        )
         assertTrue(ValidationCodes.FILTER_TYPE_PINNING in codes(gen(filter(id = "genres", type = "toggle", param = "g"))))
     }
 
@@ -96,25 +94,41 @@ class SourceConfigValidatorFilterTest {
         assertTrue(ValidationCodes.FILTER_OPTIONS_REQUIRED in codes(gen(filter(id = "x", type = "select", param = "a"))))
         assertTrue(ValidationCodes.FILTER_OPTIONS_FORBIDDEN in codes(gen(filter(id = "x", type = "toggle", options = listOf("a"), param = "a"))))
         assertTrue(ValidationCodes.FILTER_OPTION_VALUE_BLANK in codes(gen(filter(id = "x", type = "select", options = listOf(""), param = "a"))))
-        assertTrue(ValidationCodes.FILTER_OPTION_VALUE_DUPLICATE in codes(gen(filter(id = "x", type = "select", options = listOf("a", "a"), default = "a", param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_OPTION_VALUE_DUPLICATE in
+                codes(gen(filter(id = "x", type = "select", options = listOf("a", "a"), default = "a", param = "a"))),
+        )
     }
 
     @Test
     fun `rule 21 - defaults across every type`() {
         // multiselect must not set `default`
-        assertTrue(ValidationCodes.FILTER_DEFAULT_NOT_ALLOWED in codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), default = "a", param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_DEFAULT_NOT_ALLOWED in codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), default = "a", param = "a"))),
+        )
         // non-multiselect must not set `defaults`
-        assertTrue(ValidationCodes.FILTER_DEFAULTS_NOT_ALLOWED in codes(gen(filter(id = "x", type = "select", options = listOf("a"), defaults = listOf("a"), param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_DEFAULTS_NOT_ALLOWED in
+                codes(gen(filter(id = "x", type = "select", options = listOf("a"), defaults = listOf("a"), param = "a"))),
+        )
         // select default must be an option
-        assertTrue(ValidationCodes.FILTER_DEFAULT_NOT_OPTION in codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "b", param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_DEFAULT_NOT_OPTION in codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "b", param = "a"))),
+        )
         // multiselect defaults must be options
-        assertTrue(ValidationCodes.FILTER_DEFAULT_NOT_OPTION in codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), defaults = listOf("z"), param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_DEFAULT_NOT_OPTION in
+                codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), defaults = listOf("z"), param = "a"))),
+        )
         // toggle default must be boolean-ish
         assertTrue(ValidationCodes.FILTER_TOGGLE_DEFAULT_INVALID in codes(gen(filter(id = "x", type = "toggle", default = "maybe", param = "a"))))
         // number default must parse
         assertTrue(ValidationCodes.FILTER_NUMBER_DEFAULT_INVALID in codes(gen(filter(id = "x", type = "number", default = "abc", param = "a"))))
         // required demands a usable default
-        assertTrue(ValidationCodes.FILTER_REQUIRED_WITHOUT_DEFAULT in codes(gen(filter(id = "x", type = "select", options = listOf("a"), required = true, param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_REQUIRED_WITHOUT_DEFAULT in
+                codes(gen(filter(id = "x", type = "select", options = listOf("a"), required = true, param = "a"))),
+        )
     }
 
     @Test
@@ -123,18 +137,35 @@ class SourceConfigValidatorFilterTest {
         assertTrue(ValidationCodes.FILTER_REQUEST_PARAM_BLANK in codes(gen(filter(id = "x", type = "toggle", param = " "))))
         assertTrue(ValidationCodes.FILTER_REQUEST_UNKNOWN_ENCODE in codes(gen(filter(id = "x", type = "toggle", encode = "weird", param = "a"))))
         // repeat only for query/form
-        assertTrue(ValidationCodes.FILTER_ENCODE_INCOMPATIBLE in codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), target = "header", encode = "repeat", param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_ENCODE_INCOMPATIBLE in
+                codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), target = "header", encode = "repeat", param = "a"))),
+        )
         // json-array only for body-json
-        assertTrue(ValidationCodes.FILTER_ENCODE_INCOMPATIBLE in codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), target = "query", encode = "json-array", param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_ENCODE_INCOMPATIBLE in
+                codes(gen(filter(id = "x", type = "multiselect", options = listOf("a"), target = "query", encode = "json-array", param = "a"))),
+        )
         // csv/repeat/json-array require multiselect
-        assertTrue(ValidationCodes.FILTER_ENCODE_INCOMPATIBLE in codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", encode = "csv", param = "a"))))
+        assertTrue(
+            ValidationCodes.FILTER_ENCODE_INCOMPATIBLE in
+                codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", encode = "csv", param = "a"))),
+        )
     }
 
     @Test
     fun `rule 23 - placeholder param regex, reserved-var shadow, path-without-default`() {
-        assertTrue(ValidationCodes.FILTER_PARAM_INVALID in codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = "bad-param"))))
-        assertTrue(ValidationCodes.FILTER_PARAM_RESERVED in codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = "page"))))
-        assertTrue(ValidationCodes.FILTER_PATH_REQUIRES_DEFAULT in codes(gen(filter(id = "x", type = "select", options = listOf("a"), target = "path", param = "p"))))
+        assertTrue(
+            ValidationCodes.FILTER_PARAM_INVALID in
+                codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = "bad-param"))),
+        )
+        assertTrue(
+            ValidationCodes.FILTER_PARAM_RESERVED in
+                codes(gen(filter(id = "x", type = "select", options = listOf("a"), default = "a", target = "path", param = "page"))),
+        )
+        assertTrue(
+            ValidationCodes.FILTER_PATH_REQUIRES_DEFAULT in codes(gen(filter(id = "x", type = "select", options = listOf("a"), target = "path", param = "p"))),
+        )
     }
 
     @Test
@@ -145,13 +176,33 @@ class SourceConfigValidatorFilterTest {
         // form target requires a post-form endpoint and no static-key collision.
         assertTrue(
             ValidationCodes.FILTER_FORM_METHOD_MISMATCH in
-                codes(gen(filter(id = "genres", type = "multiselect", options = listOf("a"), defaults = listOf("a"), target = "form", encode = "csv", param = "g"))),
+                codes(
+                    gen(
+                        filter(
+                            id = "genres",
+                            type = "multiselect",
+                            options = listOf("a"),
+                            defaults = listOf("a"),
+                            target = "form",
+                            encode = "csv",
+                            param = "g",
+                        ),
+                    ),
+                ),
         )
         assertTrue(
             ValidationCodes.FILTER_FORM_PARAM_COLLISION in
                 codes(
                     gen(
-                        filter(id = "genres", type = "multiselect", options = listOf("a"), defaults = listOf("a"), target = "form", encode = "csv", param = "g"),
+                        filter(
+                            id = "genres",
+                            type = "multiselect",
+                            options = listOf("a"),
+                            defaults = listOf("a"),
+                            target = "form",
+                            encode = "csv",
+                            param = "g",
+                        ),
                         search = EndpointSpec(url = "{baseUrl}/s", method = "post-form", format = "json", formBody = mapOf("g" to "1")),
                     ),
                 ),
@@ -159,13 +210,33 @@ class SourceConfigValidatorFilterTest {
         // body-json target requires a post-json endpoint whose jsonBody carries the placeholder.
         assertTrue(
             ValidationCodes.FILTER_BODYJSON_METHOD_MISMATCH in
-                codes(gen(filter(id = "genres", type = "multiselect", options = listOf("a"), defaults = listOf("a"), target = "body-json", encode = "json-array", param = "g"))),
+                codes(
+                    gen(
+                        filter(
+                            id = "genres",
+                            type = "multiselect",
+                            options = listOf("a"),
+                            defaults = listOf("a"),
+                            target = "body-json",
+                            encode = "json-array",
+                            param = "g",
+                        ),
+                    ),
+                ),
         )
         assertTrue(
             ValidationCodes.FILTER_BODYJSON_MISSING_PLACEHOLDER in
                 codes(
                     gen(
-                        filter(id = "genres", type = "multiselect", options = listOf("a"), defaults = listOf("a"), target = "body-json", encode = "json-array", param = "g"),
+                        filter(
+                            id = "genres",
+                            type = "multiselect",
+                            options = listOf("a"),
+                            defaults = listOf("a"),
+                            target = "body-json",
+                            encode = "json-array",
+                            param = "g",
+                        ),
                         search = EndpointSpec(url = "{baseUrl}/s", method = "post-json", format = "json", jsonBody = "{}"),
                     ),
                 ),
@@ -181,7 +252,9 @@ class SourceConfigValidatorFilterTest {
                 codes(gen(filter(id = "x", type = "text", target = "query", param = "q"))),
         )
         // A verb whose endpoint is absent is flagged.
-        val noSearch = SourceConfigFixtures.validGenericSource().let { it.copy(endpoints = it.endpoints - "search", filters = listOf(SourceConfigFixtures.validFilter())) }
+        val noSearch = SourceConfigFixtures.validGenericSource().let {
+            it.copy(endpoints = it.endpoints - "search", filters = listOf(SourceConfigFixtures.validFilter()))
+        }
         assertTrue(ValidationCodes.FILTER_ENDPOINT_MISSING in codes(noSearch))
     }
 
@@ -197,11 +270,21 @@ class SourceConfigValidatorFilterTest {
         )
         assertTrue(
             ValidationCodes.FILTER_VISIBLEWHEN_EMPTY_ANYOF in
-                codes(gen(SourceConfigFixtures.validFilter(), filter(id = "b2", type = "toggle", param = "b", visibleWhen = listOf(FilterConditionSpec("genres", emptyList()))))),
+                codes(
+                    gen(
+                        SourceConfigFixtures.validFilter(),
+                        filter(id = "b2", type = "toggle", param = "b", visibleWhen = listOf(FilterConditionSpec("genres", emptyList()))),
+                    ),
+                ),
         )
         assertTrue(
             ValidationCodes.FILTER_VISIBLEWHEN_OUT_OF_VOCABULARY in
-                codes(gen(SourceConfigFixtures.validFilter(), filter(id = "b2", type = "toggle", param = "b", visibleWhen = listOf(FilterConditionSpec("genres", listOf("nonexistent")))))),
+                codes(
+                    gen(
+                        SourceConfigFixtures.validFilter(),
+                        filter(id = "b2", type = "toggle", param = "b", visibleWhen = listOf(FilterConditionSpec("genres", listOf("nonexistent")))),
+                    ),
+                ),
         )
     }
 
@@ -210,7 +293,12 @@ class SourceConfigValidatorFilterTest {
         // excludeOf only on multiselect
         assertTrue(
             ValidationCodes.FILTER_EXCLUDEOF_NOT_MULTISELECT in
-                codes(gen(SourceConfigFixtures.validFilter(), filter(id = "s", type = "select", options = listOf("a"), default = "a", param = "s", excludeOf = "genres"))),
+                codes(
+                    gen(
+                        SourceConfigFixtures.validFilter(),
+                        filter(id = "s", type = "select", options = listOf("a"), default = "a", param = "s", excludeOf = "genres"),
+                    ),
+                ),
         )
         // unknown reference
         assertTrue(

@@ -23,15 +23,9 @@ import java.nio.charset.StandardCharsets
  * bytes and replayed from memory, so chunked or falsely-small Content-Length requests cannot bypass
  * the cap. An over-limit response is a bounded RFC-9457 problem and never echoes submitted content.
  */
-class RequestBodySizeLimitFilter(
-    private val objectMapper: ObjectMapper,
-) : OncePerRequestFilter() {
+class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OncePerRequestFilter() {
 
-    override fun doFilterInternal(
-        request: HttpServletRequest,
-        response: HttpServletResponse,
-        filterChain: FilterChain,
-    ) {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
         val limit = limitFor(request)
         if (request.contentLengthLong > limit) {
             writeTooLarge(response, limit)
@@ -53,10 +47,7 @@ class RequestBodySizeLimitFilter(
         return if (applicationPath == IMPORT_PATH) MAX_IMPORT_BODY_BYTES else DEFAULT_MAX_BODY_BYTES
     }
 
-    private fun writeTooLarge(
-        response: HttpServletResponse,
-        limit: Int,
-    ) {
+    private fun writeTooLarge(response: HttpServletResponse, limit: Int) {
         val detail =
             if (limit == MAX_IMPORT_BODY_BYTES) {
                 "request body exceeds the 5 MiB import limit."
@@ -77,19 +68,15 @@ class RequestBodySizeLimitFilter(
         )
     }
 
-    private class CachedBodyRequest(
-        request: HttpServletRequest,
-        private val body: ByteArray,
-    ) : HttpServletRequestWrapper(request) {
+    private class CachedBodyRequest(request: HttpServletRequest, private val body: ByteArray) : HttpServletRequestWrapper(request) {
         override fun getInputStream(): ServletInputStream = ByteArrayServletInputStream(body)
 
-        override fun getReader(): BufferedReader =
-            BufferedReader(
-                InputStreamReader(
-                    inputStream,
-                    characterEncoding?.let(Charset::forName) ?: StandardCharsets.UTF_8,
-                ),
-            )
+        override fun getReader(): BufferedReader = BufferedReader(
+            InputStreamReader(
+                inputStream,
+                characterEncoding?.let(Charset::forName) ?: StandardCharsets.UTF_8,
+            ),
+        )
 
         override fun getContentLength(): Int = body.size
 
@@ -101,11 +88,7 @@ class RequestBodySizeLimitFilter(
 
         override fun read(): Int = delegate.read()
 
-        override fun read(
-            bytes: ByteArray,
-            offset: Int,
-            length: Int,
-        ): Int = delegate.read(bytes, offset, length)
+        override fun read(bytes: ByteArray, offset: Int, length: Int): Int = delegate.read(bytes, offset, length)
 
         override fun isFinished(): Boolean = delegate.available() == 0
 

@@ -19,10 +19,7 @@ import org.springframework.stereotype.Component
  * Constructed with its [config] so tests can exercise misconfigured floors against a real DB.
  */
 @Component
-class RevisionFloorStartupValidator(
-    private val config: KiraConfigProperties,
-    private val publishedDocuments: PublishedDocumentRepository,
-) {
+class RevisionFloorStartupValidator(private val config: KiraConfigProperties, private val publishedDocuments: PublishedDocumentRepository) {
     /** Throws [IllegalStateException] with the recovery-runbook message on any floor violation (PLAN §5). */
     fun validate() {
         // 1) Property invariant — independent of DB state; fails fast even on a fresh install.
@@ -63,11 +60,10 @@ class RevisionFloorStartupValidator(
         )
     }
 
-    private fun runbook(problem: String): String =
-        "Revision-floor consistency check FAILED: $problem " +
-            "The backend refuses to start; this is never auto-repaired. See the recovery runbook in " +
-            "docs/SOURCE_CONFIG_LIFECYCLE.md (inspect published_documents / the publication pointer / the " +
-            "sequence, repair with a single audited SQL statement, record it in audit_log, then restart)."
+    private fun runbook(problem: String): String = "Revision-floor consistency check FAILED: $problem " +
+        "The backend refuses to start; this is never auto-repaired. See the recovery runbook in " +
+        "docs/SOURCE_CONFIG_LIFECYCLE.md (inspect published_documents / the publication pointer / the " +
+        "sequence, repair with a single audited SQL statement, record it in audit_log, then restart)."
 
     private companion object {
         val log = LoggerFactory.getLogger(RevisionFloorStartupValidator::class.java)

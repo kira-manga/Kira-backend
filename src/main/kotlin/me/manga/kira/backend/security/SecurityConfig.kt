@@ -24,6 +24,9 @@ import org.springframework.security.oauth2.jwt.JwtIssuerValidator
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.security.web.SecurityFilterChain
+import org.springframework.web.cors.CorsConfiguration
+import org.springframework.web.cors.CorsConfigurationSource
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 
 /**
  * The security composition root (PLAN §6). Stateless bearer-token API: sessions STATELESS, CSRF
@@ -41,9 +44,7 @@ import org.springframework.security.web.SecurityFilterChain
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-class SecurityConfig(
-    private val environment: Environment,
-) {
+class SecurityConfig(private val environment: Environment) {
     /**
      * `DelegatingPasswordEncoder` with `{bcrypt}` as the initial id (PLAN §5/§6) — the stored hash
      * carries its `{id}` prefix, so migrating to Argon2 later is a config change, not a schema one.
@@ -53,10 +54,7 @@ class SecurityConfig(
 
     /** HS256 decoder + explicit signature/exp/nbf/issuer/audience validation with 60s skew (PLAN §6). */
     @Bean
-    fun jwtDecoder(
-        keyProvider: JwtKeyProvider,
-        properties: KiraSecurityProperties,
-    ): JwtDecoder {
+    fun jwtDecoder(keyProvider: JwtKeyProvider, properties: KiraSecurityProperties): JwtDecoder {
         val decoder =
             NimbusJwtDecoder
                 .withSecretKey(keyProvider.secretKey)
@@ -81,6 +79,8 @@ class SecurityConfig(
         users: UserRepository,
         entryPoint: ProblemAuthenticationEntryPoint,
         deniedHandler: ProblemAccessDeniedHandler,
+        properties: KiraSecurityProperties,
+        corsConfigurationSource: CorsConfigurationSource,
     ): SecurityFilterChain {
         val converter = DbUserJwtAuthenticationConverter(users)
         val devProfile = environment.activeProfiles.contains("dev")
@@ -89,6 +89,11 @@ class SecurityConfig(
             csrf { disable() }
             httpBasic { disable() }
             formLogin { disable() }
+            if (properties.allowedOrigins.isEmpty()) {
+                cors { disable() }
+            } else {
+                cors { configurationSource = corsConfigurationSource }
+            }
             sessionManagement { sessionCreationPolicy = SessionCreationPolicy.STATELESS }
 
             authorizeHttpRequests {
@@ -135,5 +140,22 @@ class SecurityConfig(
             }
         }
         return http.build()
+    }
+
+    @Bean
+    fun corsConfigurationSource(properties: KiraSecurityProperties): CorsConfigurationSource {
+        val source = UrlBasedCorsConfigurationSource()
+        if (properties.allowedOrigins.isNotEmpty()) {
+            val configuration = CorsConfiguration()
+            configuration.allowedOrigins = properties.allowedOrigins
+            configuration.allowedMethods = listOf("GET", "POST", "OPTIONS")
+            configuration.allowedHeaders = listOf("Authorization", "Content-Type", "If-None-Match", "X-Request-Id")
+            configuration.exposedHeaders =
+                listOf("ETag", "X-Config-Revision", "X-Config-Checksum", "X-Request-Id", "Retry-After")
+            configuration.allowCredentials = false
+            configuration.maxAge = 3600
+            source.registerCorsConfiguration("/api/**", configuration)
+        }
+        return source
     }
 }

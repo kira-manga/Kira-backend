@@ -47,10 +47,16 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected lateinit var adminToken: String
 
     /** Emits exactly the mirrored model's keys (no unknown keys) — accepted by the STRICT parser (PLAN §7). */
-    protected val modelJson: Json = Json { encodeDefaults = false; explicitNulls = false }
+    protected val modelJson: Json = Json {
+        encodeDefaults = false
+        explicitNulls = false
+    }
 
     /** Reads a served document body back into the model, leniently — exactly as the app parses (PLAN §7). */
-    protected val servedJson: Json = Json { ignoreUnknownKeys = true; isLenient = true }
+    protected val servedJson: Json = Json {
+        ignoreUnknownKeys = true
+        isLenient = true
+    }
 
     @BeforeEach
     fun seedAdmin() {
@@ -60,47 +66,34 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     protected fun toJson(model: SourceConfig): String = modelJson.encodeToString(SourceConfig.serializer(), model)
 
-    protected fun toJson(document: SourceConfigDocument): String =
-        modelJson.encodeToString(SourceConfigDocument.serializer(), document)
+    protected fun toJson(document: SourceConfigDocument): String = modelJson.encodeToString(SourceConfigDocument.serializer(), document)
 
     /** `POST /admin/sources/import-bundled` with a raw document body (PLAN §4.3 / §12.2). */
-    protected fun importBundled(json: String): ResultActionsDsl =
-        mockMvc.post("/api/v1/admin/sources/import-bundled") {
-            header("Authorization", "Bearer $adminToken")
-            contentType = MediaType.APPLICATION_JSON
-            content = json
-        }
+    protected fun importBundled(json: String): ResultActionsDsl = mockMvc.post("/api/v1/admin/sources/import-bundled") {
+        header("Authorization", "Bearer $adminToken")
+        contentType = MediaType.APPLICATION_JSON
+        content = json
+    }
 
     protected fun importBundled(document: SourceConfigDocument): ResultActionsDsl = importBundled(toJson(document))
 
     protected fun createSource(model: SourceConfig): ResultActionsDsl = createSourceRaw(toJson(model))
 
-    protected fun createSourceRaw(json: String): ResultActionsDsl =
-        mockMvc.post("/api/v1/admin/sources") {
-            header("Authorization", "Bearer $adminToken")
-            contentType = MediaType.APPLICATION_JSON
-            content = json
-        }
+    protected fun createSourceRaw(json: String): ResultActionsDsl = mockMvc.post("/api/v1/admin/sources") {
+        header("Authorization", "Bearer $adminToken")
+        contentType = MediaType.APPLICATION_JSON
+        content = json
+    }
 
-    protected fun createRevision(
-        api: String,
-        model: SourceConfig,
-    ): ResultActionsDsl = createRevisionRaw(api, toJson(model))
+    protected fun createRevision(api: String, model: SourceConfig): ResultActionsDsl = createRevisionRaw(api, toJson(model))
 
-    protected fun createRevisionRaw(
-        api: String,
-        json: String,
-    ): ResultActionsDsl =
-        mockMvc.post("/api/v1/admin/sources/$api/revisions") {
-            header("Authorization", "Bearer $adminToken")
-            contentType = MediaType.APPLICATION_JSON
-            content = json
-        }
+    protected fun createRevisionRaw(api: String, json: String): ResultActionsDsl = mockMvc.post("/api/v1/admin/sources/$api/revisions") {
+        header("Authorization", "Bearer $adminToken")
+        contentType = MediaType.APPLICATION_JSON
+        content = json
+    }
 
-    protected fun publish(
-        api: String,
-        number: Int,
-    ): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/revisions/$number/publish")
+    protected fun publish(api: String, number: Int): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/revisions/$number/publish")
 
     protected fun disable(api: String): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/disable")
 
@@ -108,15 +101,11 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     protected fun retire(api: String): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/retire")
 
-    protected fun remove(
-        api: String,
-        confirm: String = api,
-    ): ResultActionsDsl = adminPostJson("/api/v1/admin/sources/$api/remove", """{"confirm":"$confirm"}""")
+    protected fun remove(api: String, confirm: String = api): ResultActionsDsl =
+        adminPostJson("/api/v1/admin/sources/$api/remove", """{"confirm":"$confirm"}""")
 
-    protected fun rollback(
-        api: String,
-        toRevision: Int,
-    ): ResultActionsDsl = adminPostJson("/api/v1/admin/sources/$api/rollback", """{"toRevision":$toRevision}""")
+    protected fun rollback(api: String, toRevision: Int): ResultActionsDsl =
+        adminPostJson("/api/v1/admin/sources/$api/rollback", """{"toRevision":$toRevision}""")
 
     protected fun getRawDocument(revision: Long): ResultActionsDsl =
         mockMvc.get("/api/v1/admin/documents/$revision") { header("Authorization", "Bearer $adminToken") }
@@ -124,14 +113,10 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     // --- Public app-facing routes (Phase 7 — no auth) ----------------------------------------------
 
     /** `GET /source-config/document`, optionally conditional (`If-None-Match`) / carrying `appVersion`. */
-    protected fun getPublicDocument(
-        ifNoneMatch: String? = null,
-        appVersion: String? = null,
-    ): ResultActionsDsl =
-        mockMvc.get("/api/v1/source-config/document") {
-            if (ifNoneMatch != null) header("If-None-Match", ifNoneMatch)
-            if (appVersion != null) param("appVersion", appVersion)
-        }
+    protected fun getPublicDocument(ifNoneMatch: String? = null, appVersion: String? = null): ResultActionsDsl = mockMvc.get("/api/v1/source-config/document") {
+        if (ifNoneMatch != null) header("If-None-Match", ifNoneMatch)
+        if (appVersion != null) param("appVersion", appVersion)
+    }
 
     protected fun getPublicDocumentMeta(): ResultActionsDsl = mockMvc.get("/api/v1/source-config/document/meta")
 
@@ -159,53 +144,42 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
         return servedJson.decodeFromString(SourceConfigDocument.serializer(), body)
     }
 
-    protected fun latestPointer(): Long? =
-        jdbcTemplate.queryForObject(
-            "SELECT latest_document_revision FROM document_publication_state WHERE id = 1",
-            Long::class.javaObjectType,
-        )
+    protected fun latestPointer(): Long? = jdbcTemplate.queryForObject(
+        "SELECT latest_document_revision FROM document_publication_state WHERE id = 1",
+        Long::class.javaObjectType,
+    )
 
-    protected fun snapshotCount(): Long =
-        jdbcTemplate.queryForObject("SELECT count(*) FROM published_documents", Long::class.java)!!
+    protected fun snapshotCount(): Long = jdbcTemplate.queryForObject("SELECT count(*) FROM published_documents", Long::class.java)!!
 
-    protected fun publishedRevisionCount(api: String): Long =
-        jdbcTemplate.queryForObject(
-            "SELECT count(*) FROM source_config_revisions r JOIN source_configs s ON s.id = r.source_config_id " +
-                "WHERE s.api = ? AND r.status = 'published'",
-            Long::class.java,
-            api,
-        )!!
+    protected fun publishedRevisionCount(api: String): Long = jdbcTemplate.queryForObject(
+        "SELECT count(*) FROM source_config_revisions r JOIN source_configs s ON s.id = r.source_config_id " +
+            "WHERE s.api = ? AND r.status = 'published'",
+        Long::class.java,
+        api,
+    )!!
 
     /** Count of ALL revisions (any status) for a source — proves import creates zero new ones (PLAN §12.2). */
-    protected fun revisionCount(api: String): Long =
-        jdbcTemplate.queryForObject(
-            "SELECT count(*) FROM source_config_revisions r JOIN source_configs s ON s.id = r.source_config_id " +
-                "WHERE s.api = ?",
-            Long::class.java,
-            api,
-        )!!
+    protected fun revisionCount(api: String): Long = jdbcTemplate.queryForObject(
+        "SELECT count(*) FROM source_config_revisions r JOIN source_configs s ON s.id = r.source_config_id " +
+            "WHERE s.api = ?",
+        Long::class.java,
+        api,
+    )!!
 
     /** The `source_configs.status` wire value for an api (DB truth), or null if the source does not exist. */
-    protected fun sourceStatus(api: String): String? =
-        jdbcTemplate.query(
-            "SELECT status FROM source_configs WHERE api = ?",
-            { rs, _ -> rs.getString("status") },
-            api,
-        ).firstOrNull()
+    protected fun sourceStatus(api: String): String? = jdbcTemplate.query(
+        "SELECT status FROM source_configs WHERE api = ?",
+        { rs, _ -> rs.getString("status") },
+        api,
+    ).firstOrNull()
 
-    protected fun sourceRowCount(): Long =
-        jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs", Long::class.java)!!
+    protected fun sourceRowCount(): Long = jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs", Long::class.java)!!
 
-    private fun adminPost(path: String): ResultActionsDsl =
-        mockMvc.post(path) { header("Authorization", "Bearer $adminToken") }
+    private fun adminPost(path: String): ResultActionsDsl = mockMvc.post(path) { header("Authorization", "Bearer $adminToken") }
 
-    private fun adminPostJson(
-        path: String,
-        json: String,
-    ): ResultActionsDsl =
-        mockMvc.post(path) {
-            header("Authorization", "Bearer $adminToken")
-            contentType = MediaType.APPLICATION_JSON
-            content = json
-        }
+    private fun adminPostJson(path: String, json: String): ResultActionsDsl = mockMvc.post(path) {
+        header("Authorization", "Bearer $adminToken")
+        contentType = MediaType.APPLICATION_JSON
+        content = json
+    }
 }

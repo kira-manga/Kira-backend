@@ -24,8 +24,8 @@ class PublishInvalidFailsIT : AbstractAdminSourceIT() {
         val invalid =
             SourceConfigFixtures.validGenericSource("Bad").copy(
                 endpoints =
-                    SourceConfigFixtures.validGenericSource("Bad").endpoints +
-                        ("search" to EndpointSpec(url = "{baseUrl}/search?q={query}&page={page}", format = "json")),
+                SourceConfigFixtures.validGenericSource("Bad").endpoints +
+                    ("search" to EndpointSpec(url = "{baseUrl}/search?q={query}&page={page}", format = "json")),
             )
         createSource(invalid).andExpect {
             status { isCreated() }

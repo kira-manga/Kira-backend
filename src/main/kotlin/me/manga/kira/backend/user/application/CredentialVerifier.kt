@@ -10,15 +10,10 @@ import org.springframework.stereotype.Component
  * without ever storing or logging the submitted password.
  */
 @Component
-class CredentialVerifier(
-    private val passwordEncoder: PasswordEncoder,
-) {
+class CredentialVerifier(private val passwordEncoder: PasswordEncoder) {
     private val decoyHash = passwordEncoder.encode(DECOY_PASSWORD_SOURCE)
 
-    fun verify(
-        rawPassword: String,
-        candidate: User?,
-    ): User? {
+    fun verify(rawPassword: String, candidate: User?): User? {
         val eligible = candidate?.takeIf { it.enabled }
         val matched = passwordEncoder.matches(rawPassword, eligible?.passwordHash ?: decoyHash)
         return if (eligible != null && matched) eligible else null

@@ -16,12 +16,7 @@ import java.net.URI
  */
 internal object UrlSafety {
 
-    fun check(
-        rawUrl: String,
-        path: String,
-        findings: Findings,
-        allowedSchemes: Set<String> = setOf("http", "https"),
-    ) {
+    fun check(rawUrl: String, path: String, findings: Findings, allowedSchemes: Set<String> = setOf("http", "https")) {
         val uri =
             try {
                 URI(rawUrl)

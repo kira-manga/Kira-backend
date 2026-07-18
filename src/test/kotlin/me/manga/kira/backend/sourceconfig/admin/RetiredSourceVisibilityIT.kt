@@ -14,10 +14,7 @@ import org.junit.jupiter.api.Test
  */
 class RetiredSourceVisibilityIT : AbstractAdminSourceIT() {
 
-    private fun toRetired(
-        api: String,
-        legacy: Boolean,
-    ) {
+    private fun toRetired(api: String, legacy: Boolean) {
         val model =
             if (legacy) SourceConfigFixtures.validLegacySource(api) else SourceConfigFixtures.validGenericSource(api)
         createSource(model).andExpect { status { isCreated() } }

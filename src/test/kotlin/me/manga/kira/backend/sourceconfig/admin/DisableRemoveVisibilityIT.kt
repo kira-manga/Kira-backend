@@ -16,14 +16,11 @@ import org.junit.jupiter.api.Test
  */
 class DisableRemoveVisibilityIT : AbstractAdminSourceIT() {
 
-    private fun lifecycleInDocument(
-        documentRevision: Long,
-        api: String,
-    ): String? = servedDocument(documentRevision).sources.firstOrNull { it.api == api }?.lifecycle
+    private fun lifecycleInDocument(documentRevision: Long, api: String): String? =
+        servedDocument(documentRevision).sources.firstOrNull { it.api == api }?.lifecycle
 
     /** The injected lifecycle for [api] as seen through the PUBLIC latest-document endpoint. */
-    private fun publicLifecycle(api: String): String? =
-        publicServedDocument().sources.firstOrNull { it.api == api }?.lifecycle
+    private fun publicLifecycle(api: String): String? = publicServedDocument().sources.firstOrNull { it.api == api }?.lifecycle
 
     @Test
     fun `disable then retire then remove walk the stanza through the document`() {

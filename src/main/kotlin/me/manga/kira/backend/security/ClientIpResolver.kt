@@ -2,7 +2,6 @@ package me.manga.kira.backend.security
 
 import jakarta.servlet.http.HttpServletRequest
 import me.manga.kira.backend.config.KiraSecurityProperties
-import org.slf4j.LoggerFactory
 import org.springframework.security.web.util.matcher.IpAddressMatcher
 import org.springframework.stereotype.Component
 
@@ -20,16 +19,21 @@ import org.springframework.stereotype.Component
  *    to the remote address — never an exception path.
  */
 @Component
-class ClientIpResolver(
-    private val properties: KiraSecurityProperties,
-) {
-    // Built once; malformed CIDR/address entries are dropped with a warning rather than failing.
+class ClientIpResolver(private val properties: KiraSecurityProperties) {
+    // Built once; malformed CIDR/address entries fail startup rather than silently weakening policy.
     private val trustedProxyMatchers: List<IpAddressMatcher> =
-        properties.trustedProxies.mapNotNull { entry ->
-            runCatching { IpAddressMatcher(entry.trim()) }
-                .onFailure { log.warn("Ignoring unparseable kira.security.trusted-proxies entry (name only): {}", entry.length) }
-                .getOrNull()
+        properties.trustedProxies.map { entry ->
+            require(entry.isNotBlank()) { "kira.security.trusted-proxies contains a blank entry" }
+            runCatching { IpAddressMatcher(entry.trim()) }.getOrElse {
+                throw IllegalArgumentException("kira.security.trusted-proxies contains an invalid address or CIDR", it)
+            }
         }
+
+    init {
+        require(!properties.trustForwardedHeaders || trustedProxyMatchers.isNotEmpty()) {
+            "trust-forwarded-headers=true requires at least one trusted proxy CIDR/address"
+        }
+    }
 
     fun resolve(request: HttpServletRequest): String {
         val remoteAddr = request.remoteAddr ?: UNKNOWN
@@ -47,12 +51,10 @@ class ClientIpResolver(
         return remoteAddr
     }
 
-    private fun isTrustedProxy(ip: String): Boolean =
-        trustedProxyMatchers.any { runCatching { it.matches(ip) }.getOrDefault(false) }
+    private fun isTrustedProxy(ip: String): Boolean = trustedProxyMatchers.any { runCatching { it.matches(ip) }.getOrDefault(false) }
 
     /** Walk hops right→left; the first that is NOT itself a trusted proxy is the real client. */
-    private fun rightmostNonTrusted(hops: List<String>): String? =
-        hops.asReversed().firstOrNull { it.isNotBlank() && !isTrustedProxy(it) }
+    private fun rightmostNonTrusted(hops: List<String>): String? = hops.asReversed().firstOrNull { isIpLiteral(it) && !isTrustedProxy(it) }
 
     private fun splitForwardedFor(header: String): List<String> {
         if (header.length > MAX_FORWARDED_HEADER_BYTES) return emptyList()
@@ -82,12 +84,23 @@ class ClientIpResolver(
         return if (value.count { it == ':' } == 1) value.substringBefore(':') else value
     }
 
+    private fun isIpLiteral(value: String): Boolean {
+        val candidate = value.removePrefix("[").removeSuffix("]")
+        if (candidate.contains(':')) return candidate.matches(IPV6_LITERAL)
+        val octets = candidate.split('.')
+        return octets.size == 4 &&
+            octets.all { octet ->
+                val number = octet.toIntOrNull()
+                number != null && number in 0..255 && octet == number.toString()
+            }
+    }
+
     private companion object {
-        val log = LoggerFactory.getLogger(ClientIpResolver::class.java)
         const val HEADER_X_FORWARDED_FOR = "X-Forwarded-For"
         const val HEADER_FORWARDED = "Forwarded"
         const val FOR_PREFIX = "for="
         const val MAX_FORWARDED_HEADER_BYTES = 1024
         const val UNKNOWN = "unknown"
+        val IPV6_LITERAL = Regex("^[0-9A-Fa-f:.%]+$")
     }
 }

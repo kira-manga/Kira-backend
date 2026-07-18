@@ -79,11 +79,7 @@ interface SourceConfigRepository {
     )
 
     /** Set the head [status] (a lifecycle transition — disable/enable/retire/remove; PLAN §9). Direct DB update. */
-    fun updateStatus(
-        id: UUID,
-        status: SourceLifecycleStatus,
-        updatedAt: Instant,
-    )
+    fun updateStatus(id: UUID, status: SourceLifecycleStatus, updatedAt: Instant)
 }
 
 /**
@@ -107,21 +103,11 @@ data class NewSourceConfig(
  * the published revision's stored **lifecycle-neutral** canonical bytes; the assembly injects the served
  * lifecycle value derived from [status] (`active`→omitted, `disabled`→`"disabled"`, retired→`"removed"`).
  */
-data class AssemblySource(
-    val api: String,
-    val position: Int,
-    val engine: String,
-    val status: SourceLifecycleStatus,
-    val canonicalContent: String,
-)
+data class AssemblySource(val api: String, val position: Int, val engine: String, val status: SourceLifecycleStatus, val canonicalContent: String)
 
 /**
  * The `GET /sources` summary metadata NOT derivable from the served document bytes (PLAN §4.1):
  * [revisionNumber] is the source's currently-published revision number and [publishedAt] is that
  * revision's publish time (both from `source_config_revisions`).
  */
-data class PublishedRevisionMetadata(
-    val api: String,
-    val revisionNumber: Int,
-    val publishedAt: Instant,
-)
+data class PublishedRevisionMetadata(val api: String, val revisionNumber: Int, val publishedAt: Instant)

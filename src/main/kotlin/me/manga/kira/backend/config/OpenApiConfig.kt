@@ -18,26 +18,25 @@ import org.springframework.context.annotation.Configuration
 class OpenApiConfig {
 
     @Bean
-    fun kiraOpenApi(): OpenAPI =
-        OpenAPI()
-            .info(
-                Info()
-                    .title("kira-backend API")
-                    .version(API_VERSION)
-                    .description(
-                        "Remote authority for the Kira Manga source-configuration document, " +
-                            "plus JWT auth, admin, and completion foundations. See docs/PLAN.md.",
-                    ),
-            ).components(
-                Components().addSecuritySchemes(
-                    BEARER_SCHEME,
-                    SecurityScheme()
-                        .type(SecurityScheme.Type.HTTP)
-                        .scheme("bearer")
-                        .bearerFormat("JWT")
-                        .description("JWT access token from POST /api/v1/auth/login (added in a later phase)."),
+    fun kiraOpenApi(): OpenAPI = OpenAPI()
+        .info(
+            Info()
+                .title("kira-backend API")
+                .version(API_VERSION)
+                .description(
+                    "Remote authority for the Kira Manga source-configuration document, " +
+                        "plus JWT auth, admin, and completion foundations. See docs/PLAN.md.",
                 ),
-            )
+        ).components(
+            Components().addSecuritySchemes(
+                BEARER_SCHEME,
+                SecurityScheme()
+                    .type(SecurityScheme.Type.HTTP)
+                    .scheme("bearer")
+                    .bearerFormat("JWT")
+                    .description("JWT access token from POST /api/v1/auth/login (added in a later phase)."),
+            ),
+        )
 
     companion object {
         const val API_VERSION = "v1"

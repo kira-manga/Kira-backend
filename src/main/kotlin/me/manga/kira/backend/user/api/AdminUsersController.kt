@@ -25,23 +25,16 @@ import java.util.UUID
  */
 @RestController
 @RequestMapping("/api/v1/admin/users")
-class AdminUsersController(
-    private val userAdminService: UserAdminService,
-) {
+class AdminUsersController(private val userAdminService: UserAdminService) {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun create(
-        @Valid @RequestBody request: CreateUserRequest,
-    ): AdminUserResponse {
+    fun create(@Valid @RequestBody request: CreateUserRequest): AdminUserResponse {
         val user = userAdminService.createUser(request.email, request.password, request.role)
         return AdminUserResponse.from(user)
     }
 
     @GetMapping
-    fun list(
-        @RequestParam(defaultValue = "0") page: Int,
-        @RequestParam(defaultValue = "20") size: Int,
-    ): PageResponse<AdminUserResponse> {
+    fun list(@RequestParam(defaultValue = "0") page: Int, @RequestParam(defaultValue = "20") size: Int): PageResponse<AdminUserResponse> {
         if (page < 0) throw BadRequestException("page must be >= 0.", code = "INVALID_PAGE")
         if (size < 1 || size > MAX_PAGE_SIZE) {
             throw BadRequestException("size must be between 1 and $MAX_PAGE_SIZE.", code = "INVALID_PAGE_SIZE")
@@ -56,24 +49,17 @@ class AdminUsersController(
     }
 
     @PostMapping("/{id}/enable")
-    fun enable(
-        @PathVariable id: UUID,
-    ) {
+    fun enable(@PathVariable id: UUID) {
         userAdminService.enable(id)
     }
 
     @PostMapping("/{id}/disable")
-    fun disable(
-        @PathVariable id: UUID,
-    ) {
+    fun disable(@PathVariable id: UUID) {
         userAdminService.disable(id)
     }
 
     @PostMapping("/{id}/reset-password")
-    fun resetPassword(
-        @PathVariable id: UUID,
-        @Valid @RequestBody request: ResetPasswordRequest,
-    ) {
+    fun resetPassword(@PathVariable id: UUID, @Valid @RequestBody request: ResetPasswordRequest) {
         userAdminService.resetPassword(id, request.newPassword)
     }
 

@@ -10,11 +10,8 @@ import org.springframework.security.oauth2.jwt.Jwt
  * directly) and its **authorities** are derived from the DB role (PLAN §6). The verified [Jwt] is
  * retained as the credentials for diagnostics.
  */
-class BearerUserAuthenticationToken(
-    private val jwt: Jwt,
-    private val user: AuthenticatedUser,
-    authorities: Collection<GrantedAuthority>,
-) : AbstractAuthenticationToken(authorities) {
+class BearerUserAuthenticationToken(private val jwt: Jwt, private val user: AuthenticatedUser, authorities: Collection<GrantedAuthority>) :
+    AbstractAuthenticationToken(authorities) {
 
     init {
         isAuthenticated = true

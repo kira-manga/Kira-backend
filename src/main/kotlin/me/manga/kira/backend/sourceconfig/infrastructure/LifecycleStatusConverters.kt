@@ -15,8 +15,7 @@ import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 class SourceLifecycleStatusConverter : AttributeConverter<SourceLifecycleStatus, String> {
     override fun convertToDatabaseColumn(attribute: SourceLifecycleStatus): String = attribute.wire
 
-    override fun convertToEntityAttribute(dbData: String): SourceLifecycleStatus =
-        SourceLifecycleStatus.fromWire(dbData)
+    override fun convertToEntityAttribute(dbData: String): SourceLifecycleStatus = SourceLifecycleStatus.fromWire(dbData)
 }
 
 @Converter

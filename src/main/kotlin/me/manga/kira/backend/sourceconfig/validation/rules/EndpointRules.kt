@@ -19,11 +19,7 @@ object EndpointRules {
     private val LIST_FILTER_OPS = setOf("equals", "notEquals", "contains", "notNull", "isNull")
     private val LIST_FILTER_MODES = setOf("include", "exclude")
 
-    fun check(
-        source: SourceConfig,
-        ctx: RuleContext,
-        findings: Findings,
-    ) {
+    fun check(source: SourceConfig, ctx: RuleContext, findings: Findings) {
         val base = sourcePath(source.api)
         val endpoints = source.endpoints
 
@@ -46,24 +42,13 @@ object EndpointRules {
         }
     }
 
-    private fun requireVerb(
-        endpoints: Map<String, EndpointSpec>,
-        verb: String,
-        code: String,
-        base: String,
-        findings: Findings,
-    ) {
+    private fun requireVerb(endpoints: Map<String, EndpointSpec>, verb: String, code: String, base: String, findings: Findings) {
         if (verb !in endpoints) {
             findings.error(code, "$base.endpoints", "a generic source must declare the '$verb' endpoint.")
         }
     }
 
-    private fun checkEndpoint(
-        verb: String,
-        endpoint: EndpointSpec,
-        path: String,
-        findings: Findings,
-    ) {
+    private fun checkEndpoint(verb: String, endpoint: EndpointSpec, path: String, findings: Findings) {
         if (endpoint.url.isBlank()) {
             findings.error(ValidationCodes.ENDPOINT_URL_BLANK, "$path.url", "endpoint '$verb' url must be non-blank.")
         }

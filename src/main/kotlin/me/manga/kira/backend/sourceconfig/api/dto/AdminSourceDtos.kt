@@ -18,18 +18,14 @@ import me.manga.kira.backend.sourceconfig.validation.ValidationWarning
 import java.time.Instant
 import java.util.UUID
 
-/**
+/*
  * Admin source-management API DTOs (PLAN §4.3). Jackson-serialized (the source-config MODEL uses
  * kotlinx; these are thin API views mapped from application results, never leaking entities). Lifecycle
  * and revision statuses are exposed as their lowercase wire values (the plan/DB vocabulary).
  */
 
 /** One `{code, path, message}` validation finding (PLAN §4.3 / §8). */
-data class FindingDto(
-    val code: String,
-    val path: String,
-    val message: String,
-) {
+data class FindingDto(val code: String, val path: String, val message: String) {
     companion object {
         fun of(e: ValidationError) = FindingDto(e.code, e.path, e.message)
 
@@ -38,36 +34,25 @@ data class FindingDto(
 }
 
 /** `{valid, errors[], warnings[]}` (PLAN §4.3 create/validate response). */
-data class ValidationResultDto(
-    val valid: Boolean,
-    val errors: List<FindingDto>,
-    val warnings: List<FindingDto>,
-) {
+data class ValidationResultDto(val valid: Boolean, val errors: List<FindingDto>, val warnings: List<FindingDto>) {
     companion object {
-        fun of(result: ValidationResult) =
-            ValidationResultDto(
-                valid = result.isValid,
-                errors = result.errors.map { FindingDto.of(it) },
-                warnings = result.warnings.map { FindingDto.of(it) },
-            )
+        fun of(result: ValidationResult) = ValidationResultDto(
+            valid = result.isValid,
+            errors = result.errors.map { FindingDto.of(it) },
+            warnings = result.warnings.map { FindingDto.of(it) },
+        )
     }
 }
 
 /** `POST /admin/sources` + `.../revisions` response: the stored draft + its inline validation. */
-data class SourceMutationResponse(
-    val api: String,
-    val status: String,
-    val revisionNumber: Int,
-    val validation: ValidationResultDto,
-) {
+data class SourceMutationResponse(val api: String, val status: String, val revisionNumber: Int, val validation: ValidationResultDto) {
     companion object {
-        fun of(result: SourceMutationResult) =
-            SourceMutationResponse(
-                api = result.api,
-                status = result.status.wire,
-                revisionNumber = result.revisionNumber,
-                validation = ValidationResultDto.of(result.validation),
-            )
+        fun of(result: SourceMutationResult) = SourceMutationResponse(
+            api = result.api,
+            status = result.status.wire,
+            revisionNumber = result.revisionNumber,
+            validation = ValidationResultDto.of(result.validation),
+        )
     }
 }
 
@@ -170,24 +155,16 @@ data class RevisionDetailResponse(
 }
 
 /** `POST .../publish` / lifecycle response `{documentRevision, checksum}` (PLAN §4.3). */
-data class PublishResponse(
-    val documentRevision: Long,
-    val checksum: String,
-) {
+data class PublishResponse(val documentRevision: Long, val checksum: String) {
     companion object {
         fun of(outcome: PublishOutcome) = PublishResponse(outcome.documentRevision, outcome.checksum)
     }
 }
 
 /** `POST .../rollback` response `{newRevisionNumber, documentRevision}` (PLAN §4.3). */
-data class RollbackResponse(
-    val newRevisionNumber: Int,
-    val documentRevision: Long,
-    val checksum: String,
-) {
+data class RollbackResponse(val newRevisionNumber: Int, val documentRevision: Long, val checksum: String) {
     companion object {
-        fun of(outcome: RollbackOutcome) =
-            RollbackResponse(outcome.newRevisionNumber, outcome.documentRevision, outcome.checksum)
+        fun of(outcome: RollbackOutcome) = RollbackResponse(outcome.newRevisionNumber, outcome.documentRevision, outcome.checksum)
     }
 }
 
@@ -201,35 +178,26 @@ data class DocumentSummaryResponse(
     val createdAt: Instant,
 ) {
     companion object {
-        fun of(doc: PublishedDocument) =
-            DocumentSummaryResponse(
-                documentRevision = doc.documentRevision,
-                schemaVersion = doc.schemaVersion,
-                checksum = doc.checksum,
-                sourceCount = doc.sourceCount,
-                createdBy = doc.createdBy,
-                createdAt = doc.createdAt,
-            )
+        fun of(doc: PublishedDocument) = DocumentSummaryResponse(
+            documentRevision = doc.documentRevision,
+            schemaVersion = doc.schemaVersion,
+            checksum = doc.checksum,
+            sourceCount = doc.sourceCount,
+            createdBy = doc.createdBy,
+            createdAt = doc.createdAt,
+        )
     }
 }
 
 /** `POST /admin/documents/validate` response `{valid, errors[]}` (PLAN §4.3). */
-data class DocumentValidationResponse(
-    val valid: Boolean,
-    val errors: List<FindingDto>,
-) {
+data class DocumentValidationResponse(val valid: Boolean, val errors: List<FindingDto>) {
     companion object {
-        fun of(result: ValidationResult) =
-            DocumentValidationResponse(result.isValid, result.errors.map { FindingDto.of(it) })
+        fun of(result: ValidationResult) = DocumentValidationResponse(result.isValid, result.errors.map { FindingDto.of(it) })
     }
 }
 
 /** One `{api, payloadLifecycle, serverLifecycle}` lifecycle conflict (PLAN §12.2). */
-data class LifecycleConflictDto(
-    val api: String,
-    val payloadLifecycle: String,
-    val serverLifecycle: String,
-) {
+data class LifecycleConflictDto(val api: String, val payloadLifecycle: String, val serverLifecycle: String) {
     companion object {
         fun of(c: LifecycleConflict) = LifecycleConflictDto(c.api, c.payloadLifecycle, c.serverLifecycle)
     }
@@ -254,27 +222,22 @@ data class ImportBundledResponse(
     val documentRevision: Long?,
 ) {
     companion object {
-        fun of(result: BundledImportResult) =
-            ImportBundledResponse(
-                created = result.created,
-                updated = result.updated,
-                unchanged = result.unchanged,
-                skippedRemoved = result.skippedRemoved,
-                skippedRetired = result.skippedRetired,
-                skippedDraft = result.skippedDraft,
-                lifecycleConflicts = result.lifecycleConflicts.map { LifecycleConflictDto.of(it) },
-                warnings = result.warnings.map { FindingDto.of(it) },
-                documentRevision = result.documentRevision,
-            )
+        fun of(result: BundledImportResult) = ImportBundledResponse(
+            created = result.created,
+            updated = result.updated,
+            unchanged = result.unchanged,
+            skippedRemoved = result.skippedRemoved,
+            skippedRetired = result.skippedRetired,
+            skippedDraft = result.skippedDraft,
+            lifecycleConflicts = result.lifecycleConflicts.map { LifecycleConflictDto.of(it) },
+            warnings = result.warnings.map { FindingDto.of(it) },
+            documentRevision = result.documentRevision,
+        )
     }
 }
 
 /** `POST .../rollback` request body `{toRevision}` (PLAN §4.3). */
-data class RollbackRequest(
-    @field:Positive val toRevision: Int = 0,
-)
+data class RollbackRequest(@field:Positive val toRevision: Int = 0)
 
 /** `POST .../remove` request body `{confirm}` — foot-gun guard, must equal the api (PLAN §4.3). */
-data class RemoveRequest(
-    @field:NotBlank val confirm: String = "",
-)
+data class RemoveRequest(@field:NotBlank val confirm: String = "")

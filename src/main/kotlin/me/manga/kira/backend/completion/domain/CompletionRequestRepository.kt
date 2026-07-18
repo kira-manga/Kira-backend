@@ -10,27 +10,13 @@ import java.util.UUID
  */
 interface CompletionRequestRepository {
     /** Insert a new `PENDING` row and return its generated id. */
-    fun insertPending(
-        userId: UUID,
-        provider: String,
-        model: String,
-        prompt: String,
-        now: Instant,
-    ): UUID
+    fun insertPending(userId: UUID, provider: String, model: String, prompt: String, now: Instant): UUID
 
     /** Move a request to [status], stamping `updated_at` = [now]. */
-    fun updateStatus(
-        id: UUID,
-        status: CompletionStatus,
-        now: Instant,
-    )
+    fun updateStatus(id: UUID, status: CompletionStatus, now: Instant)
 
     fun findById(id: UUID): CompletionRequestRecord?
 
     /** Caller's own requests, newest first (the `idx_completions_user` order, PLAN §4.6). */
-    fun findPageByUser(
-        userId: UUID,
-        page: Int,
-        size: Int,
-    ): CompletionRequestPage
+    fun findPageByUser(userId: UUID, page: Int, size: Int): CompletionRequestPage
 }

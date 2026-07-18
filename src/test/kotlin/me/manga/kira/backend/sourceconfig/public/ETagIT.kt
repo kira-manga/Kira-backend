@@ -19,8 +19,7 @@ import org.springframework.test.web.servlet.get
  */
 class ETagIT : AbstractAdminSourceIT() {
 
-    private fun etagOf(actions: ResultActionsDsl): String =
-        actions.andReturn().response.getHeader("ETag") ?: error("missing ETag header")
+    private fun etagOf(actions: ResultActionsDsl): String = actions.andReturn().response.getHeader("ETag") ?: error("missing ETag header")
 
     @Test
     fun `document serves a strong quoted etag and honors conditional GET`() {

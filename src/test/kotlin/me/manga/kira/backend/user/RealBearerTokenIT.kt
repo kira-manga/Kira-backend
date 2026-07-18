@@ -19,64 +19,61 @@ import java.time.Instant
  * tampered audience / issuer / expiry / signature variants → 401 (PLAN §6).
  */
 class RealBearerTokenIT
-    @Autowired
-    constructor(
-        private val mockMvc: MockMvc,
-        private val objectMapper: ObjectMapper,
-        private val users: UserRepository,
-    ) : AbstractIntegrationTest() {
+@Autowired
+constructor(private val mockMvc: MockMvc, private val objectMapper: ObjectMapper, private val users: UserRepository) :
+    AbstractIntegrationTest() {
 
-        private val email = "bearer@example.com"
-        private val password = "correct horse battery staple"
+    private val email = "bearer@example.com"
+    private val password = "correct horse battery staple"
 
-        private fun registerAndLogin(): String {
-            val body = objectMapper.writeValueAsString(mapOf("email" to email, "password" to password))
-            mockMvc.post("/api/v1/auth/register") {
-                contentType = MediaType.APPLICATION_JSON
-                content = body
-            }.andExpect { status { isCreated() } }
-            val response =
-                mockMvc
-                    .post("/api/v1/auth/login") {
-                        contentType = MediaType.APPLICATION_JSON
-                        content = body
-                    }.andExpect { status { isOk() } }
-                    .andReturn()
-            return objectMapper.readTree(response.response.contentAsString).get("accessToken").asText()
-        }
-
-        @Test
-        fun `a real login token authenticates against the real decoder`() {
-            val token = registerAndLogin()
+    private fun registerAndLogin(): String {
+        val body = objectMapper.writeValueAsString(mapOf("email" to email, "password" to password))
+        mockMvc.post("/api/v1/auth/register") {
+            contentType = MediaType.APPLICATION_JSON
+            content = body
+        }.andExpect { status { isCreated() } }
+        val response =
             mockMvc
-                .get("/api/v1/auth/me") { header("Authorization", "Bearer $token") }
-                .andExpect {
-                    status { isOk() }
-                    jsonPath("$.email") { value(email) }
-                    jsonPath("$.role") { value("USER") }
-                }
-        }
+                .post("/api/v1/auth/login") {
+                    contentType = MediaType.APPLICATION_JSON
+                    content = body
+                }.andExpect { status { isOk() } }
+                .andReturn()
+        return objectMapper.readTree(response.response.contentAsString).get("accessToken").asText()
+    }
 
-        @Test
-        fun `tampered audience, issuer, expiry, and signature are all 401`() {
-            val realToken = registerAndLogin()
-            val subject = users.findByEmail(email)!!.id
-
-            val wrongAudience = JwtTestSupport.mint(subject = subject, email = email, audience = "someone-else")
-            val wrongIssuer = JwtTestSupport.mint(subject = subject, email = email, issuer = "evil-issuer")
-            val expired =
-                JwtTestSupport.mint(
-                    subject = subject,
-                    email = email,
-                    issuedAt = Instant.now().minus(Duration.ofHours(2)),
-                    expiresAt = Instant.now().minus(Duration.ofHours(1)),
-                )
-            val tampered = JwtTestSupport.tamperSignature(realToken)
-
-            listOf(wrongAudience, wrongIssuer, expired, tampered).forEach { badToken ->
-                mockMvc
-                    .get("/api/v1/auth/me") { header("Authorization", "Bearer $badToken") }
-                    .andExpect { status { isUnauthorized() } }
+    @Test
+    fun `a real login token authenticates against the real decoder`() {
+        val token = registerAndLogin()
+        mockMvc
+            .get("/api/v1/auth/me") { header("Authorization", "Bearer $token") }
+            .andExpect {
+                status { isOk() }
+                jsonPath("$.email") { value(email) }
+                jsonPath("$.role") { value("USER") }
             }
+    }
+
+    @Test
+    fun `tampered audience, issuer, expiry, and signature are all 401`() {
+        val realToken = registerAndLogin()
+        val subject = users.findByEmail(email)!!.id
+
+        val wrongAudience = JwtTestSupport.mint(subject = subject, email = email, audience = "someone-else")
+        val wrongIssuer = JwtTestSupport.mint(subject = subject, email = email, issuer = "evil-issuer")
+        val expired =
+            JwtTestSupport.mint(
+                subject = subject,
+                email = email,
+                issuedAt = Instant.now().minus(Duration.ofHours(2)),
+                expiresAt = Instant.now().minus(Duration.ofHours(1)),
+            )
+        val tampered = JwtTestSupport.tamperSignature(realToken)
+
+        listOf(wrongAudience, wrongIssuer, expired, tampered).forEach { badToken ->
+            mockMvc
+                .get("/api/v1/auth/me") { header("Authorization", "Bearer $badToken") }
+                .andExpect { status { isUnauthorized() } }
         }
     }
+}

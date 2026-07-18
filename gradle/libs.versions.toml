@@ -18,6 +18,10 @@ springBoot = "3.5.16"                   # Spring Boot 3.5.x line (NOT 4.x — PL
 springDependencyManagement = "1.1.7"    # io.spring.dependency-management (applies the Boot BOM)
 kotlinxSerialization = "1.8.1"          # kotlinx-serialization-json runtime (PLAN §3: "1.7+")
 springdoc = "2.8.17"                    # springdoc-openapi 2.8.x = the Spring Boot 3.x line
+ktlintPlugin = "14.2.0"
+detekt = "1.23.8"
+dependencyCheck = "12.2.2"
+cycloneDx = "3.2.4"
 
 # Non-Gradle pins (recorded here for provenance; referenced textually where used):
 #   Gradle wrapper .......... 8.14.5   (gradle/wrapper/gradle-wrapper.properties)
@@ -31,6 +35,10 @@ kotlin-jpa = { id = "org.jetbrains.kotlin.plugin.jpa", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+dependency-check = { id = "org.owasp.dependencycheck", version.ref = "dependencyCheck" }
+cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cycloneDx" }
 
 [libraries]
 # Explicitly-versioned libraries (everything else is Boot-BOM-managed and versionless below).

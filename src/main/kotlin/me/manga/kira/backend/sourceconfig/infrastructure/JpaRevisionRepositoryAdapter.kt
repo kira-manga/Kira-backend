@@ -14,16 +14,12 @@ import java.util.UUID
  * caller holds the source head `FOR UPDATE` lock, which serializes concurrent creations (PLAN §5).
  */
 @Repository
-class JpaRevisionRepositoryAdapter(
-    private val jpa: SpringDataRevisionRepository,
-) : RevisionRepository {
+class JpaRevisionRepositoryAdapter(private val jpa: SpringDataRevisionRepository) : RevisionRepository {
 
     override fun findById(id: UUID): SourceRevision? = jpa.findById(id).map { it.toDomain() }.orElse(null)
 
-    override fun findBySourceAndNumber(
-        sourceConfigId: UUID,
-        revisionNumber: Int,
-    ): SourceRevision? = jpa.findBySourceConfigIdAndRevisionNumber(sourceConfigId, revisionNumber)?.toDomain()
+    override fun findBySourceAndNumber(sourceConfigId: UUID, revisionNumber: Int): SourceRevision? =
+        jpa.findBySourceConfigIdAndRevisionNumber(sourceConfigId, revisionNumber)?.toDomain()
 
     override fun create(spec: NewRevision): SourceRevision {
         val entity =
@@ -49,23 +45,19 @@ class JpaRevisionRepositoryAdapter(
 
     override fun markSuperseded(revisionId: UUID) = jpa.markSuperseded(revisionId)
 
-    override fun markPublished(
-        revisionId: UUID,
-        publishedAt: Instant,
-    ) = jpa.markPublished(revisionId, publishedAt)
+    override fun markPublished(revisionId: UUID, publishedAt: Instant) = jpa.markPublished(revisionId, publishedAt)
 
-    private fun SourceConfigRevisionEntity.toDomain(): SourceRevision =
-        SourceRevision(
-            id = requireNotNull(id) { "persisted SourceConfigRevisionEntity must have an id" },
-            sourceConfigId = requireNotNull(sourceConfigId),
-            revisionNumber = revisionNumber,
-            configCanonicalJson = configCanonicalJson,
-            checksum = checksum,
-            canonVersion = canonVersion,
-            status = status,
-            createdBy = requireNotNull(createdBy),
-            notes = notes,
-            createdAt = createdAt,
-            publishedAt = publishedAt,
-        )
+    private fun SourceConfigRevisionEntity.toDomain(): SourceRevision = SourceRevision(
+        id = requireNotNull(id) { "persisted SourceConfigRevisionEntity must have an id" },
+        sourceConfigId = requireNotNull(sourceConfigId),
+        revisionNumber = revisionNumber,
+        configCanonicalJson = configCanonicalJson,
+        checksum = checksum,
+        canonVersion = canonVersion,
+        status = status,
+        createdBy = requireNotNull(createdBy),
+        notes = notes,
+        createdAt = createdAt,
+        publishedAt = publishedAt,
+    )
 }

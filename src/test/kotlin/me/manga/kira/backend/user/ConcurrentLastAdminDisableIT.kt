@@ -21,45 +21,42 @@ import java.util.concurrent.Executors
  * count-then-disable race a bare check would lose under READ COMMITTED.
  */
 class ConcurrentLastAdminDisableIT
-    @Autowired
-    constructor(
-        private val userAdminService: UserAdminService,
-        private val users: UserRepository,
-    ) : AbstractIntegrationTest() {
+@Autowired
+constructor(private val userAdminService: UserAdminService, private val users: UserRepository) :
+    AbstractIntegrationTest() {
 
-        private fun createAdmin(email: String) =
-            users.create(email, "{bcrypt}\$2a\$10\$notarealhashjustfortheconcurrencyguard.", Role.ADMIN)
+    private fun createAdmin(email: String) = users.create(email, "{bcrypt}\$2a\$10\$notarealhashjustfortheconcurrencyguard.", Role.ADMIN)
 
-        @Test
-        fun `two concurrent disables leave exactly one enabled admin`() {
-            val adminA = createAdmin("admin-a@example.com")
-            val adminB = createAdmin("admin-b@example.com")
-            assertEquals(2L, users.countEnabledAdmins())
+    @Test
+    fun `two concurrent disables leave exactly one enabled admin`() {
+        val adminA = createAdmin("admin-a@example.com")
+        val adminB = createAdmin("admin-b@example.com")
+        assertEquals(2L, users.countEnabledAdmins())
 
-            val results = CopyOnWriteArrayList<Result<Unit>>()
-            val barrier = CyclicBarrier(2)
-            val pool = Executors.newFixedThreadPool(2)
-            try {
-                val tasks =
-                    listOf(adminA.id, adminB.id).map { id ->
-                        Callable {
-                            barrier.await() // release both threads at the same instant
-                            results.add(runCatching { userAdminService.disable(id) })
-                        }
+        val results = CopyOnWriteArrayList<Result<Unit>>()
+        val barrier = CyclicBarrier(2)
+        val pool = Executors.newFixedThreadPool(2)
+        try {
+            val tasks =
+                listOf(adminA.id, adminB.id).map { id ->
+                    Callable {
+                        barrier.await() // release both threads at the same instant
+                        results.add(runCatching { userAdminService.disable(id) })
                     }
-                pool.invokeAll(tasks).forEach { it.get() }
-            } finally {
-                pool.shutdown()
-            }
-
-            val successes = results.count { it.isSuccess }
-            val failures = results.filter { it.isFailure }
-            assertEquals(1, successes, "exactly one disable must succeed")
-            assertEquals(1, failures.size, "exactly one disable must fail")
-            assertTrue(
-                failures.single().exceptionOrNull() is LastAdminException,
-                "the losing disable must be the last-admin 409",
-            )
-            assertEquals(1L, users.countEnabledAdmins(), "one enabled admin must remain")
+                }
+            pool.invokeAll(tasks).forEach { it.get() }
+        } finally {
+            pool.shutdown()
         }
+
+        val successes = results.count { it.isSuccess }
+        val failures = results.filter { it.isFailure }
+        assertEquals(1, successes, "exactly one disable must succeed")
+        assertEquals(1, failures.size, "exactly one disable must fail")
+        assertTrue(
+            failures.single().exceptionOrNull() is LastAdminException,
+            "the losing disable must be the last-admin 409",
+        )
+        assertEquals(1L, users.countEnabledAdmins(), "one enabled admin must remain")
     }
+}

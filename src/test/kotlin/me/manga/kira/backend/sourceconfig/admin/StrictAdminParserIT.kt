@@ -14,8 +14,7 @@ import org.junit.jupiter.api.Test
  */
 class StrictAdminParserIT : AbstractAdminSourceIT() {
 
-    private fun bodyOf(actions: org.springframework.test.web.servlet.ResultActionsDsl): String =
-        actions.andReturn().response.contentAsString
+    private fun bodyOf(actions: org.springframework.test.web.servlet.ResultActionsDsl): String = actions.andReturn().response.contentAsString
 
     // --- STRICT authoring: create source ------------------------------------------------------------
 

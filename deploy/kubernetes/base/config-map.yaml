@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kira-backend-config
+data:
+  SPRING_PROFILES_ACTIVE: prod
+  KIRA_ADMIN_SEED_ENABLED: "false"
+  KIRA_AUTH_REGISTRATION_ENABLED: "false"
+  KIRA_SECURITY_EXTERNAL_BASE_URL: https://api.kira.example
+  KIRA_SECURITY_TRUST_FORWARDED_HEADERS: "true"
+  KIRA_SECURITY_TRUSTED_PROXIES: 10.0.0.0/8

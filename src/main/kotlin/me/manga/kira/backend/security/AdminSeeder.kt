@@ -19,14 +19,15 @@ import org.springframework.stereotype.Component
  * (PLAN §6). The previous "generate a random password and log it at WARN" idea is rejected.
  */
 @Component
-class AdminSeeder(
-    private val properties: KiraAdminSeedProperties,
-    private val userService: UserService,
-) : ApplicationRunner {
+class AdminSeeder(private val properties: KiraAdminSeedProperties, private val userService: UserService) : ApplicationRunner {
 
     override fun run(args: ApplicationArguments?) {
         if (!properties.seedEnabled) {
             log.info("Admin seeding disabled (kira.admin.seed-enabled=false).")
+            return
+        }
+        if (userService.adminExists()) {
+            log.info("Admin seeding: an ADMIN already exists — nothing to do.")
             return
         }
         val email = properties.email?.trim()
@@ -37,10 +38,6 @@ class AdminSeeder(
                     "Set both (local dev: the gitignored .env), or disable seeding with " +
                     "kira.admin.seed-enabled=false. The password is never logged.",
             )
-        }
-        if (userService.adminExists()) {
-            log.info("Admin seeding: an ADMIN already exists — nothing to do.")
-            return
         }
         val created = userService.createUser(email, password, Role.ADMIN)
         log.info("Admin seeding: created initial ADMIN id={} email={}", created.id, created.email)

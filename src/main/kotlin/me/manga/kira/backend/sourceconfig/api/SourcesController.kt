@@ -23,9 +23,7 @@ import java.nio.charset.StandardCharsets
  */
 @RestController
 @RequestMapping("/api/v1/sources")
-class SourcesController(
-    private val sourceQueryService: SourceQueryService,
-) {
+class SourcesController(private val sourceQueryService: SourceQueryService) {
 
     /**
      * `GET /sources` — a plain JSON array (no pagination; it mirrors the bounded document content). No
@@ -33,10 +31,7 @@ class SourcesController(
      * disabled, removed}) and `engine` ({generic, legacy}) filters; an unknown value → 400 (PLAN §4.5).
      */
     @GetMapping
-    fun list(
-        @RequestParam(required = false) lifecycle: String?,
-        @RequestParam(required = false) engine: String?,
-    ): List<SourceSummaryResponse> {
+    fun list(@RequestParam(required = false) lifecycle: String?, @RequestParam(required = false) engine: String?): List<SourceSummaryResponse> {
         val lifecycles = parseFilter(lifecycle, APP_LIFECYCLES, "lifecycle", "INVALID_LIFECYCLE_FILTER")
         val engines = parseFilter(engine, ENGINES, "engine", "INVALID_ENGINE_FILTER")
         return sourceQueryService.listSummaries(lifecycles, engines).map { SourceSummaryResponse.of(it) }
@@ -47,30 +42,24 @@ class SourcesController(
      * re-serialized DTO). 200 present / 410 removed / 404 unknown-or-draft-only (PLAN §4.1).
      */
     @GetMapping("/{api}")
-    fun byApi(
-        @PathVariable api: String,
-    ): ResponseEntity<ByteArray> =
-        when (val result = sourceQueryService.sourceStanza(api)) {
-            is SourceStanzaResult.Found ->
-                ResponseEntity
-                    .ok()
-                    .contentType(DocumentResponseWriter.JSON_UTF8)
-                    .body(result.json.toByteArray(StandardCharsets.UTF_8))
-            SourceStanzaResult.Gone -> throw SourceRemovedException(api)
-            SourceStanzaResult.NotFound -> throw SourceNotFoundException(api)
-        }
+    fun byApi(@PathVariable api: String): ResponseEntity<ByteArray> = when (val result = sourceQueryService.sourceStanza(api)) {
+        is SourceStanzaResult.Found ->
+            ResponseEntity
+                .ok()
+                .contentType(DocumentResponseWriter.JSON_UTF8)
+                .body(result.json.toByteArray(StandardCharsets.UTF_8))
+
+        SourceStanzaResult.Gone -> throw SourceRemovedException(api)
+
+        SourceStanzaResult.NotFound -> throw SourceNotFoundException(api)
+    }
 
     /**
      * Parse a comma-separated multi-value filter (PLAN §4.5) into a set, rejecting any token outside
      * [allowed] with a 400 (stable [code], generic message — the submitted value is never echoed, §6).
      * A null or empty param → null (no filter).
      */
-    private fun parseFilter(
-        raw: String?,
-        allowed: Set<String>,
-        param: String,
-        code: String,
-    ): Set<String>? {
+    private fun parseFilter(raw: String?, allowed: Set<String>, param: String, code: String): Set<String>? {
         if (raw == null) return null
         val values = raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
         val unknown = values - allowed

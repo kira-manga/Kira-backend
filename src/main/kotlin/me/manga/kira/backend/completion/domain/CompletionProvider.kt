@@ -16,10 +16,7 @@ interface CompletionProvider {
     val name: String
 
     /** Produce a completion for [prompt] using [model], or refuse via [CompletionOutcome.Failure]. */
-    fun complete(
-        prompt: String,
-        model: String,
-    ): CompletionOutcome
+    fun complete(prompt: String, model: String): CompletionOutcome
 }
 
 /**
@@ -29,12 +26,7 @@ interface CompletionProvider {
  * generic one — PLAN §10).
  */
 sealed interface CompletionOutcome {
-    data class Success(
-        val result: String,
-        val latencyMs: Int,
-    ) : CompletionOutcome
+    data class Success(val result: String, val latencyMs: Int) : CompletionOutcome
 
-    data class Failure(
-        val error: String,
-    ) : CompletionOutcome
+    data class Failure(val error: String) : CompletionOutcome
 }

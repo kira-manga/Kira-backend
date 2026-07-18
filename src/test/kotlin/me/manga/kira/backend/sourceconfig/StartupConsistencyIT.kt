@@ -113,10 +113,7 @@ class StartupConsistencyIT : AbstractIntegrationTest() {
         return id
     }
 
-    private fun insertSnapshot(
-        revision: Long,
-        createdBy: UUID,
-    ) {
+    private fun insertSnapshot(revision: Long, createdBy: UUID) {
         jdbcTemplate.update(
             "INSERT INTO published_documents " +
                 "(id, document_revision, schema_version, document_json, checksum, canon_version, source_count, created_by, created_at) " +

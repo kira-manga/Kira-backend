@@ -18,34 +18,24 @@ import java.util.UUID
  */
 interface SpringDataRevisionRepository : JpaRepository<SourceConfigRevisionEntity, UUID> {
 
-    fun findBySourceConfigIdAndRevisionNumber(
-        sourceConfigId: UUID,
-        revisionNumber: Int,
-    ): SourceConfigRevisionEntity?
+    fun findBySourceConfigIdAndRevisionNumber(sourceConfigId: UUID, revisionNumber: Int): SourceConfigRevisionEntity?
 
     fun findAllBySourceConfigIdOrderByRevisionNumberAsc(sourceConfigId: UUID): List<SourceConfigRevisionEntity>
 
     @Query("SELECT max(r.revisionNumber) FROM SourceConfigRevisionEntity r WHERE r.sourceConfigId = :sourceId")
-    fun maxRevisionNumber(
-        @Param("sourceId") sourceConfigId: UUID,
-    ): Int?
+    fun maxRevisionNumber(@Param("sourceId") sourceConfigId: UUID): Int?
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
         value = "UPDATE source_config_revisions SET status = 'superseded' WHERE id = :id",
         nativeQuery = true,
     )
-    fun markSuperseded(
-        @Param("id") id: UUID,
-    )
+    fun markSuperseded(@Param("id") id: UUID)
 
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
         value = "UPDATE source_config_revisions SET status = 'published', published_at = :publishedAt WHERE id = :id",
         nativeQuery = true,
     )
-    fun markPublished(
-        @Param("id") id: UUID,
-        @Param("publishedAt") publishedAt: Instant,
-    )
+    fun markPublished(@Param("id") id: UUID, @Param("publishedAt") publishedAt: Instant)
 }

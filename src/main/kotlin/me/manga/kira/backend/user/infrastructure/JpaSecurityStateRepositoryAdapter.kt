@@ -9,9 +9,7 @@ import org.springframework.stereotype.Repository
  * schema/migration defect worth failing loudly on (PLAN §5).
  */
 @Repository
-class JpaSecurityStateRepositoryAdapter(
-    private val jpa: SpringDataSecurityStateRepository,
-) : SecurityStateRepository {
+class JpaSecurityStateRepositoryAdapter(private val jpa: SpringDataSecurityStateRepository) : SecurityStateRepository {
 
     override fun lockForAdminMutation() {
         checkNotNull(jpa.lockSingletonRow()) {
