@@ -29,4 +29,10 @@ data class KiraCompletionProperties(
     /** Max accepted prompt length; over the limit → 413 (PLAN §4.6 / §4.5). */
     @field:Positive
     val promptMaxLength: Int = 8_000,
+    /** Provider worker count. Calls above this run from the bounded queue. */
+    @field:Positive
+    val executorThreads: Int = 8,
+    /** Maximum queued provider calls before new work fails fast as provider-unavailable. */
+    @field:Positive
+    val queueCapacity: Int = 64,
 )

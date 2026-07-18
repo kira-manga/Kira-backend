@@ -198,6 +198,28 @@ class CompletionIT
         }
 
         @Test
+        fun `a model longer than the database bound is rejected with 400 before persistence`() {
+            val token = registerAndLogin("completion-model-too-long@example.com")
+            mockMvc
+                .post("/api/v1/completions") {
+                    header("Authorization", "Bearer $token")
+                    contentType = MediaType.APPLICATION_JSON
+                    content =
+                        objectMapper.writeValueAsString(
+                            mapOf("prompt" to "hi", "model" to "m".repeat(129)),
+                        )
+                }.andExpect {
+                    status { isBadRequest() }
+                    jsonPath("$.errors[0].code") { value("MODEL_TOO_LONG") }
+                }
+
+            assertEquals(
+                0,
+                jdbcTemplate.queryForObject("SELECT count(*) FROM completion_requests", Int::class.java),
+            )
+        }
+
+        @Test
         fun `list is paginated and newest first`() {
             val token = registerAndLogin("completion-list@example.com")
             post(token, "first")

@@ -3,13 +3,21 @@ package me.manga.kira.backend.common
 import jakarta.validation.ConstraintViolationException
 import me.manga.kira.backend.common.exception.ApiException
 import org.slf4j.LoggerFactory
+import org.springframework.dao.DataIntegrityViolationException
+import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.http.converter.HttpMessageNotReadableException
+import org.springframework.web.HttpMediaTypeNotAcceptableException
+import org.springframework.web.HttpMediaTypeNotSupportedException
+import org.springframework.web.HttpRequestMethodNotSupportedException
+import org.springframework.web.bind.ServletRequestBindingException
 import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.bind.MissingServletRequestParameterException
+import org.springframework.web.method.annotation.HandlerMethodValidationException
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
 import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.resource.NoResourceFoundException
@@ -72,6 +80,71 @@ class GlobalExceptionHandler {
             listOf(ApiFieldError(code = "INVALID", path = ex.name, message = "invalid value")),
         )
 
+    @ExceptionHandler(MissingServletRequestParameterException::class)
+    fun handleMissingParameter(ex: MissingServletRequestParameterException): ResponseEntity<ApiError> =
+        problem(
+            HttpStatus.BAD_REQUEST,
+            "Required request parameter '${ex.parameterName}' is missing.",
+            listOf(ApiFieldError(code = "MISSING_PARAMETER", path = ex.parameterName, message = "required value is missing")),
+        )
+
+    @ExceptionHandler(ServletRequestBindingException::class)
+    fun handleRequestBinding(ex: ServletRequestBindingException): ResponseEntity<ApiError> =
+        problem(
+            HttpStatus.BAD_REQUEST,
+            "A required request value is missing or invalid.",
+            listOf(ApiFieldError(code = "REQUEST_BINDING_FAILED", message = "required request value is missing or invalid")),
+        )
+
+    @ExceptionHandler(HandlerMethodValidationException::class)
+    fun handleMethodValidation(ex: HandlerMethodValidationException): ResponseEntity<ApiError> =
+        problem(
+            HttpStatus.BAD_REQUEST,
+            "Request validation failed.",
+            listOf(ApiFieldError(code = "INVALID", message = "request validation failed")),
+        )
+
+    @ExceptionHandler(HttpRequestMethodNotSupportedException::class)
+    fun handleMethodNotSupported(ex: HttpRequestMethodNotSupportedException): ResponseEntity<ApiError> {
+        val headers = HttpHeaders()
+        ex.supportedHttpMethods?.let(headers::setAllow)
+        return problem(
+            HttpStatus.METHOD_NOT_ALLOWED,
+            "The HTTP method is not supported for this endpoint.",
+            listOf(ApiFieldError(code = "METHOD_NOT_ALLOWED", message = "HTTP method is not supported")),
+            headers,
+        )
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotSupportedException::class)
+    fun handleMediaTypeNotSupported(ex: HttpMediaTypeNotSupportedException): ResponseEntity<ApiError> {
+        val headers = HttpHeaders()
+        headers.accept = ex.supportedMediaTypes
+        return problem(
+            HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+            "The request Content-Type is not supported for this endpoint.",
+            listOf(ApiFieldError(code = "UNSUPPORTED_MEDIA_TYPE", message = "request Content-Type is not supported")),
+            headers,
+        )
+    }
+
+    @ExceptionHandler(HttpMediaTypeNotAcceptableException::class)
+    fun handleMediaTypeNotAcceptable(ex: HttpMediaTypeNotAcceptableException): ResponseEntity<ApiError> =
+        problem(
+            HttpStatus.NOT_ACCEPTABLE,
+            "The requested response media type is not available.",
+            listOf(ApiFieldError(code = "NOT_ACCEPTABLE", message = "response media type is not available")),
+        )
+
+    @ExceptionHandler(DataIntegrityViolationException::class)
+    fun handleDataIntegrity(ex: DataIntegrityViolationException): ResponseEntity<ApiError> =
+        // Never surface SQL/constraint/vendor details. Expected uniqueness/state races are conflicts.
+        problem(
+            HttpStatus.CONFLICT,
+            "The request conflicts with existing data.",
+            listOf(ApiFieldError(code = "DATA_INTEGRITY_CONFLICT", message = "request conflicts with existing data")),
+        )
+
     @ExceptionHandler(ResponseStatusException::class)
     fun handleResponseStatus(ex: ResponseStatusException): ResponseEntity<ApiError> {
         val status = HttpStatus.valueOf(ex.statusCode.value())
@@ -96,9 +169,11 @@ class GlobalExceptionHandler {
         status: HttpStatus,
         detail: String?,
         errors: List<ApiFieldError>,
+        headers: HttpHeaders = HttpHeaders(),
     ): ResponseEntity<ApiError> =
         ResponseEntity
             .status(status)
+            .headers(headers)
             .contentType(MediaType.APPLICATION_PROBLEM_JSON)
             .body(
                 ApiError(

@@ -80,12 +80,22 @@ object SourceRules {
         base: String,
     ) {
         for ((name, value) in source.headers) {
-            val lower = name.lowercase()
+            val normalized = name.trim()
+            if (name != normalized || !isHttpFieldName(normalized)) {
+                findings.error(
+                    ValidationCodes.HEADER_NAME_INVALID,
+                    "$base.headers",
+                    "header names must be non-blank RFC HTTP field-name tokens without surrounding whitespace.",
+                )
+                continue
+            }
+
+            val lower = normalized.lowercase()
             if (lower in FORBIDDEN_HEADER_NAMES) {
                 findings.error(
                     ValidationCodes.FORBIDDEN_HEADER,
-                    "$base.headers[$name]",
-                    "header '$name' is never allowed in a published config.",
+                    "$base.headers[$normalized]",
+                    "header '$normalized' is never allowed in a published config.",
                 )
                 continue
             }
@@ -93,13 +103,25 @@ object SourceRules {
                 // Never echo the value — only the (structural) header name (PLAN §6 log-hygiene).
                 findings.error(
                     ValidationCodes.SECRET_LIKE_HEADER,
-                    "$base.headers[$name]",
-                    "header '$name' looks credential-like; its value is not on the public-placeholder allowlist.",
+                    "$base.headers[$normalized]",
+                    "header '$normalized' looks credential-like; its value is not on the public-placeholder allowlist.",
                 )
             }
         }
     }
 
+    /** RFC 9110 field-name = `token`; tokens are non-empty and ASCII-only. */
+    private fun isHttpFieldName(name: String): Boolean =
+        name.isNotEmpty() &&
+            name.all { char ->
+                char in 'a'..'z' ||
+                    char in 'A'..'Z' ||
+                    char in '0'..'9' ||
+                    char in HTTP_TOKEN_PUNCTUATION
+            }
+
     private fun isSensitiveName(lowerName: String): Boolean =
         lowerName in SENSITIVE_HEADER_NAMES || SENSITIVE_HEADER_SUBSTRINGS.any { it in lowerName }
+
+    private const val HTTP_TOKEN_PUNCTUATION = "!#\$%&'*+-.^_`|~"
 }

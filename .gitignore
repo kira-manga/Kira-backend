@@ -1,13 +1,29 @@
 .agent/
 *.bak
 .env
+.env.*
+!.env.example
 .DS_Store
+
+# Secrets / local credentials
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+secrets/
 
 # Build / Gradle
 build/
 .gradle/
+.kotlin/
+out/
+*.log
+hs_err_pid*
 !gradle/wrapper/gradle-wrapper.jar
 
 # IDE
 *.iml
 .idea/
+.vscode/

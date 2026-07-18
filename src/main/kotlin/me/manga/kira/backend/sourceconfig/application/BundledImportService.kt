@@ -46,9 +46,10 @@ import java.util.UUID
  *    (`lifecycle = "active"`, rendered as an absent key by kcj-1) before any canonical comparison,
  *    checksum, or storage — the incoming lifecycle NEVER enters stored content (PLAN §9).
  * 5. Per source, by `api` (see [importStanza]): absent → create (position = payload order); present →
- *    compare lifecycle-neutral canonical content vs the currently published revision (identical →
- *    `unchanged`; different → publish exactly ONE new revision), with the retired/removed exceptions
- *    and the "payload lifecycle never overrides server lifecycle" conflict reporting.
+ *    draft-only → `skippedDraft`; otherwise compare lifecycle-neutral canonical content vs the
+ *    currently published revision (identical → `unchanged`; different → publish exactly ONE new
+ *    revision), with the retired/removed exceptions and the "payload lifecycle never overrides server
+ *    lifecycle" conflict reporting.
  * 6. All per-source changes apply WITHOUT intermediate whole-document snapshots; after the batch,
  *    materialize **exactly ONE** snapshot via the §9 sequence ([DocumentAssemblyService.materialize]).
  *    Nothing changed at all → no-op: no new snapshot, `documentRevision = null`.
@@ -161,9 +162,10 @@ class BundledImportService(
             // Retired: content is never imported (publish-on-retired is 409); a difference is skipped.
             SourceLifecycleStatus.RETIRED ->
                 if (identical) acc.unchanged += stanza.api else acc.skippedRetired += stanza.api
-            // active / disabled / draft: publish-on-disabled is legal and keeps it disabled; a draft-only
-            // source (no published revision) with content is content-different → published as `updated`.
-            else ->
+            // Import is a migration/re-sync path, never an implicit approval path for admin WIP.
+            SourceLifecycleStatus.DRAFT -> acc.skippedDraft += stanza.api
+            // Active/disabled content can be updated; publishing on disabled preserves that lifecycle.
+            SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.DISABLED ->
                 if (identical) {
                     acc.unchanged += stanza.api
                 } else {
@@ -221,7 +223,7 @@ class BundledImportService(
     }
 
     /**
-     * Publish exactly ONE new revision for an existing (active/disabled/draft) source whose content
+     * Publish exactly ONE new revision for an existing active/disabled source whose content
      * changed (PLAN §12.2) — supersede-then-publish ordering keeps `uq_one_published_per_source` valid
      * at every statement (PLAN §9). Publishing never re-enables ([LifecycleStateMachine.statusAfterPublish]:
      * active→active, disabled→disabled, first-publish draft→active). NO per-source snapshot here — the
@@ -342,6 +344,7 @@ class BundledImportService(
                 "unchanged" to acc.unchanged.size,
                 "skippedRemoved" to acc.skippedRemoved.size,
                 "skippedRetired" to acc.skippedRetired.size,
+                "skippedDraft" to acc.skippedDraft.size,
                 "lifecycleConflicts" to acc.lifecycleConflicts.size,
                 "sourceCount" to document.sources.size,
                 "payloadRevision" to document.revision,
@@ -369,6 +372,7 @@ class BundledImportService(
         val unchanged = mutableListOf<String>()
         val skippedRemoved = mutableListOf<String>()
         val skippedRetired = mutableListOf<String>()
+        val skippedDraft = mutableListOf<String>()
         val lifecycleConflicts = mutableListOf<LifecycleConflict>()
 
         fun toResult(
@@ -380,6 +384,7 @@ class BundledImportService(
             unchanged = unchanged.toList(),
             skippedRemoved = skippedRemoved.toList(),
             skippedRetired = skippedRetired.toList(),
+            skippedDraft = skippedDraft.toList(),
             lifecycleConflicts = lifecycleConflicts.toList(),
             warnings = warnings,
             documentRevision = documentRevision,
@@ -419,6 +424,7 @@ data class BundledImportResult(
     val unchanged: List<String>,
     val skippedRemoved: List<String>,
     val skippedRetired: List<String>,
+    val skippedDraft: List<String>,
     val lifecycleConflicts: List<LifecycleConflict>,
     val warnings: List<ValidationWarning>,
     val documentRevision: Long?,

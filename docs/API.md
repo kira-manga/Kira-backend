@@ -20,8 +20,9 @@ Errors are RFC-9457 `application/problem+json`:
 ```
 
 `type`/`detail`/`errors` are omitted when empty (`NON_EMPTY` inclusion). `errors[]` carries
-`{code, path?, message}` field-level pinpoints (e.g. a validation result). **No error ever echoes a
-submitted config body, header value, password, or token.** Typed-exception → status mapping:
+`{code, path?, message}` field-level pinpoints (e.g. a validation result). Errors never echo a submitted
+config body, header value, password, or token; some source/revision path identifiers currently appear
+in 404/409 details. Typed-exception → status mapping:
 
 | Status | Exception / source | Typical `code` |
 |---|---|---|
@@ -29,9 +30,12 @@ submitted config body, header value, password, or token.** Typed-exception → s
 | 401 | security pipeline (missing/invalid bearer); `UnauthorizedException` (bad login) | `INVALID_CREDENTIALS` |
 | 403 | security pipeline (role); `ForbiddenException` | `REGISTRATION_DISABLED` |
 | 404 | `NotFoundException` (+ subclasses); unmatched route | `NOT_FOUND`, `*_NOT_FOUND`, `NO_PUBLISHED_DOCUMENT` |
-| 409 | `ConflictException`; `InvalidLifecycleTransitionException` | `CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, `REVISION_OLDER_THAN_PUBLISHED`, `UNRETIRE_UNSUPPORTED_FOR_ENGINE`, last-admin guard |
+| 405 | unsupported method | `METHOD_NOT_ALLOWED` |
+| 406 | unsupported response media type | `NOT_ACCEPTABLE` |
+| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, last-admin guard |
 | 410 | `GoneException` | `GONE` (removed source) |
-| 413 | `PayloadTooLargeException` | `PROMPT_TOO_LARGE`, import body over 5 MiB |
+| 413 | body/prompt limit | `PAYLOAD_TOO_LARGE`, `PROMPT_TOO_LARGE` |
+| 415 | unsupported request media type | `UNSUPPORTED_MEDIA_TYPE` |
 | 422 | `ValidationFailedException` | `VALIDATION_FAILED` (+ `errors[]`) |
 | 429 | `TooManyRequestsException` | `TOO_MANY_REQUESTS` |
 | 500 | unexpected (stack trace logged server-side only) | — |
@@ -43,10 +47,13 @@ submitted config body, header value, password, or token.** Typed-exception → s
   `GET /sources` is deliberately **not** paginated — it returns the bounded document as a plain array.
 - **Multi-value filters** (`?lifecycle=`, `?engine=`, `?status=`): comma-separated within one query
   param; an unknown token → 400.
-- **Request-body size:** default max **256 KB**; `POST /admin/sources/import-bundled` max **5 MiB**;
-  a completion prompt over its max length → **413** (one consistent status, never sometimes-400).
-- **Responses** are `Content-Type: application/json; charset=UTF-8`. The public document endpoints
-  add `Cache-Control: public, max-age=300, no-transform` and `X-Content-Type-Options: nosniff`.
+- **Request-body size:** every request body is capped at **256 KiB** before MVC parsing, except
+  `POST /admin/sources/import-bundled`, which is capped at **5 MiB**. Declared and streamed/chunked
+  bodies use the same 413 `PAYLOAD_TOO_LARGE` response. Completion prompts additionally have a
+  configurable character cap (default 8000).
+- **Responses:** raw source-config routes explicitly send `application/json; charset=UTF-8` and add the
+  documented cache/nosniff headers. Jackson-rendered endpoints currently send `application/json`
+  without an explicit charset, which is valid JSON but differs from the original normative plan.
 
 ---
 
@@ -128,9 +135,11 @@ of the password (email is trim + lowercased).
 Body `{email, password}`.
 
 - **200** `{ "accessToken": "<jwt>", "tokenType": "Bearer", "expiresInSeconds": 3600, "role": "USER" }`
-- **401** `INVALID_CREDENTIALS` — identical generic message for unknown-user / wrong-password /
-  disabled account (no account-existence oracle).
-- **429** when throttled (keyed per normalized email **and** client IP).
+- **401** `INVALID_CREDENTIALS` — the same generic response body for unknown-user / wrong-password /
+  disabled account. All three paths perform one password-hash verification (a decoy hash for an
+  unknown/disabled account).
+- **429** when either the normalized-email/client-IP identity bucket or the aggregate client-IP spray
+  bucket is temporarily blocked.
 
 ### `GET /api/v1/auth/me`  — USER or ADMIN
 - **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon.
@@ -152,6 +161,10 @@ neutral `"active"`), `API_IDENTIFIER_INVALID` (blank / > 128 chars / control cha
 edge whitespace), `FIELD_TOO_LONG` (identity/denormalized value over a DB column limit). Semantic
 (Tier-2) validation is stored on the draft and returned inline even when invalid.
 
+Header names must be valid RFC HTTP field-name tokens. Blank, non-token, or leading/trailing-whitespace
+names fail validation with `HEADER_NAME_INVALID`, so padded sensitive names cannot bypass the public-
+credential rules. Published configuration is public; never place a real credential in any header.
+
 | Method & path | Purpose | Codes |
 |---|---|---|
 | `POST /admin/sources` | Create a source (body = full `SourceConfig`; `api` is the identity). Appends to document order (`position = max+1`). | 201 · 409 api exists · 400 strict-parse/Tier-1 |
@@ -172,7 +185,7 @@ edge whitespace), `FIELD_TOO_LONG` (identity/denormalized value over a DB column
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |
 | `POST /admin/documents/republish` | Force-materialize a new snapshot from current state (always a new revision). | 200 |
-| `POST /admin/sources/import-bundled` | The migration on-ramp — see [4. Import](#4-import-bundled). | 200 · 422 |
+| `POST /admin/sources/import-bundled` | The migration on-ramp — see [4. Import](#4-import-bundled). | 200 · 400 · 413 · 422 |
 
 **Selected response shapes** (Jackson-serialized; lifecycle/revision statuses are lowercase wire
 values):
@@ -210,7 +223,7 @@ provenance only); each stanza's `lifecycle` is read separately and normalized aw
 
 ```json
 { "created": ["…"], "updated": ["…"], "unchanged": ["…"],
-  "skippedRemoved": ["…"], "skippedRetired": ["…"],
+  "skippedRemoved": ["…"], "skippedRetired": ["…"], "skippedDraft": ["…"],
   "lifecycleConflicts": [ { "api": "…", "payloadLifecycle": "disabled", "serverLifecycle": "active" } ],
   "warnings": [ { "code": "…", "path": "…", "message": "…" } ],
   "documentRevision": 101 }
@@ -218,6 +231,10 @@ provenance only); each stanza's `lifecycle` is read separately and normalized aw
 
 `documentRevision` is **absent** on the pure no-op case (nothing changed → no new snapshot). Full
 semantics: [`MIGRATION_BUNDLED_TO_REMOTE.md`](MIGRATION_BUNDLED_TO_REMOTE.md).
+
+Existing draft-only sources are never replaced or published by import; they are returned in
+`skippedDraft`. Importing into a partly existing catalog can still retain old positions rather than
+reproduce payload order exactly, so review ordering before later re-imports.
 
 ---
 
@@ -242,12 +259,13 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo in v1) and persist. | 201 · 401 anon · 400 blank prompt · 413 prompt too large |
+| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo in v1) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large |
 | `GET /api/v1/completions/{id}` | Fetch one — **owner or ADMIN only** (others → 404, never 403). | 200 · 404 |
 | `GET /api/v1/completions` | List the caller's own requests, newest first, paginated. ADMIN may pass `?userId=`. | 200 |
 
 - Request `{ "prompt": "…", "model"?: "…" }`. Blank prompt → **400** `BLANK_PROMPT`; prompt over
-  `kira.completion.prompt-max-length` (default 8000) → **413** `PROMPT_TOO_LARGE`.
+  `kira.completion.prompt-max-length` (default 8000) → **413** `PROMPT_TOO_LARGE`. A supplied `model`
+  over **128 characters** is rejected before persistence with **400** `MODEL_TOO_LONG`.
 - Response `CompletionResponse`:
 
 ```json
@@ -262,3 +280,7 @@ and `result` is null. The prompt is never echoed back. The default model when `m
 `INVALID_PROVIDER_RESPONSE`, `RESULT_TOO_LARGE` (reserved, unused in v1), `INTERNAL_COMPLETION_ERROR`
 (every unexpected exception maps here). Raw provider exceptions are never returned or stored — secured
 server logs only.
+
+Provider work runs on `kira.completion.executor-threads` workers (default 8) with a bounded
+`kira.completion.queue-capacity` (default 64). Saturation fails the request outcome as
+`PROVIDER_UNAVAILABLE` instead of growing an unbounded in-memory queue.

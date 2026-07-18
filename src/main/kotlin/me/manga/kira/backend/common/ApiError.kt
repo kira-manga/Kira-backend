@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonInclude
 /**
  * The uniform problem envelope (PLAN §2 / §4) — RFC-9457 (`application/problem+json`) style:
  * `type`, `title`, `status`, `detail`, plus the `errors[]` extension member for field-level
- * pinpoints. Produced only by [GlobalExceptionHandler]; serialized by Jackson.
+ * pinpoints. Produced by [GlobalExceptionHandler] and pre-MVC request filters; serialized by Jackson.
  *
  * `NON_EMPTY` inclusion drops `null`/empty members so an error with no field details is a clean
  * `{type,title,status,detail}` and one with details adds `errors[]`. Error responses **never echo

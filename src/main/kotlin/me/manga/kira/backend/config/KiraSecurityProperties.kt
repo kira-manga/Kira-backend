@@ -50,9 +50,9 @@ data class KiraSecurityProperties(
     val throttle: Throttle = Throttle(),
 ) {
     /**
-     * Auth-throttle tuning (PLAN §6). Login is keyed by normalized-email AND client IP with a
-     * progressive block; registration is a per-IP rate limit. Everything is TTL-bounded — there is
-     * no permanent lockout an attacker could weaponize against a victim account.
+     * Auth-throttle tuning (PLAN §6). Login has both a normalized-email/client-IP identity bucket and
+     * a separate client-IP spray bucket; registration is a per-IP rate limit. Everything is TTL-bounded
+     * — there is no permanent lockout an attacker could weaponize against a victim account.
      */
     data class Throttle(
         /** Maximum tracked throttle entries before deterministic eviction (PLAN §6). */
@@ -61,6 +61,9 @@ data class KiraSecurityProperties(
         /** Consecutive login failures (per email+IP) that trigger a temporary block (PLAN §6: ≥5). */
         @field:Positive
         val loginFailureThreshold: Int = 5,
+        /** Failures spread across identities from one IP before that IP is temporarily blocked. */
+        @field:Positive
+        val loginIpFailureThreshold: Int = 25,
         /** First temporary-block duration once the threshold is hit (PLAN §6: 1 minute). */
         @field:NotNull
         val loginInitialBlock: Duration = Duration.ofMinutes(1),

@@ -59,8 +59,9 @@ disabled; no CORS in v1. Method security is on for the completion ownership chec
   prod**. Prod onboarding is via the admin user API (`POST /admin/users`), not open registration.
 - **Admin seeding** (`AdminSeeder`, an `ApplicationRunner`): if no `ADMIN` exists, create one from
   `KIRA_ADMIN_EMAIL` + `KIRA_ADMIN_PASSWORD`. Missing env while seeding is enabled → **fail startup**
-  with a clear message (dev included; supply them via the gitignored `.env`). An existing admin's
-  password is never reset, and the password is never logged.
+  with a clear message (dev included; export them directly or source the gitignored `.env` first — it
+  is not loaded automatically). An existing admin's password is never reset, and the password is never
+  logged.
 - **Last-admin guard:** disabling a user refuses (**409**) to disable the last enabled `ADMIN`. The
   guard is serialized via a `SELECT … FOR UPDATE` on the singleton `security_state` row *before*
   counting — a bare count-then-disable is racy under READ COMMITTED (two transactions each see 2 enabled
@@ -71,11 +72,12 @@ disabled; no CORS in v1. Method security is on for the completion ownership chec
 `AuthThrottleService` is a bounded **in-memory** store. **Single-instance only** — correct for one JVM;
 a multi-instance deployment MUST move to a shared backend (Redis) first, and this class is that seam.
 
-- **Login:** keyed by normalized email **and** client IP; `≥ 5` consecutive failures arm a temporary
-  block that doubles per breach, capped at 15 minutes; counters reset on success or window expiry. There
-  is **no permanent lockout** an attacker could weaponize against a victim account (everything is
-  TTL-bounded). Throttled → **429** with the same generic body as an auth failure (no username-exists
-  oracle).
+- **Login:** an identity bucket covers each normalized-email/client-IP pair (`≥ 5` failures by default),
+  and a separate aggregate IP bucket covers attempts spread across emails (`≥ 25` by default). Blocks
+  double per breach, cap at 15 minutes, and reset after the idle window; successful login clears only
+  its identity bucket, not aggregate spray history. There is **no permanent lockout**. Throttled calls
+  return **429** with a generic body. Unknown and disabled accounts verify against a startup-generated
+  decoy hash, so every credential path performs one password-hash check.
 - **Registration:** a per-IP rate limit within a window.
 - **Trusted client-IP:** the client address is the server-observed `request.remoteAddr` by **default**.
   `X-Forwarded-For` / `Forwarded` are honored **only** when `kira.security.trust-forwarded-headers=true`
@@ -106,7 +108,9 @@ Tuning lives under `kira.security.throttle.*` (`login-failure-threshold`, `login
   (`baseUrl`, `imageBase`, `icon.remoteUrl`) must be real absolute URIs with **no user-info**
   (`https://user:pass@host` → rejected), no fragment, valid port. *Every value published in a
   `SourceConfig` is public application configuration — never place credentials, cookies, tokens, or
-  private API keys in it.*
+  private API keys in it.* Header names must also be ASCII RFC field-name tokens with no surrounding
+  whitespace; invalid names are publication-blocking `HEADER_NAME_INVALID` findings before sensitive-
+  name evaluation.
 
 ## Logging & diagnostics (§6, normative)
 

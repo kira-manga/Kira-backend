@@ -237,7 +237,7 @@ data class LifecycleConflictDto(
 
 /**
  * `POST /admin/sources/import-bundled` response (PLAN §4.3 / §12.2). The `created/updated/unchanged/
- * skippedRemoved/skippedRetired` arrays are api strings (payload order); `lifecycleConflicts` are the
+ * skippedRemoved/skippedRetired/skippedDraft` arrays are api strings (payload order); `lifecycleConflicts` are the
  * informational payload-vs-server lifecycle mismatches; `warnings` mirrors the validation-DTO finding
  * shape. `documentRevision` is **absent on the no-op case** (`NON_NULL` — nothing changed → no snapshot).
  */
@@ -248,6 +248,7 @@ data class ImportBundledResponse(
     val unchanged: List<String>,
     val skippedRemoved: List<String>,
     val skippedRetired: List<String>,
+    val skippedDraft: List<String>,
     val lifecycleConflicts: List<LifecycleConflictDto>,
     val warnings: List<FindingDto>,
     val documentRevision: Long?,
@@ -260,6 +261,7 @@ data class ImportBundledResponse(
                 unchanged = result.unchanged,
                 skippedRemoved = result.skippedRemoved,
                 skippedRetired = result.skippedRetired,
+                skippedDraft = result.skippedDraft,
                 lifecycleConflicts = result.lifecycleConflicts.map { LifecycleConflictDto.of(it) },
                 warnings = result.warnings.map { FindingDto.of(it) },
                 documentRevision = result.documentRevision,

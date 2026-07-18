@@ -50,6 +50,12 @@ class CompletionController(
                 code = "PROMPT_TOO_LARGE",
             )
         }
+        if (request.model != null && request.model.length > MAX_MODEL_LENGTH) {
+            throw BadRequestException(
+                "model must be at most $MAX_MODEL_LENGTH characters.",
+                code = "MODEL_TOO_LONG",
+            )
+        }
         return CompletionResponse.from(completionService.create(user.id, prompt, request.model))
     }
 
@@ -85,5 +91,6 @@ class CompletionController(
 
     private companion object {
         const val MAX_PAGE_SIZE = 100
+        const val MAX_MODEL_LENGTH = 128
     }
 }

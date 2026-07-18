@@ -89,6 +89,7 @@ object ValidationCodes {
     const val GENERIC_MISSING_SEARCH = "GENERIC_MISSING_SEARCH" // rule 31
     const val GENERIC_MISSING_DETAILS = "GENERIC_MISSING_DETAILS" // rule 31
     const val GENERIC_MISSING_PAGES = "GENERIC_MISSING_PAGES" // rule 31
+    const val HEADER_NAME_INVALID = "HEADER_NAME_INVALID" // rule 32: RFC field-name token
     const val FORBIDDEN_HEADER = "FORBIDDEN_HEADER" // rule 32a
     const val SECRET_LIKE_HEADER = "SECRET_LIKE_HEADER" // rule 32b
     const val URL_INVALID = "URL_INVALID" // rule 32c

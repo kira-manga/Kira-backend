@@ -33,14 +33,16 @@ semantics (all-or-nothing — any failure rolls the entire import back):
      preserves the bundled stanza order, which the app's tab ordering follows). Initial server status
      maps from the payload lifecycle: `"active"` → `active`, `"disabled"` → `disabled`, `"removed"` →
      **not created**, reported under `skippedRemoved` (a terminal husk is pointless).
-   - **Present:** compare the **lifecycle-neutral canonical** content against the currently published
-     revision. Identical → `unchanged` (no new revision). Different → create + publish exactly ONE new
-     per-source revision — **except** a source currently `retired`/`removed` never gets content imported
-     (publish on those statuses is 409 by the state machine; import must not bypass it) → reported under
-     `skippedRetired` / `skippedRemoved`, nothing stored. A `disabled` source's content DOES import and
-     stays disabled. The payload lifecycle **never overrides an existing source's server lifecycle**
-     (that goes through the lifecycle endpoints); a differing payload lifecycle is reported under
-     `lifecycleConflicts`, content still imports (subject to the retired/removed exception).
+   - **Present:** a draft-only source is never replaced or implicitly approved by import; it is reported
+     under `skippedDraft`, with no revision or snapshot caused by that stanza. Otherwise compare the
+     **lifecycle-neutral canonical** content against the currently published revision. Identical →
+     `unchanged` (no new revision). Different → create + publish exactly ONE new per-source revision —
+     **except** a source currently `retired`/`removed` never gets content imported (publish on those
+     statuses is 409 by the state machine; import must not bypass it) → reported under `skippedRetired` /
+     `skippedRemoved`, nothing stored. A `disabled` source's content DOES import and stays disabled. The
+     payload lifecycle **never overrides an existing source's server lifecycle** (that goes through the
+     lifecycle endpoints); a differing payload lifecycle is reported under `lifecycleConflicts`, content
+     still imports (subject to the draft/retired/removed exceptions).
    - A server-side terminally **`removed`** source is never revived by import (`skippedRemoved`).
 6. **Materialize exactly ONE snapshot** after the batch (the §9 global-lock sequence, whole-document
    validation). If nothing changed at all → no-op: **200** with all-`unchanged` and **no new document
@@ -50,15 +52,16 @@ semantics (all-or-nothing — any failure rolls the entire import back):
 
 ```json
 { "created": ["…"], "updated": ["…"], "unchanged": ["…"],
-  "skippedRemoved": ["…"], "skippedRetired": ["…"],
+  "skippedRemoved": ["…"], "skippedRetired": ["…"], "skippedDraft": ["…"],
   "lifecycleConflicts": [ { "api": "…", "payloadLifecycle": "disabled", "serverLifecycle": "active" } ],
   "warnings": [ { "code": "…", "path": "…", "message": "…" } ],
   "documentRevision": 101 }
 ```
 
-Re-importing the identical document is idempotent: everything reports `unchanged`, zero new per-source
-revisions, zero new snapshots — even when stanzas carry explicit non-neutral `lifecycle` values (the
-lifecycle-neutral normalization is what makes this hold).
+Re-importing the identical document is idempotent: published sources report `unchanged`, draft-only
+sources report `skippedDraft`, and there are zero new per-source revisions or snapshots — even when
+stanzas carry explicit non-neutral `lifecycle` values (the lifecycle-neutral normalization is what
+makes this hold).
 
 ## 3. The two-floor revision model
 

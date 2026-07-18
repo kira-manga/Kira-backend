@@ -14,10 +14,12 @@ import java.time.Instant
  * correct for one JVM; a multi-instance deployment MUST move to a shared backend (Redis) first.
  * This class is the seam for that.
  *
- *  - **Login**: keyed by normalized-email AND client IP. `>= loginFailureThreshold` consecutive
- *    failures → a temporary block that doubles per breach, capped at `loginMaxBlock`. Counters reset
- *    on success or after `loginFailureWindow` of inactivity. There is **no permanent lockout** an
- *    attacker could weaponize against a victim (everything is TTL-bounded).
+ *  - **Login identity bucket**: keyed by normalized-email AND client IP. Repeated failures block that
+ *    pair without globally locking the account.
+ *  - **Login IP bucket**: aggregates failures across emails from one client address, preventing one
+ *    origin from bypassing throttling by spraying many identities.
+ *    Blocks double per breach, cap at `loginMaxBlock`, and expire after inactivity. There is **no
+ *    permanent lockout** an attacker could weaponize against a victim (everything is TTL-bounded).
  *  - **Registration**: a per-IP rate limit within `registrationWindow`.
  *  - Throttled → the caller raises **429** with the same generic body as an auth failure (no oracle).
  *
@@ -36,17 +38,18 @@ class AuthThrottleService(
     private val loginBuckets = HashMap<String, LoginBucket>()
     private val registrationBuckets = HashMap<String, RegistrationBucket>()
 
-    /** Throws 429 if the (email, IP) pair is currently blocked. Call BEFORE verifying credentials. */
+    /** Throws 429 if either the (email, IP) identity or aggregate IP bucket is blocked. */
     fun checkLoginAllowed(
         normalizedEmail: String,
         clientIp: String,
     ) {
         val now = clock.instant()
         synchronized(lock) {
-            val bucket = loginBuckets[loginKey(normalizedEmail, clientIp)] ?: return
-            val until = bucket.blockedUntil
-            if (until != null && now.isBefore(until)) {
-                throw TooManyRequestsException("Too many attempts. Try again later.")
+            for (key in listOf(loginIdentityKey(normalizedEmail, clientIp), loginIpKey(clientIp))) {
+                val until = loginBuckets[key]?.blockedUntil
+                if (until != null && now.isBefore(until)) {
+                    throw TooManyRequestsException("Too many attempts. Try again later.")
+                }
             }
         }
     }
@@ -58,35 +61,27 @@ class AuthThrottleService(
     ) {
         val now = clock.instant()
         synchronized(lock) {
-            val key = loginKey(normalizedEmail, clientIp)
-            val bucket =
-                loginBuckets.getOrPut(key) {
-                    evictIfNeeded(loginBuckets, now) { it.isDead(now, throttle) }
-                    LoginBucket(nextBlock = throttle.loginInitialBlock, lastUpdate = now)
-                }
-            if (Duration.between(bucket.lastUpdate, now) > throttle.loginFailureWindow) {
-                // Stale window — reset the counter and the block escalation.
-                bucket.failures = 0
-                bucket.nextBlock = throttle.loginInitialBlock
-                bucket.blockedUntil = null
-            }
-            bucket.failures += 1
-            bucket.lastUpdate = now
-            if (bucket.failures >= throttle.loginFailureThreshold) {
-                bucket.blockedUntil = now.plus(bucket.nextBlock)
-                bucket.failures = 0
-                bucket.nextBlock = minOf(bucket.nextBlock.multipliedBy(2), throttle.loginMaxBlock)
-                log.warn("Auth throttle engaged for a login identity (key hashed)")
-            }
+            recordFailure(
+                key = loginIdentityKey(normalizedEmail, clientIp),
+                threshold = throttle.loginFailureThreshold,
+                now = now,
+                dimension = "identity",
+            )
+            recordFailure(
+                key = loginIpKey(clientIp),
+                threshold = throttle.loginIpFailureThreshold,
+                now = now,
+                dimension = "client-ip",
+            )
         }
     }
 
-    /** Successful login clears the (email, IP) throttle state. */
+    /** Successful login clears the identity bucket; it cannot erase aggregate IP spray history. */
     fun recordLoginSuccess(
         normalizedEmail: String,
         clientIp: String,
     ) {
-        synchronized(lock) { loginBuckets.remove(loginKey(normalizedEmail, clientIp)) }
+        synchronized(lock) { loginBuckets.remove(loginIdentityKey(normalizedEmail, clientIp)) }
     }
 
     /** Count a registration attempt for [clientIp]; throws 429 when the per-IP window cap is exceeded. */
@@ -121,14 +116,42 @@ class AuthThrottleService(
     /** Total tracked entries across both stores (for tests / diagnostics). */
     fun size(): Int = synchronized(lock) { loginBuckets.size + registrationBuckets.size }
 
+    private fun recordFailure(
+        key: String,
+        threshold: Int,
+        now: Instant,
+        dimension: String,
+    ) {
+        val bucket =
+            loginBuckets.getOrPut(key) {
+                evictIfNeeded(loginBuckets, now) { it.isDead(now, throttle) }
+                LoginBucket(nextBlock = throttle.loginInitialBlock, lastUpdate = now)
+            }
+        if (Duration.between(bucket.lastUpdate, now) > throttle.loginFailureWindow) {
+            bucket.failures = 0
+            bucket.nextBlock = throttle.loginInitialBlock
+            bucket.blockedUntil = null
+        }
+        bucket.failures += 1
+        bucket.lastUpdate = now
+        if (bucket.failures >= threshold) {
+            bucket.blockedUntil = now.plus(bucket.nextBlock)
+            bucket.failures = 0
+            bucket.nextBlock = minOf(bucket.nextBlock.multipliedBy(2), throttle.loginMaxBlock)
+            log.warn("Auth throttle engaged for login dimension={}", dimension)
+        }
+    }
+
     /** Key = hash(capped email) + IP — bounded and credential-free (PLAN §6 bounded keys). */
-    private fun loginKey(
+    private fun loginIdentityKey(
         normalizedEmail: String,
         clientIp: String,
     ): String {
         val capped = normalizedEmail.take(EMAIL_KEY_CAP)
-        return Sha256.hexUtf8(capped) + "|" + clientIp
+        return "identity|" + Sha256.hexUtf8(capped) + "|" + clientIp
     }
+
+    private fun loginIpKey(clientIp: String): String = "client-ip|$clientIp"
 
     /**
      * Ensure there is room for one more key: drop dead entries first, then the oldest by last-update,

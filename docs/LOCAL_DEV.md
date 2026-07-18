@@ -8,6 +8,7 @@ macOS. Authoritative spec: [`PLAN.md`](PLAN.md); versions: [`README.md`](README.
 - **JDK 21** (the project toolchain). On macOS: `export JAVA_HOME=$(/usr/libexec/java_home -v 21)`.
 - **Docker running** — required both for local dev (`docker compose`) and for the Testcontainers
   integration tests (`./gradlew build`). Docker Desktop, Colima, or Rancher all work.
+- **curl + jq** — used by the API walkthroughs below and in [`USAGE.md`](USAGE.md).
 
 ### Colima / non-default Docker socket
 
@@ -36,15 +37,22 @@ docker compose down -v    # stop AND delete the volume (wipe local data)
 
 ## `.env` setup
 
-Copy the template and fill in what you need:
+Copy the template, uncomment the two admin variables, and fill them in. The file uses shell syntax;
+single-quote values containing spaces, `#`, `$`, or other shell-special characters.
 
 ```bash
 cp .env.example .env      # .env is gitignored — never commit it or any real secret
+# edit KIRA_ADMIN_EMAIL and KIRA_ADMIN_PASSWORD, then export every assignment into this shell
+set -a; source .env; set +a
 ```
+
+Spring Boot and Gradle do **not** load `.env` automatically. You must source it in each new shell (or
+export the variables directly) before running `bootRun`. The datasource lines are commented by default
+because the `dev` profile already has the matching local Docker coordinates.
 
 | Variable | When needed | Notes |
 |---|---|---|
-| `KIRA_ADMIN_EMAIL`, `KIRA_ADMIN_PASSWORD` | admin seeding (on by default, incl. dev) | Startup fails fast if seeding is enabled but these are absent. Password must satisfy the policy (≥ 15 chars, ≤ 72 UTF-8 bytes); it is BCrypt-hashed and never logged. To run without seeding, set `kira.admin.seed-enabled=false`. |
+| `KIRA_ADMIN_EMAIL`, `KIRA_ADMIN_PASSWORD` | admin seeding (on by default, incl. dev) | Startup fails fast if seeding is enabled but these are absent. Password must satisfy the policy (≥ 15 chars, ≤ 72 UTF-8 bytes); it is BCrypt-hashed and never logged. To run without seeding, set `KIRA_ADMIN_SEED_ENABLED=false`. |
 | `KIRA_JWT_SECRET` | outside the `dev` profile | Base64 that decodes to ≥ 256 bits, e.g. `openssl rand -base64 32`. The `dev` profile ships a clearly-insecure default so you don't need this locally. |
 | `SPRING_DATASOURCE_URL/USERNAME/PASSWORD` | outside the `dev` profile | The `dev` profile reads the compose coordinates from `application-dev.yml` directly, so a plain local run needs none of these. |
 
@@ -55,6 +63,7 @@ A minimal local `dev` run only needs `KIRA_ADMIN_EMAIL` + `KIRA_ADMIN_PASSWORD`.
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 docker compose up -d
+set -a; source .env; set +a
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 ```
 
@@ -93,26 +102,30 @@ the app's bundled document JSON (`CONFIG_BACKED_SOURCES_JSON`). It validates the
 creates/updates per-source revisions, and materializes exactly one snapshot (all-or-nothing).
 
 ```bash
-# 1. Log in as the seeded admin to get a token (replace with your .env admin credentials).
-TOKEN=$(curl -s http://localhost:8080/api/v1/auth/login \
+# 1. Log in as the seeded admin. This shell must already have sourced .env.
+LOGIN_JSON=$(jq -n --arg email "$KIRA_ADMIN_EMAIL" --arg password "$KIRA_ADMIN_PASSWORD" \
+  '{email: $email, password: $password}')
+ADMIN_TOKEN=$(curl --fail-with-body -sS http://localhost:8080/api/v1/auth/login \
   -H 'Content-Type: application/json' \
-  -d '{"email":"<your-admin-email>","password":"<your-admin-password>"}' \
-  | sed -n 's/.*"accessToken":"\([^"]*\)".*/\1/p')
+  --data "$LOGIN_JSON" | jq -er '.accessToken')
+unset LOGIN_JSON
 
 # 2. Import the bundled document (≤ 5 MiB).
-curl -s -X POST http://localhost:8080/api/v1/admin/sources/import-bundled \
-  -H "Authorization: Bearer $TOKEN" \
+curl --fail-with-body -sS -X POST http://localhost:8080/api/v1/admin/sources/import-bundled \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data-binary @bundled-full.json
+  --data-binary @src/test/resources/fixtures/bundled-full.json | jq
 
 # 3. Verify the served document + summaries.
-curl -s -D - http://localhost:8080/api/v1/source-config/document/meta
-curl -s http://localhost:8080/api/v1/sources
+curl --fail-with-body -sS http://localhost:8080/api/v1/source-config/document/meta | jq
+curl --fail-with-body -sS http://localhost:8080/api/v1/sources | jq
 ```
 
 A test-fixture copy of the full document lives at
 `src/test/resources/fixtures/bundled-full.json` (the real 45-source document). See
 [`MIGRATION_BUNDLED_TO_REMOTE.md`](MIGRATION_BUNDLED_TO_REMOTE.md) for the full import contract.
+For user creation, completions, source edits, publishing, lifecycle changes, ETags, and production
+configuration, continue with [`USAGE.md`](USAGE.md).
 
 ## Common gotchas
 
@@ -123,7 +136,8 @@ A test-fixture copy of the full document lives at
   `db/migration/V<n>__*.sql` files (roll forward only; `outOfOrder=false`), never entity-driven DDL.
   A mapping/schema mismatch fails startup — fix the migration, not `ddl-auto`.
 - **Admin seeding fail-fast.** If seeding is enabled (default) without `KIRA_ADMIN_EMAIL` /
-  `KIRA_ADMIN_PASSWORD`, startup fails with a clear message. Set both, or `kira.admin.seed-enabled=false`.
+  `KIRA_ADMIN_PASSWORD`, startup fails with a clear message. Source `.env` first, set both directly, or
+  export `KIRA_ADMIN_SEED_ENABLED=false`.
 - **`./gradlew --version` shows "Kotlin: 2.0.21".** That is Gradle 8.14.5's embedded script-compiler
   Kotlin, not the project's — sources compile with the pinned 2.1.21 plugin.
 - **Don't switch Spring Boot to 4.x** to "get the latest" — the 3.5.x pin is deliberate; a major upgrade

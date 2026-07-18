@@ -12,7 +12,6 @@ import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
 import me.manga.kira.backend.user.domain.UserRepository
 import org.slf4j.LoggerFactory
-import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.stereotype.Service
 
 /**
@@ -25,7 +24,7 @@ import org.springframework.stereotype.Service
 class AuthService(
     private val users: UserRepository,
     private val userService: UserService,
-    private val passwordEncoder: PasswordEncoder,
+    private val credentialVerifier: CredentialVerifier,
     private val jwtService: JwtService,
     private val throttle: AuthThrottleService,
     private val authProperties: KiraAuthProperties,
@@ -63,9 +62,9 @@ class AuthService(
         val normalized = userService.normalizeEmail(email)
         throttle.checkLoginAllowed(normalized, clientIp)
 
-        val user = users.findByEmail(normalized)
-        // A single generic 401 for unknown-user / disabled / wrong-password — no existence oracle.
-        if (user == null || !user.enabled || !passwordEncoder.matches(rawPassword, user.passwordHash)) {
+        // CredentialVerifier performs one hash check even for an unknown/disabled account.
+        val user = credentialVerifier.verify(rawPassword, users.findByEmail(normalized))
+        if (user == null) {
             throttle.recordLoginFailure(normalized, clientIp)
             log.warn("Login failed (generic reason category)")
             // Audit the failed attempt (no credential material — the normalized email is an identifier,

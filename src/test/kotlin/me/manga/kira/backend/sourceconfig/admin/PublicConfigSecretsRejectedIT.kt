@@ -42,6 +42,22 @@ class PublicConfigSecretsRejectedIT : AbstractAdminSourceIT() {
     }
 
     @Test
+    fun `a whitespace-padded authorization header cannot bypass publication validation`() {
+        val api = "PaddedAuth"
+        val model =
+            SourceConfigFixtures.validGenericSource(api).copy(
+                headers = mapOf("Authorization " to "Bearer real-token-xyz"),
+            )
+
+        createSource(model).andExpect {
+            status { isCreated() }
+            jsonPath("$.validation.valid") { value(false) }
+            jsonPath("$.validation.errors[?(@.code == 'HEADER_NAME_INVALID')]") { exists() }
+        }
+        publish(api, 1).andExpect { status { isUnprocessableEntity() } }
+    }
+
+    @Test
     fun `the Bearer null placeholder is accepted`() {
         val model =
             SourceConfigFixtures.validGenericSource("Placeholder").copy(headers = mapOf("authorization" to "Bearer null"))

@@ -15,7 +15,7 @@ import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.Callable
 import java.util.concurrent.ExecutionException
-import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
@@ -56,9 +56,13 @@ class CompletionService(
                     "(available: ${providers.map { it.name }}). Check kira.completion.provider (PLAN §10).",
             )
 
-    /** Bounded pool for the timed provider call, so the request thread is never blocked unbounded (PLAN §10). */
+    /** Fixed workers plus a bounded queue; saturation fails fast instead of accumulating unbounded work. */
     private val executor =
-        Executors.newFixedThreadPool(PROVIDER_THREADS, namedThreadFactory("completion-provider"))
+        BoundedCompletionExecutor(
+            threads = properties.executorThreads,
+            queueCapacity = properties.queueCapacity,
+            threadFactory = namedThreadFactory("completion-provider"),
+        )
 
     /**
      * Submit a completion (PLAN §4.6/§10): insert `PENDING`, mark `RUNNING`, invoke the provider with a
@@ -162,7 +166,17 @@ class CompletionService(
         model: String,
     ): Resolved {
         val startNanos = System.nanoTime()
-        val future = executor.submit(Callable { provider.complete(prompt, model) })
+        val future =
+            try {
+                executor.submit(Callable { provider.complete(prompt, model) })
+            } catch (ex: RejectedExecutionException) {
+                return Resolved.Failure(
+                    CompletionErrorCode.PROVIDER_UNAVAILABLE,
+                    "provider execution capacity is exhausted",
+                    ex,
+                    elapsedMs(startNanos),
+                )
+            }
         return try {
             when (val outcome = future.get(properties.timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                 is CompletionOutcome.Success -> Resolved.Success(outcome.result, outcome.latencyMs)
@@ -243,9 +257,6 @@ class CompletionService(
 
         /** The single sanitized, bounded, generic client-visible failure message (PLAN §10). */
         const val SANITIZED_FAILURE_MESSAGE = "The completion request could not be completed."
-
-        /** Bounded provider-call pool size — the seam a real async design would revisit (PLAN §10). */
-        const val PROVIDER_THREADS = 8
 
         fun elapsedMs(startNanos: Long): Int = ((System.nanoTime() - startNanos) / 1_000_000L).toInt()
 

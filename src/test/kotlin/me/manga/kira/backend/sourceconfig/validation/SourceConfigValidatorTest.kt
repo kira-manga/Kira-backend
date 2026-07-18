@@ -211,6 +211,21 @@ class SourceConfigValidatorTest {
     }
 
     @Test
+    fun `rule 32 - padded and non-token header names are rejected before safety matching`() {
+        val padded =
+            SourceConfigFixtures.validGenericSource().copy(
+                headers = mapOf(" Authorization " to "Bearer real-token-xyz"),
+            )
+        val containsWhitespace =
+            SourceConfigFixtures.validGenericSource().copy(
+                headers = mapOf("X Bad Header" to "public"),
+            )
+
+        assertTrue(ValidationCodes.HEADER_NAME_INVALID in codes(padded))
+        assertTrue(ValidationCodes.HEADER_NAME_INVALID in codes(containsWhitespace))
+    }
+
+    @Test
     fun `rule 32c - url user-info is forbidden`() {
         assertTrue(ValidationCodes.URL_USERINFO_FORBIDDEN in codes(SourceConfigFixtures.validGenericSource().copy(baseUrl = "https://user:pass@example.com")))
     }

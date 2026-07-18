@@ -1,5 +1,7 @@
 package me.manga.kira.backend.config
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import me.manga.kira.backend.common.web.RequestBodySizeLimitFilter
 import me.manga.kira.backend.common.web.RequestDiagnosticsFilter
 import me.manga.kira.backend.security.AuthenticatedMdcFilter
 import org.springframework.boot.autoconfigure.security.SecurityProperties
@@ -26,6 +28,14 @@ class WebDiagnosticsConfig {
     fun requestDiagnosticsFilter(): FilterRegistrationBean<RequestDiagnosticsFilter> =
         FilterRegistrationBean(RequestDiagnosticsFilter()).apply {
             order = Ordered.HIGHEST_PRECEDENCE
+            addUrlPatterns("/*")
+        }
+
+    @Bean
+    fun requestBodySizeLimitFilter(objectMapper: ObjectMapper): FilterRegistrationBean<RequestBodySizeLimitFilter> =
+        FilterRegistrationBean(RequestBodySizeLimitFilter(objectMapper)).apply {
+            // Keep request-id/access logging outermost, then reject oversized bodies before security/MVC.
+            order = Ordered.HIGHEST_PRECEDENCE + 1
             addUrlPatterns("/*")
         }
 

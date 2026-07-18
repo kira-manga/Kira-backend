@@ -136,6 +136,25 @@ class ImportBundledIT : AbstractAdminSourceIT() {
     }
 
     @Test
+    fun `re-import never publishes or replaces a draft-only source`() {
+        val api = "AdminDraft"
+        val draft = SourceConfigFixtures.validGenericSource(api)
+        createSource(draft).andExpect { status { isCreated() } }
+        val revisionsBefore = revisionCount(api)
+
+        val changedPayload = SourceConfigFixtures.document(draft.copy(displayName = "Imported replacement"))
+        val body = result(importBundled(changedPayload).andExpect { status { isOk() } })
+
+        assertTrue(body.apis("skippedDraft").contains(api))
+        assertFalse(body.apis("updated").contains(api))
+        assertEquals("draft", sourceStatus(api))
+        assertEquals(revisionsBefore, revisionCount(api), "import must not create a revision over admin WIP")
+        assertEquals(0L, publishedRevisionCount(api), "import must not publish the draft")
+        assertEquals(0L, snapshotCount(), "skipping only drafts is a document no-op")
+        assertTrue(body.get("documentRevision") == null || body.get("documentRevision").isNull)
+    }
+
+    @Test
     fun `a body over the 5 MiB import limit is rejected with 413`() {
         val oversized = "a".repeat(5 * 1024 * 1024 + 1)
         importBundled(oversized).andExpect { status { isPayloadTooLarge() } }

@@ -3,7 +3,7 @@
 A standalone **Spring Boot / Kotlin / PostgreSQL** service that is the remote authority for the
 Kira Manga app's **source configuration** — the validated, versioned `SourceConfigDocument` the app
 currently bundles as a string constant. Configs are authored and validated server-side with the
-*same rules* the app's own validator enforces, published as immutable per-source revisions,
+app's mirrored rules plus server-side safety rules, published as immutable per-source revisions,
 assembled into whole-document snapshots, and served over a stable public read API with strong
 ETag/checksum support. Around that core sit three small foundations: JWT auth with `ADMIN`/`USER`
 roles, admin source/user management with a full audit trail, and an authenticated completion service
@@ -11,10 +11,13 @@ behind a provider abstraction (a fake `echo` provider only — no AI/provider SD
 
 The design goal throughout: the app must eventually be able to fetch a document that is
 **contract-equivalent, deterministically canonical, and byte-stable** with respect to what it
-bundles today, and the server must make publishing an invalid config impossible.
+bundles today. This means stable backend canonical bytes, not byte identity with the app's
+hand-authored bundled JSON.
 
 > **The full specification is [`docs/PLAN.md`](docs/PLAN.md).** This project was built in the phased
 > order of PLAN.md §15; the code is the source of truth for everything documented here.
+> Before production use, read the open implementation cautions in
+> [`docs/USAGE.md`](docs/USAGE.md#10-remaining-known-limitations).
 
 ## Architecture
 
@@ -31,8 +34,8 @@ infrastructure JPA entities, Spring Data repos, port adapters, entity↔domain m
 ```
 
 - `api` never touches `infrastructure` or JPA types; `application` depends only on domain ports.
-- Three model families per feature — API DTOs (`api/dto`), domain models (`domain`), JPA entities
-  (`infrastructure/entity`) — mapped explicitly (no MapStruct).
+- Three model families per feature — API DTOs (`api/dto`), domain models (`domain`), and JPA entities
+  (`infrastructure`) — mapped explicitly (no MapStruct).
 - **`sourceconfig/domain` + `sourceconfig/validation` are framework-free** (kotlin-stdlib +
   kotlinx-serialization only) so they can later be extracted into a shared module consumed by both
   backend and app.
@@ -84,8 +87,9 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 # 1. Start the local PostgreSQL (host port 5433; throwaway local-only credentials kira/kira).
 docker compose up -d
 
-# 2. Provide local secrets: copy the template and set an admin email/password (dev seeds an admin).
-cp .env.example .env    # then set KIRA_ADMIN_EMAIL / KIRA_ADMIN_PASSWORD (dev ships an insecure JWT default)
+# 2. Provide local secrets. Uncomment/edit the two KIRA_ADMIN_* lines, then export the file.
+cp .env.example .env
+set -a; source .env; set +a
 
 # 3. Run against it with the `dev` profile (reads compose coordinates from application-dev.yml).
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
@@ -93,6 +97,10 @@ SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 # 4. The full green gate: compile + all unit + Testcontainers integration tests (Docker required).
 ./gradlew clean build
 ```
+
+Spring Boot does **not** load `.env` automatically in this project. Run the `source` command in every
+new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
+shell-special password values single-quoted inside `.env`.
 
 `ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V5`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
@@ -104,6 +112,7 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 
 | Doc | Contents |
 |---|---|
+| [`docs/USAGE.md`](docs/USAGE.md) | Start-to-finish curl walkthrough: login, import, public reads, users, completions, source revisions, lifecycle, and current cautions. |
 | [`docs/PLAN.md`](docs/PLAN.md) | The authoritative specification (§1–§16 + appendices A–C). |
 | [`docs/API.md`](docs/API.md) | Every endpoint: method, auth level, request/response shapes, status codes, ETag/pagination/body-size rules. |
 | [`docs/SOURCE_CONFIG_LIFECYCLE.md`](docs/SOURCE_CONFIG_LIFECYCLE.md) | The 5 server states, app 3-value mapping, publish rules, the 10-step publication sequence + locks, revision numbering, startup consistency + recovery runbook. |
@@ -117,7 +126,7 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 build.gradle.kts / settings.gradle.kts / gradle/libs.versions.toml   # single Gradle module, versions pinned
 docker-compose.yml                                                   # local postgres:17.6-alpine on :5433, named volume
 .env.example                                                         # env template (secrets are BYO, .env gitignored)
-docs/                                                                # PLAN.md + the 6 Phase-10 documents
+docs/                                                                # specification, API, operations, security, and usage documents
 src/main/kotlin/me/manga/kira/backend/
   KiraBackendApplication.kt
   config/          # @ConfigurationProperties (Kira{Security,Completion,Auth,Config,AdminSeed,Validation}Properties),
@@ -141,7 +150,7 @@ src/test/kotlin/me/manga/kira/backend/
 
 ## Test suite
 
-**232 tests across 53 suites** (0 failures / 0 errors / 0 skipped on `./gradlew clean build`).
+**252 tests across 59 suites** (0 failures / 0 errors / 0 skipped on `./gradlew clean build`).
 Pure-unit tests (validator, canonical JSON, JWT, password hashing, state machine, echo provider,
 contract inventory) run without a Spring context. Integration tests use **Testcontainers PostgreSQL**
 (`postgres:17.6-alpine`, one shared container via `@ServiceConnection`) rather than H2, because the

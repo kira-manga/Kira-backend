@@ -75,4 +75,15 @@ class AuthenticationRateLimitIT
             // Four more failures stay below the threshold → still 401, never 429.
             repeat(4) { login(email, "wrong password value").andExpect { status { isUnauthorized() } } }
         }
+
+        @Test
+        fun `one IP spraying many account identifiers is throttled`() {
+            repeat(25) { attempt ->
+                login("missing-$attempt@example.com", "wrong password value")
+                    .andExpect { status { isUnauthorized() } }
+            }
+
+            login("missing-next@example.com", "wrong password value")
+                .andExpect { status { isEqualTo(429) } }
+        }
     }
