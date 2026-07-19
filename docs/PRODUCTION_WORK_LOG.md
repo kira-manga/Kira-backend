@@ -87,6 +87,10 @@ appended here as work completes.
 - The production OCI image built as a non-root multi-stage image. The packaged `prod` smoke test passed
   against disposable TLS PostgreSQL after running the migration CLI from the same image; readiness,
   liveness, and Prometheus were verified.
+- Hosted CI exposed a PostgreSQL bootstrap race: `pg_isready` can accept connections on the temporary
+  initialization server before the target database exists, immediately before that server shuts down.
+  The smoke gate now pins the PostgreSQL image digest and waits for the final PID-1 `postgres` process
+  plus a successful SQL query against `kira`; three consecutive local regression runs passed.
 - Strict Kubernetes 1.34.1 schema validation passed for all 10 rendered resources. The deployment and
   migration Job both require the same immutable digest placeholder in environment overlays.
 - The committed Gradle lock resolved 264 packages. Google OSV-Scanner v2.3.8 initially identified four

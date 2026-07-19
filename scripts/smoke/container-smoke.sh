@@ -85,8 +85,11 @@ docker run --detach --name "$database" --network "$network" \
   sh -ec 'mkdir -p /run/kira-certs; cp /source-certs/ca.crt /source-certs/server.crt /source-certs/server.key /run/kira-certs/; chown -R postgres:postgres /run/kira-certs; chmod 600 /run/kira-certs/server.key; exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/run/kira-certs/ca.crt -c ssl_cert_file=/run/kira-certs/server.crt -c ssl_key_file=/run/kira-certs/server.key' \
   >/dev/null
 
+database_ready=false
 for _ in $(seq 1 45); do
-  if docker exec "$database" pg_isready --username kira --dbname kira >/dev/null 2>&1; then
+  if docker exec "$database" sh -ec 'test "$(cat /proc/1/comm)" = postgres' >/dev/null 2>&1 &&
+    docker exec "$database" psql --username kira --dbname kira --tuples-only --command 'SELECT 1' >/dev/null 2>&1; then
+    database_ready=true
     break
   fi
   if [[ $(docker inspect --format '{{.State.Running}}' "$database") != true ]]; then
@@ -95,7 +98,11 @@ for _ in $(seq 1 45); do
   fi
   sleep 1
 done
-docker exec "$database" pg_isready --username kira --dbname kira >/dev/null
+if [[ $database_ready != true ]]; then
+  docker logs "$database" >&2
+  echo "disposable PostgreSQL did not complete initialization" >&2
+  exit 1
+fi
 
 failure_stage="database migration"
 docker run --rm --network "$network" --entrypoint java \
