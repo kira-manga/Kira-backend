@@ -1,30 +1,45 @@
-# kira-backend — Implementation Plan
+# kira-backend — Architecture and implementation record
 
-> Historical design specification. Production-hardening changes implemented after the original plan
-> are recorded in `PRODUCTION_WORK_LOG.md`; all adversarial findings are dispositioned in
-> `REVIEW_RESOLUTION_2026-07-18.md`. Current code and those amendments supersede statements here that
-> describe in-memory throttling, echo-only completions, unsigned delivery, recursive validation, or
-> deferred app remote integration.
+> This began as the implementation plan and is retained as the detailed architecture record.
+> Production-hardening changes are recorded in `PRODUCTION_WORK_LOG.md`; all adversarial findings are
+> dispositioned in `REVIEW_RESOLUTION_2026-07-18.md`. The current implementation includes shared
+> Redis admission, a production HTTPS completion provider, signed delivery, bounded iterative
+> validation, deployment automation, and the sibling application's fail-closed remote client.
 
-**Status:** Planning document (sole spec for the implementation agent). Nothing has been scaffolded yet.
+**Status:** Implemented and production-hardened for release `1.0.0` (2026-07-19). Sections that retain
+phase language describe construction order, not missing functionality.
 **Revision:** REVIEWED & AMENDED (2026-07-11, second-pass review). 24 proposed amendments were adjudicated against the real mobile-app code; the outcomes are recorded in **Appendix A** at the end of this document. This revision supersedes the first draft wherever they differ. **THIRD-PASS final consistency review (2026-07-11):** 9 implementation-level findings + 7 smaller consistency items were verified against the mobile-app code and PostgreSQL/Spring-Security/Flyway semantics and incorporated; outcomes in **Appendix B**. **FOURTH-PASS pre-implementation amendments (2026-07-11):** 4 owner-directed amendments (publish-state rules, completion error taxonomy, logging & diagnostics, trusted client-IP resolution for throttling) incorporated; outcomes in **Appendix C**. Where appendices differ, the latest appendix (and the amended body text) wins.
-**Target location:** `/Users/abdelrahman/Projects/kira-backend/` — a standalone Gradle project, fully outside the mobile app repos.
-**Mobile parity reference (READ-ONLY):** `/Users/abdelrahman/Projects/Kira manga` — all config shapes and validation rules in this plan were read from that repo on 2026-07-11 (file paths cited inline).
+**Target location:** `/Users/abdelrahman/Projects/kira/kira-backend/` — a standalone Gradle project.
+**Mobile parity reference:** `/Users/abdelrahman/Projects/kira/Kira manga` — the production-hardening
+campaign updated its signed remote-delivery integration on a separate app branch; backend and app
+remain independent repositories and builds.
 
 ## Hard constraints (restated up front — non-negotiable)
 
 1. **JWT signing secret and ALL secrets come from env/config** (`KIRA_JWT_SECRET`, DB credentials, admin seed credentials). Never hardcoded, never committed. `application.yml` holds only `${ENV_VAR}` placeholders and dev-profile defaults that are obviously non-production.
 2. **Passwords are BCrypt-hashed.** No plaintext, no reversible encoding, anywhere (including tests — tests hash too).
 3. **No real secrets committed.** `docker-compose.yml` may carry a throwaway local dev password (`kira`/`kira` style) clearly marked local-only; `.gitignore` excludes `.env`.
-4. **The completion provider is an abstraction** (interface + fake/echo implementation). No provider SDK call and no provider name is ever hardcoded into a controller; selection is by Spring configuration property.
-5. **Standalone project.** No dependency on, reference to, or modification of the mobile app's Gradle modules. The mobile repo is inspected read-only for shape parity only.
-6. **The mobile-app remote-fetch client is OUT OF SCOPE.** This backend serves the document; wiring the app's `RemoteConfigSource` to it is a separate future task in the app repo.
+4. **The completion provider is an abstraction.** Controllers never select providers. Echo is
+   dev/test-only; production uses the configured credential-bearing HTTPS adapter or keeps completion
+   disabled.
+5. **Standalone project.** The backend has no build dependency on the mobile app. Cross-project
+   contract work is implemented and tested in each repository independently.
+6. **Remote delivery fails closed.** The app verifies the exact signed envelope with pinned Ed25519
+   public keys and falls back to its last verified cache or bundled document.
 
 ---
 
 ## 1. Overview & goals
 
-kira-backend is a Spring Boot / Kotlin / PostgreSQL service that becomes the remote authority for the Kira Manga app's **source configuration**: the same validated, versioned `SourceConfigDocument` JSON the app currently bundles as a string constant (`CONFIG_BACKED_SOURCES_JSON` in `composeApp/.../sources/runtime/BundledSourcesConfig.kt`, currently `schemaVersion 1, revision 4`, 12 generic + 33 legacy stanzas) will be authored, validated server-side with the exact same rules the app's `DefaultSourceConfigValidator` enforces, published as immutable revisions, and served over a stable public read API with ETag/checksum support — with lifecycle management (draft → active → disabled → retired → removed), per-source rollback, and an audit trail. Around that core, the project lays three small foundations: JWT auth with ADMIN/USER roles, admin source-management endpoints, and an authenticated completion-request service behind a provider abstraction (fake/echo provider only for now). The design goal throughout: the app must eventually be able to fetch from this backend a document that is **contract-equivalent, deterministically canonical, and byte-stable** with respect to what it bundles today (the app's parser is key-order-insensitive and lenient — semantic equivalence is the contract, byte identity with the hand-authored bundled text is explicitly NOT claimed; see §5 canonicalization), and the server must make publishing an invalid config impossible.
+kira-backend is a Spring Boot / Kotlin / PostgreSQL service that is the remote authority for the Kira
+Manga app's **source configuration**. It authors and validates the mirrored `SourceConfigDocument`
+contract, publishes immutable signed revisions, serves exact canonical bytes with ETag/checksum
+support, manages source lifecycle and rollback, and records an audit trail. It also provides JWT
+ADMIN/USER authorization and an optional authenticated completion service behind a provider
+abstraction with shared admission controls. The app's bundled document remains its offline trust and
+availability floor. Remote documents are semantically contract-equivalent and deterministic under
+`kcj-1`; byte identity with the hand-authored bundle is not claimed. Invalid or unsigned publication
+is impossible in production, and invalid remote delivery cannot replace the app's last good state.
 
 ---
 
@@ -600,26 +615,49 @@ draft    --(new revisions freely)-->   draft
 
 Failure anywhere rolls the whole mutation back — the served document can never be invalid, torn, or missing a concurrent change. A Postgres advisory transaction lock (`pg_advisory_xact_lock`) would be an acceptable equivalent for step 1, but the singleton row is preferred: it is visible in the schema, testable, and doubles as the latest-revision pointer. `ConcurrentDifferentSourcePublishIT` proves the invariant: two truly concurrent publications to two different sources → the final latest snapshot contains BOTH changes.
 
-**Checksum & ETag:** ETag = strong quoted document checksum (`ETag: "a1b2…"`); `If-None-Match` containing it → 304 (weak `W/"…"` validators never match — §4.1). Checksum also surfaces in `X-Config-Checksum` and `/document/meta` so the app (future) can verify payload integrity independently of HTTP caching. `generatedAt` and the snapshot row's `created_at` are **the same application-controlled instant** (steps 7–8 above; injected Clock, ISO-8601 UTC, seconds precision; no DB `now()` default anywhere in the snapshot path) — provenance only, exactly as the app treats it (verified 2026-07-11: `generatedAt` has zero readers in the app outside the model declaration).
+**Checksum & ETag:** ETag = strong quoted document checksum (`ETag: "a1b2…"`); `If-None-Match` containing it → 304 (weak `W/"…"` validators never match — §4.1). Checksum also surfaces in `X-Config-Checksum` and `/document/meta`; the app recomputes it before signature and rollback acceptance. `generatedAt` and the snapshot row's `created_at` are **the same application-controlled instant** (steps 7–8 above; injected Clock, ISO-8601 UTC, seconds precision; no DB `now()` default anywhere in the snapshot path) and are included in the signed metadata.
 
 **Empty document — allowed, consequences documented:** publishing a document with ZERO sources (after removing the final published source) is legal — it is the truthful terminal state, and reaching it already requires walking every source through `disabled → retired → removed(confirm)`, so no extra destructive confirmation is invented. Whole-document validation (§8 rule 29) accepts zero sources; under `kcj-1` default-omission the empty `sources` list is simply absent from the canonical bytes (it equals the model default `emptyList()`), and the app parses that back to an empty list. **App-side impact (verified 2026-07-11):** the app can never be blanked by an empty remote document — `RemoteSourceConfigManager.refresh()` ALWAYS folds the bundled document in first (`mutableListOf(bundledDocument)`), `ConfigMerger.merge` unions per-api (an empty higher-precedence document overrides nothing), and the catalog sync's `forceDisableNonConfigRows` is guarded on a non-empty generic set. The only effect is the revision ratchet: the app's accepted floor rises to the empty document's revision. `EmptyDocumentPublishIT` covers it.
 
-**Signature (future-ready, not implemented — and the column is NOT created in v1, unambiguously):** the app's remote path requires a detached signature (`ConfigSignatureVerifier.verify(payload, signatureBase64)`; currently `DenyRemoteSignatureVerifier` rejects all). V3 does **not** include a `signature_base64` column; when the owner decides the scheme (Open Q1), a NEW migration adds the nullable column + an Ed25519 signing key from env. This paragraph is the design seam — schema space is not reserved speculatively. Nothing in v1 depends on it.
+**Signature (implemented in V7):** every new snapshot carries an Ed25519 detached signature over the
+versioned `kira-source-signature-v1` input: revision, predecessor revision/checksum, current checksum,
+creation time, and exact `kcj-1` bytes. V7 adds the signature, signing-key id, and predecessor metadata
+without rewriting prior migrations. Production startup requires a matching PKCS#8 private key and
+X.509 public-key entry. The public document endpoint, metadata endpoint, and discovery endpoint expose
+verifiable metadata; discovery is not a trust root. The app selects a locally pinned public key by id,
+recomputes the checksum, verifies the signature, and rejects tampering, unknown keys, replay, and
+rollback. Rotation keeps old and new public keys in an explicit overlap window. See
+`SOURCE_DOCUMENT_SIGNING.md`.
 
 ---
 
-## 10. Completion foundation
+## 10. Completion service
 
-Deliberately small — a persistence + abstraction skeleton, not an AI platform.
+The service remains provider-agnostic, but its admission, lifecycle, and retention paths are complete
+for production use. It is disabled by default.
 
 - **Port (domain):** `interface CompletionProvider { val name: String; fun complete(prompt: String, model: String): CompletionOutcome }` where `CompletionOutcome` = `Success(result: String, latencyMs: Int)` | `Failure(error: String)`. No Spring types in the interface.
-- **Fake provider (infrastructure):** `EchoCompletionProvider` — `name = "echo"`, returns `"echo: $prompt"` (with the model name recorded), never fails except on blank input; used by all tests and as the default runtime provider.
-- **Selection:** property `kira.completion.provider=echo` (default) picks the bean by name from the injected `List<CompletionProvider>`; unknown name → startup failure. Controllers know only `CompletionService`; `CompletionService` knows only the port. A future real provider = one new class + its API key from env (`KIRA_COMPLETION_API_KEY`) — **secrets stay server-side; no provider secret ever appears in an API response or client**.
+- **Providers:** `EchoCompletionProvider` is available only in explicit `dev`/`test` profiles.
+  Production uses the generic HTTPS provider adapter, configured through environment-only endpoint,
+  model, and API-key values. Enabling completion in production without a valid HTTPS provider fails
+  startup; disabling the feature requires no provider credential.
+- **Selection:** `kira.completion.provider` selects a bean from the injected provider set; unknown or
+  unsafe production selection fails startup. Controllers know only `CompletionService`;
+  `CompletionService` knows only the port. Provider secrets never appear in an API response, stored
+  error, audit entry, or application log.
 - **Transaction & failure boundaries (normative — a DB transaction is NEVER held open across a provider call):** (1) short tx: insert `completion_requests` row `PENDING` → commit; (2) short tx: update to `RUNNING` → commit; (3) invoke the provider **outside any DB transaction** on a bounded executor (`kira.completion.executor-threads`, default 8; `queue-capacity`, default 64), wrapped in a timeout (`kira.completion.timeout`, default 30s) — a slow/hung provider must not pin a connection-pool slot or a row lock, and executor saturation becomes a stored `FAILED` result with `PROVIDER_UNAVAILABLE`; (4) short tx: store the sanitized outcome — `SUCCEEDED` with the result truncated to `kira.completion.max-result-length` (default 100 000 chars, truncation recorded), or `FAILED` with a **sanitized client-visible message + stable error code** (below). A crash between (2) and (4) leaves a `RUNNING` row — harmless, visible, and exactly why the status exists. The request timeout includes time spent waiting in the bounded queue. The **echo provider goes through this same orchestration path** (queue, timeout, truncation, sanitization, error mapping) so a future real provider changes zero orchestration code.
 - **Stable error-code catalog (normative — persisted in `completion_results.error_code`, exposed in the API):** a bounded enum, not free text: `PROVIDER_TIMEOUT` (the §10 timeout elapsed), `PROVIDER_UNAVAILABLE` (connect/transport failure), `PROVIDER_REJECTED` (the provider refused the request), `INVALID_PROVIDER_RESPONSE` (unparseable/contract-violating provider output), `RESULT_TOO_LARGE` (result over the max even for truncation policy — when truncation is disallowed), `INTERNAL_COMPLETION_ERROR` (anything else — **every unknown/unexpected exception maps here**, never to a leaked message). Failure responses expose both fields: `{"errorCode": "PROVIDER_TIMEOUT", "error": "The completion request could not be completed."}` — the `error` message is sanitized, bounded, and generic; the `errorCode` is the machine-actionable part. **Raw provider exceptions are never returned to clients and never stored** — stack traces and provider internals appear only in secured server logs (request-id-correlated, §6 logging). Successful requests carry `error_code = NULL` and `error = NULL` (DB CHECK-enforced, §5); a failed request never carries a `result` (CHECK `chk_result_xor_error`). `CompletionErrorTaxonomyIT` (§11 test 49) proves timeout, provider rejection, unexpected-exception mapping, and response sanitization.
-- **Data hygiene & retention:** prompts/results live only in the two completion tables (retention: kept indefinitely in v1; a retention window is a documented future admin policy, and the tables are RESTRICT-protected evidence until then). Prompt/result contents never appear in audit rows or logs; provider credentials/`Authorization` never logged.
-- **Persistence:** every call writes `completion_requests` (user, provider, model, prompt, status) and, on completion, `completion_results` (result | error, latency). Synchronous execution in v1 within the request; the `RUNNING` status also enables async execution later without schema change.
-- **Rate limits / quotas:** NOT implemented; the seam is `CompletionService.checkQuota(user)` (no-op v1, single call site) + the per-user request history already persisted (a quota needs only a count query). Documented future work.
+- **Data hygiene & retention:** prompts/results live only in the two completion tables and are never
+  written to audit rows or logs. A scheduled, bounded cleanup expires abandoned in-flight work and
+  deletes terminal prompt/result rows after `kira.completion.retention` (seven days by default).
+- **Persistence:** every accepted call records its request and terminal result/error in short
+  transactions; no database transaction spans a provider call. Cancellation and timeout transitions
+  are compare-and-set guarded so late workers cannot overwrite terminal state.
+- **Admission:** atomic per-user/global rolling limits, daily per-user quota, global concurrency,
+  executor capacity, and separate queue/provider timeouts reject overload predictably with 429 or 503
+  plus retry guidance. Redis Lua coordination is mandatory for multiple instances; a bounded in-memory
+  implementation is permitted only for an explicitly declared single-instance topology. Coordination
+  failure denies new work.
 
 ---
 
@@ -701,9 +739,16 @@ Full doc to be written as `docs/MIGRATION_BUNDLED_TO_REMOTE.md` in Phase 10 (the
    - A server-side terminally **`removed` source is never revived** by import (reported `skippedRemoved`).
    - All per-source changes apply **without intermediate whole-document snapshots**; after the batch, materialize **exactly ONE** snapshot via the §9 sequence (global lock, whole-doc validation). If nothing changed at all → no-op: 200 with all-`unchanged` summary and **no new document revision**.
    - Any failure rolls back the entire import. Response: `{created[], updated[], unchanged[], skippedRemoved[], skippedRetired[], skippedDraft[], lifecycleConflicts[], warnings[], documentRevision?}`.
-3. **App-side acceptance chain (already implemented, verified in `RemoteSourceConfigManager`):** fetched remote must (a) pass signature verification, (b) parse, (c) pass the full validator, (d) have `revision >=` the accepted floor — any failure drops the document silently and the previous good document (cache, else bundled) stays active. The backend's job is to make (b)–(d) always true and to be ready for (a).
+3. **App-side acceptance chain (implemented and verified):** fetched remote must (a) have complete,
+   bounded metadata from a credential-free HTTPS origin, (b) match its SHA-256 checksum, (c) pass
+   pinned-key Ed25519 verification, (d) parse and pass the full validator, and (e) advance the accepted
+   revision/chain without rollback. Any failure keeps the previous verified cache or bundled document.
 4. **Failure semantics restated:** failed fetch → bundled/cache; unsupported `schemaVersion` → ignored (validator gate); failed checksum/signature → ignored; revisions are stable and monotonic; **no silent deletion** — a source is `disabled` in the document before it is ever `retired`/dropped.
-5. **Explicitly OUT OF SCOPE for the backend task:** implementing the app's `RemoteConfigSource` HTTP client, enabling `remote` in the app's DI, the signing key ceremony, and staged rollout. Those are app-repo work items listed as future.
+5. **Cross-repository delivery status:** the sibling app branch implements `KtorRemoteConfigSource`,
+   enables it in DI, verifies the complete signed envelope, persists the verified envelope, and safely
+   falls back. A real HTTPS deployment origin and the protected production signing ceremony are
+   release-environment inputs, not values that can be committed. Percentage rollout remains future
+   product work.
 
 ---
 
@@ -724,18 +769,26 @@ Full doc to be written as `docs/MIGRATION_BUNDLED_TO_REMOTE.md` in Phase 10 (the
 | Popularity counters | Future | Needs client telemetry design first |
 | Rollout percentage / staged rollout | Future | Requires stable client identity + bucketing; owner decision |
 | Feature flags | Future | No consumer yet |
-| **Auth rate limiting (login/registration throttling)** | **Foundation now** | Single-factor password auth without brute-force protection is not shippable; bounded in-memory impl, Redis seam later (§6) |
+| **Auth rate limiting (login/registration throttling)** | **Implemented** | Atomic TTL-bounded Redis counters for multiple instances; bounded memory backend only for declared single-instance operation; coordination failure is fail-closed |
 | **Minimal admin user management** (§4.4) | **Foundation now** | Prod disables registration — without admin-created users there is no lawful onboarding path at all |
-| Completion rate limits / per-user quota | Future (seam now) | `checkQuota()` no-op seam + persisted history make it a small later change (distinct from auth throttling above, which IS v1) |
+| Completion rate limits / per-user quota | **Implemented** | Per-user/global rolling windows, daily quota, global concurrency, bounded queue, independent queue/provider timeouts, and Redis multi-instance coordination |
 | API keys (machine auth) | Future | JWT covers v1 consumers; key mgmt is its own surface |
 | Refresh tokens | Future (seam now) | §6 seam; table design reserved in §5 |
-| Document signing (Ed25519) | Future | Blocked on Open Q1 (key ceremony); the `signature_base64` column is **NOT created in v1** — a future migration adds it (§9) |
+| Document signing (Ed25519) | **Implemented** | V7 signed metadata, deterministic versioned input, key ids/rotation overlap, production startup validation, public/meta endpoints, scripts, and app-pinned verification (§9) |
 
 ---
 
 ## 14. Explicit non-goals
 
-This task will NOT build: the mobile app's remote-fetch client or any change in the mobile repos; any admin web UI; a real AI/completion provider integration (or any provider SDK dependency); **completion** rate limiting/quotas (seam only — **auth throttling IS in scope**, §6); refresh-token issuance/rotation (seam only); document signing (design-seam only — no column in v1); staged rollout / percentage targeting; source health probing; client telemetry/popularity; multi-tenancy; API keys; deployment manifests (K8s/Terraform/CI pipelines) beyond `docker-compose.yml` for local dev; extraction of the validation package into an actual shared module (structured-for, not done). Also explicitly NOT introduced without a concrete present need: replacing JPA (jOOQ/Exposed/raw JDBC), Redis/Caffeine caching, a generic domain-event system (publication/validation/snapshot/audit stay direct transactional orchestration), a source dependency graph, Gradle multi-module split, documents as an independent bounded context, asymmetric JWT signing.
+The released scope intentionally does not include: an admin web UI; a provider-specific AI SDK;
+refresh-token issuance/rotation; staged rollout or percentage targeting; source health probing; client
+telemetry/popularity; multi-tenancy; machine API keys; managed-cloud infrastructure creation; or
+extraction of the validation package into a shared binary module. Kubernetes delivery manifests,
+provider-neutral database recovery automation, GitHub CI/release pipelines, signed remote delivery, and
+the generic production HTTPS completion adapter are implemented. Also not introduced without a
+concrete need: replacing JPA (jOOQ/Exposed/raw JDBC), application data caching, a generic domain-event
+system, a source dependency graph, a Gradle multi-module backend split, documents as an independent
+bounded context, or asymmetric JWT signing.
 
 ---
 
@@ -749,7 +802,13 @@ This task will NOT build: the mobile app's remote-fetch client or any change in 
 6. **Admin management** — `SourceAdminService` + `DocumentAssemblyService` (global publication lock + the 10-step §9 sequence: `(position, api)` ordering, lifecycle-neutral content + injected lifecycle, the single Clock instant for `generatedAt`/`created_at`, empty-document support), all §4.3 endpoints except import (incl. the full Tier-1 structural gate §8, and the **§9 publishable-revision-states rules with supersede-then-publish ordering**), **V4__audit_log.sql** + `AuditService` wired into every mutation; test 20's expectation extended to V1..V4. Tests: 12, 13, 14, 15, 19, 21, 22, 26, 27, 28, 29, 30, 31, 40, 43, 44, 45 (non-import halves), 46, 47, 48 (IT).
 7. **App-facing API** — `SourceDocumentController` (latest + `/meta`, raw-bytes writer, ETag/304/Cache-Control/X-headers; **no public historical revisions**), `SourcesController` (list + by-api per §4.1 status mapping). Tests: 16, 34, 35 + the visibility halves of 14 (IT).
 8. **Bundled import** — `import-bundled` endpoint on top of the Phase-6 services implementing the §12.2 contract (lifecycle-separately-read + neutral normalization, payload-order positions, `skippedRetired`/`skippedRemoved`/`skippedDraft`), trimmed + full real fixtures. Tests: 17, 23, 24, 25, 32, 45 (import halves) (IT).
-9. **Completion foundation** — **V5__completions.sql** (incl. `error_code` + the `chk_result_xor_error`/error-pairing CHECKs, §5), port + `EchoCompletionProvider` + property selection, `CompletionService` (three-transaction orchestration + bounded executor queue + timeout + sanitization + the **§10 stable error-code catalog**, no-op `checkQuota`), `CompletionController`. **The migration history is now complete: run test 20 in its FINAL form (exactly V1..V5, in order, `outOfOrder=false`) and test 39 (both incremental baselines).** Tests: 8 (unit), 18, 20 (final), 39, 49 (IT).
+9. **Completion foundation (original phase)** — **V5__completions.sql** (incl. `error_code` + the
+   `chk_result_xor_error`/error-pairing CHECKs, §5), provider port, dev/test echo, property selection,
+   three-transaction orchestration, bounded executor, timeouts, sanitization, stable error codes, and
+   controller. Production hardening subsequently added the HTTPS provider, Redis/in-memory atomic
+   admission implementations, rate/quota/concurrency controls, independent queue/provider timeouts,
+   cancellation guards, and scheduled retention. The current Flyway gate validates all migrations,
+   including the later signing migration.
 10. **Hardening + docs** — full-suite pass, security-matrix sweep against every route, log-hygiene sweep (no bodies/Authorization/passwords/header-values/prompts in logs, §6 rules), then write `README.md`, `docs/API.md`, `docs/SOURCE_CONFIG_LIFECYCLE.md`, `docs/SECURITY.md` (**incl. the §6 log/completion-data retention + privacy expectations**), `docs/LOCAL_DEV.md`, `docs/MIGRATION_BUNDLED_TO_REMOTE.md`.
 
 (Phases 4–5 could swap order internally, but keep validation before persistence so entity design is informed by the final model. Phases 7 and 8 depend on 6; 9 is independent after 3 and can run any time after it.)
@@ -822,7 +881,7 @@ This task will NOT build: the mobile app's remote-fetch client or any change in 
 | 8 | ACCEPTED | An argument resolver only runs when a controller injects it — insufficient. Enforcement moved into the authentication pipeline: custom `jwtAuthenticationConverter` (`Converter<Jwt, AbstractAuthenticationToken>`) — verify JWT normally, load user by `sub`, missing/disabled → `AuthenticationException` → 401 on EVERY protected endpoint; authorities derived from the **DB role** (immediate effect for server-side role changes; token role claim is informational, never trusted); loaded user exposed as principal (no second DB read). "No custom servlet filter" wording reconciled (a converter is not a filter). Test 37 extended across /auth/me, completion read/write, admin, + DB-role-change immediacy. |
 | 9 | ACCEPTED-WITH-MODIFICATION | Two-tier model added (§8): Tier-1 structural 400 gate (nothing persisted) = strict-parse failures, `API_ID_MISMATCH`, `LIFECYCLE_NOT_AUTHORABLE` (both were already 400s — now formally tiered), `API_IDENTIFIER_INVALID`, `FIELD_TOO_LONG` (all DB column limits → controlled 400, never a 500 from a persistence exception); Tier-2 = all semantic §8 rules stored on inspectable drafts. MODIFICATION (decisive, evidence-driven): the proposed "safe path/identifier format" CANNOT be an ASCII slug — real production apis contain embedded spaces (`"Team X"`, `"Komik Cast"`, `"Mangamello Plus"`, `"Taurus Fansub"`, `"Manga Origine"`) and Arabic script (`"مانجا بارك"`); the gate instead rejects blank/over-128-chars/control-chars/`/`+`\`/edge-whitespace and all 45 bundled apis pass. `StructuralGateIT` (test 44). |
 | S1 | ACCEPTED | `/auth/refresh` is NOT registered — standard 404, no 501 stub; docs mark it planned. §4.2 + §6 both aligned (the "501-until-implemented" phrasing removed). |
-| S2 | ACCEPTED | `signature_base64` column unambiguously NOT created in v1 (a future migration adds it when Open Q1 resolves); §9, §13, §14 aligned — "column-ready"/"nullable column ready" phrasing removed. |
+| S2 | ACCEPTED, THEN IMPLEMENTED | The initial schema did not speculate about signatures. Production hardening later added the decided Ed25519 contract and nullable historical migration through V7, with fail-closed production signing (§9). |
 | S3 | ACCEPTED | `GET /admin/documents/{revision}` = raw stored canonical bytes as body (same raw-bytes writer as public) + metadata headers; explicitly NOT a JSON envelope (would break the serve-stored-bytes/checksum guarantee); consistent with test 16's existing wording. |
 | S4 | ACCEPTED | Explicit: weak validators (`W/"…"`) never strongly match (RFC 9110 §8.8.3.2) → 200; §4.1 + §9 + test 35. |
 | S5 | ACCEPTED | Inbound `X-Request-Id` accepted only when matching `[A-Za-z0-9._-]{1,64}`; otherwise a server UUID is generated — unvalidated header values never reach MDC/logs (§6). |
@@ -842,4 +901,4 @@ This task will NOT build: the mobile app's remote-fetch client or any change in 
 | 1 | ACCEPTED | **Publishable revision states fully specified** (§4.3 publish row + §9): currently-published → 200 idempotent no-op (no snapshot); `superseded` → 409 `REVISION_SUPERSEDED` (restore = rollback only); draft older than the published revision → 409 `REVISION_OLDER_THAN_PUBLISHED`; retired/removed → 409 unchanged. Supersede-then-publish statement ordering inside the single transaction keeps `uq_one_published_per_source` valid at every statement (Postgres checks the partial unique index per statement). Concurrent same-source publishes serialize on the §9 lock order with exactly one deterministic winner. Tests 47 (`PublishStateRulesIT`) + 48 (`ConcurrentSameSourcePublishIT`); Phase 6 updated. |
 | 2 | ACCEPTED | **Stable completion error taxonomy** (§5 + §10 + §4.6): `completion_results.error_code varchar(64) NULL` added with CHECKs — `chk_result_xor_error` (never both `result` and `error`) and error/error_code pairing (both set on failure, both NULL on success). Bounded catalog: `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`, `INVALID_PROVIDER_RESPONSE`, `RESULT_TOO_LARGE`, `INTERNAL_COMPLETION_ERROR` (all unknown exceptions map to the last). API failure shape `{errorCode, error}` with sanitized bounded messages; raw provider exceptions/stack traces never stored, never returned — secured logs only. Test 49 (`CompletionErrorTaxonomyIT`); Phase 9 updated. |
 | 3 | ACCEPTED | **Logging & diagnostics section added** (§6): structured JSON in prod / console in dev; normative per-line fields (request ID, method, normalized route pattern — never raw URLs, status, duration, user ID/role, api, source/document revision, completion ID, error code); full INFO/WARN/ERROR/DEBUG event catalog (startup, Flyway state, consistency checks, seeding, login, throttling, lifecycle, import, publication+checksum, 304 hits, completion transitions, shutdown); log-once-at-the-owning-boundary rule; non-negotiable never-log list extended (no header VALUES, no prompts/results, no field-name injection, control-char sanitization, bounded validation logging); SECURITY.md gains retention/privacy expectations (Phase 10). Phase 2 lays the foundation; each feature phase lands its own events. |
-| 4 | ACCEPTED | **Trusted client-IP resolution for throttling** (§6): server-observed remote address by default; `X-Forwarded-For`/`Forwarded` honored ONLY under `kira.security.trust-forwarded-headers=true` AND a peer listed in `kira.security.trusted-proxies` (rightmost non-trusted hop); malformed/oversized headers fall back safely; bounded in-memory store (max-entries default 100k, TTL expiry, deterministic eviction, bounded hashed keys, minimal data, no permanent lockout); single-instance-only limitation documented with the Redis seam. Test 50 (`ClientIpResolutionIT`); Phase 3 updated. |
+| 4 | ACCEPTED, THEN HARDENED | **Trusted client-IP resolution for throttling** (§6): server-observed remote address by default; forwarded headers are honored only when explicitly enabled through trusted proxies. Malformed/oversized headers fail safely. The bounded memory store remains single-instance-only; atomic TTL-bounded Redis throttling is mandatory for multiple production instances and fails closed when unavailable. |

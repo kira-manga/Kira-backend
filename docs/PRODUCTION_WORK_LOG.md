@@ -66,8 +66,9 @@ appended here as work completes.
 - Implemented the sibling app HTTPS client, pinned-key verification, complete signed cache envelope,
   rollback/replay rejection, bounded delivery, and bundled fallback. Shipping builds require an HTTPS
   origin and public-key pins.
-- GitHub authentication is valid, but the backend repository has no signing secret names configured.
-  No orphan public pin is treated as production-ready; the exact external key ceremony is documented.
+- GitHub API authentication is valid, but the backend repository has no signing secret names
+  configured. No orphan public pin is treated as production-ready; the exact key ceremony is
+  documented and intentionally remains fail-closed until authorized as a persistent trust-root change.
 
 ## Batch 7 — robustness resolution
 
@@ -106,9 +107,12 @@ appended here as work completes.
 ## External release inputs
 
 - `gh secret list --repo kira-manga/Kira-backend` returned no configured production signing secrets.
-  A production private key was therefore not fabricated or committed. The exact one-time generation,
-  GitHub secret installation, public-pin propagation, and rotation procedure is in
-  `SOURCE_DOCUMENT_SIGNING.md` and `scripts/signing/`.
+  `gh api user` confirmed the authenticated account can reach the GitHub API. The attempted one-time
+  ceremony was rejected before execution by the environment's protected-action reviewer because
+  creating and uploading a persistent production trust root requires a fresh explicit approval for
+  that exact action. No key was generated, uploaded, printed, or left on disk. Once approved, run the
+  two commands in `SOURCE_DOCUMENT_SIGNING.md`, commit only the resulting public pin to the app, and
+  retain the private recovery copy in the organization's secret manager.
 - App integration is committed locally on `production-hardening-source-signing` at
   `6b7641a5cf1e23b9876b0d3d51651dc492a8b9d6` with 300 tests and Android/iOS compilation/lint green.
   The execution environment rejected `git push origin production-hardening-source-signing` as an
