@@ -63,4 +63,5 @@ jobs:
           generate_release_notes: true
           files: |
             build/libs/kira-backend-*.jar
-            build/reports/cyclonedx.*
+            build/reports/cyclonedx/bom.json
+            build/reports/cyclonedx/bom.xml

@@ -116,3 +116,19 @@ appended here as work completes.
 - A deployed HTTPS backend origin and production Kubernetes/database/Redis infrastructure are not
   present in this workspace. Manifests, validation, rollout/rollback, backup/PITR/restore, alerts, and
   load-test automation are complete without claiming that those external services already exist.
+
+## Release publication
+
+- Release commit and tag: `61998b3c14cf21b136b78740ea7ea0f6353999ef`, `v1.0.0`.
+- The hardening-branch CI run `29666840861`, main CI run `29666970629`, and tag release run
+  `29666983746` completed successfully for that exact SHA.
+- GitHub Release: `https://github.com/kira-manga/Kira-backend/releases/tag/v1.0.0` with the executable
+  JAR (`sha256:13cdf4e006589452ca038b7e99b78b6f3e793cb4f6c3c1b8e51d7931ead3985b`) and
+  CycloneDX JSON/XML SBOMs attached. The tag workflow's initial glob selected the SBOM directories;
+  the exact generated files were attached to the release and future workflow paths were corrected.
+- GHCR tags `1.0.0`, `sha-61998b3c14cf21b136b78740ea7ea0f6353999ef`, and `latest` were
+  published at image digest `sha256:ebbcdd15979ac8e6f142d206c4fe953e572a12579fd64754026132d91ede6fe7`.
+  GitHub Actions also pushed build provenance for that subject digest.
+- Independent local registry verification requires a GitHub token with `read:packages`; the current
+  CLI token lacks that scope. Publication and attestation creation are confirmed by the successful
+  release workflow without claiming an unauthenticated registry pull.
