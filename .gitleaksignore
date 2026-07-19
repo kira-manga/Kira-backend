@@ -1,0 +1,7 @@
+# Exact historical fingerprints for deliberately public development/test-only JWT fixtures.
+# These values are labeled insecure in source, cannot authenticate against production, and are
+# retained so deterministic security tests can exercise real signing and verification paths.
+a7b97ea8f1f5926415c29b8555f0a7f8b7005c7a:src/test/kotlin/me/manga/kira/backend/config/ProductionSecurityPolicyTest.kt:generic-api-key:66
+d0bb0da8d5d9bc0c4f39363db43810d7893a9732:src/main/resources/application-dev.yml:generic-api-key:20
+d0bb0da8d5d9bc0c4f39363db43810d7893a9732:src/test/resources/application-test.yml:generic-api-key:13
+d0bb0da8d5d9bc0c4f39363db43810d7893a9732:src/test/kotlin/me/manga/kira/backend/support/JwtTestSupport.kt:generic-api-key:24

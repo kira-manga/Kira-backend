@@ -94,7 +94,10 @@ appended here as work completes.
   locks regenerated, and the repeated fail-closed scan returned **No issues found**. The image is pinned
   by digest in CI and needs no third-party API key. CycloneDX generation passed.
 - Shell syntax, diff whitespace, credential/token/private-key pattern checks, and Kustomize rendering
-  passed. GitHub CI retains the pinned Gitleaks full-history scan.
+  passed. The first hosted run exposed a new license requirement in the Gitleaks action; CI now
+  downloads the official Gitleaks 8.30.1 archive, verifies its pinned SHA-256, and scans full Git
+  history without a license or repository token. Four deterministic dev/test JWT fixtures are ignored
+  only by exact historical fingerprint; the repeated local scan found no unignored leaks.
 
 ## External release inputs
 
