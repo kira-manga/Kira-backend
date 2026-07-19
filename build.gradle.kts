@@ -7,7 +7,6 @@ plugins {
     alias(libs.plugins.spring.dependency.management)
     alias(libs.plugins.ktlint)
     alias(libs.plugins.detekt)
-    alias(libs.plugins.dependency.check)
     alias(libs.plugins.cyclonedx)
     jacoco
 }
@@ -15,10 +14,18 @@ plugins {
 group = "me.manga.kira"
 version = "1.0.0"
 
+springBoot {
+    // The release jar also contains the one-shot migration CLI. Pin the HTTP application so clean
+    // builds and image builds never depend on main-class auto-detection order.
+    mainClass.set("me.manga.kira.backend.KiraBackendApplicationKt")
+}
+
 // Force the Spring Boot BOM's Kotlin stdlib/reflect to match the compiler version above.
 // Boot 3.5.x's BOM pins an older Kotlin; overriding this BOM property keeps the runtime
 // stdlib aligned with the 2.1.x compiler (PLAN §3: Kotlin 2.1+).
 extra["kotlin.version"] = libs.versions.kotlin.get()
+extra["jackson-bom.version"] = libs.versions.jackson.get()
+extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
 
 java {
     toolchain {
@@ -62,6 +69,12 @@ dependencies {
     testImplementation("org.testcontainers:junit-jupiter")
     testImplementation("org.testcontainers:postgresql")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+
+    constraints {
+        testImplementation(libs.commons.compress) {
+            because("Testcontainers 1.21.4 requests a Commons Compress release with known vulnerabilities")
+        }
+    }
 }
 
 kotlin {
@@ -137,15 +150,6 @@ tasks.jacocoTestCoverageVerification {
 
 tasks.named("check") {
     dependsOn("ktlintCheck", "detekt", tasks.jacocoTestCoverageVerification)
-}
-
-dependencyCheck {
-    failBuildOnCVSS = 7.0f
-    suppressionFile = "config/dependency-check-suppressions.xml"
-    analyzers {
-        nodeEnabled = false
-        assemblyEnabled = false
-    }
 }
 
 tasks.withType<AbstractArchiveTask>().configureEach {

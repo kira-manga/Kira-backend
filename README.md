@@ -6,8 +6,9 @@ currently bundles as a string constant. Configs are authored and validated serve
 app's mirrored rules plus server-side safety rules, published as immutable per-source revisions,
 assembled into whole-document snapshots, and served over a stable public read API with strong
 ETag/checksum support. Around that core sit three small foundations: JWT auth with `ADMIN`/`USER`
-roles, admin source/user management with a full audit trail, and an authenticated completion service
-behind a provider abstraction (a fake `echo` provider only — no AI/provider SDK).
+roles, admin source/user management with a full audit trail, Ed25519-signed document delivery, and an
+optional authenticated completion service behind a production HTTPS provider abstraction. Echo is
+restricted to explicit development/test profiles.
 
 The design goal throughout: the app must eventually be able to fetch a document that is
 **contract-equivalent, deterministically canonical, and byte-stable** with respect to what it
@@ -16,8 +17,8 @@ hand-authored bundled JSON.
 
 > **The full specification is [`docs/PLAN.md`](docs/PLAN.md).** This project was built in the phased
 > order of PLAN.md §15; the code is the source of truth for everything documented here.
-> Before production use, read the open implementation cautions in
-> [`docs/USAGE.md`](docs/USAGE.md#10-remaining-known-limitations).
+> Before production use, read the fail-closed deployment prerequisites in
+> [`docs/USAGE.md`](docs/USAGE.md#9-production-checklist).
 
 Current release line: **1.0.0**. Releases are built from immutable tags and published with both the
 semantic version and full Git SHA; see [`docs/RELEASE.md`](docs/RELEASE.md).
@@ -65,6 +66,7 @@ fully-tested change).
 | io.spring.dependency-management | **1.1.7** | `gradle/libs.versions.toml` |
 | kotlinx-serialization-json | **1.8.1** | `gradle/libs.versions.toml` |
 | springdoc-openapi-starter-webmvc-ui | **2.8.17** | `gradle/libs.versions.toml` |
+| Jackson BOM / Commons Lang / Commons Compress security overrides | **2.21.5 / 3.20.0 / 1.28.0** | `gradle/libs.versions.toml` + dependency locks |
 | PostgreSQL Docker image | **`postgres:17.6-alpine`** (digest `sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`) | `docker-compose.yml`, test base class |
 
 **BOM-managed** (versions supplied by the Spring Boot 3.5.16 dependency BOM — recorded for
@@ -123,7 +125,9 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | Prerequisites, docker-compose, `.env`, running the app + tests, Swagger, seeding, common gotchas. |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production Kubernetes topology, rollout, drain, rollback, and forward-recovery procedure. |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Reproducible build, immutable image, semantic tag, SBOM, provenance, and publishing procedure. |
-| [`docs/MIGRATION_BUNDLED_TO_REMOTE.md`](docs/MIGRATION_BUNDLED_TO_REMOTE.md) | The bundled→remote migration contract, two-floor revision model, app acceptance chain, cutover checklist, future work. |
+| [`docs/LOAD_TEST.md`](docs/LOAD_TEST.md) | Non-mutating k6 staging load profile, thresholds, metrics, and release evidence. |
+| [`docs/SOURCE_DOCUMENT_SIGNING.md`](docs/SOURCE_DOCUMENT_SIGNING.md) | Signed-byte contract, key generation, protected installation, rotation, and incident procedure. |
+| [`docs/MIGRATION_BUNDLED_TO_REMOTE.md`](docs/MIGRATION_BUNDLED_TO_REMOTE.md) | The bundled→remote migration contract, revision floors, signed app acceptance chain, and cutover checklist. |
 
 ## Project layout
 
@@ -144,18 +148,18 @@ src/main/kotlin/me/manga/kira/backend/
   sourceconfig/    # api (public: SourceDocument/Sources; admin: AdminSources/AdminDocuments) / domain (+ model, validation)
                    # / application (SourceAdminService, DocumentAssemblyService, BundledImportService, SourceQueryService)
                    # / infrastructure (entities, repos, adapters, startup validators)
-  completion/      # api (CompletionController) / domain (CompletionProvider port) / application / infrastructure (EchoCompletionProvider)
+  completion/      # API/domain/application + bounded admission and dev/test echo / production HTTPS providers
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # V1__users, V2__source_config, V3__published_documents, V4__audit_log, V5__completions
+  db/migration/    # forward-only V1 through V8 (users, source docs/signing, audit, completions)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```
 
 ## Test suite
 
-**256 tests across 60 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
+**283 tests across 76 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
 Pure-unit tests (validator, canonical JSON, JWT, password hashing, state machine, echo provider,
 contract inventory) run without a Spring context. Integration tests use **Testcontainers PostgreSQL**
 (`postgres:17.6-alpine`, one shared container via `@ServiceConnection`) rather than H2, because the

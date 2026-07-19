@@ -19,6 +19,12 @@ kubectl kustomize deploy/kubernetes/base > /tmp/kira-rendered.yaml
 kubectl apply --server-side --dry-run=server -f /tmp/kira-rendered.yaml
 ```
 
+CI also runs `scripts/smoke/container-smoke.sh IMAGE`. It creates disposable TLS PostgreSQL
+infrastructure, runs the packaged migration CLI, boots the exact image with the `prod` profile and
+ephemeral signing/JWT material, then verifies readiness, liveness, and Prometheus before removing all
+disposable resources. The rendered base is schema-checked in strict mode against Kubernetes 1.34.1;
+the environment overlay still receives the server-side dry run shown above before deployment.
+
 ## Rollout
 
 1. Verify database backup freshness and complete the pre-deploy restore test.

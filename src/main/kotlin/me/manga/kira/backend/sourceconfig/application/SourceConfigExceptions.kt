@@ -13,11 +13,11 @@ import me.manga.kira.backend.common.exception.NotFoundException
  */
 
 /** 404 — no source with the given api. */
-class SourceNotFoundException(api: String) : NotFoundException("source '$api' not found.", code = "SOURCE_NOT_FOUND")
+class SourceNotFoundException(@Suppress("UNUSED_PARAMETER") api: String) : NotFoundException("source not found.", code = "SOURCE_NOT_FOUND")
 
 /** 404 — no such revision for the source. */
-class RevisionNotFoundException(api: String, revisionNumber: Int) :
-    NotFoundException("revision $revisionNumber of source '$api' not found.", code = "REVISION_NOT_FOUND")
+class RevisionNotFoundException(@Suppress("UNUSED_PARAMETER") api: String, @Suppress("UNUSED_PARAMETER") revisionNumber: Int) :
+    NotFoundException("source revision not found.", code = "REVISION_NOT_FOUND")
 
 /** 404 — no published document snapshot with the given revision. */
 class DocumentNotFoundException(revision: Long) : NotFoundException("published document revision $revision not found.", code = "DOCUMENT_NOT_FOUND")
@@ -30,10 +30,16 @@ class NoPublishedDocumentException : NotFoundException("no source-config documen
  * `GET /sources/{api}`). Distinct from a 404 (unknown/never-published) so the app can distinguish
  * "gone for good" from "no such source". The `{api}` is a caller-supplied path value, not a secret.
  */
-class SourceRemovedException(api: String) : GoneException("source '$api' has been removed.", code = "SOURCE_REMOVED")
+class SourceRemovedException(@Suppress("UNUSED_PARAMETER") api: String) : GoneException("source has been removed.", code = "SOURCE_REMOVED")
 
 /** 409 — a source with this api already exists (`uq_source_configs_api`; PLAN §4.3). */
-class SourceAlreadyExistsException(api: String) : ConflictException("source '$api' already exists.", code = "SOURCE_ALREADY_EXISTS")
+class SourceAlreadyExistsException(@Suppress("UNUSED_PARAMETER") api: String) : ConflictException("source already exists.", code = "SOURCE_ALREADY_EXISTS")
+
+class RollbackRequiresPublishedBaselineException :
+    ConflictException(
+        "rollback requires an existing published revision; publish the draft directly first.",
+        code = "ROLLBACK_REQUIRES_PUBLISHED_BASELINE",
+    )
 
 /**
  * 409 — attempted to publish a `superseded` revision (PLAN §9). Old content is restored ONLY via

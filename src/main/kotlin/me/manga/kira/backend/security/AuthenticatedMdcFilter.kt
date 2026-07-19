@@ -24,6 +24,8 @@ class AuthenticatedMdcFilter : OncePerRequestFilter() {
         if (principal is AuthenticatedUser) {
             MDC.put(MDC_USER_ID, principal.id.toString())
             MDC.put(MDC_ROLE, principal.role.name)
+            request.setAttribute(REQUEST_USER_ID, principal.id.toString())
+            request.setAttribute(REQUEST_ROLE, principal.role.name)
             added += MDC_USER_ID
             added += MDC_ROLE
         }
@@ -37,5 +39,7 @@ class AuthenticatedMdcFilter : OncePerRequestFilter() {
     companion object {
         const val MDC_USER_ID = "userId"
         const val MDC_ROLE = "role"
+        const val REQUEST_USER_ID = "kira.authenticatedUserId"
+        const val REQUEST_ROLE = "kira.authenticatedRole"
     }
 }

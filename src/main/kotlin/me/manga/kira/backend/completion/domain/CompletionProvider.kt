@@ -1,14 +1,14 @@
 package me.manga.kira.backend.completion.domain
 
 /**
- * The completion port (PLAN §10) — a pure domain abstraction with **no Spring types**. A future real
- * provider (e.g. an LLM API client) is one new implementation; its API key stays server-side in its
+ * The completion port (PLAN §10) — a pure domain abstraction with **no Spring types**. The production
+ * HTTPS implementation keeps its API key server-side in its
  * own env var and never appears in any API response (PLAN §10). Controllers know only
  * `CompletionService`; the service knows only this port.
  *
  * [complete] runs OUTSIDE any DB transaction, wrapped in a timeout by the orchestrator (PLAN §10), so
  * an implementation may block on I/O without pinning a connection-pool slot. A transport-level failure
- * a real provider hits should be signalled by throwing [ProviderUnavailableException] /
+ * a provider hits should be signalled by throwing [ProviderUnavailableException] /
  * [InvalidProviderResponseException]; a deliberate *refusal* of the request is a [CompletionOutcome.Failure].
  */
 interface CompletionProvider {

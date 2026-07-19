@@ -89,53 +89,57 @@ class CompletionService(
             log.info("Completion {} PENDING provider={} model={}", id, provider.name, sanitizeForLog(effectiveModel))
 
             val resolved = invokeProvider(id, prompt, effectiveModel)
-            val view =
-                when (resolved) {
-                    is Resolved.Success -> {
-                        val (stored, truncated) = truncate(resolved.result)
-                        if (truncated) {
-                            // Server-log only, lengths only — never the result text (PLAN §6/§10).
-                            log.warn(
-                                "Completion {} result truncated from {} to {} chars",
-                                id,
-                                resolved.result.length,
-                                properties.maxResultLength,
+            try {
+                val view =
+                    when (resolved) {
+                        is Resolved.Success -> {
+                            val (stored, truncated) = truncate(resolved.result)
+                            if (truncated) {
+                                // Server-log only, lengths only — never the result text (PLAN §6/§10).
+                                log.warn(
+                                    "Completion {} result truncated from {} to {} chars",
+                                    id,
+                                    resolved.result.length,
+                                    properties.maxResultLength,
+                                )
+                            }
+                            persistence.storeOutcome(
+                                id = id,
+                                status = CompletionStatus.SUCCEEDED,
+                                result = stored,
+                                error = null,
+                                errorCode = null,
+                                latencyMs = resolved.latencyMs,
                             )
                         }
-                        persistence.storeOutcome(
-                            id = id,
-                            status = CompletionStatus.SUCCEEDED,
-                            result = stored,
-                            error = null,
-                            errorCode = null,
-                            latencyMs = resolved.latencyMs,
-                        )
+
+                        is Resolved.Failure -> {
+                            logFailure(id, resolved)
+                            persistence.storeOutcome(
+                                id = id,
+                                status = CompletionStatus.FAILED,
+                                result = null,
+                                error = SANITIZED_FAILURE_MESSAGE,
+                                errorCode = resolved.code,
+                                latencyMs = resolved.latencyMs,
+                            )
+                        }
                     }
 
-                    is Resolved.Failure -> {
-                        logFailure(id, resolved)
-                        persistence.storeOutcome(
-                            id = id,
-                            status = CompletionStatus.FAILED,
-                            result = null,
-                            error = SANITIZED_FAILURE_MESSAGE,
-                            errorCode = resolved.code,
-                            latencyMs = resolved.latencyMs,
-                        )
-                    }
+                val latencyMs = if (resolved is Resolved.Success) resolved.latencyMs else (resolved as Resolved.Failure).latencyMs
+                log.info("Completion {} {} errorCode={} latencyMs={}", id, view.status, view.errorCode, latencyMs)
+                metrics.completionFinished(view.status.name, view.errorCode?.name ?: "none")
+                if (resolved is Resolved.Failure && resolved.overloaded) {
+                    throw ServiceUnavailableException(
+                        "Completion capacity is currently exhausted. Try again later.",
+                        code = "COMPLETION_OVERLOADED",
+                        retryAfterSeconds = 1,
+                    )
                 }
-
-            val latencyMs = if (resolved is Resolved.Success) resolved.latencyMs else (resolved as Resolved.Failure).latencyMs
-            log.info("Completion {} {} errorCode={} latencyMs={}", id, view.status, view.errorCode, latencyMs)
-            metrics.completionFinished(view.status.name, view.errorCode?.name ?: "none")
-            if (resolved is Resolved.Failure && resolved.overloaded) {
-                throw ServiceUnavailableException(
-                    "Completion capacity is currently exhausted. Try again later.",
-                    code = "COMPLETION_OVERLOADED",
-                    retryAfterSeconds = 1,
-                )
+                return view
+            } finally {
+                if (resolved is Resolved.Failure && resolved.interrupted) Thread.currentThread().interrupt()
             }
-            return view
         }
     }
 
@@ -190,9 +194,15 @@ class CompletionService(
                 )
             }
         } catch (ex: InterruptedException) {
-            Thread.currentThread().interrupt()
             future.cancel(true)
-            return Resolved.Failure(CompletionErrorCode.INTERNAL_COMPLETION_ERROR, "interrupted in provider queue", ex, elapsedMs(startNanos))
+            Thread.interrupted() // clear while the sanitized outcome is persisted; restored by create()
+            return Resolved.Failure(
+                CompletionErrorCode.INTERNAL_COMPLETION_ERROR,
+                "interrupted in provider queue",
+                ex,
+                elapsedMs(startNanos),
+                interrupted = true,
+            )
         }
         return try {
             when (val outcome = future.get(properties.timeout.toMillis(), TimeUnit.MILLISECONDS)) {
@@ -215,9 +225,9 @@ class CompletionService(
                 }
             Resolved.Failure(code, cause?.message, cause ?: ex, elapsedMs(startNanos))
         } catch (ex: InterruptedException) {
-            Thread.currentThread().interrupt()
             future.cancel(true)
-            Resolved.Failure(CompletionErrorCode.INTERNAL_COMPLETION_ERROR, "interrupted", ex, elapsedMs(startNanos))
+            Thread.interrupted() // clear while the sanitized outcome is persisted; restored by create()
+            Resolved.Failure(CompletionErrorCode.INTERNAL_COMPLETION_ERROR, "interrupted", ex, elapsedMs(startNanos), interrupted = true)
         }
     }
 
@@ -259,6 +269,7 @@ class CompletionService(
             val cause: Throwable?,
             val latencyMs: Int?,
             val overloaded: Boolean = false,
+            val interrupted: Boolean = false,
         ) : Resolved
     }
 

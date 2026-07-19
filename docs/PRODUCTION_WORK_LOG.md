@@ -12,9 +12,8 @@ It contains no credentials or secret material.
 - Safety scan: no credential, private-key, token, local environment, IDE, build-output, or generated
   artifact was staged. `.gitignore` was tightened for environment variants, private-key/keystore
   formats, IDE state, and common generated output before the baseline commit.
-- Push status: externally blocked. `gh auth status` reports the configured GitHub token is invalid,
-  and HTTPS Git authentication is unavailable (`could not read Username for 'https://github.com':
-  Device not configured`). No force-push or history rewrite was attempted.
+- Push status: pushed successfully to `origin/main` before hardening. No force-push or history rewrite
+  was used.
 
 ## Hardening branch
 
@@ -58,3 +57,55 @@ appended here as work completes.
 - Focused verification: formatting and detekt passed; 19 focused unit/integration tests across 10 suites
   passed with real PostgreSQL and Redis containers; database backup/restore and Prometheus scrape tests
   passed.
+
+## Batch 6 — signed documents and app integration
+
+- Added deterministic `kira-source-signature-v1` Ed25519 signatures, persisted key id/chain metadata,
+  signed public/meta responses, production startup validation, rotation scripts, and tamper/wrong-key/
+  canonicalization/chain tests.
+- Implemented the sibling app HTTPS client, pinned-key verification, complete signed cache envelope,
+  rollback/replay rejection, bounded delivery, and bundled fallback. Shipping builds require an HTTPS
+  origin and public-key pins.
+- GitHub authentication is valid, but the backend repository has no signing secret names configured.
+  No orphan public pin is treated as production-ready; the exact external key ceremony is documented.
+
+## Batch 7 — robustness resolution
+
+- Replaced recursive visibility validation on backend and app with bounded iterative traversal and
+  explicit document/source collection complexity limits.
+- Made partial imports adopt payload order in one transaction with a post-write rollback regression;
+  batched admin revision metadata; separated completion queue/provider timeouts; hardened interruption,
+  ETag, URL, numeric, rollback, JSON charset, assembly consistency, and completion-result constraints.
+- Finding-by-finding disposition: `REVIEW_RESOLUTION_2026-07-18.md`.
+
+## Final prerelease verification
+
+- Clean Gradle `build` plus CycloneDX SBOM passed with **283 tests, 0 failures, 0 errors, 0 skipped**.
+  This includes Testcontainers PostgreSQL/Redis, Flyway incremental/full migration, disposable database
+  backup/restore, authentication/authorization, signing/tampering, publication/import rollback,
+  completion quota/throttle/queue/timeout/retention/interruption, and coordination failure tests.
+- The production OCI image built as a non-root multi-stage image. The packaged `prod` smoke test passed
+  against disposable TLS PostgreSQL after running the migration CLI from the same image; readiness,
+  liveness, and Prometheus were verified.
+- Strict Kubernetes 1.34.1 schema validation passed for all 10 rendered resources. The deployment and
+  migration Job both require the same immutable digest placeholder in environment overlays.
+- The committed Gradle lock resolved 264 packages. Google OSV-Scanner v2.3.8 initially identified four
+  medium findings; Jackson, Commons Lang, and Commons Compress were upgraded to their fixed releases,
+  locks regenerated, and the repeated fail-closed scan returned **No issues found**. The image is pinned
+  by digest in CI and needs no third-party API key. CycloneDX generation passed.
+- Shell syntax, diff whitespace, credential/token/private-key pattern checks, and Kustomize rendering
+  passed. GitHub CI retains the pinned Gitleaks full-history scan.
+
+## External release inputs
+
+- `gh secret list --repo kira-manga/Kira-backend` returned no configured production signing secrets.
+  A production private key was therefore not fabricated or committed. The exact one-time generation,
+  GitHub secret installation, public-pin propagation, and rotation procedure is in
+  `SOURCE_DOCUMENT_SIGNING.md` and `scripts/signing/`.
+- App integration is committed locally on `production-hardening-source-signing` at
+  `6b7641a5cf1e23b9876b0d3d51651dc492a8b9d6` with 300 tests and Android/iOS compilation/lint green.
+  The execution environment rejected `git push origin production-hardening-source-signing` as an
+  external-repository export, so the configured app remote is still three commits behind locally.
+- A deployed HTTPS backend origin and production Kubernetes/database/Redis infrastructure are not
+  present in this workspace. Manifests, validation, rollout/rollback, backup/PITR/restore, alerts, and
+  load-test automation are complete without claiming that those external services already exist.

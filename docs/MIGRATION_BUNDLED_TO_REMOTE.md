@@ -87,14 +87,13 @@ validators enforce all of this (see [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG
 A fetched remote document must pass, in order — any failure **silently drops** the remote document and
 keeps the previous good one (cache, else bundled):
 
-1. **Signature** verification (currently `DenyRemoteSignatureVerifier` rejects all — remote is not yet
-   enabled in the app; see Future work).
+1. **Signature** verification with an app-pinned Ed25519 X.509 public key selected by key id.
 2. **Parse** (lenient).
 3. **Validate** (the full validator — the same rules the server enforces at publish).
 4. **Revision floor** — `revision >=` the accepted floor (inclusive).
 
-The backend's job is to make steps 2–4 always succeed (validate-before-publish, monotonic revisions
-well above the floor) and to be ready for step 1.
+The backend signs the exact canonical bytes and metadata; the app also re-verifies its cached signed
+envelope after restart. Any failure preserves the last verified cache or bundled floor.
 
 ## 5. Failure semantics (no silent deletion)
 
@@ -119,17 +118,13 @@ well above the floor) and to be ready for step 1.
    source set, same `api` identities, same stanza content). Byte-identity with the hand-authored bundled
    text is explicitly NOT claimed (the bundled constant is pretty-printed; the server serves canonical
    `kcj-1` bytes) — semantic equivalence is the contract.
-4. **Point the app's remote at the backend** and enable its `remote` config source. **This is app-repo
-   work and is explicitly OUT OF SCOPE for the backend** — implementing the app's `RemoteConfigSource`
-   HTTP client, enabling `remote` in the app's DI, and the signing-key ceremony all live in the app repo.
+4. Build the app with `KIRA_SOURCE_CONFIG_BASE_URL` set to the credential-free HTTPS backend origin
+   and `KIRA_SOURCE_CONFIG_PINNED_KEYS` containing the active/overlap public keys. The implemented
+   client is wired in DI and release builds reject missing or malformed trust configuration.
 5. Roll out, watch, and — once confident — manage sources entirely server-side (a host move is now a
    config edit + a publish, not an app release).
 
-## 7. Future work (not in v1)
-
-- **Ed25519 detached signature** over the canonical bytes (app step 1). Not implemented; the
-  `signature_base64` column is **not created** in v1 — a future migration adds it when the key ceremony
-  is decided. Until then, authenticity is HTTPS and `X-Config-Checksum` is a corruption check only.
+## 7. Deliberately deferred product features
 - **`minAppVersion` filtering** — the field is stored and served today but the app engine does not
   enforce it yet; per-version response variants (which complicate ETag) are deferred.
 - **Staged rollout / percentage targeting** — requires stable client identity + bucketing; not built.

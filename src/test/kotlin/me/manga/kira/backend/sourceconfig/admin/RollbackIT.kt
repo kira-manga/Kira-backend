@@ -13,6 +13,19 @@ import org.junit.jupiter.api.Test
  */
 class RollbackIT : AbstractAdminSourceIT() {
 
+    @Test
+    fun `a never-published draft cannot use rollback as a disguised first publish`() {
+        val api = "NeverPublished"
+        createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
+
+        rollback(api, 1).andExpect {
+            status { isConflict() }
+            jsonPath("$.errors[0].code") { value("ROLLBACK_REQUIRES_PUBLISHED_BASELINE") }
+        }
+        assertEquals(0L, snapshotCount())
+        assertEquals("draft", sourceStatus(api))
+    }
+
     private val urlA = "https://a.example.com"
     private val urlB = "https://b.example.com"
 

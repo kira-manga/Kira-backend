@@ -3,8 +3,11 @@ package me.manga.kira.backend.sourceconfig.api
 import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.sourceconfig.api.dto.DocumentMetaResponse
+import me.manga.kira.backend.sourceconfig.api.dto.SigningKeysResponse
 import me.manga.kira.backend.sourceconfig.application.NoPublishedDocumentException
 import me.manga.kira.backend.sourceconfig.application.SourceQueryService
+import me.manga.kira.backend.sourceconfig.signing.DocumentSignatureCodec
+import me.manga.kira.backend.sourceconfig.signing.DocumentSigner
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpHeaders
 import org.springframework.http.ResponseEntity
@@ -23,7 +26,11 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/v1/source-config")
-class SourceDocumentController(private val sourceQueryService: SourceQueryService, private val documentResponseWriter: DocumentResponseWriter) {
+class SourceDocumentController(
+    private val sourceQueryService: SourceQueryService,
+    private val documentResponseWriter: DocumentResponseWriter,
+    private val documentSigner: DocumentSigner,
+) {
 
     /**
      * `GET /source-config/document` — the app document. Optional `appVersion` is validated (semver-ish,
@@ -52,6 +59,14 @@ class SourceDocumentController(private val sourceQueryService: SourceQueryServic
             .contentType(DocumentResponseWriter.JSON_UTF8)
             .body(DocumentMetaResponse.of(document))
     }
+
+    /** Discovery aid for planned rotation. Clients pin accepted keys and never trust this list alone. */
+    @GetMapping("/signing-keys")
+    fun signingKeys(): SigningKeysResponse = SigningKeysResponse(
+        format = DocumentSignatureCodec.FORMAT,
+        algorithm = DocumentSignatureCodec.ALGORITHM,
+        keys = documentSigner.publicKeys(),
+    )
 
     /**
      * Validate the optional `appVersion` (bounded, semver-ish) and LOG it (PLAN §4.1 / §6 — appVersion

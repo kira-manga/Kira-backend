@@ -55,7 +55,7 @@ object FilterRules {
             checkFilter(source, f, byId, findings, "$base.filters[${f.id}]")
         }
 
-        detectCycle(filters, byId, findings, base)
+        detectCycle(byId, findings, base)
     }
 
     private fun checkFilter(source: SourceConfig, f: FilterDefinition, byId: Map<String, FilterDefinition>, findings: Findings, path: String) {
@@ -144,7 +144,7 @@ object FilterRules {
                     }
 
                 "number" ->
-                    if (f.default.isNotEmpty() && f.default.toDoubleOrNull() == null) {
+                    if (f.default.isNotEmpty() && f.default.toDoubleOrNull()?.isFinite() != true) {
                         findings.error(ValidationCodes.FILTER_NUMBER_DEFAULT_INVALID, "$path.default", "number default must parse as a number.")
                     }
             }
@@ -333,32 +333,34 @@ object FilterRules {
         }
     }
 
-    // Rule 27 — visibleWhen dependency-cycle detection (DFS; one report per source).
-    private fun detectCycle(filters: List<FilterDefinition>, byId: Map<String, FilterDefinition>, findings: Findings, base: String) {
-        val adjacency: Map<String, List<String>> =
-            filters.associate { f ->
-                f.id to f.visibleWhen.map { it.filter }.filter { byId.containsKey(it) }
-            }
-        val white = 0
-        val gray = 1
-        val black = 2
-        val color = HashMap<String, Int>()
-
-        fun dfs(node: String): Boolean {
-            color[node] = gray
-            for (next in adjacency[node].orEmpty()) {
-                if (next == node) continue // self-reference is a rule-25 finding, not a cycle
-                when (color[next] ?: white) {
-                    gray -> return true
-                    white -> if (dfs(next)) return true
-                }
-            }
-            color[node] = black
-            return false
+    // Rule 27 — bounded, iterative visibleWhen dependency-cycle detection (one report per source).
+    private fun detectCycle(byId: Map<String, FilterDefinition>, findings: Findings, base: String) {
+        val adjacency = LinkedHashMap<String, Set<String>>(byId.size)
+        val indegree = byId.keys.associateWith { 0 }.toMutableMap()
+        byId.forEach { (id, filter) ->
+            val dependencies =
+                filter.visibleWhen
+                    .asSequence()
+                    .map { it.filter }
+                    .filter { it in byId }
+                    .toCollection(linkedSetOf())
+            adjacency[id] = dependencies
+            dependencies.forEach { dependency -> indegree[dependency] = indegree.getValue(dependency) + 1 }
         }
 
-        val cycle = filters.any { (color[it.id] ?: white) == white && dfs(it.id) }
-        if (cycle) {
+        val ready = ArrayDeque(indegree.filterValues { it == 0 }.keys)
+        var visited = 0
+        while (ready.isNotEmpty()) {
+            val node = ready.removeFirst()
+            visited++
+            adjacency[node].orEmpty().forEach { dependency ->
+                val remaining = indegree.getValue(dependency) - 1
+                indegree[dependency] = remaining
+                if (remaining == 0) ready.addLast(dependency)
+            }
+        }
+
+        if (visited != byId.size) {
             findings.error(ValidationCodes.FILTER_CYCLE, "$base.filters", "visibleWhen dependency cycle detected among filters.")
         }
     }

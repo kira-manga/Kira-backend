@@ -2,6 +2,7 @@ package me.manga.kira.backend.sourceconfig.validation
 
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
+import me.manga.kira.backend.sourceconfig.validation.rules.ComplexityRules
 import me.manga.kira.backend.sourceconfig.validation.rules.DocumentRules
 import me.manga.kira.backend.sourceconfig.validation.rules.EndpointRules
 import me.manga.kira.backend.sourceconfig.validation.rules.FieldRules
@@ -51,6 +52,10 @@ class SourceConfigValidator(
             return ValidationResult.of(findings.errors, findings.warnings)
         }
 
+        if (!ComplexityRules.document(document, findings)) {
+            return ValidationResult.of(findings.errors, findings.warnings)
+        }
+
         // Rule 2 — unique api across the document (reported once per duplicated api, doc-level).
         DocumentRules.uniqueApis(document, findings)
 
@@ -84,6 +89,7 @@ class SourceConfigValidator(
 
     /** Compose every per-source rule group for one stanza into [findings]. */
     private fun collectSourceFindings(source: SourceConfig, findings: Findings) {
+        if (!ComplexityRules.source(source, findings)) return
         val isGeneric = source.engine == "generic"
 
         // All engines: identity (3–6), secret-safety (32), metadata (7–10), icon advisory (33).

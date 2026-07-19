@@ -1,6 +1,8 @@
 package me.manga.kira.backend.sourceconfig.infrastructure
 
 import jakarta.persistence.Column
+import jakarta.persistence.Embeddable
+import jakarta.persistence.Embedded
 import jakarta.persistence.Entity
 import jakarta.persistence.GeneratedValue
 import jakarta.persistence.GenerationType
@@ -45,4 +47,24 @@ class PublishedDocumentEntity(
     var createdAt: Instant = Instant.EPOCH,
     @Column(name = "notes")
     var notes: String? = null,
+) {
+    @Embedded
+    var signature: PublishedDocumentSignatureEmbeddable = PublishedDocumentSignatureEmbeddable()
+}
+
+@Embeddable
+class PublishedDocumentSignatureEmbeddable(
+    @Column(name = "signature_format", length = 64)
+    var signatureFormat: String? = null,
+    @Column(name = "signature_algorithm", length = 16)
+    var signatureAlgorithm: String? = null,
+    @Column(name = "signing_key_id", length = 64)
+    var signingKeyId: String? = null,
+    @Column(name = "signature_base64", length = 128)
+    var signatureBase64: String? = null,
+    @Column(name = "previous_document_revision")
+    var previousDocumentRevision: Long? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
+    @Column(name = "previous_document_checksum", length = 64)
+    var previousDocumentChecksum: String? = null,
 )

@@ -124,6 +124,8 @@ class SourceConfigValidatorFilterTest {
         assertTrue(ValidationCodes.FILTER_TOGGLE_DEFAULT_INVALID in codes(gen(filter(id = "x", type = "toggle", default = "maybe", param = "a"))))
         // number default must parse
         assertTrue(ValidationCodes.FILTER_NUMBER_DEFAULT_INVALID in codes(gen(filter(id = "x", type = "number", default = "abc", param = "a"))))
+        assertTrue(ValidationCodes.FILTER_NUMBER_DEFAULT_INVALID in codes(gen(filter(id = "x", type = "number", default = "NaN", param = "a"))))
+        assertTrue(ValidationCodes.FILTER_NUMBER_DEFAULT_INVALID in codes(gen(filter(id = "x", type = "number", default = "Infinity", param = "a"))))
         // required demands a usable default
         assertTrue(
             ValidationCodes.FILTER_REQUIRED_WITHOUT_DEFAULT in

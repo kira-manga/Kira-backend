@@ -28,6 +28,7 @@ import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import me.manga.kira.backend.sourceconfig.validation.ValidationResult
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
@@ -72,18 +73,22 @@ class SourceAdminService(
         if (sources.existsByApi(model.api)) throw SourceAlreadyExistsException(model.api)
 
         val head =
-            sources.create(
-                NewSourceConfig(
-                    api = model.api,
-                    displayName = model.displayName,
-                    language = model.language,
-                    engine = model.engine,
-                    status = SourceLifecycleStatus.DRAFT,
-                    position = sources.nextPosition(),
-                    baseUrl = model.baseUrl,
-                    adult = model.isAdult(),
-                ),
-            )
+            try {
+                sources.create(
+                    NewSourceConfig(
+                        api = model.api,
+                        displayName = model.displayName,
+                        language = model.language,
+                        engine = model.engine,
+                        status = SourceLifecycleStatus.DRAFT,
+                        position = sources.nextPosition(),
+                        baseUrl = model.baseUrl,
+                        adult = model.isAdult(),
+                    ),
+                )
+            } catch (_: DataIntegrityViolationException) {
+                throw SourceAlreadyExistsException(model.api)
+            }
         val revision = insertDraftRevision(head.id, 1, model, actorId, notes = null)
         val validation = validateAndStore(revision.id, model)
 
@@ -128,10 +133,12 @@ class SourceAdminService(
     }
 
     @Transactional(readOnly = true)
-    fun listSources(status: SourceLifecycleStatus?): List<SourceAdminView> = sources.findAll(status).map { head ->
-        val currentPublishedNumber =
-            head.currentPublishedRevisionId?.let { revisions.findById(it)?.revisionNumber }
-        SourceAdminView(head, currentPublishedNumber, revisions.latestRevisionNumber(head.id))
+    fun listSources(status: SourceLifecycleStatus?): List<SourceAdminView> = sources.findAllWithRevisionNumbers(status).map { listing ->
+        SourceAdminView(
+            listing.head,
+            listing.currentPublishedRevisionNumber,
+            listing.latestRevisionNumber,
+        )
     }
 
     @Transactional(readOnly = true)
@@ -245,6 +252,9 @@ class SourceAdminService(
         val head = sources.lockByApiForUpdate(api) ?: throw SourceNotFoundException(api)
         if (head.status == SourceLifecycleStatus.RETIRED || head.status == SourceLifecycleStatus.REMOVED) {
             throw InvalidLifecycleTransitionException("cannot rollback a ${head.status.wire} source (PLAN §9).")
+        }
+        if (head.currentPublishedRevisionId == null) {
+            throw RollbackRequiresPublishedBaselineException()
         }
         val source = revisions.findBySourceAndNumber(head.id, toRevision) ?: throw RevisionNotFoundException(api, toRevision)
 

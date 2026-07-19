@@ -21,4 +21,10 @@ data class PublishedDocument(
     val createdBy: UUID,
     val createdAt: Instant,
     val notes: String?,
+    val signatureFormat: String?,
+    val signatureAlgorithm: String?,
+    val signingKeyId: String?,
+    val signatureBase64: String?,
+    val previousDocumentRevision: Long?,
+    val previousDocumentChecksum: String?,
 )

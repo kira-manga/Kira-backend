@@ -8,8 +8,12 @@ import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
+import org.springframework.test.context.DynamicPropertyRegistry
+import org.springframework.test.context.DynamicPropertySource
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
+import java.security.KeyPairGenerator
+import java.util.Base64
 
 /**
  * Base class for Spring integration tests (PLAN §11).
@@ -66,6 +70,20 @@ abstract class AbstractIntegrationTest {
     }
 
     companion object {
+        private val signingKeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+
+        @JvmStatic
+        @DynamicPropertySource
+        fun signingProperties(registry: DynamicPropertyRegistry) {
+            registry.add("kira.signing.enabled") { "true" }
+            registry.add("kira.signing.active-key-id") { "test-ephemeral" }
+            registry.add("kira.signing.private-key") { Base64.getEncoder().encodeToString(signingKeyPair.private.encoded) }
+            registry.add("kira.signing.verification-keys[0].key-id") { "test-ephemeral" }
+            registry.add("kira.signing.verification-keys[0].public-key") {
+                Base64.getEncoder().encodeToString(signingKeyPair.public.encoded)
+            }
+        }
+
         @JvmStatic
         @ServiceConnection
         val postgres: PostgreSQLContainer<*> =

@@ -37,6 +37,13 @@ class DocumentResponseWriter {
         response.setHeader(HttpHeaders.ETAG, "\"${document.checksum}\"")
         response.setHeader(HEADER_CONFIG_REVISION, document.documentRevision.toString())
         response.setHeader(HEADER_CONFIG_CHECKSUM, document.checksum)
+        document.signatureFormat?.let { response.setHeader(HEADER_SIGNATURE_FORMAT, it) }
+        document.signatureAlgorithm?.let { response.setHeader(HEADER_SIGNATURE_ALGORITHM, it) }
+        document.signingKeyId?.let { response.setHeader(HEADER_SIGNING_KEY_ID, it) }
+        document.signatureBase64?.let { response.setHeader(HEADER_SIGNATURE, it) }
+        document.previousDocumentRevision?.let { response.setHeader(HEADER_PREVIOUS_REVISION, it.toString()) }
+        document.previousDocumentChecksum?.let { response.setHeader(HEADER_PREVIOUS_CHECKSUM, it) }
+        response.setHeader(HEADER_CREATED_AT, document.createdAt.toString())
         if (cacheable) {
             response.setHeader(HttpHeaders.CACHE_CONTROL, CACHE_CONTROL_VALUE)
             response.setHeader(NOSNIFF_HEADER, NOSNIFF_VALUE)
@@ -56,17 +63,15 @@ class DocumentResponseWriter {
 
     /**
      * RFC 9110 §8.8.3.2 strong comparison (PLAN §4.1): `*` matches any existing document; a
-     * comma-separated list is parsed and each entry compared with quotes stripped; a **weak validator
+     * comma-separated list is parsed and each valid quoted entry compared exactly; a **weak validator
      * `W/"…"` never strongly matches** even with an identical opaque hash → full 200 body.
      */
     private fun matchesIfNoneMatch(ifNoneMatch: String?, checksum: String): Boolean {
         val header = ifNoneMatch?.trim() ?: return false
         if (header.isEmpty()) return false
         if (header == "*") return true
-        return header.split(",").any { raw ->
-            val entry = raw.trim()
-            entry.isNotEmpty() && !entry.startsWith("W/") && entry.trim('"') == checksum
-        }
+        val expected = "\"$checksum\""
+        return header.split(",").any { raw -> raw.trim() == expected }
     }
 
     companion object {
@@ -76,6 +81,13 @@ class DocumentResponseWriter {
         const val NOSNIFF_VALUE = "nosniff"
         const val HEADER_CONFIG_REVISION = "X-Config-Revision"
         const val HEADER_CONFIG_CHECKSUM = "X-Config-Checksum"
+        const val HEADER_SIGNATURE_FORMAT = "X-Config-Signature-Format"
+        const val HEADER_SIGNATURE_ALGORITHM = "X-Config-Signature-Algorithm"
+        const val HEADER_SIGNING_KEY_ID = "X-Config-Signing-Key-Id"
+        const val HEADER_SIGNATURE = "X-Config-Signature"
+        const val HEADER_PREVIOUS_REVISION = "X-Config-Previous-Revision"
+        const val HEADER_PREVIOUS_CHECKSUM = "X-Config-Previous-Checksum"
+        const val HEADER_CREATED_AT = "X-Config-Created-At"
 
         /** `application/json; charset=UTF-8` — the normative public content-type (PLAN §4.1/§4.5). */
         val JSON_UTF8: MediaType = MediaType("application", "json", StandardCharsets.UTF_8)

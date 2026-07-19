@@ -9,9 +9,12 @@
 *.pem
 *.key
 *.p12
+*-private.pem
+*.pkcs8.b64
 *.pfx
 *.jks
 *.keystore
+.secrets/
 secrets/
 
 # Build / Gradle

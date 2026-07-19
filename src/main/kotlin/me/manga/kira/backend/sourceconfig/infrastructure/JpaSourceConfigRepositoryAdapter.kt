@@ -1,5 +1,6 @@
 package me.manga.kira.backend.sourceconfig.infrastructure
 
+import me.manga.kira.backend.sourceconfig.domain.AdminSourceListing
 import me.manga.kira.backend.sourceconfig.domain.AssemblySource
 import me.manga.kira.backend.sourceconfig.domain.NewSourceConfig
 import me.manga.kira.backend.sourceconfig.domain.PublishedRevisionMetadata
@@ -45,7 +46,7 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
                 baseUrl = spec.baseUrl,
                 adult = spec.adult,
             )
-        return jpa.save(entity).toDomain()
+        return jpa.saveAndFlush(entity).toDomain()
     }
 
     override fun lockByApiForUpdate(api: String): SourceConfigHead? = jdbcTemplate
@@ -60,10 +61,29 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
         jpa.findAllByStatusOrderByPositionAscApiAsc(status)
     }.map { it.toDomain() }
 
+    override fun findAllWithRevisionNumbers(status: SourceLifecycleStatus?): List<AdminSourceListing> {
+        val sql =
+            "SELECT s.*, current_revision.revision_number AS current_revision_number, " +
+                "(SELECT MAX(r.revision_number) FROM source_config_revisions r WHERE r.source_config_id = s.id) AS latest_revision_number " +
+                "FROM source_configs s " +
+                "LEFT JOIN source_config_revisions current_revision ON current_revision.id = s.current_published_revision_id " +
+                (if (status == null) "" else "WHERE s.status = ? ") +
+                "ORDER BY s.position ASC, s.api ASC"
+        val mapper =
+            RowMapper { rs: ResultSet, rowNumber: Int ->
+                AdminSourceListing(
+                    head = requireNotNull(HEAD_MAPPER.mapRow(rs, rowNumber)),
+                    currentPublishedRevisionNumber = rs.nullableInt("current_revision_number"),
+                    latestRevisionNumber = rs.nullableInt("latest_revision_number"),
+                )
+            }
+        return if (status == null) jdbcTemplate.query(sql, mapper) else jdbcTemplate.query(sql, mapper, status.wire)
+    }
+
     override fun findSourcesForAssembly(): List<AssemblySource> = jdbcTemplate.query(
         "SELECT s.api, s.position, s.engine, s.status, r.config_canonical_json " +
             "FROM source_configs s " +
-            "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
+            "LEFT JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
             "WHERE s.status IN ('active', 'disabled', 'retired') " +
             "ORDER BY s.position ASC, s.api ASC",
         ASSEMBLY_MAPPER,
@@ -103,6 +123,15 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
 
     override fun updateStatus(id: UUID, status: SourceLifecycleStatus, updatedAt: Instant) = jpa.updateStatusNative(id, status.wire, updatedAt)
 
+    override fun updatePosition(id: UUID, position: Int, updatedAt: Instant) {
+        jdbcTemplate.update(
+            "UPDATE source_configs SET position = ?, updated_at = ? WHERE id = ?",
+            position,
+            OffsetDateTime.ofInstant(updatedAt, java.time.ZoneOffset.UTC),
+            id,
+        )
+    }
+
     private fun SourceConfigEntity.toDomain(): SourceConfigHead = SourceConfigHead(
         id = requireNotNull(id) { "persisted SourceConfigEntity must have an id" },
         api = api,
@@ -118,6 +147,8 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
         updatedAt = updatedAt,
         publishedAt = publishedAt,
     )
+
+    private fun ResultSet.nullableInt(column: String): Int? = getObject(column, Integer::class.java)?.toInt()
 
     private companion object {
         val HEAD_MAPPER =
@@ -146,7 +177,10 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
                     position = rs.getInt("position"),
                     engine = rs.getString("engine"),
                     status = SourceLifecycleStatus.fromWire(rs.getString("status")),
-                    canonicalContent = rs.getString("config_canonical_json"),
+                    canonicalContent =
+                    requireNotNull(rs.getString("config_canonical_json")) {
+                        "published source '${rs.getString("api")}' has no current revision; refusing partial document assembly"
+                    },
                 )
             }
 

@@ -2,12 +2,15 @@ package me.manga.kira.backend.sourceconfig.admin
 
 import com.fasterxml.jackson.databind.JsonNode
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.application.BundledImportService
 import me.manga.kira.backend.sourceconfig.domain.model.EndpointSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.test.web.servlet.ResultActionsDsl
 
 /**
@@ -19,6 +22,9 @@ import org.springframework.test.web.servlet.ResultActionsDsl
  * nothing stored. Plus the §4.5 5-MiB body cap → 413.
  */
 class ImportBundledIT : AbstractAdminSourceIT() {
+
+    @Autowired
+    private lateinit var bundledImportService: BundledImportService
 
     private fun trimmed(): String = SourceConfigFixtures.loadFixture("bundled-trimmed.json")
 
@@ -56,6 +62,59 @@ class ImportBundledIT : AbstractAdminSourceIT() {
         assertTrue(body.get("documentRevision") == null || body.get("documentRevision").isNull, "no-op → no documentRevision")
         assertEquals(snapshotsAfterFirst, snapshotCount(), "no new snapshot on an identical re-import")
         revisionsAfterFirst.forEach { (api, count) -> assertEquals(count, revisionCount(api), "no new revision for $api") }
+    }
+
+    @Test
+    fun `partial catalog import adopts payload order and publishes one reordered snapshot`() {
+        val first = SourceConfigFixtures.validGenericSource("First")
+        val second = SourceConfigFixtures.validGenericSource("Second")
+        createSource(first).andExpect { status { isCreated() } }
+        publish(first.api, 1).andExpect { status { isOk() } }
+        createSource(second).andExpect { status { isCreated() } }
+        publish(second.api, 1).andExpect { status { isOk() } }
+        val before = snapshotCount()
+
+        val body = result(importBundled(SourceConfigFixtures.document(second, first)).andExpect { status { isOk() } })
+
+        assertTrue(body.apis("updated").isEmpty())
+        assertEquals(setOf("First", "Second"), body.apis("reordered").toSet())
+        assertEquals(listOf("Second", "First"), publicServedDocument().sources.map { it.api })
+        assertEquals(before + 1, snapshotCount(), "the order change creates exactly one snapshot")
+    }
+
+    @Test
+    fun `database failure after the first stanza rolls back the complete import`() {
+        jdbcTemplate.execute(
+            """
+            CREATE OR REPLACE FUNCTION fail_second_import() RETURNS trigger AS ${'$'}${'$'}
+            BEGIN
+              IF NEW.api = 'RollbackSecond' THEN RAISE EXCEPTION 'injected import failure'; END IF;
+              RETURN NEW;
+            END;
+            ${'$'}${'$'} LANGUAGE plpgsql
+            """.trimIndent(),
+        )
+        jdbcTemplate.execute(
+            "CREATE TRIGGER fail_second_import_trigger BEFORE INSERT ON source_configs " +
+                "FOR EACH ROW EXECUTE FUNCTION fail_second_import()",
+        )
+        try {
+            val document =
+                SourceConfigFixtures.document(
+                    SourceConfigFixtures.validGenericSource("RollbackFirst"),
+                    SourceConfigFixtures.validGenericSource("RollbackSecond"),
+                )
+
+            assertThrows(Exception::class.java) {
+                bundledImportService.import(toJson(document), admin.id)
+            }
+
+            assertEquals(0L, sourceRowCount(), "the first stanza must roll back with the second")
+            assertEquals(0L, snapshotCount(), "a failed import must never publish a snapshot")
+        } finally {
+            jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_second_import_trigger ON source_configs")
+            jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_second_import()")
+        }
     }
 
     @Test

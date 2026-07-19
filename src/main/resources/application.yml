@@ -33,6 +33,11 @@ logging:
     level: "%5p [%X{requestId:-}]"
 
 management:
+  health:
+    # Disable Boot's unconditional Redis probe. The topology-aware coordination indicator checks
+    # Redis only when authentication or completion coordination is configured to require it.
+    redis:
+      enabled: false
   endpoints:
     web:
       exposure:

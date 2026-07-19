@@ -13,16 +13,35 @@ import java.time.Instant
  */
 
 /** `GET /source-config/document/meta` — the cheap poll body `{revision, schemaVersion, checksum, publishedAt}`. */
-data class DocumentMetaResponse(val revision: Long, val schemaVersion: Int, val checksum: String, val publishedAt: Instant) {
+data class DocumentMetaResponse(
+    val revision: Long,
+    val schemaVersion: Int,
+    val checksum: String,
+    val publishedAt: Instant,
+    val signatureFormat: String?,
+    val signatureAlgorithm: String?,
+    val signingKeyId: String?,
+    val signature: String?,
+    val previousRevision: Long?,
+    val previousChecksum: String?,
+) {
     companion object {
         fun of(doc: PublishedDocument) = DocumentMetaResponse(
             revision = doc.documentRevision,
             schemaVersion = doc.schemaVersion,
             checksum = doc.checksum,
             publishedAt = doc.createdAt,
+            signatureFormat = doc.signatureFormat,
+            signatureAlgorithm = doc.signatureAlgorithm,
+            signingKeyId = doc.signingKeyId,
+            signature = doc.signatureBase64,
+            previousRevision = doc.previousDocumentRevision,
+            previousChecksum = doc.previousDocumentChecksum,
         )
     }
 }
+
+data class SigningKeysResponse(val format: String, val algorithm: String, val keys: Map<String, String>)
 
 /**
  * `GET /sources` list item (PLAN §4.1). `iconRemoteUrl` is omitted when the stanza carries none

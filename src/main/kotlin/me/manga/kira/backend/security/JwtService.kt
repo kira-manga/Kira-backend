@@ -13,6 +13,7 @@ import org.springframework.security.oauth2.jwt.JwtClaimsSet
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
 import org.springframework.stereotype.Service
+import java.time.Clock
 import java.time.Instant
 
 /**
@@ -25,7 +26,7 @@ import java.time.Instant
  * DB role by [DbUserJwtAuthenticationConverter] (PLAN §6), never trusted from the token.
  */
 @Service
-class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecurityProperties) {
+class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecurityProperties, private val clock: Clock) {
     // The signing JWK carries the kid, so a JwsHeader specifying that kid selects it deterministically.
     private val encoder: NimbusJwtEncoder =
         NimbusJwtEncoder(
@@ -41,7 +42,7 @@ class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecuri
         )
 
     /** Mint a signed access token for [user]. Returns the compact token plus its lifetime. */
-    fun issue(user: User, issuedAt: Instant = Instant.now()): IssuedToken {
+    fun issue(user: User, issuedAt: Instant = clock.instant()): IssuedToken {
         val expiresAt = issuedAt.plus(properties.accessTokenTtl)
         val header = JwsHeader.with(MacAlgorithm.HS256).keyId(KEY_ID).build()
         val claims =

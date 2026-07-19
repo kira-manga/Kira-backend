@@ -8,8 +8,8 @@ import org.springframework.stereotype.Component
 /**
  * The default runtime provider and the provider used by tests (PLAN §10). `name = "echo"`; returns
  * `"echo: $prompt"` and never fails except on blank input. It carries no state and no I/O, but still
- * goes through the SAME orchestration path (timeout, truncation, sanitization, error mapping) as a
- * future real provider — so swapping in a real one changes zero orchestration code.
+ * goes through the SAME orchestration path (timeout, truncation, sanitization, error mapping) as the
+ * production HTTPS provider.
  *
  * The submitted model is recorded on the `completion_requests` row by the orchestrator (it is a column,
  * not part of the echoed text — the echoed result is exactly `"echo: $prompt"`).

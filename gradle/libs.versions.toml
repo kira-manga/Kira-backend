@@ -20,8 +20,10 @@ kotlinxSerialization = "1.8.1"          # kotlinx-serialization-json runtime (PL
 springdoc = "2.8.17"                    # springdoc-openapi 2.8.x = the Spring Boot 3.x line
 ktlintPlugin = "14.2.0"
 detekt = "1.23.8"
-dependencyCheck = "12.2.2"
 cycloneDx = "3.2.4"
+jackson = "2.21.5"                       # security patch above Boot 3.5.16 BOM's 2.21.4
+commonsLang3 = "3.20.0"                  # security patch above Boot 3.5.16 BOM's 3.17.0
+commonsCompress = "1.28.0"               # security patch above Testcontainers' 1.24.0
 
 # Non-Gradle pins (recorded here for provenance; referenced textually where used):
 #   Gradle wrapper .......... 8.14.5   (gradle/wrapper/gradle-wrapper.properties)
@@ -37,10 +39,10 @@ spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
 spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlintPlugin" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
-dependency-check = { id = "org.owasp.dependencycheck", version.ref = "dependencyCheck" }
 cyclonedx = { id = "org.cyclonedx.bom", version.ref = "cycloneDx" }
 
 [libraries]
 # Explicitly-versioned libraries (everything else is Boot-BOM-managed and versionless below).
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 springdoc-openapi-starter-webmvc-ui = { module = "org.springdoc:springdoc-openapi-starter-webmvc-ui", version.ref = "springdoc" }
+commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }

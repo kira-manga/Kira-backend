@@ -67,7 +67,17 @@ class JpaPublishedDocumentRepositoryAdapter(
                 createdBy = spec.createdBy,
                 createdAt = spec.createdAt,
                 notes = spec.notes,
-            )
+            ).apply {
+                signature =
+                    PublishedDocumentSignatureEmbeddable(
+                        signatureFormat = spec.signatureFormat,
+                        signatureAlgorithm = spec.signatureAlgorithm,
+                        signingKeyId = spec.signingKeyId,
+                        signatureBase64 = spec.signatureBase64,
+                        previousDocumentRevision = spec.previousDocumentRevision,
+                        previousDocumentChecksum = spec.previousDocumentChecksum,
+                    )
+            }
         return documents.saveAndFlush(entity).toDomain()
     }
 
@@ -88,6 +98,12 @@ class JpaPublishedDocumentRepositoryAdapter(
         createdBy = requireNotNull(createdBy),
         createdAt = createdAt,
         notes = notes,
+        signatureFormat = signature.signatureFormat,
+        signatureAlgorithm = signature.signatureAlgorithm,
+        signingKeyId = signature.signingKeyId,
+        signatureBase64 = signature.signatureBase64,
+        previousDocumentRevision = signature.previousDocumentRevision,
+        previousDocumentChecksum = signature.previousDocumentChecksum,
     )
 
     private companion object {

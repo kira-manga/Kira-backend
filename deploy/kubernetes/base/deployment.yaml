@@ -20,7 +20,7 @@ spec:
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/path: /actuator/prometheus
-        prometheus.io/port: "8080"
+        prometheus.io/port: "9090"
     spec:
       serviceAccountName: kira-backend
       automountServiceAccountToken: false
@@ -41,7 +41,8 @@ spec:
               app.kubernetes.io/name: kira-backend
       containers:
         - name: backend
-          image: ghcr.io/kira-manga/kira-backend:1.0.0
+          # Overlays MUST replace this with the same verified release digest as the migration Job.
+          image: ghcr.io/kira-manga/kira-backend@sha256:REPLACE_WITH_RELEASE_DIGEST
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -72,6 +73,26 @@ spec:
                 secretKeyRef:
                   name: kira-backend-secrets
                   key: jwt-secret-base64
+            - name: KIRA_SIGNING_ACTIVE_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kira-backend-secrets
+                  key: signing-key-id
+            - name: KIRA_SIGNING_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kira-backend-secrets
+                  key: signing-private-key
+            - name: KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kira-backend-secrets
+                  key: signing-key-id
+            - name: KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kira-backend-secrets
+                  key: signing-public-key
             - name: SPRING_DATA_REDIS_URL
               valueFrom:
                 secretKeyRef:

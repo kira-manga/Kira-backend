@@ -154,7 +154,20 @@ class SecurityConfig(private val environment: Environment) {
             configuration.allowedMethods = listOf("GET", "POST", "OPTIONS")
             configuration.allowedHeaders = listOf("Authorization", "Content-Type", "If-None-Match", "X-Request-Id")
             configuration.exposedHeaders =
-                listOf("ETag", "X-Config-Revision", "X-Config-Checksum", "X-Request-Id", "Retry-After")
+                listOf(
+                    "ETag",
+                    "X-Config-Revision",
+                    "X-Config-Checksum",
+                    "X-Config-Signature-Format",
+                    "X-Config-Signature-Algorithm",
+                    "X-Config-Signing-Key-Id",
+                    "X-Config-Signature",
+                    "X-Config-Previous-Revision",
+                    "X-Config-Previous-Checksum",
+                    "X-Config-Created-At",
+                    "X-Request-Id",
+                    "Retry-After",
+                )
             configuration.allowCredentials = false
             configuration.maxAge = 3600
             source.registerCorsConfiguration("/api/**", configuration)

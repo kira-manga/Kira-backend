@@ -1,5 +1,11 @@
 # kira-backend — Implementation Plan
 
+> Historical design specification. Production-hardening changes implemented after the original plan
+> are recorded in `PRODUCTION_WORK_LOG.md`; all adversarial findings are dispositioned in
+> `REVIEW_RESOLUTION_2026-07-18.md`. Current code and those amendments supersede statements here that
+> describe in-memory throttling, echo-only completions, unsigned delivery, recursive validation, or
+> deferred app remote integration.
+
 **Status:** Planning document (sole spec for the implementation agent). Nothing has been scaffolded yet.
 **Revision:** REVIEWED & AMENDED (2026-07-11, second-pass review). 24 proposed amendments were adjudicated against the real mobile-app code; the outcomes are recorded in **Appendix A** at the end of this document. This revision supersedes the first draft wherever they differ. **THIRD-PASS final consistency review (2026-07-11):** 9 implementation-level findings + 7 smaller consistency items were verified against the mobile-app code and PostgreSQL/Spring-Security/Flyway semantics and incorporated; outcomes in **Appendix B**. **FOURTH-PASS pre-implementation amendments (2026-07-11):** 4 owner-directed amendments (publish-state rules, completion error taxonomy, logging & diagnostics, trusted client-IP resolution for throttling) incorporated; outcomes in **Appendix C**. Where appendices differ, the latest appendix (and the amended body text) wins.
 **Target location:** `/Users/abdelrahman/Projects/kira-backend/` — a standalone Gradle project, fully outside the mobile app repos.

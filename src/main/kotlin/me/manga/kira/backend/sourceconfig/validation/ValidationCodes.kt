@@ -13,6 +13,8 @@ object ValidationCodes {
     // Document level
     const val UNSUPPORTED_SCHEMA_VERSION = "UNSUPPORTED_SCHEMA_VERSION" // rule 1
     const val DUPLICATE_API = "DUPLICATE_API" // rule 2
+    const val DOCUMENT_COMPLEXITY_EXCEEDED = "DOCUMENT_COMPLEXITY_EXCEEDED" // resource-safety gate
+    const val SOURCE_COMPLEXITY_EXCEEDED = "SOURCE_COMPLEXITY_EXCEEDED" // resource-safety gate
 
     // Every source (any engine)
     const val API_BLANK = "API_BLANK" // rule 3

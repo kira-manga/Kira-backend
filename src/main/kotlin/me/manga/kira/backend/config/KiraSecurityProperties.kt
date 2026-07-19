@@ -18,7 +18,7 @@ import java.time.Duration
  *
  * [issuer]/[audience]/[clockSkew] are the Nimbus decoder-validation inputs (PLAN §6: `iss`,
  * `aud`, 60s skew). [trustForwardedHeaders]/[trustedProxies] drive the throttle's trusted
- * client-IP resolution; [throttle] bounds the in-memory throttle store (all PLAN §6).
+ * client-IP resolution; [throttle] configures the shared Redis-backed throttle store (all PLAN §6).
  */
 @Validated
 @ConfigurationProperties(prefix = "kira.security")

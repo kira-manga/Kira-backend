@@ -77,8 +77,9 @@ import creates exactly one whole-document snapshot. Incoming document revision/t
 ignored because the backend allocates them.
 
 Do not use routine re-import as a substitute for normal source editing. Existing draft-only sources are
-reported in `skippedDraft` and are never replaced or published. A partly existing catalog can retain old
-positions instead of exactly inheriting payload ordering, so review ordering before re-importing.
+reported in `skippedDraft` and are never replaced or published. Import adopts payload order for every
+source in the payload, moves catalog-only sources after that ordered set, reports changed positions in
+`reordered`, and creates at most one signed snapshot for the complete transaction.
 
 ## 4. Read the public API
 
@@ -262,22 +263,23 @@ published engine is `generic`. Read the grace-window rules before using terminal
   proxy allowlist.
 - Keep an ingress body limit as defense in depth. The application enforces 256 KiB generally, 5 MiB
   for bundled import, and a separate completion prompt character cap.
-- Keep the service single-instance while using the in-memory login throttle, or replace it with a
-  shared throttle store before scaling horizontally.
+- Use Redis coordination for authentication and completion admission whenever replica count exceeds
+  one. Production startup rejects an unsafe multi-instance memory configuration.
+- Enable Ed25519 document signing and supply the active PKCS#8 private key, matching X.509 public key,
+  and key id from the deployment secret store. See `SOURCE_DOCUMENT_SIGNING.md`.
 - Verify `kira.config.bundled-revision-floor` against the revision in the shipping app before cutover.
 - Run `./gradlew clean build` with Docker available before deployment.
-- Do not claim app cutover is complete: remote app fetching and detached config signatures are future
-  app/backend work.
+- Build the app with a credential-free HTTPS backend origin and the matching pinned public key. A
+  shipping app build refuses missing remote trust configuration.
 
-## 10. Remaining known limitations
+## 10. Closed robustness findings
 
-- A re-import into a partly populated catalog may not fully reproduce payload order because existing
-  positions are retained. Prefer revision/publish endpoints after the initial import.
-- Completion capacity is bounded, but a queued call's provider timeout is still measured from submit
-  time, so time spent waiting in the queue counts against the provider timeout.
-- The source `visibleWhen` cycle check remains recursive and can overflow on an adversarially deep
-  dependency chain.
-- Admin source listing still performs extra revision lookups per source and should be batched before
-  substantially increasing the catalog beyond its current size.
+The former known limitations are closed: partial imports now reorder transactionally, queue-wait and
+provider execution timeouts are independent, `visibleWhen` validation is iterative with explicit
+collection/complexity ceilings, and admin source revision numbers load in one joined query. The full
+historical finding disposition is in `REVIEW_RESOLUTION_2026-07-18.md`.
 
-These are current implementation constraints, not intended final behavior.
+Production deployment still requires operator-owned values that cannot live in this repository: a
+PostgreSQL/Redis service, TLS hostname, JWT/admin credentials, completion-provider credentials when
+enabled, and an Ed25519 signing key ceremony. Their absence is a deployment prerequisite, not a hidden
+application fallback; production startup and shipping app builds fail closed.

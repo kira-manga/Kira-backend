@@ -33,6 +33,10 @@ internal object UrlSafety {
                 "URL scheme must be one of ${allowedSchemes.sorted()}.",
             )
         }
+        if (uri.rawAuthority != null && uri.host == null) {
+            findings.error(ValidationCodes.URL_INVALID, path, "Not a valid absolute URL authority.")
+            return
+        }
         if (uri.host.isNullOrBlank()) {
             findings.error(ValidationCodes.URL_HOST_MISSING, path, "URL must have a non-empty host.")
         }

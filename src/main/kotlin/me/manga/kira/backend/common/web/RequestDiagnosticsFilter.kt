@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.web
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import me.manga.kira.backend.security.AuthenticatedMdcFilter
 import org.slf4j.LoggerFactory
 import org.slf4j.MDC
 import org.springframework.web.filter.OncePerRequestFilter
@@ -44,6 +45,12 @@ class RequestDiagnosticsFilter : OncePerRequestFilter() {
             MDC.put(MDC_ROUTE, route)
             MDC.put(MDC_STATUS, response.status.toString())
             MDC.put(MDC_DURATION_MS, durationMs.toString())
+            (request.getAttribute(AuthenticatedMdcFilter.REQUEST_USER_ID) as? String)?.let {
+                MDC.put(AuthenticatedMdcFilter.MDC_USER_ID, it)
+            }
+            (request.getAttribute(AuthenticatedMdcFilter.REQUEST_ROLE) as? String)?.let {
+                MDC.put(AuthenticatedMdcFilter.MDC_ROLE, it)
+            }
             log.info("http {} {} -> {} ({} ms)", request.method, route, response.status, durationMs)
             MDC.clear()
         }

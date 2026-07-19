@@ -15,6 +15,7 @@ import org.springframework.security.oauth2.jwt.JwtException
 import org.springframework.security.oauth2.jwt.JwtIssuerValidator
 import org.springframework.security.oauth2.jwt.JwtTimestampValidator
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -28,7 +29,7 @@ class JwtServiceTest {
 
     private val properties = KiraSecurityProperties(jwtSecret = JwtTestSupport.TEST_JWT_SECRET_BASE64)
     private val keyProvider = JwtKeyProvider(properties)
-    private val jwtService = JwtService(keyProvider, properties)
+    private val jwtService = JwtService(keyProvider, properties, Clock.systemUTC())
     private val decoder = buildDecoder()
 
     private fun user(role: Role = Role.USER): User = User(

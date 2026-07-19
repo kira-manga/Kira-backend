@@ -43,6 +43,9 @@ interface SourceConfigRepository {
      */
     fun findAll(status: SourceLifecycleStatus?): List<SourceConfigHead>
 
+    /** Admin listing in one query, including current and latest revision numbers (no per-row lookups). */
+    fun findAllWithRevisionNumbers(status: SourceLifecycleStatus?): List<AdminSourceListing>
+
     /**
      * The sources to assemble into the served document (PLAN §9 steps 4–5): every source in
      * `active|disabled|retired` (NOT draft, NOT removed), ordered by `(position ASC, api ASC)`, each
@@ -80,7 +83,12 @@ interface SourceConfigRepository {
 
     /** Set the head [status] (a lifecycle transition — disable/enable/retire/remove; PLAN §9). Direct DB update. */
     fun updateStatus(id: UUID, status: SourceLifecycleStatus, updatedAt: Instant)
+
+    /** Update the normative document position as part of an import/reorder transaction. */
+    fun updatePosition(id: UUID, position: Int, updatedAt: Instant)
 }
+
+data class AdminSourceListing(val head: SourceConfigHead, val currentPublishedRevisionNumber: Int?, val latestRevisionNumber: Int?)
 
 /**
  * The fields needed to create a `source_configs` row (PLAN §5). [position] is the normative document

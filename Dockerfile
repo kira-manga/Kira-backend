@@ -3,7 +3,7 @@ FROM eclipse-temurin:21-jdk-alpine@sha256:1ff763083f2993d57d0bf374ab10bb3e2cb873
 
 WORKDIR /workspace
 COPY gradle gradle
-COPY gradlew settings.gradle.kts build.gradle.kts ./
+COPY gradlew settings.gradle.kts build.gradle.kts gradle.lockfile settings-gradle.lockfile ./
 COPY src src
 COPY config config
 RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon clean bootJar

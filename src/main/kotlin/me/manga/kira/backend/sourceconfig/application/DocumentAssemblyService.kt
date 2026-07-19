@@ -10,6 +10,8 @@ import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
+import me.manga.kira.backend.sourceconfig.signing.DocumentSigner
+import me.manga.kira.backend.sourceconfig.signing.DocumentSigningInput
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import me.manga.kira.backend.sourceconfig.validation.ValidationResult
 import org.springframework.stereotype.Service
@@ -36,6 +38,7 @@ class DocumentAssemblyService(
     private val sources: SourceConfigRepository,
     private val publishedDocuments: PublishedDocumentRepository,
     private val validator: SourceConfigValidator,
+    private val documentSigner: DocumentSigner,
     private val clock: Clock,
 ) {
 
@@ -69,6 +72,20 @@ class DocumentAssemblyService(
         // Step 7 — canonicalize + checksum the exact served bytes.
         val canonical = SourceConfigParser.canonicalDocument(document)
         val checksum = CanonicalJson.checksum(canonical)
+        val previousRevision = publishedDocuments.latestPointer()
+        val previousChecksum = previousRevision?.let { publishedDocuments.findByRevision(it)?.checksum }
+        check(previousRevision == null || previousChecksum != null) { "latest document pointer has no snapshot" }
+        val signature =
+            documentSigner.sign(
+                DocumentSigningInput(
+                    revision = revision,
+                    checksum = checksum,
+                    createdAt = instant,
+                    previousRevision = previousRevision,
+                    previousChecksum = previousChecksum,
+                    documentJson = canonical,
+                ),
+            )
 
         // Step 8 — insert the snapshot with created_at = the shared instant (no DB default).
         val snapshot =
@@ -83,6 +100,12 @@ class DocumentAssemblyService(
                     createdBy = actorId,
                     createdAt = instant,
                     notes = null,
+                    signatureFormat = signature?.format,
+                    signatureAlgorithm = signature?.algorithm,
+                    signingKeyId = signature?.keyId,
+                    signatureBase64 = signature?.signatureBase64,
+                    previousDocumentRevision = signature?.previousRevision,
+                    previousDocumentChecksum = signature?.previousChecksum,
                 ),
             )
 

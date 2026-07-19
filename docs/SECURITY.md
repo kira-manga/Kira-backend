@@ -184,10 +184,12 @@ and cleanup batch size are bounded configuration.
   structurally: the audit encoder accepts only scalar values (String/Int/Long/Boolean/null) and throws
   if handed an object body. The `LOGIN_FAILED` row records the normalized email as the login *identifier*
   (never the password); `USER_PASSWORD_RESET` records actor + target only.
-- **Payload integrity vs authenticity.** `X-Config-Checksum` (and the ETag) is a **corruption check,
-  not authenticity** — a hash delivered beside the same payload cannot authenticate it. Authenticity is
-  HTTPS today plus a **future** detached signature (Ed25519 over the canonical bytes; not implemented,
-  no `signature_base64` column in v1).
+- **Payload integrity and authenticity.** `X-Config-Checksum` and the ETag detect corruption but are
+  not trust roots. Every production snapshot is authenticated by an Ed25519 detached signature over
+  versioned metadata and the exact canonical bytes. The app selects an in-binary pinned X.509 public
+  key by key id, verifies the signature/checksum/chain, and rejects replay or rollback. Production
+  startup refuses missing or mismatched signing material; private keys remain secret-manager-only.
+  See `SOURCE_DOCUMENT_SIGNING.md`.
 
 ## Operational notes / seams (v1)
 

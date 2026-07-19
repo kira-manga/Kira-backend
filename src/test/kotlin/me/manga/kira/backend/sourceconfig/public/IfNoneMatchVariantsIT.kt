@@ -39,5 +39,9 @@ class IfNoneMatchVariantsIT : AbstractAdminSourceIT() {
 
         // A weak validator carrying the identical opaque hash NEVER strongly matches → 200 full body.
         getPublicDocument(ifNoneMatch = "W/$etag").andExpect { status { isOk() } }
+
+        // Malformed unquoted or multiply-quoted values are not entity-tags and never match.
+        getPublicDocument(ifNoneMatch = etag.trim('"')).andExpect { status { isOk() } }
+        getPublicDocument(ifNoneMatch = "\"$etag\"").andExpect { status { isOk() } }
     }
 }

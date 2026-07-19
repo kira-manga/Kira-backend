@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.security.JwtService
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
@@ -47,6 +48,7 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected lateinit var adminToken: String
 
     /** Emits exactly the mirrored model's keys (no unknown keys) — accepted by the STRICT parser (PLAN §7). */
+    @OptIn(ExperimentalSerializationApi::class)
     protected val modelJson: Json = Json {
         encodeDefaults = false
         explicitNulls = false

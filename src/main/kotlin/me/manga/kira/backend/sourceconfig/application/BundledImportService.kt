@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
@@ -96,15 +97,20 @@ class BundledImportService(
         // §9 step 1 — global publication lock FIRST (serialize with publishes; no deadlock, PLAN §9).
         publishedDocuments.lockPublicationState()
 
-        val now = clock.instant()
+        val now = clock.instant().truncatedTo(ChronoUnit.SECONDS)
         val acc = Accumulator()
         // 4/5) Per-source, in payload order (created positions follow it — PLAN §5 source ordering).
         document.sources.forEachIndexed { index, stanza ->
             importStanza(stanza, index, actorId, now, acc)
         }
 
+        // Payload order is authoritative for every source present in the import. Sources absent from
+        // the payload retain their relative order and are placed after it. This also repairs ordering
+        // when importing into a partially populated catalog.
+        reorderToPayload(document, now, acc)
+
         // 6) Exactly ONE snapshot when anything changed; otherwise a no-op with no new revision (PLAN §12.2).
-        val changed = acc.created.isNotEmpty() || acc.updated.isNotEmpty()
+        val changed = acc.created.isNotEmpty() || acc.updated.isNotEmpty() || acc.reordered.isNotEmpty()
         val documentRevision =
             if (changed) {
                 val snapshot = assembly.materialize(actorId)
@@ -117,6 +123,22 @@ class BundledImportService(
 
         metrics.bundledImport(if (changed) "changed" else "noop")
         return acc.toResult(warnings, documentRevision)
+    }
+
+    private fun reorderToPayload(document: SourceConfigDocument, now: Instant, acc: Accumulator) {
+        val payloadOrder = document.sources.map { it.api }.toSet()
+        val existing = sources.findAll(status = null)
+        val byApi = existing.associateBy { it.api }
+        val desired =
+            document.sources.mapNotNull { byApi[it.api] } +
+                existing.filterNot { it.api in payloadOrder }
+
+        desired.forEachIndexed { position, head ->
+            if (head.position != position) {
+                sources.updatePosition(head.id, position, now)
+                acc.reordered += head.api
+            }
+        }
     }
 
     /** Apply one payload stanza (PLAN §12.2 point 4/5); mutates [acc]. */
@@ -314,6 +336,7 @@ class BundledImportService(
             mapOf(
                 "created" to acc.created.size,
                 "updated" to acc.updated.size,
+                "reordered" to acc.reordered.size,
                 "unchanged" to acc.unchanged.size,
                 "skippedRemoved" to acc.skippedRemoved.size,
                 "skippedRetired" to acc.skippedRetired.size,
@@ -341,6 +364,7 @@ class BundledImportService(
     private class Accumulator {
         val created = mutableListOf<String>()
         val updated = mutableListOf<String>()
+        val reordered = mutableListOf<String>()
         val unchanged = mutableListOf<String>()
         val skippedRemoved = mutableListOf<String>()
         val skippedRetired = mutableListOf<String>()
@@ -350,6 +374,7 @@ class BundledImportService(
         fun toResult(warnings: List<ValidationWarning>, documentRevision: Long?) = BundledImportResult(
             created = created.toList(),
             updated = updated.toList(),
+            reordered = reordered.toList(),
             unchanged = unchanged.toList(),
             skippedRemoved = skippedRemoved.toList(),
             skippedRetired = skippedRetired.toList(),
@@ -386,6 +411,7 @@ data class LifecycleConflict(val api: String, val payloadLifecycle: String, val 
 data class BundledImportResult(
     val created: List<String>,
     val updated: List<String>,
+    val reordered: List<String>,
     val unchanged: List<String>,
     val skippedRemoved: List<String>,
     val skippedRetired: List<String>,

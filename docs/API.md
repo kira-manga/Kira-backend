@@ -111,12 +111,13 @@ document**:
 ### ETag semantics (normative)
 
 Strong quoted ETags (`ETag: "a1b2…"`). `If-None-Match: *` matches whenever any document exists → 304.
-A comma-separated `If-None-Match` list is parsed and each entry compared with **strong comparison**
-(quotes stripped); a match → **304 with no body**. **Weak validators never match**: `W/"<hash>"` fails
+A comma-separated `If-None-Match` list is parsed and each valid quoted entity-tag compared with
+**strong comparison**; a match → **304 with no body**. Malformed/unquoted tags never match. **Weak validators never match**: `W/"<hash>"` fails
 strong comparison even when the opaque hash is identical → **200** with the full body. The checksum is
 computed over the exact UTF-8 bytes sent. `X-Config-Checksum` is a **corruption check, not
-authenticity** — a hash beside the same payload cannot authenticate it; authenticity is HTTPS today +
-a future detached signature.
+authenticity** — a hash beside the same payload cannot authenticate it. Authenticity comes from the
+`kira-source-signature-v1` Ed25519 metadata returned in `X-Config-Signature-*`, `X-Config-Signing-Key-Id`,
+`X-Config-Previous-*`, and `X-Config-Created-At`; `/document/meta` carries the same fields.
 
 ---
 
