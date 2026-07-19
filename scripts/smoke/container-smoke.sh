@@ -12,8 +12,22 @@ network="kira-release-smoke-$suffix"
 database="kira-release-smoke-postgres-$suffix"
 application="kira-release-smoke-app-$suffix"
 smoke_temp_root=${KIRA_SMOKE_TEMP_ROOT:-"$PWD/build/tmp"}
+postgres_image="postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
+failure_stage=initialization
 mkdir -p "$smoke_temp_root"
 temporary_directory=$(mktemp -d "$smoke_temp_root/kira-release-smoke.XXXXXX")
+
+redact_stream() {
+  local line sensitive
+  while IFS= read -r line; do
+    for sensitive in "${database_password:-}" "${jwt_secret:-}" "${signing_private:-}"; do
+      if [[ -n $sensitive ]]; then
+        line=${line//"$sensitive"/[REDACTED]}
+      fi
+    done
+    printf '%s\n' "$line"
+  done
+}
 
 cleanup() {
   docker rm --force "$application" "$database" >/dev/null 2>&1 || true
@@ -23,6 +37,25 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
+report_failure() {
+  local status=$1
+  local line=$2
+  trap - ERR
+  echo "production-profile container smoke failed during $failure_stage (line $line, status $status)" >&2
+  if [[ -f $temporary_directory/migration.log ]]; then
+    redact_stream < "$temporary_directory/migration.log" >&2
+  fi
+  if docker inspect "$database" >/dev/null 2>&1; then
+    docker logs "$database" 2>&1 | redact_stream >&2 || true
+  fi
+  if docker inspect "$application" >/dev/null 2>&1; then
+    docker logs "$application" 2>&1 | redact_stream >&2 || true
+  fi
+  exit "$status"
+}
+trap 'report_failure "$?" "$LINENO"' ERR
+
+failure_stage="ephemeral TLS and signing material generation"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "$temporary_directory/ca.key" -out "$temporary_directory/ca.crt" \
   -subj "/CN=Kira release smoke CA" >/dev/null 2>&1
@@ -43,11 +76,12 @@ jwt_secret=$(openssl rand -base64 48 | tr -d '\n')
 database_password=$(openssl rand -hex 24)
 jdbc_url="jdbc:postgresql://$database:5432/kira?sslmode=verify-full&sslrootcert=/run/kira-smoke/ca.crt"
 
+failure_stage="disposable PostgreSQL startup"
 docker network create "$network" >/dev/null
 docker run --detach --name "$database" --network "$network" \
   --env POSTGRES_DB=kira --env POSTGRES_USER=kira --env "POSTGRES_PASSWORD=$database_password" \
   --volume "$temporary_directory:/source-certs:ro" \
-  postgres:17.6-alpine \
+  "$postgres_image" \
   sh -ec 'mkdir -p /run/kira-certs; cp /source-certs/ca.crt /source-certs/server.crt /source-certs/server.key /run/kira-certs/; chown -R postgres:postgres /run/kira-certs; chmod 600 /run/kira-certs/server.key; exec docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/run/kira-certs/ca.crt -c ssl_cert_file=/run/kira-certs/server.crt -c ssl_key_file=/run/kira-certs/server.key' \
   >/dev/null
 
@@ -63,13 +97,16 @@ for _ in $(seq 1 45); do
 done
 docker exec "$database" pg_isready --username kira --dbname kira >/dev/null
 
+failure_stage="database migration"
 docker run --rm --network "$network" --entrypoint java \
   --volume "$temporary_directory/ca.crt:/run/kira-smoke/ca.crt:ro" \
   --env "KIRA_MIGRATION_DB_URL=$jdbc_url" --env KIRA_MIGRATION_DB_USERNAME=kira \
   --env "KIRA_MIGRATION_DB_PASSWORD=$database_password" \
   "$image" -Dloader.main=me.manga.kira.backend.database.DatabaseMigrationMain \
-  -cp /app/app.jar org.springframework.boot.loader.launch.PropertiesLauncher >/dev/null
+  -cp /app/app.jar org.springframework.boot.loader.launch.PropertiesLauncher \
+  > "$temporary_directory/migration.log" 2>&1
 
+failure_stage="production application startup"
 docker run --detach --name "$application" --network "$network" \
   --volume "$temporary_directory/ca.crt:/run/kira-smoke/ca.crt:ro" \
   --env "SPRING_DATASOURCE_URL=$jdbc_url" --env SPRING_DATASOURCE_USERNAME=kira \
@@ -82,6 +119,7 @@ docker run --detach --name "$application" --network "$network" \
   --env "KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY=$signing_public" \
   "$image" >/dev/null
 
+failure_stage="readiness, liveness, and metrics probes"
 for _ in $(seq 1 60); do
   if docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/readiness; then
     docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/liveness
