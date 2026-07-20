@@ -1,0 +1,1 @@
+kira-deploy ALL=(root) NOPASSWD: /usr/local/sbin/kira-deploy deploy backend *, /usr/local/sbin/kira-deploy deploy web *

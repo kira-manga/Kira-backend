@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+deployment_root=/opt/kira
+compose_file="$deployment_root/compose.yaml"
+images_file="$deployment_root/images.env"
+backup_root="$deployment_root/backups"
+release_root="$deployment_root/releases"
+
+fail() {
+  printf 'kira-deploy: %s\n' "$*" >&2
+  exit 1
+}
+
+compose() {
+  docker compose --project-name kira --file "$compose_file" --env-file "$images_file" "$@"
+}
+
+wait_healthy() {
+  local container=$1
+  local attempts=${2:-30}
+  local status
+  for _ in $(seq 1 "$attempts"); do
+    status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)
+    if [[ $status == healthy ]]; then
+      return 0
+    fi
+    if [[ $status == exited || $status == dead ]]; then
+      docker logs --tail 100 "$container" >&2 || true
+      return 1
+    fi
+    sleep 4
+  done
+  docker logs --tail 100 "$container" >&2 || true
+  return 1
+}
+
+set_image() {
+  local key=$1
+  local value=$2
+  local temporary
+  temporary=$(mktemp "$deployment_root/images.env.XXXXXX")
+  awk -F= -v key="$key" -v value="$value" '
+    BEGIN { updated = 0 }
+    $1 == key { print key "=" value; updated = 1; next }
+    { print }
+    END { if (!updated) print key "=" value }
+  ' "$images_file" > "$temporary"
+  chmod 600 "$temporary"
+  mv "$temporary" "$images_file"
+}
+
+configured_image() {
+  local key=$1
+  awk -F= -v key="$key" '$1 == key { print $2; exit }' "$images_file"
+}
+
+rollback_component() {
+  local component=$1
+  local image=$2
+  [[ -n $image ]] || return 0
+  docker image inspect "$image" >/dev/null 2>&1 || return 0
+  if [[ $component == backend ]]; then
+    KIRA_BACKEND_IMAGE="$image" compose up --detach --no-deps backend
+    wait_healthy kira-backend 30 || true
+  else
+    KIRA_WEB_IMAGE="$image" compose up --detach --no-deps web
+    wait_healthy kira-web 20 || true
+  fi
+}
+
+backup_database() {
+  install -d -m 700 "$backup_root"
+  local stamp destination
+  stamp=$(date -u +%Y%m%dT%H%M%SZ)
+  destination="$backup_root/kira-$stamp.dump"
+  docker exec kira-postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination"
+  docker exec -i kira-postgres pg_restore --list < "$destination" >/dev/null
+  chmod 600 "$destination"
+  sha256sum "$destination" > "$destination.sha256"
+  chmod 600 "$destination.sha256"
+}
+
+activate_backend() {
+  local image=$1
+  local previous
+  [[ $image =~ ^kira-backend:[A-Za-z0-9_.-]+$ ]] || fail "invalid backend image"
+  previous=$(configured_image KIRA_BACKEND_IMAGE)
+  docker image inspect "$image" >/dev/null
+  compose up --detach postgres
+  wait_healthy kira-postgres 30
+  backup_database
+  KIRA_BACKEND_IMAGE="$image" compose --profile tools run --rm backend-migrate
+  if ! KIRA_BACKEND_IMAGE="$image" compose up --detach --no-deps backend; then
+    rollback_component backend "$previous"
+    fail "backend activation failed; restored the previous image when available"
+  fi
+  if ! wait_healthy kira-backend 30; then
+    rollback_component backend "$previous"
+    fail "backend health check failed; restored the previous image when available"
+  fi
+  set_image KIRA_BACKEND_IMAGE "$image"
+}
+
+activate_web() {
+  local image=$1
+  local previous
+  [[ $image =~ ^kira-web:[A-Za-z0-9_.-]+$ ]] || fail "invalid web image"
+  previous=$(configured_image KIRA_WEB_IMAGE)
+  docker image inspect "$image" >/dev/null
+  if ! KIRA_WEB_IMAGE="$image" compose up --detach --no-deps web; then
+    rollback_component web "$previous"
+    fail "web activation failed; restored the previous image when available"
+  fi
+  if ! wait_healthy kira-web 20; then
+    rollback_component web "$previous"
+    fail "web health check failed; restored the previous image when available"
+  fi
+  set_image KIRA_WEB_IMAGE "$image"
+}
+
+deploy_stream() {
+  local component=$1
+  local revision=$2
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail "revision must be a full Git SHA"
+  install -d -m 700 "$release_root"
+  local archive="$release_root/$component-$revision.tar.gz"
+  local image
+  case "$component" in
+    backend) image="kira-backend:$revision" ;;
+    web) image="kira-web:$revision" ;;
+    *) fail "unknown component" ;;
+  esac
+  umask 077
+  cat > "$archive"
+  gzip --test "$archive"
+  gzip --decompress --stdout "$archive" | docker load >/dev/null
+  docker image inspect "$image" >/dev/null || fail "archive did not contain $image"
+  if [[ $component == backend ]]; then
+    activate_backend "$image"
+  else
+    activate_web "$image"
+  fi
+}
+
+with_lock() {
+  exec 9>/run/lock/kira-deploy.lock
+  flock --exclusive 9
+  "$@"
+}
+
+case ${1:-} in
+  deploy)
+    [[ $# -eq 3 ]] || fail "usage: kira-deploy deploy COMPONENT GIT_SHA"
+    with_lock deploy_stream "$2" "$3"
+    ;;
+  activate)
+    [[ $# -eq 3 ]] || fail "usage: kira-deploy activate COMPONENT IMAGE"
+    case "$2" in
+      backend) with_lock activate_backend "$3" ;;
+      web) with_lock activate_web "$3" ;;
+      *) fail "unknown component" ;;
+    esac
+    ;;
+  backup)
+    [[ $# -eq 1 ]] || fail "usage: kira-deploy backup"
+    with_lock backup_database
+    ;;
+  *)
+    fail "supported commands: deploy, activate, backup"
+    ;;
+esac
