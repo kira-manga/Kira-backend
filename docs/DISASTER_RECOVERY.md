@@ -25,11 +25,12 @@ application profile. Credentials are injected by the platform secret manager and
 ## Backup
 
 Prefer encrypted provider-native snapshots plus continuous WAL/PITR. As the portable logical layer,
-run `scripts/db/backup.sh /secure/absolute/path/kira-YYYYmmddTHHMMSSZ.dump` with `PGHOST`, `PGDATABASE`,
-`PGUSER`, `PGPASSWORD` (or a `.pgpass` supplied by the secret manager), `PGSSLROOTCERT`, and
-`PGSSLMODE=verify-full`. Store the dump, checksum, and manifest together in encrypted immutable
-storage. Alert when the most recent successful backup is older than 15 minutes or checksum/catalog
-verification fails.
+freeze tutorial ADMIN mutations, then run
+`scripts/db/backup.sh /secure/absolute/path/kira-YYYYmmddTHHMMSSZ.dump /var/lib/kira/tutorial-media`
+with `PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` (or a `.pgpass` supplied by the secret manager),
+`PGSSLROOTCERT`, and `PGSSLMODE=verify-full`. Store the matched dump, media archive, individual
+checksums, bundle checksum, and manifest together in encrypted immutable storage. Alert when the
+most recent successful backup is older than 15 minutes or checksum/catalog verification fails.
 
 ## Restoration and PITR procedure
 
@@ -39,7 +40,12 @@ verification fails.
    selected point. For a logical verification target only, use `scripts/db/verify-restore.sh`; its
    database-name, environment, and explicit-authorization guards prevent accidental production use.
 3. Verify TLS, roles/grants, Flyway history checksums, row counts, constraints, publication pointers,
-   latest signed document checksum, admin availability, and completion/audit retention expectations.
+   latest signed document checksum, admin availability, tutorial media checksums, and completion/audit retention expectations.
+   Restore media into a new empty directory/volume with
+   `KIRA_ALLOW_DESTRUCTIVE_RESTORE_TEST=yes scripts/db/restore-media.sh BACKUP.media.tar.gz EMPTY_TARGET`,
+   then point `KIRA_TUTORIAL_MEDIA_DIRECTORY` at it. Start the backend in quarantine so startup
+   validation checks every published file/reference before traffic switches. This supports
+   relocation without preserving the old host path.
 4. Run the exact release image migration Job. Flyway clean, baselining, out-of-order migrations, and
    reverse migrations remain disabled. A failed migration is repaired only after the cause is fixed
    and a forward-compatible recovery migration is reviewed and tested.

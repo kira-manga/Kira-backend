@@ -32,6 +32,14 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
             return
         }
 
+        // Multipart parsing is owned by the servlet container. Reading it here would consume the
+        // stream before `getParts()` can decode it; Boot's multipart max-request-size still enforces
+        // the same 5 MiB streamed/chunked bound, while the media service enforces the 4 MiB file cap.
+        if (request.requestURI.removePrefix(request.contextPath) == TUTORIAL_MEDIA_PATH) {
+            filterChain.doFilter(request, response)
+            return
+        }
+
         val body = request.inputStream.readNBytes(limit + 1)
         if (body.size > limit) {
             writeTooLarge(response, limit)
@@ -44,7 +52,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
 
     private fun limitFor(request: HttpServletRequest): Int {
         val applicationPath = request.requestURI.removePrefix(request.contextPath)
-        return if (applicationPath == IMPORT_PATH) MAX_IMPORT_BODY_BYTES else DEFAULT_MAX_BODY_BYTES
+        return if (applicationPath == IMPORT_PATH || applicationPath == TUTORIAL_MEDIA_PATH) MAX_IMPORT_BODY_BYTES else DEFAULT_MAX_BODY_BYTES
     }
 
     private fun writeTooLarge(response: HttpServletResponse, limit: Int) {
@@ -105,5 +113,6 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         const val DEFAULT_MAX_BODY_BYTES = 256 * 1024
         const val MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024
         const val IMPORT_PATH = "/api/v1/admin/sources/import-bundled"
+        const val TUTORIAL_MEDIA_PATH = "/api/v1/admin/tutorial-media"
     }
 }

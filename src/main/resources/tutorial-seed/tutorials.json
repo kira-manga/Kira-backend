@@ -1,0 +1,54 @@
+[
+  {
+    "slug": "getting-started", "category": "basics",
+    "title": {"en": "From setup to your first chapter", "ar": "من الإعداد إلى فصلك الأول"},
+    "summary": {"en": "Activate source management, choose a source, find a title, and begin reading.", "ar": "فعّل إدارة المصادر، واختر مصدرًا، واعثر على عنوان، وابدأ القراءة."},
+    "intro": {"en": "This is the shortest path from a fresh Kira installation to an open chapter. Activation reveals source controls; it does not create an account.", "ar": "هذا هو أقصر طريق من تثبيت كيرا الجديد إلى فتح أول فصل. التفعيل يُظهر أدوات المصادر ولا ينشئ حسابًا."},
+    "duration": {"en": "4 min", "ar": "٤ دقائق"}, "level": {"en": "Beginner", "ar": "مبتدئ"}, "cover": "discover",
+    "steps": [
+      {"id": "activate", "title": {"en": "Open the official activation link", "ar": "افتح رابط التفعيل الرسمي"}, "body": {"en": "On the phone where Kira is installed, visit kiramanga.me/activate and choose “Open the Kira app.” Source management becomes visible for that installation. No password or payment is required.", "ar": "على الهاتف المثبّت عليه كيرا، افتح kiramanga.me/activate واختر «افتح تطبيق كيرا». ستظهر إدارة المصادر لهذا التثبيت، من دون كلمة مرور أو دفع."}},
+      {"id": "sources", "title": {"en": "Enable the sources you want", "ar": "فعّل المصادر التي تريدها"}, "body": {"en": "Open Sources management in Kira and enable at least one source. Source websites are independent services, so their availability can change separately from the app.", "ar": "افتح إدارة المصادر داخل كيرا وفعّل مصدرًا واحدًا على الأقل. مواقع المصادر خدمات مستقلة، لذلك قد يتغيّر توفرها بعيدًا عن التطبيق."}, "tip": {"en": "Start with one source in your preferred language. You can add or remove sources later.", "ar": "ابدأ بمصدر واحد بلغتك المفضلة، ويمكنك إضافة المصادر أو إزالتها لاحقًا."}},
+      {"id": "discover", "title": {"en": "Browse Discover", "ar": "تصفّح «اكتشف»"}, "body": {"en": "Use the source pills near the top of Discover, then browse Popular now and Latest updates. The search icon takes you directly to a title search.", "ar": "استخدم أزرار المصادر أعلى شاشة «اكتشف»، ثم تصفّح «الشائع الآن» و«آخر التحديثات». ينقلك رمز البحث مباشرةً إلى البحث عن عنوان."}, "media": "discover"},
+      {"id": "first-chapter", "title": {"en": "Save a title and open a chapter", "ar": "احفظ عنوانًا وافتح فصلًا"}, "body": {"en": "Open a result, add it to your library, and choose a chapter. When reading state exists, the details screen offers a Resume action so you can return quickly.", "ar": "افتح نتيجة، وأضفها إلى مكتبتك، ثم اختر فصلًا. عند وجود تقدّم قراءة ستجد زر المتابعة في شاشة التفاصيل لتعود سريعًا."}, "media": "mangaDetails"}
+    ]
+  },
+  {
+    "slug": "discover-manga", "category": "discovery",
+    "title": {"en": "Find manga across your sources", "ar": "اعثر على المانجا عبر مصادرك"},
+    "summary": {"en": "Use source switching, popular titles, latest updates, and search without losing your place.", "ar": "استخدم تبديل المصادر والشائع وآخر التحديثات والبحث من دون أن تفقد مكانك."},
+    "intro": {"en": "Discover is designed as a fast decision surface: pick a source, scan what changed, and save anything you want to revisit.", "ar": "صُممت شاشة «اكتشف» لتصل بسرعة إلى قرارك: اختر مصدرًا، وراجع الجديد، واحفظ ما تريد العودة إليه."},
+    "duration": {"en": "3 min", "ar": "٣ دقائق"}, "level": {"en": "Beginner", "ar": "مبتدئ"}, "cover": "discover",
+    "steps": [
+      {"id": "switch-source", "title": {"en": "Choose a source first", "ar": "اختر مصدرًا أولًا"}, "body": {"en": "Tap a source pill at the top of Discover. Popular titles and latest updates refresh for the selected source.", "ar": "اضغط على زر مصدر أعلى «اكتشف». ستتحدّث العناوين الشائعة وآخر التحديثات للمصدر المحدد."}, "media": "discover"},
+      {"id": "search", "title": {"en": "Search when you know the title", "ar": "ابحث عندما تعرف العنوان"}, "body": {"en": "Use the search icon in the top action row, enter the title, and open the closest result. Search results depend on the currently selected source.", "ar": "استخدم رمز البحث في الشريط العلوي، واكتب العنوان، وافتح النتيجة الأقرب. تعتمد النتائج على المصدر المحدد حاليًا."}},
+      {"id": "scan", "title": {"en": "Scan popular and recent updates", "ar": "راجع الشائع والتحديثات"}, "body": {"en": "Popular now is useful for browsing; Latest updates is useful for spotting active series and recently published chapters.", "ar": "يفيد قسم «الشائع الآن» في التصفّح، بينما يساعد «آخر التحديثات» في رؤية السلاسل النشطة والفصول الحديثة."}},
+      {"id": "save", "title": {"en": "Keep promising titles in your library", "ar": "احفظ العناوين الواعدة في مكتبتك"}, "body": {"en": "Open the details screen and add the title to your library. Kira can then keep its chapter state and reading progress together.", "ar": "افتح شاشة التفاصيل وأضف العنوان إلى مكتبتك. يستطيع كيرا بعدها الاحتفاظ بحالة الفصول وتقدّم القراءة معًا."}, "media": "mangaDetails"}
+    ]
+  },
+  {
+    "slug": "read-offline", "category": "reading",
+    "title": {"en": "Download chapters and read offline", "ar": "حمّل الفصول واقرأ دون إنترنت"},
+    "summary": {"en": "Prepare chapters before you leave the connection and manage the storage they use.", "ar": "جهّز الفصول قبل مغادرة الاتصال وتحكّم في مساحة التخزين التي تستخدمها."},
+    "intro": {"en": "Kira keeps completed chapter downloads on your device. Use the details screen to start a download, then confirm it finishes before going offline.", "ar": "يحتفظ كيرا بتنزيلات الفصول المكتملة على جهازك. ابدأ التنزيل من شاشة التفاصيل وتأكد من اكتماله قبل قطع الاتصال."},
+    "duration": {"en": "4 min", "ar": "٤ دقائق"}, "level": {"en": "Beginner", "ar": "مبتدئ"}, "cover": "mangaDetails",
+    "steps": [
+      {"id": "open-details", "title": {"en": "Open the manga details screen", "ar": "افتح شاشة تفاصيل المانجا"}, "body": {"en": "Choose a title from Discover or your library. The details screen collects its chapter list, reading state, and download controls.", "ar": "اختر عنوانًا من «اكتشف» أو من مكتبتك. تجمع شاشة التفاصيل قائمة الفصول وحالة القراءة وأدوات التنزيل."}, "media": "mangaDetails"},
+      {"id": "download", "title": {"en": "Choose what to download", "ar": "اختر ما تريد تنزيله"}, "body": {"en": "Use Download all when you want every available chapter, or use the controls in the chapter list for a smaller selection. Large downloads need enough free device storage.", "ar": "استخدم «تنزيل الكل» عندما تريد كل الفصول المتاحة، أو أدوات قائمة الفصول لتنزيل مجموعة أصغر. تحتاج التنزيلات الكبيرة إلى مساحة كافية."}},
+      {"id": "confirm", "title": {"en": "Wait for completion before going offline", "ar": "انتظر الاكتمال قبل قطع الاتصال"}, "body": {"en": "Let the download finish while the source is reachable. A queued or failed chapter is not yet available offline; retry it while connected.", "ar": "اترك التنزيل يكتمل بينما المصدر متاح. الفصل المنتظر أو الفاشل ليس جاهزًا دون إنترنت بعد؛ أعد المحاولة أثناء الاتصال."}, "tip": {"en": "Source websites can fail or change independently of Kira. Retry later or try another enabled source when appropriate.", "ar": "قد تتوقف مواقع المصادر أو تتغيّر بشكل مستقل عن كيرا. أعد المحاولة لاحقًا أو استخدم مصدرًا آخر مناسبًا."}},
+      {"id": "storage", "title": {"en": "Control downloaded storage", "ar": "تحكّم في مساحة التنزيلات"}, "body": {"en": "Settings includes a Downloaded only filter and Kira Compressor controls. Compression can reduce chapter size, while converting existing downloads may take time.", "ar": "تتضمن الإعدادات فلتر «المنزّل فقط» وأدوات ضغط كيرا. قد يقلل الضغط حجم الفصول، بينما قد يستغرق تحويل التنزيلات الحالية وقتًا."}, "media": "settings"}
+    ]
+  },
+  {
+    "slug": "personalize-kira", "category": "settings",
+    "title": {"en": "Tune theme, language, and privacy", "ar": "اضبط المظهر واللغة والخصوصية"},
+    "summary": {"en": "Make Kira fit your screen, reading language, privacy preference, and storage budget.", "ar": "اجعل كيرا مناسبًا لشاشتك ولغة قراءتك وتفضيلات الخصوصية ومساحة التخزين."},
+    "intro": {"en": "Kira’s settings are practical controls, not decoration. Start with theme and language, then decide how history and downloads should behave.", "ar": "إعدادات كيرا أدوات عملية وليست للزينة. ابدأ بالمظهر واللغة، ثم قرر كيف يتعامل التطبيق مع السجل والتنزيلات."},
+    "duration": {"en": "3 min", "ar": "٣ دقائق"}, "level": {"en": "All readers", "ar": "كل القراء"}, "cover": "settings",
+    "steps": [
+      {"id": "theme", "title": {"en": "Choose the right theme", "ar": "اختر المظهر المناسب"}, "body": {"en": "In Settings, use System Theme to follow the device or Custom Theme to choose directly. Pure black dark mode is available for an even darker reading environment.", "ar": "في الإعدادات، استخدم «مظهر النظام» لمتابعة الجهاز أو «مظهر مخصص» للاختيار مباشرةً. يتوفر أيضًا الوضع الداكن الأسود الخالص."}, "media": "settings"},
+      {"id": "language", "title": {"en": "Pick your app language", "ar": "اختر لغة التطبيق"}, "body": {"en": "Open Language from Settings and choose a supported language. Arabic changes both the copy and layout direction so navigation remains natural from right to left.", "ar": "افتح «اللغة» من الإعدادات واختر لغة مدعومة. تغيّر العربية النص واتجاه التصميم معًا لتبقى الحركة طبيعية من اليمين إلى اليسار."}},
+      {"id": "privacy", "title": {"en": "Decide when history is saved", "ar": "حدد متى يُحفظ السجل"}, "body": {"en": "Turn on Incognito mode when you do not want Kira to save reading history. Switch it off when you want normal history tracking again.", "ar": "فعّل وضع التصفح الخفي عندما لا تريد من كيرا حفظ سجل القراءة، وأوقفه عندما تريد استعادة حفظ السجل المعتاد."}},
+      {"id": "compressor", "title": {"en": "Balance image storage and size", "ar": "وازن بين الصور والمساحة"}, "body": {"en": "Kira Compressor can reduce downloaded chapter size. The conversion action applies compression to existing downloads and may take time on a large library.", "ar": "يمكن لضاغط كيرا تقليل حجم الفصول المنزّلة. يطبّق التحويل الضغط على التنزيلات الحالية وقد يستغرق وقتًا مع المكتبات الكبيرة."}}
+    ]
+  }
+]

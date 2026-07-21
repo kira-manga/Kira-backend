@@ -29,3 +29,6 @@ kira:
     per-user-per-minute: 0
     global-per-minute: 0
     per-user-daily-quota: 0
+  tutorial:
+    seed-enabled: false
+    media-directory: ${java.io.tmpdir}/kira-tutorial-media-tests

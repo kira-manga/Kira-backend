@@ -12,8 +12,8 @@ import java.sql.DriverManager
  * `outOfOrder`, from every meaningful baseline. It runs programmatic Flyway against a FRESH, throwaway
  * DATABASE inside the shared Testcontainers Postgres instance (the Spring ITs use the default `test`
  * database), so the main test schema is untouched:
- *  - (a) migrate V1..V3 only, then migrate to latest → V4..V8 apply on top;
- *  - (b) migrate V1..V4 only, then migrate to latest → V5..V8 apply.
+ *  - (a) migrate V1..V3 only, then migrate to latest → V4..V9 apply on top;
+ *  - (b) migrate V1..V4 only, then migrate to latest → V5..V9 apply.
  *
  * The hazard this proves impossible: a lower version appearing after a higher one is applied. A fresh
  * DATABASE (not merely a schema) is used because a startup validator inspects `seq_document_revision`
@@ -33,24 +33,24 @@ class FlywayIncrementalOrderIT {
     private fun databaseUrl(database: String): String = "jdbc:postgresql://$host:$port/$database"
 
     @Test
-    fun `V3 baseline then upgrade to latest applies V4 through V8 in order`() {
+    fun `V3 baseline then upgrade to latest applies V4 through V9 in order`() {
         withFreshDatabase("flyway_order_v3_baseline") { database ->
             flyway(database, MigrationVersion.fromVersion("3")).migrate()
             assertEquals(listOf("1", "2", "3"), historyVersions(database), "Phase-5 baseline is exactly V1..V3")
 
             flyway(database, MigrationVersion.LATEST).migrate()
-            assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8"), historyVersions(database), "V4..V8 apply on top, in order")
+            assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9"), historyVersions(database), "V4..V9 apply on top, in order")
         }
     }
 
     @Test
-    fun `V4 baseline then upgrade to latest applies V5 through V8`() {
+    fun `V4 baseline then upgrade to latest applies V5 through V9`() {
         withFreshDatabase("flyway_order_v4_baseline") { database ->
             flyway(database, MigrationVersion.fromVersion("4")).migrate()
             assertEquals(listOf("1", "2", "3", "4"), historyVersions(database), "Phase-6 baseline is exactly V1..V4")
 
             flyway(database, MigrationVersion.LATEST).migrate()
-            assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8"), historyVersions(database), "V5..V8 apply on top, in order")
+            assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9"), historyVersions(database), "V5..V9 apply on top, in order")
         }
     }
 

@@ -10,6 +10,9 @@ roles, admin source/user management with a full audit trail, Ed25519-signed docu
 optional authenticated completion service behind a production HTTPS provider abstraction. Echo is
 restricted to explicit development/test profiles.
 
+The service also owns bilingual website tutorials, immutable revisions, categories,
+ordering/featured state, and sanitized media; see [`docs/TUTORIALS.md`](docs/TUTORIALS.md).
+
 The design goal throughout: the app must eventually be able to fetch a document that is
 **contract-equivalent, deterministically canonical, and byte-stable** with respect to what it
 bundles today. This means stable backend canonical bytes, not byte identity with the app's
@@ -107,7 +110,7 @@ Spring Boot does **not** load `.env` automatically in this project. Run the `sou
 new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
 shell-special password values single-quoted inside `.env`.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V5`); Hibernate
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V9`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
 document is at `/v3/api-docs`.
 
@@ -152,7 +155,7 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V8 (users, source docs/signing, audit, completions)
+  db/migration/    # forward-only V1 through V9 (users, source docs/signing, audit, completions, tutorials)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```

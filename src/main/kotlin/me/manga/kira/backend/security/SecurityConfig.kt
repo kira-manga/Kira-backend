@@ -110,6 +110,9 @@ class SecurityConfig(private val environment: Environment) {
                 // Public, read-only app config surface (controllers arrive in Phase 7).
                 authorize(HttpMethod.GET, "/api/v1/source-config/**", permitAll)
                 authorize(HttpMethod.GET, "/api/v1/sources/**", permitAll)
+                authorize(HttpMethod.GET, "/api/v1/tutorial-categories", permitAll)
+                authorize(HttpMethod.GET, "/api/v1/tutorials/**", permitAll)
+                authorize(HttpMethod.GET, "/api/v1/tutorial-media/**", permitAll)
 
                 // Auth: register/login open; me requires a token.
                 authorize(HttpMethod.POST, "/api/v1/auth/register", permitAll)

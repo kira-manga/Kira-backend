@@ -54,12 +54,20 @@ abstract class AbstractIntegrationTest {
         // 1) Break the pointer/self references that would block RESTRICT deletes.
         jdbcTemplate.update("UPDATE document_publication_state SET latest_document_revision = NULL WHERE id = 1")
         jdbcTemplate.update("UPDATE source_configs SET current_published_revision_id = NULL")
+        jdbcTemplate.update("UPDATE tutorials SET published_revision_id = NULL")
+        jdbcTemplate.update("UPDATE tutorial_categories SET published_revision_id = NULL")
         // 2) Children → parents (respecting the RESTRICT FKs). audit_log.actor_user_id → users, and the
         //    completion tables → users / each other, so all are cleared before users (Phase 6 / Phase 9).
         jdbcTemplate.update("DELETE FROM source_validation_results")
         jdbcTemplate.update("DELETE FROM source_config_revisions")
         jdbcTemplate.update("DELETE FROM source_configs")
         jdbcTemplate.update("DELETE FROM published_documents")
+        jdbcTemplate.update("DELETE FROM tutorial_revision_media")
+        jdbcTemplate.update("DELETE FROM tutorial_revisions")
+        jdbcTemplate.update("DELETE FROM tutorials")
+        jdbcTemplate.update("DELETE FROM tutorial_category_revisions")
+        jdbcTemplate.update("DELETE FROM tutorial_categories")
+        jdbcTemplate.update("DELETE FROM tutorial_media")
         jdbcTemplate.update("DELETE FROM audit_log")
         jdbcTemplate.update("DELETE FROM completion_results")
         jdbcTemplate.update("DELETE FROM completion_requests")

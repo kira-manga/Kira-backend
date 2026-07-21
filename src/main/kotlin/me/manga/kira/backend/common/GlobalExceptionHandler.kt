@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.method.annotation.HandlerMethodValidationException
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException
+import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.web.server.ResponseStatusException
 import org.springframework.web.servlet.resource.NoResourceFoundException
 
@@ -137,6 +138,13 @@ class GlobalExceptionHandler {
         HttpStatus.NOT_ACCEPTABLE,
         "The requested response media type is not available.",
         listOf(ApiFieldError(code = "NOT_ACCEPTABLE", message = "response media type is not available")),
+    )
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class)
+    fun handleUploadTooLarge(@Suppress("UNUSED_PARAMETER") ex: MaxUploadSizeExceededException): ResponseEntity<ApiError> = problem(
+        HttpStatus.PAYLOAD_TOO_LARGE,
+        "tutorial media must not exceed 4 MiB.",
+        listOf(ApiFieldError(code = "PAYLOAD_TOO_LARGE", path = "file", message = "tutorial media must not exceed 4 MiB")),
     )
 
     @ExceptionHandler(DataIntegrityViolationException::class)

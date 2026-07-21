@@ -21,7 +21,9 @@ LABEL org.opencontainers.image.title="Kira backend" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.licenses="Apache-2.0"
 
-RUN addgroup -S -g 10001 kira && adduser -S -D -H -u 10001 -G kira kira
+RUN addgroup -S -g 10001 kira && adduser -S -D -H -u 10001 -G kira kira \
+    && mkdir -p /var/lib/kira/tutorial-media \
+    && chown -R kira:kira /var/lib/kira
 WORKDIR /app
 COPY --from=builder --chown=kira:kira /workspace/build/libs/kira-backend-*.jar /app/app.jar
 

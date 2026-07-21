@@ -1,6 +1,6 @@
 # Server3 production runbook
 
-Kira runs as an isolated Docker Compose project under `/opt/kira`. PostgreSQL is reachable only on the internal `kira-database` network. The API and static site bind to loopback ports `18080` and `18081`; host Nginx is the only public entry point.
+Kira runs as an isolated Docker Compose project under `/opt/kira`. PostgreSQL is reachable only on the internal `kira-database` network. The API and standalone SSR site bind to loopback ports `18080` and `18081`; host Nginx is the only public entry point.
 
 ## Versioned files
 
@@ -29,6 +29,14 @@ The web environment also needs `ANDROID_APP_SHA256_CERT_FINGERPRINT`, `ANDROID_P
 
 ## Operations and recovery
 
-Run deployments only through the workflow or the restricted stream command. For a manual database backup, run `sudo /usr/local/sbin/kira-deploy backup`. Dumps and SHA-256 files are stored root-only in `/opt/kira/backups`.
+Run deployments only through the workflow or restricted stream command. For a manual backup, freeze
+tutorial ADMIN mutations and run `sudo /usr/local/sbin/kira-deploy backup`. It must create a matched
+PostgreSQL dump and `kira-tutorial-media` archive with bundle checksums. Files remain root-only in
+`/opt/kira/backups`; the web cache volume is disposable.
 
-To move Kira, provision Docker and Nginx on the destination, copy the versioned files, securely transfer the `/opt/kira` secrets and a verified database dump, restore into a new `kira-postgres-data` volume, reissue public certificates, test with local DNS overrides, and only then change DNS. Do not copy Let's Encrypt private keys when certificates can be reissued. Keep mail services and mail DNS outside this deployment.
+Deploy sequentially through the restricted SSH gateway on port 22: backend image/migration/seed
+first, then verify public categories, all four seeded tutorials, media, ETags, and bilingual parity.
+Only after that gate succeeds deploy web. A newly published guide must appear within 60 seconds
+without a web rebuild. Host Nginx virtual-host files and their hashes remain unchanged.
+
+To move Kira, provision Docker and Nginx on the destination, copy the versioned files, securely transfer the `/opt/kira` secrets and a verified matched database/media bundle, restore into new `kira-postgres-data` and `kira-tutorial-media` volumes, reissue public certificates, test with local DNS overrides, and only then change DNS. Do not copy Let's Encrypt private keys when certificates can be reissued. Keep mail services and mail DNS outside this deployment.

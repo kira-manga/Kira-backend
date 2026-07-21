@@ -21,6 +21,16 @@ spring:
   flyway:
     enabled: true                  # applies classpath:db/migration/V*.sql (V1__users.sql …)
 
+  servlet:
+    multipart:
+      max-file-size: 4MB
+      max-request-size: 5MB
+
+kira:
+  tutorial:
+    media-directory: ${KIRA_TUTORIAL_MEDIA_DIRECTORY:./data/tutorial-media}
+    seed-enabled: ${KIRA_TUTORIAL_SEED_ENABLED:true}
+
 server:
   shutdown: graceful               # PLAN §6 operational hardening
 

@@ -71,14 +71,32 @@ rollback_component() {
 
 backup_database() {
   install -d -m 700 "$backup_root"
-  local stamp destination
+  local stamp destination media_destination helper_image paused=false
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   destination="$backup_root/kira-$stamp.dump"
-  docker exec kira-postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination"
-  docker exec -i kira-postgres pg_restore --list < "$destination" >/dev/null
-  chmod 600 "$destination"
-  sha256sum "$destination" > "$destination.sha256"
-  chmod 600 "$destination.sha256"
+  media_destination="$backup_root/kira-$stamp.media.tar.gz"
+  if docker inspect kira-backend >/dev/null 2>&1 && [[ $(docker inspect --format '{{.State.Running}}' kira-backend) == true ]]; then
+    docker pause kira-backend >/dev/null
+    paused=true
+  fi
+  if ! {
+    docker exec kira-postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination"
+    docker exec -i kira-postgres pg_restore --list < "$destination" > "$destination.manifest"
+    helper_image=$(docker inspect --format '{{.Config.Image}}' kira-postgres)
+    docker run --rm --network none --read-only \
+      -v kira-tutorial-media:/media:ro -v "$backup_root":/backup \
+      "$helper_image" tar -C /media -czf "/backup/$(basename "$media_destination")" .
+    tar -tzf "$media_destination" >/dev/null
+    chmod 600 "$destination" "$destination.manifest" "$media_destination"
+    sha256sum "$destination" > "$destination.sha256"
+    sha256sum "$media_destination" > "$media_destination.sha256"
+    sha256sum "$destination" "$media_destination" > "$backup_root/kira-$stamp.bundle.sha256"
+    chmod 600 "$destination.sha256" "$media_destination.sha256" "$backup_root/kira-$stamp.bundle.sha256"
+  }; then
+    [[ $paused == false ]] || docker unpause kira-backend >/dev/null
+    fail "matched database/tutorial-media backup failed"
+  fi
+  [[ $paused == false ]] || docker unpause kira-backend >/dev/null
 }
 
 activate_backend() {

@@ -4,6 +4,7 @@ Every endpoint is under `/api/v1`. This document is derived from the controllers
 `src/main/kotlin`; where it and [`PLAN.md`](PLAN.md) differ, the code wins. Errors use the problem
 envelope in [Error model](#error-model). Auth and token semantics are in [`SECURITY.md`](SECURITY.md);
 lifecycle semantics in [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md).
+Tutorial publishing and its public/ADMIN route inventory are in [`TUTORIALS.md`](TUTORIALS.md).
 
 Auth levels: **anon** (no token), **USER** (bearer, any enabled user), **ADMIN** (bearer, `ADMIN`
 role). Authorization is enforced in the security filter chain before dispatch; authorities are
@@ -48,7 +49,8 @@ in 404/409 details. Typed-exception → status mapping:
 - **Multi-value filters** (`?lifecycle=`, `?engine=`, `?status=`): comma-separated within one query
   param; an unknown token → 400.
 - **Request-body size:** every request body is capped at **256 KiB** before MVC parsing, except
-  `POST /admin/sources/import-bundled`, which is capped at **5 MiB**. Declared and streamed/chunked
+  `POST /admin/sources/import-bundled` and multipart `POST /admin/tutorial-media`, which are capped at
+  **5 MiB** request size (the media file itself is capped at **4 MiB**). Declared and streamed/chunked
   bodies use the same 413 `PAYLOAD_TOO_LARGE` response. Completion prompts additionally have a
   configurable character cap (default 8000).
 - **Responses:** raw source-config routes explicitly send `application/json; charset=UTF-8` and add the
