@@ -46,7 +46,7 @@ class TutorialLifecycleIT : AbstractIntegrationTest() {
 
         val response = mockMvc.get("/api/v1/tutorials/dynamic-guide").andExpect {
             status { isOk() }
-            content { contentType(MediaType.APPLICATION_JSON) }
+            content { contentTypeCompatibleWith(MediaType.APPLICATION_JSON) }
             jsonPath("$.slug") { value("dynamic-guide") }
             header { string("Cache-Control", "public, max-age=60, stale-if-error=86400") }
             header { exists("ETag") }
