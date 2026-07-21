@@ -30,7 +30,7 @@ COPY --from=builder --chown=kira:kira /workspace/build/libs/kira-backend-*.jar /
 USER 10001:10001
 EXPOSE 8080 9090
 ENV SPRING_PROFILES_ACTIVE=prod \
-    KIRA_TUTORIAL_MEDIA_DIRECTORY=/var/lib/kira/tutorial-media \
+    KIRA_TUTORIAL_MEDIA_DIRECTORY=/tmp/kira/tutorial-media \
     JAVA_TOOL_OPTIONS="-XX:MaxRAMPercentage=75.0 -XX:+ExitOnOutOfMemoryError -Djava.security.egd=file:/dev/urandom"
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=30s --retries=3 \

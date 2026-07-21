@@ -111,7 +111,13 @@ class TutorialMediaService(
         val decoded = decode(bytes, format)
         val encoded = encode(decoded.image, format)
         val checksum = sha256(encoded)
-        repository.listMedia().firstOrNull { it.sha256 == checksum }?.let { return it }
+        repository.listMedia().firstOrNull { it.sha256 == checksum }?.let { existing ->
+            val path = safePath(existing.storageFilename)
+            if (!Files.isRegularFile(path) || sha256(Files.readAllBytes(path)) != checksum) {
+                Files.write(path, encoded)
+            }
+            return existing
+        }
         val id = UUID.randomUUID()
         val extension = if (format == ImageFormat.PNG) "png" else "jpg"
         val filename = "$id.$extension"

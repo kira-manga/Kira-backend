@@ -30,8 +30,6 @@ class TutorialSeedService(
 ) {
     @Transactional
     fun seedIfEmpty() {
-        if (repository.categoryCount() != 0 || repository.tutorialCount() != 0) return
-
         val assets = mapOf(
             "discover-en-light" to import("tutorial-seed/media/discover-en-light.jpg"),
             "discover-en-dark" to import("tutorial-seed/media/discover-en-dark.jpg"),
@@ -40,6 +38,8 @@ class TutorialSeedService(
             "mangaDetails" to import("tutorial-seed/media/manga-details.jpg"),
             "settings" to import("tutorial-seed/media/settings-dark.jpg"),
         )
+        if (repository.categoryCount() != 0 || repository.tutorialCount() != 0) return
+
         val discover = MediaSlot(
             defaultMediaId = requireNotNull(assets["discover-en-dark"]),
             alt = LocalizedText("The real Kira Discover screen", "شاشة «اكتشف» الحقيقية في كيرا"),

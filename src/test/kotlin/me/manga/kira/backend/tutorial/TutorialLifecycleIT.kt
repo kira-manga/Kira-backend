@@ -1,5 +1,6 @@
 package me.manga.kira.backend.tutorial
 
+import me.manga.kira.backend.config.KiraTutorialProperties
 import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.tutorial.application.TutorialMediaInUseException
 import me.manga.kira.backend.tutorial.application.TutorialMediaService
@@ -9,7 +10,9 @@ import me.manga.kira.backend.tutorial.domain.LocalizedText
 import me.manga.kira.backend.tutorial.domain.MediaSlot
 import me.manga.kira.backend.tutorial.domain.TutorialContent
 import me.manga.kira.backend.tutorial.domain.TutorialStep
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.MediaType
@@ -17,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.get
 import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
+import java.nio.file.Files
 import javax.imageio.ImageIO
 
 class TutorialLifecycleIT : AbstractIntegrationTest() {
@@ -25,6 +29,21 @@ class TutorialLifecycleIT : AbstractIntegrationTest() {
     @Autowired lateinit var media: TutorialMediaService
 
     @Autowired lateinit var mockMvc: MockMvc
+
+    @Autowired lateinit var tutorialProperties: KiraTutorialProperties
+
+    @Test
+    fun `seed media import restores a missing file`() {
+        val bytes = png()
+        val asset = media.importSeedAsset(bytes)
+        val path = tutorialProperties.mediaDirectory.resolve(asset.storageFilename)
+        Files.delete(path)
+
+        val restored = media.importSeedAsset(bytes)
+
+        assertEquals(asset.id, restored.id)
+        assertTrue(Files.isRegularFile(path))
+    }
 
     @Test
     fun `publish rollback archive and immutable referenced media follow public contract`() {
