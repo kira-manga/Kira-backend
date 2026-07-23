@@ -81,10 +81,11 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
     }
 
     override fun findSourcesForAssembly(): List<AssemblySource> = jdbcTemplate.query(
-        "SELECT s.api, s.position, s.engine, s.status, r.config_canonical_json " +
+        "SELECT s.id AS source_config_id, r.id AS source_revision_id, s.api, s.position, s.engine, s.status, " +
+            "r.revision_number, r.checksum, r.canon_version, r.config_canonical_json " +
             "FROM source_configs s " +
             "LEFT JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
-            "WHERE s.status IN ('active', 'disabled', 'retired') " +
+            "WHERE s.status IN ('active', 'disabled', 'retired') AND s.engine = 'generic' " +
             "ORDER BY s.position ASC, s.api ASC",
         ASSEMBLY_MAPPER,
     )
@@ -93,7 +94,7 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
         "SELECT s.api, r.revision_number, r.published_at " +
             "FROM source_configs s " +
             "JOIN source_config_revisions r ON r.id = s.current_published_revision_id " +
-            "WHERE s.status IN ('active', 'disabled', 'retired')",
+            "WHERE s.status IN ('active', 'disabled', 'retired') AND s.engine = 'generic'",
         METADATA_MAPPER,
     )
 
@@ -173,10 +174,18 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
         val ASSEMBLY_MAPPER =
             RowMapper { rs: ResultSet, _: Int ->
                 AssemblySource(
+                    sourceConfigId = rs.getObject("source_config_id", UUID::class.java),
+                    sourceRevisionId =
+                    requireNotNull(rs.getObject("source_revision_id", UUID::class.java)) {
+                        "published source '${rs.getString("api")}' has no current revision"
+                    },
                     api = rs.getString("api"),
                     position = rs.getInt("position"),
                     engine = rs.getString("engine"),
                     status = SourceLifecycleStatus.fromWire(rs.getString("status")),
+                    revisionNumber = rs.getInt("revision_number"),
+                    checksum = rs.getString("checksum"),
+                    canonVersion = rs.getString("canon_version"),
                     canonicalContent =
                     requireNotNull(rs.getString("config_canonical_json")) {
                         "published source '${rs.getString("api")}' has no current revision; refusing partial document assembly"

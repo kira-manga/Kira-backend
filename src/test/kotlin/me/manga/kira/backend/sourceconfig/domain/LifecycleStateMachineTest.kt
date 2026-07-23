@@ -5,6 +5,7 @@ import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus.DISABLED
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus.DRAFT
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus.REMOVED
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus.RETIRED
+import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus.WITHHELD
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
@@ -122,6 +123,15 @@ class LifecycleStateMachineTest {
         assertEquals(ACTIVE, LifecycleStateMachine.statusAfterPublish(DRAFT))
         assertEquals(ACTIVE, LifecycleStateMachine.statusAfterPublish(ACTIVE))
         assertEquals(DISABLED, LifecycleStateMachine.statusAfterPublish(DISABLED))
+        assertEquals(WITHHELD, LifecycleStateMachine.statusAfterPublish(WITHHELD))
+    }
+
+    @Test
+    fun `withheld activation requires a generic published engine`() {
+        assertEquals(ACTIVE, LifecycleStateMachine.transition(WITHHELD, LifecycleAction.ENABLE, "generic"))
+        assertThrows(UnretireNotAllowedForEngineException::class.java) {
+            LifecycleStateMachine.transition(WITHHELD, LifecycleAction.ENABLE, "legacy")
+        }
     }
 
     @Test

@@ -4,7 +4,7 @@ A standalone **Spring Boot / Kotlin / PostgreSQL** service that is the remote au
 Kira Manga app's **source configuration** — the validated, versioned `SourceConfigDocument` the app
 currently bundles as a string constant. Configs are authored and validated server-side with the
 app's mirrored rules plus server-side safety rules, published as immutable per-source revisions,
-assembled into whole-document snapshots, and served over a stable public read API with strong
+assembled into whole-document snapshots and lightweight signed v2 manifests, and served with strong
 ETag/checksum support. Around that core sit three small foundations: JWT auth with `ADMIN`/`USER`
 roles, admin source/user management with a full audit trail, Ed25519-signed document delivery, and an
 optional authenticated completion service behind a production HTTPS provider abstraction. Echo is
@@ -110,7 +110,7 @@ Spring Boot does **not** load `.env` automatically in this project. Run the `sou
 new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
 shell-special password values single-quoted inside `.env`.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V9`); Hibernate
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V10`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
 document is at `/v3/api-docs`.
 
@@ -123,7 +123,7 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 | [`docs/USAGE.md`](docs/USAGE.md) | Start-to-finish curl walkthrough: login, import, public reads, users, completions, source revisions, lifecycle, and current cautions. |
 | [`docs/PLAN.md`](docs/PLAN.md) | The authoritative specification (§1–§16 + appendices A–C). |
 | [`docs/API.md`](docs/API.md) | Every endpoint: method, auth level, request/response shapes, status codes, ETag/pagination/body-size rules. |
-| [`docs/SOURCE_CONFIG_LIFECYCLE.md`](docs/SOURCE_CONFIG_LIFECYCLE.md) | The 5 server states, app 3-value mapping, publish rules, the 10-step publication sequence + locks, revision numbering, startup consistency + recovery runbook. |
+| [`docs/SOURCE_CONFIG_LIFECYCLE.md`](docs/SOURCE_CONFIG_LIFECYCLE.md) | The 6 server states, v1/v2 mappings, publish rules, the 10-step publication sequence + locks, revision numbering, startup consistency + recovery runbook. |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | JWT scheme, DB-backed per-request checks, password policy, throttling + trusted client-IP, secrets policy, and the §6 logging + retention + privacy expectations. |
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | Prerequisites, docker-compose, `.env`, running the app + tests, Swagger, seeding, common gotchas. |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production Kubernetes topology, rollout, drain, rollback, and forward-recovery procedure. |
@@ -155,7 +155,7 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V9 (users, source docs/signing, audit, completions, tutorials)
+  db/migration/    # forward-only V1 through V10 (including incremental source-catalog v2)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```

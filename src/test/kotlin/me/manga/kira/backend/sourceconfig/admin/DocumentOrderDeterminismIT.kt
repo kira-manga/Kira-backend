@@ -67,12 +67,13 @@ class DocumentOrderDeterminismIT : AbstractAdminSourceIT() {
     @Test
     fun `a bundled import serves stanzas in payload order`() {
         // Positions are assigned from payload order on create (PLAN §5(c)/§12.2), so the served document
-        // preserves the exact bundled stanza order — the app's de-facto tab order.
+        // preserves the approved generic subset's relative payload order. Legacy stanzas are
+        // retained for admins but never enter a public artifact.
         importBundled(SourceConfigFixtures.loadFixture("bundled-trimmed.json")).andExpect { status { isOk() } }
         assertEquals(
-            listOf("Azora", "SwatManga", "Lavatoons", "Manhwatop"),
+            listOf("Azora", "SwatManga"),
             publicServedDocument().sources.map { it.api },
-            "served document must preserve the bundled payload order",
+            "served document must preserve the generic payload order",
         )
     }
 }

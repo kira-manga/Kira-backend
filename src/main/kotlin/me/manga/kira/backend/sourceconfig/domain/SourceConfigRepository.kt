@@ -111,7 +111,18 @@ data class NewSourceConfig(
  * the published revision's stored **lifecycle-neutral** canonical bytes; the assembly injects the served
  * lifecycle value derived from [status] (`active`→omitted, `disabled`→`"disabled"`, retired→`"removed"`).
  */
-data class AssemblySource(val api: String, val position: Int, val engine: String, val status: SourceLifecycleStatus, val canonicalContent: String)
+data class AssemblySource(
+    val api: String,
+    val position: Int,
+    val engine: String,
+    val status: SourceLifecycleStatus,
+    val canonicalContent: String,
+    val sourceConfigId: UUID = UUID(0, 0),
+    val sourceRevisionId: UUID = UUID(0, 0),
+    val revisionNumber: Int = 0,
+    val checksum: String = "",
+    val canonVersion: String = "",
+)
 
 /**
  * The `GET /sources` summary metadata NOT derivable from the served document bytes (PLAN §4.1):

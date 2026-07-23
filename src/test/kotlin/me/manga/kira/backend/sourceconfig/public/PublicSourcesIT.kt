@@ -16,11 +16,9 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
 
     private fun publishNew(
         api: String,
-        legacy: Boolean = false,
         mutate: (me.manga.kira.backend.sourceconfig.domain.model.SourceConfig) -> me.manga.kira.backend.sourceconfig.domain.model.SourceConfig = { it },
     ) {
-        val base =
-            if (legacy) SourceConfigFixtures.validLegacySource(api) else SourceConfigFixtures.validGenericSource(api)
+        val base = SourceConfigFixtures.validGenericSource(api)
         createSource(mutate(base)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
     }
@@ -96,17 +94,22 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
     }
 
     @Test
-    fun `the engine filter selects generic or legacy`() {
+    fun `legacy sources are never exposed even through the engine filter`() {
         publishNew("Gen")
-        publishNew("Leg", legacy = true)
+        importBundled(
+            me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument(
+                schemaVersion = 1,
+                sources = listOf(SourceConfigFixtures.validLegacySource("Leg")),
+            ),
+        ).andExpect { status { isOk() } }
         getPublicSources("engine" to "generic").andExpect {
             jsonPath("$.length()") { value(1) }
             jsonPath("$[0].api") { value("Gen") }
         }
         getPublicSources("engine" to "legacy").andExpect {
-            jsonPath("$.length()") { value(1) }
-            jsonPath("$[0].api") { value("Leg") }
+            jsonPath("$.length()") { value(0) }
         }
+        getPublicSource("Leg").andExpect { status { isNotFound() } }
     }
 
     @Test

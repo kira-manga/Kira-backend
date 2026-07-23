@@ -184,6 +184,16 @@ class BundledImportService(
             // Import is a migration/re-sync path, never an implicit approval path for admin WIP.
             SourceLifecycleStatus.DRAFT -> acc.skippedDraft += stanza.api
 
+            // Withheld is admin-only. Import may update its immutable revision while preserving the
+            // quarantine, but can never activate it.
+            SourceLifecycleStatus.WITHHELD ->
+                if (identical) {
+                    acc.unchanged += stanza.api
+                } else {
+                    publishNewRevision(head, neutral, canonical, checksum, actorId, now)
+                    acc.updated += stanza.api
+                }
+
             // Active/disabled content can be updated; publishing on disabled preserves that lifecycle.
             SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.DISABLED ->
                 if (identical) {
@@ -356,6 +366,7 @@ class BundledImportService(
     /** The app's 3-value lifecycle for a server status (PLAN §9 mapping) — the vocabulary the payload speaks. */
     private fun SourceLifecycleStatus.toAppLifecycle(): String = when (this) {
         SourceLifecycleStatus.ACTIVE, SourceLifecycleStatus.DRAFT -> APP_ACTIVE
+        SourceLifecycleStatus.WITHHELD -> APP_REMOVED
         SourceLifecycleStatus.DISABLED -> APP_DISABLED
         SourceLifecycleStatus.RETIRED, SourceLifecycleStatus.REMOVED -> APP_REMOVED
     }

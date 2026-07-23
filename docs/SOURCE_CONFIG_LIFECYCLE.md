@@ -5,15 +5,17 @@ publishable, and how a whole-document snapshot is materialized safely. Derived f
 `sourceconfig/domain` (the state machine), `SourceAdminService`, `DocumentAssemblyService`, and the
 startup validators. Authoritative spec: [`PLAN.md`](PLAN.md) §5, §8 (rule 29), §9, §12.
 
-## Server states (5) and app-vocabulary mapping (3)
+## Server states (6), v1 mapping, and v2 mapping
 
 Authoring truth is **per-source** (`source_configs` head + immutable `source_config_revisions`); the
 served artifact is a **materialized whole-document snapshot** (`published_documents`). The server has
-five statuses; the app understands only three lifecycle values.
+six statuses. v1 retains its three-value compatibility vocabulary; v2 represents retirement
+explicitly and reserves `removed` for identity-only tombstones.
 
 | Server status | In served document? | Stanza `lifecycle` | Meaning |
 |---|---|---|---|
 | `draft` | No | — | Authored, never published. |
+| `withheld` | **No** | — | Admin-only quarantine. It can accept reviewed generic revisions and requires explicit enable before becoming public. |
 | `active` | Yes | `"active"` (key omitted) | Normal operation. |
 | `disabled` | Yes | `"disabled"` | App force-disables the source row every sync but keeps it on disk (saved-entry reads still work). The mandatory soft-off stage. |
 | `retired` | Yes | `"removed"` | App deletes the `sources` row (saved library untouched); the stanza stays in the document for a grace window so every client observes the removal. |
@@ -29,6 +31,8 @@ Any transition not shown is **409 `INVALID_LIFECYCLE_TRANSITION`**.
 
 ```
 draft    --publish(valid revision)-->  active     (first valid publish only)
+withheld --publish(valid generic revision)--> withheld
+withheld --enable(generic only)-->     active
 active   --disable-->                  disabled
 disabled --enable-->                   active
 disabled --retire-->                   retired     (direct active->retired is REJECTED:
@@ -39,7 +43,7 @@ draft    --(new draft revisions freely)--> draft
 ```
 
 **Publish × status (publishing content NEVER implicitly re-enables):** `draft` + first valid publish
-→ `active`; publish on `active` → stays `active`; publish on `disabled` → stays `disabled`; publish on
+→ `active`; publish on `withheld` → stays `withheld`; publish on `active` → stays `active`; publish on `disabled` → stays `disabled`; publish on
 `retired`/`removed` → **409**.
 
 Repeating a transition that does not apply to the current state is a **409**, not a no-op — a strict
@@ -114,7 +118,7 @@ stays `active`, a `disabled` one stays `disabled`).
 
 Two properties (`kira.config.*`) bound the sequence with **exact** comparisons:
 
-- `bundled-revision-floor` (default **4**) — the highest document revision shipped in any released app
+- `bundled-revision-floor` (default **5**) — the exact-12 catalog-v2 bundle revision shipped by the app
   binary. Every published server revision must be **strictly `>`** it.
 - `minimum-server-revision` (default **100**) — the smallest revision the backend may ever publish (=
   the sequence seed). The sequence's next value must be **`>=`** it (inclusive: the first value IS 100).
@@ -150,17 +154,18 @@ earlier change (a lost update read-committed does not prevent).
    no deadlock is possible because every writer takes the global lock first).
 3. Apply the mutation (revision insert / status change / import batch).
 4. Read the authoritative current state (all published revisions + statuses) **under the lock**.
-5. Assemble the candidate document — all `active|disabled|retired` sources, ordered by
+5. Assemble the candidate document — all **generic** `active|disabled|retired` sources, ordered by
    `(position ASC, api ASC)`, each rendered from its published revision's lifecycle-neutral content with
    the real lifecycle injected.
 6. Validate it whole (§8 rule 29): a `removed` source's stanza must be absent, a `retired` source's
    stanza must carry `lifecycle:"removed"`.
 7. Take **one** instant from the injected Clock, truncated to ISO-8601 UTC seconds; set it as
    `generatedAt`; serialize canonically (`kcj-1`) and compute the SHA-256 checksum.
-8. Insert the `published_documents` row with the next `document_revision` from the sequence and
+8. Insert the `published_documents` row and matching signed v2 manifest/entries with the next shared
+   catalog revision from the sequence and
    `created_at` = **that same instant** (the column has no DB default — application time and DB time
    cannot diverge; the same instant also goes into the publication audit detail).
-9. Update `document_publication_state.latest_document_revision` (FK to the just-inserted snapshot).
+9. Update `document_publication_state.latest_document_revision` only after both artifacts exist.
 10. Commit — the lock releases and the new snapshot becomes the served latest atomically.
 
 Any failure rolls the whole mutation back; the served document can never be invalid, torn, or missing a
@@ -170,13 +175,12 @@ the new baseline or gets the deterministic 409.
 
 ## Empty document
 
-Publishing a document with **zero** sources is legal — it is the truthful terminal state, reached only
-by walking every source through `disabled → retired → remove(confirm)`, so no extra destructive
-confirmation is invented. Whole-document validation accepts zero sources; under `kcj-1` default-omission
-the empty `sources` list is simply absent from the canonical bytes, and the app parses that back to an
-empty list. The app can never be blanked by an empty remote document — it always folds its bundled
-document in first and unions per-api, so an empty higher-precedence document overrides nothing; the only
-effect is the revision ratchet.
+Publishing a document with **zero** active sources is legal — it is the truthful emergency or terminal
+state reached through explicit lifecycle changes. Whole-document validation accepts zero sources;
+under `kcj-1` default-omission the empty `sources` list is absent from the canonical bytes. The v2 app
+does not union the bundle into a verified remote catalog: it atomically activates the empty active
+projection so an older source cannot survive a kill switch. If that candidate fails authentication,
+validation, download, or persistence, the complete previous tier remains active.
 
 ## `republish`
 

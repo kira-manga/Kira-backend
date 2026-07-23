@@ -46,6 +46,16 @@ object LifecycleStateMachine {
             when (current) {
                 SourceLifecycleStatus.DISABLED -> SourceLifecycleStatus.ACTIVE
 
+                SourceLifecycleStatus.WITHHELD ->
+                    if (canUnretire(engine)) {
+                        SourceLifecycleStatus.ACTIVE
+                    } else {
+                        throw UnretireNotAllowedForEngineException(
+                            engine,
+                            "Activation from withheld is supported only for engine=\"generic\" sources.",
+                        )
+                    }
+
                 SourceLifecycleStatus.RETIRED ->
                     if (canUnretire(engine)) {
                         SourceLifecycleStatus.ACTIVE
@@ -83,6 +93,8 @@ object LifecycleStateMachine {
      */
     fun statusAfterPublish(current: SourceLifecycleStatus): SourceLifecycleStatus = when (current) {
         SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.ACTIVE -> SourceLifecycleStatus.ACTIVE
+
+        SourceLifecycleStatus.WITHHELD -> SourceLifecycleStatus.WITHHELD
 
         SourceLifecycleStatus.DISABLED -> SourceLifecycleStatus.DISABLED
 

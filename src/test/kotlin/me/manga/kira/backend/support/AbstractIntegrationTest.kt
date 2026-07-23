@@ -58,6 +58,9 @@ abstract class AbstractIntegrationTest {
         jdbcTemplate.update("UPDATE tutorial_categories SET published_revision_id = NULL")
         // 2) Children → parents (respecting the RESTRICT FKs). audit_log.actor_user_id → users, and the
         //    completion tables → users / each other, so all are cleared before users (Phase 6 / Phase 9).
+        jdbcTemplate.update("DELETE FROM published_source_catalog_removed")
+        jdbcTemplate.update("DELETE FROM published_source_catalog_entries")
+        jdbcTemplate.update("DELETE FROM published_source_catalogs")
         jdbcTemplate.update("DELETE FROM source_validation_results")
         jdbcTemplate.update("DELETE FROM source_config_revisions")
         jdbcTemplate.update("DELETE FROM source_configs")

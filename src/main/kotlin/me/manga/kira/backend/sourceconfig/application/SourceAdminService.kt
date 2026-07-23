@@ -316,6 +316,7 @@ class SourceAdminService(
 
     /** Supersede the current published revision (if any), publish [draft], update the head, materialize. */
     private fun doPublishDraft(head: SourceConfigHead, draft: SourceRevision, model: SourceConfig, actorId: UUID): PublishedDocument {
+        if (model.engine != GENERIC_ENGINE) throw NonGenericPublicationForbiddenException()
         // Compute the resulting status FIRST (throws for retired/removed → mapped to 409) before any write.
         val newStatus = LifecycleStateMachine.statusAfterPublish(head.status)
         val now = clock.instant()
@@ -471,6 +472,7 @@ class SourceAdminService(
 
     private companion object {
         const val ADULT_SITE_STATE = "ADULT_18_PLUS"
+        const val GENERIC_ENGINE = "generic"
     }
 }
 

@@ -1,6 +1,7 @@
 # kira-backend API
 
-Every endpoint is under `/api/v1`. This document is derived from the controllers and DTOs in
+Most endpoints are under `/api/v1`; the incremental source-catalog protocol is under `/api/v2`.
+This document is derived from the controllers and DTOs in
 `src/main/kotlin`; where it and [`PLAN.md`](PLAN.md) differ, the code wins. Errors use the problem
 envelope in [Error model](#error-model). Auth and token semantics are in [`SECURITY.md`](SECURITY.md);
 lifecycle semantics in [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md).
@@ -60,6 +61,43 @@ in 404/409 details. Typed-exception → status mapping:
 ---
 
 ## 1. App-facing (public, read-only, no auth)
+
+### Source catalog v2
+
+`GET /api/v2/source-config/manifest` returns exact stored signed `kcj-1` manifest bytes:
+
+```json
+{
+  "schemaVersion": 1,
+  "sourceSchemaVersion": 1,
+  "catalogRevision": 101,
+  "generatedAt": "2026-07-23T00:00:00Z",
+  "sources": [{
+    "api": "Azora",
+    "sourceRevision": 1,
+    "checksum": "<sha256>",
+    "order": 0,
+    "lifecycle": "active",
+    "engine": "generic",
+    "sourceSigningKeyId": "prod-2026-01",
+    "sourceSignature": "<base64-ed25519>"
+  }],
+  "removedSources": [{"api": "Previously Published", "lifecycle": "removed"}]
+}
+```
+
+Only `active|disabled|retired` generic entries are allowed. Draft, withheld, removed, and non-generic
+sources are absent. `removedSources` contains only identity tombstones for APIs previously published
+through v2. Response headers use the existing `X-Config-*` family; `X-Config-Revision` is the catalog
+revision. The strong ETag equals the manifest checksum; matching `If-None-Match` returns a bodiless
+304. Signature format is `kira-source-catalog-manifest-v1`.
+
+`GET /api/v2/source-config/sources/{api}/revisions/{positiveRevision}` returns exact immutable,
+lifecycle-neutral source JSON only when that tuple appeared in a public v2 manifest. It sends
+`ETag`, immutable one-year cache control, `X-Source-Api`, `X-Source-Revision`, `X-Source-Checksum`,
+and `X-Source-Canon-Version`. Matching `If-None-Match` returns 304. Draft, legacy, withheld-only,
+unknown, and guessed revisions all return 404. Source signatures use `kira-source-revision-v1` and
+are carried by the signed manifest.
 
 ### `GET /api/v1/source-config/document`
 The app document — the **latest** published snapshot, served as the exact stored canonical
@@ -184,6 +222,8 @@ credential rules. Published configuration is public; never place a real credenti
 | `POST /admin/sources/{api}/retire` | `disabled → retired` only. | 200 · 409 |
 | `POST /admin/sources/{api}/remove` | `retired → removed` (terminal). Body `{confirm: "<api>"}`. | 200 · 409 · 400 |
 | `POST /admin/sources/{api}/rollback` | Body `{toRevision}`. Copies that content into a new highest revision, re-validates, publishes. | 200 · 422 · 409 · 404 |
+| `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
+| `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
 | `GET /admin/documents` | Published snapshots (metadata list). | 200 |
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |

@@ -27,13 +27,29 @@ class DocumentSigner(private val properties: KiraSigningProperties) {
     }
 
     fun sign(input: DocumentSigningInput): DocumentSignature? {
+        val payload = DocumentSignatureCodec.payload(input)
+        val detached = signDetached(payload) ?: return null
+        return DocumentSignature(
+            format = DocumentSignatureCodec.FORMAT,
+            algorithm = detached.algorithm,
+            keyId = detached.keyId,
+            signatureBase64 = detached.signatureBase64,
+            previousRevision = input.previousRevision,
+            previousChecksum = input.previousChecksum,
+        )
+    }
+
+    /**
+     * Sign an already domain-separated payload with the configured active Ed25519 key. The method is
+     * shared by whole-document, catalog-manifest, and immutable source-revision contracts.
+     */
+    fun signDetached(payload: ByteArray): DetachedSignature? {
         if (!properties.enabled) return null
         val keyId = requireNotNull(properties.activeKeyId?.takeIf(KEY_ID::matches)) {
             "kira.signing.active-key-id is required and must match ${KEY_ID.pattern}"
         }
         val privateKey = decodePrivate(requireNotNull(properties.privateKey) { "kira.signing.private-key is required" })
         val publicKey = decodePublic(requireNotNull(publicKeys()[keyId]) { "public key for active key '$keyId' is required" })
-        val payload = DocumentSignatureCodec.payload(input)
         val signer = Signature.getInstance(DocumentSignatureCodec.ALGORITHM)
         signer.initSign(privateKey)
         signer.update(payload)
@@ -44,13 +60,10 @@ class DocumentSigner(private val properties: KiraSigningProperties) {
         verifier.update(payload)
         check(verifier.verify(signature)) { "active Ed25519 private key does not match its configured public key" }
 
-        return DocumentSignature(
-            format = DocumentSignatureCodec.FORMAT,
+        return DetachedSignature(
             algorithm = DocumentSignatureCodec.ALGORITHM,
             keyId = keyId,
             signatureBase64 = Base64.getEncoder().encodeToString(signature),
-            previousRevision = input.previousRevision,
-            previousChecksum = input.previousChecksum,
         )
     }
 
@@ -78,3 +91,5 @@ class DocumentSigner(private val properties: KiraSigningProperties) {
         val KEY_ID = Regex("[A-Za-z0-9._-]{1,64}")
     }
 }
+
+data class DetachedSignature(val algorithm: String, val keyId: String, val signatureBase64: String)

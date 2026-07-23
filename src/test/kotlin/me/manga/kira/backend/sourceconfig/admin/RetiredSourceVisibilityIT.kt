@@ -17,8 +17,17 @@ class RetiredSourceVisibilityIT : AbstractAdminSourceIT() {
     private fun toRetired(api: String, legacy: Boolean) {
         val model =
             if (legacy) SourceConfigFixtures.validLegacySource(api) else SourceConfigFixtures.validGenericSource(api)
-        createSource(model).andExpect { status { isCreated() } }
-        publish(api, 1).andExpect { status { isOk() } }
+        if (legacy) {
+            importBundled(
+                me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument(
+                    schemaVersion = 1,
+                    sources = listOf(model),
+                ),
+            ).andExpect { status { isOk() } }
+        } else {
+            createSource(model).andExpect { status { isCreated() } }
+            publish(api, 1).andExpect { status { isOk() } }
+        }
         disable(api).andExpect { status { isOk() } }
         retire(api).andExpect { status { isOk() } }
     }

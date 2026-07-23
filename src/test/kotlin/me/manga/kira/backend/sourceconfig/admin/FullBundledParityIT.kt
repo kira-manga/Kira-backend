@@ -14,8 +14,8 @@ import org.springframework.beans.factory.annotation.Autowired
  * Parse the FULL `bundled-full.json` (45 sources: 12 generic + 33 legacy, schemaVersion 1, revision 4)
  * with the compatibility parser → validate whole (zero errors) → canonicalize → re-parse → semantic
  * equality (source count + every api identity, incl. the non-ASCII `"مانجا بارك"`) → import it
- * transactionally via the endpoint → serve it via the PUBLIC document endpoint → the served bytes
- * re-checksum correctly (hash of the raw response bytes == ETag == X-Config-Checksum) (PLAN §12).
+ * transactionally via the endpoint. Public artifacts intentionally contain only the 12 converted
+ * generic sources; the 33 legacy rows remain admin-side migration input and are never exposed.
  */
 class FullBundledParityIT : AbstractAdminSourceIT() {
 
@@ -49,15 +49,17 @@ class FullBundledParityIT : AbstractAdminSourceIT() {
         assertEquals(45, importBody.get("created").size(), "all 45 sources created")
         assertEquals(1L, snapshotCount(), "one snapshot for the whole import")
 
-        // Serve it via the PUBLIC endpoint → 45 sources, payload order preserved end-to-end.
+        // Serve it via the PUBLIC endpoint → only the 12 approved generic sources, in payload order.
         val servedResponse = getPublicDocument().andExpect { status { isOk() } }.andReturn().response
         val servedBytes = servedResponse.contentAsByteArray
         val served = servedJson.decodeFromString(
             me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument.serializer(),
             servedBytes.toString(Charsets.UTF_8),
         )
-        assertEquals(45, served.sources.size)
-        assertEquals(payloadApis, served.sources.map { it.api }, "served document preserves the bundled payload order")
+        val approvedApis = document.sources.filter { it.engine == "generic" }.map { it.api }
+        assertEquals(12, served.sources.size)
+        assertEquals(approvedApis, served.sources.map { it.api }, "public document contains only converted generic sources")
+        assertTrue(served.sources.none { it.engine != "generic" })
 
         // The served raw bytes re-checksum to the ETag + X-Config-Checksum (no re-serialization drift).
         val hash = Sha256.hexUtf8(servedBytes.toString(Charsets.UTF_8))

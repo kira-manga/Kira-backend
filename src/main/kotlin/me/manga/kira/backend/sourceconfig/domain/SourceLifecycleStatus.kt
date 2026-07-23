@@ -1,7 +1,7 @@
 package me.manga.kira.backend.sourceconfig.domain
 
 /**
- * The server's five source-lifecycle states (PLAN §9). Distinct from the app's 3-value vocabulary
+ * The server's six source-lifecycle states (PLAN §9). Distinct from the app's lifecycle vocabulary
  * (`active`/`disabled`/`removed`): `draft` and `retired` are server-only statuses, mapped to the app
  * vocabulary at document-assembly time (Phase 6). Server lifecycle lives ONLY here (in
  * `source_configs.status`) — never in stored revision content, which is lifecycle-neutral (PLAN §9).
@@ -12,6 +12,12 @@ package me.manga.kira.backend.sourceconfig.domain
 enum class SourceLifecycleStatus(val wire: String) {
     /** Authored, never published. Not in the served document. */
     DRAFT("draft"),
+
+    /**
+     * Published/admin-visible but deliberately absent from every public artifact. A withheld source
+     * can accept reviewed generic revisions and becomes public only through an explicit enable.
+     */
+    WITHHELD("withheld"),
 
     /** Normal operation. Served with `lifecycle:"active"` (rendered as an absent key by kcj-1). */
     ACTIVE("active"),

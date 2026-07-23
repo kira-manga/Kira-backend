@@ -41,9 +41,10 @@ class ImportBundledIT : AbstractAdminSourceIT() {
         assertTrue(body.apis("updated").isEmpty() && body.apis("unchanged").isEmpty())
         assertTrue(body.get("documentRevision").asLong() >= 100L, "server-allocated document revision")
 
-        // Served document preserves the payload order (positions per §12.2 / §5 source ordering).
+        // Public documents preserve the approved generic subset's payload order. The two legacy
+        // rows remain admin-visible migration input and are never exposed.
         val served = publicServedDocument()
-        assertEquals(listOf("Azora", "SwatManga", "Lavatoons", "Manhwatop"), served.sources.map { it.api })
+        assertEquals(listOf("Azora", "SwatManga"), served.sources.map { it.api })
         // Exactly one snapshot for the whole import (test 23 asserts this in isolation).
         assertEquals(1L, snapshotCount())
     }

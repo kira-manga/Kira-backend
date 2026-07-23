@@ -27,6 +27,29 @@ remain independent repositories and builds.
 6. **Remote delivery fails closed.** The app verifies the exact signed envelope with pinned Ed25519
    public keys and falls back to its last verified cache or bundled document.
 
+### Source-catalog v2 amendment (2026-07-23; overrides older whole-document assumptions)
+
+- Public artifacts contain **generic sources only**. `WITHHELD` is a sixth, server-only lifecycle:
+  admin-visible and publishable for reviewed generic revisions, but absent from all public routes.
+- The catalog-v2 application bundle is revision **5**. The backend's
+  `kira.config.bundled-revision-floor` default is therefore **5**; older revision-4/default-4
+  statements later in this historical record are superseded.
+- The initial reviewed cutover is exactly 12 active generic sources and 33 withheld legacy sources.
+  The dry-run/confirmed admin operation validates the exact inventory and performs one audited,
+  globally locked publication transaction.
+- `GET /api/v2/source-config/manifest` serves exact signed `kcj-1` manifest bytes with strong ETag/304.
+  Entries commit to immutable per-source revisions, checksums, order, lifecycle, engine, key id, and
+  detached source signature. Removed v2 sources are identity-only tombstones.
+- `GET /api/v2/source-config/sources/{api}/revisions/{revision}` serves a lifecycle-neutral immutable
+  generic source revision only if that exact tuple appeared in a public v2 manifest. Draft, legacy,
+  withheld-only, and guessed revisions return 404.
+- v1 document materialization and v2 manifest materialization share the existing catalog revision,
+  global publication lock, transaction, and latest pointer. The pointer moves only after both exact
+  artifacts and their mappings are durable.
+- Existing paragraphs that describe legacy sources as publicly served or the app merging a missing
+  remote source back from the bundle, or that name `RemoteSourceConfigManager` as the shipping
+  client, are superseded by this amendment.
+
 ---
 
 ## 1. Overview & goals

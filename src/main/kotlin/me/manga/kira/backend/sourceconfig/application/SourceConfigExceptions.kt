@@ -69,5 +69,11 @@ class RevisionOlderThanPublishedException(api: String, revisionNumber: Int, publ
  */
 class UnretireUnsupportedForEngineException(detail: String) : ConflictException(detail, code = "UNRETIRE_UNSUPPORTED_FOR_ENGINE")
 
+class NonGenericPublicationForbiddenException :
+    ConflictException(
+        "only a validated engine=\"generic\" revision can be published through the public source catalog.",
+        code = "NON_GENERIC_PUBLICATION_FORBIDDEN",
+    )
+
 /** The stable code for the `remove` foot-gun guard 400 (body `{confirm}` must equal the api; PLAN §4.3). */
 const val CONFIRMATION_REQUIRED_CODE = "CONFIRMATION_REQUIRED"

@@ -8,7 +8,8 @@ import org.junit.jupiter.api.Test
  * PLAN §11 test 28 — `EndpointCompletenessIT`: no broken generic source can publish (PLAN §8 rule 31).
  * A generic stanza missing `search`/`details`/`pages`/both-home-and-featured → 422 with the matching
  * `GENERIC_MISSING_*` code; a generic stanza WITHOUT `chapters` publishes fine (the chapter list parses
- * inline from details — 4 of 12 real generic stanzas omit it); a legacy stanza is unaffected.
+ * inline from details — 4 of 12 real generic stanzas omit it). Legacy revisions can remain as
+ * migration input but cannot be published into the public catalog.
  */
 class EndpointCompletenessIT : AbstractAdminSourceIT() {
 
@@ -54,8 +55,11 @@ class EndpointCompletenessIT : AbstractAdminSourceIT() {
     }
 
     @Test
-    fun `a legacy source is unaffected by endpoint completeness`() {
+    fun `a legacy source is not publicly publishable`() {
         createSource(SourceConfigFixtures.validLegacySource("Legacy")).andExpect { status { isCreated() } }
-        publish("Legacy", 1).andExpect { status { isOk() } }
+        publish("Legacy", 1).andExpect {
+            status { isConflict() }
+            jsonPath("$.errors[0].code") { value("NON_GENERIC_PUBLICATION_FORBIDDEN") }
+        }
     }
 }

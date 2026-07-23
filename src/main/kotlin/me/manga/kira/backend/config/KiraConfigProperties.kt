@@ -10,7 +10,7 @@ import org.springframework.validation.annotation.Validated
  * pointer at boot, fail-fast (PLAN §5 `StartupConsistencyIT`).
  *
  * **Two floors, exact comparisons (no ambiguous "exceeds"):**
- * - [bundledRevisionFloor] (default **4**) = the highest document revision shipped in any released app
+ * - [bundledRevisionFloor] (default **5**) = the highest document revision shipped in the catalog-v2 app
  *   binary. Every *published* server revision must be **strictly `>`** it (equal would let two
  *   different documents share a revision number). The app's own acceptance rule is the *inclusive*
  *   `revision >= bundledDocument.revision`, so strictly-greater composes safely with it.
@@ -30,7 +30,7 @@ import org.springframework.validation.annotation.Validated
 data class KiraConfigProperties(
     /** Highest document revision shipped in a released app binary; published revisions must be `>` it. */
     @field:Positive
-    val bundledRevisionFloor: Long = 4,
+    val bundledRevisionFloor: Long = 5,
     /** Smallest revision the backend may publish (= the sequence seed); sequence-next must be `>=` it. */
     @field:Positive
     val minimumServerRevision: Long = 100,

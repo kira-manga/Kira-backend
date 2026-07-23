@@ -4,14 +4,29 @@ How the Kira Manga app moves from serving its **bundled** `SourceConfigDocument`
 constant) to fetching the document from this backend — without ever risking a blank or downgraded
 config on a client. This expands [`PLAN.md`](PLAN.md) §12 into the operational narrative. The
 server-side mechanics live in `BundledImportService` + `DocumentAssemblyService`; the app-side
-acceptance chain is the app's `RemoteSourceConfigManager` (read-only reference).
+acceptance chain is `IncrementalSourceCatalogManager`.
 
-## 1. The bundled document is the floor, forever
+## 1. The approved bundled catalog is the final availability floor
 
-The app **keeps its bundled document forever** as the always-present floor, trusted via the app
-binary's own signature. The backend is an **upgrade tier**, never a replacement for that floor. On
-every refresh the app folds the bundled document in first and merges per-`api`, so a missing, empty, or
-rejected remote document changes nothing the app already has — the worst case is "no upgrade this time."
+The app keeps a read-only bundled fallback trusted through the application binary. The v2 client
+selects one complete tier (latest synchronized catalog, last-known-good cache, then bundle); it never
+unions entries from different tiers. The fallback contains only explicitly approved generic sources,
+so an outage cannot reactivate an absent legacy adapter.
+
+### Exact initial cutover
+
+Import the reviewed 45-source authoring fixture, then call the cutover preflight. Apply only when it
+reports exactly 12 active generic candidates and 33 legacy candidates:
+
+```text
+GET  /api/v1/admin/source-catalog-v2/cutover
+POST /api/v1/admin/source-catalog-v2/cutover
+{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}
+```
+
+The confirmed operation runs under the global publication lock, changes all 33 legacy sources to
+`WITHHELD`, and atomically publishes matching v1/v2 artifacts containing only the approved 12. It is
+idempotent after success.
 
 ## 2. Server-side on-ramp — the `import-bundled` contract
 
@@ -70,27 +85,27 @@ The app's anti-rollback rule and the server's allocation are decoupled by two ex
 
 | Floor | Default | Rule |
 |---|---|---|
-| `bundled-revision-floor` | **4** | The highest document revision shipped in any released app binary. Every published **server** revision must be **strictly `>`** it. |
+| `bundled-revision-floor` | **5** | The exact-12 catalog-v2 bundle revision. Every published **server** revision must be **strictly `>`** it. |
 | `minimum-server-revision` | **100** | The smallest revision the backend may ever publish (= the `seq_document_revision` seed). The sequence's next value must be **`>=`** it (inclusive — the first generated value IS 100). |
 
-Why these compose safely: the app's own acceptance rule is the **inclusive** `revision >=
-bundledDocument.revision` (verified in `RemoteSourceConfigManager.refresh()`:
-`.takeIf { it.revision >= acceptedRevision }`, seeded from the bundled revision). Because the server
-publishes strictly **above** the bundled floor (≥ 100 ≫ 4), any served document trivially clears the
-app's inclusive bar, and the app can never accept a server document that is older than what it bundles.
+Why these compose safely: `IncrementalSourceCatalogManager` accepts a remote manifest only when its
+catalog revision is strictly greater than the bundled revision and not below the durable accepted
+floor. Because the server publishes strictly **above** the bundled floor (≥ 100 ≫ 5), any served
+catalog clears the binary floor and cannot roll back what the app bundles.
 Revisions are unique and strictly increasing but **may contain gaps** (Postgres sequence values consumed
 by rolled-back transactions are not returned) — nothing may assume contiguity. Startup fail-fast
 validators enforce all of this (see [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md)).
 
-## 4. App-side acceptance chain (already implemented in the app)
+## 4. App-side v2 acceptance chain
 
-A fetched remote document must pass, in order — any failure **silently drops** the remote document and
-keeps the previous good one (cache, else bundled):
+A fetched manifest and all required immutable sources must pass, in order. Any failure keeps the
+previous complete catalog (cache, else bundled):
 
-1. **Signature** verification with an app-pinned Ed25519 X.509 public key selected by key id.
-2. **Parse** (lenient).
-3. **Validate** (the full validator — the same rules the server enforces at publish).
-4. **Revision floor** — `revision >=` the accepted floor (inclusive).
+1. Verify manifest checksum/signature, schema, chain, catalog revision, unique order, and lifecycle.
+2. Diff every `(api, sourceRevision, checksum)` against verified immutable local rows.
+3. Fetch only missing or changed source revisions.
+4. Verify each source checksum, detached signature, identity, schema, generic engine, and complete content.
+5. Persist every required member, then move the active pointer atomically. Partial candidates never activate.
 
 The backend signs the exact canonical bytes and metadata; the app also re-verifies its cached signed
 envelope after restart. Any failure preserves the last verified cache or bundled floor.
@@ -108,7 +123,7 @@ envelope after restart. Any failure preserves the last verified cache or bundled
 ## 6. Cutover checklist
 
 1. **Re-verify the live bundled revision.** Confirm the `revision` actually shipped in the current app
-   binary and set `kira.config.bundled-revision-floor` to it (default 4 — re-check every release that
+   binary and set `kira.config.bundled-revision-floor` to it (default 5 — re-check every release that
    re-bundles; never rely forever on "4").
 2. **Seed the backend** with that exact bundled document via `POST /admin/sources/import-bundled`
    (see [`LOCAL_DEV.md`](LOCAL_DEV.md) for a curl walkthrough). Confirm the response: expected `created`

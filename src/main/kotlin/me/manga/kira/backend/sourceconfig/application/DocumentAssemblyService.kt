@@ -3,15 +3,22 @@ package me.manga.kira.backend.sourceconfig.application
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.sourceconfig.domain.AssemblySource
 import me.manga.kira.backend.sourceconfig.domain.NewPublishedDocument
+import me.manga.kira.backend.sourceconfig.domain.NewPublishedSourceCatalog
+import me.manga.kira.backend.sourceconfig.domain.PublishedCatalogEntry
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
+import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalogRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
+import me.manga.kira.backend.sourceconfig.domain.model.RemovedSourceEntry
+import me.manga.kira.backend.sourceconfig.domain.model.SourceCatalogEntry
+import me.manga.kira.backend.sourceconfig.domain.model.SourceCatalogManifest
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import me.manga.kira.backend.sourceconfig.signing.DocumentSigner
 import me.manga.kira.backend.sourceconfig.signing.DocumentSigningInput
+import me.manga.kira.backend.sourceconfig.signing.SourceCatalogSignatureCodec
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import me.manga.kira.backend.sourceconfig.validation.ValidationResult
 import org.springframework.stereotype.Service
@@ -37,6 +44,7 @@ import java.util.UUID
 class DocumentAssemblyService(
     private val sources: SourceConfigRepository,
     private val publishedDocuments: PublishedDocumentRepository,
+    private val publishedCatalogs: PublishedSourceCatalogRepository,
     private val validator: SourceConfigValidator,
     private val documentSigner: DocumentSigner,
     private val clock: Clock,
@@ -109,7 +117,18 @@ class DocumentAssemblyService(
                 ),
             )
 
-        // Step 9 — move the authoritative latest pointer (FK holds: the snapshot row exists).
+        // Source-catalog v2 is materialized in the SAME transaction and shares this revision. The
+        // latest pointer cannot expose the document until its corresponding manifest is durable.
+        materializeCatalog(
+            assemblySources = assemblySources,
+            catalogRevision = revision,
+            generatedAt = generatedAt,
+            instant = instant,
+            actorId = actorId,
+            previousDocumentRevision = previousRevision,
+        )
+
+        // Step 9 — move the authoritative latest pointer (both document + catalog rows now exist).
         publishedDocuments.updatePointer(revision, instant)
         return snapshot
     }
@@ -162,13 +181,132 @@ class DocumentAssemblyService(
 
         SourceLifecycleStatus.RETIRED -> "removed"
 
-        SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.REMOVED ->
+        SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.WITHHELD, SourceLifecycleStatus.REMOVED ->
             error("status $status must never reach document assembly (PLAN §9)")
+    }
+
+    private fun materializeCatalog(
+        assemblySources: List<AssemblySource>,
+        catalogRevision: Long,
+        generatedAt: String,
+        instant: java.time.Instant,
+        actorId: UUID,
+        previousDocumentRevision: Long?,
+    ) {
+        val previousCatalog = previousDocumentRevision?.let(publishedCatalogs::findByRevision)
+        val currentApis = assemblySources.mapTo(linkedSetOf()) { it.api }
+        val removedApis =
+            (
+                previousCatalog?.let { publishedCatalogs.removedApis(it.catalogRevision) }.orEmpty() +
+                    (publishedCatalogs.previouslyPublishedApis() - currentApis)
+                ).toSortedSet()
+
+        val persistedEntries =
+            assemblySources
+                .sortedWith(compareBy({ it.position }, { it.api }))
+                .mapIndexed { order, source ->
+                    require(source.engine == GENERIC_ENGINE) {
+                        "non-generic source '${source.api}' must never enter public catalog assembly"
+                    }
+                    val sourceSignature =
+                        requireNotNull(
+                            documentSigner.signDetached(
+                                SourceCatalogSignatureCodec.sourcePayload(
+                                    api = source.api,
+                                    sourceRevision = source.revisionNumber,
+                                    checksum = source.checksum,
+                                    canonicalJson = source.canonicalContent,
+                                ),
+                            ),
+                        ) { "source-catalog v2 requires configured Ed25519 signing" }
+                    PublishedCatalogEntry(
+                        sourceConfigId = source.sourceConfigId,
+                        sourceRevisionId = source.sourceRevisionId,
+                        api = source.api,
+                        sourceRevision = source.revisionNumber,
+                        checksum = source.checksum,
+                        order = order,
+                        lifecycle = catalogLifecycle(source.status),
+                        engine = source.engine,
+                        sourceSigningKeyId = sourceSignature.keyId,
+                        sourceSignature = sourceSignature.signatureBase64,
+                    )
+                }
+        val manifest =
+            SourceCatalogManifest(
+                schemaVersion = CATALOG_SCHEMA_VERSION,
+                sourceSchemaVersion = SCHEMA_VERSION,
+                catalogRevision = catalogRevision,
+                generatedAt = generatedAt,
+                sources =
+                persistedEntries.map { entry ->
+                    SourceCatalogEntry(
+                        api = entry.api,
+                        sourceRevision = entry.sourceRevision,
+                        checksum = entry.checksum,
+                        order = entry.order,
+                        lifecycle = entry.lifecycle,
+                        engine = entry.engine,
+                        sourceSigningKeyId = entry.sourceSigningKeyId,
+                        sourceSignature = entry.sourceSignature,
+                    )
+                },
+                removedSources = removedApis.map(::RemovedSourceEntry),
+            )
+        val canonical = CanonicalJson.canonicalize(SourceCatalogManifest.serializer(), manifest)
+        val checksum = CanonicalJson.checksum(canonical)
+        val manifestSignature =
+            requireNotNull(
+                documentSigner.signDetached(
+                    SourceCatalogSignatureCodec.manifestPayload(
+                        catalogRevision = catalogRevision,
+                        previousCatalogRevision = previousCatalog?.catalogRevision,
+                        previousCatalogChecksum = previousCatalog?.checksum,
+                        checksum = checksum,
+                        createdAt = instant,
+                        manifestJson = canonical,
+                    ),
+                ),
+            ) { "source-catalog v2 requires configured Ed25519 signing" }
+        publishedCatalogs.insert(
+            NewPublishedSourceCatalog(
+                catalogRevision = catalogRevision,
+                schemaVersion = CATALOG_SCHEMA_VERSION,
+                sourceSchemaVersion = SCHEMA_VERSION,
+                manifestJson = canonical,
+                checksum = checksum,
+                canonVersion = CanonicalJson.CANON_VERSION,
+                createdBy = actorId,
+                createdAt = instant,
+                signatureFormat = SourceCatalogSignatureCodec.MANIFEST_FORMAT,
+                signatureAlgorithm = manifestSignature.algorithm,
+                signingKeyId = manifestSignature.keyId,
+                signatureBase64 = manifestSignature.signatureBase64,
+                previousCatalogRevision = previousCatalog?.catalogRevision,
+                previousCatalogChecksum = previousCatalog?.checksum,
+                entries = persistedEntries,
+                removedApis = removedApis.toList(),
+            ),
+        )
+    }
+
+    /** V2 keeps server lifecycle explicit; only tombstones use `removed`. */
+    private fun catalogLifecycle(status: SourceLifecycleStatus): String = when (status) {
+        SourceLifecycleStatus.ACTIVE -> "active"
+
+        SourceLifecycleStatus.DISABLED -> "disabled"
+
+        SourceLifecycleStatus.RETIRED -> "retired"
+
+        SourceLifecycleStatus.DRAFT, SourceLifecycleStatus.WITHHELD, SourceLifecycleStatus.REMOVED ->
+            error("status $status must never reach source-catalog assembly")
     }
 
     companion object {
         /** The document schema version (PLAN §7 / §8 rule 1 — `SUPPORTED_SCHEMA_VERSION`). */
         const val SCHEMA_VERSION = 1
+        const val CATALOG_SCHEMA_VERSION = 1
+        private const val GENERIC_ENGINE = "generic"
         private const val PLACEHOLDER_GENERATED_AT = "1970-01-01T00:00:00Z"
     }
 }

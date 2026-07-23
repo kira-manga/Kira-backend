@@ -110,6 +110,7 @@ class SecurityConfig(private val environment: Environment) {
                 // Public, read-only app config surface (controllers arrive in Phase 7).
                 authorize(HttpMethod.GET, "/api/v1/source-config/**", permitAll)
                 authorize(HttpMethod.GET, "/api/v1/sources/**", permitAll)
+                authorize(HttpMethod.GET, "/api/v2/source-config/**", permitAll)
                 authorize(HttpMethod.GET, "/api/v1/tutorial-categories", permitAll)
                 authorize(HttpMethod.GET, "/api/v1/tutorials/**", permitAll)
                 authorize(HttpMethod.GET, "/api/v1/tutorial-media/**", permitAll)
@@ -168,6 +169,10 @@ class SecurityConfig(private val environment: Environment) {
                     "X-Config-Previous-Revision",
                     "X-Config-Previous-Checksum",
                     "X-Config-Created-At",
+                    "X-Source-Api",
+                    "X-Source-Revision",
+                    "X-Source-Checksum",
+                    "X-Source-Canon-Version",
                     "X-Request-Id",
                     "Retry-After",
                 )
