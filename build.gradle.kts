@@ -26,6 +26,8 @@ springBoot {
 extra["kotlin.version"] = libs.versions.kotlin.get()
 extra["jackson-bom.version"] = libs.versions.jackson.get()
 extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
+extra["netty.version"] = "4.1.136.Final"
+extra["postgresql.version"] = "42.7.12"
 
 java {
     toolchain {
