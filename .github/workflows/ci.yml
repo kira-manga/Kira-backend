@@ -11,7 +11,7 @@ permissions:
 
 env:
   KIRA_PACKAGES_USER: ${{ github.actor }}
-  KIRA_PACKAGES_READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -103,7 +103,7 @@ jobs:
             BUILD_DATE=1970-01-01T00:00:00Z
             KIRA_PACKAGES_USER=${{ github.actor }}
           secrets: |
-            github_token=${{ secrets.GITHUB_TOKEN }}
+            github_token=${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Production-profile container smoke

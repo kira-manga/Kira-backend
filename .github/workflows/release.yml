@@ -52,7 +52,7 @@ jobs:
             BUILD_DATE=${{ steps.metadata.outputs.created }}
             KIRA_PACKAGES_USER=${{ github.actor }}
           secrets: |
-            github_token=${{ secrets.GITHUB_TOKEN }}
+            github_token=${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2

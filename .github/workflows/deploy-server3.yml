@@ -40,7 +40,7 @@ jobs:
             BUILD_DATE=1970-01-01T00:00:00Z
             KIRA_PACKAGES_USER=${{ github.actor }}
           secrets: |
-            github_token=${{ secrets.GITHUB_TOKEN }}
+            github_token=${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Configure pinned SSH host
