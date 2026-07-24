@@ -55,6 +55,31 @@ configured_image() {
   awk -F= -v key="$key" '$1 == key { print $2; exit }' "$images_file"
 }
 
+prepare_tutorial_media_volume() {
+  local image=$1
+  local image_user uid gid
+  image_user=$(docker image inspect --format '{{.Config.User}}' "$image")
+  [[ $image_user =~ ^([0-9]+):([0-9]+)$ ]] ||
+    fail "backend image must declare a numeric uid:gid"
+  uid=${BASH_REMATCH[1]}
+  gid=${BASH_REMATCH[2]}
+
+  docker volume create kira-tutorial-media >/dev/null
+  docker run --rm --network none --read-only \
+    --user 0:0 --entrypoint sh \
+    --volume kira-tutorial-media:/var/lib/kira/tutorial-media \
+    "$image" -ec \
+    'chown "$1:$2" "$3"; chmod 750 "$3"' \
+    sh "$uid" "$gid" /var/lib/kira/tutorial-media
+
+  docker run --rm --network none --read-only \
+    --user "$image_user" --entrypoint sh \
+    --volume kira-tutorial-media:/var/lib/kira/tutorial-media \
+    "$image" -ec \
+    'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' \
+    sh /var/lib/kira/tutorial-media
+}
+
 rollback_component() {
   local component=$1
   local image=$2
@@ -108,6 +133,7 @@ activate_backend() {
   [[ $image =~ ^kira-backend:[A-Za-z0-9_.-]+$ ]] || fail "invalid backend image"
   previous=$(configured_image KIRA_BACKEND_IMAGE)
   docker image inspect "$image" >/dev/null
+  prepare_tutorial_media_volume "$image"
   compose up --detach postgres
   wait_healthy kira-postgres 30
   backup_database

@@ -11,6 +11,7 @@ suffix="$$"
 network="kira-release-smoke-$suffix"
 database="kira-release-smoke-postgres-$suffix"
 application="kira-release-smoke-app-$suffix"
+media_volume="kira-release-smoke-media-$suffix"
 smoke_temp_root=${KIRA_SMOKE_TEMP_ROOT:-"$PWD/build/tmp"}
 postgres_image="postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 failure_stage=initialization
@@ -31,6 +32,7 @@ redact_stream() {
 
 cleanup() {
   docker rm --force "$application" "$database" >/dev/null 2>&1 || true
+  docker volume rm --force "$media_volume" >/dev/null 2>&1 || true
   docker network rm "$network" >/dev/null 2>&1 || true
   find "$temporary_directory" -type f -exec chmod 600 {} \; 2>/dev/null || true
   rm -rf "$temporary_directory"
@@ -114,8 +116,31 @@ docker run --rm --network "$network" --entrypoint java \
   > "$temporary_directory/migration.log" 2>&1
 
 failure_stage="production application startup"
+image_user=$(docker image inspect --format '{{.Config.User}}' "$image")
+if [[ ! $image_user =~ ^([0-9]+):([0-9]+)$ ]]; then
+  echo "production image must declare a numeric uid:gid" >&2
+  exit 1
+fi
+image_uid=${BASH_REMATCH[1]}
+image_gid=${BASH_REMATCH[2]}
+docker volume create "$media_volume" >/dev/null
+docker run --rm --network none --read-only \
+  --user 0:0 --entrypoint sh \
+  --volume "$media_volume:/var/lib/kira/tutorial-media" \
+  "$image" -ec \
+  'chown "$1:$2" "$3"; chmod 750 "$3"' \
+  sh "$image_uid" "$image_gid" /var/lib/kira/tutorial-media
+docker run --rm --network none --read-only \
+  --user "$image_user" --entrypoint sh \
+  --volume "$media_volume:/var/lib/kira/tutorial-media" \
+  "$image" -ec \
+  'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' \
+  sh /var/lib/kira/tutorial-media
+
 docker run --detach --name "$application" --network "$network" \
+  --read-only --tmpfs /tmp:size=128m,mode=1777 \
   --volume "$temporary_directory/ca.crt:/run/kira-smoke/ca.crt:ro" \
+  --volume "$media_volume:/var/lib/kira/tutorial-media" \
   --env "SPRING_DATASOURCE_URL=$jdbc_url" --env SPRING_DATASOURCE_USERNAME=kira \
   --env "SPRING_DATASOURCE_PASSWORD=$database_password" --env "KIRA_JWT_SECRET=$jwt_secret" \
   --env KIRA_SECURITY_EXTERNAL_BASE_URL=https://api.smoke.invalid \
@@ -124,6 +149,7 @@ docker run --detach --name "$application" --network "$network" \
   --env KIRA_SIGNING_ACTIVE_KEY_ID=smoke --env "KIRA_SIGNING_PRIVATE_KEY=$signing_private" \
   --env KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID=smoke \
   --env "KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY=$signing_public" \
+  --env KIRA_TUTORIAL_MEDIA_DIRECTORY=/var/lib/kira/tutorial-media \
   "$image" >/dev/null
 
 failure_stage="readiness, liveness, and metrics probes"

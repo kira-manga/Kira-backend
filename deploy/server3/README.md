@@ -12,8 +12,9 @@ the internal `kira-database` network. The API, public site, and admin studio bin
 - `postgres-init.sh` creates separate migration and runtime roles on the first database initialization.
 - `nginx/*.conf` keeps the site and API virtual hosts independent from existing hosts.
 - `kira-deploy` accepts an exact-SHA image stream, verifies it, backs up PostgreSQL before
-  migrations, health-gates activation, and restores the prior component image after a failed
-  health check.
+  migrations, initializes the tutorial-media volume for the backend image's declared numeric
+  UID/GID, health-gates activation, and restores the prior component image after a failed health
+  check. The deployment fails closed if the volume is not writable by that runtime identity.
 - `kira-deploy-gateway` restricts the CI SSH account to
   `deploy backend|web|admin <40-character-sha>`.
 - `kira-deploy.sudoers` grants only the two root deploy commands. `kira-deploy.sshd.conf` forces every login for that account through the gateway and disables forwarding, TTYs, and password authentication.
