@@ -62,6 +62,7 @@ abstract class AbstractIntegrationTest {
         jdbcTemplate.update("DELETE FROM published_source_catalog_entries")
         jdbcTemplate.update("DELETE FROM published_source_catalogs")
         jdbcTemplate.update("DELETE FROM source_editor_drafts")
+        jdbcTemplate.update("DELETE FROM source_changesets")
         jdbcTemplate.update("DELETE FROM source_validation_results")
         jdbcTemplate.update("DELETE FROM source_config_revisions")
         jdbcTemplate.update("DELETE FROM source_configs")

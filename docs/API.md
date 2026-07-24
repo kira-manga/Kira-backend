@@ -236,6 +236,13 @@ Tier-1 checks still run before finalization or publication.
 | `POST /admin/sources/{api}/editor-draft/finalize` | Strictly create an immutable revision and advance the workspace baseline atomically. | 200 · 400 · 409 |
 | `POST /admin/sources/{api}/editor-draft/publish` | Create and publish one immutable revision atomically. Requires `X-Kira-Admin-Step-Up`. | 200 · 401 · 409 · 422 |
 | `DELETE /admin/sources/{api}/editor-draft` | Discard the exact `If-Match` workspace version. | 204 · 404 · 409 |
+| `POST /admin/source-changesets` | Open a server-side multi-source changeset. | 201 |
+| `GET /admin/source-changesets[/{id}]` | List or read changesets. A detail response includes `ETag: "changeset-N"`. | 200 · 404 |
+| `PUT /admin/source-changesets/{id}` | Autosave the complete operation list using `If-Match`. | 200 · 400 · 409 |
+| `POST /admin/source-changesets/{id}/validate` | Read-only preflight of the exact version. Apply repeats validation under locks. | 200 · 400 · 409 · 422 |
+| `POST /admin/source-changesets/{id}/apply` | Apply every operation atomically and materialize exactly one snapshot. Requires password step-up. | 200 · 400 · 401 · 409 · 422 |
+| `DELETE /admin/source-changesets/{id}` | Discard an open changeset using `If-Match`. | 200 · 409 |
+| `GET /admin/audit?page=0&size=50` | Read identifiers-only audit metadata; maximum page size is 100. | 200 · 400 |
 | `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
 | `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
 | `GET /admin/documents` | Published snapshots (metadata list). | 200 |

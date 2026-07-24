@@ -1,8 +1,10 @@
 package me.manga.kira.backend.sourceconfig.application
 
+import me.manga.kira.backend.common.exception.ApiException
 import me.manga.kira.backend.common.exception.ConflictException
 import me.manga.kira.backend.common.exception.GoneException
 import me.manga.kira.backend.common.exception.NotFoundException
+import org.springframework.http.HttpStatus
 
 /*
  * Source-config boundary exceptions (PLAN §4.3/§9). These extend the common `ApiException` types so the
@@ -82,6 +84,17 @@ class SourceDraftVersionConflictException :
         "source editor draft changed on the server; reload it before saving again.",
         code = "SOURCE_DRAFT_VERSION_CONFLICT",
     )
+
+class SourceChangesetNotFoundException : NotFoundException("source changeset not found.", code = "SOURCE_CHANGESET_NOT_FOUND")
+
+class SourceChangesetVersionConflictException :
+    ConflictException("source changeset changed or is no longer open.", code = "SOURCE_CHANGESET_VERSION_CONFLICT")
+
+class EmptyChangesetException : ApiException(HttpStatus.BAD_REQUEST, "EMPTY_SOURCE_CHANGESET", "a changeset must contain at least one operation.")
+
+class ChangesetTooLargeException : ApiException(HttpStatus.BAD_REQUEST, "SOURCE_CHANGESET_TOO_LARGE", "a changeset may contain at most 500 operations.")
+
+class InvalidChangesetException(message: String) : ApiException(HttpStatus.BAD_REQUEST, "INVALID_SOURCE_CHANGESET", message)
 
 /** The stable code for the `remove` foot-gun guard 400 (body `{confirm}` must equal the api; PLAN §4.3). */
 const val CONFIRMATION_REQUIRED_CODE = "CONFIRMATION_REQUIRED"

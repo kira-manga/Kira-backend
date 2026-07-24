@@ -39,7 +39,11 @@ class FlywayIncrementalOrderIT {
             assertEquals(listOf("1", "2", "3"), historyVersions(database), "Phase-5 baseline is exactly V1..V3")
 
             flyway(database, MigrationVersion.LATEST).migrate()
-            assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"), historyVersions(database), "V4..V12 apply on top, in order")
+            assertEquals(
+                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"),
+                historyVersions(database),
+                "V4..V13 apply on top, in order",
+            )
         }
     }
 
@@ -50,7 +54,11 @@ class FlywayIncrementalOrderIT {
             assertEquals(listOf("1", "2", "3", "4"), historyVersions(database), "Phase-6 baseline is exactly V1..V4")
 
             flyway(database, MigrationVersion.LATEST).migrate()
-            assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"), historyVersions(database), "V5..V12 apply on top, in order")
+            assertEquals(
+                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13"),
+                historyVersions(database),
+                "V5..V13 apply on top, in order",
+            )
         }
     }
 

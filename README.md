@@ -110,7 +110,7 @@ Spring Boot does **not** load `.env` automatically in this project. Run the `sou
 new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
 shell-special password values single-quoted inside `.env`.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V12`); Hibernate
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V13`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
 document is at `/v3/api-docs`.
 
@@ -155,14 +155,14 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V12 (catalog v2, editor drafts, admin step-up)
+  db/migration/    # forward-only V1 through V13 (catalog v2, editor drafts, step-up, changesets)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```
 
 ## Test suite
 
-**300 tests across 82 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
+**305 tests across 84 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
 Pure-unit tests (validator, canonical JSON, JWT, password hashing, state machine, echo provider,
 contract inventory) run without a Spring context. Integration tests use **Testcontainers PostgreSQL**
 (`postgres:17.6-alpine`, one shared container via `@ServiceConnection`) rather than H2, because the

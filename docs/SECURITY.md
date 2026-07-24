@@ -130,6 +130,11 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   minutes by default (maximum configurable value 15 minutes), and is consumed exactly once. Only its
   SHA-256 hash is stored in `admin_step_up_grants`; the plaintext proof and submitted password are
   never logged. The dashboard keeps both JWT and step-up proof out of browser-readable storage.
+- **Multi-source publication is fail-closed and atomic.** An open changeset uses an optimistic ETag.
+  Apply consumes a one-time step-up proof, validates every operation before the first mutation, locks
+  source heads in stable API order, and commits one catalog snapshot. A failed validation, lifecycle
+  transition, stale version, or persistence error rolls back every source, revision, order, snapshot,
+  and audit mutation.
 
 ## Logging & diagnostics (§6, normative)
 

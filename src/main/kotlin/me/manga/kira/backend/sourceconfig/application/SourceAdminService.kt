@@ -248,6 +248,69 @@ class SourceAdminService(
         )
     }
 
+    @Transactional(readOnly = true)
+    fun validateChanges(operations: List<CatalogChange>): ChangesetValidation {
+        val prepared = prepareChanges(operations, lock = false)
+        return ChangesetValidation(
+            valid = true,
+            operationCount = prepared.mutations.size + if (prepared.order != null) 1 else 0,
+            affectedApis = prepared.affectedApis,
+        )
+    }
+
+    /**
+     * Apply a complete changeset in one transaction and materialize exactly one catalog snapshot.
+     * Every operation is checked before the first write, so a failed changeset makes no partial change.
+     */
+    @Transactional
+    fun applyChanges(operations: List<CatalogChange>, actorId: UUID, changesetId: UUID): ChangesetApplyOutcome {
+        publishedDocuments.lockPublicationState()
+        val prepared = prepareChanges(operations, lock = true)
+        val now = clock.instant()
+        prepared.mutations.forEach { mutation ->
+            when (mutation) {
+                is PreparedPublish -> {
+                    mutation.head.currentPublishedRevisionId?.let { revisions.markSuperseded(it) }
+                    revisions.markPublished(mutation.revision.id, now)
+                    sources.applyPublishedRevision(
+                        id = mutation.head.id,
+                        currentPublishedRevisionId = mutation.revision.id,
+                        status = mutation.resultingStatus,
+                        publishedAt = now,
+                        displayName = mutation.model.displayName,
+                        language = mutation.model.language,
+                        engine = mutation.model.engine,
+                        baseUrl = mutation.model.baseUrl,
+                        adult = mutation.model.isAdult(),
+                        updatedAt = now,
+                    )
+                }
+
+                is PreparedLifecycle -> sources.updateStatus(mutation.head.id, mutation.resultingStatus, now)
+            }
+        }
+        prepared.order?.forEachIndexed { position, head ->
+            if (head.position != position) sources.updatePosition(head.id, position, now)
+        }
+        val snapshot = assembly.materialize(actorId)
+        audit.recordAt(
+            AuditAction.SOURCE_CHANGESET_APPLIED,
+            AuditService.ENTITY_SOURCE_CHANGESET,
+            changesetId.toString(),
+            snapshot.createdAt,
+            mapOf(
+                "operationCount" to operations.size,
+                "affectedSourceCount" to prepared.affectedApis.size,
+                "documentRevision" to snapshot.documentRevision,
+                "checksum" to snapshot.checksum,
+            ),
+            actorId,
+        )
+        auditDocumentPublished(snapshot, actorId)
+        metrics.publication("changeset")
+        return ChangesetApplyOutcome(snapshot.documentRevision, snapshot.checksum, prepared.affectedApis)
+    }
+
     // --- Lifecycle transitions ----------------------------------------------------------------------
 
     @Transactional
@@ -468,6 +531,87 @@ class SourceAdminService(
 
     private fun latestValid(revisionId: UUID): Boolean? = validationResults.findLatestForRevision(revisionId)?.valid
 
+    @Suppress("ThrowsCount")
+    private fun prepareChanges(operations: List<CatalogChange>, lock: Boolean): PreparedChanges {
+        if (operations.isEmpty()) throw EmptyChangesetException()
+        if (operations.size > MAX_CHANGESET_OPERATIONS) throw ChangesetTooLargeException()
+        val mutations = operations.filterNot { it.type == CatalogChangeType.REORDER }
+        val reorder = operations.filter { it.type == CatalogChangeType.REORDER }
+        if (reorder.size > 1) throw InvalidChangesetException("a changeset may contain at most one reorder operation.")
+        val duplicateApi = mutations.groupingBy { it.api }.eachCount().entries.firstOrNull { it.value > 1 }?.key
+        if (duplicateApi != null) throw InvalidChangesetException("source '$duplicateApi' has more than one operation.")
+
+        val preparedMutations =
+            mutations.sortedBy { it.api }.map { operation ->
+                val api = operation.api ?: throw InvalidChangesetException("${operation.type.wire} requires an api.")
+                val head =
+                    (if (lock) sources.lockByApiForUpdate(api) else sources.findByApi(api))
+                        ?: throw SourceNotFoundException(api)
+                when (operation.type) {
+                    CatalogChangeType.PUBLISH -> preparePublish(operation, head)
+
+                    CatalogChangeType.DISABLE -> prepareLifecycle(head, LifecycleAction.DISABLE)
+
+                    CatalogChangeType.ENABLE -> prepareLifecycle(head, LifecycleAction.ENABLE)
+
+                    CatalogChangeType.RETIRE -> prepareLifecycle(head, LifecycleAction.RETIRE)
+
+                    CatalogChangeType.REMOVE -> {
+                        if (operation.confirm != api) {
+                            throw InvalidChangesetException("remove for '$api' requires an exact confirmation.")
+                        }
+                        prepareLifecycle(head, LifecycleAction.REMOVE)
+                    }
+
+                    CatalogChangeType.REORDER -> error("reorder is handled separately")
+                }
+            }
+        val orderedHeads =
+            reorder.singleOrNull()?.let { operation ->
+                val requested = operation.orderedApis ?: throw InvalidChangesetException("reorder requires orderedApis.")
+                if (requested.size != requested.distinct().size) {
+                    throw InvalidChangesetException("reorder contains duplicate source ids.")
+                }
+                val current = sources.findAll(null)
+                if (requested.size != current.size || requested.toSet() != current.map { it.api }.toSet()) {
+                    throw InvalidChangesetException("reorder must contain every source exactly once.")
+                }
+                val byApi = current.associateBy { it.api }
+                requested.map { requireNotNull(byApi[it]) }
+            }
+        return PreparedChanges(
+            mutations = preparedMutations,
+            order = orderedHeads,
+            affectedApis = (preparedMutations.map { it.head.api } + orderedHeads?.map { it.api }.orEmpty()).distinct(),
+        )
+    }
+
+    private fun preparePublish(operation: CatalogChange, head: SourceConfigHead): PreparedPublish {
+        val number = operation.revisionNumber
+            ?: throw InvalidChangesetException("publish for '${head.api}' requires revisionNumber.")
+        val revision =
+            revisions.findBySourceAndNumber(head.id, number)
+                ?: throw RevisionNotFoundException(head.api, number)
+        if (revision.status != RevisionStatus.DRAFT) {
+            throw InvalidChangesetException("publish revision for '${head.api}' must be a draft.")
+        }
+        val publishedNumber = head.currentPublishedRevisionId?.let { revisions.findById(it)?.revisionNumber }
+        if (publishedNumber != null && number <= publishedNumber) {
+            throw RevisionOlderThanPublishedException(head.api, number, publishedNumber)
+        }
+        val resultingStatus = mappingLifecycleErrors { LifecycleStateMachine.statusAfterPublish(head.status) }
+        val model = decodeStored(revision)
+        if (model.engine != GENERIC_ENGINE) throw NonGenericPublicationForbiddenException()
+        val validation = validateStanza(model)
+        if (!validation.isValid) throw ValidationFailedException(validation.errors.map { it.toFieldError() })
+        return PreparedPublish(head, revision, model, resultingStatus)
+    }
+
+    private fun prepareLifecycle(head: SourceConfigHead, action: LifecycleAction): PreparedLifecycle = PreparedLifecycle(
+        head,
+        mappingLifecycleErrors { LifecycleStateMachine.transition(head.status, action, head.engine) },
+    )
+
     private fun auditRevisionCreated(api: String, revision: SourceRevision, validation: ValidationResult, actorId: UUID) = audit.record(
         AuditAction.REVISION_CREATED,
         AuditService.ENTITY_REVISION,
@@ -504,6 +648,7 @@ class SourceAdminService(
     private companion object {
         const val ADULT_SITE_STATE = "ADULT_18_PLUS"
         const val GENERIC_ENGINE = "generic"
+        const val MAX_CHANGESET_OPERATIONS = 500
     }
 }
 
@@ -527,3 +672,39 @@ data class SourceAdminView(val head: SourceConfigHead, val currentPublishedRevis
 data class RevisionView(val revision: SourceRevision, val valid: Boolean?)
 
 data class EditorContentPublishOutcome(val revision: SourceMutationResult, val publication: PublishOutcome)
+
+enum class CatalogChangeType(val wire: String) {
+    PUBLISH("publish"),
+    DISABLE("disable"),
+    ENABLE("enable"),
+    RETIRE("retire"),
+    REMOVE("remove"),
+    REORDER("reorder"),
+}
+
+data class CatalogChange(
+    val type: CatalogChangeType,
+    val api: String? = null,
+    val revisionNumber: Int? = null,
+    val confirm: String? = null,
+    val orderedApis: List<String>? = null,
+)
+
+data class ChangesetValidation(val valid: Boolean, val operationCount: Int, val affectedApis: List<String>)
+
+data class ChangesetApplyOutcome(val documentRevision: Long, val checksum: String, val affectedApis: List<String>)
+
+private data class PreparedChanges(val mutations: List<PreparedMutation>, val order: List<SourceConfigHead>?, val affectedApis: List<String>)
+
+private sealed interface PreparedMutation {
+    val head: SourceConfigHead
+}
+
+private data class PreparedPublish(
+    override val head: SourceConfigHead,
+    val revision: SourceRevision,
+    val model: SourceConfig,
+    val resultingStatus: SourceLifecycleStatus,
+) : PreparedMutation
+
+private data class PreparedLifecycle(override val head: SourceConfigHead, val resultingStatus: SourceLifecycleStatus) : PreparedMutation
