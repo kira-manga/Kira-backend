@@ -43,9 +43,10 @@ infrastructure JPA entities, Spring Data repos, port adapters, entity↔domain m
 - `api` never touches `infrastructure` or JPA types; `application` depends only on domain ports.
 - Three model families per feature — API DTOs (`api/dto`), domain models (`domain`), and JPA entities
   (`infrastructure`) — mapped explicitly (no MapStruct).
-- **`sourceconfig/domain` + `sourceconfig/validation` are framework-free** (kotlin-stdlib +
-  kotlinx-serialization only) so they can later be extracted into a shared module consumed by both
-  backend and app.
+- **`sourceconfig/domain` + `sourceconfig/validation` remain framework-free** (kotlin-stdlib +
+  kotlinx-serialization only). Deterministic config-driven execution and preview use the pinned
+  `me.manga.kira.source:source-engine:0.1.0` Kotlin Multiplatform package shared with the app;
+  backend canonicalization, persistence, signing, and publication remain backend-owned.
 - **Serialization split:** Spring MVC API DTOs use Jackson (the Boot default); the **source-config
   model uses kotlinx-serialization** so default-omission behaves identically to the app. Document
   endpoints return the stored pre-serialized canonical bytes verbatim (a raw-bytes writer, never a

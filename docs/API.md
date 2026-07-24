@@ -214,6 +214,7 @@ Tier-1 checks still run before finalization or publication.
 | Method & path | Purpose | Codes |
 |---|---|---|
 | `GET /admin/source-studio/capabilities` | Exact schema, strategy, lifecycle, method/format, limit, and generic-only policy vocabulary used by the editor. | 200 |
+| `POST /admin/source-preview` | Run the pinned shared generic engine against a caller-supplied response fixture. It never performs network I/O; request metadata omits values. `sourceJson` ≤ 512 KiB and `responseBody` ≤ 2 MiB. | 200 · 400 · 413 |
 | `POST /admin/step-up` | Re-check the authenticated ADMIN password. Returns a short-lived one-time proof scoped to source mutations. | 200 · 401 · 429 |
 | `POST /admin/sources` | Create a source (body = full `SourceConfig`; `api` is the identity). Appends to document order (`position = max+1`). | 201 · 409 api exists · 400 strict-parse/Tier-1 |
 | `GET /admin/sources` | All sources incl. drafts/retired/removed. Query `?status=`. | 200 |

@@ -135,6 +135,10 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   source heads in stable API order, and commits one catalog snapshot. A failed validation, lifecycle
   transition, stale version, or persistence error rolls back every source, revision, order, snapshot,
   and audit mutation.
+- **Source preview is deterministic and cannot act as an SSRF proxy.** The ADMIN supplies inert
+  response bytes to the pinned shared engine. The backend records the generated request only in the
+  response as URL, method, header names, and body-presence flags; it never sends that request, returns
+  header values, or logs fixture contents. Source and response fixture sizes are bounded.
 
 ## Logging & diagnostics (§6, normative)
 
