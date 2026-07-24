@@ -1,21 +1,28 @@
 # Server3 production runbook
 
-Kira runs as an isolated Docker Compose project under `/opt/kira`. PostgreSQL is reachable only on the internal `kira-database` network. The API and standalone SSR site bind to loopback ports `18080` and `18081`; host Nginx is the only public entry point.
+Kira runs as an isolated Docker Compose project under `/opt/kira`. PostgreSQL is reachable only on
+the internal `kira-database` network. The API, public site, and admin studio bind to loopback ports
+`18080`, `18081`, and `18082`; host Nginx is the only public entry point.
 
 ## Versioned files
 
-- `compose.yaml` defines the database, one-shot migration, backend, and web services with resource limits and health checks.
+- `compose.yaml` defines the database, one-shot migration, backend, public web, and admin services
+  with resource limits and health checks. `/opt/kira/admin.env` contains only the admin container's
+  runtime endpoints (`KIRA_BACKEND_URL` and `KIRA_ADMIN_ORIGIN`) and remains uncommitted.
 - `postgres-init.sh` creates separate migration and runtime roles on the first database initialization.
 - `nginx/*.conf` keeps the site and API virtual hosts independent from existing hosts.
-- `kira-deploy` accepts an exact-SHA image stream, verifies it, backs up PostgreSQL before migrations, health-gates activation, and restores the prior application image after a failed health check.
-- `kira-deploy-gateway` restricts the CI SSH account to `deploy backend|web <40-character-sha>`.
+- `kira-deploy` accepts an exact-SHA image stream, verifies it, backs up PostgreSQL before
+  migrations, health-gates activation, and restores the prior component image after a failed
+  health check.
+- `kira-deploy-gateway` restricts the CI SSH account to
+  `deploy backend|web|admin <40-character-sha>`.
 - `kira-deploy.sudoers` grants only the two root deploy commands. `kira-deploy.sshd.conf` forces every login for that account through the gateway and disables forwarding, TTYs, and password authentication.
 
 Do not commit the production `*.env`, TLS keys, signing keys, initial administrator credentials, database dumps, or deployment private key.
 
 ## GitHub production environment
 
-Create a protected `production` environment in both the backend and web repositories.
+Create a protected `production` environment in the backend, public web, and admin repositories.
 
 | Kind | Name | Value |
 |---|---|---|
@@ -26,6 +33,14 @@ Create a protected `production` environment in both the backend and web reposito
 | Secret | `SERVER3_KNOWN_HOSTS` | Pinned server3 host-key line |
 
 The web environment also needs `ANDROID_APP_SHA256_CERT_FINGERPRINT`, `ANDROID_PACKAGE_NAME`, `APPLE_TEAM_ID`, and `IOS_BUNDLE_ID`. Require manual environment approval until the first automated release is verified.
+
+The admin repository needs no backend credential: its server-side BFF uses the operator's
+short-lived ADMIN token. Configure `/opt/kira/admin.env` with:
+
+```text
+KIRA_BACKEND_URL=http://backend:8080
+KIRA_ADMIN_ORIGIN=https://admin.kiramanga.me
+```
 
 ## Operations and recovery
 

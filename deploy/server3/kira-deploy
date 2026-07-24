@@ -63,9 +63,12 @@ rollback_component() {
   if [[ $component == backend ]]; then
     KIRA_BACKEND_IMAGE="$image" compose up --detach --no-deps backend
     wait_healthy kira-backend 30 || true
-  else
+  elif [[ $component == web ]]; then
     KIRA_WEB_IMAGE="$image" compose up --detach --no-deps web
     wait_healthy kira-web 20 || true
+  else
+    KIRA_ADMIN_IMAGE="$image" compose up --detach --no-deps admin
+    wait_healthy kira-admin 20 || true
   fi
 }
 
@@ -137,6 +140,23 @@ activate_web() {
   set_image KIRA_WEB_IMAGE "$image"
 }
 
+activate_admin() {
+  local image=$1
+  local previous
+  [[ $image =~ ^kira-admin:[A-Za-z0-9_.-]+$ ]] || fail "invalid admin image"
+  previous=$(configured_image KIRA_ADMIN_IMAGE)
+  docker image inspect "$image" >/dev/null
+  if ! KIRA_ADMIN_IMAGE="$image" compose up --detach --no-deps admin; then
+    rollback_component admin "$previous"
+    fail "admin activation failed; restored the previous image when available"
+  fi
+  if ! wait_healthy kira-admin 20; then
+    rollback_component admin "$previous"
+    fail "admin health check failed; restored the previous image when available"
+  fi
+  set_image KIRA_ADMIN_IMAGE "$image"
+}
+
 deploy_stream() {
   local component=$1
   local revision=$2
@@ -147,6 +167,7 @@ deploy_stream() {
   case "$component" in
     backend) image="kira-backend:$revision" ;;
     web) image="kira-web:$revision" ;;
+    admin) image="kira-admin:$revision" ;;
     *) fail "unknown component" ;;
   esac
   umask 077
@@ -154,11 +175,11 @@ deploy_stream() {
   gzip --test "$archive"
   gzip --decompress --stdout "$archive" | docker load >/dev/null
   docker image inspect "$image" >/dev/null || fail "archive did not contain $image"
-  if [[ $component == backend ]]; then
-    activate_backend "$image"
-  else
-    activate_web "$image"
-  fi
+  case "$component" in
+    backend) activate_backend "$image" ;;
+    web) activate_web "$image" ;;
+    admin) activate_admin "$image" ;;
+  esac
 }
 
 with_lock() {
@@ -177,6 +198,7 @@ case ${1:-} in
     case "$2" in
       backend) with_lock activate_backend "$3" ;;
       web) with_lock activate_web "$3" ;;
+      admin) with_lock activate_admin "$3" ;;
       *) fail "unknown component" ;;
     esac
     ;;
