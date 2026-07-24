@@ -124,6 +124,21 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   private API keys in it.* Header names must also be ASCII RFC field-name tokens with no surrounding
   whitespace; invalid names are publication-blocking `HEADER_NAME_INVALID` findings before sensitive-
   name evaluation.
+- **High-impact Source Admin Studio publication is password-stepped-up.** `POST /api/v1/admin/step-up`
+  verifies the already-authenticated ADMIN account password through the existing throttled password
+  path and returns a 256-bit random proof. The proof is scoped to source mutations, expires after five
+  minutes by default (maximum configurable value 15 minutes), and is consumed exactly once. Only its
+  SHA-256 hash is stored in `admin_step_up_grants`; the plaintext proof and submitted password are
+  never logged. The dashboard keeps both JWT and step-up proof out of browser-readable storage.
+- **Multi-source publication is fail-closed and atomic.** An open changeset uses an optimistic ETag.
+  Apply consumes a one-time step-up proof, validates every operation before the first mutation, locks
+  source heads in stable API order, and commits one catalog snapshot. A failed validation, lifecycle
+  transition, stale version, or persistence error rolls back every source, revision, order, snapshot,
+  and audit mutation.
+- **Source preview is deterministic and cannot act as an SSRF proxy.** The ADMIN supplies inert
+  response bytes to the pinned shared engine. The backend records the generated request only in the
+  response as URL, method, header names, and body-presence flags; it never sends that request, returns
+  header values, or logs fixture contents. Source and response fixture sizes are bounded.
 
 ## Logging & diagnostics (§6, normative)
 

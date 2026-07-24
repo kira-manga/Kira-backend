@@ -12,6 +12,8 @@ interface AuditRepository {
 
     /** Append one audit row. [NewAuditEntry.detailJson] is a pre-encoded jsonb object string. */
     fun record(entry: NewAuditEntry)
+
+    fun findPage(page: Int, size: Int): AuditPage
 }
 
 /**
@@ -28,3 +30,15 @@ data class NewAuditEntry(
     val detailJson: String,
     val createdAt: Instant,
 )
+
+data class AuditEntry(
+    val id: Long,
+    val actorUserId: UUID?,
+    val action: String,
+    val entityType: String,
+    val entityId: String,
+    val detailJson: String,
+    val createdAt: Instant,
+)
+
+data class AuditPage(val items: List<AuditEntry>, val total: Long)

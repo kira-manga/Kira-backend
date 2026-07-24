@@ -14,6 +14,7 @@ import me.manga.kira.backend.user.domain.UserRepository
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.MediaType
+import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActionsDsl
 import org.springframework.test.web.servlet.get
@@ -44,6 +45,9 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     @Autowired
     protected lateinit var sourceAdminService: SourceAdminService
 
+    @Autowired
+    protected lateinit var passwordEncoder: PasswordEncoder
+
     protected lateinit var admin: User
     protected lateinit var adminToken: String
 
@@ -62,7 +66,11 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     @BeforeEach
     fun seedAdmin() {
-        admin = users.create("admin-${UUID.randomUUID()}@test.local", "{noop}not-a-real-hash", Role.ADMIN)
+        admin = users.create(
+            "admin-${UUID.randomUUID()}@test.local",
+            passwordEncoder.encode(ADMIN_PASSWORD),
+            Role.ADMIN,
+        )
         adminToken = jwtService.issue(admin).value
     }
 
@@ -108,6 +116,17 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     protected fun rollback(api: String, toRevision: Int): ResultActionsDsl =
         adminPostJson("/api/v1/admin/sources/$api/rollback", """{"toRevision":$toRevision}""")
+
+    protected fun issueStepUp(): String {
+        val response =
+            mockMvc.post("/api/v1/admin/step-up") {
+                header("Authorization", "Bearer $adminToken")
+                contentType = MediaType.APPLICATION_JSON
+                content = objectMapper.writeValueAsString(mapOf("password" to ADMIN_PASSWORD))
+            }.andReturn().response
+        check(response.status == 200) { "test step-up failed with HTTP ${response.status}" }
+        return objectMapper.readTree(response.contentAsString).get("token").asText()
+    }
 
     protected fun getRawDocument(revision: Long): ResultActionsDsl =
         mockMvc.get("/api/v1/admin/documents/$revision") { header("Authorization", "Bearer $adminToken") }
@@ -183,5 +202,9 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
         header("Authorization", "Bearer $adminToken")
         contentType = MediaType.APPLICATION_JSON
         content = json
+    }
+
+    protected companion object {
+        const val ADMIN_PASSWORD = "source-admin-test-password"
     }
 }

@@ -206,8 +206,16 @@ Header names must be valid RFC HTTP field-name tokens. Blank, non-token, or lead
 names fail validation with `HEADER_NAME_INVALID`, so padded sensitive names cannot bypass the public-
 credential rules. Published configuration is public; never place a real credential in any header.
 
+The Source Admin Studio uses a mutable editor workspace that is separate from immutable source
+revisions. Autosaves require the current strong editor ETag in `If-Match`; stale writes return
+`409 SOURCE_DRAFT_VERSION_CONFLICT`. Invalid/incomplete JSON may be autosaved, but strict parsing and
+Tier-1 checks still run before finalization or publication.
+
 | Method & path | Purpose | Codes |
 |---|---|---|
+| `GET /admin/source-studio/capabilities` | Exact schema, strategy, lifecycle, method/format, limit, and generic-only policy vocabulary used by the editor. | 200 |
+| `POST /admin/source-preview` | Run the pinned shared generic engine against a caller-supplied response fixture. It never performs network I/O; request metadata omits values. `sourceJson` ≤ 512 KiB and `responseBody` ≤ 2 MiB. | 200 · 400 · 413 |
+| `POST /admin/step-up` | Re-check the authenticated ADMIN password. Returns a short-lived one-time proof scoped to source mutations. | 200 · 401 · 429 |
 | `POST /admin/sources` | Create a source (body = full `SourceConfig`; `api` is the identity). Appends to document order (`position = max+1`). | 201 · 409 api exists · 400 strict-parse/Tier-1 |
 | `GET /admin/sources` | All sources incl. drafts/retired/removed. Query `?status=`. | 200 |
 | `GET /admin/sources/{api}` | Full admin head view. | 200 · 404 |
@@ -222,6 +230,20 @@ credential rules. Published configuration is public; never place a real credenti
 | `POST /admin/sources/{api}/retire` | `disabled → retired` only. | 200 · 409 |
 | `POST /admin/sources/{api}/remove` | `retired → removed` (terminal). Body `{confirm: "<api>"}`. | 200 · 409 · 400 |
 | `POST /admin/sources/{api}/rollback` | Body `{toRevision}`. Copies that content into a new highest revision, re-validates, publishes. | 200 · 422 · 409 · 404 |
+| `POST /admin/sources/{api}/editor-draft` | Open the one collaborative editor workspace, optionally from `{fromRevision}`. | 200 · 404 |
+| `GET /admin/sources/{api}/editor-draft` | Read the workspace and its ETag/version. | 200 · 404 |
+| `PUT /admin/sources/{api}/editor-draft` | Autosave `{content}` with `If-Match: "draft-N"`. Does not create a revision. | 200 · 409 · 413 |
+| `POST /admin/sources/{api}/editor-draft/validate` | Strictly parse and validate the exact ETag version without creating a revision. | 200 · 400 · 409 |
+| `POST /admin/sources/{api}/editor-draft/finalize` | Strictly create an immutable revision and advance the workspace baseline atomically. | 200 · 400 · 409 |
+| `POST /admin/sources/{api}/editor-draft/publish` | Create and publish one immutable revision atomically. Requires `X-Kira-Admin-Step-Up`. | 200 · 401 · 409 · 422 |
+| `DELETE /admin/sources/{api}/editor-draft` | Discard the exact `If-Match` workspace version. | 204 · 404 · 409 |
+| `POST /admin/source-changesets` | Open a server-side multi-source changeset. | 201 |
+| `GET /admin/source-changesets[/{id}]` | List or read changesets. A detail response includes `ETag: "changeset-N"`. | 200 · 404 |
+| `PUT /admin/source-changesets/{id}` | Autosave the complete operation list using `If-Match`. | 200 · 400 · 409 |
+| `POST /admin/source-changesets/{id}/validate` | Read-only preflight of the exact version. Apply repeats validation under locks. | 200 · 400 · 409 · 422 |
+| `POST /admin/source-changesets/{id}/apply` | Apply every operation atomically and materialize exactly one snapshot. Requires password step-up. | 200 · 400 · 401 · 409 · 422 |
+| `DELETE /admin/source-changesets/{id}` | Discard an open changeset using `If-Match`. | 200 · 409 |
+| `GET /admin/audit?page=0&size=50` | Read identifiers-only audit metadata; maximum page size is 100. | 200 · 400 |
 | `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
 | `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
 | `GET /admin/documents` | Published snapshots (metadata list). | 200 |
@@ -245,6 +267,10 @@ values):
 - Publish / lifecycle transitions → `{ "documentRevision", "checksum" }`. A currently-published
   revision re-published → **200 no-op** (no new snapshot).
 - Rollback → `{ "newRevisionNumber", "documentRevision", "checksum" }`.
+- Editor draft → `{ "id", "basedOnRevisionNumber", "content", "version", "createdBy", "updatedBy",
+  "createdAt", "updatedAt" }` plus `ETag: "draft-N"`.
+- Step-up → `{ "token", "expiresAt", "scope": "source-admin-mutation" }`. The token is secret and
+  must remain in server-side/HttpOnly session state; it is never logged or persisted in plaintext.
 - `GET /admin/documents` item → `{ "documentRevision", "schemaVersion", "checksum", "sourceCount", "createdBy", "createdAt" }`.
 - `GET /admin/documents/{revision}` → **body = raw stored canonical bytes**; metadata in headers only
   (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`) — deliberately not a JSON envelope.

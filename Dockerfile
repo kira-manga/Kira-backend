@@ -1,12 +1,17 @@
 # syntax=docker/dockerfile:1.7
 FROM eclipse-temurin:21-jdk-alpine@sha256:1ff763083f2993d57d0bf374ab10bb3e2cb873af6c13a04458ebbd3e0337dc76 AS builder
 
+ARG KIRA_PACKAGES_USER
 WORKDIR /workspace
 COPY gradle gradle
 COPY gradlew settings.gradle.kts build.gradle.kts gradle.lockfile settings-gradle.lockfile ./
 COPY src src
 COPY config config
-RUN --mount=type=cache,target=/root/.gradle ./gradlew --no-daemon clean bootJar
+RUN --mount=type=cache,target=/root/.gradle \
+    --mount=type=secret,id=github_token,required=true \
+    KIRA_PACKAGES_USER="$KIRA_PACKAGES_USER" \
+    KIRA_PACKAGES_READ_TOKEN="$(cat /run/secrets/github_token)" \
+    ./gradlew --no-daemon clean bootJar
 
 FROM eclipse-temurin:21-jre-alpine@sha256:3f08b13888f595cc49edabea7250ba69499ba25602b267da591720769400e08c AS runtime
 ARG VERSION=1.0.0

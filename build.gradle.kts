@@ -36,6 +36,21 @@ java {
 }
 
 repositories {
+    if (providers.gradleProperty("kiraUseMavenLocal").orNull == "true") {
+        mavenLocal()
+    }
+    maven("https://maven.pkg.github.com/kira-manga/kira-source-engine") {
+        name = "KiraSourceEngine"
+        credentials {
+            username = providers.environmentVariable("KIRA_PACKAGES_USER")
+                .orElse(providers.environmentVariable("GITHUB_ACTOR"))
+                .orNull
+            password = providers.environmentVariable("KIRA_PACKAGES_READ_TOKEN")
+                .orElse(providers.environmentVariable("GITHUB_TOKEN"))
+                .orNull
+        }
+        content { includeGroup("me.manga.kira.source") }
+    }
     mavenCentral()
 }
 
@@ -56,7 +71,9 @@ dependencies {
 
     // --- Kotlin ---
     implementation("org.jetbrains.kotlin:kotlin-reflect")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.kotlinx.serialization.json)
+    implementation("me.manga.kira.source:source-engine:0.1.0")
 
     // --- API docs ---
     implementation(libs.springdoc.openapi.starter.webmvc.ui)
