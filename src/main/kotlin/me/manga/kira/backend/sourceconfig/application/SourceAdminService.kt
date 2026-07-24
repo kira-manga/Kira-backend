@@ -217,6 +217,37 @@ class SourceAdminService(
         return PublishOutcome(snapshot.documentRevision, snapshot.checksum, noOp = false)
     }
 
+    /**
+     * Atomic editor fast path: strict-parse the current autosaved content, take the global lock before
+     * the source lock, create one immutable revision, validate it, and publish it in the same
+     * transaction. Any failure rolls back the revision, source head, snapshots, catalog, and audits.
+     */
+    @Transactional
+    fun publishEditorContent(api: String, rawJson: String, actorId: UUID): EditorContentPublishOutcome {
+        val model = SourceConfigParser.parseStrictSource(rawJson)
+        StructuralAuthoringGate.check(model, pathApi = api)
+        publishedDocuments.lockPublicationState()
+        val head = sources.lockByApiForUpdate(api) ?: throw SourceNotFoundException(api)
+        mappingLifecycleErrors { LifecycleStateMachine.statusAfterPublish(head.status) }
+        val number = revisions.nextRevisionNumber(head.id)
+        val revision = insertDraftRevision(head.id, number, model, actorId, notes = "published from source editor draft")
+        val validation = validateAndStore(revision.id, model)
+        if (!validation.isValid) throw ValidationFailedException(validation.errors.map { it.toFieldError() })
+        auditRevisionCreated(api, revision, validation, actorId)
+        val snapshot = mappingLifecycleErrors { doPublishDraft(head, revision, model, actorId) }
+        metrics.publication("editor")
+        return EditorContentPublishOutcome(
+            revision =
+            SourceMutationResult(
+                api = api,
+                status = LifecycleStateMachine.statusAfterPublish(head.status),
+                revisionNumber = number,
+                validation = validation,
+            ),
+            publication = PublishOutcome(snapshot.documentRevision, snapshot.checksum, noOp = false),
+        )
+    }
+
     // --- Lifecycle transitions ----------------------------------------------------------------------
 
     @Transactional
@@ -494,3 +525,5 @@ data class SourceAdminView(val head: SourceConfigHead, val currentPublishedRevis
 
 /** A revision plus its latest stored validity flag (PLAN §4.3 revision list). */
 data class RevisionView(val revision: SourceRevision, val valid: Boolean?)
+
+data class EditorContentPublishOutcome(val revision: SourceMutationResult, val publication: PublishOutcome)

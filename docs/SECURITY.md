@@ -124,6 +124,12 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   private API keys in it.* Header names must also be ASCII RFC field-name tokens with no surrounding
   whitespace; invalid names are publication-blocking `HEADER_NAME_INVALID` findings before sensitive-
   name evaluation.
+- **High-impact Source Admin Studio publication is password-stepped-up.** `POST /api/v1/admin/step-up`
+  verifies the already-authenticated ADMIN account password through the existing throttled password
+  path and returns a 256-bit random proof. The proof is scoped to source mutations, expires after five
+  minutes by default (maximum configurable value 15 minutes), and is consumed exactly once. Only its
+  SHA-256 hash is stored in `admin_step_up_grants`; the plaintext proof and submitted password are
+  never logged. The dashboard keeps both JWT and step-up proof out of browser-readable storage.
 
 ## Logging & diagnostics (§6, normative)
 

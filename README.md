@@ -110,7 +110,7 @@ Spring Boot does **not** load `.env` automatically in this project. Run the `sou
 new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
 shell-special password values single-quoted inside `.env`.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V10`); Hibernate
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V12`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
 document is at `/v3/api-docs`.
 
@@ -122,7 +122,7 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 |---|---|
 | [`docs/USAGE.md`](docs/USAGE.md) | Start-to-finish curl walkthrough: login, import, public reads, users, completions, source revisions, lifecycle, and current cautions. |
 | [`docs/PLAN.md`](docs/PLAN.md) | The authoritative specification (§1–§16 + appendices A–C). |
-| [`docs/API.md`](docs/API.md) | Every endpoint: method, auth level, request/response shapes, status codes, ETag/pagination/body-size rules. |
+| [`docs/API.md`](docs/API.md) | Every endpoint: method, auth level, request/response shapes, source-editor optimistic locking, status codes, ETag/pagination/body-size rules. |
 | [`docs/SOURCE_CONFIG_LIFECYCLE.md`](docs/SOURCE_CONFIG_LIFECYCLE.md) | The 6 server states, v1/v2 mappings, publish rules, the 10-step publication sequence + locks, revision numbering, startup consistency + recovery runbook. |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | JWT scheme, DB-backed per-request checks, password policy, throttling + trusted client-IP, secrets policy, and the §6 logging + retention + privacy expectations. |
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | Prerequisites, docker-compose, `.env`, running the app + tests, Swagger, seeding, common gotchas. |
@@ -145,8 +145,8 @@ src/main/kotlin/me/manga/kira/backend/
                    # OpenAPI, Clock, web-diagnostics filter registration
   common/          # problem envelope (ApiError/ApiFieldError), GlobalExceptionHandler, typed exceptions,
                    # PageResponse, Sha256, CanonicalJson (kcj-1), RequestDiagnosticsFilter
-  security/        # SecurityConfig (filter chain), JwtService, DB-backed jwtAuthenticationConverter,
-                   # CurrentUser, AuthThrottleService, ClientIpResolver, AdminSeeder, problem 401/403 handlers
+  security/        # SecurityConfig, JWT/DB-backed auth, password step-up grants, throttling,
+                   # ClientIpResolver, AdminSeeder, and problem 401/403 handlers
   user/            # api (AuthController, AdminUsersController) / domain / application / infrastructure
   sourceconfig/    # api (public: SourceDocument/Sources; admin: AdminSources/AdminDocuments) / domain (+ model, validation)
                    # / application (SourceAdminService, DocumentAssemblyService, BundledImportService, SourceQueryService)
@@ -155,14 +155,14 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V10 (including incremental source-catalog v2)
+  db/migration/    # forward-only V1 through V12 (catalog v2, editor drafts, admin step-up)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```
 
 ## Test suite
 
-**283 tests across 76 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
+**300 tests across 82 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
 Pure-unit tests (validator, canonical JSON, JWT, password hashing, state machine, echo provider,
 contract inventory) run without a Spring context. Integration tests use **Testcontainers PostgreSQL**
 (`postgres:17.6-alpine`, one shared container via `@ServiceConnection`) rather than H2, because the

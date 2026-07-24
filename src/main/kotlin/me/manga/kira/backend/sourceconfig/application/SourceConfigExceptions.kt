@@ -75,5 +75,13 @@ class NonGenericPublicationForbiddenException :
         code = "NON_GENERIC_PUBLICATION_FORBIDDEN",
     )
 
+class SourceDraftNotFoundException : NotFoundException("source editor draft not found.", code = "SOURCE_DRAFT_NOT_FOUND")
+
+class SourceDraftVersionConflictException :
+    ConflictException(
+        "source editor draft changed on the server; reload it before saving again.",
+        code = "SOURCE_DRAFT_VERSION_CONFLICT",
+    )
+
 /** The stable code for the `remove` foot-gun guard 400 (body `{confirm}` must equal the api; PLAN §4.3). */
 const val CONFIRMATION_REQUIRED_CODE = "CONFIRMATION_REQUIRED"
