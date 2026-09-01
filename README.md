@@ -70,7 +70,7 @@ fully-tested change).
 | io.spring.dependency-management | **1.1.7** | `gradle/libs.versions.toml` |
 | kotlinx-serialization-json | **1.8.1** | `gradle/libs.versions.toml` |
 | springdoc-openapi-starter-webmvc-ui | **2.8.17** | `gradle/libs.versions.toml` |
-| Jackson BOM / Commons Lang / Commons Compress security overrides | **2.21.5 / 3.20.0 / 1.28.0** | `gradle/libs.versions.toml` + dependency locks |
+| Jackson BOM / Commons Lang / Commons Compress / Log4j security overrides | **2.21.5 / 3.20.0 / 1.28.0 / 2.25.5** | `gradle/libs.versions.toml` + dependency locks |
 | PostgreSQL Docker image | **`postgres:17.6-alpine`** (digest `sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`) | `docker-compose.yml`, test base class |
 
 **BOM-managed** (versions supplied by the Spring Boot 3.5.16 dependency BOM — recorded for
