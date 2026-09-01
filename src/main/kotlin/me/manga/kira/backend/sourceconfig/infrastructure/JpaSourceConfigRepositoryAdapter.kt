@@ -64,6 +64,9 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
     override fun findAllWithRevisionNumbers(status: SourceLifecycleStatus?): List<AdminSourceListing> {
         val sql =
             "SELECT s.*, current_revision.revision_number AS current_revision_number, " +
+                "CASE WHEN current_revision.id IS NULL THEN NULL " +
+                "ELSE COALESCE(current_revision.config_canonical_json::jsonb ->> 'siteState', 'WORKING') " +
+                "END AS current_site_state, " +
                 "(SELECT MAX(r.revision_number) FROM source_config_revisions r WHERE r.source_config_id = s.id) AS latest_revision_number " +
                 "FROM source_configs s " +
                 "LEFT JOIN source_config_revisions current_revision ON current_revision.id = s.current_published_revision_id " +
@@ -75,6 +78,7 @@ class JpaSourceConfigRepositoryAdapter(private val jpa: SpringDataSourceConfigRe
                     head = requireNotNull(HEAD_MAPPER.mapRow(rs, rowNumber)),
                     currentPublishedRevisionNumber = rs.nullableInt("current_revision_number"),
                     latestRevisionNumber = rs.nullableInt("latest_revision_number"),
+                    currentSiteState = rs.getString("current_site_state"),
                 )
             }
         return if (status == null) jdbcTemplate.query(sql, mapper) else jdbcTemplate.query(sql, mapper, status.wire)

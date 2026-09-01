@@ -77,6 +77,19 @@ class NonGenericPublicationForbiddenException :
         code = "NON_GENERIC_PUBLICATION_FORBIDDEN",
     )
 
+class InvalidSourceOperationalModeException :
+    ApiException(
+        HttpStatus.BAD_REQUEST,
+        "INVALID_SOURCE_OPERATIONAL_MODE",
+        "mode must be one of: enabled, disabled, under_maintenance.",
+    )
+
+class SourceOperationalModeUnavailableException :
+    ConflictException(
+        "the source cannot be managed by the enabled/disabled/maintenance control in its current state.",
+        code = "SOURCE_OPERATIONAL_MODE_UNAVAILABLE",
+    )
+
 class SourceDraftNotFoundException : NotFoundException("source editor draft not found.", code = "SOURCE_DRAFT_NOT_FOUND")
 
 class SourceDraftVersionConflictException :

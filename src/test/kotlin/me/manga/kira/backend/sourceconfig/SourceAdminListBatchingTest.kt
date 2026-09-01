@@ -43,7 +43,7 @@ class SourceAdminListBatchingTest {
                 updatedAt = Instant.EPOCH,
                 publishedAt = Instant.EPOCH,
             )
-        `when`(sources.findAllWithRevisionNumbers(null)).thenReturn(listOf(AdminSourceListing(head, 7, 9)))
+        `when`(sources.findAllWithRevisionNumbers(null)).thenReturn(listOf(AdminSourceListing(head, 7, 9, "WORKING")))
         val service =
             SourceAdminService(
                 sources,
@@ -61,6 +61,7 @@ class SourceAdminListBatchingTest {
 
         assertEquals(7, result.currentPublishedRevisionNumber)
         assertEquals(9, result.latestRevisionNumber)
+        assertEquals("enabled", result.operationalMode?.wire)
         verify(sources).findAllWithRevisionNumbers(null)
         verifyNoInteractions(revisions)
     }

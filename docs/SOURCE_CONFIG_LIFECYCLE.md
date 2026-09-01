@@ -25,6 +25,16 @@ The app's `GET /sources/{api}` contract follows this exactly: `active`/`disabled
 lifecycle; `retired` → **200 with `lifecycle:"removed"`** (returning 410 while the document still
 carries the stanza would be self-contradictory); `removed` → **410**; unknown/draft-only → **404**.
 
+### Admin Studio operational mode
+
+`PUT /api/v1/admin/sources/{api}/operational-mode` is the password-step-up-protected quick control
+for `enabled`, `disabled`, and `under_maintenance`. It is idempotent. `enabled` and `disabled`
+normalize `siteState` to `WORKING`; maintenance keeps the server lifecycle active and publishes
+`siteState:"UNDER_MAINTENANCE"`. A site-state change is recorded as a new immutable source
+revision; a lifecycle-only change reuses the current revision. Every real change materializes one
+document and v2 catalog revision under the global publication lock. `STOPPED`, `ADULT_18_PLUS`,
+draft, withheld, retired, removed, and non-generic sources remain outside this quick control.
+
 ## Transitions
 
 Any transition not shown is **409 `INVALID_LIFECYCLE_TRANSITION`**.
@@ -142,7 +152,7 @@ path (it survives only inside the startup comparison).
 
 ## The 10-step publication sequence (globally serialized)
 
-Every state-visible document mutation — publish, disable, enable, retire, remove, rollback, bundled
+Every state-visible document mutation — publish, operational-mode change, disable, enable, retire, remove, rollback, bundled
 import, and `republish` — runs this exact sequence inside **one** transaction. The per-mutation
 transaction alone is not enough: without global ordering, two concurrent mutations each assemble a
 candidate from a snapshot that predates the other's commit, and the later revision silently loses the

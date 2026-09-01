@@ -227,6 +227,7 @@ Tier-1 checks still run before finalization or publication.
 | `POST /admin/sources/{api}/revisions/{n}/publish` | Publish (server re-validates in-tx). | 200 (or 200 no-op) · 422 invalid · 409 · 404 |
 | `POST /admin/sources/{api}/disable` | `active → disabled`. | 200 · 409 |
 | `POST /admin/sources/{api}/enable` | `disabled → active`; `retired → active` (generic only). | 200 · 409 |
+| `PUT /admin/sources/{api}/operational-mode` | Idempotently set `{mode:"enabled"|"disabled"|"under_maintenance"}`. Requires `X-Kira-Admin-Step-Up`; publishes exactly one signed catalog revision for a real change. | 200 · 400 · 401 · 404 · 409 |
 | `POST /admin/sources/{api}/retire` | `disabled → retired` only. | 200 · 409 |
 | `POST /admin/sources/{api}/remove` | `retired → removed` (terminal). Body `{confirm: "<api>"}`. | 200 · 409 · 400 |
 | `POST /admin/sources/{api}/rollback` | Body `{toRevision}`. Copies that content into a new highest revision, re-validates, publishes. | 200 · 422 · 409 · 404 |
@@ -258,7 +259,7 @@ values):
 - Create / new revision → `SourceMutationResponse`:
   `{ "api", "status", "revisionNumber", "validation": { "valid", "errors": [{code,path,message}], "warnings": [...] } }`
 - `GET /admin/sources` item / `GET /admin/sources/{api}` → `AdminSourceResponse`:
-  `{ "api", "displayName", "language", "engine", "status", "position", "baseUrl", "adult",
+  `{ "api", "displayName", "language", "engine", "status", "siteState"?, "operationalMode"?, "position", "baseUrl", "adult",
      "currentPublishedRevisionNumber"?, "latestRevisionNumber"?, "createdAt", "updatedAt", "publishedAt"? }`
 - Revision list item → `{ "revisionNumber", "status", "checksum", "createdBy", "createdAt", "publishedAt"?, "valid"? }`
 - Revision detail → `{ "revisionNumber", "status", "config": <raw canonical JSON>, "checksum",
@@ -266,6 +267,9 @@ values):
      lifecycle-neutral canonical bytes emitted verbatim.
 - Publish / lifecycle transitions → `{ "documentRevision", "checksum" }`. A currently-published
   revision re-published → **200 no-op** (no new snapshot).
+- Operational mode → `{ "api", "mode", "sourceRevisionNumber", "documentRevision", "checksum",
+  "noOp" }`. `STOPPED`, `ADULT_18_PLUS`, drafts, withheld, retired, removed, and non-generic
+  sources are intentionally outside this quick control.
 - Rollback → `{ "newRevisionNumber", "documentRevision", "checksum" }`.
 - Editor draft → `{ "id", "basedOnRevisionNumber", "content", "version", "createdBy", "updatedBy",
   "createdAt", "updatedAt" }` plus `ETag: "draft-N"`.

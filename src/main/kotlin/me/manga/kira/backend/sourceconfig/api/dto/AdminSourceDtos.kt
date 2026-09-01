@@ -11,6 +11,7 @@ import me.manga.kira.backend.sourceconfig.application.RevisionView
 import me.manga.kira.backend.sourceconfig.application.RollbackOutcome
 import me.manga.kira.backend.sourceconfig.application.SourceAdminView
 import me.manga.kira.backend.sourceconfig.application.SourceMutationResult
+import me.manga.kira.backend.sourceconfig.application.SourceOperationalModeOutcome
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.validation.ValidationError
 import me.manga.kira.backend.sourceconfig.validation.ValidationResult
@@ -64,6 +65,8 @@ data class AdminSourceResponse(
     val language: String,
     val engine: String,
     val status: String,
+    val siteState: String?,
+    val operationalMode: String?,
     val position: Int,
     val baseUrl: String,
     val adult: Boolean,
@@ -82,6 +85,8 @@ data class AdminSourceResponse(
                 language = h.language,
                 engine = h.engine,
                 status = h.status.wire,
+                siteState = view.siteState,
+                operationalMode = view.operationalMode?.wire,
                 position = h.position,
                 baseUrl = h.baseUrl,
                 adult = h.adult,
@@ -158,6 +163,28 @@ data class RevisionDetailResponse(
 data class PublishResponse(val documentRevision: Long, val checksum: String) {
     companion object {
         fun of(outcome: PublishOutcome) = PublishResponse(outcome.documentRevision, outcome.checksum)
+    }
+}
+
+data class SourceOperationalModeRequest(@field:NotBlank val mode: String = "")
+
+data class SourceOperationalModeResponse(
+    val api: String,
+    val mode: String,
+    val sourceRevisionNumber: Int,
+    val documentRevision: Long,
+    val checksum: String,
+    val noOp: Boolean,
+) {
+    companion object {
+        fun of(outcome: SourceOperationalModeOutcome) = SourceOperationalModeResponse(
+            api = outcome.api,
+            mode = outcome.mode.wire,
+            sourceRevisionNumber = outcome.sourceRevisionNumber,
+            documentRevision = outcome.documentRevision,
+            checksum = outcome.checksum,
+            noOp = outcome.noOp,
+        )
     }
 }
 

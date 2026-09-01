@@ -19,6 +19,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.ResultActionsDsl
 import org.springframework.test.web.servlet.get
 import org.springframework.test.web.servlet.post
+import org.springframework.test.web.servlet.put
 import java.util.UUID
 
 /**
@@ -108,6 +109,15 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected fun disable(api: String): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/disable")
 
     protected fun enable(api: String): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/enable")
+
+    protected fun setOperationalMode(api: String, mode: String, proof: String?): ResultActionsDsl = mockMvc.put(
+        "/api/v1/admin/sources/$api/operational-mode",
+    ) {
+        header("Authorization", "Bearer $adminToken")
+        if (proof != null) header("X-Kira-Admin-Step-Up", proof)
+        contentType = MediaType.APPLICATION_JSON
+        content = objectMapper.writeValueAsString(mapOf("mode" to mode))
+    }
 
     protected fun retire(api: String): ResultActionsDsl = adminPost("/api/v1/admin/sources/$api/retire")
 

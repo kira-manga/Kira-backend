@@ -20,6 +20,7 @@ import me.manga.kira.backend.sourceconfig.domain.RevisionStatus
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigHead
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
+import me.manga.kira.backend.sourceconfig.domain.SourceOperationalMode
 import me.manga.kira.backend.sourceconfig.domain.SourceRevision
 import me.manga.kira.backend.sourceconfig.domain.UnretireNotAllowedForEngineException
 import me.manga.kira.backend.sourceconfig.domain.ValidationResultRepository
@@ -127,9 +128,15 @@ class SourceAdminService(
     @Transactional(readOnly = true)
     fun getSource(api: String): SourceAdminView {
         val head = sources.findByApi(api) ?: throw SourceNotFoundException(api)
-        val currentPublishedNumber =
-            head.currentPublishedRevisionId?.let { revisions.findById(it)?.revisionNumber }
-        return SourceAdminView(head, currentPublishedNumber, revisions.latestRevisionNumber(head.id))
+        val currentRevision = head.currentPublishedRevisionId?.let(revisions::findById)
+        val siteState = currentRevision?.let(::decodeStored)?.siteState
+        return SourceAdminView(
+            head = head,
+            currentPublishedRevisionNumber = currentRevision?.revisionNumber,
+            latestRevisionNumber = revisions.latestRevisionNumber(head.id),
+            siteState = siteState,
+            operationalMode = siteState?.let { SourceOperationalMode.current(head.status, it) },
+        )
     }
 
     @Transactional(readOnly = true)
@@ -138,6 +145,8 @@ class SourceAdminService(
             listing.head,
             listing.currentPublishedRevisionNumber,
             listing.latestRevisionNumber,
+            listing.currentSiteState,
+            listing.currentSiteState?.let { SourceOperationalMode.current(listing.head.status, it) },
         )
     }
 
@@ -666,7 +675,13 @@ data class PublishOutcome(val documentRevision: Long, val checksum: String, val 
 data class RollbackOutcome(val newRevisionNumber: Int, val documentRevision: Long, val checksum: String)
 
 /** The admin view of a source head plus its published/latest revision numbers (PLAN §4.3). */
-data class SourceAdminView(val head: SourceConfigHead, val currentPublishedRevisionNumber: Int?, val latestRevisionNumber: Int?)
+data class SourceAdminView(
+    val head: SourceConfigHead,
+    val currentPublishedRevisionNumber: Int?,
+    val latestRevisionNumber: Int?,
+    val siteState: String?,
+    val operationalMode: SourceOperationalMode?,
+)
 
 /** A revision plus its latest stored validity flag (PLAN §4.3 revision list). */
 data class RevisionView(val revision: SourceRevision, val valid: Boolean?)

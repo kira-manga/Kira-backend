@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest
 import jakarta.validation.Valid
 import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.PayloadTooLargeException
+import me.manga.kira.backend.security.AdminStepUpService
 import me.manga.kira.backend.security.AuthenticatedUser
 import me.manga.kira.backend.sourceconfig.api.dto.AdminSourceResponse
 import me.manga.kira.backend.sourceconfig.api.dto.ImportBundledResponse
@@ -14,16 +15,23 @@ import me.manga.kira.backend.sourceconfig.api.dto.RevisionSummaryResponse
 import me.manga.kira.backend.sourceconfig.api.dto.RollbackRequest
 import me.manga.kira.backend.sourceconfig.api.dto.RollbackResponse
 import me.manga.kira.backend.sourceconfig.api.dto.SourceMutationResponse
+import me.manga.kira.backend.sourceconfig.api.dto.SourceOperationalModeRequest
+import me.manga.kira.backend.sourceconfig.api.dto.SourceOperationalModeResponse
 import me.manga.kira.backend.sourceconfig.api.dto.ValidationResultDto
 import me.manga.kira.backend.sourceconfig.application.BundledImportService
+import me.manga.kira.backend.sourceconfig.application.InvalidSourceOperationalModeException
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
+import me.manga.kira.backend.sourceconfig.application.SourceOperationalModeService
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
+import me.manga.kira.backend.sourceconfig.domain.SourceOperationalMode
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.ResponseStatus
@@ -40,7 +48,12 @@ import org.springframework.web.bind.annotation.RestController
  */
 @RestController
 @RequestMapping("/api/v1/admin/sources")
-class AdminSourcesController(private val sourceAdminService: SourceAdminService, private val bundledImportService: BundledImportService) {
+class AdminSourcesController(
+    private val sourceAdminService: SourceAdminService,
+    private val operationalModes: SourceOperationalModeService,
+    private val bundledImportService: BundledImportService,
+    private val stepUp: AdminStepUpService,
+) {
 
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
@@ -96,6 +109,20 @@ class AdminSourcesController(private val sourceAdminService: SourceAdminService,
     @PostMapping("/{api}/enable")
     fun enable(@PathVariable api: String, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =
         PublishResponse.of(sourceAdminService.enable(api, admin.id))
+
+    @PutMapping("/{api}/operational-mode")
+    fun setOperationalMode(
+        @PathVariable api: String,
+        @Valid @RequestBody request: SourceOperationalModeRequest,
+        @RequestHeader(name = AdminStepUpService.HEADER, required = false) proof: String?,
+        @AuthenticationPrincipal admin: AuthenticatedUser,
+    ): SourceOperationalModeResponse {
+        val mode =
+            SourceOperationalMode.fromWire(request.mode)
+                ?: throw InvalidSourceOperationalModeException()
+        stepUp.requireSourceMutation(admin.id, proof)
+        return SourceOperationalModeResponse.of(operationalModes.set(api, mode, admin.id))
+    }
 
     @PostMapping("/{api}/retire")
     fun retire(@PathVariable api: String, @AuthenticationPrincipal admin: AuthenticatedUser): PublishResponse =

@@ -88,7 +88,13 @@ interface SourceConfigRepository {
     fun updatePosition(id: UUID, position: Int, updatedAt: Instant)
 }
 
-data class AdminSourceListing(val head: SourceConfigHead, val currentPublishedRevisionNumber: Int?, val latestRevisionNumber: Int?)
+data class AdminSourceListing(
+    val head: SourceConfigHead,
+    val currentPublishedRevisionNumber: Int?,
+    val latestRevisionNumber: Int?,
+    /** App-facing state from the current immutable revision; null before first publication. */
+    val currentSiteState: String? = null,
+)
 
 /**
  * The fields needed to create a `source_configs` row (PLAN §5). [position] is the normative document
