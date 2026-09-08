@@ -1,5 +1,6 @@
 package me.manga.kira.backend.support
 
+import me.manga.kira.backend.database.complaint.complaintResource
 import me.manga.kira.backend.security.AuthThrottleService
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
@@ -51,6 +52,9 @@ abstract class AbstractIntegrationTest {
 
     @BeforeEach
     fun resetState() {
+        // Disposable fixtures only: release complaint closure/user and scoped bookkeeping FKs first.
+        // Reinstates exact closed V14 seeds; this is not a production erasure implementation.
+        jdbcTemplate.execute(complaintResource("fixtures/complaint/reset.sql"))
         // 1) Break the pointer/self references that would block RESTRICT deletes.
         jdbcTemplate.update("UPDATE document_publication_state SET latest_document_revision = NULL WHERE id = 1")
         jdbcTemplate.update("UPDATE source_configs SET current_published_revision_id = NULL")

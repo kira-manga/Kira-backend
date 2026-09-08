@@ -73,13 +73,12 @@ fully-tested change).
 | Jackson BOM / Commons Lang / Commons Compress / Log4j security overrides | **2.21.5 / 3.20.0 / 1.28.0 / 2.25.5** | `gradle/libs.versions.toml` + dependency locks |
 | PostgreSQL Docker image | **`postgres:17.6-alpine`** (digest `sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94`) | `docker-compose.yml`, test base class |
 
-**BOM-managed** (versions supplied by the Spring Boot 3.5.16 dependency BOM — recorded for
-provenance, not separately pinned):
+**BOM-managed**, except explicit overrides noted below (versions recorded for provenance):
 
 | Component | Resolved version |
 |---|---|
 | Testcontainers (postgresql, junit-jupiter, core) | **1.21.4** |
-| PostgreSQL JDBC driver | **42.7.11** |
+| PostgreSQL JDBC driver (override in `build.gradle.kts`) | **42.7.12** |
 | Flyway (flyway-core, flyway-database-postgresql) | **11.7.2** |
 | spring-security-oauth2-jose (Nimbus, via oauth2-resource-server) | **6.5.11** |
 
@@ -111,9 +110,12 @@ Spring Boot does **not** load `.env` automatically in this project. Run the `sou
 new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
 shell-special password values single-quoted inside `.env`.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V13`); Hibernate
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V14`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
 document is at `/v3/api-docs`.
+
+V14 adds backend-owned complaint storage with closed, zero-capacity seeds. It does not enable
+complaint APIs or authorize a Firebase cutover; see [`docs/COMPLAINT_SCHEMA.md`](docs/COMPLAINT_SCHEMA.md).
 
 See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, seeding data, and gotchas.
 
@@ -126,6 +128,8 @@ See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, se
 | [`docs/API.md`](docs/API.md) | Every endpoint: method, auth level, request/response shapes, source-editor optimistic locking, status codes, ETag/pagination/body-size rules. |
 | [`docs/SOURCE_CONFIG_LIFECYCLE.md`](docs/SOURCE_CONFIG_LIFECYCLE.md) | The 6 server states, v1/v2 mappings, publish rules, the 10-step publication sequence + locks, revision numbering, startup consistency + recovery runbook. |
 | [`docs/SECURITY.md`](docs/SECURITY.md) | JWT scheme, DB-backed per-request checks, password policy, throttling + trusted client-IP, secrets policy, and the §6 logging + retention + privacy expectations. |
+| [`docs/COMPLAINT_SCHEMA.md`](docs/COMPLAINT_SCHEMA.md) | V14 complaint storage, identity/recovery records, limits, closed seeds, test coverage and remaining writer/cutover gates. |
+| [`docs/COMPLAINT_DRIVER_LIFECYCLE.md`](docs/COMPLAINT_DRIVER_LIFECYCLE.md) | Unwired complaint connection lifecycle, ownership, retirement policies, shutdown evidence and remaining activation gates. |
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | Prerequisites, docker-compose, `.env`, running the app + tests, Swagger, seeding, common gotchas. |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Production Kubernetes topology, rollout, drain, rollback, and forward-recovery procedure. |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Reproducible build, immutable image, semantic tag, SBOM, provenance, and publishing procedure. |
@@ -156,14 +160,14 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V13 (catalog v2, editor drafts, step-up, changesets)
+  db/migration/    # forward-only V1 through V14 (including closed backend-owned complaint storage)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```
 
 ## Test suite
 
-**305 tests across 84 suites** (0 failures / 0 errors / 0 skipped on the current full Testcontainers gate).
+The full gate runs unit and PostgreSQL integration suites; use its generated reports for current counts.
 Pure-unit tests (validator, canonical JSON, JWT, password hashing, state machine, echo provider,
 contract inventory) run without a Spring context. Integration tests use **Testcontainers PostgreSQL**
 (`postgres:17.6-alpine`, one shared container via `@ServiceConnection`) rather than H2, because the
