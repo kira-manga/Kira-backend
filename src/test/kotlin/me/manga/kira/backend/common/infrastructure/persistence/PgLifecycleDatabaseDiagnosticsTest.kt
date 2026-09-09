@@ -75,6 +75,59 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         assertEquals(PersistenceFactoryProcessing.PENDING, second.state())
     }
 
+    @Test
+    fun `MODEL early one shot completion keeps the exact result without needing a retained entry or rendering its candidate`() {
+        val receipt = PersistenceFactoryProcessingCell().receipt
+        val renders = AtomicInteger()
+        val candidate = object {
+            override fun toString(): String {
+                renders.incrementAndGet()
+                error("Synthetic early-result candidate must not be rendered.")
+            }
+        }
+        val results: List<PersistenceFactoryResult<Any>> = listOf(
+            PersistenceFactoryResult.Refused(PersistenceFactoryFailure.BUSY),
+            PersistenceFactoryResult.Failed(PersistenceFactoryFailure.CREATE_FAILED, receipt),
+            PersistenceFactoryResult.Success(candidate, receipt),
+        )
+        results.forEach { result ->
+            var calls = 0
+            val actual = PgLifecycleDatabaseDiagnostics.originalCall(case(), 0, APPLICATION) {
+                calls++
+                result
+            }
+            assertSame(result, actual)
+            assertEquals(1, calls)
+            val line = PgLifecycleDatabaseDiagnostics.originalCallLines(case(), 0, APPLICATION, Result.success(actual)).single()
+            assertTrue(line.contains("entry=UNAVAILABLE state=RETURNED"))
+            val identity = if (result is PersistenceFactoryResult.Refused) "NOT_APPLICABLE" else "UNAVAILABLE"
+            assertTrue(line.contains("control_receipt=$identity attempt_receipt=$identity"))
+        }
+        assertEquals(0, renders.get())
+        assertEquals(PersistenceFactoryProcessing.PENDING, receipt.state())
+        assertThrows(IllegalStateException::class.java) { candidate.toString() }
+        assertEquals(1, renders.get())
+    }
+
+    @Test
+    fun `MODEL pending and thrown original calls never invent a result or inspect a hostile failure`() {
+        val pending = PgLifecycleDatabaseDiagnostics.originalCallLines(case(), 0, APPLICATION, null).single()
+        assertTrue(pending.contains("entry=UNAVAILABLE state=PENDING result=UNOBSERVED"))
+        val failure = PhysicalHostileFailure()
+        var calls = 0
+        val caught = assertThrows(PhysicalHostileFailure::class.java) {
+            PgLifecycleDatabaseDiagnostics.originalCall<Any>(case(), 0, APPLICATION) {
+                calls++
+                throw failure
+            }
+        }
+        assertSame(failure, caught)
+        assertEquals(1, calls)
+        val line = PgLifecycleDatabaseDiagnostics.originalCallLines(case(), 0, APPLICATION, Result.failure(failure)).single()
+        assertTrue(line.contains("entry=UNAVAILABLE state=THREW result=UNOBSERVED"))
+        assertEquals(0, failure.reads.get())
+    }
+
     @ParameterizedTest
     @ValueSource(strings = ["F", "G"])
     fun `MODEL contended bookkeeping stays unavailable and preserves caller budget`(lockName: String) = OwnedCallerTestScope().use { scope ->
@@ -159,14 +212,22 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         check(rows.distinct().size == 83)
         rows.forEach { row ->
             var total = 0
+            var progressTotal = 0
             repeat(row.attempts) { ordinal ->
                 val lines = PgLifecycleDatabaseDiagnostics.resultLines(row, ordinal, APPLICATION, model.binding, model.entry, model.result)
                 val bytes = lines.sumOf { it.toByteArray(Charsets.US_ASCII).size + 1 }
                 assertTrue(lines.all { line -> line.all { it.code in 32..126 } })
                 assertTrue(bytes <= PgLifecycleDatabaseDiagnostics.MAX_CHARACTERS)
                 total += bytes
+                val progress = PgLifecycleDatabaseChildStage.entries.map { PgLifecycleDatabaseDiagnostics.childStageLine(row, ordinal, APPLICATION, it) } +
+                    PgLifecycleDatabaseDiagnostics.originalCallLines(row, ordinal, APPLICATION, null) +
+                    PgLifecycleDatabaseDiagnostics.originalCallLines(row, ordinal, APPLICATION, Result.success(model.result)) +
+                    PgLifecycleDatabaseDiagnostics.originalCallLines(row, ordinal, APPLICATION, Result.failure(PhysicalHostileFailure()))
+                assertTrue(progress.all { line -> line.all { it.code in 32..126 } })
+                progressTotal += progress.sumOf { it.toByteArray(Charsets.US_ASCII).size + 1 }
             }
             assertTrue(total <= 4_096) // Diagnostic contribution only; the existing 16KiB total child cap is unchanged.
+            assertTrue(total + progressTotal <= 8_192) // Includes both possible completion variants; leaves half the cap for other child records.
         }
         assertThrows(IllegalStateException::class.java) {
             PgLifecycleDatabaseDiagnostics.resultLines(case(), 0, "untrusted\nidentity", model.binding, model.entry, model.result)

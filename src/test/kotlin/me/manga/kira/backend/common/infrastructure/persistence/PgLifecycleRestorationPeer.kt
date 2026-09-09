@@ -32,13 +32,18 @@ internal class PgLifecycleRestorationPeer : AutoCloseable {
         actor.start()
     }
 
-    fun awaitStartup() {
+    fun awaitStartup(progress: () -> Unit) {
         awaitLifecycleFact {
             problem.get()?.let { throw it }
+            progress()
             startup.count == 0L
         }
+        progress()
         check(!closing.get() && end.get() == null && !requireNotNull(accepted.get()).isClosed)
     }
+
+    fun diagnostic(): String = "peer_accepted=${accepted.get() != null} peer_startup=${startup.count == 0L} peer_end=${end.get()?.name ?: "UNOBSERVED"} " +
+        "peer_problem_present=${problem.get() != null} peer_closing=${closing.get()} peer_actor_alive=${actor.isAlive}"
 
     private fun serve() {
         runCatching {

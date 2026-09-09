@@ -16,10 +16,7 @@ internal object PgLifecycleNegotiationCases {
                 peer.start()
                 val endpoint = PgLifecycleNegotiationSettings.endpoint(peer, recipe, root)
                 PgLifecycleTestScope(endpoint).use { scope ->
-                    scope.start()
-                    if (deletion) scope.prepareDeletion()
-                    runAttempts(scope, peer, deletion, recipe, endpoint)
-                    PgLifecycleTlsAssertions.shutdown(scope)
+                    verifyScope(scope, peer, deletion, recipe, endpoint)
                 }
                 peer.verifyNoExtraConnections()
             }
@@ -31,12 +28,30 @@ internal object PgLifecycleNegotiationCases {
         )
     }
 
+    private fun verifyScope(
+        scope: PgLifecycleTestScope,
+        peer: PgLifecycleNegotiationPeer,
+        deletion: Boolean,
+        recipe: PgLifecycleNegotiationMode,
+        endpoint: ResolvedPersistenceEndpoint,
+    ) {
+        PgLifecycleAdmissionScheduling(scope).use { admission ->
+            // The same scanner serves both lanes; retain its ordinary G-only cut before any actor starts.
+            installLifecycleModelLock(scope, PgLifecycleAdmissionLock(admission))
+            scope.start()
+            if (deletion) scope.prepareDeletion()
+            runAttempts(scope, peer, deletion, recipe, endpoint, admission)
+            PgLifecycleTlsAssertions.shutdown(scope)
+        }
+    }
+
     private fun runAttempts(
         scope: PgLifecycleTestScope,
         peer: PgLifecycleNegotiationPeer,
         deletion: Boolean,
         recipe: PgLifecycleNegotiationMode,
         endpoint: ResolvedPersistenceEndpoint,
+        admission: PgLifecycleAdmissionScheduling,
     ) {
         var previous: PgLifecycleNegotiationWitness? = null
         var previousEndedAt = 0L
@@ -46,7 +61,7 @@ internal object PgLifecycleNegotiationCases {
                 // hostRecheckSeconds=0 then reconsiders the refused first host without private cache mutation.
                 awaitLifecycleFact(1_000) { System.nanoTime() - previousEndedAt >= 2_000_000 }
             }
-            previous = attempt(scope, peer, index, deletion, recipe, endpoint, previous)
+            previous = attempt(scope, peer, index, deletion, recipe, endpoint, previous, admission)
             previousEndedAt = System.nanoTime()
         }
     }
@@ -59,14 +74,25 @@ internal object PgLifecycleNegotiationCases {
         recipe: PgLifecycleNegotiationMode,
         endpoint: ResolvedPersistenceEndpoint,
         previous: PgLifecycleNegotiationWitness?,
+        admission: PgLifecycleAdmissionScheduling,
         cut: PgLifecycleNegotiationCut = PgLifecycleNegotiationCut.NONE,
     ): PgLifecycleNegotiationWitness {
         awaitLifecycleFact { scope.binding(deletion).isOwnedReceiverReady() }
         peer.arm(index)
         return PgLifecycleTlsRequest(scope, deletion).use { caller ->
             try {
-                caller.start()
-                peer.awaitInitial(index)
+                admission.during("fixture=NEGOTIATION ordinal=$index deletion=$deletion recipe=${recipe.name}") {
+                    caller.start()
+                    PgLifecycleDatabaseDiagnostics.preservingFailure(
+                        {
+                            println(
+                                "PG_LIFECYCLE_STARTUP_DIAGNOSTIC fixture=NEGOTIATION ordinal=$index deletion=$deletion recipe=${recipe.name} " +
+                                    caller.diagnostic() + " " + peer.diagnostic(index),
+                            )
+                        },
+                        { peer.awaitInitial(index) },
+                    )
+                }
                 val witness = PgLifecycleNegotiationAssertions.admitted(scope, deletion, endpoint)
                 cut.failAt(PgLifecycleNegotiationCut.INITIAL_RESPONSE, peer, index)
                 if (previous != null) PgLifecycleNegotiationAssertions.staleAlias(scope, deletion, previous, witness)

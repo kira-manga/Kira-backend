@@ -55,6 +55,14 @@ internal class PgLifecycleNegotiationPeer(private val mode: PgLifecycleNegotiati
 
     fun awaitInitial(index: Int) = await { attempts[index].initialSeen.count == 0L }
 
+    /** Independently sampled fixture facts, not an atomic snapshot or admission/cleanup evidence. */
+    fun diagnostic(index: Int): String {
+        val attempt = attempts[index]
+        return "observation=MIXED accepted_listener0=${connections[0].get()} accepted_listener1=${connections[1].get()} " +
+            "armed=${attempt.armed.get()} initial_seen=${attempt.initialSeen.count == 0L} " +
+            "held_gate=${attempt.heldGate.get().name} problem_present=${problem.get() != null}"
+    }
+
     fun releaseResponse(index: Int) = attempts[index].allowResponse.countDown()
 
     fun awaitFinalStartup(index: Int) {

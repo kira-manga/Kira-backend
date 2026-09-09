@@ -48,6 +48,44 @@ internal class PgLifecycleRestorationCaller(private val owner: PersistenceJdbcLi
         }
     }
 
+    /** Startup polling observes only this original call; it neither starts another request nor waits for completion. */
+    fun requireRequestPending() {
+        val returned = result.get()
+        val requestEnded = requestReturned.get()
+        val bodyExited = bodyEnded.get()
+        throwProblem() // Read after the end markers so an already-published original problem is rethrown unchanged.
+        check(returned == null && !requestEnded && !bodyExited) { "Original restoration request was no longer pending before the held-call scenario." }
+    }
+
+    /** Independently sampled facts; a missing result is not refusal and a receipt is not an identity match. */
+    fun diagnostic(): String {
+        val requestEnded = requestReturned.get()
+        val returned = result.get()
+        val actualFlag = if (requestEnded) returnedFlag.get().toString() else "UNOBSERVED"
+        val kind = when (returned) {
+            null -> "UNOBSERVED"
+            is PersistenceFactoryResult.Success -> "SUCCESS"
+            is PersistenceFactoryResult.Refused -> "REFUSED"
+            is PersistenceFactoryResult.Failed -> "FAILED"
+        }
+        val absent = if (returned == null) "UNOBSERVED" else "NOT_APPLICABLE"
+        val reason = when (returned) {
+            is PersistenceFactoryResult.Refused -> returned.reason.name
+            is PersistenceFactoryResult.Failed -> returned.reason.name
+            else -> absent
+        }
+        val receipt = when (returned) {
+            is PersistenceFactoryResult.Success -> returned.receipt
+            is PersistenceFactoryResult.Failed -> returned.receipt
+            else -> null
+        }
+        return "result_published=${returned != null} result=$kind reason=$reason receipt_present=${receipt != null} " +
+            "receipt_state=${receipt?.state()?.name ?: absent} request_returned=$requestEnded returned_actual_flag=$actualFlag " +
+            "problem_present=${problem.get() != null} caller_alive=$isAlive body_entered=${bodyEntered.get()} body_ended=${bodyEnded.get()} " +
+            "sample_entered=${sample.entered()} sample_held=${sample.held()} sample_exited=${sample.exited()} " +
+            "restoration_entered=${restoration.entered()} restoration_held=${restoration.held()} restoration_exited=${restoration.exited()}"
+    }
+
     override fun isInterrupted(): Boolean {
         val exact = witness.get()
         if (Thread.currentThread() === this && exact != null && sampleClaimed.compareAndSet(false, true)) {

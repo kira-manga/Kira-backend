@@ -6,8 +6,7 @@ internal object PgLifecycleRestorationCases {
         PgLifecycleRestorationFixture(deletion).use { fixture ->
             val timer = fixture.start()
             val caller = fixture.caller
-            caller.launch()
-            fixture.peer.awaitStartup()
+            fixture.launchCaller()
             val exact = PgLifecycleRestorationAttempt.capture(fixture.scope, deletion)
             caller.holdNextSample(exact)
             awaitLifecycleFact {

@@ -7,6 +7,37 @@ internal object PgLifecycleDatabaseDiagnostics {
     const val MAX_CHARACTERS = 2_048
     const val UNAVAILABLE = "PG_DATABASE_DIAGNOSTIC_UNAVAILABLE v=1"
 
+    /** Child-stack observations only; callers place these before/after existing operations outside F/G/T. */
+    fun childStage(case: PgLifecycleDatabaseCase, ordinal: Int, application: String, stage: PgLifecycleDatabaseChildStage) = safely {
+        emit(listOf(childStageLine(case, ordinal, application, stage)))
+    }
+
+    fun childStageLine(case: PgLifecycleDatabaseCase, ordinal: Int, application: String, stage: PgLifecycleDatabaseChildStage): String =
+        "PG_DATABASE_CHILD_STAGE v=1 ${identity(case, ordinal, application)} observation=CHILD_STACK stage=${stage.name}"
+            .also { checkBound(listOf(it)) }
+
+    /** Wrap exactly the existing one-shot caller, not retention polling or a second request. Never inspect its candidate or Throwable. */
+    fun <T : Any> originalCall(
+        case: PgLifecycleDatabaseCase,
+        ordinal: Int,
+        application: String,
+        operation: () -> PersistenceFactoryResult<T>,
+    ): PersistenceFactoryResult<T> {
+        safely { emit(originalCallLines(case, ordinal, application, null)) }
+        val outcome = runCatching(operation)
+        safely { emit(originalCallLines(case, ordinal, application, outcome)) }
+        return outcome.getOrThrow()
+    }
+
+    fun originalCallLines(case: PgLifecycleDatabaseCase, ordinal: Int, application: String, outcome: Result<PersistenceFactoryResult<*>>?): List<String> {
+        val fields = when {
+            outcome == null -> "state=PENDING result=UNOBSERVED"
+            outcome.isFailure -> "state=THREW result=UNOBSERVED"
+            else -> "state=RETURNED ${resultFields(outcome.getOrThrow(), null, null)}"
+        }
+        return listOf("PG_DATABASE_ORIGINAL_CALL v=1 ${identity(case, ordinal, application)} entry=UNAVAILABLE $fields").also(::checkBound)
+    }
+
     /** Runtime hook is called outside F/G/T. Binding lookup failure removes only the optional locked details. */
     fun result(
         case: PgLifecycleDatabaseCase,
@@ -186,6 +217,14 @@ internal object PgLifecycleDatabaseDiagnostics {
 
         fun noFailure(): String = if (phase != null) "NONE" else "UNAVAILABLE"
     }
+}
+
+internal enum class PgLifecycleDatabaseChildStage {
+    WAIT_START,
+    WAIT_RECEIVER,
+    START_CALLER,
+    WAIT_RETAIN,
+    RETAINED,
 }
 
 internal enum class PgLifecycleDatabaseObservationPhase {

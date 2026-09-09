@@ -10,6 +10,7 @@ internal class PgLifecycleRestorationFixture(private val deletion: Boolean) : Au
     private var acquired = false
     private var retainedScope: PgLifecycleTestScope? = null
     private var retainedCaller: PgLifecycleRestorationCaller? = null
+    private var admission: PgLifecycleAdmissionScheduling? = null
     private var actors = emptyList<PersistenceRetainedPlatformThread>()
     private val cleanupProblems = mutableListOf<Throwable>()
     val scope: PgLifecycleTestScope get() = requireNotNull(retainedScope)
@@ -21,12 +22,46 @@ internal class PgLifecycleRestorationFixture(private val deletion: Boolean) : Au
         peer.start()
         retainedScope = PgLifecycleTestScope(pgProbeEndpoint(peer.port))
         actors = scope.actors() // Exact root wrappers and Threads retained before ANY root actor starts.
+        val scheduling = PgLifecycleAdmissionScheduling(scope)
+        admission = scheduling // Retain before fallible installation/start, including a failed cut wait.
+        installLifecycleModelLock(scope, PgLifecycleAdmissionLock(scheduling))
         retainedCaller = PgLifecycleRestorationCaller(scope.owner, deletion)
         check(actors.all { it.startPhase() === PersistenceThreadStartPhase.NEW && !it.thread.isAlive })
         scope.start()
         if (deletion) scope.prepareDeletion()
         awaitLifecycleFact { scope.binding(deletion).isOwnedReceiverReady() }
         return PgLifecycleRestorationTimer(foreign, scope) // Real foreign task starts only AFTER genuine capture/readiness.
+    }
+
+    fun launchCaller() {
+        var stage = StartupStage.ARM_CUT
+        var reported = false
+        val diagnostic: (Throwable) -> Unit = { original ->
+            if (!reported) {
+                reported = true
+                runCatching { reportStartup(stage) }.exceptionOrNull()?.let { if (it !== original) original.addSuppressed(it) }
+            }
+        }
+        runCatching {
+            requireNotNull(admission).during("fixture=RESTORATION lane=$lane ordinal=0") {
+                // Original caller/startup failure is sampled before even the admission cut is released.
+                runCatching {
+                    stage = StartupStage.LAUNCH_CALLER
+                    caller.launch()
+                    stage = StartupStage.WAIT_STARTUP
+                    peer.awaitStartup(caller::requireRequestPending)
+                    stage = StartupStage.RELEASE_CUT
+                }.onFailure(diagnostic).getOrThrow()
+            }
+        }.onFailure(diagnostic).getOrThrow() // Also diagnose cut-only failure, still before independent fixture cleanup.
+        // Release/acknowledge before attempt capture; never await the intentionally held request's completion here.
+    }
+
+    private fun reportStartup(stage: StartupStage) {
+        val line = "PG_LIFECYCLE_RESTORATION_STARTUP_DIAGNOSTIC v=1 stage=${stage.name} lane=$lane observation=PRE_CLEANUP_MIXED " +
+            caller.diagnostic() + " " + peer.diagnostic()
+        check(line.length <= 1_024 && line.all { it.code in 32..126 })
+        println(line) // Fixed vocabulary only, before caller/Timer gates or shutdown cleanup can induce a result.
     }
 
     fun requireUnchangedActiveRoot() {
@@ -37,6 +72,7 @@ internal class PgLifecycleRestorationFixture(private val deletion: Boolean) : Au
     }
 
     override fun close() {
+        cleanup { admission?.close() } // Release/acknowledge before any existing independent root/caller cleanup.
         cleanup { retainedCaller?.releaseGates() }
         cleanup { foreign.releaseHolds() }
         cleanup { retainedScope?.owner?.requestShutdown() }
@@ -74,5 +110,12 @@ internal class PgLifecycleRestorationFixture(private val deletion: Boolean) : Au
 
     private inline fun cleanup(action: () -> Unit) {
         runCatching(action).exceptionOrNull()?.let { cleanupProblems.add(it) }
+    }
+
+    private enum class StartupStage {
+        ARM_CUT,
+        LAUNCH_CALLER,
+        WAIT_STARTUP,
+        RELEASE_CUT,
     }
 }

@@ -16,23 +16,39 @@ internal object PgLifecycleInvalidatedOpeningCases {
         val action = Action.valueOf(mode.name.substringAfterLast('_'))
         ServerSocket(0, 1, InetAddress.getByAddress(byteArrayOf(127, 0, 0, 1))).use { listener ->
             PgLifecycleTestScope(pgProbeEndpoint(listener.localPort)).use { scope ->
-                val gate = PgLifecycleContentionLock.install(scope, stage)
-                scope.expectedUnknown = action === Action.INTERRUPTED
-                scope.start()
-                runInvalidated(scope, gate, stage, action)
+                PgLifecycleAdmissionScheduling(scope).use { admission ->
+                    val gate = PgLifecycleContentionLock.install(scope, stage, admission)
+                    scope.expectedUnknown = action === Action.INTERRUPTED
+                    scope.start()
+                    runInvalidated(scope, gate, stage, action, admission)
+                }
             }
         }
     }
 
-    private fun runInvalidated(scope: PgLifecycleTestScope, gate: PgLifecycleContentionLock, stage: Int, action: Action) {
+    private fun runInvalidated(
+        scope: PgLifecycleTestScope,
+        gate: PgLifecycleContentionLock,
+        stage: Int,
+        action: Action,
+        admission: PgLifecycleAdmissionScheduling,
+    ) {
         val binding = scope.binding()
-        val control = PersistenceOwnedCallerControl.prepare(if (action === Action.EXPIRED) 750 else 6_000)
-        val opening = requireNotNull(scope.root.ordinary.selectOpening())
-        check(opening.policy === PersistenceDriverAttemptPolicy.TRACKED_ORDINARY_CONJUNCTION)
-        val entry = requireNotNull(binding.reserve(control, opening.policy, opening))
-        gate.entry.set(entry)
+        var originalControl: PersistenceOwnedCallerControl? = null
         try {
-            check(binding.admit(entry))
+            val entry = admission.during("fixture=INVALIDATED_OPENING stage=$stage action=$action ordinal=0") {
+                val control = PersistenceOwnedCallerControl.prepare(if (action === Action.EXPIRED) 750 else 6_000).also { originalControl = it }
+                val opening = requireNotNull(scope.root.ordinary.selectOpening())
+                check(opening.policy === PersistenceDriverAttemptPolicy.TRACKED_ORDINARY_CONJUNCTION)
+                val reserved = requireNotNull(binding.reserve(control, opening.policy, opening))
+                gate.entry.set(reserved)
+                check(binding.admit(reserved)) {
+                    "PG_LIFECYCLE_ADMISSION fixture=INVALIDATED_OPENING stage=$stage action=$action control=${control.state().name} " +
+                        "reason=${control.state().reason?.name ?: "NONE"}"
+                }
+                reserved
+            }
+            val control = requireNotNull(originalControl)
             check(gate.entered.await(4, TimeUnit.SECONDS))
             gate.lock()
             try {
@@ -77,7 +93,7 @@ internal object PgLifecycleInvalidatedOpeningCases {
             println("PG_LIFECYCLE_G_INVALIDATED stage=$stage action=$action native_allocations=0 proof=OWN_PROJECT_MODEL_REAL_ACTORS_DRIVER")
         } finally {
             gate.proceed.countDown()
-            control.fail(PersistenceFactoryFailure.CLOSED)
+            originalControl?.fail(PersistenceFactoryFailure.CLOSED)
         }
     }
 

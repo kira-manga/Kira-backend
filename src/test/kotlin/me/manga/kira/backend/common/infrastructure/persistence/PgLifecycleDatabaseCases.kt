@@ -16,12 +16,17 @@ internal object PgLifecycleDatabaseCases {
             handshake.publish(PgLifecycleDatabasePhase.PREPARED)
             var previous: PgLifecycleDatabaseWitness? = null
             repeat(case.attempts) { ordinal ->
+                PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.WAIT_START)
                 handshake.await(PgLifecycleDatabasePhase.START, ordinal)
+                PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.WAIT_RECEIVER)
                 awaitLifecycleFact { scope.binding(case.lane.deleting).isOwnedReceiverReady() }
-                val request = PgLifecycleDatabaseRequest(scope, case.lane)
+                val request = PgLifecycleDatabaseRequest(scope, case, application, ordinal)
                 try {
+                    PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.START_CALLER)
                     request.start()
+                    PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.WAIT_RETAIN)
                     val witness = PgLifecycleDatabaseAssertions.retain(scope, case, application)
+                    PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.RETAINED)
                     if (previous != null) reuseIdentity(requireNotNull(previous), witness)
                     val result = openingResult(scope, case, application, witness, request, handshake, ordinal)
                     val receipt = resultReceipt(case, result)
@@ -203,8 +208,13 @@ internal object PgLifecycleDatabaseCases {
 }
 
 /** Owned real platform caller; no Future.cancel, callback replacement, or test-written lifecycle fact. */
-private class PgLifecycleDatabaseRequest(private val scope: PgLifecycleTestScope, lane: PgLifecycleDatabaseLane) : AutoCloseable {
-    private val task = FutureTask { if (lane.deleting) scope.owner.requestDeletion() else scope.owner.requestOrdinary() }
+private class PgLifecycleDatabaseRequest(private val scope: PgLifecycleTestScope, case: PgLifecycleDatabaseCase, application: String, ordinal: Int) :
+    AutoCloseable {
+    private val task = FutureTask {
+        PgLifecycleDatabaseDiagnostics.originalCall(case, ordinal, application) {
+            if (case.lane.deleting) scope.owner.requestDeletion() else scope.owner.requestOrdinary()
+        }
+    }
     private val thread = Thread.ofPlatform().name("w03-database-candidate-caller").unstarted(task)
 
     fun start() = thread.start()

@@ -14,16 +14,24 @@ internal object PgLifecycleTlsCases {
             PgLifecycleTlsPeer(recipe, material.serverContext(recipe)).use { peer ->
                 peer.start()
                 PgLifecycleTestScope(endpoint(peer.port, rootCertificate)).use { scope ->
-                    scope.start()
-                    if (deletion) scope.prepareDeletion()
-                    var previous: PgLifecycleTlsWitness? = null
-                    repeat(2) { index -> previous = attempt(scope, peer, index, deletion, rootCertificate, recipe, previous) }
-                    PgLifecycleTlsAssertions.shutdown(scope)
+                    verifyScope(scope, peer, deletion, rootCertificate, recipe)
                 }
                 peer.verifyNoDowngrade()
             }
         }
         println("PG_LIFECYCLE_TLS_VERIFIED mode=${mode.name} attempts=2 no_plaintext_downgrade=true proof=REAL_TLS+PROTOCOL_PEER")
+    }
+
+    private fun verifyScope(scope: PgLifecycleTestScope, peer: PgLifecycleTlsPeer, deletion: Boolean, rootCertificate: Path, recipe: PgLifecycleTlsMode) {
+        PgLifecycleAdmissionScheduling(scope).use { admission ->
+            // The same scanner serves both lanes; retain its ordinary G-only cut before any actor starts.
+            installLifecycleModelLock(scope, PgLifecycleAdmissionLock(admission))
+            scope.start()
+            if (deletion) scope.prepareDeletion()
+            var previous: PgLifecycleTlsWitness? = null
+            repeat(2) { index -> previous = attempt(scope, peer, index, deletion, rootCertificate, recipe, previous, admission) }
+            PgLifecycleTlsAssertions.shutdown(scope)
+        }
     }
 
     private fun attempt(
@@ -34,21 +42,24 @@ internal object PgLifecycleTlsCases {
         rootCertificate: Path,
         recipe: PgLifecycleTlsMode,
         previous: PgLifecycleTlsWitness?,
+        admission: PgLifecycleAdmissionScheduling,
     ): PgLifecycleTlsWitness {
         awaitLifecycleFact { scope.binding(deletion).isOwnedReceiverReady() }
         peer.arm(index)
         return PgLifecycleTlsRequest(scope, deletion).use { caller ->
             try {
-                caller.start()
-                PgLifecycleDatabaseDiagnostics.preservingFailure(
-                    {
-                        println(
-                            "PG_LIFECYCLE_STARTUP_DIAGNOSTIC fixture=TLS ordinal=$index deletion=$deletion recipe=${recipe.name} " +
-                                caller.diagnostic() + " " + peer.diagnostic(index),
-                        )
-                    },
-                    { peer.awaitSslRequest(index) },
-                )
+                admission.during("fixture=TLS ordinal=$index deletion=$deletion recipe=${recipe.name}") {
+                    caller.start()
+                    PgLifecycleDatabaseDiagnostics.preservingFailure(
+                        {
+                            println(
+                                "PG_LIFECYCLE_STARTUP_DIAGNOSTIC fixture=TLS ordinal=$index deletion=$deletion recipe=${recipe.name} " +
+                                    caller.diagnostic() + " " + peer.diagnostic(index),
+                            )
+                        },
+                        { peer.awaitSslRequest(index) },
+                    )
+                }
                 val witness = PgLifecycleTlsAssertions.admitted(scope, deletion, rootCertificate)
                 if (previous != null) {
                     check(witness.entry.record !== previous.entry.record && witness.entry.record.slotHint == previous.entry.record.slotHint)
