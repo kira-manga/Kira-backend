@@ -90,7 +90,12 @@ operation, server time, expiring bounded counters, and hashed identities. Redis 
   AND the direct peer is in `kira.security.trusted-proxies` (CIDR/address list, empty by default), in
   which case the effective client is the rightmost non-trusted hop. With the mode off, forwarding
   headers are completely ignored — a spoofed `X-Forwarded-For` can neither dodge its own bucket nor
-  poison someone else's. Malformed/oversized (> 1 KB) headers fall back safely to the remote address.
+  poison someone else's. Numeric addresses are canonicalized (IPv4-mapped IPv6 becomes IPv4; other
+  IPv6 uses eight lowercase unpadded groups); parsing and CIDR matching never perform DNS lookups.
+  Malformed/oversized (> 1 KB), non-ASCII, duplicated or partly invalid chains fall back to the peer.
+  A present `X-Forwarded-For` selects that protocol even when invalid/all-trusted: it never falls
+  through to `Forwarded`. Only absent XFF permits a wholly valid `Forwarded` chain. Generic numeric
+  IPv4/IPv6 proxy CIDRs, rightmost-hop semantics and valid address/port forms remain supported.
 - **Bounded store:** `kira.security.throttle.max-entries` (default 100 000); TTL expiry on every entry;
   deterministic eviction when full (dead entries first, then oldest-by-last-update); keys hash the
   (capped) email; each entry stores only counters/timestamps — no credentials, no payloads.
@@ -98,6 +103,22 @@ operation, server time, expiring bounded counters, and hashed identities. Redis 
 Both implementations preserve the same policy. Tuning lives under `kira.security.throttle.*`
 (`login-failure-threshold`, `login-initial-block`,
 `login-max-block`, `login-failure-window`, `registration-max-per-window`, `registration-window`).
+
+### Server3 ingress (not a generic deployment default)
+
+The `prod,server3` profile requires exactly two distinct provisioned numeric peers:
+`KIRA_SERVER3_HOST_PEER` and `KIRA_SERVER3_ADMIN_ADDRESS`. The committed edge overwrites forwarding
+metadata; Admin's isolated BFF link forwards one validated `X-Real-IP` as fresh XFF on password login
+and step-up only. Missing/invalid metadata safely shares the BFF peer bucket; that is degraded
+isolation, not proof of distinct clients. Never enable BFF trust on a publicly reachable/unisolated server.
+
+A web-server-factory customizer checks the actual bound profile/security/peer/ServerProperties before
+any listener is created. It rejects broad/extra/wrong peers, disabled trust, non-prod/dev combinations,
+framework forwarding other than `NONE`, and Tomcat remote-IP/protocol-header overrides that could
+otherwise rewrite the observed servlet peer even with `NONE`. Generic profiles are unaffected.
+See [`../deploy/server3/README.md`](../deploy/server3/README.md) for the required Docker/Nginx topology,
+provisioning and preflight. Installed routing/firewall isolation, peer observation and two-client
+smoke checks remain external deployment verification; source tests do not prove them.
 
 ## Secrets policy
 
