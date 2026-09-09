@@ -5,6 +5,14 @@ have `DRAFT`, `PUBLISHED`, or `ARCHIVED` lifecycle state. Publishing moves the p
 rollback copies historical content into a new revision and publishes that copy. Archive hides an
 identity publicly without deleting history, and restore returns it to its published/draft state.
 
+Category archive is a visibility gate, not a cascade: it preserves child lifecycle, publication
+pointers, revisions, order and featured positions. Internally PUBLISHED tutorials may remain under
+an ARCHIVED category with a retained published revision; that durable state is valid on restart.
+Restoring the category reveals only children that are still PUBLISHED. Independently archived or
+draft children stay hidden. Publishing or rolling back a tutorial requires a currently PUBLISHED
+category with a publication pointer; the category row is locked until that transaction commits,
+so an archive that wins first makes publication/rollback fail without changing the tutorial.
+
 ## Public API
 
 - `GET /api/v1/tutorial-categories`
@@ -15,6 +23,10 @@ identity publicly without deleting history, and restore returns it to its publis
 JSON endpoints return bilingual `{en, ar}` values, ordered records, resolved immutable media URLs,
 strong ETags, and `Cache-Control: public, max-age=60, stale-if-error=86400`. Published media uses a
 one-year immutable cache. Archived/draft content is absent publicly.
+
+Category gating applies to origin JSON responses, not immediate revocation of already cached
+responses. Previously published media remains permanently public, including while its category
+or tutorial is archived.
 
 ## ADMIN workflow
 
@@ -45,3 +57,7 @@ disable it and `KIRA_TUTORIAL_MEDIA_DIRECTORY` to the dedicated mounted volume.
 Startup fails if a published media row has no file or if a published pointer/category/media relation
 is inconsistent. PostgreSQL stores metadata and references only; media bytes belong in the
 `kira-tutorial-media` volume.
+
+An older binary with the pre-fix startup validator rejects an archived category that retains a
+PUBLISHED child. This correction does not make rollback to that binary safe; retain a compatible
+binary when planning upgrades/rollback. No startup repair or data rewrite is performed.
