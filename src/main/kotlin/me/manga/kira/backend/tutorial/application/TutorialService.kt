@@ -198,7 +198,8 @@ class TutorialService(
         val tutorial = requireTutorial(tutorialId, lock = true)
         val revision = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
         ensureNewerTutorialRevision(tutorial, revision)
-        val category = requireCategory(requireNotNull(revision.categoryId))
+        // Serialize the lifecycle check with category archive/restore through transaction commit.
+        val category = requireCategory(requireNotNull(revision.categoryId), lock = true)
         if (category.status != TutorialLifecycle.PUBLISHED || category.publishedRevisionId == null) {
             throw TutorialConflictException("the referenced category must be published before the tutorial.", "TUTORIAL_CATEGORY_NOT_PUBLISHED")
         }
@@ -217,8 +218,8 @@ class TutorialService(
     fun rollbackTutorial(tutorialId: UUID, revisionNumber: Int): AdminTutorialView {
         requireTutorial(tutorialId, lock = true)
         val historical = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
-        val category = requireCategory(requireNotNull(historical.categoryId))
-        if (category.status != TutorialLifecycle.PUBLISHED) {
+        val category = requireCategory(requireNotNull(historical.categoryId), lock = true)
+        if (category.status != TutorialLifecycle.PUBLISHED || category.publishedRevisionId == null) {
             throw TutorialConflictException("the historical revision's category is not published.", "TUTORIAL_CATEGORY_NOT_PUBLISHED")
         }
         val content = tutorialRevision(historical).content
