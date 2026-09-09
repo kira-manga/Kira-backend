@@ -25,7 +25,7 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
         val home = pgLifecycleDatabasePrivateDirectory(directory.resolve("home"))
         val temporary = pgLifecycleDatabasePrivateDirectory(directory.resolve("tmp"))
         val phases = pgLifecycleDatabasePrivateDirectory(directory.resolve("phases"))
-        handshake = PgLifecycleDatabaseHandshake(phases, nonce, PgLifecycleDatabaseParty.PARENT)
+        handshake = PgLifecycleDatabaseHandshake(phases, nonce, PgLifecycleDatabaseParty.PARENT, case)
         val jul = Files.writeString(directory.resolve("jul.properties"), ".level=INFO\n")
         val logback = Files.writeString(directory.resolve("logback.xml"), "<configuration><root level=\"INFO\"/></configuration>")
         val identity = BootstrapProbeEnvironment.identity(directory)
@@ -58,7 +58,8 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
         val receipts = output.lineSequence().filter { it.startsWith("PG_DATABASE_VERIFIED ") }.toList()
         check(receipts == listOf("PG_DATABASE_VERIFIED ${case.label} nonce=$nonce")) { "Synthetic database final receipt differs." }
         check(output.lineSequence().count { it == "PG_DATABASE_SCENARIO_CLEANUP ${case.label} all_terminated=true" } == 1)
-        check(output.lineSequence().count { it.startsWith("PG_LIFECYCLE_ROOT_CLEANUP result=TRACKED_LOCAL_ENDED ") } == 1)
+        val outcome = if (case.originalProvider) "DRIVER_CONTRACT_ONLY_ENDED" else "TRACKED_LOCAL_ENDED"
+        check(output.lineSequence().count { it.startsWith("PG_LIFECYCLE_ROOT_CLEANUP result=$outcome ") } == 1)
         check(output.lineSequence().none { it.startsWith("PG_DATABASE_FAILED ") })
     }
 

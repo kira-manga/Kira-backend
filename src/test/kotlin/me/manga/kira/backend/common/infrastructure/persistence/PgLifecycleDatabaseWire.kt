@@ -61,6 +61,24 @@ internal object PgLifecycleDatabaseWire {
         output.flush()
     }
 
+    fun readyFrame(message: Message): ByteArray {
+        check(message.type == 'Z'.code && message.bytes.contentEquals(byteArrayOf('I'.code.toByte())))
+        return ByteBuffer.allocate(6).put('Z'.code.toByte()).putInt(5).put(message.bytes[0]).array()
+    }
+
+    fun requirePrimaryRoleRow(message: Message) {
+        check(message.type == 'D'.code && message.bytes.size == 9)
+        val row = ByteBuffer.wrap(message.bytes)
+        check(row.short.toInt() == 1 && row.int == 3)
+        val value = ByteArray(3)
+        row.get(value)
+        check(value.contentEquals("off".toByteArray(Charsets.US_ASCII)) && !row.hasRemaining())
+    }
+
+    fun requireRoleCommand(message: Message) {
+        check(message.type == 'C'.code && message.bytes.contentEquals("SHOW\u0000".toByteArray(Charsets.US_ASCII)))
+    }
+
     fun sqlFingerprint(message: Message): PgLifecycleDatabaseSql? {
         val sql = when (message.type.toChar()) {
             'Q' -> strings(message.bytes, 0).single()
@@ -76,6 +94,7 @@ internal object PgLifecycleDatabaseWire {
         check(sql.length <= 8_192)
         val normalized = sql.trim().trimEnd(';').uppercase(Locale.ROOT)
         return when {
+            normalized == "SHOW TRANSACTION_READ_ONLY" -> PgLifecycleDatabaseSql.ROLE
             normalized == "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY" -> PgLifecycleDatabaseSql.READ_ONLY
             normalized.contains("PG_TYPE") && normalized.contains("TYPNAME") && normalized.contains("OID") -> PgLifecycleDatabaseSql.CATALOG
             else -> PgLifecycleDatabaseSql.UNEXPECTED
@@ -123,6 +142,7 @@ internal object PgLifecycleDatabaseWire {
 }
 
 internal enum class PgLifecycleDatabaseSql {
+    ROLE,
     READ_ONLY,
     CATALOG,
     UNEXPECTED,

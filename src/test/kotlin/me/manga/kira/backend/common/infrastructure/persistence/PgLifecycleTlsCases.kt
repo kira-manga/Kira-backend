@@ -40,7 +40,15 @@ internal object PgLifecycleTlsCases {
         return PgLifecycleTlsRequest(scope, deletion).use { caller ->
             try {
                 caller.start()
-                peer.awaitSslRequest(index)
+                PgLifecycleDatabaseDiagnostics.preservingFailure(
+                    {
+                        println(
+                            "PG_LIFECYCLE_STARTUP_DIAGNOSTIC fixture=TLS ordinal=$index deletion=$deletion recipe=${recipe.name} " +
+                                caller.diagnostic() + " " + peer.diagnostic(index),
+                        )
+                    },
+                    { peer.awaitSslRequest(index) },
+                )
                 val witness = PgLifecycleTlsAssertions.admitted(scope, deletion, rootCertificate)
                 if (previous != null) {
                     check(witness.entry.record !== previous.entry.record && witness.entry.record.slotHint == previous.entry.record.slotHint)

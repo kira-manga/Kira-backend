@@ -14,7 +14,11 @@ import java.util.concurrent.atomic.AtomicReference
 internal class PgLifecycleProbeProcess(private val directory: Path, private val mode: PgLifecycleCase, private val serverPort: Int = 0) : AutoCloseable {
     private val process = AtomicReference<Process?>()
     private val nonce = UUID.randomUUID().toString()
-    private val tlsMaterial = if (PgLifecycleTlsCases.isTlsCase(mode)) PgLifecycleTlsMaterialOwner(directory) else null
+    private val tlsMaterial = if (PgLifecycleTlsCases.isTlsCase(mode) || PgLifecycleNegotiationCases.requiresMaterial(mode)) {
+        PgLifecycleTlsMaterialOwner(directory)
+    } else {
+        null
+    }
     private var observedOutput: String? = null
 
     fun start() {
@@ -47,9 +51,19 @@ internal class PgLifecycleProbeProcess(private val directory: Path, private val 
         observedOutput = output
         println(output)
         check(child.exitValue() == 0) { "Synthetic lifecycle child rejected its scenario." }
-        check(output.lineSequence().count { it == "PG_LIFECYCLE_VERIFIED mode=${mode.name} nonce=$nonce" } == 1)
+        check(output.lineSequence().count { it == "PG_LIFECYCLE_VERIFIED mode=${mode.name} nonce=$nonce" } == 1) {
+            PgLifecycleReceiptRejectionWitness.FINAL_RECEIPT_REASON
+        }
         check(output.lineSequence().count { it == "PG_LIFECYCLE_SCENARIO_CLEANUP mode=${mode.name} all_terminated=true" } == 1)
         tlsMaterial?.requireChildCleanup()
+    }
+
+    fun requireReceiptRejectionWitness(rejection: IllegalStateException) {
+        val child = requireNotNull(process.get())
+        check(!child.isAlive)
+        val exit = child.exitValue()
+        check(PgLifecycleReceiptRejectionWitness.matches(mode, nonce, observedOutput, exit, rejection))
+        println("PG_LIFECYCLE_RECEIPT_REJECTION_VERIFIED mode=${mode.name} nonce=$nonce exit=$exit reason=FINAL_RECEIPT")
     }
 
     fun requireAssertionWitness() {

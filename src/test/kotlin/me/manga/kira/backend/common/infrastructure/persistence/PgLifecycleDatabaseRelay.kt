@@ -12,11 +12,16 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicReferenceArray
 
 /** Fixed plaintext relay to one owned PostgreSQL. At most one primary plus two AUX connections per request. */
-internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabaseFixture, private val application: String, attempts: Int) : AutoCloseable {
+internal class PgLifecycleDatabaseRelay(
+    private val database: PgLifecycleDatabaseFixture,
+    private val application: String,
+    private val case: PgLifecycleDatabaseCase,
+) : AutoCloseable {
     private val listener = ServerSocket()
     private val sessions = CopyOnWriteArrayList<PgLifecycleDatabaseRelaySession>()
-    private val primaries = AtomicReferenceArray<PgLifecycleDatabaseRelaySession>(attempts)
+    private val primaries = AtomicReferenceArray<PgLifecycleDatabaseRelaySession>(case.attempts)
     private val primaryCount = AtomicInteger()
+    private val weakCleanupThrough = AtomicInteger(-1)
     private val closing = AtomicBoolean()
     private val failed = AtomicReference<Throwable?>()
     private val actor = Thread.ofPlatform().name("w03-database-relay-accept").unstarted(::accept)
@@ -24,7 +29,7 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
     val port: Int get() = listener.localPort
 
     init {
-        check(attempts in 1..2)
+        check(case.attempts in 1..2)
     }
 
     fun start() {
@@ -45,7 +50,7 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
                 var retained = false
                 try {
                     // The owning list is published before configuration, parsing, connecting, or starting the accepted socket's actor.
-                    val session = PgLifecycleDatabaseRelaySession(socket, database.host, database.port, ::register)
+                    val session = PgLifecycleDatabaseRelaySession(socket, database.host, database.port, case, ::register)
                     sessions.add(session)
                     retained = true
                     check(sessions.size <= primaries.length() * 3) { "Synthetic relay connection bound exceeded." }
@@ -66,6 +71,7 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
                 val ordinal = primaryCount.getAndIncrement()
                 check(ordinal < primaries.length())
                 session.state.ordinal = ordinal
+                session.state.readyFault.bind(ordinal)
                 check(primaries.compareAndSet(ordinal, null, session))
             }
 
@@ -79,11 +85,21 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
 
             else -> error("Plaintext fixture received an unexpected startup protocol.")
         }
+        // A delayed accepted AUX from an already sampled weak attempt is fixture cleanup, never a new upstream connection or disposal receipt.
+        if (session.state.ordinal <= weakCleanupThrough.get()) session.cleanupBeforeConnect()
     }
 
     fun progress() {
         check(failed.get() == null && sessions.all { it.state.failure.get() == null }) { "Owned PostgreSQL relay failed." }
         check(!closing.get() && actor.isAlive) { "Owned PostgreSQL relay is no longer running." }
+    }
+
+    /** No progress assertion, I/O, waits, gate release or cleanup: callable before failure unwinds this relay's use scope. */
+    fun diagnostic(ordinal: Int): String {
+        val selected = if (ordinal in 0 until primaries.length()) primaries.get(ordinal)?.state else null
+        return "accepted=${sessions.size} registered=${primaryCount.get()} acceptor_state=${actor.state.name} acceptor_alive=${actor.isAlive} " +
+            "relay_closing=${closing.get()} acceptor_failure=${failed.get() != null} session_failure=${sessions.any { it.state.failure.get() != null }} " +
+            "primary_registered=${selected != null} ${selected?.diagnostic() ?: "gate=UNAVAILABLE"}"
     }
 
     fun awaitGate(ordinal: Int, deadline: PgLifecycleDatabaseDeadline, childAlive: () -> Unit): PgLifecycleDatabaseRelayState {
@@ -102,6 +118,36 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
         val state = requireNotNull(primaries.get(ordinal)).state
         check(state.gate.get() === PgLifecycleDatabaseGate.AUTHENTICATED_READY && state.clientEnd.get() == null)
         check(!state.fixtureClosing.get() && state.backendPid.get() > 0)
+        check(state.readyFault.bytesWritten.get() == 6)
+    }
+
+    fun armFault(ordinal: Int) {
+        progress()
+        val state = requireNotNull(primaries.get(ordinal)).state
+        check(state.isHeld() && state.gate.get() === PgLifecycleDatabaseGate.AUTHENTICATED_READY)
+        check(!state.fixtureClosing.get() && state.clientEnd.get() == null)
+        state.readyFault.arm(case, ordinal)
+    }
+
+    fun confirmDeadline(ordinal: Int) {
+        progress()
+        val state = requireNotNull(primaries.get(ordinal)).state
+        check(state.gate.get() === PgLifecycleDatabaseGate.AUTHENTICATED_READY && !state.fixtureClosing.get() && state.clientEnd.get() == null)
+        state.readyFault.confirmDeadline(case, ordinal)
+    }
+
+    fun releaseLateReady(ordinal: Int, deadline: PgLifecycleDatabaseDeadline, childAlive: () -> Unit) {
+        val state = requireNotNull(primaries.get(ordinal)).state
+        while (state.readyFault.bytesWritten.get() != 5) {
+            progress()
+            childAlive()
+            check(state.clientEnd.get() == null && !state.fixtureClosing.get())
+            deadline.pause()
+        }
+        deadline.checkRemaining()
+        childAlive()
+        check(state.clientEnd.get() == null && !state.fixtureClosing.get())
+        state.readyFault.releaseFinal(case, ordinal)
     }
 
     fun awaitClientDisposal(ordinal: Int, deadline: PgLifecycleDatabaseDeadline, childAlive: () -> Unit) {
@@ -127,11 +173,47 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
             check(state.gate.get() === PgLifecycleDatabaseGate.AUTHENTICATED_READY && state.errorState.get() == null)
             check(state.authentication == listOf(10, 11, 12, 0))
             val expected = buildList {
+                if (case.roleProbe) add(PgLifecycleDatabaseSql.ROLE)
                 if (case.recipe.readOnlySql(case.queryTimeout)) add(PgLifecycleDatabaseSql.READ_ONLY)
                 if (case.recipe.catalogSql(case.queryTimeout)) add(PgLifecycleDatabaseSql.CATALOG)
             }
             check(state.statements == expected) { "Pinned constructor statement fingerprints differ; queryTimeout was not suppressed." }
+            state.role.requireEvidence()
+            state.readyFault.requireEvidence(state.clientEndNanos.get())
+            if (state.readyFault.kind !== PgLifecycleDatabaseReadyKind.COMPLETE) {
+                println("PG_DATABASE_READY ${case.label} ordinal=$ordinal ${state.readyFault.summary(state.clientEndNanos.get())} proof=REAL_RELAY_WRITES")
+            }
         }
+    }
+
+    fun weakBeforeCleanup(ordinal: Int): PgLifecycleDatabaseClientEnd? {
+        check(case.originalProvider && !case.returnsRaw)
+        progress()
+        val state = requireNotNull(primaries.get(ordinal)).state
+        check(!state.fixtureClosing.get() && state.gate.get() === PgLifecycleDatabaseGate.AUTHENTICATED_READY)
+        return state.clientEnd.get()
+    }
+
+    fun cleanupWeakNoRaw(ordinal: Int, deadline: PgLifecycleDatabaseDeadline, childAlive: () -> Unit) {
+        check(case.originalProvider && !case.returnsRaw)
+        check(ordinal in 0 until case.attempts && weakCleanupThrough.compareAndSet(ordinal - 1, ordinal))
+        var pending: Boolean
+        do {
+            progress()
+            childAlive()
+            deadline.checkRemaining()
+            val selected = sessions.filter { (it.state.ordinal == ordinal || it.state.ordinal < 0) && !it.state.fixtureClosing.get() }
+            val cleanup = selected.map { runCatching { it.close() } }
+            cleanup.forEach { it.getOrThrow() } // Attempt every known close/join, even after one failed.
+            pending = sessions.any {
+                it.state.ordinal <= ordinal && (!it.state.fixtureClosing.get() || !it.actorsEnded())
+            }
+            if (pending) deadline.pause()
+        } while (pending)
+        val selected = sessions.filter { it.state.ordinal <= ordinal }
+        check(selected.isNotEmpty() && selected.all { it.state.fixtureClosing.get() && it.actorsEnded() })
+        childAlive()
+        progress()
     }
 
     override fun close() {
@@ -144,5 +226,6 @@ internal class PgLifecycleDatabaseRelay(private val database: PgLifecycleDatabas
         val connections = sessions.map { runCatching { it.close() } }
         (listOf(listenerClose, acceptor) + connections).forEach { it.getOrThrow() }
         check(!actor.isAlive && sessions.all { it.actorsEnded() })
+        check(failed.get() == null && sessions.all { it.state.failure.get() == null }) { "Owned relay failure remains failure after cleanup." }
     }
 }

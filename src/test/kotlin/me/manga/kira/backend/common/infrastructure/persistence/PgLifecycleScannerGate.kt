@@ -10,7 +10,8 @@ internal class PgLifecycleScannerGate(
     private val binding: PersistencePhysicalFactoryBinding,
     private val scanner: Thread,
     private val ownMonitor: Boolean = false,
-) : ReentrantLock(), AutoCloseable {
+) : ReentrantLock(),
+    AutoCloseable {
     private val armed = AtomicBoolean()
     private val claimed = AtomicBoolean()
     val entered = CountDownLatch(1)

@@ -49,6 +49,10 @@ internal class PgLifecycleTlsPeer(mode: PgLifecycleTlsMode, context: SSLContext)
         }
     }
 
+    fun diagnostic(index: Int): String = "observation=MIXED accepted=${connections.get()} " +
+        "armed=${sessions[index].armed.get()} started=${sessions[index].started.get()} " +
+        "ssl_requested=${sessions[index].requested.count == 0L} problem_present=${problem.get() != null}"
+
     fun release(index: Int) = sessions[index].allowTls.countDown()
 
     fun releaseAll() = sessions.forEach { it.allowTls.countDown() }

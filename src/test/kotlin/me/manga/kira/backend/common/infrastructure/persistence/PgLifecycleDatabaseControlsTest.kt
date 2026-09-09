@@ -24,6 +24,20 @@ internal class PgLifecycleDatabaseControlsTest {
         check(cases.filter { it.queryTimeout == 0 }.all { it.returnsRaw })
     }
 
+    @Test
+    fun `supplemental declarations retain all thirty five identities seventy attempts and exact S F T distinctions`() {
+        val strong = PersistenceJdbcDatabaseLifecycleTest.establishmentRows().use { rows -> rows.map { it.get()[0] as PgLifecycleDatabaseCase }.toList() }
+        val weak = PersistenceJdbcDatabaseLifecycleTest.originalProviderRows().use { rows -> rows.map { it.get()[0] as PgLifecycleDatabaseCase }.toList() }
+        val cases = strong + weak
+        check(strong.size == 12 && weak.size == 23 && cases.distinct().size == 35)
+        check(cases.all { it.supplemental && it.attempts == 2 } && cases.sumOf { it.attempts } == 70)
+        check(cases.count { it.succeeds } == 20 && cases.count { it.deadlineFailure } == 5)
+        check(cases.count { !it.succeeds && !it.deadlineFailure } == 10)
+        check(weak.all { it.originalProvider && it.lane === PgLifecycleDatabaseLane.ORDINARY })
+        check(weak.count { !it.returnsRaw } == 4 && weak.count { it.lateReturn } == 1)
+        check(cases.filter { it.lateReturn }.all { it.returnsRaw && !it.succeeds })
+    }
+
     @ParameterizedTest
     @EnumSource(
         value = PgLifecycleDatabaseMode::class,
@@ -57,7 +71,7 @@ internal class PgLifecycleDatabaseControlsTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = ["wrong_nonce", "duplicate_record", "malformed_record"])
+    @ValueSource(strings = ["wrong_nonce", "wrong_case", "wrong_ordinal", "wrong_phase", "duplicate_record", "malformed_record"])
     fun `wrong malformed or duplicated phase record never releases the response gate`(mode: String) {
         val nonce = UUID.randomUUID().toString()
         val directory = pgLifecycleDatabasePrivateDirectory(root.resolve(mode))
@@ -68,6 +82,9 @@ internal class PgLifecycleDatabaseControlsTest {
         val valid = Files.readString(path)
         val invalid = when (mode) {
             "wrong_nonce" -> valid.replace(nonce, UUID.randomUUID().toString())
+            "wrong_case" -> valid.replace("lane=ORDINARY", "lane=DELETION")
+            "wrong_ordinal" -> valid.replace("ordinal=0", "ordinal=1")
+            "wrong_phase" -> valid.replace("phase=RETAINED", "phase=PREPARED")
             "duplicate_record" -> valid + valid
             else -> "not-a-receipt\n"
         }

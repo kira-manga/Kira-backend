@@ -23,11 +23,13 @@ internal class PgLifecycleDatabaseFixture : AutoCloseable {
                 connection.createStatement().use { statement ->
                     statement.queryTimeout = 2
                     statement.executeQuery(
-                        "SELECT pg_postmaster_start_time(), current_setting('server_version_num'), current_setting('server_encoding')",
+                        "SELECT pg_postmaster_start_time(), current_setting('server_version_num'), current_setting('server_encoding'), pg_is_in_recovery()",
                     ).use { result ->
                         check(result.next())
                         generation = result.getTimestamp(1).toInstant()
-                        check(result.getString(2) == "170006" && result.getString(3) == "UTF8" && !result.next())
+                        check(result.getString(2) == "170006" && result.getString(3) == "UTF8")
+                        check(!result.getBoolean(4) && !result.wasNull()) { "Synthetic PostgreSQL was not positively witnessed as primary." }
+                        check(!result.next())
                     }
                     statement.execute(
                         "CREATE ROLE ${PgLifecycleDatabaseSettings.CANDIDATE} LOGIN PASSWORD '${PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD}'",

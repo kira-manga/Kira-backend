@@ -5,6 +5,14 @@ import java.util.concurrent.TimeUnit
 
 internal object PgLifecycleCases {
     fun verify(mode: PgLifecycleCase) {
+        if (PgLifecycleNegotiationCases.isNegotiationCase(mode)) {
+            PgLifecycleNegotiationCases.verify(mode)
+            return
+        }
+        if (PgLifecycleRecordBoundaryCases.isRecordBoundaryCase(mode)) {
+            PgLifecycleRecordBoundaryCases.verify(mode)
+            return
+        }
         when (mode) {
             PgLifecycleCase.INERT_SHUTDOWN -> inert()
 
@@ -56,6 +64,15 @@ internal object PgLifecycleCases {
             PgLifecycleCase.TLS_WRONG_HOST_ORDINARY, PgLifecycleCase.TLS_WRONG_HOST_DELETION,
             PgLifecycleCase.TLS_PARTIAL_HANDSHAKE_ORDINARY, PgLifecycleCase.TLS_PARTIAL_HANDSHAKE_DELETION,
             -> PgLifecycleTlsCases.verify(mode)
+
+            PgLifecycleCase.HELD_CALLER_RESTORATION_ORDINARY -> PgLifecycleRestorationCases.verify(deletion = false)
+
+            PgLifecycleCase.HELD_CALLER_RESTORATION_DELETION -> PgLifecycleRestorationCases.verify(deletion = true)
+
+            PgLifecycleCase.TRACKED_WEAK_NO_RAW_REUSE,
+            PgLifecycleCase.MODEL_TRACKED_WEAK_NO_RAW_PENDING_CALL,
+            PgLifecycleCase.MODEL_TRACKED_WEAK_NO_RAW_FAILED_CONSTRUCTION,
+            -> PgLifecycleTrackedWeakNoRawCases.verify(mode)
 
             else -> PgLifecycleModelCases.verify(mode)
         }

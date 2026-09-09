@@ -55,14 +55,18 @@ internal object PgLifecycleTimerCases {
         scope.prepareDeletion()
         val ordinary = scope.request()
         val deletion = scope.request(deletion = true)
-        val entries = scope.entries() + scope.entries(deletion = true)
+        val ordinaryEntry = scope.entries().single()
+        val deletionEntry = scope.entries(deletion = true).single()
+        val entries = listOf(ordinaryEntry, deletionEntry)
         val hold = foreign.hold()
         val run = if (queued) foreign.queued(cancel = false) else null
         val canceled = if (queued) foreign.queued(cancel = true) else null
         check(ordinary.value.requestRetirement() && deletion.value.requestRetirement())
         awaitLifecycleFact { entries.all { it.terminalWork?.closeState() === PersistenceTerminalCall.RETURNED } }
         check(entries.all { it.terminalWork?.disposition() === PersistenceTerminalDisposition.PENDING && !it.terminalWork.bodyExited() })
-        check(scope.owner.snapshot().ordinaryRetained == 1 && scope.owner.snapshot().deletionRetained == 1)
+        awaitLifecycleFact {
+            retainedExactly(scope.binding(), ordinaryEntry) && retainedExactly(scope.binding(deletion = true), deletionEntry)
+        }
         check(!hold.returned.get())
         hold.unblock.countDown()
         awaitLifecycleFact { scope.entries().isEmpty() && scope.entries(deletion = true).isEmpty() }
@@ -74,6 +78,17 @@ internal object PgLifecycleTimerCases {
             },
         )
         peer.verify()
+    }
+
+    /** Contention is pending; a conclusive count/identity mismatch fails immediately, never retries. */
+    private fun retainedExactly(binding: PersistencePhysicalFactoryBinding, expected: PersistencePhysicalEntry): Boolean {
+        if (!binding.ledger.lock.tryLock()) return false
+        return try {
+            check(binding.ledger.entries.filterNotNull().singleOrNull() === expected) { "Expected the exact entry to remain retained while the Timer is held." }
+            true
+        } finally {
+            binding.ledger.lock.unlock()
+        }
     }
 
     private fun deadTimer(scope: PgLifecycleTestScope, peer: PgLifecyclePeer, foreign: PgLifecycleTimerFixture) {

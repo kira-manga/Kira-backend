@@ -1,17 +1,17 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
-import java.io.EOFException
 import java.io.IOException
 import java.net.Socket
 import java.net.SocketException
-import javax.net.ssl.SSLException
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.SSLSocket
 
 /** Bounded wire witnesses. A peer cleanup close is never counted as a client EOF/reset. */
-internal class PgLifecycleTlsWire(private val raw: Socket, private val budget: PersistenceTimeBudget) {
+internal class PgLifecycleTlsWire(private val raw: Socket, private val budget: PersistenceTimeBudget, private val closing: AtomicBoolean) {
     private val input = raw.getInputStream()
     private var bytes = 0
     private var records = 0
+    private var serverOutputEnded = false
 
     fun readClientHello(): ByteArray {
         val type = requireNotNull(first()) { "Client closed before sending a real TLS ClientHello." }
@@ -32,6 +32,8 @@ internal class PgLifecycleTlsWire(private val raw: Socket, private val budget: P
             flush()
         }
         raw.shutdownOutput() // Inject server EOF, but retain the readable raw socket for the client's independent disconnect.
+        serverOutputEnded = true
+        checkOpen()
         check(raw.isOutputShutdown && !raw.isClosed && !raw.isInputShutdown)
     }
 
@@ -47,7 +49,8 @@ internal class PgLifecycleTlsWire(private val raw: Socket, private val budget: P
     fun awaitFailedHandshakeDisconnect(encrypted: SSLSocket) {
         // Pinned OpenJDK21 fatal initial-handshake shutdown already closed this autoClose=false TLS layer.
         // Its raw socket must still be untouched; an SSL/socket exception alone is not a disconnect witness.
-        check(encrypted.isClosed && !raw.isClosed && !raw.isInputShutdown && !raw.isOutputShutdown)
+        checkOpen()
+        check(encrypted.isClosed && !raw.isOutputShutdown)
         encrypted.close() // Documented layer-close barrier; already-closed SSLSocketImpl.close returns without I/O.
         check(encrypted.isClosed && !raw.isClosed && !raw.isInputShutdown && !raw.isOutputShutdown)
         awaitRawDisconnect()
@@ -55,6 +58,8 @@ internal class PgLifecycleTlsWire(private val raw: Socket, private val budget: P
     }
 
     fun awaitEncryptedDisconnect(encrypted: SSLSocket, allowTerminate: Boolean = true) {
+        checkOpen()
+        check(!raw.isOutputShutdown)
         check(!encrypted.isClosed && !encrypted.isInputShutdown && !raw.isClosed && !raw.isInputShutdown)
         try {
             encrypted.soTimeout = budget.remainingMillis(3_000).toInt()
@@ -67,42 +72,40 @@ internal class PgLifecycleTlsWire(private val raw: Socket, private val budget: P
                 check(type == -1) { "Unexpected business traffic on an opaque TLS candidate." }
             }
         } catch (failure: IOException) {
-            // This single owner has not closed/half-closed the layer or raw, and no cleanup is running.
-            // Stock JSSE preserves SocketException and wraps EOF separately. Other TLS failures are not EOF evidence.
-            check(isEofOrReset(failure) && !raw.isClosed && !raw.isInputShutdown) {
-                "TLS disconnect was not observed: ${failure.javaClass.simpleName}"
-            }
+            check(PgLifecycleDisconnectEvidence.tlsEofOrReset(failure)) { "Unclassified TLS failure is not client EOF/reset." }
         }
+        checkOpen()
+        check(!raw.isOutputShutdown)
         // The layered-socket contract forbids raw reads before SSLSocket.close returns. Client TLS closure
         // was observed above; autoClose=false leaves this separate raw EOF/reset witness fixture-owned and open.
         encrypted.close()
+        checkOpen()
+        check(!raw.isOutputShutdown)
         awaitRawDisconnect()
-    }
-
-    private fun isEofOrReset(failure: IOException): Boolean {
-        var cursor: Throwable? = failure
-        repeat(4) {
-            when (val current = cursor) {
-                is EOFException, is SocketException -> return true
-                is SSLException -> cursor = current.cause
-                else -> return false
-            }
-        }
-        return false
+        checkOpen()
+        check(!raw.isOutputShutdown)
     }
 
     private fun first(): Int? {
-        check(!raw.isClosed && !raw.isInputShutdown) { "Locally closed fixture socket cannot witness client disposal." }
+        checkOpen()
         raw.soTimeout = budget.remainingMillis(3_000).toInt()
         val type = try {
             input.read()
         } catch (failure: SocketException) {
-            check(!raw.isClosed && !raw.isInputShutdown) { "Local socket cleanup masked a client disconnect: ${failure.javaClass.simpleName}" }
+            check(PgLifecycleDisconnectEvidence.reset(failure)) { "Unclassified socket failure is not client EOF/reset." }
             -1
         }
+        checkOpen()
         if (type == -1) return null
         charge(1)
         return type
+    }
+
+    private fun checkOpen() {
+        // Only this wire's intentional partial-handshake injection may half-close output; input stays locally open.
+        check(!closing.get() && !raw.isClosed && !raw.isInputShutdown && raw.isOutputShutdown == serverOutputEnded) {
+            "Fixture cleanup/local shutdown cannot witness client disposal."
+        }
     }
 
     private fun record(header: ByteArray = read(4)): ByteArray {

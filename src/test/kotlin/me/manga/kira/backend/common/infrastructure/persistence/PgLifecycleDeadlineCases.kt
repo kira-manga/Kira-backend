@@ -20,13 +20,7 @@ internal object PgLifecycleDeadlineCases {
                 val caller = Thread.ofPlatform().name("synthetic-progress-caller").inheritInheritableThreadLocals(false).unstarted(request)
                 try {
                     caller.start()
-                    try {
-                        peer.awaitStartup()
-                    } catch (failure: IllegalStateException) {
-                        // Safe sealed result text only; do not infer a startup/admission cause from a missing peer receipt.
-                        if (request.isDone) println("PG_LIFECYCLE_PROGRESS_EARLY_RESULT deletion=$deletion result=${request.get(1, TimeUnit.SECONDS)}")
-                        throw failure
-                    }
+                    awaitStartup(peer, request, deletion)
                     val entry = scope.entries(deletion).single()
                     val control = requireNotNull(entry.control)
                     val expectedPolicy = if (deletion) {
@@ -49,6 +43,16 @@ internal object PgLifecycleDeadlineCases {
                     awaitLifecycleFact { !caller.isAlive }
                 }
             }
+        }
+    }
+
+    private fun awaitStartup(peer: PgLifecyclePeer, request: FutureTask<PersistenceFactoryResult<PersistenceJdbcCandidate>>, deletion: Boolean) {
+        try {
+            peer.awaitStartup()
+        } catch (failure: IllegalStateException) {
+            // Safe sealed result text only; do not infer a startup/admission cause from a missing peer receipt.
+            if (request.isDone) println("PG_LIFECYCLE_PROGRESS_EARLY_RESULT deletion=$deletion result=${request.get(1, TimeUnit.SECONDS)}")
+            throw failure
         }
     }
 

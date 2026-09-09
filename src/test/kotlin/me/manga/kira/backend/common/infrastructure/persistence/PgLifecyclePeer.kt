@@ -62,6 +62,10 @@ internal class PgLifecyclePeer(count: Int = 1, private val mode: PgLifecyclePeer
         check(slots[ordinal].refusalReached.await(5, TimeUnit.SECONDS)) { "Provider refusal did not reach real startup." }
     }
 
+    fun diagnostic(ordinal: Int): String = "observation=MIXED accepted=${slots.count { it.socket.get() != null }} " +
+        "started=${slots[ordinal].started.get()} refusal_reached=${slots[ordinal].refusalReached.count == 0L} " +
+        "problem_present=${problem.get() != null}"
+
     fun releaseRefusal(ordinal: Int) = slots[ordinal].allowRefusal.countDown()
 
     fun verify() {

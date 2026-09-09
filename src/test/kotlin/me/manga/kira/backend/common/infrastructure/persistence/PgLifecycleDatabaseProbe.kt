@@ -28,7 +28,7 @@ object PgLifecycleDatabaseProbe {
         if (negative(case, nonce)) return
         val port = args[7].toInt()
         check(port in 1..65535)
-        val handshake = PgLifecycleDatabaseHandshake(root.resolve("phases"), nonce, PgLifecycleDatabaseParty.CHILD)
+        val handshake = PgLifecycleDatabaseHandshake(root.resolve("phases"), nonce, PgLifecycleDatabaseParty.CHILD, case)
         val result = runCatching { PgLifecycleDatabaseCases.verify(case, port, "w03c_$nonce", handshake) }
         if (result.isFailure) {
             // Keep bounded assertion/cleanup locations, never messages, causes, SQL or authentication payloads.
@@ -50,7 +50,9 @@ object PgLifecycleDatabaseProbe {
     }
 
     private fun negative(case: PgLifecycleDatabaseCase, nonce: String): Boolean {
-        if (case.mode in setOf(PgLifecycleDatabaseMode.MATRIX, PgLifecycleDatabaseMode.REUSE, PgLifecycleDatabaseMode.WRONG_PASSWORD)) return false
+        if (case.supplemental || case.mode in setOf(PgLifecycleDatabaseMode.MATRIX, PgLifecycleDatabaseMode.REUSE, PgLifecycleDatabaseMode.WRONG_PASSWORD)) {
+            return false
+        }
         if (case.mode === PgLifecycleDatabaseMode.ASSERTION_FAILURE) {
             println("PG_DATABASE_EXPECTED_ASSERTION ${case.label} nonce=$nonce")
             error("Deliberate synthetic database assertion.")

@@ -53,7 +53,7 @@ internal class PgLifecycleTlsSession(
             flush()
         }
         acceptedTls.set(true)
-        val wire = PgLifecycleTlsWire(raw, budget)
+        val wire = PgLifecycleTlsWire(raw, budget, closing)
         if (mode === PgLifecycleTlsMode.PARTIAL_HANDSHAKE) {
             wire.sendPartialHandshakeAfterClientHello()
             partialSent.set(true)

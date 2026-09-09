@@ -30,6 +30,14 @@ internal enum class PgLifecycleDatabaseMode {
     MATRIX,
     REUSE,
     WRONG_PASSWORD,
+    TRUNCATED_STARTUP,
+    SOCKET_TIMEOUT,
+    PROGRESS_DEADLINE,
+    LATE_RETURN,
+    PRIMARY_ROLE,
+    SECONDARY_REJECT,
+    ORIGINAL_MATRIX,
+    ORIGINAL_LATE_RETURN,
     ASSERTION_FAILURE,
     MISSING_RECEIPT,
     WRONG_RECEIPT,
@@ -44,12 +52,48 @@ internal data class PgLifecycleDatabaseCase(
 ) {
     init {
         require(queryTimeout in 0..1)
-        require(mode === PgLifecycleDatabaseMode.MATRIX || (recipe === PgLifecycleDatabaseRecipe.DEFAULT && queryTimeout == 0))
+        require(
+            mode in setOf(PgLifecycleDatabaseMode.MATRIX, PgLifecycleDatabaseMode.ORIGINAL_MATRIX) ||
+                (recipe === PgLifecycleDatabaseRecipe.DEFAULT && queryTimeout == 0),
+        )
+        require(!originalProvider || lane === PgLifecycleDatabaseLane.ORDINARY)
     }
 
-    val attempts: Int get() = if (mode === PgLifecycleDatabaseMode.REUSE) 2 else 1
-    val returnsRaw: Boolean get() = mode !== PgLifecycleDatabaseMode.WRONG_PASSWORD && !(queryTimeout == 1 && recipe.positiveTimeoutFails)
+    val originalProvider: Boolean get() = mode in setOf(PgLifecycleDatabaseMode.ORIGINAL_MATRIX, PgLifecycleDatabaseMode.ORIGINAL_LATE_RETURN)
+    val lateReturn: Boolean get() = mode in setOf(PgLifecycleDatabaseMode.LATE_RETURN, PgLifecycleDatabaseMode.ORIGINAL_LATE_RETURN)
+    val deadlineFailure: Boolean get() = lateReturn || mode === PgLifecycleDatabaseMode.PROGRESS_DEADLINE
+    val roleProbe: Boolean get() = mode in setOf(PgLifecycleDatabaseMode.PRIMARY_ROLE, PgLifecycleDatabaseMode.SECONDARY_REJECT)
+    val supplemental: Boolean get() = mode in ESTABLISHMENT || originalProvider
+    val attempts: Int get() = if (mode === PgLifecycleDatabaseMode.REUSE || supplemental) 2 else 1
+    val returnsRaw: Boolean get() = mode !in NO_RAW && !(queryTimeout == 1 && recipe.positiveTimeoutFails)
+    val succeeds: Boolean get() = returnsRaw && !deadlineFailure
+    val socketTimeout: Int
+        get() = if (mode === PgLifecycleDatabaseMode.SOCKET_TIMEOUT) {
+            1
+        } else if (lane.deleting) {
+            2
+        } else {
+            3
+        }
     val label: String get() = "mode=${mode.name} lane=${lane.name} recipe=${recipe.name} q=$queryTimeout"
+
+    companion object {
+        val ESTABLISHMENT = setOf(
+            PgLifecycleDatabaseMode.TRUNCATED_STARTUP,
+            PgLifecycleDatabaseMode.SOCKET_TIMEOUT,
+            PgLifecycleDatabaseMode.PROGRESS_DEADLINE,
+            PgLifecycleDatabaseMode.LATE_RETURN,
+            PgLifecycleDatabaseMode.PRIMARY_ROLE,
+            PgLifecycleDatabaseMode.SECONDARY_REJECT,
+        )
+        private val NO_RAW = setOf(
+            PgLifecycleDatabaseMode.WRONG_PASSWORD,
+            PgLifecycleDatabaseMode.TRUNCATED_STARTUP,
+            PgLifecycleDatabaseMode.SOCKET_TIMEOUT,
+            PgLifecycleDatabaseMode.PROGRESS_DEADLINE,
+            PgLifecycleDatabaseMode.SECONDARY_REJECT,
+        )
+    }
 }
 
 /** Disposable database/role/password constants only. No environment datasource or credential file is read. */
@@ -69,7 +113,14 @@ internal object PgLifecycleDatabaseSettings {
             "gssEncMode" to "disable", "requireAuth" to "scram-sha-256", "scramMaxIterations" to "100000", "channelBinding" to "disable",
             "sslmode" to "disable", "sslcert" to "", "sslkey" to "", "connectTimeout" to "2", "socketTimeout" to "3", "cancelSignalTimeout" to "2",
             "readOnly" to "false", "preferQueryMode" to "extended", "queryTimeout" to case.queryTimeout.toString(),
-        ) + case.recipe.settings
+        ) + case.recipe.settings + buildMap {
+            if (case.originalProvider) put("socketFactoryArg", "synthetic-ignored")
+            if (case.mode === PgLifecycleDatabaseMode.SOCKET_TIMEOUT) put("socketTimeout", "1")
+            if (case.roleProbe) {
+                put("targetServerType", if (case.mode === PgLifecycleDatabaseMode.PRIMARY_ROLE) "primary" else "secondary")
+                put("loadBalanceHosts", "false")
+            }
+        }
         // Deliberately different from deletion's derived 2000ms. Never reset an already active request budget.
         return ResolvedPersistenceEndpoint(properties, PersistenceLoginPolicy.resolve(null, 6_000))
     }

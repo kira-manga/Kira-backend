@@ -22,6 +22,8 @@ internal class PgLifecycleTlsRequest(private val scope: PgLifecycleTestScope, de
         return result
     }
 
+    fun diagnostic(): String = pgLifecycleCallerDiagnostic(task, thread)
+
     override fun close() {
         if (!resultObserved) scope.owner.requestShutdown()
         pgLifecycleTlsJoin(listOf(thread))

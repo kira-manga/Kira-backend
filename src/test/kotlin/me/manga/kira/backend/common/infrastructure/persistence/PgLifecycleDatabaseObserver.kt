@@ -28,11 +28,12 @@ internal class PgLifecycleDatabaseObserver(private val connection: Connection, p
                     check(observer > 0 && result.getInt(5) == 1)
                     if (observerPid == null) observerPid = observer
                     check(observer == observerPid) { "Observer connection identity changed." }
-                    val pid = result.getInt(6)
+                    check(!result.getBoolean(6) && !result.wasNull()) { "Observer did not witness the unchanged server as primary." }
+                    val pid = result.getInt(7)
                     if (!result.wasNull()) {
-                        check(pid > 0 && sessions.add(PgLifecycleDatabaseSession(pid, result.getTimestamp(7).toInstant())))
+                        check(pid > 0 && sessions.add(PgLifecycleDatabaseSession(pid, result.getTimestamp(8).toInstant())))
                     } else {
-                        check(result.getTimestamp(7) == null)
+                        check(result.getTimestamp(8) == null)
                     }
                 }
                 check(rows > 0) { "Observer health row was absent." }
@@ -82,7 +83,7 @@ internal class PgLifecycleDatabaseObserver(private val connection: Connection, p
 
     companion object {
         private val QUERY = """
-            SELECT pg_postmaster_start_time(), current_database(), current_user, pg_backend_pid(), 1, a.pid, a.backend_start
+            SELECT pg_postmaster_start_time(), current_database(), current_user, pg_backend_pid(), 1, pg_is_in_recovery(), a.pid, a.backend_start
             FROM (SELECT 1) AS health
             LEFT JOIN pg_stat_activity AS a
               ON a.datname = ? AND a.usename = ? AND a.application_name = ? AND a.backend_type = 'client backend'

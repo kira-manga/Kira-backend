@@ -6,32 +6,50 @@ import java.io.EOFException
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.SocketException
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+
+private enum class PgLifecycleDatabaseSessionStart {
+    NEW,
+    ENTERED,
+    ENDED,
+    CLOSED_BEFORE_START,
+}
 
 /** All three actors and both socket identities are retained before start/connect. No server EOF fabricates client EOF. */
 internal class PgLifecycleDatabaseRelaySession(
     private val client: Socket,
     private val host: String,
     private val port: Int,
+    case: PgLifecycleDatabaseCase,
     private val register: (PgLifecycleDatabaseRelaySession, ByteArray) -> Unit,
 ) : AutoCloseable {
-    val state = PgLifecycleDatabaseRelayState()
+    val state = PgLifecycleDatabaseRelayState(case)
     private val upstream = Socket()
-    private val started = AtomicBoolean()
+    private val startPhase = AtomicReference(PgLifecycleDatabaseSessionStart.NEW)
     private val coordinator = Thread.ofPlatform().name("w03-database-relay-session").unstarted { guarded(::run) }
     private val clientPump = Thread.ofPlatform().name("w03-database-relay-client").unstarted { guarded(::fromClient) }
     private val serverPump = Thread.ofPlatform().name("w03-database-relay-server").unstarted { guarded(::fromServer) }
 
     fun start() {
-        check(started.compareAndSet(false, true))
-        coordinator.start()
+        if (!startPhase.compareAndSet(PgLifecycleDatabaseSessionStart.NEW, PgLifecycleDatabaseSessionStart.ENTERED)) {
+            check(startPhase.get() === PgLifecycleDatabaseSessionStart.CLOSED_BEFORE_START && state.fixtureClosing.get())
+            return
+        }
+        try {
+            coordinator.start()
+        } finally {
+            startPhase.set(PgLifecycleDatabaseSessionStart.ENDED)
+        }
     }
 
     private fun run() {
+        if (state.fixtureClosing.get()) return
         client.soTimeout = 15_000
         client.tcpNoDelay = true
         val startup = PgLifecycleDatabaseWire.startup(DataInputStream(client.getInputStream()))
+        if (state.fixtureClosing.get()) return
         register(this, startup)
+        if (state.fixtureClosing.get()) return
         upstream.soTimeout = 15_000
         upstream.tcpNoDelay = true
         upstream.connect(InetSocketAddress(host, port), 1_000)
@@ -67,6 +85,7 @@ internal class PgLifecycleDatabaseRelaySession(
             PgLifecycleDatabaseWire.sqlFingerprint(message)?.let { fingerprint ->
                 check(state.statements.size < 4)
                 state.statements.add(fingerprint)
+                if (fingerprint === PgLifecycleDatabaseSql.ROLE) state.role.request(message)
             }
             if (message.type == 'X'.code) {
                 check(message.bytes.isEmpty() && state.frontendTerminate.compareAndSet(false, true))
@@ -76,6 +95,8 @@ internal class PgLifecycleDatabaseRelaySession(
     }
 
     private fun readClient(input: DataInputStream): PgLifecycleDatabaseWire.Message? {
+        if (state.fixtureClosing.get()) return null
+        check(!client.isClosed && !client.isInputShutdown)
         var ending = PgLifecycleDatabaseClientEnd.EOF
         // Deliberately only the client INPUT operation is caught here. An upstream write/reset cannot manufacture this receipt.
         val message = try {
@@ -88,11 +109,15 @@ internal class PgLifecycleDatabaseRelaySession(
         } catch (_: EOFException) {
             null
         } catch (failure: SocketException) {
-            if (state.fixtureClosing.get() || client.isClosed) throw failure
+            if (state.fixtureClosing.get() || client.isClosed || client.isInputShutdown) throw failure
+            if (!PgLifecycleDatabaseDisconnectEvidence.reset(failure)) throw failure
             ending = PgLifecycleDatabaseClientEnd.RESET
             null
         }
-        if (message == null && !state.fixtureClosing.get()) state.clientOriginatedEnd(ending)
+        if (message == null && !state.fixtureClosing.get()) {
+            check(!client.isClosed && !client.isInputShutdown)
+            state.clientOriginatedEnd(ending)
+        }
         return message
     }
 
@@ -106,9 +131,9 @@ internal class PgLifecycleDatabaseRelaySession(
                 copyServer(input, output)
             }
         } catch (failure: SocketException) {
-            if (state.clientEnd.get() == null && !state.fixtureClosing.get()) throw failure
+            requireIndependentClientEnd(failure)
         } catch (failure: EOFException) {
-            if (state.clientEnd.get() == null && !state.fixtureClosing.get()) throw failure
+            requireIndependentClientEnd(failure)
         }
         // In particular do not close client here. Its own EOF/reset is required even when PostgreSQL closes first.
     }
@@ -126,8 +151,15 @@ internal class PgLifecycleDatabaseRelaySession(
             }
             bytes += message.bytes.size + 5
             check(++messages <= 256 && bytes <= 1_048_576)
+            val firstReady = message.type == 'Z'.code && state.gate.get() == null
             if (!beforeServerMessage(message)) return
-            PgLifecycleDatabaseWire.write(output, message)
+            if (firstReady) {
+                if (!forwardFirstReady(output, message)) return
+            } else {
+                PgLifecycleDatabaseWire.write(output, message)
+                state.lastServerWriteNanos.set(System.nanoTime())
+                state.role.response(message) // Only a successfully forwarded complete role response earns its wire receipt.
+            }
         }
     }
 
@@ -145,6 +177,7 @@ internal class PgLifecycleDatabaseRelaySession(
             'Z' -> if (state.gate.get() == null) {
                 check(message.bytes.contentEquals(byteArrayOf('I'.code.toByte())))
                 check(state.authentication == listOf(10, 11, 12, 0) && state.backendPid.get() > 0)
+                state.readyFault.observeReady(state.lastServerWriteNanos.get())
                 return state.hold(PgLifecycleDatabaseGate.AUTHENTICATED_READY)
             }
 
@@ -159,7 +192,75 @@ internal class PgLifecycleDatabaseRelaySession(
         return !state.fixtureClosing.get()
     }
 
-    fun actorsEnded(): Boolean = listOf(coordinator, clientPump, serverPump).none { it.isAlive }
+    private fun forwardFirstReady(output: DataOutputStream, message: PgLifecycleDatabaseWire.Message): Boolean {
+        val frame = PgLifecycleDatabaseWire.readyFrame(message)
+        val fault = state.readyFault
+        fault.beginDelivery()
+        return when (fault.kind) {
+            PgLifecycleDatabaseReadyKind.COMPLETE -> {
+                output.write(frame)
+                output.flush()
+                fault.wrote(0, frame.size)
+                true
+            }
+
+            PgLifecycleDatabaseReadyKind.TRUNCATED -> {
+                output.write(frame, 0, 3)
+                output.flush()
+                fault.wrote(0, 3)
+                state.outputHalfCloseInvoked()
+                client.shutdownOutput() // Never close client input or upstream to manufacture a candidate EOF receipt.
+                fault.outputHalfCloseEnded.set(true)
+                false
+            }
+
+            PgLifecycleDatabaseReadyKind.IDLE -> {
+                // No Ready byte, progress, socket close, or fabricated timeout observation.
+                false
+            }
+
+            PgLifecycleDatabaseReadyKind.PROGRESS, PgLifecycleDatabaseReadyKind.LATE -> progressReady(output, frame)
+        }
+    }
+
+    private fun progressReady(output: DataOutputStream, frame: ByteArray): Boolean {
+        val fault = state.readyFault
+        for (offset in 0..4) {
+            if (offset > 0 && !fault.pauseBeforeNextByte()) return false
+            if (state.fixtureClosing.get() || state.clientEnd.get() != null) return false
+            output.writeByte(frame[offset].toInt())
+            output.flush()
+            fault.wrote(offset, 1)
+        }
+        if (fault.kind === PgLifecycleDatabaseReadyKind.PROGRESS || !fault.awaitFinal()) return false
+        check(!state.fixtureClosing.get() && state.clientEnd.get() == null)
+        output.writeByte(frame[5].toInt()) // The authentic payload byte, released only after the parent's exact after-expiry witness.
+        output.flush()
+        fault.wrote(5, 1)
+        return true
+    }
+
+    private fun requireIndependentClientEnd(failure: Exception) {
+        if (state.fixtureClosing.get() || state.clientEnd.get() != null) return
+        // A write can race the independent input pump's EOF. Wait boundedly for that input receipt; never create it from this failure.
+        state.readyFault.awaitClientEnd(1_000)
+        if (!state.fixtureClosing.get() && state.clientEnd.get() == null) throw failure
+    }
+
+    fun actorsEnded(): Boolean = startPhase.get() in setOf(
+        PgLifecycleDatabaseSessionStart.ENDED,
+        PgLifecycleDatabaseSessionStart.CLOSED_BEFORE_START,
+    ) && listOf(coordinator, clientPump, serverPump).none { it.isAlive }
+
+    /** Called only by this retained coordinator after late predecessor registration; never joins itself or opens the upstream socket. */
+    fun cleanupBeforeConnect() {
+        check(Thread.currentThread() === coordinator && clientPump.state === Thread.State.NEW && serverPump.state === Thread.State.NEW)
+        state.cleanupRelease()
+        val sockets = listOf(client, upstream).map { socket ->
+            runCatching { socket.close() }.onFailure { state.failure.compareAndSet(null, it) }
+        }
+        sockets.forEach { it.getOrThrow() }
+    }
 
     private fun guarded(operation: () -> Unit) {
         runCatching(operation).onFailure { failure ->
@@ -169,10 +270,12 @@ internal class PgLifecycleDatabaseRelaySession(
 
     override fun close() {
         state.cleanupRelease()
+        startPhase.compareAndSet(PgLifecycleDatabaseSessionStart.NEW, PgLifecycleDatabaseSessionStart.CLOSED_BEFORE_START)
         val sockets = listOf(client, upstream).map { runCatching { it.close() } }
         val deadline = PgLifecycleDatabaseDeadline(5_000)
+        val start = runCatching { while (startPhase.get() === PgLifecycleDatabaseSessionStart.ENTERED) deadline.pause() }
         val actors = listOf(coordinator, clientPump, serverPump).map { runCatching { waitActor(it, deadline) } }
-        (sockets + actors).forEach { it.getOrThrow() }
+        (sockets + start + actors).forEach { it.getOrThrow() }
         check(actorsEnded())
     }
 

@@ -40,16 +40,28 @@ internal class PersistenceJdbcDatabaseLifecycleTest {
         run(case)
     }
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
     @EnumSource(PgLifecycleDatabaseLane::class)
     fun `same root reuses its physical slot and stale alias cannot retire a positively witnessed successor`(lane: PgLifecycleDatabaseLane) {
         run(PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.DEFAULT, 0, lane, PgLifecycleDatabaseMode.REUSE))
     }
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
     @EnumSource(PgLifecycleDatabaseLane::class)
     fun `wrong synthetic password proves real SCRAM refusal without inventing an authenticated session`(lane: PgLifecycleDatabaseLane) {
         run(PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.DEFAULT, 0, lane, PgLifecycleDatabaseMode.WRONG_PASSWORD))
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @MethodSource("establishmentRows")
+    fun `real authenticated establishment faults deadlines late returns and server role preserve both policies`(case: PgLifecycleDatabaseCase) {
+        run(case)
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @MethodSource("originalProviderRows")
+    fun `original provider keeps weaker raw and no raw constructor dispositions with deletion unavailable`(case: PgLifecycleDatabaseCase) {
+        run(case)
     }
 
     private fun run(case: PgLifecycleDatabaseCase) {
@@ -64,5 +76,28 @@ internal class PersistenceJdbcDatabaseLifecycleTest {
                 PgLifecycleDatabaseRecipe.entries.map { recipe -> Arguments.of(PgLifecycleDatabaseCase(recipe, queryTimeout, lane)) }
             }
         }.stream()
+
+        @JvmStatic
+        fun establishmentRows(): Stream<Arguments> = PgLifecycleDatabaseLane.entries.flatMap { lane ->
+            PgLifecycleDatabaseCase.ESTABLISHMENT.map { mode ->
+                Arguments.of(PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.DEFAULT, 0, lane, mode))
+            }
+        }.stream()
+
+        @JvmStatic
+        fun originalProviderRows(): Stream<Arguments> = (
+            PgLifecycleDatabaseRecipe.entries.flatMap { recipe ->
+                (0..1).map { timeout ->
+                    Arguments.of(PgLifecycleDatabaseCase(recipe, timeout, PgLifecycleDatabaseLane.ORDINARY, PgLifecycleDatabaseMode.ORIGINAL_MATRIX))
+                }
+            } + Arguments.of(
+                PgLifecycleDatabaseCase(
+                    PgLifecycleDatabaseRecipe.DEFAULT,
+                    0,
+                    PgLifecycleDatabaseLane.ORDINARY,
+                    PgLifecycleDatabaseMode.ORIGINAL_LATE_RETURN,
+                ),
+            )
+            ).stream()
     }
 }

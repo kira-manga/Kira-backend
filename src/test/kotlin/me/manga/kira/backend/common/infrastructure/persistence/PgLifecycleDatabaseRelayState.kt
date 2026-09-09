@@ -18,8 +18,13 @@ internal enum class PgLifecycleDatabaseClientEnd {
     RESET,
 }
 
+private enum class PgLifecycleDatabaseInputOrigin {
+    CLIENT,
+    FIXTURE,
+}
+
 /** Detached bounded wire facts. Fixture teardown can never set a candidate-originated close receipt. */
-internal class PgLifecycleDatabaseRelayState {
+internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDatabaseCase) {
     val fixtureClosing = AtomicBoolean()
     val failure = AtomicReference<Throwable?>()
     val completed = AtomicBoolean()
@@ -31,11 +36,17 @@ internal class PgLifecycleDatabaseRelayState {
     val clientEnd = AtomicReference<PgLifecycleDatabaseClientEnd?>()
     val originOrder = AtomicLong()
     val upstreamCloseOrder = AtomicLong()
+    val clientEndNanos = AtomicLong()
+    val outputHalfCloseOrder = AtomicLong()
+    val lastServerWriteNanos = AtomicLong()
     val gate = AtomicReference<PgLifecycleDatabaseGate?>()
+    val readyFault = PgLifecycleDatabaseReadyFault(case)
+    val role = PgLifecycleDatabaseRoleWitness(case)
     private val held = CountDownLatch(1)
     private val released = CountDownLatch(1)
     private val releasedByParent = AtomicBoolean()
     private val sequence = AtomicLong()
+    private val inputOrigin = AtomicReference<PgLifecycleDatabaseInputOrigin?>()
 
     @Volatile
     var ordinal: Int = -1
@@ -52,15 +63,54 @@ internal class PgLifecycleDatabaseRelayState {
 
     fun isHeld(): Boolean = held.count == 0L
 
+    /** Read-only, bounded, mixed observations. Reached and actually unreleased are deliberately separate. */
+    fun diagnostic(): String {
+        val reached = isHeld()
+        val signalled = released.count == 0L
+        val closing = fixtureClosing.get()
+        val auth = authentication.take(4).joinToString(",") { code ->
+            when (code) {
+                0 -> "OK"
+                10 -> "SASL"
+                11 -> "CONTINUE"
+                12 -> "FINAL"
+                else -> "OTHER"
+            }
+        }.ifEmpty { "NONE" }
+        val error = when (errorState.get()) {
+            null -> "NONE"
+            "28P01" -> "WRONG_PASSWORD"
+            else -> "OTHER"
+        }
+        return "gate=${gate.get()?.name ?: "NOT_RECORDED"} held_reached=$reached release_signalled=$signalled " +
+            "unreleased=${reached && !signalled} parent_released=${releasedByParent.get()} fixture_closing=$closing " +
+            "auth_count=${authentication.size} auth=$auth backend_key_present=${backendPid.get() > 0} error_category=$error " +
+            "client_end=${clientEnd.get()?.name ?: "NOT_RECORDED"} origin_order=${originOrder.get()} upstream_close_order=${upstreamCloseOrder.get()} " +
+            "frontend_terminate=${frontendTerminate.get()} completed=${completed.get()} failure_present=${failure.get() != null}"
+    }
+
     fun release() {
-        check(isHeld() && releasedByParent.compareAndSet(false, true) && !fixtureClosing.get())
+        check(isHeld() && !fixtureClosing.get())
+        if (case.supplemental) check(readyFault.armed.get())
+        check(releasedByParent.compareAndSet(false, true))
         released.countDown()
     }
 
     fun clientOriginatedEnd(kind: PgLifecycleDatabaseClientEnd) {
-        check(!fixtureClosing.get())
+        if (!inputOrigin.compareAndSet(null, PgLifecycleDatabaseInputOrigin.CLIENT)) {
+            check(inputOrigin.get() === PgLifecycleDatabaseInputOrigin.FIXTURE) { "Duplicate independent client-input ending." }
+            return
+        }
         check(clientEnd.compareAndSet(null, kind))
+        clientEndNanos.set(System.nanoTime())
         originOrder.set(sequence.incrementAndGet()) // Publication is strictly before the upstream close invocation.
+        readyFault.stop()
+    }
+
+    fun outputHalfCloseInvoked() {
+        check(!fixtureClosing.get() && clientEnd.get() == null)
+        check(readyFault.outputHalfCloseEntered.compareAndSet(false, true))
+        check(outputHalfCloseOrder.compareAndSet(0, sequence.incrementAndGet()))
     }
 
     fun propagatingUpstreamClose() {
@@ -70,12 +120,16 @@ internal class PgLifecycleDatabaseRelayState {
 
     fun requireClientDisposal(primary: Boolean) {
         check(failure.get() == null && !fixtureClosing.get() && completed.get())
-        check(clientEnd.get() != null && originOrder.get() > 0 && upstreamCloseOrder.get() > originOrder.get())
+        check(clientEnd.get() != null && clientEndNanos.get() != 0L)
+        check(originOrder.get() > 0 && upstreamCloseOrder.get() > originOrder.get())
         if (primary) check(releasedByParent.get())
+        if (readyFault.outputHalfCloseEntered.get()) check(outputHalfCloseOrder.get() < originOrder.get())
     }
 
     fun cleanupRelease() {
+        inputOrigin.compareAndSet(null, PgLifecycleDatabaseInputOrigin.FIXTURE)
         fixtureClosing.set(true)
         released.countDown()
+        readyFault.stop()
     }
 }
