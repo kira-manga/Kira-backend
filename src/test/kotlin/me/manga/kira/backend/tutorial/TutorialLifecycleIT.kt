@@ -19,6 +19,7 @@ import me.manga.kira.backend.tutorial.domain.TutorialContent
 import me.manga.kira.backend.tutorial.domain.TutorialLifecycle
 import me.manga.kira.backend.tutorial.domain.TutorialRepository
 import me.manga.kira.backend.tutorial.domain.TutorialStep
+import org.hamcrest.Matchers.equalTo
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -163,7 +164,7 @@ class TutorialLifecycleIT : AbstractIntegrationTest() {
         assertEquals(publicTutorials, tutorials.publicTutorials(null, null))
         mockMvc.get("/api/v1/tutorial-categories").andExpect {
             status { isOk() }
-            jsonPath("$[*].slug") { value(listOf(category.slug)) }
+            jsonPath("$[*].slug") { value<List<String>>(equalTo(listOf(category.slug))) }
         }
         assertTutorialLists(category.slug, listOf(normal.slug, featured.slug), listOf(featured.slug), listOf(normal.slug))
         listOf(normal, featured).forEach { mockMvc.get("/api/v1/tutorials/${it.slug}").andExpect { status { isOk() } } }
@@ -218,7 +219,7 @@ class TutorialLifecycleIT : AbstractIntegrationTest() {
         validateStartup()
     }
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName} [{index}] {0}")
     @EnumSource(PublicationAction::class)
     fun `archive winning the category lock rejects publication without side effects`(action: PublicationAction) {
         val fixture = publicationFixture()
@@ -249,7 +250,7 @@ class TutorialLifecycleIT : AbstractIntegrationTest() {
         validateStartup()
     }
 
-    @ParameterizedTest
+    @ParameterizedTest(name = "{displayName} [{index}] {0}")
     @EnumSource(PublicationAction::class)
     fun `publication holds the category lock through commit before archive hides its child`(action: PublicationAction) {
         val fixture = publicationFixture()
@@ -357,7 +358,7 @@ class TutorialLifecycleIT : AbstractIntegrationTest() {
         ).forEach { (path, slugs) ->
             mockMvc.get(path).andExpect {
                 status { isOk() }
-                jsonPath("$[*].slug") { value(slugs) }
+                jsonPath("$[*].slug") { value<List<String>>(equalTo(slugs)) }
             }
         }
     }
