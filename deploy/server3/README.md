@@ -14,6 +14,8 @@ prerequisites below require verification on the installed host, not just a valid
   `/opt/kira/ingress.env`; the intentionally empty example is not a deployable configuration.
 - `postgres-init.sh` creates separate migration and runtime roles on the first database initialization.
 - `nginx/*.conf` keeps the site and API virtual hosts independent from existing hosts.
+- `verify_hsts.py` is an explicitly invoked, read-only post-install header/redirect check for all
+  four public hosts; it is not part of image deployment or a health check.
 - `kira-deploy` accepts an exact-SHA image stream, verifies it, preflights the candidate Compose
   configuration before activation, backs up PostgreSQL before
   migrations, initializes the tutorial-media volume for the backend image's declared numeric
@@ -122,6 +124,95 @@ Before enabling trust or admitting public authentication traffic, an authorized 
 The source/config checks and application tests cannot establish those installed-host facts. Until
 the operator checks succeed, production ingress/client-identity acceptance remains **EXTERNAL
 VERIFICATION REQUIRED**, not a deployment or issue-closure claim.
+
+## HTTPS-only HSTS policy — EXTERNAL VERIFICATION REQUIRED
+
+The versioned policy for the four TLS servers (apex, www redirect, API, and Admin) is exactly one
+`Strict-Transport-Security: max-age=86400`, defined at server scope with `always`. This covers
+redirects and ordinary local/upstream HTTP errors, not failed TLS handshakes with no HTTP response.
+The three TLS proxies suppress upstream HSTS so the edge owns the policy. The standalone Web
+bootstrap proxy (both apex and www) and API bootstrap proxy also suppress upstream HSTS; they
+**still proxy HTTP**, unlike the redirecting HTTP servers in the steady-state TLS templates.
+Standalone Admin HTTP remains redirect-only. Do not enable bootstrap and TLS templates together.
+ACME's `/.well-known/acme-challenge/` path deliberately remains available over HTTP without HSTS.
+
+### Reconcile the installed Nginx policy before activation
+
+An image-stream deployment does not install these templates or reload Nginx. An authorized operator
+must inspect the effective configuration, including Certbot/global includes, reconcile it without
+changing unrelated hosts, validate it with the installed Nginx, and separately install/reload it.
+For the **Nginx 1.28.3** validation baseline, account for all of these inheritance rules:
+
+- Adding server-level `add_header` replaces the **entire inherited parent `add_header` set**, not
+  just HSTS. Preserve any required other security headers when reconciling the installed policy.
+- An `add_header` in a same-scope Certbot/global include can instead create a duplicate HSTS field.
+  Any child location with its own `add_header` drops the inherited server header set, including
+  HSTS; none of the committed locations currently defines one. Audit future locations too.
+- `proxy_hide_header` suppresses an upstream response field, **not edge-generated** headers.
+  A local custom hide list replaces an inherited custom hide list; preserve other required hiding.
+  An inherited `proxy_pass_header Strict-Transport-Security` can undo the intended suppression.
+- A global edge HSTS rule can leak HSTS onto HTTP despite upstream suppression. Reconcile all
+  four HTTP hosts as well as HTTPS; do not assume an unknown global policy is safe or overwrite it.
+
+Do not use `add_header_inherit`: it was introduced in Nginx 1.29.3 and is unavailable in 1.28.3.
+Source/config checks do not prove the effective installed headers or preserve unknown global rules.
+
+### Post-install operator checks
+
+After the authorized configuration change, run from the Backend repository with Python 3.10+:
+
+```bash
+python3 -B deploy/server3/verify_hsts.py --check
+```
+
+Without `--check`, the command only prints help and makes no requests. The explicit check makes
+eight credential-free GETs: HTTPS `/` on each host, plus HTTP
+`/__kira_hsts_probe__/part%2Fone?first=1&second=a%2Bb` on each. It uses the normal CA trust store and
+hostname verification, never follows redirects (www must supply its own HTTPS policy), and never
+reads response bodies. Each request has a **10-second total deadline**, including DNS, connection,
+TLS, header receipt, and worker cleanup; a small part is reserved for kill/reap rather than allowing
+socket-idle timeouts to reset. `--timeout SECONDS` accepts 1–60 seconds per request. There are no
+retries. Exit 0 means these eight header checks passed; exit 1 means at least one failed.
+
+The checker counts raw case-insensitive field occurrences and requires exactly one HTTPS HSTS value
+`max-age=86400` after field OWS trimming. Missing, duplicate (even identical), comma-combined, and
+extra/wrong policies fail. HTTPS 4xx/5xx are inspected normally, **not** treated as a health failure.
+Every HTTP response must have no HSTS, status **301**, and exactly the expected HTTPS Location with
+the original encoded path/query: www goes to apex; apex/API/Admin retain their respective hosts.
+This checks steady-state TLS deployment redirects, **not** the standalone Web/API bootstrap proxy
+behavior or the ACME exception. It is not proof that every route/error response has the policy.
+Separately verify installed normal/local-error/upstream-error headers, bootstrap/ACME behavior,
+public certificates on all four names (including www), and the effective global/include policy.
+
+Keep the public Web repository's existing verifier as a complementary gate, run from that repository:
+
+```bash
+node scripts/verify-deployment.mjs https://kiramanga.me
+```
+
+That unchanged command checks TLS, pages, content types, and association identifiers; it does not
+replace the Backend's four-host exact-HSTS checks. Neither command installs configuration, verifies
+network isolation, or authorizes deployment. Focused Backend helper tests use only offline/owned
+loopback fixtures and do not contact production:
+
+```bash
+python3 -B -m unittest discover -s deploy/server3 -p 'test_verify_hsts.py' -v
+```
+
+### Staged rollout and rollback limits
+
+One day is a conservative **initial** policy, not a final security ceiling. Any later increase needs
+separate observation and operator approval. This rollout has no `includeSubDomains` or preload:
+the apex does not cover www or sibling hosts, and a fresh client's first HTTP hop is not protected
+without an already learned/preloaded policy. HSTS expiry is relative to receipt and is refreshed by
+valid policy responses; merely removing the directive does not clear a browser's cached policy.
+
+Rollback requires delivering `max-age=0` over **valid HTTPS for each affected host** and separately
+checking that changed policy (the fixed-policy smoke above deliberately rejects it). This does not
+erase a parent or preloaded policy. Account for any previously issued longer policy and clients
+that have not received the rollback. Maintain valid certificates, including www's redirect
+certificate, throughout rollout, rollback, and the remaining cache lifetime. Installed acceptance
+and rollout remain **EXTERNAL VERIFICATION REQUIRED**, not implied by a source or isolated test pass.
 
 ## Operations and recovery
 
