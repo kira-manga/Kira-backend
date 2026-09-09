@@ -4,6 +4,7 @@ set -euo pipefail
 deployment_root=/opt/kira
 compose_file="$deployment_root/compose.yaml"
 images_file="$deployment_root/images.env"
+ingress_file="$deployment_root/ingress.env"
 backup_root="$deployment_root/backups"
 release_root="$deployment_root/releases"
 
@@ -13,7 +14,17 @@ fail() {
 }
 
 compose() {
-  docker compose --project-name kira --file "$compose_file" --env-file "$images_file" "$@"
+  docker compose --project-name kira --file "$compose_file" \
+    --env-file "$images_file" --env-file "$ingress_file" "$@"
+}
+
+preflight_configuration() {
+  [[ -f $ingress_file && -r $ingress_file ]] || fail "server3 ingress.env is required and must be readable"
+  # Validate the same model used by activation, including the one-shot migration.
+  # Never emit rendered configuration or parser diagnostics containing env values.
+  if ! compose --profile tools config --quiet >/dev/null 2>&1; then
+    fail "server3 Compose configuration preflight failed; check the installed Compose and environment files"
+  fi
 }
 
 wait_healthy() {
@@ -131,6 +142,7 @@ activate_backend() {
   local image=$1
   local previous
   [[ $image =~ ^kira-backend:[A-Za-z0-9_.-]+$ ]] || fail "invalid backend image"
+  KIRA_BACKEND_IMAGE="$image" preflight_configuration
   previous=$(configured_image KIRA_BACKEND_IMAGE)
   docker image inspect "$image" >/dev/null
   prepare_tutorial_media_volume "$image"
@@ -153,6 +165,7 @@ activate_web() {
   local image=$1
   local previous
   [[ $image =~ ^kira-web:[A-Za-z0-9_.-]+$ ]] || fail "invalid web image"
+  KIRA_WEB_IMAGE="$image" preflight_configuration
   previous=$(configured_image KIRA_WEB_IMAGE)
   docker image inspect "$image" >/dev/null
   if ! KIRA_WEB_IMAGE="$image" compose up --detach --no-deps web; then
@@ -170,6 +183,7 @@ activate_admin() {
   local image=$1
   local previous
   [[ $image =~ ^kira-admin:[A-Za-z0-9_.-]+$ ]] || fail "invalid admin image"
+  KIRA_ADMIN_IMAGE="$image" preflight_configuration
   previous=$(configured_image KIRA_ADMIN_IMAGE)
   docker image inspect "$image" >/dev/null
   if ! KIRA_ADMIN_IMAGE="$image" compose up --detach --no-deps admin; then
