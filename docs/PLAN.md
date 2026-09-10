@@ -186,10 +186,19 @@ All endpoints under `/api/v1`. Errors use the problem envelope from §2. Paginat
 
 | Method & path | Auth | Request → Response | Codes |
 |---|---|---|---|
-| `POST /api/v1/auth/register` | none (gated by `kira.auth.registration-enabled`, default `true` dev / `false` prod — prod onboarding is via `/admin/users`, §4.5) | `{email, password}` → `{id, email, role:"USER"}`. Password policy: **min 15 chars, max 72 UTF-8 bytes** (BCrypt input limit — documented, enforced, never silently truncated), no composition rules, no trimming/normalization of the password (email IS trim+lowercased). | 201; 409 duplicate email (case-insensitive); 400 policy violation; 403 registration disabled; **429** registration throttle (per-IP) |
-| `POST /api/v1/auth/login` | none | `{email, password}` → `{accessToken, tokenType:"Bearer", expiresInSeconds, role}` | 200; 401 bad credentials (identical generic message for unknown-user / wrong-password / disabled account); **429** when throttled (per normalized email AND per IP — §6) |
+| `POST /api/v1/auth/register` | none (gated by `kira.auth.registration-enabled`, default `true` dev / `false` prod — prod onboarding is via `/admin/users`, §4.5) | `{email, password}` → `{id, email, role:"USER"}`. Password policy: **min 15 chars, max 72 UTF-8 bytes** (BCrypt input limit — documented, enforced, never silently truncated), no composition rules, no trimming/normalization of the password (email IS trim+lowercased). | 201; 409 duplicate email (case-insensitive); 400 password policy / `EMAIL_TOO_LONG`; 403 registration disabled; **429** registration throttle (per-IP) |
+| `POST /api/v1/auth/login` | none | `{email, password}` → `{accessToken, tokenType:"Bearer", expiresInSeconds, role}` | 200; 400 `EMAIL_TOO_LONG`; 401 bad credentials (identical generic message for unknown-user / wrong-password / disabled account); **429** when throttled (per normalized email AND per IP — §6) |
 | `GET /api/v1/auth/me` | Bearer (USER or ADMIN) | → `{id, email, role, createdAt}` | 200; 401 |
 | `POST /api/v1/auth/refresh` | **NOT registered in v1** — no handler, no 501 stub: requests get the standard 404 handling. OpenAPI/docs list it as planned-not-implemented. (§6 refresh seam.) | — | — |
+
+**Email admission:** shared `UserService` preserves `trim().lowercase()` and rejects a normalized
+result over **320 Unicode code points** with a value-free 400 `EMAIL_TOO_LONG`. Count after lowercase
+expansion; supplementary characters count once. No truncation, raw-size/RFC-shape restriction, Unicode
+normalization or alias rewriting is introduced. Login checks before throttle/lookup/credentials/audit;
+creation checks before password policy/duplicate lookup/hashing/insertion. Registration's enabled/IP
+gates, admin authentication/authorization and structural request checks retain precedence. Admin creation
+and seeding share the same bound. It aligns with PostgreSQL character length for valid representable
+Unicode, not a broader Unicode validator or a promise of JVM/database casing equivalence.
 
 ### 4.3 Admin — source management (all `ROLE_ADMIN`; every mutation writes `audit_log`)
 
@@ -222,7 +231,7 @@ Prod onboarding mechanism (registration is disabled in prod): admins create user
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /api/v1/admin/users` | `{email, password, role}` → create user (password policy of §4.2 applies; email trim+lowercased, case-insensitively unique). Response never echoes the password. | 201; 409 duplicate; 400 |
+| `POST /api/v1/admin/users` | `{email, password, role}` → create user (password policy and normalized email bound of §4.2 apply; email trim+lowercased, case-insensitively unique). Response never echoes the password. | 201; 409 duplicate; 400 (including `EMAIL_TOO_LONG`) |
 | `GET /api/v1/admin/users` | Paginated list: `{id, email, role, enabled, createdAt}` — **no password material, ever**. | 200 |
 | `POST /api/v1/admin/users/{id}/enable` | Re-enable a disabled user. | 200; 404 |
 | `POST /api/v1/admin/users/{id}/disable` | Disable: user can no longer log in; in-flight tokens die at the next request because the authentication pipeline re-checks `enabled` (§6). **Guard: refuses (409) to disable the last enabled ADMIN** — recovery from an all-admins-disabled state would otherwise require manual SQL. The guard is **serialized via the `security_state` singleton row lock** (§5): a bare count-then-disable check is racy — two concurrent transactions each observe 2 enabled admins and disable different ones → zero. Enable/disable (and any future role mutation) lock `security_state FOR UPDATE` first, then count. `ConcurrentLastAdminDisableIT` proves it. | 200; 404; 409 last-admin guard |
@@ -280,7 +289,7 @@ Number determinism is trivial here — the model contains only `Int`/`Long`/`Boo
 | column | type | constraints |
 |---|---|---|
 | id | uuid | PK, default `gen_random_uuid()` |
-| email | varchar(320) | NOT NULL; case-insensitive uniqueness enforced in the DB: `CREATE UNIQUE INDEX uq_users_email_lower ON users(lower(email));` (app layer ALSO trims + lowercases before store — belt and braces) |
+| email | varchar(320) | NOT NULL; case-insensitive uniqueness enforced in the DB: `CREATE UNIQUE INDEX uq_users_email_lower ON users(lower(email));` (app layer ALSO trims + lowercases and bounds the normalized result to 320 Unicode code points before store — §4.2) |
 | password_hash | varchar(255) | NOT NULL — sized for `DelegatingPasswordEncoder` `{id}hash` format, so the schema is not coupled to BCrypt forever (initial encoder IS `{bcrypt}`; cost calibrated on deployment hardware, not frozen at 10) |
 | role | varchar(16) | NOT NULL, CHECK (`role IN ('ADMIN','USER')`) |
 | enabled | boolean | NOT NULL default true |
@@ -417,11 +426,20 @@ CHECK `chk_result_xor_error`: `NOT (result IS NOT NULL AND error IS NOT NULL)` �
 | id | bigint | PK, `GENERATED ALWAYS AS IDENTITY` |
 | actor_user_id | uuid | NULL FK users (NULL = system, e.g. admin seeder) |
 | action | varchar(64) | NOT NULL (`SOURCE_CREATED`, `REVISION_CREATED`, `REVISION_PUBLISHED`, `SOURCE_DISABLED/ENABLED/RETIRED/REMOVED`, `SOURCE_ROLLBACK`, `DOCUMENT_PUBLISHED`, `BUNDLED_IMPORTED`, `USER_REGISTERED`, `USER_CREATED`, `USER_DISABLED/ENABLED`, `USER_PASSWORD_RESET`, `LOGIN_FAILED`) |
-| entity_type / entity_id | varchar(32) / varchar(128) | NOT NULL (api id / revision uuid / user uuid) |
+| entity_type / entity_id | varchar(32) / varchar(128) | NOT NULL; action/type-specific identifier (namespaces below) |
 | detail | jsonb | NOT NULL default `'{}'` — **identifiers, revision numbers, and checksums ONLY. Never full config bodies, never header values, never completion prompts/results, never passwords** (log-hygiene rule, §6) |
 | created_at | timestamptz | NOT NULL |
 
 Indexes: `(entity_type, entity_id)`, `(created_at)`.
+
+New `LOGIN_FAILED` rows use `login_identifier` / `email-sha256-v1:<full lowercase 64-hex SHA-256 of
+the submitted normalized UTF-8 email>` (80-character ID), null actor and empty detail for every
+credential-failure cause. Legacy `LOGIN_FAILED` / `user` / `<raw normalized identifier>` rows remain
+unchanged; user mutation rows still use `user` / `<UUID>`. Interpret `(action, entity_type, entity_id)`,
+not the prefix alone: a legacy raw identifier can itself look like a fingerprint. No migration or
+historical rewrite is needed. The audit API only paginates; operators/export consumers must distinguish
+both namespaces across cutover. Fingerprints remain dictionary-guessable, correlatable personal data,
+not anonymity, encryption, authentication or identity proof; access/retention rules remain (SECURITY.md).
 
 **Reserved, NOT created in v1:** `refresh_tokens` (id, user_id, token_hash, expires_at, revoked_at) — designed here so the auth seam has a landing spot; migration added only when refresh tokens are actually built.
 

@@ -171,19 +171,29 @@ authenticity** — a hash beside the same payload cannot authenticate it. Authen
 
 ## 2. Auth
 
+Email identifiers use `trim().lowercase()` and allow at most **320 Unicode code points after
+normalization**, not 320 UTF-16 units or UTF-8 bytes. Supplementary characters count once; lowercase
+expansion counts in the result. Oversize yields a value-free **400 `EMAIL_TOO_LONG`**. This shared
+bound applies to login, registration, admin creation and seeding; it adds no RFC-shape rule or
+raw-input size constraint. Existing structural request validation and security gates retain precedence.
+
 ### `POST /api/v1/auth/register`  — anon
 Gated by `kira.auth.registration-enabled` (default `true` dev / `false` prod). Body `{email, password}`.
 Password policy: **min 15 chars, max 72 UTF-8 bytes**, no composition rules, no trimming/normalization
 of the password (email is trim + lowercased).
 
 - **201** `{ "id": "<uuid>", "email": "…", "role": "USER" }`
-- **409** duplicate email (case-insensitive) · **400** policy violation · **403** `REGISTRATION_DISABLED`
+- **409** duplicate email (case-insensitive) · **400** password policy / `EMAIL_TOO_LONG` · **403** `REGISTRATION_DISABLED`
   · **429** per-IP registration throttle.
+
+The registration-enabled gate and per-IP throttle still run before the shared creation check.
+Within creation, the email bound precedes password policy, duplicate lookup, hashing and insertion.
 
 ### `POST /api/v1/auth/login`  — anon
 Body `{email, password}`.
 
 - **200** `{ "accessToken": "<jwt>", "tokenType": "Bearer", "expiresInSeconds": 3600, "role": "USER" }`
+- **400** `EMAIL_TOO_LONG` — checked before login throttle, lookup, credential verification, token or audit work.
 - **401** `INVALID_CREDENTIALS` — the same generic response body for unknown-user / wrong-password /
   disabled account. All three paths perform one password-hash verification (a decoy hash for an
   unknown/disabled account).
@@ -325,7 +335,7 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /admin/users` | `{email, password, role}` → create. Password policy of §2; email case-insensitively unique. | 201 · 409 duplicate · 400 |
+| `POST /admin/users` | `{email, password, role}` → create. Password policy and normalized email bound of §2; email case-insensitively unique. Admin authentication/authorization precedes creation. | 201 · 409 duplicate · 400 (including `EMAIL_TOO_LONG`) |
 | `GET /admin/users` | Paginated (`?page&size`, size ≤ 100). | 200 |
 | `POST /admin/users/{id}/enable` | Re-enable a disabled user. | 200 · 404 |
 | `POST /admin/users/{id}/disable` | Disable (in-flight tokens die at the next request). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
