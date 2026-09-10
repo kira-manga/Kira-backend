@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import com.fasterxml.jackson.databind.JsonNode
+import me.manga.kira.backend.sourceconfig.HeaderFilterSafetyFixtures
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import me.manga.kira.backend.sourceconfig.application.BundledImportService
 import me.manga.kira.backend.sourceconfig.domain.model.EndpointSpec
@@ -131,6 +132,43 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
         assertEquals(0L, sourceRowCount(), "nothing persisted on a 422")
         assertEquals(0L, snapshotCount(), "no snapshot on a 422")
+    }
+
+    @Test
+    fun `unsafe header filters reject a mixed create and update import before any public mutation`() {
+        val existing = SourceConfigFixtures.validGenericSource("HeaderImportExisting")
+        createSource(existing).andExpect { status { isCreated() } }
+        publish(existing.api, 1).andExpect { status { isOk() } }
+        val before = publicState()
+        val headBefore = sourceAdminService.getSource(existing.api).head
+        val rowsBefore = sourceRowCount()
+        val validationsBefore = jdbcTemplate.queryForObject("SELECT count(*) FROM source_validation_results", Long::class.java)
+        val good = SourceConfigFixtures.validGenericSource("HeaderImportNew")
+        val candidates = listOf(
+            // Even a stanza that import would skip for lifecycle must pass the whole-document gate.
+            HeaderFilterSafetyFixtures.unsafeSource("HeaderImportBad").copy(lifecycle = "removed") to mapOf("SECRET_LIKE_HEADER" to 1),
+            HeaderFilterSafetyFixtures.diagnosticSource("HeaderImportBad") to HeaderFilterSafetyFixtures.diagnosticErrorCounts,
+        )
+
+        candidates.forEach { (bad, expectedCodes) ->
+            val document = SourceConfigFixtures.document(good, existing.copy(displayName = "Must not replace baseline"), bad)
+            val rejected = importBundled(document).andExpect {
+                status { isUnprocessableEntity() }
+            }.andReturn().response.contentAsString
+            assertNoDiagnosticSentinels(rejected)
+            assertEquals(expectedCodes, objectMapper.readTree(rejected).get("errors").groupingBy { it.get("code").asText() }.eachCount())
+
+            assertEquals(rowsBefore, sourceRowCount(), "the otherwise valid new source must not be inserted")
+            assertEquals(headBefore, sourceAdminService.getSource(existing.api).head, "existing content, position and lifecycle must not change")
+            assertEquals(1L, revisionCount(existing.api), "the otherwise valid update must not create a revision")
+            assertEquals(0L, revisionCount(good.api))
+            assertEquals(0L, revisionCount(bad.api))
+            assertEquals(validationsBefore, jdbcTemplate.queryForObject("SELECT count(*) FROM source_validation_results", Long::class.java))
+            assertPublicStateUnchanged(before)
+            assertPublicArtifactAbsent(good.api, 1)
+            assertPublicArtifactAbsent(bad.api, 1)
+            assertPublicArtifactAbsent(existing.api, 2)
+        }
     }
 
     @Test
