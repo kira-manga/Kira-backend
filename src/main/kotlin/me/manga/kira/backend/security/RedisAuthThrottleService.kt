@@ -6,15 +6,18 @@ import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.observability.KiraMetrics
 import org.slf4j.LoggerFactory
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
+import org.springframework.core.io.ClassPathResource
 import org.springframework.dao.DataAccessException
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.script.DefaultRedisScript
+import org.springframework.data.redis.serializer.SerializationException
 import org.springframework.stereotype.Service
+import java.util.UUID
 
 /**
- * Atomic, TTL-bounded Redis authentication throttle for horizontally scaled production deployments.
- * Redis server time is authoritative, keys contain only hashes/counters, and backend failure denies
- * authentication attempts instead of silently removing throttling.
+ * Fenced two-dimension admission using Redis TIME. All script keys are explicitly declared; an
+ * outside-Lua shortlist is only a hint, atomically revalidated before safe eviction. No local fallback.
+ * Requires no independent Redis key eviction and a coordinated v2 auth-state cutover (SECURITY.md).
  */
 @Service
 @ConditionalOnProperty(prefix = "kira.security.throttle", name = ["backend"], havingValue = "redis")
@@ -25,59 +28,76 @@ class RedisAuthThrottleService(
 ) : AuthThrottle {
     private val config get() = properties.throttle
 
-    override fun checkLoginAllowed(normalizedEmail: String, clientIp: String) {
-        val retryMs = execute(
-            CHECK_SCRIPT,
-            listOf(loginIdentityKey(normalizedEmail, clientIp), loginIpKey(clientIp)),
-        )
-        if (retryMs > 0) {
-            metrics?.authenticationThrottle("login", "blocked")
-            throttled(retryMs)
+    override fun beginLoginAttempt(normalizedEmail: String, clientIp: String): AuthLoginAttempt {
+        val targets = listOf(loginIdentityKey(normalizedEmail, clientIp), key("login:ip", clientIp))
+        val token = UUID.randomUUID().toString()
+        admission("begin", targets, token)
+        return AuthLoginAttempt { success ->
+            val reply = execute(if (success) "success" else "failure", targets, token)
+            // Missing/expired failure is a harmless no-op.
+            when (reply) {
+                0L -> if (success) invalidLoginAttempt()
+                1L -> Unit
+                else -> unavailable()
+            }
         }
-    }
-
-    override fun recordLoginFailure(normalizedEmail: String, clientIp: String) {
-        recordFailure(loginIdentityKey(normalizedEmail, clientIp), config.loginFailureThreshold)
-        recordFailure(loginIpKey(clientIp), config.loginIpFailureThreshold)
-    }
-
-    override fun recordLoginSuccess(normalizedEmail: String, clientIp: String) {
-        safely { redis.delete(loginIdentityKey(normalizedEmail, clientIp)) }
     }
 
     override fun checkRegistrationAllowed(clientIp: String) {
-        val retryMs = execute(
-            REGISTRATION_SCRIPT,
-            listOf(registrationKey(clientIp), INDEX_KEY),
-            config.registrationMaxPerWindow.toString(),
-            config.registrationWindow.toMillis().toString(),
-            config.maxEntries.toString(),
-        )
-        if (retryMs > 0) {
-            metrics?.authenticationThrottle("registration", "blocked")
-            throttled(retryMs)
+        admission("register", listOf(key("registration:ip", clientIp)), "")
+    }
+
+    private fun admission(mode: String, targets: List<String>, token: String) {
+        val reply = execute(mode, targets, token, candidates(targets))
+        if (reply < 0 || reply >= MAX_SCRIPT_INTEGER) unavailable()
+        if (reply > 0) {
+            metrics?.authenticationThrottle(if (mode == "register") "registration" else "login", "blocked")
+            throw TooManyRequestsException(
+                "Too many attempts. Try again later.",
+                retryAfterSeconds = (reply / 1_000 + if (reply % 1_000 > 0) 1 else 0).coerceAtLeast(1),
+            )
         }
     }
 
-    private fun recordFailure(key: String, threshold: Int) {
-        execute(
-            FAILURE_SCRIPT,
-            listOf(key, INDEX_KEY),
-            threshold.toString(),
-            config.loginFailureWindow.toMillis().toString(),
-            config.loginInitialBlock.toMillis().toString(),
-            config.loginMaxBlock.toMillis().toString(),
-            config.maxEntries.toString(),
-        )
+    /** At most 64 oldest records, score then lexical key order. No retry or database-wide scan. */
+    private fun candidates(targets: List<String>): List<Candidate> = safely {
+        val entries = redis.opsForZSet().rangeWithScores(INDEX_KEY, 0, MAX_CANDIDATES - 1) ?: unavailable()
+        if (entries.size > MAX_CANDIDATES) unavailable()
+        entries.map { entry ->
+            val key = entry.value ?: unavailable()
+            val score = entry.score ?: unavailable()
+            if (!BUCKET_KEY.matches(key)) unavailable()
+            if (!score.isFinite() || score < 0 || score != score.toLong().toDouble()) unavailable()
+            Candidate(key, score.toLong())
+        }.filter { it.key !in targets }.sortedWith(compareBy({ it.score }, { it.key }))
     }
 
-    private fun execute(script: DefaultRedisScript<Long>, keys: List<String>, vararg args: String): Long = safely {
-        redis.execute(script, keys, *args) ?: 0L
+    private fun execute(mode: String, targets: List<String>, token: String, candidates: List<Candidate> = emptyList()): Long = safely {
+        val keys = listOf(INDEX_KEY) + (targets + candidates.map { it.key }).flatMap { listOf(it, "$it:attempts") }
+        val args = listOf(
+            mode, token,
+            config.loginFailureThreshold.toString(), config.loginIpFailureThreshold.toString(),
+            config.loginInitialBlock.toMillis().toString(), config.loginMaxBlock.toMillis().toString(),
+            config.loginFailureWindow.toMillis().toString(), config.loginAttemptTtl.toMillis().toString(),
+            config.registrationMaxPerWindow.toString(), config.registrationWindow.toMillis().toString(), config.maxEntries.toString(),
+        ) + candidates.map { it.score.toString() }
+        // Read as Any so unexpected serializer/mock result types are denied, not cast or defaulted to success.
+        val reply: Any? = redis.execute(SCRIPT, keys, *args.toTypedArray())
+        if (reply !is Long) unavailable()
+        reply
     }
 
     private fun <T> safely(block: () -> T): T = try {
         block()
     } catch (ignored: DataAccessException) {
+        unavailable()
+    } catch (ignored: SerializationException) {
+        unavailable()
+    } catch (ignored: ClassCastException) {
+        unavailable()
+    }
+
+    private fun unavailable(): Nothing {
         log.error("Shared authentication throttle unavailable; denying request")
         metrics?.authenticationThrottle("shared", "unavailable")
         throw TooManyRequestsException(
@@ -87,95 +107,24 @@ class RedisAuthThrottleService(
         )
     }
 
-    private fun throttled(retryMs: Long): Nothing = throw TooManyRequestsException(
-        detail = "Too many attempts. Try again later.",
-        retryAfterSeconds = ((retryMs + MILLIS_PER_SECOND - 1) / MILLIS_PER_SECOND).coerceAtLeast(1),
-    )
-
     private fun loginIdentityKey(email: String, clientIp: String): String = key("login:identity", email.take(EMAIL_KEY_CAP) + "|" + clientIp)
-
-    private fun loginIpKey(clientIp: String): String = key("login:ip", clientIp)
-
-    private fun registrationKey(clientIp: String): String = key("registration:ip", clientIp)
 
     private fun key(dimension: String, value: String): String = "$KEY_PREFIX:$dimension:${Sha256.hexUtf8(value)}"
 
+    private data class Candidate(val key: String, val score: Long)
+
     private companion object {
         val log = LoggerFactory.getLogger(RedisAuthThrottleService::class.java)
-        const val KEY_PREFIX = "kira:auth-throttle"
+        const val KEY_PREFIX = "kira:auth-throttle:v2"
         const val INDEX_KEY = "$KEY_PREFIX:index"
         const val EMAIL_KEY_CAP = 320
-        const val MILLIS_PER_SECOND = 1_000L
+        const val MAX_CANDIDATES = 64L
+        const val MAX_SCRIPT_INTEGER = 9_007_199_254_740_991L
         const val FAILURE_RETRY_SECONDS = 5L
-
-        val CHECK_SCRIPT = DefaultRedisScript(
-            """
-            local t = redis.call('TIME')
-            local now = t[1] * 1000 + math.floor(t[2] / 1000)
-            local retry = 0
-            for _, key in ipairs(KEYS) do
-              local blocked = tonumber(redis.call('HGET', key, 'blockedUntil') or '0')
-              if blocked > now then retry = math.max(retry, blocked - now) end
-            end
-            return retry
-            """.trimIndent(),
-            Long::class.java,
-        )
-
-        val FAILURE_SCRIPT = DefaultRedisScript(
-            """
-            local t = redis.call('TIME')
-            local now = t[1] * 1000 + math.floor(t[2] / 1000)
-            local threshold = tonumber(ARGV[1])
-            local window = tonumber(ARGV[2])
-            local initialBlock = tonumber(ARGV[3])
-            local maxBlock = tonumber(ARGV[4])
-            local maxEntries = tonumber(ARGV[5])
-            local failures = tonumber(redis.call('HGET', KEYS[1], 'failures') or '0')
-            local last = tonumber(redis.call('HGET', KEYS[1], 'lastUpdate') or '0')
-            local nextBlock = tonumber(redis.call('HGET', KEYS[1], 'nextBlock') or tostring(initialBlock))
-            if now - last > window then failures = 0; nextBlock = initialBlock end
-            failures = failures + 1
-            local blockedUntil = tonumber(redis.call('HGET', KEYS[1], 'blockedUntil') or '0')
-            if failures >= threshold then
-              blockedUntil = now + nextBlock
-              failures = 0
-              nextBlock = math.min(nextBlock * 2, maxBlock)
-            end
-            redis.call('HSET', KEYS[1], 'failures', failures, 'lastUpdate', now, 'nextBlock', nextBlock, 'blockedUntil', blockedUntil)
-            redis.call('PEXPIRE', KEYS[1], math.max(window, maxBlock * 2))
-            redis.call('ZADD', KEYS[2], now, KEYS[1])
-            local excess = redis.call('ZCARD', KEYS[2]) - maxEntries
-            if excess > 0 then
-              local victims = redis.call('ZRANGE', KEYS[2], 0, excess - 1)
-              for _, victim in ipairs(victims) do redis.call('DEL', victim) end
-              redis.call('ZREM', KEYS[2], unpack(victims))
-            end
-            return math.max(0, blockedUntil - now)
-            """.trimIndent(),
-            Long::class.java,
-        )
-
-        val REGISTRATION_SCRIPT = DefaultRedisScript(
-            """
-            local maxCount = tonumber(ARGV[1])
-            local window = tonumber(ARGV[2])
-            local maxEntries = tonumber(ARGV[3])
-            local count = redis.call('INCR', KEYS[1])
-            if count == 1 then redis.call('PEXPIRE', KEYS[1], window) end
-            local t = redis.call('TIME')
-            local now = t[1] * 1000 + math.floor(t[2] / 1000)
-            redis.call('ZADD', KEYS[2], now, KEYS[1])
-            local excess = redis.call('ZCARD', KEYS[2]) - maxEntries
-            if excess > 0 then
-              local victims = redis.call('ZRANGE', KEYS[2], 0, excess - 1)
-              for _, victim in ipairs(victims) do redis.call('DEL', victim) end
-              redis.call('ZREM', KEYS[2], unpack(victims))
-            end
-            if count > maxCount then return math.max(redis.call('PTTL', KEYS[1]), 1) end
-            return 0
-            """.trimIndent(),
-            Long::class.java,
-        )
+        val BUCKET_KEY = Regex("$KEY_PREFIX:(login:identity|login:ip|registration:ip):[a-f0-9]{64}")
+        val SCRIPT = DefaultRedisScript<Long>().apply {
+            setLocation(ClassPathResource("redis/auth-throttle.lua"))
+            resultType = Long::class.java
+        }
     }
 }

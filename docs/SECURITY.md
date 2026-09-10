@@ -79,17 +79,41 @@ completion ownership check.
 
 Authentication throttling is selected explicitly with `kira.security.throttle.backend`. The bounded
 in-memory implementation is accepted only when `instance-count=1`; production with multiple replicas
-must use the shared Redis implementation and a `rediss://` URL. The Redis path uses an atomic Lua
-operation, server time, expiring bounded counters, and hashed identities. Redis errors fail closed with
-503 instead of silently bypassing throttling.
+must use shared Redis and a `rediss://` URL. Memory uses one lock and Redis uses one atomic Lua
+admission/completion operation, with Redis server TIME rather than application-node time. Neither
+holds a lock or Redis operation across user lookup or password verification. Redis unavailability,
+null/malformed replies and write failures **deny**, with **429 `AUTH_THROTTLE_UNAVAILABLE` and
+`Retry-After: 5`**; there is no memory fallback.
 
-- **Login:** an identity bucket covers each normalized-email/client-IP pair (`≥ 5` failures by default),
-  and a separate aggregate IP bucket covers attempts spread across emails (`≥ 25` by default). Blocks
-  double per breach, cap at 15 minutes, and reset after the idle window; successful login clears only
-  its identity bucket, not aggregate spray history. There is **no permanent lockout**. Throttled calls
-  return **429** with a generic body. Unknown and disabled accounts verify against a startup-generated
-  decoy hash, so every credential path performs one password-hash check.
-- **Registration:** a per-IP rate limit within a window.
+- **Login and admin password step-up:** atomically reserve one slot in BOTH the normalized-email/IP
+  identity bucket (default threshold 5) and aggregate IP bucket (default 25) **before** credential work.
+  In each dimension, completed failures plus live reservations must be below the threshold and any
+  block must be over. Policy/capacity rejection acquires neither slot. Distinct emails cannot bypass the
+  aggregate IP bound, and there is no global account-only lockout.
+- Each opaque attempt is locally once-only and fenced by its unpredictable token and still-live,
+  matching deadline in both buckets. Both outcomes complete atomically. Explicit failed completion
+  precedes the ordinary rejection audit/401; acknowledged successful completion precedes JWT or
+  step-up proof/grant creation. Unexpected exits close as one failure; cleanup errors are suppressed
+  behind the original exception. Missing/expired success or duplicate completion denies issuance.
+  An ambiguous Redis reply can leave a reservation until its bounded lease expires, but cannot permit
+  credential work after failed admission or issuance after failed completion; it is never retried locally.
+- A failure releases its reservation and increments each dimension's completed counter. A threshold
+  breach resets that counter to zero and arms the existing doubling block (initial 1 minute, cap
+  15 minutes). History ages since the **last failure** (default 15 minutes), not admission or successful
+  IP activity; an unexpired block or another live reservation is never discarded by idle cleanup.
+  Success resets only the identity's completed history/block/escalation and releases its own IP slot;
+  it preserves other live attempts and aggregate IP failure history. A failure completed after that
+  success is still counted. There is no permanent lockout, and rejection refreshes no history or TTL.
+- `login-attempt-ttl` defaults to **30s**, must be positive whole milliseconds and is capped at **5m**.
+  Expiry (including equality with the deadline) recovers abandoned capacity and fences late success.
+  It is a **lease, not hash preemption**: a stalled/noninterruptible BCrypt may keep running after its
+  slot expires, but cannot subsequently authorize a JWT/proof. No executor, heartbeat or hard CPU
+  concurrency guarantee beyond the live lease is provided. Normal exceptional exits close promptly.
+- Unknown and disabled login accounts still perform one startup-decoy hash check; eligible accounts
+  perform one real check. Step-up retains its existing absent/disabled/non-ADMIN short circuit.
+  Throttling and lease-expired success return generic **429**, without a credential-state oracle.
+- **Registration:** a per-IP window cap, sharing the same global bucket capacity. An exhausted but
+  unexpired registration window is protected from eviction just like an active login block.
 - **Trusted client-IP:** the client address is the server-observed `request.remoteAddr` by **default**.
   `X-Forwarded-For` / `Forwarded` are honored **only** when `kira.security.trust-forwarded-headers=true`
   AND the direct peer is in `kira.security.trusted-proxies` (CIDR/address list, empty by default), in
@@ -101,13 +125,47 @@ operation, server time, expiring bounded counters, and hashed identities. Redis 
   A present `X-Forwarded-For` selects that protocol even when invalid/all-trusted: it never falls
   through to `Forwarded`. Only absent XFF permits a wholly valid `Forwarded` chain. Generic numeric
   IPv4/IPv6 proxy CIDRs, rightmost-hop semantics and valid address/port forms remain supported.
-- **Bounded store:** `kira.security.throttle.max-entries` (default 100 000); TTL expiry on every entry;
-  deterministic eviction when full (dead entries first, then oldest-by-last-update); keys hash the
-  (capped) email; each entry stores only counters/timestamps — no credentials, no payloads.
+- **Bounded store:** `max-entries` (default 100 000, minimum 2) is ONE logical-bucket bound across
+  login identity, login IP and registration. Targets, live attempts, active blocks and exhausted
+  registration windows are ineligible eviction victims. Capacity is preflighted before any reservation
+  or victim removal; expired candidates precede oldest eligible activity, with lexical key tie-breaking.
+  Memory prunes on access/capacity checks. Redis preselects at most **64** oldest index candidates
+  outside Lua, declares all metadata/token/index keys in `KEYS`, then atomically rechecks membership,
+  score and protection. A stale/inadequate shortlist or no safe room conservatively yields 429; there
+  is no unbounded scan/retry. Dead index members may await bounded reclamation, counting toward the cap.
+- Keys retain bounded hashed identifiers; values contain counters/timestamps and opaque attempt tokens,
+  never credentials or request payloads. Each token set is threshold-bounded and expires no earlier
+  than its latest live deadline. Metadata survives every lease/block/history horizon; the global index
+  expiry can only extend to cover its members, never shorten with a smaller registration/login window.
+  Eviction removes the metadata, token sidecar and index membership together.
 
-Both implementations preserve the same policy. Tuning lives under `kira.security.throttle.*`
-(`login-failure-threshold`, `login-initial-block`,
-`login-max-block`, `login-failure-window`, `registration-max-per-window`, `registration-window`).
+Tuning lives under `kira.security.throttle.*`: `login-failure-threshold`, `login-ip-failure-threshold`,
+`login-attempt-ttl`, `login-initial-block`, `login-max-block`, `login-failure-window`,
+`registration-max-per-window`, `registration-window`, and `max-entries`.
+
+### Redis operating assumptions and auth-state cutover
+
+Use **`noeviction`**, or an equivalent guarantee that Redis cannot independently evict this security
+state. `allkeys-*`/`volatile-*` eviction can delete a live reservation/block behind the application's
+safe-eviction policy. Under `noeviction`, memory-pressure write errors deny admission/issuance; do not
+interpret them as permission to fall back or retry a completion. All auth nodes must use the same
+policy/configuration and shared Redis authority. The protocol requires **Redis 7+** (absolute expiry
+inspection via `PEXPIRETIME`; the integration fixture is Redis 7.4.7). These multi-key scripts do
+**not** support Redis Cluster sharding.
+
+This attempt protocol uses the **`kira:auth-throttle:v2`** transient namespace and deliberately starts
+fresh; it does not migrate old failure counters/blocks or old registration strings/index entries.
+A coordinated maintenance transition is required: stop auth admission, drain all old login/step-up
+work (or stop those processes), remove all old auth nodes, and only then enable new nodes together.
+**No mixed old/new auth nodes and no ordinary rolling auth upgrade**: old check/hash/record nodes
+cannot participate in reservations. Record the deliberate transient-history reset and retire the old
+namespace through a separately approved operational procedure. No deployment/reset is performed by
+this source change. Rollback also requires stopped admission, drained work and an explicit state choice.
+
+Bounds are not promised uninterrupted through arbitrary Redis state loss/restart/failover or wall-clock
+jumps. Redis TIME removes application-node clock disagreement, not wall-clock discontinuities. Loss of
+reservation state cannot make an already-held handle authorize success; it can admit new work once the
+store is available again. Account for this, lease duration and verifier latency in deployment planning.
 
 ### Server3 ingress (not a generic deployment default)
 

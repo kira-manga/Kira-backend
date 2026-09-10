@@ -1,6 +1,7 @@
 package me.manga.kira.backend.config
 
 import jakarta.validation.Valid
+import jakarta.validation.constraints.Min
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.NotNull
 import jakarta.validation.constraints.Positive
@@ -48,7 +49,7 @@ data class KiraSecurityProperties(
     val externalBaseUrl: String? = null,
     /** Explicit browser origins. Empty keeps CORS disabled, which is correct for mobile-only use. */
     val allowedOrigins: List<String> = emptyList(),
-    /** In-memory auth-throttle store bounds + tuning (PLAN §6). */
+    /** Shared auth-throttle store bounds + tuning (PLAN §6). */
     @field:Valid
     @field:NotNull
     val throttle: Throttle = Throttle(),
@@ -77,8 +78,8 @@ data class KiraSecurityProperties(
         /** Expected application replica count, validated at production startup. */
         @field:Positive
         val instanceCount: Int = 1,
-        /** Maximum tracked throttle entries before deterministic eviction (PLAN §6). */
-        @field:Positive
+        /** One bound across login identity, login IP and registration; a login needs two buckets. */
+        @field:Min(2)
         val maxEntries: Int = 100_000,
         /** Consecutive login failures (per email+IP) that trigger a temporary block (PLAN §6: ≥5). */
         @field:Positive
@@ -86,6 +87,9 @@ data class KiraSecurityProperties(
         /** Failures spread across identities from one IP before that IP is temporarily blocked. */
         @field:Positive
         val loginIpFailureThreshold: Int = 25,
+        /** Crash/abandonment lease, not a password-hash execution timeout. Positive milliseconds, at most five minutes. */
+        @field:NotNull
+        val loginAttemptTtl: Duration = Duration.ofSeconds(30),
         /** First temporary-block duration once the threshold is hit (PLAN §6: 1 minute). */
         @field:NotNull
         val loginInitialBlock: Duration = Duration.ofMinutes(1),
@@ -105,6 +109,18 @@ data class KiraSecurityProperties(
         init {
             require(backend in setOf("memory", "redis")) {
                 "kira.security.throttle.backend must be memory or redis"
+            }
+            require(instanceCount > 0 && maxEntries >= 2) {
+                "kira.security.throttle requires a positive instance-count and max-entries of at least two"
+            }
+            require(loginFailureThreshold > 0 && loginIpFailureThreshold > 0 && registrationMaxPerWindow > 0) {
+                "kira.security.throttle thresholds must be positive"
+            }
+            require(
+                loginAttemptTtl > Duration.ZERO && loginAttemptTtl <= Duration.ofMinutes(5) &&
+                    loginAttemptTtl.nano % 1_000_000 == 0,
+            ) {
+                "kira.security.throttle.login-attempt-ttl must be positive whole milliseconds and at most five minutes"
             }
             require(!loginInitialBlock.isZero && !loginInitialBlock.isNegative) {
                 "kira.security.throttle.login-initial-block must be positive"
