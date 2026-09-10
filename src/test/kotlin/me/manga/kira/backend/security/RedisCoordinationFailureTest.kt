@@ -45,10 +45,12 @@ class RedisCoordinationFailureTest {
     @Test
     fun `a missing capacity shortlist denies rather than silently omitting shared eviction checks`() {
         var scripts = 0
-        val service = service(scriptedRedis(shortlist = null) {
-            scripts += 1
-            0L
-        })
+        val service = service(
+            scriptedRedis(shortlist = null) {
+                scripts += 1
+                0L
+            },
+        )
         assertUnavailable(assertThrows<TooManyRequestsException> { service.beginLoginAttempt("reader@example.com", "192.0.2.1") })
         assertEquals(0, scripts)
     }
@@ -58,10 +60,18 @@ class RedisCoordinationFailureTest {
         listOf(null, -1L, 2L, "malformed", DataAccessResourceFailureException("injected Redis error")).forEach { reply ->
             listOf(false, true).forEach { success ->
                 var scripts = 0
-                val service = service(scriptedRedis {
-                    scripts += 1
-                    if (scripts == 1) 0L else if (reply is RuntimeException) throw reply else reply
-                })
+                val service = service(
+                    scriptedRedis {
+                        scripts += 1
+                        if (scripts == 1) {
+                            0L
+                        } else if (reply is RuntimeException) {
+                            throw reply
+                        } else {
+                            reply
+                        }
+                    },
+                )
                 val attempt = service.beginLoginAttempt("reader@example.com", "192.0.2.1")
                 assertUnavailable(assertThrows<TooManyRequestsException> { attempt.complete(success) })
                 attempt.close()
@@ -86,10 +96,7 @@ class RedisCoordinationFailureTest {
         KiraSecurityProperties(throttle = KiraSecurityProperties.Throttle(backend = "redis", instanceCount = 2)),
     )
 
-    private fun scriptedRedis(
-        shortlist: Set<ZSetOperations.TypedTuple<String>>? = emptySet(),
-        reply: () -> Any?,
-    ): StringRedisTemplate {
+    private fun scriptedRedis(shortlist: Set<ZSetOperations.TypedTuple<String>>? = emptySet(), reply: () -> Any?): StringRedisTemplate {
         val sortedSets = mock(ZSetOperations::class.java) { invocation ->
             if (invocation.method.name == "rangeWithScores") shortlist else Answers.RETURNS_DEFAULTS.answer(invocation)
         }

@@ -75,8 +75,10 @@ class AuthThrottleServiceTest {
     fun `block breaches reset counts double to the cap and idle failures reset escalation`() {
         val service = service(
             KiraSecurityProperties.Throttle(
-                loginFailureThreshold = 2, loginIpFailureThreshold = 100,
-                loginInitialBlock = Duration.ofSeconds(1), loginMaxBlock = Duration.ofSeconds(4),
+                loginFailureThreshold = 2,
+                loginIpFailureThreshold = 100,
+                loginInitialBlock = Duration.ofSeconds(1),
+                loginMaxBlock = Duration.ofSeconds(4),
                 loginFailureWindow = Duration.ofSeconds(20),
             ),
         )
@@ -131,9 +133,12 @@ class AuthThrottleServiceTest {
     fun `capacity preflight is all-or-neither and protects live attempts blocks and registration`() {
         val service = service(
             KiraSecurityProperties.Throttle(
-                maxEntries = 3, loginFailureThreshold = 1, loginIpFailureThreshold = 1,
+                maxEntries = 3,
+                loginFailureThreshold = 1,
+                loginIpFailureThreshold = 1,
                 loginFailureWindow = Duration.ofMillis(100),
-                registrationMaxPerWindow = 2, registrationWindow = Duration.ofSeconds(1),
+                registrationMaxPerWindow = 2,
+                registrationWindow = Duration.ofSeconds(1),
             ),
         )
         service.checkRegistrationAllowed("192.0.2.2") // Eligible, but insufficient to fit another two-bucket login.

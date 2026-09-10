@@ -34,8 +34,9 @@ class RedisAuthThrottleService(
         admission("begin", targets, token)
         return AuthLoginAttempt { success ->
             val reply = execute(if (success) "success" else "failure", targets, token)
+            // Missing/expired failure is a harmless no-op.
             when (reply) {
-                0L -> if (success) invalidLoginAttempt() // Missing/expired failure is a harmless no-op.
+                0L -> if (success) invalidLoginAttempt()
                 1L -> Unit
                 else -> unavailable()
             }
@@ -65,7 +66,8 @@ class RedisAuthThrottleService(
         entries.map { entry ->
             val key = entry.value ?: unavailable()
             val score = entry.score ?: unavailable()
-            if (!BUCKET_KEY.matches(key) || !score.isFinite() || score < 0 || score != score.toLong().toDouble()) unavailable()
+            if (!BUCKET_KEY.matches(key)) unavailable()
+            if (!score.isFinite() || score < 0 || score != score.toLong().toDouble()) unavailable()
             Candidate(key, score.toLong())
         }.filter { it.key !in targets }.sortedWith(compareBy({ it.score }, { it.key }))
     }

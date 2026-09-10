@@ -154,8 +154,10 @@ class AuthThrottleService(private val properties: KiraSecurityProperties, privat
 
         fun retryMillis(now: Instant, threshold: Int): Long = when {
             blocked(now) -> Duration.between(now, blockedUntil).toMillis().coerceAtLeast(1)
+
             failures.toLong() + attempts.size >= threshold ->
                 attempts.values.minOrNull()?.let { Duration.between(now, it).toMillis().coerceAtLeast(1) } ?: CAPACITY_RETRY_MILLIS
+
             else -> 0
         }
 

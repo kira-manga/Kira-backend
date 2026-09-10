@@ -109,7 +109,7 @@ internal fun assertAuthAdmissionWave(throttles: List<AuthThrottle>, path: AuthWa
                     rejections += ex.code
                     classified.countDown()
                     429
-                } catch (ex: UnauthorizedException) {
+                } catch (ignored: UnauthorizedException) {
                     401
                 }
             }

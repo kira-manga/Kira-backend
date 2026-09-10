@@ -110,9 +110,12 @@ class RedisCoordinationIT {
     fun `Redis breaches reset counts and double block duration until idle history expires`() {
         val (first, second) = services(
             KiraSecurityProperties.Throttle(
-                loginFailureThreshold = 1, loginIpFailureThreshold = 100,
-                loginInitialBlock = Duration.ofMillis(300), loginMaxBlock = Duration.ofMillis(600),
-                loginFailureWindow = Duration.ofSeconds(2), loginAttemptTtl = Duration.ofMillis(200),
+                loginFailureThreshold = 1,
+                loginIpFailureThreshold = 100,
+                loginInitialBlock = Duration.ofMillis(300),
+                loginMaxBlock = Duration.ofMillis(600),
+                loginFailureWindow = Duration.ofSeconds(2),
+                loginAttemptTtl = Duration.ofMillis(200),
             ),
         )
         listOf(300L, 600L, 600L).forEach { duration ->

@@ -158,7 +158,8 @@ class AuthAttemptCallerTest {
     }
 
     private fun memory() = AuthThrottleService(
-        KiraSecurityProperties(throttle = KiraSecurityProperties.Throttle(loginFailureThreshold = 1, loginAttemptTtl = Duration.ofSeconds(1))), clock,
+        KiraSecurityProperties(throttle = KiraSecurityProperties.Throttle(loginFailureThreshold = 1, loginAttemptTtl = Duration.ofSeconds(1))),
+        clock,
     )
 
     private fun attemptThrottle(finish: (Boolean) -> Unit) = object : AuthThrottle {
