@@ -21,14 +21,22 @@ internal class PgLifecycleDatabaseRelaySession(
     private val host: String,
     private val port: Int,
     case: PgLifecycleDatabaseCase,
+    acceptedIndex: Int? = null,
+    upstreamSocket: Socket? = null,
     private val register: (PgLifecycleDatabaseRelaySession, ByteArray) -> Unit,
 ) : AutoCloseable {
-    val state = PgLifecycleDatabaseRelayState(case)
-    private val upstream = Socket()
+    val state = PgLifecycleDatabaseRelayState(case, acceptedIndex)
+
+    // Only local capture controls supply an inert socket. The real relay constructs Socket at the original point.
+    private val upstream = upstreamSocket ?: Socket()
     private val startPhase = AtomicReference(PgLifecycleDatabaseSessionStart.NEW)
-    private val coordinator = Thread.ofPlatform().name("w03-database-relay-session").unstarted { guarded(::run) }
-    private val clientPump = Thread.ofPlatform().name("w03-database-relay-client").unstarted { guarded(::fromClient) }
-    private val serverPump = Thread.ofPlatform().name("w03-database-relay-server").unstarted { guarded(::fromServer) }
+    private val coordinator = Thread.ofPlatform().name("w03-database-relay-session").unstarted(::run)
+    private val clientPump = Thread.ofPlatform().name("w03-database-relay-client").unstarted {
+        guarded(PgLifecycleDatabaseRelayStage.CLIENT_PUMP, ::fromClient)
+    }
+    private val serverPump = Thread.ofPlatform().name("w03-database-relay-server").unstarted {
+        guarded(PgLifecycleDatabaseRelayStage.SERVER_PUMP, ::fromServer)
+    }
 
     fun start() {
         if (!startPhase.compareAndSet(PgLifecycleDatabaseSessionStart.NEW, PgLifecycleDatabaseSessionStart.ENTERED)) {
@@ -43,26 +51,39 @@ internal class PgLifecycleDatabaseRelaySession(
     }
 
     private fun run() {
-        if (state.fixtureClosing.get()) return
-        client.soTimeout = 15_000
-        client.tcpNoDelay = true
-        val startup = PgLifecycleDatabaseWire.startup(DataInputStream(client.getInputStream()))
-        if (state.fixtureClosing.get()) return
-        register(this, startup)
-        if (state.fixtureClosing.get()) return
-        upstream.soTimeout = 15_000
-        upstream.tcpNoDelay = true
-        upstream.connect(InetSocketAddress(host, port), 1_000)
-        upstream.getOutputStream().apply {
-            write(startup)
-            flush()
+        // This cursor belongs only to the coordinator. Neither pump can race to relabel its capture span.
+        var stage = PgLifecycleDatabaseRelayStage.CLIENT_CONFIGURE
+        runCatching {
+            if (state.fixtureClosing.get()) return
+            client.soTimeout = 15_000
+            client.tcpNoDelay = true
+            stage = PgLifecycleDatabaseRelayStage.STARTUP_READ
+            val startup = PgLifecycleDatabaseWire.startup(DataInputStream(client.getInputStream()))
+            if (state.fixtureClosing.get()) return
+            stage = PgLifecycleDatabaseRelayStage.REGISTER
+            register(this, startup)
+            if (state.fixtureClosing.get()) return
+            stage = PgLifecycleDatabaseRelayStage.UPSTREAM_CONFIGURE
+            upstream.soTimeout = 15_000
+            upstream.tcpNoDelay = true
+            stage = PgLifecycleDatabaseRelayStage.UPSTREAM_CONNECT
+            upstream.connect(InetSocketAddress(host, port), 1_000)
+            stage = PgLifecycleDatabaseRelayStage.STARTUP_FORWARD
+            upstream.getOutputStream().apply {
+                write(startup)
+                flush()
+            }
+            stage = PgLifecycleDatabaseRelayStage.PUMP_START
+            clientPump.start()
+            serverPump.start()
+            stage = PgLifecycleDatabaseRelayStage.ACTOR_JOIN
+            val deadline = PgLifecycleDatabaseDeadline(20_000)
+            waitActor(clientPump, deadline)
+            waitActor(serverPump, deadline)
+            state.completed.set(true)
+        }.onFailure {
+            state.captureFailure(stage, it)
         }
-        clientPump.start()
-        serverPump.start()
-        val deadline = PgLifecycleDatabaseDeadline(20_000)
-        waitActor(clientPump, deadline)
-        waitActor(serverPump, deadline)
-        state.completed.set(true)
     }
 
     private fun fromClient() {
@@ -256,15 +277,18 @@ internal class PgLifecycleDatabaseRelaySession(
     fun cleanupBeforeConnect() {
         check(Thread.currentThread() === coordinator && clientPump.state === Thread.State.NEW && serverPump.state === Thread.State.NEW)
         state.cleanupRelease()
-        val sockets = listOf(client, upstream).map { socket ->
-            runCatching { socket.close() }.onFailure { state.failure.compareAndSet(null, it) }
+        val sockets = listOf(client, upstream).mapIndexed { index, socket ->
+            runCatching { socket.close() }.onFailure {
+                val stage = if (index == 0) PgLifecycleDatabaseRelayStage.CLEANUP_CLIENT_CLOSE else PgLifecycleDatabaseRelayStage.CLEANUP_UPSTREAM_CLOSE
+                state.captureFailure(stage, it, retainDuringCleanup = true)
+            }
         }
         sockets.forEach { it.getOrThrow() }
     }
 
-    private fun guarded(operation: () -> Unit) {
+    private fun guarded(stage: PgLifecycleDatabaseRelayStage, operation: () -> Unit) {
         runCatching(operation).onFailure { failure ->
-            if (!state.fixtureClosing.get()) state.failure.compareAndSet(null, failure)
+            state.captureFailure(stage, failure)
         }
     }
 

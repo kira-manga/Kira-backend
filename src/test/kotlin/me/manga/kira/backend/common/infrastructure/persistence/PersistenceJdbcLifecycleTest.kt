@@ -19,6 +19,7 @@ internal class PersistenceJdbcLifecycleTest {
         value = PgLifecycleCase::class,
         mode = EnumSource.Mode.EXCLUDE,
         names = [
+            "ORDINARY", "DELETION", "BOTH_PARTICIPANTS", "SLOT_REUSE", "ORIGINAL_PROVIDER", "VIRTUAL_CANDIDATE",
             "ASSERTION_FAILURE", "MISSING_RECEIPT", "WRONG_RECEIPT", "DUPLICATE_RECEIPT",
         ],
     )

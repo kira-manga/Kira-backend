@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.Socket
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.util.concurrent.CopyOnWriteArrayList
@@ -17,13 +18,18 @@ internal class PgLifecycleDatabaseRelay(
     private val application: String,
     private val case: PgLifecycleDatabaseCase,
 ) : AutoCloseable {
+    init {
+        PgLifecycleDatabaseRelayFailure.prepareRuntime()
+    }
+
     private val listener = ServerSocket()
     private val sessions = CopyOnWriteArrayList<PgLifecycleDatabaseRelaySession>()
     private val primaries = AtomicReferenceArray<PgLifecycleDatabaseRelaySession>(case.attempts)
+    private val acceptedCount = AtomicInteger()
     private val primaryCount = AtomicInteger()
     private val weakCleanupThrough = AtomicInteger(-1)
     private val closing = AtomicBoolean()
-    private val failed = AtomicReference<Throwable?>()
+    private val failed = AtomicReference<PgLifecycleDatabaseRelayFailure?>()
     private val actor = Thread.ofPlatform().name("w03-database-relay-accept").unstarted(::accept)
 
     val port: Int get() = listener.localPort
@@ -47,21 +53,66 @@ internal class PgLifecycleDatabaseRelay(
                 } catch (_: SocketTimeoutException) {
                     continue
                 }
-                var retained = false
-                try {
-                    // The owning list is published before configuration, parsing, connecting, or starting the accepted socket's actor.
-                    val session = PgLifecycleDatabaseRelaySession(socket, database.host, database.port, case, ::register)
-                    sessions.add(session)
-                    retained = true
-                    check(sessions.size <= primaries.length() * 3) { "Synthetic relay connection bound exceeded." }
-                    session.start()
-                } finally {
-                    if (!retained) socket.close()
-                }
+                acceptSession(socket)
             }
         }.onFailure { failure ->
-            if (!closing.get() || failure !is SocketException) failed.compareAndSet(null, failure)
+            captureAcceptorFailure(null, null, PgLifecycleDatabaseRelayStage.ACCEPT, failure)
         }
+    }
+
+    /** Same accepted-socket path in the real accept loop and inert capture controls; no listener/driver replacement. */
+    internal fun acceptSession(
+        socket: Socket,
+        construct: (Int, (PgLifecycleDatabaseRelaySession, ByteArray) -> Unit) -> PgLifecycleDatabaseRelaySession = { index, registration ->
+            PgLifecycleDatabaseRelaySession(socket, database.host, database.port, case, acceptedIndex = index, register = registration)
+        },
+    ): PgLifecycleDatabaseRelaySession {
+        val acceptedIndex = acceptedCount.incrementAndGet() // Immediately after accept, before endpoint lookup/construction/start. Not an attempt ordinal.
+        var stage = PgLifecycleDatabaseRelayStage.SESSION_CONSTRUCT
+        var state: PgLifecycleDatabaseRelayState? = null
+        var retained = false
+        try {
+            val session = construct(acceptedIndex, ::register)
+            state = session.state
+            stage = PgLifecycleDatabaseRelayStage.SESSION_RETAIN
+            // The owning list is published before configuration, parsing, connecting, or starting the accepted socket's actor.
+            sessions.add(session)
+            retained = true
+            check(sessions.size <= primaries.length() * 3) { "Synthetic relay connection bound exceeded." }
+            stage = PgLifecycleDatabaseRelayStage.SESSION_START
+            session.start()
+            return session
+        } catch (failure: Throwable) {
+            // Capture before the original finally: an unretained close may still replace the thrown object, not its evidence.
+            captureAcceptorFailure(acceptedIndex, state, stage, failure)
+            throw failure
+        } finally {
+            if (!retained) closeUnretained(socket, acceptedIndex, state)
+        }
+    }
+
+    private fun closeUnretained(socket: Socket, acceptedIndex: Int, state: PgLifecycleDatabaseRelayState?) {
+        try {
+            socket.close()
+        } catch (failure: Throwable) {
+            captureAcceptorFailure(acceptedIndex, state, PgLifecycleDatabaseRelayStage.UNRETAINED_CLOSE, failure)
+            throw failure
+        }
+    }
+
+    private fun captureAcceptorFailure(index: Int?, state: PgLifecycleDatabaseRelayState?, stage: PgLifecycleDatabaseRelayStage, failure: Throwable) {
+        val fixtureClosing = closing.get()
+        if (fixtureClosing && failure is SocketException) return
+        failed.compareAndSet(
+            null,
+            PgLifecycleDatabaseRelayFailure(
+                index,
+                state?.association ?: PgLifecycleDatabaseRelayAssociation.UNREGISTERED,
+                stage,
+                PgLifecycleDatabaseRelayFailureType.of(failure),
+                fixtureClosing,
+            ),
+        )
     }
 
     private fun register(session: PgLifecycleDatabaseRelaySession, startup: ByteArray) {
@@ -73,6 +124,9 @@ internal class PgLifecycleDatabaseRelay(
                 session.state.ordinal = ordinal
                 session.state.readyFault.bind(ordinal)
                 check(primaries.compareAndSet(ordinal, null, session))
+                session.state.publishAssociation(
+                    if (ordinal == 0) PgLifecycleDatabaseRelayAssociation.PRIMARY_0 else PgLifecycleDatabaseRelayAssociation.PRIMARY_1,
+                )
             }
 
             PgLifecycleDatabaseWire.CANCEL -> {
@@ -81,6 +135,9 @@ internal class PgLifecycleDatabaseRelay(
                 session.state.ordinal = primary.state.ordinal
                 session.state.auxiliary = true
                 check(sessions.count { it.state.auxiliary && it.state.ordinal == primary.state.ordinal } <= 2)
+                session.state.publishAssociation(
+                    if (session.state.ordinal == 0) PgLifecycleDatabaseRelayAssociation.AUX_0 else PgLifecycleDatabaseRelayAssociation.AUX_1,
+                )
             }
 
             else -> error("Plaintext fixture received an unexpected startup protocol.")
@@ -97,9 +154,17 @@ internal class PgLifecycleDatabaseRelay(
     /** No progress assertion, I/O, waits, gate release or cleanup: callable before failure unwinds this relay's use scope. */
     fun diagnostic(ordinal: Int): String {
         val selected = if (ordinal in 0 until primaries.length()) primaries.get(ordinal)?.state else null
-        return "accepted=${sessions.size} registered=${primaryCount.get()} acceptor_state=${actor.state.name} acceptor_alive=${actor.isAlive} " +
+        val count = sessions.size
+        val bound = primaries.length() * 3
+        // Insertion precedes the bound check: include the one overflow offender, not only the six legal sessions.
+        val limit = bound + 1
+        val events = sessions.take(limit).mapNotNull { it.state.failure.get() }.joinToString(";") { it.diagnostic() }.ifEmpty { "NOT_RECORDED" }
+        return "accepted=${acceptedCount.get()} retained=$count registered=${primaryCount.get()} " +
+            "acceptor_state=${actor.state.name} acceptor_alive=${actor.isAlive} " +
             "relay_closing=${closing.get()} acceptor_failure=${failed.get() != null} session_failure=${sessions.any { it.state.failure.get() != null }} " +
-            "primary_registered=${selected != null} ${selected?.diagnostic() ?: "gate=UNAVAILABLE"}"
+            "primary_registered=${selected != null} ${selected?.diagnostic() ?: "gate=UNAVAILABLE"} " +
+            "accept_event=${failed.get()?.diagnostic() ?: "NOT_RECORDED"} session_events=$events " +
+            "event_overflow=${count > bound} events_omitted=${(count - limit).coerceAtLeast(0)}"
     }
 
     fun awaitGate(ordinal: Int, deadline: PgLifecycleDatabaseDeadline, childAlive: () -> Unit): PgLifecycleDatabaseRelayState {

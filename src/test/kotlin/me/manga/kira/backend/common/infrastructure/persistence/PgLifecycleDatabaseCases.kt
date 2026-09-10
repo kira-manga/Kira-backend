@@ -1,8 +1,5 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
-import java.util.concurrent.FutureTask
-import java.util.concurrent.TimeUnit
-
 /** Actual retained owner and factory. The parent, never this JVM, witnesses PostgreSQL session presence/removal. */
 internal object PgLifecycleDatabaseCases {
     fun verify(case: PgLifecycleDatabaseCase, port: Int, application: String, handshake: PgLifecycleDatabaseHandshake) {
@@ -20,12 +17,11 @@ internal object PgLifecycleDatabaseCases {
                 handshake.await(PgLifecycleDatabasePhase.START, ordinal)
                 PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.WAIT_RECEIVER)
                 awaitLifecycleFact { scope.binding(case.lane.deleting).isOwnedReceiverReady() }
-                val request = PgLifecycleDatabaseRequest(scope, case, application, ordinal)
-                try {
+                PgLifecycleDatabaseRequest(scope, case, application, ordinal).use { request ->
                     PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.START_CALLER)
                     request.start()
                     PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.WAIT_RETAIN)
-                    val witness = PgLifecycleDatabaseAssertions.retain(scope, case, application)
+                    val witness = PgLifecycleDatabaseAssertions.retain(scope, case, application, request.original)
                     PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.RETAINED)
                     if (previous != null) reuseIdentity(requireNotNull(previous), witness)
                     val result = openingResult(scope, case, application, witness, request, handshake, ordinal)
@@ -51,8 +47,6 @@ internal object PgLifecycleDatabaseCases {
                     }
                     handshake.await(next, ordinal)
                     previous = witness
-                } finally {
-                    request.close()
                 }
             }
             PgLifecycleDatabaseAssertions.shutdown(scope, case)
@@ -204,26 +198,5 @@ internal object PgLifecycleDatabaseCases {
         check(previous.entry.terminalWork !== current.entry.terminalWork)
         check(!previous.entry.candidate.requestRetirement()) // Issue the stale alias only after the successor is actually LIVE.
         check(!current.entry.retirementRequested.get() && scope.entries(case.lane.deleting).single() === current.entry)
-    }
-}
-
-/** Owned real platform caller; no Future.cancel, callback replacement, or test-written lifecycle fact. */
-private class PgLifecycleDatabaseRequest(private val scope: PgLifecycleTestScope, case: PgLifecycleDatabaseCase, application: String, ordinal: Int) :
-    AutoCloseable {
-    private val task = FutureTask {
-        PgLifecycleDatabaseDiagnostics.originalCall(case, ordinal, application) {
-            if (case.lane.deleting) scope.owner.requestDeletion() else scope.owner.requestOrdinary()
-        }
-    }
-    private val thread = Thread.ofPlatform().name("w03-database-candidate-caller").unstarted(task)
-
-    fun start() = thread.start()
-
-    fun result(): PersistenceFactoryResult<PersistenceJdbcCandidate> = task.get(8, TimeUnit.SECONDS)
-
-    override fun close() {
-        if (!task.isDone) scope.owner.requestShutdown()
-        awaitLifecycleFact { !thread.isAlive }
-        check(task.isDone)
     }
 }

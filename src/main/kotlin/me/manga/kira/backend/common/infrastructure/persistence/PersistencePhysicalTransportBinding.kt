@@ -99,10 +99,13 @@ internal class PersistencePhysicalTransportBinding(private val physical: Persist
         private fun reserveBound(): PersistenceTransportRefusal? {
             try {
                 val refusal = boundCut(install = false)
+                recordRefusal(PersistenceConstructionSite.BOUND_PREPARE, refusal)
                 if (refusal != null) return refusal
                 // Both G and T have ended. No preheld/reentrant F/G/T is permitted into this sequence.
                 socket.closePredecessor()
-                return boundCut(install = true)
+                val installed = boundCut(install = true)
+                recordRefusal(PersistenceConstructionSite.BOUND_INSTALL, installed)
+                return installed
             } finally {
                 if (!reserved.get()) socket.abandonBound()
             }
@@ -136,11 +139,31 @@ internal class PersistencePhysicalTransportBinding(private val physical: Persist
         }
 
         fun construct(): PersistenceTransportCreation<TrackedPersistenceSocket> {
-            if (!reserved.get() || binding.physical.ledger.lock.isHeldByCurrentThread || binding.physical.rendezvous.lock.isHeldByCurrentThread) {
-                return PersistenceTransportCreation.Refused(PersistenceTransportRefusal.INVALID_CONSTRUCTION)
+            val result = if (!reserved.get() || binding.physical.ledger.lock.isHeldByCurrentThread || binding.physical.rendezvous.lock.isHeldByCurrentThread) {
+                PersistenceTransportCreation.Refused(PersistenceTransportRefusal.INVALID_CONSTRUCTION)
+            } else {
+                // T checks its own current-thread ownership and exact one-use invocation. No G/F is held here.
+                runCatching {
+                    socket.construct()
+                }.onFailure { failure ->
+                    if (origin != null && !binding.ownershipLockHeld()) binding.entry.openingFacts.recordConstructionThrow(origin.extent.role, failure)
+                }.getOrThrow()
             }
-            // T checks its own current-thread ownership and exact one-use invocation. No G/F is held here.
-            return socket.construct()
+            if (origin != null && !binding.ownershipLockHeld()) {
+                when (result) {
+                    is PersistenceTransportCreation.Refused -> recordRefusal(PersistenceConstructionSite.CONSTRUCTION_SPAN, result.reason)
+                    is PersistenceTransportCreation.Retained -> binding.entry.openingFacts.recordConstructionRetained(origin.extent.role)
+                    is PersistenceTransportCreation.Created -> Unit // Absence of first non-provision evidence never means construction succeeded.
+                }
+            }
+            return result
+        }
+
+        /** Both bound cuts have returned. Preheld-lock misuse and legacy MODEL calls have no capture coverage. */
+        private fun recordRefusal(site: PersistenceConstructionSite, refusal: PersistenceTransportRefusal?) {
+            if (refusal != null && origin != null && !binding.ownershipLockHeld()) {
+                binding.entry.openingFacts.recordConstructionRefusal(origin.extent.role, site, refusal)
+            }
         }
 
         override fun toString(): String = "PersistencePhysicalTransportBinding.Construction(redacted)"

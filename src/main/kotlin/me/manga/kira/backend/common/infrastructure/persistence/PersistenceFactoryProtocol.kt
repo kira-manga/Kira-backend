@@ -40,7 +40,7 @@ internal enum class PersistenceFactoryProcessing {
 }
 
 internal sealed interface PersistenceFactoryResult<out R : Any> {
-    class Refused(val reason: PersistenceFactoryFailure) : PersistenceFactoryResult<Nothing> {
+    class Refused(val reason: PersistenceFactoryFailure, val busySite: PersistenceFactoryBusySite? = null) : PersistenceFactoryResult<Nothing> {
         override fun toString(): String = "PersistenceFactoryResult.Refused(${reason.name})"
     }
 
@@ -51,6 +51,15 @@ internal sealed interface PersistenceFactoryResult<out R : Any> {
     class Success<R : Any>(val value: R, val receipt: PersistenceFactoryReceipt) : PersistenceFactoryResult<R> {
         override fun toString(): String = "PersistenceFactoryResult.Success(redacted)"
     }
+}
+
+/** The original owned refusal branch only; not a lock holder, occupancy history or retry authority. */
+internal enum class PersistenceFactoryBusySite {
+    RESERVE_G,
+    RESERVE_FULL,
+    ADMIT_F,
+    ADMIT_G,
+    ADMIT_OCCUPIED,
 }
 
 internal enum class PersistenceFactoryFailure {

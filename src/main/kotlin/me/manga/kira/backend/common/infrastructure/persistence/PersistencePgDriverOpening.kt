@@ -31,7 +31,7 @@ internal class PersistencePgDriverOpening private constructor(
                     returned = true
                     outcome
                 } finally {
-                    // Publish actual failure exit before Result can box a Throwable, even after properties/scope entry failure.
+                    // Publish actual failure exit before the enclosing Result boxes a Throwable, even after properties/scope entry failure.
                     if (!returned) {
                         entry.retirementRequested.set(true)
                         settleOpening(physical, entry, PersistencePhysicalOpening.FAILED)
@@ -47,9 +47,13 @@ internal class PersistencePgDriverOpening private constructor(
     private fun connect(physical: PersistencePhysicalFactoryBinding, entry: PersistencePhysicalEntry, properties: Properties): PersistencePhysicalOpening {
         entry.openingFacts.driverEntered.set(true)
         try {
-            val raw: Connection? = driver.connect(endpoint.driverUrl, properties)
-            // Literally first after the nullable Driver return: no wrapper, flag, lock, callback or finally.
-            entry.raw.set(raw)
+            runCatching {
+                // Literally adjacent normal-return retention; no diagnostic action may intervene.
+                val raw: Connection? = driver.connect(endpoint.driverUrl, properties)
+                entry.raw.set(raw)
+            }.onFailure { failure ->
+                entry.openingFacts.recordFailure(PersistenceOpeningFailureSite.DRIVER_CONNECT, failure)
+            }.getOrThrow()
         } finally {
             entry.openingFacts.driverEnded.set(true)
         }
@@ -103,6 +107,7 @@ internal class PersistencePgDriverOpening private constructor(
         attempt.budget === control.budget && attempt.receipt === control.receipt
 
     private fun failOpening(physical: PersistencePhysicalFactoryBinding, entry: PersistencePhysicalEntry, failure: Throwable): PersistencePhysicalOpening {
+        entry.openingFacts.recordFailure(PersistenceOpeningFailureSite.OPENING_FALLBACK, failure)
         if (failure is Error) entry.openingFacts.fatal.set(true)
         entry.retirementRequested.set(true)
         val interrupted = failure is InterruptedException || Thread.currentThread().isInterrupted
@@ -148,6 +153,7 @@ internal class PersistencePgDriverOpening private constructor(
                 // No scope for ORIGINAL_PROVIDER: no outstanding capture cleanup, not tracking success.
                 entry.driverScope?.leave() ?: true
             }.getOrElse { failure ->
+                entry.openingFacts.recordFailure(PersistenceOpeningFailureSite.SCOPE_LEAVE, failure)
                 if (failure is InterruptedException) Thread.currentThread().interrupt()
                 if (failure is Error) throw failure
                 false
@@ -179,6 +185,7 @@ internal class PersistencePgDriverOpening private constructor(
             pathStyle: PersistencePathStyle,
             timer: PersistenceDriverTimer? = null,
         ): PersistencePgDriverOpening = persistenceBootstrapBoundary {
+            PersistenceOpeningEvidence.prepareRuntime()
             val selected = selectEndpoint(endpoint, policy, pathStyle)
             if (selected.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
             val driver = retained.forOpening()
@@ -193,6 +200,7 @@ internal class PersistencePgDriverOpening private constructor(
             policy: PersistenceDriverAttemptPolicy,
             pathStyle: PersistencePathStyle,
         ): PersistencePgDriverOpening = persistenceBootstrapBoundary {
+            PersistenceOpeningEvidence.prepareRuntime()
             val selected = selectEndpoint(endpoint, policy, pathStyle)
             if (selected.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
             val driver = prepared.construct()

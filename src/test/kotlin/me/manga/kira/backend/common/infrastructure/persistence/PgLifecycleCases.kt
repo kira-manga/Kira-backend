@@ -106,42 +106,58 @@ internal object PgLifecycleCases {
             peer.start()
             val extras = if (mode === PgLifecycleCase.ORIGINAL_PROVIDER) mapOf("socketFactoryArg" to "synthetic-ignored") else emptyMap()
             PgLifecycleTestScope(pgProbeEndpoint(peer.port, extras)).use { scope ->
-                scope.start()
-                check(scope.owner.start() === PersistenceLifecycleActivation.ALREADY_CLAIMED)
-                check(scope.owner.requestDeletion() is PersistenceFactoryResult.Refused)
-                check(scope.owner.observeDeletionPreparation() === PersistenceLifecycleObservation.NOT_REQUESTED)
-                check(!scope.owner.snapshot().deletionRequested)
-                val deleting = mode === PgLifecycleCase.DELETION
-                if (deleting || mode === PgLifecycleCase.BOTH_PARTICIPANTS) scope.prepareDeletion()
-                if (mode === PgLifecycleCase.VIRTUAL_CANDIDATE) {
-                    val task = FutureTask { scope.request() }
-                    val thread = Thread.ofVirtual().unstarted(task)
-                    try {
-                        thread.start()
-                        scope.retire(task.get(8, TimeUnit.SECONDS))
-                    } finally {
-                        awaitLifecycleFact { !thread.isAlive }
-                    }
-                } else {
-                    repeat(count) { index ->
-                        val deletion = deleting || (mode === PgLifecycleCase.BOTH_PARTICIPANTS && index == 1)
-                        val result = scope.request(deletion)
-                        val entry = scope.retire(result, deletion)
-                        check(entry.driverOpening != null && entry.openingFacts.driverEntered.get() && entry.openingFacts.driverEnded.get())
-                        check(entry.raw.get() != null && entry.terminalWork?.closeState() === PersistenceTerminalCall.RETURNED)
-                        val driver = lifecycleField(requireNotNull(entry.driverOpening), "driver")
-                        check(driver === scope.root.retainedDriver.forOpening()) { "Participants did not share the retained guarded Driver." }
-                        val expected =
-                            if (extras.isEmpty()) PersistenceTerminalDisposition.TRACKED_DISPOSED else PersistenceTerminalDisposition.DRIVER_CLOSE_RETURNED
-                        check(entry.terminalWork?.disposition() === expected)
-                        check(
-                            entry.policy.route === if (deletion) PersistenceDriverTransportRoute.APPROVED_DIRECT else PersistenceDriverTransportRoute.ORDINARY,
-                        )
-                        // Old aliases remain monotone and cannot retire a successor occupying the same slot.
-                        check(!result.value.requestRetirement())
-                    }
+                PgLifecycleAdmissionScheduling(scope).use { admission ->
+                    installLifecycleModelLock(scope, PgLifecycleAdmissionLock(admission))
+                    scope.start()
+                    check(scope.owner.start() === PersistenceLifecycleActivation.ALREADY_CLAIMED)
+                    check(scope.owner.requestDeletion() is PersistenceFactoryResult.Refused)
+                    check(scope.owner.observeDeletionPreparation() === PersistenceLifecycleObservation.NOT_REQUESTED)
+                    check(!scope.owner.snapshot().deletionRequested)
+                    successfulOpenings(mode, count, extras, scope, admission)
                 }
                 peer.verify()
+            }
+        }
+    }
+
+    private fun successfulOpenings(
+        mode: PgLifecycleCase,
+        count: Int,
+        extras: Map<String, String>,
+        scope: PgLifecycleTestScope,
+        admission: PgLifecycleAdmissionScheduling,
+    ) {
+        val deleting = mode === PgLifecycleCase.DELETION
+        if (deleting || mode === PgLifecycleCase.BOTH_PARTICIPANTS) scope.prepareDeletion()
+        if (mode === PgLifecycleCase.VIRTUAL_CANDIDATE) {
+            val task = FutureTask { scope.request() }
+            val thread = Thread.ofVirtual().unstarted(task)
+            try {
+                val result = admission.during("mode=${mode.name} ordinal=0") {
+                    thread.start()
+                    task.get(8, TimeUnit.SECONDS)
+                }
+                scope.retire(result)
+            } finally {
+                awaitLifecycleFact { !thread.isAlive }
+            }
+        } else {
+            repeat(count) { index ->
+                val deletion = deleting || (mode === PgLifecycleCase.BOTH_PARTICIPANTS && index == 1)
+                val result = admission.during("mode=${mode.name} ordinal=$index") { scope.request(deletion) }
+                val entry = scope.retire(result, deletion)
+                check(entry.driverOpening != null && entry.openingFacts.driverEntered.get() && entry.openingFacts.driverEnded.get())
+                check(entry.raw.get() != null && entry.terminalWork?.closeState() === PersistenceTerminalCall.RETURNED)
+                val driver = lifecycleField(requireNotNull(entry.driverOpening), "driver")
+                check(driver === scope.root.retainedDriver.forOpening()) { "Participants did not share the retained guarded Driver." }
+                val expected =
+                    if (extras.isEmpty()) PersistenceTerminalDisposition.TRACKED_DISPOSED else PersistenceTerminalDisposition.DRIVER_CLOSE_RETURNED
+                check(entry.terminalWork?.disposition() === expected)
+                check(
+                    entry.policy.route === if (deletion) PersistenceDriverTransportRoute.APPROVED_DIRECT else PersistenceDriverTransportRoute.ORDINARY,
+                )
+                // Old aliases remain monotone and cannot retire a successor occupying the same slot.
+                check(!result.value.requestRetirement())
             }
         }
     }

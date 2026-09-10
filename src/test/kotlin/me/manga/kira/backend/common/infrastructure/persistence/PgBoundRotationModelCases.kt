@@ -6,6 +6,7 @@ import kotlin.concurrent.withLock
 /** Real retained factory is an input to synthetic own-project scope/cell cuts, never permission to call its public bridge directly. */
 internal object PgBoundRotationModelCases {
     fun verify(actual: PersistencePhysicalEntry) {
+        PgConstructionEvidenceModelCases.verify(actual)
         val image = requireNotNull(actual.driverOpening?.image)
         val factory = pgCapturedFactory(actual)
         originChecks(actual)

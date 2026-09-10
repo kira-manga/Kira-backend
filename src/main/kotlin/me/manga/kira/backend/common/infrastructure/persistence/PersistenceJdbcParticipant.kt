@@ -77,6 +77,8 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
 
     fun retainedCount(): Int? = binding.completion.retainedCount()
 
+    internal fun ownershipLockHeld(): Boolean = binding.ownershipLockHeld()
+
     fun usedWeakEvidence(): Boolean = binding.completion.weakEvidence.get()
 
     fun cleanupFailed(): Boolean = failed.get() || binding.completion.cleanupFailure.get()

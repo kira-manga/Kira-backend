@@ -71,6 +71,8 @@ internal class PersistenceJdbcDriverRoot(val endpoint: ResolvedPersistenceEndpoi
 
     fun scannerReady(): Boolean = scanner.startPhase() === PersistenceThreadStartPhase.RETURNED && scanner.hasEntered() && !scanner.hasBodyEnded()
 
+    internal fun ownershipLockHeld(): Boolean = ordinary.ownershipLockHeld() || deletion.ownershipLockHeld()
+
     fun canReleaseTimer(): Boolean = shutdown.get() && participantsEnded() && scanner.termination().ended()
 
     private fun participantsEnded(): Boolean = ordinary.recordsEnded() && deletion.recordsEnded() && ordinary.threadsEnded() && deletion.threadsEnded()

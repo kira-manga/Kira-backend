@@ -25,6 +25,10 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
 
     internal fun isClosed(): Boolean = shutdown.get() || stopRequested.get()
 
+    /** Fixed negative lock guard only, never native/actor disposition evidence. */
+    internal fun ownershipLockHeld(): Boolean = ledger.lock.isHeldByCurrentThread || rendezvous.lock.isHeldByCurrentThread ||
+        ledger.entries.any { it?.transports?.ownershipLockHeld() == true }
+
     /** Acquire/termination observation only outside F/G/T; no result/raw/reference is released by this fact. */
     internal fun actualFactoryThreadEnded(): Boolean = worker?.termination() === PersistenceThreadTermination.TERMINATED
 
@@ -84,7 +88,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
     ): PersistencePhysicalEntry? {
         require(opening == null || opening.policy === policy) { "Persistence reservation policy must match its opening." }
         if (!ledger.lock.tryLock()) {
-            control.fail(PersistenceFactoryFailure.BUSY)
+            control.fail(PersistenceFactoryFailure.BUSY, PersistenceFactoryBusySite.RESERVE_G)
             return null
         }
         return try {
@@ -100,7 +104,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
             }
             val slot = ledger.entries.indexOfFirst { it == null }
             if (slot < 0) {
-                control.fail(PersistenceFactoryFailure.BUSY)
+                control.fail(PersistenceFactoryFailure.BUSY, PersistenceFactoryBusySite.RESERVE_FULL)
                 return null
             }
             val record = PersistencePhysicalRecord(slot)
@@ -121,19 +125,20 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
     internal fun admit(entry: PersistencePhysicalEntry): Boolean {
         val control = requireNotNull(entry.control)
         if (!rendezvous.lock.tryLock()) {
-            control.fail(PersistenceFactoryFailure.BUSY)
+            control.fail(PersistenceFactoryFailure.BUSY, PersistenceFactoryBusySite.ADMIT_F)
             return false
         }
         return try {
             if (!ledger.lock.tryLock()) {
-                control.fail(PersistenceFactoryFailure.BUSY)
+                control.fail(PersistenceFactoryFailure.BUSY, PersistenceFactoryBusySite.ADMIT_G)
                 return false
             }
             try {
                 val attempt = requireNotNull(entry.attempt)
                 val reason = admissionFailure(entry) ?: finalCallerFailure(control)
                 if (reason != null) {
-                    control.fail(reason)
+                    // Only admissionFailure's occupied branch can select BUSY here; keep its precedence unchanged.
+                    control.fail(reason, if (reason === PersistenceFactoryFailure.BUSY) PersistenceFactoryBusySite.ADMIT_OCCUPIED else null)
                     return false
                 }
                 // Only the authentic platform receiver can be queued on this owned Condition.
@@ -190,6 +195,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
                 // Signal before the non-fallible commit. The receiver cannot reacquire F before unlock.
                 rendezvous.changed.signalAll()
                 if (!control.take()) return false
+                entry.jdbc.deliveredOpaqueLocked()
                 attempt.commitOwnedTransfer()
                 true
             } finally {
@@ -290,6 +296,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         }
         // Also covers an already-TAKEN candidate and a pending T fence after F has cleared current.
         if (entry.retirementRequested.get()) {
+            entry.jdbc.sealForRetirementLocked()
             val transports = entry.transports
             if (transports == null) entry.retiring = true else transports.fenceRetirementLocked()
         }
@@ -326,6 +333,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         if (!claimIdentityMatches(entry, prepared)) return PersistenceFactoryFailure.COORDINATION_FAILED
         return when {
             isClosed() || ledger.sealed || entry.retiring || entry.retirementRequested.get() -> PersistenceFactoryFailure.CLOSED
+            !entry.jdbc.canDeliverOpaqueLocked() -> PersistenceFactoryFailure.COORDINATION_FAILED
             managed?.permits(entry) == false -> PersistenceFactoryFailure.NOT_READY
             rendezvous.closedFailure() != null -> rendezvous.closedFailure()
             attempt.failure != null -> attempt.failure

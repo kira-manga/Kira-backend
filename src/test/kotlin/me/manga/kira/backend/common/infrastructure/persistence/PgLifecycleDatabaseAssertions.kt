@@ -7,23 +7,33 @@ internal class PgLifecycleDatabaseWitness(val entry: PersistencePhysicalEntry, v
 
 /** Read-only own-project assertions. Raw existence is observed, but no raw Connection method/getter or production fact write is introduced. */
 internal object PgLifecycleDatabaseAssertions {
-    fun retain(scope: PgLifecycleTestScope, case: PgLifecycleDatabaseCase, application: String): PgLifecycleDatabaseWitness {
-        var witness: PgLifecycleDatabaseWitness? = null
+    fun retain(
+        scope: PgLifecycleTestScope,
+        case: PgLifecycleDatabaseCase,
+        application: String,
+        original: PgLifecycleDatabaseOriginalOutcome,
+    ): PgLifecycleDatabaseWitness {
         val binding = scope.binding(case.lane.deleting)
-        awaitLifecycleFact {
-            binding.ledger.lock.withLock {
-                val entry = binding.ledger.entries.filterNotNull().singleOrNull()
-                val transport = entry?.transports?.snapshot() as? PersistenceTransportSnapshot.Available
-                val primary = transport?.primary?.takeIf(::primaryConstructionReturned)
-                val transportReady = case.originalProvider || primary != null
-                if (entry != null && entry.openingFacts.driverEntered.get() && transportReady) {
-                    admitted(scope, case, application, entry)
-                    witness = PgLifecycleDatabaseWitness(entry, primary?.record)
-                }
-                witness != null
-            }
+        return original.awaitWitness { captureWitness(scope, case, application, binding) }
+    }
+
+    /** One existing G-protected admission sample. Completion selection and failure context stay outside this lock. */
+    fun captureWitness(
+        scope: PgLifecycleTestScope,
+        case: PgLifecycleDatabaseCase,
+        application: String,
+        binding: PersistencePhysicalFactoryBinding,
+    ): PgLifecycleDatabaseWitness? = binding.ledger.lock.withLock {
+        val entry = binding.ledger.entries.filterNotNull().singleOrNull()
+        val transport = entry?.transports?.snapshot() as? PersistenceTransportSnapshot.Available
+        val primary = transport?.primary?.takeIf(::primaryConstructionReturned)
+        val transportReady = case.originalProvider || primary != null
+        if (entry != null && entry.openingFacts.driverEntered.get() && transportReady) {
+            admitted(scope, case, application, entry)
+            PgLifecycleDatabaseWitness(entry, primary?.record)
+        } else {
+            null
         }
-        return requireNotNull(witness)
     }
 
     private fun primaryConstructionReturned(primary: PersistenceTransportRecordSnapshot): Boolean =

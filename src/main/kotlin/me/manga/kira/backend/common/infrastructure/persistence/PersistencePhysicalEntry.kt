@@ -45,6 +45,7 @@ internal class PersistencePhysicalEntry(
     val raw = AtomicReference<Connection?>()
     val openingFacts = PersistenceOpeningFacts()
     val retirementRequested = AtomicBoolean()
+    val jdbc = PersistenceOwnership(this, physical)
     var dispatched = false
     var opening = PersistencePhysicalOpeningPhase.UNCLAIMED
     var retiring = false

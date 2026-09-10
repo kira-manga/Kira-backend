@@ -35,7 +35,9 @@ internal object PgLifecycleDatabaseDiagnostics {
             outcome.isFailure -> "state=THREW result=UNOBSERVED"
             else -> "state=RETURNED ${resultFields(outcome.getOrThrow(), null, null)}"
         }
-        return listOf("PG_DATABASE_ORIGINAL_CALL v=1 ${identity(case, ordinal, application)} entry=UNAVAILABLE $fields").also(::checkBound)
+        return listOf(
+            "PG_DATABASE_ORIGINAL_CALL v=1 ${identity(case, ordinal, application)} entry=UNAVAILABLE $fields ${openingEvidenceFields(null)}",
+        ).also(::checkBound)
     }
 
     /** Runtime hook is called outside F/G/T. Binding lookup failure removes only the optional locked details. */
@@ -73,7 +75,8 @@ internal object PgLifecycleDatabaseDiagnostics {
                 "factory_entered=${facts.factoryEntered.get()} factory_ended=${facts.factoryEnded.get()} " +
                 "opening_outcome=${facts.outcome.get()?.name ?: "NOT_RECORDED"} scope_call_ended=${facts.scopeCallEnded.get()} " +
                 "raw_present=${entry.raw.get() != null} fatal=${facts.fatal.get()} retirement_requested=${entry.retirementRequested.get()} " +
-                runCatching { budgetFields(control) }.getOrDefault("allowance_ms=UNAVAILABLE elapsed_at_observation_ms=UNAVAILABLE"),
+                runCatching { budgetFields(control) }.getOrDefault("allowance_ms=UNAVAILABLE elapsed_at_observation_ms=UNAVAILABLE") +
+                " ${openingEvidenceFields(facts)}",
             "PG_DATABASE_BOOKKEEPING v=1 $identity observation=MIXED " +
                 "fg_sample=${locked.status} entry_present=${scalar(locked.member)} dispatched=${scalar(locked.dispatched)} " +
                 "opening_phase=${locked.opening?.name ?: "UNAVAILABLE"} scope_ended=${scalar(locked.scopeEnded)} " +
@@ -97,8 +100,33 @@ internal object PgLifecycleDatabaseDiagnostics {
         }
         return "variant=$variant reason=$reason receipt_present=${receipt != null} " +
             "receipt_state=${receipt?.state()?.name ?: "NOT_APPLICABLE"} " +
-            "control_receipt=${receiptIdentity(receipt, controlReceipt)} attempt_receipt=${receiptIdentity(receipt, attemptReceipt)}"
+            "control_receipt=${receiptIdentity(receipt, controlReceipt)} attempt_receipt=${receiptIdentity(receipt, attemptReceipt)} " +
+            "busy_site=${busySite(result)}"
     }
+
+    /** Each immutable cell is coherent; the three observations are not a linearizable opening history. */
+    fun openingEvidenceFields(facts: PersistenceOpeningFacts?): String {
+        if (facts == null) {
+            return "evidence_scope=UNAVAILABLE opening_failure=UNAVAILABLE primary_construction=UNAVAILABLE aux_construction=UNAVAILABLE"
+        }
+        val failure = facts.failure()
+        val opening = if (failure == null) "NOT_RECORDED" else "${failure.site.name}/${failure.type.name}"
+        return "evidence_scope=PARTIAL_SPANS opening_failure=$opening " +
+            "primary_construction=${constructionEvidence(facts.construction(PersistenceTransportRole.PRIMARY))} " +
+            "aux_construction=${constructionEvidence(facts.construction(PersistenceTransportRole.AUX_CANCEL))}"
+    }
+
+    private fun constructionEvidence(evidence: PersistenceConstructionEvidence?): String {
+        if (evidence == null) return "NOT_RECORDED"
+        return "${evidence.site.name}/${evidence.disposition.name}/${evidence.refusal?.name ?: evidence.type?.name ?: "NOT_APPLICABLE"}"
+    }
+
+    private fun busySite(result: PersistenceFactoryResult<*>): String =
+        if (result is PersistenceFactoryResult.Refused && result.reason === PersistenceFactoryFailure.BUSY) {
+            result.busySite?.name ?: "UNAVAILABLE"
+        } else {
+            "NOT_APPLICABLE"
+        }
 
     fun relay(case: PgLifecycleDatabaseCase, application: String, observation: PgLifecycleDatabaseObservation, relay: PgLifecycleDatabaseRelay) {
         emit(

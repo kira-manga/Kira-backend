@@ -20,6 +20,7 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
             if (binding.isClosed()) entry.retirementRequested.set(true)
             if (!entry.dispatched || !entry.retirementRequested.get()) return null
             val work = requireNotNull(entry.terminalWork)
+            entry.jdbc.sealForRetirementLocked()
             if (entry.transports == null) entry.retiring = true else entry.transports.fenceRetirementLocked()
             if (!entry.retiring || entry.transports?.fenceTerminalLocked(work) == false) return null
             if (entry.terminal == null) entry.terminal = work.claim
@@ -51,7 +52,7 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
         if (!ledger.lock.tryLock()) return false
         return try {
             val entry = current(work) ?: return false
-            entry.retiring && entry.decisionDelivered && openingCallsEnded(entry, factoryEnded)
+            entry.retiring && entry.decisionDelivered && openingCallsEnded(entry, factoryEnded) && entry.jdbc.postOpeningCallsEnded()
         } finally {
             ledger.lock.unlock()
         }
@@ -62,9 +63,8 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
         if (!ledger.lock.tryLock()) return PersistenceTerminalDisposition.PENDING
         return try {
             val entry = current(work) ?: return PersistenceTerminalDisposition.PENDING
-            if (!entry.decisionDelivered || !work.producerDrainProven() ||
-                !openingCallsEnded(entry, factoryEnded)
-            ) {
+            val decisionOrDrainPending = !entry.decisionDelivered || !work.producerDrainProven()
+            if (decisionOrDrainPending || !openingCallsEnded(entry, factoryEnded) || !entry.jdbc.postOpeningCallsEnded()) {
                 return PersistenceTerminalDisposition.PENDING
             }
             val beforeDriver = !entry.openingFacts.driverEntered.get() && entry.raw.get() == null
@@ -112,6 +112,7 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
 
     private fun scanWorkEnded(entry: PersistencePhysicalEntry, work: PersistenceTerminalWork, factoryEnded: Boolean): Boolean =
         work.bodyExited() && work.disposition() !== PersistenceTerminalDisposition.PENDING && openingCallsEnded(entry, factoryEnded) &&
+            entry.jdbc.postOpeningCallsEnded() &&
             entry.control?.receipt?.state() !== PersistenceFactoryProcessing.PENDING && entry.attempt?.workerSettled == true
 
     private fun canReclaimLocked(entry: PersistencePhysicalEntry, work: PersistenceTerminalWork, factoryEnded: Boolean): Boolean {
@@ -122,7 +123,7 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
         val processing = control.receipt.state() === PersistenceFactoryProcessing.PROCESSING_ENDED && attempt.workerSettled && !attempt.unresolved
         val identity = entry.terminal === work.claim && attempt.input === entry.record && attempt.ownedControl === control &&
             attempt.budget === control.budget && control.matchesRecord(entry.record) && attempt.receipt === control.receipt
-        val noOldWork = work.bodyExited() && openingCallsEnded(entry, factoryEnded) &&
+        val noOldWork = work.bodyExited() && openingCallsEnded(entry, factoryEnded) && entry.jdbc.postOpeningCallsEnded() &&
             binding.rendezvous.current !== attempt && control.state().phase in TERMINAL_CALLERS
         return successful && processing && identity && noOldWork
     }
@@ -134,7 +135,8 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
             ledger.entries.all { entry ->
                 entry == null || (
                     entry.dispatched && entry.terminalWork?.bodyExited() == true &&
-                        entry.terminalWork.disposition() !== PersistenceTerminalDisposition.PENDING && openingCallsEnded(entry, factoryEnded)
+                        entry.terminalWork.disposition() !== PersistenceTerminalDisposition.PENDING && openingCallsEnded(entry, factoryEnded) &&
+                        entry.jdbc.postOpeningCallsEnded()
                     )
             }
         } finally {

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
 import org.junit.jupiter.params.provider.ValueSource
+import java.net.SocketTimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.withLock
@@ -22,6 +23,7 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         val refused = PgLifecycleDatabaseDiagnostics.resultFields(PersistenceFactoryResult.Refused(reason), processing.receipt, processing.receipt)
         assertTrue(refused.contains("variant=REFUSED reason=${reason.name} receipt_present=false"))
         assertTrue(refused.contains("receipt_state=NOT_APPLICABLE control_receipt=NOT_APPLICABLE attempt_receipt=NOT_APPLICABLE"))
+        assertTrue(refused.contains("busy_site=${if (reason === PersistenceFactoryFailure.BUSY) "UNAVAILABLE" else "NOT_APPLICABLE"}"))
         val failed = PgLifecycleDatabaseDiagnostics.resultFields(
             PersistenceFactoryResult.Failed(reason, processing.receipt),
             processing.receipt,
@@ -29,7 +31,40 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         )
         assertTrue(failed.contains("variant=FAILED reason=${reason.name} receipt_present=true"))
         assertTrue(failed.contains("receipt_state=PENDING control_receipt=MATCH attempt_receipt=MATCH"))
+        assertTrue(failed.contains("busy_site=NOT_APPLICABLE"))
         assertEquals(PersistenceFactoryProcessing.PENDING, processing.receipt.state())
+    }
+
+    @ParameterizedTest
+    @EnumSource(PersistenceFactoryBusySite::class)
+    fun `MODEL original refusal renders only its own immutable site without needing an Entry`(site: PersistenceFactoryBusySite) {
+        val control = PersistenceOwnedCallerControl.prepare(2_000)
+        assertTrue(control.fail(PersistenceFactoryFailure.BUSY, site))
+        val original = requireNotNull(control.failureResult())
+        val line = PgLifecycleDatabaseDiagnostics.originalCallLines(case(), 0, APPLICATION, Result.success(original)).single()
+        assertTrue(line.contains("variant=REFUSED reason=BUSY"))
+        assertTrue(line.contains("busy_site=${site.name}"))
+        assertTrue(line.contains("entry=UNAVAILABLE"))
+        assertTrue(line.contains("opening_failure=UNAVAILABLE primary_construction=UNAVAILABLE aux_construction=UNAVAILABLE"))
+        assertSame(original, control.failureResult())
+    }
+
+    @Test
+    fun `MODEL retained first evidence stays distinct from missing entry unrecorded evidence and normal return`() {
+        val unavailable = PgLifecycleDatabaseDiagnostics.openingEvidenceFields(null)
+        val facts = PersistenceOpeningFacts()
+        val unrecorded = PgLifecycleDatabaseDiagnostics.openingEvidenceFields(facts)
+        assertTrue(unavailable.contains("evidence_scope=UNAVAILABLE opening_failure=UNAVAILABLE"))
+        assertTrue(unrecorded.contains("evidence_scope=PARTIAL_SPANS opening_failure=NOT_RECORDED"))
+        assertTrue(unrecorded.contains("primary_construction=NOT_RECORDED aux_construction=NOT_RECORDED"))
+        facts.recordFailure(PersistenceOpeningFailureSite.DRIVER_CONNECT, SocketTimeoutException())
+        facts.recordConstructionRefusal(PersistenceTransportRole.PRIMARY, PersistenceConstructionSite.BOUND_INSTALL, PersistenceTransportRefusal.FULL)
+        facts.recordConstructionRetained(PersistenceTransportRole.AUX_CANCEL)
+        val rendered = PgLifecycleDatabaseDiagnostics.openingEvidenceFields(facts)
+        assertTrue(rendered.contains("opening_failure=DRIVER_CONNECT/SOCKET_TIMEOUT"))
+        assertTrue(rendered.contains("primary_construction=BOUND_INSTALL/REFUSED/FULL"))
+        assertTrue(rendered.contains("aux_construction=CONSTRUCTION_SPAN/RETAINED/NOT_APPLICABLE"))
+        assertFalse(rendered.contains("SUCCEEDED"))
     }
 
     @ParameterizedTest
@@ -199,7 +234,7 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
 
     @Test
     fun `MODEL baseline and supplemental labels and both ordinals remain ASCII and below the unchanged child output cap`() {
-        val model = Model()
+        val model = Model(maximum = true)
         val rows = PgLifecycleDatabaseLane.entries.flatMap { lane ->
             (0..1).flatMap { timeout -> PgLifecycleDatabaseRecipe.entries.map { PgLifecycleDatabaseCase(it, timeout, lane) } }
         } + PgLifecycleDatabaseLane.entries.flatMap { lane ->
@@ -214,7 +249,10 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
             var total = 0
             var progressTotal = 0
             repeat(row.attempts) { ordinal ->
-                val lines = PgLifecycleDatabaseDiagnostics.resultLines(row, ordinal, APPLICATION, model.binding, model.entry, model.result)
+                val alternatives = listOf(model.binding, null).map { binding ->
+                    PgLifecycleDatabaseDiagnostics.resultLines(row, ordinal, APPLICATION, binding, model.entry, model.result)
+                }
+                val lines = alternatives.maxBy { batch -> batch.sumOf { it.length + 1 } }
                 val bytes = lines.sumOf { it.toByteArray(Charsets.US_ASCII).size + 1 }
                 assertTrue(lines.all { line -> line.all { it.code in 32..126 } })
                 assertTrue(bytes <= PgLifecycleDatabaseDiagnostics.MAX_CHARACTERS)
@@ -231,6 +269,27 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         }
         assertThrows(IllegalStateException::class.java) {
             PgLifecycleDatabaseDiagnostics.resultLines(case(), 0, "untrusted\nidentity", model.binding, model.entry, model.result)
+        }
+    }
+
+    @Test
+    fun `MODEL full parent relay batch includes maximum session evidence and seventh overflow offender at both ordinals`() {
+        val row = PgLifecycleDatabaseCase(
+            PgLifecycleDatabaseRecipe.QUALIFIED_BINARY_BOX_BINARY_DISABLED,
+            1,
+            PgLifecycleDatabaseLane.ORDINARY,
+            PgLifecycleDatabaseMode.ORIGINAL_MATRIX,
+        )
+        pgLifecycleDatabaseWorstRelayEvidence(row).use { fixture ->
+            repeat(row.attempts) { ordinal ->
+                val observation = PgLifecycleDatabaseObservation().apply {
+                    begin(ordinal)
+                    phase = PgLifecycleDatabaseObservationPhase.WAIT_EXPIRED_DRIVER
+                }
+                // The real emitter checks the entire two-line batch, not just an isolated relay tuple.
+                PgLifecycleDatabaseDiagnostics.relay(row, PgLifecycleDatabaseRelayEvidenceFixture.APPLICATION, observation, fixture.relay)
+                assertTrue(fixture.relay.diagnostic(ordinal).contains("7/UNREGISTERED/"))
+            }
         }
     }
 
@@ -259,7 +318,7 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         val failure = PhysicalHostileFailure()
         state.authentication.addAll(listOf(10, 11, 12, 0))
         state.errorState.set("synthetic-untrusted-wire-text\nnot-a-code")
-        state.failure.set(failure)
+        state.captureFailure(PgLifecycleDatabaseRelayStage.CLIENT_PUMP, failure)
         val diagnostic = state.diagnostic()
         assertTrue(diagnostic.contains("auth_count=4 auth=SASL,CONTINUE,FINAL,OK"))
         assertTrue(diagnostic.contains("error_category=OTHER"))
@@ -333,13 +392,37 @@ internal class PgLifecycleDatabaseDiagnosticsTest {
         PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.QUALIFIED_NONBINARY_BOX, 1, PgLifecycleDatabaseLane.DELETION)
 
     /** Inert, explicitly fabricated bookkeeping for renderer tests; it never activates a real lifecycle. */
-    private class Model {
+    private class Model(maximum: Boolean = false) {
         val binding = PersistencePhysicalFactoryBinding(1, AtomicBoolean())
-        val control = PersistenceOwnedCallerControl.prepare(2_000)
-        val entry = PersistencePhysicalEntry(PersistencePhysicalRecord(0), control)
-        val result = PersistenceFactoryResult.Failed(PersistenceFactoryFailure.CREATE_FAILED, control.receipt)
+        val control = PersistenceOwnedCallerControl.prepare(if (maximum) Long.MAX_VALUE / 1_000_000 else 2_000)
+        val entry = PersistencePhysicalEntry(
+            PersistencePhysicalRecord(0),
+            control,
+            if (maximum) PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION else PersistenceDriverAttemptPolicy.ORIGINAL_PROVIDER,
+            binding,
+        )
+        val result = PersistenceFactoryResult.Failed(
+            if (maximum) PersistenceFactoryFailure.COORDINATION_FAILED else PersistenceFactoryFailure.CREATE_FAILED,
+            control.receipt,
+        )
 
         init {
+            if (maximum) {
+                assertTrue(control.attach())
+                assertTrue(control.fail(PersistenceFactoryFailure.COORDINATION_FAILED))
+                control.processing.complete(unresolved = true)
+                PersistenceTimeBudget::class.java.getDeclaredField("startedAtNanos").also { it.isAccessible = true }
+                    .setLong(control.budget, System.nanoTime() - Long.MAX_VALUE / 2)
+                entry.openingFacts.recordFailure(PersistenceOpeningFailureSite.OPENING_FALLBACK, SocketTimeoutException())
+                for (role in PersistenceTransportRole.entries) {
+                    entry.openingFacts.recordConstructionRefusal(
+                        role,
+                        PersistenceConstructionSite.CONSTRUCTION_SPAN,
+                        PersistenceTransportRefusal.INVALID_CONSTRUCTION,
+                    )
+                }
+                entry.openingFacts.outcome.set(PersistencePhysicalOpening.RETAINED_FOR_RETIREMENT)
+            }
             binding.rendezvous.lock.withLock {
                 binding.ledger.lock.withLock {
                     entry.attempt = PersistenceFactoryAttempt(entry.record, control.budget, control)

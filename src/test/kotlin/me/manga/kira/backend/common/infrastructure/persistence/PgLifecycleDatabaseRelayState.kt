@@ -24,9 +24,9 @@ private enum class PgLifecycleDatabaseInputOrigin {
 }
 
 /** Detached bounded wire facts. Fixture teardown can never set a candidate-originated close receipt. */
-internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDatabaseCase) {
+internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDatabaseCase, val acceptedIndex: Int? = null) {
     val fixtureClosing = AtomicBoolean()
-    val failure = AtomicReference<Throwable?>()
+    val failure = AtomicReference<PgLifecycleDatabaseRelayFailure?>()
     val completed = AtomicBoolean()
     val backendPid = AtomicInteger()
     val authentication = CopyOnWriteArrayList<Int>()
@@ -53,6 +53,21 @@ internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDataba
 
     @Volatile
     var auxiliary = false
+
+    @Volatile
+    var association = PgLifecycleDatabaseRelayAssociation.UNREGISTERED
+        private set
+
+    /** Called only after the original registration validations succeed; never used as admission authority. */
+    fun publishAssociation(association: PgLifecycleDatabaseRelayAssociation) {
+        this.association = association
+    }
+
+    fun captureFailure(stage: PgLifecycleDatabaseRelayStage, thrown: Throwable, retainDuringCleanup: Boolean = false) {
+        val closing = fixtureClosing.get()
+        if (closing && !retainDuringCleanup) return
+        failure.compareAndSet(null, PgLifecycleDatabaseRelayFailure(acceptedIndex, association, stage, PgLifecycleDatabaseRelayFailureType.of(thrown), closing))
+    }
 
     fun hold(reason: PgLifecycleDatabaseGate): Boolean {
         check(gate.compareAndSet(null, reason))

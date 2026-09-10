@@ -22,5 +22,7 @@ internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoi
 
     fun snapshot(): PersistenceLifecycleSnapshot = root.snapshot()
 
+    internal fun ownershipLockHeld(): Boolean = root.ownershipLockHeld()
+
     override fun toString(): String = "PersistenceJdbcLifecycleOwner(redacted)"
 }
