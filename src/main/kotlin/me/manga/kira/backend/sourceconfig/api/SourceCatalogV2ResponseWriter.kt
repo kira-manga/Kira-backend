@@ -8,6 +8,7 @@ import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Component
 import java.nio.charset.StandardCharsets
 
+/** Writes exact stored v2 bytes with strong ETags and weak If-None-Match comparison. */
 @Component
 class SourceCatalogV2ResponseWriter {
     fun writeManifest(catalog: PublishedSourceCatalog, ifNoneMatch: String?, response: HttpServletResponse) {
@@ -38,7 +39,7 @@ class SourceCatalogV2ResponseWriter {
     }
 
     private fun writeConditional(body: String, checksum: String, ifNoneMatch: String?, response: HttpServletResponse) {
-        if (stronglyMatches(ifNoneMatch, checksum)) {
+        if (IfNoneMatchMatcher.matches(ifNoneMatch, checksum)) {
             response.status = HttpStatus.NOT_MODIFIED.value()
             return
         }
@@ -48,11 +49,6 @@ class SourceCatalogV2ResponseWriter {
         response.setContentLength(bytes.size)
         response.outputStream.write(bytes)
         response.outputStream.flush()
-    }
-
-    private fun stronglyMatches(value: String?, checksum: String): Boolean {
-        val raw = value?.trim()?.takeIf { it.isNotEmpty() } ?: return false
-        return raw == "*" || raw.split(",").any { it.trim() == quote(checksum) }
     }
 
     private fun quote(value: String) = "\"$value\""
