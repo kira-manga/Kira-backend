@@ -7,8 +7,8 @@ import org.junit.jupiter.api.Test
 /**
  * PLAN §11 test 35 — `IfNoneMatchVariantsIT`: conditional-GET correctness. `If-None-Match: *` → 304;
  * a comma-separated list that includes the current ETag → 304; a non-matching list → 200; a **weak
- * validator `W/"<current-hash>"` → 200** (strong comparison never matches a weak validator, RFC 9110
- * §8.8.3.2); every 304 carries no body (PLAN §4.1).
+ * validator `W/"<current-hash>"` → 304** (If-None-Match requires weak comparison, RFC 9110
+ * §13.1.2); every 304 carries no body (PLAN §4.1).
  */
 class IfNoneMatchVariantsIT : AbstractAdminSourceIT() {
 
@@ -16,7 +16,7 @@ class IfNoneMatchVariantsIT : AbstractAdminSourceIT() {
     private val other2 = "\"1111111111111111111111111111111111111111111111111111111111111111\""
 
     @Test
-    fun `if-none-match variants follow strong comparison`() {
+    fun `if-none-match variants follow weak comparison`() {
         val api = "Variants"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
@@ -37,8 +37,11 @@ class IfNoneMatchVariantsIT : AbstractAdminSourceIT() {
         // A list with no matching entry → 200 full body.
         getPublicDocument(ifNoneMatch = "$other1, $other2").andExpect { status { isOk() } }
 
-        // A weak validator carrying the identical opaque hash NEVER strongly matches → 200 full body.
-        getPublicDocument(ifNoneMatch = "W/$etag").andExpect { status { isOk() } }
+        // A weak validator carrying the identical opaque hash matches → 304, no body.
+        getPublicDocument(ifNoneMatch = "W/$etag").andExpect {
+            status { isNotModified() }
+            content { string("") }
+        }
 
         // Malformed unquoted or multiply-quoted values are not entity-tags and never match.
         getPublicDocument(ifNoneMatch = etag.trim('"')).andExpect { status { isOk() } }

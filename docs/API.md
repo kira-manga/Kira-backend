@@ -150,11 +150,19 @@ document**:
 
 ### ETag semantics (normative)
 
-Strong quoted ETags (`ETag: "a1b2…"`). `If-None-Match: *` matches whenever any document exists → 304.
-A comma-separated `If-None-Match` list is parsed and each valid quoted entity-tag compared with
-**strong comparison**; a match → **304 with no body**. Malformed/unquoted tags never match. **Weak validators never match**: `W/"<hash>"` fails
-strong comparison even when the opaque hash is identical → **200** with the full body. The checksum is
-computed over the exact UTF-8 bytes sent. `X-Config-Checksum` is a **corruption check, not
+These semantics apply to v1 public/latest and admin/history documents, and v2 manifests/immutable
+sources. Emitted ETags stay strong and quoted (`ETag: "a1b2…"`). `If-None-Match` uses **weak comparison**
+(RFC 9110 §13.1.2): valid `"<hash>"` and uppercase `W/"<hash>"` tags match the same case-sensitive
+opaque value → **304 with no body**, retaining the route's ETag/cache/metadata headers. A standalone
+`*` matches an existing selected representation; it never bypasses a missing-artifact 404.
+
+Lists are quote-aware: commas inside opaque tags are not separators, and backslash is literal (not
+a quote escape). Only SP/HTAB count as outside optional whitespace; empty list elements are accepted.
+The **entire field** must be valid: unquoted/malformed tags, mixed wildcard/list forms, or junk before
+or after an otherwise matching entry do not match. Such values reaching the writer return **200**
+with the full body. This does not change the strong `If-Match` contract for admin optimistic locking.
+
+The checksum is computed over the exact UTF-8 bytes sent. `X-Config-Checksum` is a **corruption check, not
 authenticity** — a hash beside the same payload cannot authenticate it. Authenticity comes from the
 `kira-source-signature-v1` Ed25519 metadata returned in `X-Config-Signature-*`, `X-Config-Signing-Key-Id`,
 `X-Config-Previous-*`, and `X-Config-Created-At`; `/document/meta` carries the same fields.

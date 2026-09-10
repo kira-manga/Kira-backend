@@ -68,6 +68,12 @@ class SourceCatalogV2IT : AbstractAdminSourceIT() {
             status { isNotModified() }
             content { string("") }
         }
+        mockMvc.get("/api/v2/source-config/manifest") {
+            header(HttpHeaders.IF_NONE_MATCH, "W/${requireNotNull(manifestResponse.getHeader(HttpHeaders.ETAG))}")
+        }.andExpect {
+            status { isNotModified() }
+            content { string("") }
+        }
 
         val entry = manifest.sources.first()
         val artifactResponse =
@@ -89,6 +95,13 @@ class SourceCatalogV2IT : AbstractAdminSourceIT() {
             ),
         )
         assertEquals(keyId, entry.sourceSigningKeyId)
+
+        mockMvc.get("/api/v2/source-config/sources/${entry.api}/revisions/${entry.sourceRevision}") {
+            header(HttpHeaders.IF_NONE_MATCH, "W/${requireNotNull(artifactResponse.getHeader(HttpHeaders.ETAG))}")
+        }.andExpect {
+            status { isNotModified() }
+            content { string("") }
+        }
 
         mockMvc.get("/api/v2/source-config/sources/Lavatoons/revisions/1")
             .andExpect { status { isNotFound() } }
