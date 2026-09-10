@@ -40,13 +40,14 @@ class PublicTutorialController(private val tutorials: TutorialService, private v
     @GetMapping("/tutorial-media/{id}")
     fun media(@PathVariable id: UUID, request: HttpServletRequest): ResponseEntity<*> {
         val (metadata, path) = media.loadForDelivery(id)
+        val cacheControl = if (metadata.published) IMMUTABLE_CACHE else "private, no-store"
         val etag = "\"${metadata.sha256}\""
         if (matches(request, etag)) {
-            return ResponseEntity.status(304).eTag(etag).header(HttpHeaders.CACHE_CONTROL, IMMUTABLE_CACHE).build<Any>()
+            return ResponseEntity.status(304).eTag(etag).header(HttpHeaders.CACHE_CONTROL, cacheControl).build<Any>()
         }
         return ResponseEntity.ok()
             .eTag(etag)
-            .header(HttpHeaders.CACHE_CONTROL, IMMUTABLE_CACHE)
+            .header(HttpHeaders.CACHE_CONTROL, cacheControl)
             .contentType(MediaType.parseMediaType(metadata.contentType))
             .contentLength(metadata.byteSize)
             .body(InputStreamResource(Files.newInputStream(path)))
