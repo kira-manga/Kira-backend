@@ -206,7 +206,7 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   [`LOCAL_DEV.md`](LOCAL_DEV.md#local-document-signing) and [`SOURCE_DOCUMENT_SIGNING.md`](SOURCE_DOCUMENT_SIGNING.md).
 - **No secrets in the published config.** The served document is public and cacheable, so validation
   rule 32 (publish-blocking) rejects credential-like material: hard-denied header names `cookie`,
-  `set-cookie`, `proxy-authorization`; sensitive-name headers (`authorization`, `x-api-key`, `api-key`,
+  `set-cookie`, `proxy-authorization`; sensitive-name **static** headers (`authorization`, `x-api-key`, `api-key`,
   `x-auth-token`, any name containing `token`/`secret`/`password`) are allowed **only** when the value
   is on the explicit public-placeholder allowlist (`kira.validation.public-header-placeholder-values`,
   default exactly `["Bearer null"]` — the literal placeholder the real bundled document requires); URLs
@@ -215,7 +215,17 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
   `SourceConfig` is public application configuration — never place credentials, cookies, tokens, or
   private API keys in it.* Header names must also be ASCII RFC field-name tokens with no surrounding
   whitespace; invalid names are publication-blocking `HEADER_NAME_INVALID` findings before sensitive-
-  name evaluation.
+  name evaluation. The same name classifier applies to `target=header` filter parameters, but
+  **all sensitive header-target filters are unsupported**, even when optional, hidden, empty or
+  configured with `Bearer null`. The static placeholder allowlist never exempts a dynamic filter's
+  default, options, CSV delimiter or toggle wire values. This gate matches the consumers' filter-name
+  policy; their pre-existing static-header policy is not made identical to the Backend's value gate.
+  Filter option/default/enumerable-condition findings use fixed value-free messages and retain
+  collect-all validation. Structural identifiers remain in paths; arbitrary-field secret detection
+  is not promised. Invalid admin drafts deliberately retain authored content, but cannot be newly
+  published. Whole imports fail before writes, and failed editor quick-publish rolls back its new
+  revision. Historical public bytes and stored findings are not rewritten: installed-cache cleanup,
+  exposure assessment and any credential rotation remain external operations, not automatic recall.
 - **High-impact Source Admin Studio publication is password-stepped-up.** `POST /api/v1/admin/step-up`
   verifies the already-authenticated ADMIN account password through the existing throttled password
   path and returns a 256-bit random proof. The proof is scoped to source mutations, expires after five

@@ -227,9 +227,22 @@ neutral `"active"`), `API_IDENTIFIER_INVALID` (blank / > 128 chars / control cha
 edge whitespace), `FIELD_TOO_LONG` (identity/denormalized value over a DB column limit). Semantic
 (Tier-2) validation is stored on the draft and returned inline even when invalid.
 
-Header names must be valid RFC HTTP field-name tokens. Blank, non-token, or leading/trailing-whitespace
-names fail validation with `HEADER_NAME_INVALID`, so padded sensitive names cannot bypass the public-
-credential rules. Published configuration is public; never place a real credential in any header.
+Static header names and header-target filters' `request.param` must be exact nonempty ASCII RFC HTTP
+field-name tokens. Blank, non-token, or whitespace-padded names fail `HEADER_NAME_INVALID`; names are
+never trimmed or repaired. `genre[]` remains legal for query/form parameters, not header names.
+Both contexts reject `cookie`, `set-cookie` and `proxy-authorization` case-insensitively with
+`FORBIDDEN_HEADER`. Header-target filters also reject all sensitive names (`authorization`, `x-api-key`,
+`api-key`, `x-auth-token`, or any name containing `token`/`secret`/`password`) with `SECRET_LIKE_HEADER`
+at `sources[api].filters[id].request.param`, irrespective of values, defaults, options, visibility,
+encoding or toggle mappings. Dynamic credential filters are unsupported, even with `Bearer null`;
+the configured exact-value placeholder allowlist applies to **static headers only**.
+These remain Tier-2 findings: invalid admin drafts retain their authored content and validation,
+but new publication, editor quick-publish and whole-document import reject invalid candidates.
+Published configuration is public; never place a real credential in any field.
+
+Filter option/default/condition-value findings and new header-filter findings use fixed explanatory
+messages without submitted values. Structural source/filter identifiers remain in paths; this is not
+a universal arbitrary-field redaction guarantee. Historical stored diagnostics are not rewritten.
 
 The Source Admin Studio uses a mutable editor workspace that is separate from immutable source
 revisions. Autosaves require the current strong editor ETag in `If-Match`; stale writes return
