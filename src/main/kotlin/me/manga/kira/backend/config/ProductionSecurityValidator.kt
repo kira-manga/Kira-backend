@@ -1,6 +1,5 @@
 package me.manga.kira.backend.config
 
-import me.manga.kira.backend.sourceconfig.signing.DocumentSigner
 import org.springframework.boot.ApplicationArguments
 import org.springframework.boot.ApplicationRunner
 import org.springframework.core.Ordered
@@ -17,19 +16,8 @@ class ProductionSecurityValidator(
     private val auth: KiraAuthProperties,
     private val security: KiraSecurityProperties,
     private val completion: KiraCompletionProperties,
-    private val signing: KiraSigningProperties,
-    private val documentSigner: DocumentSigner,
 ) : ApplicationRunner {
     override fun run(args: ApplicationArguments?) {
-        if (environment.activeProfiles.contains("prod")) {
-            require(signing.enabled) { "Document signing is mandatory in production" }
-            require(!signing.privateKey.isNullOrBlank()) { "kira.signing.private-key is required in production" }
-            require(!signing.activeKeyId.isNullOrBlank()) { "kira.signing.active-key-id is required in production" }
-            require(signing.verificationKeys.any { it.keyId == signing.activeKeyId }) {
-                "The active signing key must have a configured public key"
-            }
-            documentSigner.validateConfiguration()
-        }
         ProductionSecurityPolicy.validate(
             activeProfiles = environment.activeProfiles.toSet(),
             auth = auth,
@@ -86,6 +74,7 @@ internal object ProductionSecurityPolicy {
             require((completion.apiKey?.length ?: 0) >= MIN_PROVIDER_KEY_LENGTH) {
                 "kira.completion.api-key is required and must be at least $MIN_PROVIDER_KEY_LENGTH characters"
             }
+            completion.requireDefaultModel()
             if (completion.instanceCount > 1) {
                 require(completion.coordinationBackend == "redis") {
                     "Multiple completion instances require Redis coordination"

@@ -24,9 +24,20 @@ JSON endpoints return bilingual `{en, ar}` values, ordered records, resolved imm
 strong ETags, and `Cache-Control: public, max-age=60, stale-if-error=86400`. Published media uses a
 one-year immutable cache. Archived/draft content is absent publicly.
 
+Authorized ADMIN delivery of unpublished media uses `Cache-Control: private, no-store` on
+both 200 and 304 responses. Authorization precedes conditional handling: anonymous and non-ADMIN
+requests still receive 404 even with a matching ETag. The Admin media proxy forwards the backend's
+chosen cache policy to the browser.
+
 Category gating applies to origin JSON responses, not immediate revocation of already cached
 responses. Previously published media remains permanently public, including while its category
 or tutorial is archived.
+
+The unpublished policy forbids retention by compliant private and shared caches for new responses.
+Changing the origin header cannot automatically recall draft bytes previously served with public,
+immutable caching or erase downloaded copies. Assessment of historical exposure and any purge of
+installed browser/proxy/CDN cache entries are external operational actions, not performed by this
+change.
 
 ## ADMIN workflow
 

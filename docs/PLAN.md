@@ -689,8 +689,12 @@ Failure anywhere rolls the whole mutation back — the served document can never
 **Signature (implemented in V7):** every new snapshot carries an Ed25519 detached signature over the
 versioned `kira-source-signature-v1` input: revision, predecessor revision/checksum, current checksum,
 creation time, and exact `kcj-1` bytes. V7 adds the signature, signing-key id, and predecessor metadata
-without rewriting prior migrations. Production startup requires a matching PKCS#8 private key and
-X.509 public-key entry. The public document endpoint, metadata endpoint, and discovery endpoint expose
+without rewriting prior migrations or historical nullable metadata. Every running profile, including
+`dev`, requires signing enabled, a valid active key id, and matching PKCS#8 private/X.509 public material
+at signer bean initialization, even with global lazy initialization. Common configuration maps the
+four documented signing aliases; local development uses its own uncommitted pair
+(`LOCAL_DEV.md#local-document-signing`), never production keys or shipping App trust pins.
+The public document endpoint, metadata endpoint, and discovery endpoint expose
 verifiable metadata; discovery is not a trust root. The app selects a locally pinned public key by id,
 recomputes the checksum, verifies the signature, and rejects tampering, unknown keys, replay, and
 rollback. Rotation keeps old and new public keys in an explicit overlap window. See
@@ -707,7 +711,15 @@ for production use. It is disabled by default.
 - **Providers:** `EchoCompletionProvider` is available only in explicit `dev`/`test` profiles.
   Production uses the generic HTTPS provider adapter, configured through environment-only endpoint,
   model, and API-key values. Enabling completion in production without a valid HTTPS provider fails
-  startup; disabling the feature requires no provider credential.
+  startup; disabling the feature requires no provider credential or default model.
+- **Default model:** `kira.completion.default-model` (native environment key
+  `KIRA_COMPLETION_DEFAULTMODEL`) must be explicitly configured when enabled, nonblank and at most
+  128 JVM UTF-16 units. Production policy and service construction share that guard; the service
+  validates before allocating its executor. Only dev/test profile configuration supplies `echo-1`.
+  Omitted/null/empty/whitespace-only request models use the configured default; a nonblank request
+  remains an exact override under the existing API length gate. Neither value is trimmed or
+  normalized before persistence or provider invocation. A 129-unit whitespace request is still
+  rejected by the controller before fallback, not accepted as an omitted value.
 - **Selection:** `kira.completion.provider` selects a bean from the injected provider set; unknown or
   unsafe production selection fails startup. Controllers know only `CompletionService`;
   `CompletionService` knows only the port. Provider secrets never appear in an API response, stored
@@ -842,7 +854,7 @@ Full doc to be written as `docs/MIGRATION_BUNDLED_TO_REMOTE.md` in Phase 10 (the
 | Completion rate limits / per-user quota | **Implemented** | Per-user/global rolling windows, daily quota, global concurrency, bounded queue, independent queue/provider timeouts, and Redis multi-instance coordination |
 | API keys (machine auth) | Future | JWT covers v1 consumers; key mgmt is its own surface |
 | Refresh tokens | Future (seam now) | §6 seam; table design reserved in §5 |
-| Document signing (Ed25519) | **Implemented** | V7 signed metadata, deterministic versioned input, key ids/rotation overlap, production startup validation, public/meta endpoints, scripts, and app-pinned verification (§9) |
+| Document signing (Ed25519) | **Implemented** | V7 signed metadata, deterministic versioned input, key ids/rotation overlap, all-profile startup validation, public/meta endpoints, scripts, and app-pinned verification (§9) |
 
 ---
 

@@ -193,9 +193,17 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
 
 - **All secrets come from the environment**, never hardcoded, never committed: `KIRA_JWT_SECRET`, DB
   creds (`SPRING_DATASOURCE_*`), admin seed creds (`KIRA_ADMIN_EMAIL`/`KIRA_ADMIN_PASSWORD`), and any
-  future provider key (`KIRA_COMPLETION_API_KEY`). `application.yml` holds only relaxed-binding env
-  mappings and obviously-non-production dev defaults; `.env` is gitignored; `.env.example` carries
+  provider key (`KIRA_COMPLETION_API_KEY`) or document-signing private key (`KIRA_SIGNING_PRIVATE_KEY`).
+  `application.yml` holds only environment mappings and obviously-non-production dev defaults;
+  `.env` is gitignored; `.env.example` carries
   placeholders only; `docker-compose.yml` carries only a throwaway local DB password.
+- **Document signing is mandatory in every running profile**, including `dev`, before the signer
+  bean can be used. Common configuration maps the four documented signing aliases. Disabled signing,
+  invalid ids, missing/malformed material or a mismatched pair refuses initialization, including
+  with global lazy initialization. Diagnostics and their causes name properties and the local setup
+  recipe, never configured ids, key bytes or raw key-parser messages. Local keys stay in ignored
+  `.secrets/` and must never enter production or shipping App trust; see
+  [`LOCAL_DEV.md`](LOCAL_DEV.md#local-document-signing) and [`SOURCE_DOCUMENT_SIGNING.md`](SOURCE_DOCUMENT_SIGNING.md).
 - **No secrets in the published config.** The served document is public and cacheable, so validation
   rule 32 (publish-blocking) rejects credential-like material: hard-denied header names `cookie`,
   `set-cookie`, `proxy-authorization`; sensitive-name headers (`authorization`, `x-api-key`, `api-key`,
@@ -260,7 +268,16 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
 ## Completion admission, provider, and retention
 
 Completions are disabled by default. Production startup fails if they are enabled without the HTTPS
-provider endpoint and API key. Echo exists only in explicit `dev`/`test` profiles. Admission applies
+provider endpoint, API key and nonblank `kira.completion.default-model` of at most 128 JVM UTF-16
+units. The native environment key is **`KIRA_COMPLETION_DEFAULTMODEL`**, not an additional YAML
+alias. Service construction validates the default before allocating its executor, including outside
+production. Disabled completion needs no default model or provider credentials. Echo and its
+configured `echo-1` default exist only in explicit `dev`/`test` profiles; there is no implicit
+production default. Null/blank request models use the configured value; nonblank request overrides
+and configured defaults are preserved exactly, not trimmed or normalized. Operators must verify
+model availability/authorization with their provider separately; startup does not query a catalog.
+
+Admission applies
 atomic per-user/global minute limits, a per-user daily quota, and a global concurrency lease before a
 request can enter the bounded executor. A multi-instance deployment must use Redis coordination;
 single-instance memory coordination must be declared explicitly. Overload returns 429 for rate/quota
@@ -295,10 +312,10 @@ and cleanup batch size are bounded configuration.
   identifier may itself look like `email-sha256-v1:…`). The audit API only paginates; operators/export
   consumers must account for both namespaces across cutover, including historical raw personal data.
 - **Payload integrity and authenticity.** `X-Config-Checksum` and the ETag detect corruption but are
-  not trust roots. Every production snapshot is authenticated by an Ed25519 detached signature over
+  not trust roots. Every new snapshot is authenticated by an Ed25519 detached signature over
   versioned metadata and the exact canonical bytes. The app selects an in-binary pinned X.509 public
-  key by key id, verifies the signature/checksum/chain, and rejects replay or rollback. Production
-  startup refuses missing or mismatched signing material; private keys remain secret-manager-only.
+  key by key id, verifies the signature/checksum/chain, and rejects replay or rollback. Every running
+  profile refuses missing or mismatched signing material; production private keys remain secret-manager-only.
   See `SOURCE_DOCUMENT_SIGNING.md`.
 
 ## Operational notes / seams (v1)

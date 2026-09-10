@@ -39,13 +39,18 @@ import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.KeyPairGenerator
 import java.sql.DriverManager
+import java.util.Base64
 import java.util.Properties
 import java.util.UUID
 import javax.imageio.ImageIO
 
 /** Owns both contexts, but not the shared container or any Spring TestContext-cached context. */
 class TutorialCategoryRestartIT {
+    // Both owned starts use the same in-memory pair; this test does not inherit dynamic properties.
+    private val signingKeyPair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+
     // JUnit removes only this owned directory after both contexts and the database have been closed.
     @TempDir lateinit var mediaDirectory: Path
 
@@ -186,7 +191,11 @@ class TutorialCategoryRestartIT {
                     "--kira.security.jwt-secret=${JwtTestSupport.TEST_JWT_SECRET_BASE64}",
                     "--kira.security.throttle.backend=memory",
                     "--kira.security.throttle.instance-count=1",
-                    "--kira.signing.enabled=false",
+                    "--kira.signing.enabled=true",
+                    "--kira.signing.active-key-id=tutorial-restart-ephemeral",
+                    "--kira.signing.private-key=${Base64.getEncoder().encodeToString(signingKeyPair.private.encoded)}",
+                    "--kira.signing.verification-keys[0].key-id=tutorial-restart-ephemeral",
+                    "--kira.signing.verification-keys[0].public-key=${Base64.getEncoder().encodeToString(signingKeyPair.public.encoded)}",
                     "--kira.completion.enabled=true",
                     "--kira.completion.provider=echo",
                     "--kira.completion.coordination-backend=memory",

@@ -79,7 +79,7 @@ class CompletionInterruptionTest {
         val service =
             CompletionService(
                 listOf(provider),
-                KiraCompletionProperties(provider = provider.name, executorThreads = 1, queueCapacity = 1),
+                KiraCompletionProperties(provider = provider.name, defaultModel = "model", executorThreads = 1, queueCapacity = 1),
                 persistence,
                 admission,
                 mock(KiraMetrics::class.java),
