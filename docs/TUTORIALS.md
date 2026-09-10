@@ -33,6 +33,20 @@ or tutorial is archived.
 Use Swagger or an API client with an ADMIN bearer token. Category endpoints are under
 `/api/v1/admin/tutorial-categories`; tutorial endpoints are under `/api/v1/admin/tutorials`.
 
+Identity slugs are immutable lowercase kebab-case: letters `a-z`, digits `0-9`, and single hyphen
+separators. Category slugs allow **at most 64 characters**; tutorial slugs allow **at most 96**,
+matching their storage and OpenAPI bounds. Slugs are not trimmed, normalized, or truncated.
+With otherwise-valid request fields, an oversized slug is rejected before persistence/audit with
+HTTP **400** and `errors[0]` containing `path: "slug"`, `code: "TOO_LONG"`, and
+`message: "must be at most <bound> characters"`; `detail` is
+`"slug must be at most <bound> characters."`. The length guard precedes the grammar rule.
+Nonblank, within-limit grammar violations retain HTTP **422** / `INVALID_SLUG`; other tutorial
+content-validation failures also retain 422. Existing request/bean-validation precedence is unchanged.
+Genuine identity/order conflicts still return HTTP **409**, not the oversized-input 400.
+
+Both create requests accept optional non-negative `position` and `featuredPosition`. Tutorials
+use `featuredPosition`; categories retain and validate that field for compatibility but ignore it.
+
 1. `POST` an identity with `{"slug":"my-guide"}`.
 2. Upload JPEG/PNG assets with multipart field `file` to `/api/v1/admin/tutorial-media`.
 3. `POST /{id}/revisions` with bilingual structured fields and media UUIDs.
