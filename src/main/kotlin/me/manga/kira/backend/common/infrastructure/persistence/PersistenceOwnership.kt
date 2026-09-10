@@ -3,9 +3,10 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** Entry-local producer authority, not a pool/lease facade or a native-resource delivery API. */
+/** Exact entry's producer and first-pool-delivery authority. Lease/return consent remains a separate integration. */
 internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry, private val binding: PersistencePhysicalFactoryBinding?) {
     private val current = AtomicReference<PersistenceProducerEpoch?>()
+    private val poolDelivery = AtomicReference<PreparedPoolConnection?>()
     private val terminalSealed = AtomicBoolean()
     private var delivery = Delivery.UNEXPOSED // Only the exact entry's F/G owner changes delivery.
 
@@ -15,8 +16,33 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         return PersistenceProducerEpoch.prepare(this)
     }
 
+    internal fun preparePoolEpoch(pool: PersistenceJdbcPoolIdentity): PersistenceProducerEpoch {
+        check(!ownershipLockHeld() && pool.matches(binding))
+        return PersistenceProducerEpoch.preparePool(this)
+    }
+
+    internal fun canDeliverPoolLocked(prepared: PreparedPoolConnection): Boolean {
+        requireCurrentLocks()
+        return delivery === Delivery.UNEXPOSED && current.get() == null && poolDelivery.get() == null &&
+            !terminalSealed.get() && prepared.matches(entry, binding) && prepared.epoch.preparedFor(this) && entry.control?.caller?.isCurrent() == true
+    }
+
+    /** All checks and packaging already completed in the same F→G cut, before control.take(). */
+    internal fun deliveredPoolLocked(prepared: PreparedPoolConnection) {
+        prepared.epoch.publishInstallation()
+        current.set(prepared.epoch)
+        poolDelivery.set(prepared)
+        delivery = Delivery.POOL
+    }
+
+    /** Pool identity is physical/binding authority, not the factory caller's thread identity. */
+    internal fun poolEpoch(pool: PersistenceJdbcPoolIdentity): PersistenceProducerEpoch? {
+        val delivered = poolDelivery.get() ?: return null
+        return delivered.epoch.takeIf { delivered.pool === pool && pool.matches(binding) && current.get() === it }
+    }
+
     /**
-     * Producer foundation only. The next typed F→G delivery must perform its full original claim as
+     * Producer foundation only. The separate typed F→G delivery performs its full original claim as
      * well; this installs no Connection, pool identity, lease, return consent or candidate conversion.
      */
     fun installInitialLocked(prepared: PersistenceProducerEpoch): Boolean {
@@ -65,6 +91,11 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
     internal fun permits(epoch: PersistenceProducerEpoch): Boolean = current.get() === epoch &&
         !terminalSealed.get() && !entry.retirementRequested.get() && binding?.isClosed() == false
 
+    /** Existing current-owner cleanup survives a request/poison, never the permanent producer seal. */
+    internal fun permitsCleanup(epoch: PersistenceProducerEpoch): Boolean = current.get() === epoch && !terminalSealed.get()
+
+    internal fun retirementRequested(): Boolean = entry.retirementRequested.get() || terminalSealed.get()
+
     internal fun requestRetirement(epoch: PersistenceProducerEpoch) {
         // Only a still-current epoch may affect the entry; an old end can never poison a successor.
         if (current.get() === epoch) entry.retirementRequested.set(true)
@@ -90,6 +121,7 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         UNEXPOSED,
         OPAQUE,
         EPOCH,
+        POOL,
     }
 
     companion object {

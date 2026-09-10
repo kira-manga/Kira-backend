@@ -46,7 +46,12 @@ internal class PersistencePhysicalEntry(
     val openingFacts = PersistenceOpeningFacts()
     val retirementRequested = AtomicBoolean()
     val jdbc = PersistenceOwnership(this, physical)
+
+    // Inert under G. Opening capsules/driver metadata are created only after authentic claim.
+    val driverCut = PersistencePgOwnedCutCustody(this)
     var dispatched = false
+
+    @Volatile
     var opening = PersistencePhysicalOpeningPhase.UNCLAIMED
     var retiring = false
     var unknown = false

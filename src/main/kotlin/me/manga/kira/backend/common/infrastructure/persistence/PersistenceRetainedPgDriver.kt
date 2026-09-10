@@ -9,14 +9,16 @@ internal class PersistenceRetainedPgDriver {
     private val claimed = AtomicBoolean()
     private val prepared = AtomicReference<PreparedPersistenceDriver?>()
     private val driver = AtomicReference<Driver?>()
+    private val cut = AtomicReference<PersistencePgOwnedCutAccess?>()
     private val finished = AtomicBoolean()
 
     fun construct() {
         check(claimed.compareAndSet(false, true))
         try {
             prepared.set(PersistenceDriverBootstrap.prepare())
-            // First after guarded construction returns; optional metadata can fail without losing this Driver.
+            // First after guarded construction returns; required cut metadata can fail without losing this Driver.
             driver.set(requireNotNull(prepared.get()).construct())
+            cut.set(PersistencePgOwnedCutAccess.prepare(requireNotNull(prepared.get()), requireNotNull(driver.get()).javaClass))
         } finally {
             finished.set(true)
         }
@@ -35,6 +37,8 @@ internal class PersistenceRetainedPgDriver {
     }
 
     fun timerAccess(): PersistencePgTimerAccess? = PersistencePgTimerAccess.inspectRetained(requireNotNull(prepared.get()), forOpening().javaClass)
+
+    fun cutAccess(): PersistencePgOwnedCutAccess = cut.get() ?: rejectPersistenceBoundary(PersistenceBoundaryFailureCode.UNSUPPORTED_JDBC_DRIVER)
 
     override fun toString(): String = "PersistenceRetainedPgDriver(redacted)"
 }

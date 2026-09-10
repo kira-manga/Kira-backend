@@ -11,35 +11,58 @@ internal object PgLifecycleDatabaseAssertions {
         scope: PgLifecycleTestScope,
         case: PgLifecycleDatabaseCase,
         application: String,
-        original: PgLifecycleDatabaseOriginalOutcome,
+        request: PgLifecycleDatabaseRequest,
     ): PgLifecycleDatabaseWitness {
         val binding = scope.binding(case.lane.deleting)
-        return original.awaitWitness { captureWitness(scope, case, application, binding) }
+        return request.original.awaitWitness { captureWitness(scope, case, application, binding, request.prepared) }
     }
 
-    /** One existing G-protected admission sample. Completion selection and failure context stay outside this lock. */
+    /** Exact successful admission plus monotone opening facts; no F/G/T acquisition, ledger-array sample or raw operation. */
     fun captureWitness(
         scope: PgLifecycleTestScope,
         case: PgLifecycleDatabaseCase,
         application: String,
         binding: PersistencePhysicalFactoryBinding,
-    ): PgLifecycleDatabaseWitness? = binding.ledger.lock.withLock {
-        val entry = binding.ledger.entries.filterNotNull().singleOrNull()
-        val transport = entry?.transports?.snapshot() as? PersistenceTransportSnapshot.Available
-        val primary = transport?.primary?.takeIf(::primaryConstructionReturned)
-        val transportReady = case.originalProvider || primary != null
-        if (entry != null && entry.openingFacts.driverEntered.get() && transportReady) {
-            admitted(scope, case, application, entry)
-            PgLifecycleDatabaseWitness(entry, primary?.record)
-        } else {
+        request: PersistenceOwnedFactoryRequest,
+    ): PgLifecycleDatabaseWitness? {
+        val entry = request.admittedEntry(binding) ?: return null
+        val opening = admittedOpening(scope, case, entry)
+        if (!entry.openingFacts.factoryEntered.get() || !entry.openingFacts.driverEntered.get()) return null
+        // ORIGINAL_PROVIDER linearizes at this first ACTIVE read, after both entered facts.
+        if (entry.opening !== PersistencePhysicalOpeningPhase.ACTIVE) return null
+        val primary = if (case.originalProvider) {
             null
+        } else {
+            // Tracked linearization point: acquire of the current PRIMARY's settled raw-return publication.
+            requireNotNull(entry.transports).currentReturnedPrimary() ?: return null
         }
+        return finishWitness(case, application, entry, opening, primary)
     }
 
-    private fun primaryConstructionReturned(primary: PersistenceTransportRecordSnapshot): Boolean =
-        primary.rawReturned && primary.construction === PersistenceTransportConstruction.RETURNED
+    /** Later monotone facts and equal PRIMARY identities certify the earlier cut, not a new mutable snapshot. */
+    private fun finishWitness(
+        case: PgLifecycleDatabaseCase,
+        application: String,
+        entry: PersistencePhysicalEntry,
+        opening: PersistencePgDriverOpening,
+        primary: PersistenceTransportRecord?,
+    ): PgLifecycleDatabaseWitness? {
+        if (entry.raw.get() != null || entry.openingFacts.driverEnded.get() || entry.openingFacts.factoryEnded.get()) return null
+        if (entry.retirementRequested.get() || entry.control?.state() !== PersistenceOwnedCallerDisposition.ATTACHED) return null
+        if (
+            !case.originalProvider &&
+            (lifecycleField(requireNotNull(entry.driverScope), "phase") as AtomicReference<*>).get() !== PersistencePgScopePhase.ACTIVE
+        ) {
+            return null
+        }
+        if (entry.opening !== PersistencePhysicalOpeningPhase.ACTIVE) return null
+        if (!case.originalProvider && (primary == null || requireNotNull(entry.transports).currentReturnedPrimary() !== primary)) return null
+        preparedSettings(case, application, entry, opening)
+        return PgLifecycleDatabaseWitness(entry, primary)
+    }
 
-    private fun admitted(scope: PgLifecycleTestScope, case: PgLifecycleDatabaseCase, application: String, entry: PersistencePhysicalEntry) {
+    /** Admission release-publishes these immutable and one-write associations; none requires F.current or attempt phase/result. */
+    private fun admittedOpening(scope: PgLifecycleTestScope, case: PgLifecycleDatabaseCase, entry: PersistencePhysicalEntry): PersistencePgDriverOpening {
         val policy = if (case.originalProvider) {
             PersistenceDriverAttemptPolicy.ORIGINAL_PROVIDER
         } else if (case.lane.deleting) {
@@ -47,21 +70,21 @@ internal object PgLifecycleDatabaseAssertions {
         } else {
             PersistenceDriverAttemptPolicy.TRACKED_ORDINARY_CONJUNCTION
         }
-        check(entry.policy === policy && entry.dispatched && entry.opening === PersistencePhysicalOpeningPhase.ACTIVE)
+        check(entry.policy === policy && entry.dispatched)
         check(policy.route === if (case.lane.deleting) PersistenceDriverTransportRoute.APPROVED_DIRECT else PersistenceDriverTransportRoute.ORDINARY)
-        check(entry.raw.get() == null && !entry.openingFacts.driverEnded.get() && entry.openingFacts.factoryEntered.get())
-        check(!entry.openingFacts.factoryEnded.get() && !entry.retirementRequested.get())
-        check(entry.control?.state() === PersistenceOwnedCallerDisposition.ATTACHED)
-        val opening = requireNotNull(entry.driverOpening)
+        val control = checkNotNull(entry.control)
+        val attempt = checkNotNull(entry.attempt)
+        check(attempt.input === entry.record && attempt.ownedControl === control)
+        check(attempt.budget === control.budget && attempt.receipt === control.receipt && control.matchesRecord(entry.record))
+        val opening = checkNotNull(entry.driverOpening)
         check(opening.policy === policy)
         check(lifecycleField(opening, "driver") === scope.root.retainedDriver.forOpening())
         if (case.originalProvider) {
             check(opening.image == null && opening.timer == null && entry.driverScope == null && entry.transports == null)
         } else {
-            check(opening.image != null && opening.timer === scope.root.timer)
-            check((lifecycleField(requireNotNull(entry.driverScope), "phase") as AtomicReference<*>).get() === PersistencePgScopePhase.ACTIVE)
+            check(opening.image != null && opening.timer === scope.root.timer && entry.driverScope != null && entry.transports != null)
         }
-        preparedSettings(case, application, entry, opening)
+        return opening
     }
 
     private fun preparedSettings(case: PgLifecycleDatabaseCase, application: String, entry: PersistencePhysicalEntry, opening: PersistencePgDriverOpening) {

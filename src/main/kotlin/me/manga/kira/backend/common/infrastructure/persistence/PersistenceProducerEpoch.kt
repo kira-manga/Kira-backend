@@ -3,19 +3,55 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** One epoch, a caller-owned reentrant lineage, and a fixed cancellation summary; no G admission policy or ordinary depth cap. */
-internal class PersistenceProducerEpoch private constructor(private val ownership: PersistenceOwnership, private val original: Thread) {
+/** Pinned borrower or serial pool lineages, plus a fixed cancellation summary; no G admission policy or ordinary depth cap. */
+internal class PersistenceProducerEpoch private constructor(private val ownership: PersistenceOwnership, private val original: Thread?) {
+    private val preparedOn = Thread.currentThread()
     private val installed = AtomicBoolean()
     private val state = AtomicReference(State())
     private val issuance = Any()
+    private val cleanup = PersistenceJdbcCleanup.prepare(this, issuance)
 
     fun enterForeground(budget: PersistenceTimeBudget? = null): Call? = enter(Kind.FOREGROUND, budget)
 
     /** Only this closed cancellation authority crosses threads; foreground/transaction lineage never does. */
     fun enterCancellation(budget: PersistenceTimeBudget? = null): Call? = enter(Kind.CANCELLATION, budget)
 
+    /** Prepared with this exact epoch, not a fresh owner minted after a failed business call. */
+    fun prepareCleanup(): PersistenceJdbcCleanup? = if (actualForegroundCaller() && ownership.permitsCleanup(this) && !state.get().sealed) cleanup else null
+
+    fun stopBusiness(authority: PersistenceJdbcCleanup): Boolean {
+        if (!authority.matches(this, issuance) || !actualForegroundCaller() || !ownership.permitsCleanup(this)) return false
+        return stopBusinessState()
+    }
+
+    private fun stopBusinessState(): Boolean {
+        while (true) {
+            val before = state.get()
+            if (before.sealed) return false
+            if (before.businessStopped || state.compareAndSet(before, before.copy(businessStopped = true))) return true
+        }
+    }
+
+    fun enterCleanup(authority: PersistenceJdbcCleanup): Call? = if (authority.matches(this, issuance)) enter(Kind.CLEANUP, null) else null
+
+    internal fun cancellationCleanup(): PersistenceJdbcCleanup? = cleanup.takeIf { ownership.permitsCleanup(this) && !state.get().sealed }
+
+    internal fun enterCleanupCancellation(authority: PersistenceJdbcCleanup): Call? {
+        if (!authority.matches(this, issuance) || ownership.ownershipLockHeld()) return null
+        val call = Call.prepare(this, issuance, Thread.currentThread(), Kind.CANCELLATION, null)
+        return if (admit(call, null, cleanupAdmission = true)) call else null
+    }
+
+    /** Count a supplied-executor abort before dispatch. A never-started accepted command remains outstanding. */
+    internal fun prepareAbort(authority: PersistenceJdbcCleanup): PersistenceJdbcAbort? {
+        if (!authority.matches(this, issuance) || ownership.ownershipLockHeld()) return null
+        val call = Call.prepareDispatched(this, issuance)
+        val abort = PersistenceJdbcAbort.prepare(issuance, call)
+        return if (admit(call, null, cleanupAdmission = true)) abort else null
+    }
+
     fun seal(): Boolean {
-        if (Thread.currentThread() !== original || !ownership.permits(this)) return false
+        if (!actualForegroundCaller() || !ownership.permits(this)) return false
         sealForTerminal()
         return true
     }
@@ -28,9 +64,12 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
 
     fun activeCancellations(): Long = state.get().cancellations
 
-    internal fun preparedFor(owner: PersistenceOwnership): Boolean = ownership === owner && Thread.currentThread() === original && !installed.get()
+    internal fun preparedFor(owner: PersistenceOwnership): Boolean = ownership === owner && Thread.currentThread() === preparedOn && !installed.get()
 
     internal fun claimInstallation(owner: PersistenceOwnership): Boolean = preparedFor(owner) && installed.compareAndSet(false, true)
+
+    /** Only the prevalidated non-fallible typed F→G commit uses this publication. */
+    internal fun publishInstallation() = installed.set(true)
 
     /** No graph lock/walk or external call. Admission and seal compete on the same exact epoch state. */
     internal fun sealForTerminal() {
@@ -41,34 +80,73 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     }
 
     private fun enter(kind: Kind, budget: PersistenceTimeBudget?): Call? {
-        if (ownership.ownershipLockHeld() || (kind === Kind.FOREGROUND && Thread.currentThread() !== original)) return null
-        val parent = if (kind === Kind.FOREGROUND) state.get().foreground else null
+        if (ownership.ownershipLockHeld() || (kind !== Kind.CANCELLATION && !actualForegroundCaller())) return null
+        val parent = if (kind !== Kind.CANCELLATION) state.get().foreground else null
         val call = Call.prepare(this, issuance, Thread.currentThread(), kind, parent)
+        return if (admit(call, budget, kind === Kind.CLEANUP)) call else null
+    }
+
+    private fun admit(call: Call, budget: PersistenceTimeBudget?, cleanupAdmission: Boolean): Boolean {
         while (true) {
             val before = state.get()
-            if (!ownership.permits(this) || before.sealed || before.poison != null) return null
-            if (kind === Kind.FOREGROUND && before.foreground !== parent) return null
-            if (budget != null && persistenceFactoryRemainingMillis(budget) == 0L) return null
-            val after = if (kind === Kind.FOREGROUND) {
+            val permitted = if (cleanupAdmission) ownership.permitsCleanup(this) else ownership.permits(this)
+            if (!permitted || before.sealed) return false
+            if (!cleanupAdmission && (before.businessStopped || before.poison != null)) return false
+            if (call.kind !== Kind.CANCELLATION && before.foreground !== call.parent) return false
+            if (call.kind !== Kind.CANCELLATION && before.foreground?.isActualCaller() == false) return false
+            if (budget != null && persistenceFactoryRemainingMillis(budget) == 0L) return false
+            val after = if (call.kind !== Kind.CANCELLATION) {
                 before.copy(foreground = call)
             } else {
                 before.copy(cancellations = Math.addExact(before.cancellations, 1L))
             }
-            if (state.compareAndSet(before, after)) return call
+            if (state.compareAndSet(before, after)) return true
         }
     }
+
+    private fun actualForegroundCaller(): Boolean {
+        val caller = Thread.currentThread()
+        if (original != null && caller !== original) return false
+        return state.get().foreground?.isActualCaller() != false
+    }
+
+    private fun observeFailure(call: Call, outcome: PersistenceJdbcCallOutcome): Boolean {
+        if (!isUnfinishedActualCall(call)) return false
+        if (!outcome.poisons) return true
+        ownership.requestRetirement(this)
+        while (true) {
+            val before = state.get()
+            if (before.poison != null || state.compareAndSet(before, before.copy(poison = outcome))) return true
+        }
+    }
+
+    private fun stopForCall(call: Call, authority: PersistenceJdbcCleanup): Boolean {
+        if (!isUnfinishedActualCall(call)) return false
+        if (!authority.matches(this, issuance) || !ownership.permitsCleanup(this)) return false
+        return stopBusinessState()
+    }
+
+    private fun requestForCall(call: Call): Boolean {
+        if (!isUnfinishedActualCall(call)) return false
+        ownership.requestRetirement(this)
+        return true
+    }
+
+    private fun isUnfinishedActualCall(call: Call): Boolean =
+        call.isIssuedBy(issuance) && call.isActualCaller() && call.epoch === this && call.outcome() == null
 
     private fun finish(call: Call, outcome: PersistenceJdbcCallOutcome): Boolean {
         if (!call.isIssuedBy(issuance) || !call.isActualCaller() || call.epoch !== this) return false
         val observed = state.get()
-        if (call.kind === Kind.FOREGROUND && observed.foreground !== call) return false
+        if (call.kind !== Kind.CANCELLATION && observed.foreground !== call) return false
+        if (!observeFailure(call, outcome)) return false
         if (!call.claimEnd(issuance, outcome)) return false
         // Retain poison/retirement before releasing the last count, even when G is owned elsewhere.
         if (outcome.poisons) ownership.requestRetirement(this)
         while (true) {
             val before = state.get()
             val poison = before.poison ?: outcome.takeIf { it.poisons }
-            val after = if (call.kind === Kind.FOREGROUND) {
+            val after = if (call.kind !== Kind.CANCELLATION) {
                 before.copy(foreground = call.parent, poison = poison)
             } else {
                 check(before.cancellations > 0L)
@@ -84,17 +162,26 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     internal class Call private constructor(
         internal val epoch: PersistenceProducerEpoch,
         private val issuance: Any,
-        private val caller: Thread,
+        caller: Thread?,
         internal val kind: Kind,
         internal val parent: Call?,
     ) {
+        private val caller = AtomicReference(caller)
         private val actualOutcome = AtomicReference<PersistenceJdbcCallOutcome?>()
 
         fun finish(outcome: PersistenceJdbcCallOutcome): Boolean = epoch.finish(this, outcome)
 
         fun outcome(): PersistenceJdbcCallOutcome? = actualOutcome.get()
 
-        internal fun isActualCaller(): Boolean = Thread.currentThread() === caller
+        fun observeFailure(outcome: PersistenceJdbcCallOutcome): Boolean = epoch.observeFailure(this, outcome)
+
+        internal fun stopBusiness(authority: PersistenceJdbcCleanup): Boolean = epoch.stopForCall(this, authority)
+
+        internal fun requestRetirement(): Boolean = epoch.requestForCall(this)
+
+        internal fun isActualCaller(): Boolean = Thread.currentThread() === caller.get()
+
+        internal fun bindDispatch(authority: Any): Boolean = isIssuedBy(authority) && caller.compareAndSet(null, Thread.currentThread())
 
         internal fun isIssuedBy(authority: Any): Boolean = issuance === authority
 
@@ -106,16 +193,20 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
         companion object {
             internal fun prepare(epoch: PersistenceProducerEpoch, issuance: Any, caller: Thread, kind: Kind, parent: Call?): Call =
                 Call(epoch, issuance, caller, kind, parent)
+
+            internal fun prepareDispatched(epoch: PersistenceProducerEpoch, issuance: Any): Call = Call(epoch, issuance, null, Kind.CANCELLATION, null)
         }
     }
 
     internal enum class Kind {
         FOREGROUND,
+        CLEANUP,
         CANCELLATION,
     }
 
     private data class State(
         val sealed: Boolean = false,
+        val businessStopped: Boolean = false,
         val foreground: Call? = null,
         val cancellations: Long = 0,
         val poison: PersistenceJdbcCallOutcome? = null,
@@ -123,6 +214,8 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
 
     companion object {
         internal fun prepare(ownership: PersistenceOwnership): PersistenceProducerEpoch = PersistenceProducerEpoch(ownership, Thread.currentThread())
+
+        internal fun preparePool(ownership: PersistenceOwnership): PersistenceProducerEpoch = PersistenceProducerEpoch(ownership, null)
     }
 }
 

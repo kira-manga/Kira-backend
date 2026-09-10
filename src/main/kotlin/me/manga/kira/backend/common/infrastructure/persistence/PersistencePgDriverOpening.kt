@@ -10,6 +10,7 @@ internal class PersistencePgDriverOpening private constructor(
     private val endpoint: ResolvedPersistenceEndpoint,
     val policy: PersistenceDriverAttemptPolicy,
     val image: PersistencePgDriverImage?,
+    val cut: PersistencePgOwnedCutAccess,
     val timer: PersistenceDriverTimer? = null,
 ) {
     val loginPolicy: PersistenceLoginPolicy = endpoint.loginPolicy
@@ -27,6 +28,8 @@ internal class PersistencePgDriverOpening private constructor(
                     val properties = endpoint.driverProperties()
                     if (image != null) properties.setProperty("socketFactory", TrackedPgSocketFactory::class.java.name)
                     entry.driverScope?.enter()
+                    // Independent of the transport image, including ORIGINAL_PROVIDER. Retain before arm/connect.
+                    entry.driverCut.begin(driver, cut)
                     val outcome = connect(physical, entry, properties)
                     returned = true
                     outcome
@@ -39,20 +42,26 @@ internal class PersistencePgDriverOpening private constructor(
                 }
             }.getOrElse { failure -> failOpening(physical, entry, failure) }
         } finally {
-            scopeEnded = finishScope(physical, entry)
+            // The cut observer never throws over the primary connect failure. Still restore the transport scope.
+            val cutEnded = entry.driverCut.endOpening()
+            scopeEnded = finishScope(physical, entry) && cutEnded
         }
         return if (scopeEnded) result else PersistencePhysicalOpening.FAILED
     }
 
     private fun connect(physical: PersistencePhysicalFactoryBinding, entry: PersistencePhysicalEntry, properties: Properties): PersistencePhysicalOpening {
         entry.openingFacts.driverEntered.set(true)
+        var nativeReturned = false
         try {
             runCatching {
                 // Literally adjacent normal-return retention; no diagnostic action may intervene.
                 val raw: Connection? = driver.connect(endpoint.driverUrl, properties)
                 entry.raw.set(raw)
+                nativeReturned = true
+                entry.driverCut.returned(raw)
             }.onFailure { failure ->
-                entry.openingFacts.recordFailure(PersistenceOpeningFailureSite.DRIVER_CONNECT, failure)
+                val site = if (nativeReturned) PersistenceOpeningFailureSite.OPENING_FALLBACK else PersistenceOpeningFailureSite.DRIVER_CONNECT
+                entry.openingFacts.recordFailure(site, failure)
             }.getOrThrow()
         } finally {
             entry.openingFacts.driverEnded.set(true)
@@ -189,9 +198,10 @@ internal class PersistencePgDriverOpening private constructor(
             val selected = selectEndpoint(endpoint, policy, pathStyle)
             if (selected.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
             val driver = retained.forOpening()
+            val cut = retained.cutAccess()
             val image = if (policy.recipe === PersistenceDriverExecutionRecipe.TRACKED_STANDARD) PersistencePgDriverImage.prepare(driver.javaClass) else null
             if (policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) checkNotNull(timer)
-            PersistencePgDriverOpening(driver, selected, policy, image, timer)
+            PersistencePgDriverOpening(driver, selected, policy, image, cut, timer)
         }
 
         fun prepare(
@@ -204,8 +214,9 @@ internal class PersistencePgDriverOpening private constructor(
             val selected = selectEndpoint(endpoint, policy, pathStyle)
             if (selected.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
             val driver = prepared.construct()
+            val cut = PersistencePgOwnedCutAccess.prepare(prepared, driver.javaClass)
             val image = if (policy.recipe === PersistenceDriverExecutionRecipe.TRACKED_STANDARD) PersistencePgDriverImage.prepare(driver.javaClass) else null
-            PersistencePgDriverOpening(driver, selected, policy, image)
+            PersistencePgDriverOpening(driver, selected, policy, image, cut)
         }
 
         private fun selectEndpoint(

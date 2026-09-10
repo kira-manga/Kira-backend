@@ -1,5 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 
 /** A single caller stack, not a job, listener, admission queue, new budget or scheduler. */
@@ -10,6 +12,9 @@ internal class PersistenceOwnedFactoryRequest private constructor(
     private val opening: PersistencePgDriverOpening?,
     private val participant: PersistenceJdbcParticipant? = null,
 ) {
+    private val executionClaimed = AtomicBoolean()
+    private val admitted = AtomicReference<PersistencePhysicalEntry?>()
+
     constructor(
         binding: PersistencePhysicalFactoryBinding,
         allowanceMillis: Long,
@@ -25,6 +30,7 @@ internal class PersistenceOwnedFactoryRequest private constructor(
         this(binding, allowanceMillis, PersistenceDriverAttemptPolicy.ORIGINAL_PROVIDER, null, participant)
 
     fun execute(): PersistenceFactoryResult<PersistenceJdbcCandidate> {
+        if (!executionClaimed.compareAndSet(false, true)) return PersistenceFactoryResult.Refused(PersistenceFactoryFailure.COORDINATION_FAILED)
         val control = runCatching {
             PersistenceOwnedCallerControl.prepare(allowanceMillis)
         }.getOrElse { failure ->
@@ -44,7 +50,7 @@ internal class PersistenceOwnedFactoryRequest private constructor(
                     if (participant != null && selected == null) control.fail(PersistenceFactoryFailure.NOT_READY)
                     if (control.failureResult() == null) entry = binding.reserve(control, selected?.policy ?: policy, selected)
                     val reserved = entry
-                    if (reserved != null && binding.admit(reserved)) awaitOutcome(reserved, control) else failureOutcome(control)
+                    if (reserved != null && admitAndPublish(reserved)) awaitOutcome(reserved, control) else failureOutcome(control)
                 } catch (failure: PersistenceBoundaryException) {
                     val reason = if (failure.code == PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) {
                         PersistenceFactoryFailure.TIMEOUT
@@ -92,6 +98,87 @@ internal class PersistenceOwnedFactoryRequest private constructor(
             outsideFailure(control)?.let { control.fail(it) }
             control.failureResult()?.let { return it }
             // Positive floored slices of the SAME original budget. Spurious wakeups grant no authority.
+            LockSupport.parkNanos(control.budget.remainingMillis(10) * 1_000_000)
+        }
+    }
+
+    /** The same one-shot request protocol, with a closed first-pool-delivery result instead of an opaque result. */
+    fun executePoolConnection(): PersistenceFactoryResult<PhysicalJdbcFacade> {
+        if (!executionClaimed.compareAndSet(false, true)) return PersistenceFactoryResult.Refused(PersistenceFactoryFailure.COORDINATION_FAILED)
+        val control = runCatching {
+            PersistenceOwnedCallerControl.prepare(allowanceMillis)
+        }.getOrElse { failure ->
+            if (failure is Error) throw failure
+            return PersistenceFactoryResult.Refused(PersistenceFactoryFailure.COORDINATION_FAILED)
+        }
+        var entry: PersistencePhysicalEntry? = null
+        var fatal: Error? = null
+        var restorationFatal: Error? = null
+        val outcome: PersistenceFactoryResult<PhysicalJdbcFacade>
+        try {
+            outcome = runCatching {
+                try {
+                    outsideFailure(control)?.let { control.fail(it) }
+                    val selected = if (participant == null) opening else participant.selectOpening()
+                    if (participant != null && selected == null) control.fail(PersistenceFactoryFailure.NOT_READY)
+                    if (control.failureResult() == null) entry = binding.reserve(control, selected?.policy ?: policy, selected)
+                    val reserved = entry
+                    if (reserved != null && admitAndPublish(reserved)) awaitPoolOutcome(reserved, control) else failureOutcome(control)
+                } catch (failure: PersistenceBoundaryException) {
+                    val reason = if (failure.code == PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) {
+                        PersistenceFactoryFailure.TIMEOUT
+                    } else {
+                        PersistenceFactoryFailure.COORDINATION_FAILED
+                    }
+                    control.fail(reason)
+                    throw failure
+                } finally {
+                    control.fail(PersistenceFactoryFailure.COORDINATION_FAILED)
+                }
+            }.getOrElse { failure ->
+                if (failure is Error) fatal = failure
+                failureOutcome(control)
+            }
+            if (control.state().phase == PersistenceOwnedCallerPhase.REFUSED) entry?.let { binding.releaseRefused(it) }
+        } finally {
+            if (control.failureResult() != null) {
+                runCatching {
+                    control.caller.restoreAfterFailure()
+                }.onFailure { failure ->
+                    if (failure is Error) restorationFatal = failure
+                }
+            }
+        }
+        fatal?.let { throw it }
+        restorationFatal?.let { throw it }
+        return outcome
+    }
+
+    /** Request-bound read only, never a claim, readiness, opening or disposal receipt. No ledger lookup or ownership lock. */
+    internal fun admittedEntry(expectedBinding: PersistencePhysicalFactoryBinding): PersistencePhysicalEntry? =
+        if (binding === expectedBinding) admitted.get() else null
+
+    private fun admitAndPublish(entry: PersistencePhysicalEntry): Boolean {
+        if (!binding.admit(entry)) return false
+        // Both original result forms publish once, after successful F→G admission has released its locks.
+        // Entry/attempt/control associations and dispatched were all established before this release store.
+        admitted.set(entry)
+        return true
+    }
+
+    private fun awaitPoolOutcome(entry: PersistencePhysicalEntry, control: PersistenceOwnedCallerControl): PersistenceFactoryResult<PhysicalJdbcFacade> {
+        var prepared: PreparedPoolConnection? = null
+        while (true) {
+            outsideFailure(control)?.let { control.fail(it) }
+            control.failureResult()?.let { return it }
+            if (binding.offered(entry) != null) {
+                // One genuine facade/graph/result, not another preparation for each contended final claim.
+                val delivery = prepared ?: PreparedPoolConnection.prepare(entry, binding).also { prepared = it }
+                outsideFailure(control)?.let { control.fail(it) }
+                if (control.failureResult() == null && binding.takePoolConnection(entry, delivery)) return delivery.result
+            }
+            outsideFailure(control)?.let { control.fail(it) }
+            control.failureResult()?.let { return it }
             LockSupport.parkNanos(control.budget.remainingMillis(10) * 1_000_000)
         }
     }

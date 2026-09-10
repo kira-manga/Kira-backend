@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -10,6 +11,7 @@ import kotlin.concurrent.withLock
 internal class PersistenceTransportOwner<T : AutoCloseable> {
     private val lock = ReentrantLock()
     private val entries = arrayOfNulls<PersistenceTransportEntry<T>>(2)
+    private val returnedPrimary = AtomicReference<PersistenceTransportRecord?>()
     private var sealed = false
     private var revision = 0L
     private var exhausted = false
@@ -30,6 +32,9 @@ internal class PersistenceTransportOwner<T : AutoCloseable> {
         PersistenceTransportEntry(this, PersistenceTransportRecord(extent.role), extent).ticket
 
     fun ownershipLockHeld(): Boolean = lock.isHeldByCurrentThread
+
+    /** Acquire-only current PRIMARY constructor-return fact, never delivery, close or disposal authority. */
+    fun currentReturnedPrimary(): PersistenceTransportRecord? = returnedPrimary.get()
 
     /** One immediate bookkeeping transition; safe beneath G, with no constructor callback beneath G/T. */
     fun reserveConstruction(ticket: PersistenceTransportConstructionTicket<T>): PersistenceTransportRefusal? {
@@ -54,6 +59,7 @@ internal class PersistenceTransportOwner<T : AutoCloseable> {
                 return refusal
             }
             // All cells/binding packaging precede this installation; RESERVED is published last.
+            if (entry.record.role === PersistenceTransportRole.PRIMARY) returnedPrimary.set(null)
             entries[entry.record.role.ordinal] = entry
             advance()
             entry.invocation.set(PersistenceTransportInvocation.RESERVED)
@@ -107,6 +113,7 @@ internal class PersistenceTransportOwner<T : AutoCloseable> {
                 return refuseBound(entry, PersistenceTransportRefusal.FULL)
             }
             // The revision check precedes replacement. No absent-slot interval or retained predecessor graph.
+            if (entry.record.role === PersistenceTransportRole.PRIMARY) returnedPrimary.set(null)
             entries[entry.record.role.ordinal] = entry
             advance()
             entry.invocation.set(PersistenceTransportInvocation.RESERVED)
@@ -457,8 +464,17 @@ internal class PersistenceTransportOwner<T : AutoCloseable> {
         }
         entry.construction = PersistenceTransportConstruction.RETURNED
         advance()
+        // Both Created and Retained certify the original raw return only after actual T settlement.
+        // Clear-before-install and this exact-current guard prevent stale settlement from reviving a predecessor.
+        if (isCurrentReturnedPrimary(entry)) {
+            returnedPrimary.set(entry.record)
+        }
         result
     }
+
+    private fun isCurrentReturnedPrimary(entry: PersistenceTransportEntry<T>): Boolean =
+        entry.record.role === PersistenceTransportRole.PRIMARY && current(entry.record) === entry &&
+            entry.raw.get() != null && entry.construction === PersistenceTransportConstruction.RETURNED
 
     private fun constructionFailed(entry: PersistenceTransportEntry<T>) = lock.withLock {
         entry.construction = PersistenceTransportConstruction.FAILED

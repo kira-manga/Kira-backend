@@ -7,12 +7,50 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.lang.reflect.Modifier
+import java.sql.Connection
+import java.sql.SQLException
 
 /** Model opening/resource facts exercise the real final handshake; no real Driver success is claimed. */
 class PersistenceOwnedFactoryClaimTest {
+    @Test
+    fun `prepared genuine lower first delivery shares the exact original transfer and never exposes a candidate conversion`() {
+        val binding = modelReadyBinding()
+        val control = PersistenceOwnedCallerControl.prepare(5_000)
+        val raw = PhysicalTestConnection()
+        val entry = modelOfferedEntry(binding, control, raw)
+        val prepared = PreparedPoolConnection.prepare(entry, binding)
+        assertThrows<SQLException> { prepared.result.value.unwrap(Connection::class.java) }
+        assertTrue(binding.takePoolConnection(entry, prepared))
+        assertSame(control.receipt, prepared.result.receipt)
+        assertSame(prepared.result.value, prepared.result.value.unwrap(Connection::class.java))
+        assertSame(entry, binding.ledger.entries.single())
+        assertSame(raw.raw, entry.raw.get())
+        assertEquals(PersistenceOwnedCallerDisposition.TAKEN, control.state())
+        assertTrue(requireNotNull(entry.attempt).transferred)
+        assertEquals(PersistenceFactoryProcessing.PENDING, prepared.result.receipt.state())
+        assertFalse(binding.take(entry, PersistenceFactoryResult.Success(entry.candidate, control.receipt)))
+        assertFalse(binding.takePoolConnection(entry, prepared))
+        assertEquals(0, raw.calls.get())
+    }
+
+    @Test
+    fun `opaque delivery permanently excludes the separately prebuilt pool result`() {
+        val binding = modelReadyBinding()
+        val control = PersistenceOwnedCallerControl.prepare(5_000)
+        val raw = PhysicalTestConnection()
+        val entry = modelOfferedEntry(binding, control, raw)
+        val prepared = PreparedPoolConnection.prepare(entry, binding)
+        assertTrue(binding.take(entry, PersistenceFactoryResult.Success(entry.candidate, control.receipt)))
+        assertFalse(binding.takePoolConnection(entry, prepared))
+        assertThrows<SQLException> { prepared.result.value.unwrap(Connection::class.java) }
+        assertEquals(PersistenceOwnedCallerDisposition.TAKEN, control.state())
+        assertEquals(0, raw.calls.get())
+    }
+
     @Test
     fun `one exact prepared opaque result is claimed without invoking raw methods or completing processing`() {
         val binding = modelReadyBinding()

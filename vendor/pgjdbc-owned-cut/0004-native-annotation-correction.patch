@@ -1,0 +1,12 @@
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
+@@ -97,7 +97,7 @@
+ import java.util.logging.Level;
+ 
+ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
+-  final @Nullable KiraOwnedJdbcCut.Native kira;
++  final KiraOwnedJdbcCut.@Nullable Native kira;
+ 
+   // needed for updateable result set support
+   private boolean updateable;

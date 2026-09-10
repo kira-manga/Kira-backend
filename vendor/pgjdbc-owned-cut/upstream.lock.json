@@ -1,0 +1,46 @@
+{
+  "commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+  "archive_url": "https://codeload.github.com/pgjdbc/pgjdbc/tar.gz/77df98e4e66c12936ded3478a0954f6f580bad99",
+  "archive_sha256": "615e15e573ba34241ad6fe395a0148e2c4d529ece9738814bc22e8b0dad57d7e",
+  "archive_bytes": 2378289,
+  "files": 1012,
+  "source_tree": "../../../.kira-validation/pgjdbc-owned-cut/upstream",
+  "builds_run": false,
+  "candidate_status": "UNCOMPILED / UNRUN / NOT ACCEPTED",
+  "series": {
+    "path": "series",
+    "sha256": "9d5c1d038dc867124c1a72318fca1c2e325ec48c08a3659fb8da5fb46a0180ee"
+  },
+  "patches": [
+    {
+      "path": "0001-native-owned-cut.patch",
+      "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b"
+    },
+    {
+      "path": "0002-native-lifetime-correction.patch",
+      "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9"
+    },
+    {
+      "path": "0003-native-owned-cut-regressions.patch",
+      "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3"
+    }
+  ],
+  "source_manifest": {
+    "path": "source-manifest.json",
+    "sha256": "8b2bda22f7562c22508c5b2b09756824e202db15ba2e1ef47a817c331c6afd8b"
+  },
+  "abi": {
+    "path": "ABI.md",
+    "sha256": "6c2eefa3504df96d23f4ed07d6a8f9564ec34dde27b61710354f04fadc532112"
+  },
+  "license": {
+    "path": "LICENSE.pgjdbc",
+    "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53"
+  },
+  "tests_run": false,
+  "static_checks_run": false,
+  "test_source_manifest": {
+    "path": "test-source-manifest.json",
+    "sha256": "31286dd82c852edfd7d3f0304319de8b2d4e098f7f38a045e559841606b803ef"
+  }
+}

@@ -28,7 +28,12 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
 
     fun preparationFinished(): Boolean = preparationEnded.get() || controller.termination() === PersistenceThreadTermination.INERT
 
-    fun request(): PersistenceFactoryResult<PersistenceJdbcCandidate> = PersistenceOwnedFactoryRequest(binding, loginPolicy.durationMillis, this).execute()
+    /** Inert handle only: the executing original caller creates its control/budget before selecting an opening. */
+    internal fun prepareRequest(): PersistenceOwnedFactoryRequest = PersistenceOwnedFactoryRequest(binding, loginPolicy.durationMillis, this)
+
+    fun request(): PersistenceFactoryResult<PersistenceJdbcCandidate> = prepareRequest().execute()
+
+    fun requestPoolConnection(): PersistenceFactoryResult<PhysicalJdbcFacade> = prepareRequest().executePoolConnection()
 
     /** Selection happens after the original request budget exists, before any reservation or dispatch. */
     fun selectOpening(): PersistencePgDriverOpening? = if (!isReady()) {

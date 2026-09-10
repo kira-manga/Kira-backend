@@ -35,7 +35,7 @@ internal class PgLifecycleDatabaseOriginalOutcome {
             }
             requireNotNull(witness)
         }.onFailure { failure ->
-            // Sampling has released G/T. Best-effort private context must not replace the original assertion/throw.
+            // The sampler acquires no F/G/T. Best-effort private context must not replace the original assertion/throw.
             runCatching { failedRetention.compareAndSet(null, PgLifecycleDatabaseRetentionObservation(outcome.get(), failure)) }
         }.getOrThrow()
     }
@@ -58,11 +58,12 @@ internal class PgLifecycleDatabaseRetentionObservation(val original: Result<Pers
 internal class PgLifecycleDatabaseRequest(private val scope: PgLifecycleTestScope, case: PgLifecycleDatabaseCase, application: String, ordinal: Int) :
     AutoCloseable {
     val original = PgLifecycleDatabaseOriginalOutcome()
+
+    // Inert preparation does not capture this fixture thread or start the original caller's allowance.
+    val prepared = if (case.lane.deleting) scope.owner.prepareDeletionRequest() else scope.owner.prepareOrdinaryRequest()
     private val task = FutureTask {
         PgLifecycleDatabaseDiagnostics.originalCall(case, ordinal, application) {
-            original.capture {
-                if (case.lane.deleting) scope.owner.requestDeletion() else scope.owner.requestOrdinary()
-            }
+            original.capture { prepared.execute() }
         }
     }
     private val thread = Thread.ofPlatform().name("w03-database-candidate-caller").unstarted(task)
