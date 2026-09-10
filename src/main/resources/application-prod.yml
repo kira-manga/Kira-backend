@@ -57,12 +57,5 @@ kira:
       # Production must state its topology explicitly. More than one replica requires Redis.
       backend: ${KIRA_SECURITY_THROTTLE_BACKEND}
       instance-count: ${KIRA_SECURITY_THROTTLE_INSTANCE_COUNT}
-  signing:
-    enabled: true
-    active-key-id: ${KIRA_SIGNING_ACTIVE_KEY_ID}
-    private-key: ${KIRA_SIGNING_PRIVATE_KEY}
-    verification-keys:
-      - key-id: ${KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID}
-        public-key: ${KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY}
   # kira.security.jwt-secret and kira.admin.email/password come from the environment
   # (KIRA_JWT_SECRET / KIRA_ADMIN_EMAIL / KIRA_ADMIN_PASSWORD). No secret is defaulted here.

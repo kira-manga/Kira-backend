@@ -98,18 +98,34 @@ docker compose up -d
 
 # 2. Provide local secrets. Uncomment/edit the two KIRA_ADMIN_* lines, then export the file.
 cp .env.example .env
+set +x
 set -a; source .env; set +a
 
-# 3. Run against it with the `dev` profile (reads compose coordinates from application-dev.yml).
+# 3. Generate a LOCAL signing pair once (the generator refuses overwrites); export it in each shell.
+# Never use this pair for production or shipping App trust pins. Do not trace secret exports.
+scripts/signing/generate-key.sh local-dev-01 .secrets/signing-dev
+set +x
+export KIRA_SIGNING_ACTIVE_KEY_ID=local-dev-01
+export KIRA_SIGNING_PRIVATE_KEY="$(cat .secrets/signing-dev/local-dev-01.private.b64)"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID="$KIRA_SIGNING_ACTIVE_KEY_ID"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY="$(cat .secrets/signing-dev/local-dev-01.public.b64)"
+
+# 4. Run against it with the `dev` profile (reads compose coordinates from application-dev.yml).
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 
-# 4. The full green gate: compile + all unit + Testcontainers integration tests (Docker required).
+# 5. The full green gate: compile + all unit + Testcontainers integration tests (Docker required).
 ./gradlew clean build
 ```
 
 Spring Boot does **not** load `.env` automatically in this project. Run the `source` command in every
-new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
-shell-special password values single-quoted inside `.env`.
+new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Repeat
+the four signing exports too, using the existing local files rather than regenerating keys. Keep
+shell-special password values single-quoted inside `.env` and shell tracing off for secrets.
+
+Signing is mandatory at bean initialization in **every running profile**, including `dev`; missing,
+disabled, malformed or mismatched material refuses startup, not a later publication. No development
+keys are supplied or generated automatically. The recipe needs Ed25519-capable OpenSSL (see
+[`Local document signing`](docs/LOCAL_DEV.md#local-document-signing)); tests supply ephemeral in-memory keys.
 
 `ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V13`); Hibernate
 only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
