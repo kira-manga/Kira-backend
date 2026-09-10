@@ -11,9 +11,9 @@ import java.time.Duration
 /**
  * `kira.completion.*` — completion-foundation configuration (PLAN §3 config/, §4.6, §10). Phase 2
  * defines and validates the typed binding; `CompletionService` and provider selection wire it in
- * Phase 9. All fields have safe non-secret defaults, so the context loads with zero external
- * config. A real provider's API key stays server-side in its own env var — never a property echoed
- * anywhere client-visible (PLAN §10).
+ * Phase 9. Completion is disabled without external config; enabling it requires a configured
+ * default model and provider. A real provider's API key stays server-side in its own env var — never
+ * a property echoed anywhere client-visible (PLAN §10).
  */
 @Validated
 @ConfigurationProperties(prefix = "kira.completion")
@@ -23,6 +23,8 @@ data class KiraCompletionProperties(
     /** Selects the `CompletionProvider` bean by name. Echo exists only in dev/test. */
     @field:NotBlank
     val provider: String = "http",
+    /** Required when the service is enabled; dev/test profiles explicitly select their echo model. */
+    val defaultModel: String? = null,
     /** HTTPS endpoint for the production HTTP provider. */
     val endpoint: String? = null,
     /** Bearer credential for the production HTTP provider; environment/secret manager only. */
@@ -79,5 +81,10 @@ data class KiraCompletionProperties(
         }
         require(!retention.isZero && !retention.isNegative) { "kira.completion.retention must be positive" }
         require(!cleanupInterval.isZero && !cleanupInterval.isNegative) { "kira.completion.cleanup-interval must be positive" }
+    }
+
+    /** Shared startup guard; preserve the exact string and the API's existing JVM UTF-16 length bound. */
+    fun requireDefaultModel(): String = requireNotNull(defaultModel?.takeIf { it.isNotBlank() && it.length <= 128 }) {
+        "kira.completion.default-model must be nonblank and at most 128 UTF-16 units"
     }
 }

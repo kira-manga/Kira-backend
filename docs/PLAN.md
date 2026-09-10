@@ -707,7 +707,15 @@ for production use. It is disabled by default.
 - **Providers:** `EchoCompletionProvider` is available only in explicit `dev`/`test` profiles.
   Production uses the generic HTTPS provider adapter, configured through environment-only endpoint,
   model, and API-key values. Enabling completion in production without a valid HTTPS provider fails
-  startup; disabling the feature requires no provider credential.
+  startup; disabling the feature requires no provider credential or default model.
+- **Default model:** `kira.completion.default-model` (native environment key
+  `KIRA_COMPLETION_DEFAULTMODEL`) must be explicitly configured when enabled, nonblank and at most
+  128 JVM UTF-16 units. Production policy and service construction share that guard; the service
+  validates before allocating its executor. Only dev/test profile configuration supplies `echo-1`.
+  Omitted/null/empty/whitespace-only request models use the configured default; a nonblank request
+  remains an exact override under the existing API length gate. Neither value is trimmed or
+  normalized before persistence or provider invocation. A 129-unit whitespace request is still
+  rejected by the controller before fallback, not accepted as an omitted value.
 - **Selection:** `kira.completion.provider` selects a bean from the injected provider set; unknown or
   unsafe production selection fails startup. Controllers know only `CompletionService`;
   `CompletionService` knows only the port. Provider secrets never appear in an API response, stored

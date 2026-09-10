@@ -55,6 +55,9 @@ class CompletionService(
     private val admission: CompletionAdmission,
     private val metrics: KiraMetrics,
 ) {
+    /** Validate before allocating the executor, including direct or non-production construction. */
+    private val defaultModel = properties.requireDefaultModel()
+
     /** The selected provider, resolved once at construction — an unknown name fails startup (PLAN §10). */
     private val provider: CompletionProvider =
         providers.firstOrNull { it.name == properties.provider }
@@ -82,7 +85,7 @@ class CompletionService(
      */
     fun create(userId: UUID, prompt: String, model: String?): CompletionView {
         admission.acquire(userId).use {
-            val effectiveModel = model?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
+            val effectiveModel = model?.takeIf { it.isNotBlank() } ?: defaultModel
 
             val id = persistence.createPending(userId, provider.name, effectiveModel, prompt)
             // `model` is client-supplied — sanitize control chars before it reaches the log line (§6 log-hygiene).
@@ -275,9 +278,6 @@ class CompletionService(
 
     private companion object {
         val log = LoggerFactory.getLogger(CompletionService::class.java)
-
-        /** The v1 default model recorded when a request omits `model` (PLAN §4.6). */
-        const val DEFAULT_MODEL = "echo-1"
 
         /** The single sanitized, bounded, generic client-visible failure message (PLAN §10). */
         const val SANITIZED_FAILURE_MESSAGE = "The completion request could not be completed."
