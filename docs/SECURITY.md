@@ -54,6 +54,11 @@ completion ownership check.
   is not frozen to BCrypt. BCrypt cost is calibrated on real deployment hardware at setup (target
   ≈ 100 ms), not hardcoded forever.
 - Passwords are never echoed in any response and **never written to any log at any level**.
+- **Email identifiers:** shared login/creation normalization remains `trim().lowercase()`, followed
+  by a **320 Unicode-code-point** bound (400 `EMAIL_TOO_LONG`). Count the normalized result, including
+  lowercase expansion; supplementary characters count once. For valid PostgreSQL-representable Unicode
+  this matches the column's character bound, not UTF-16 units or UTF-8 bytes. It does not add RFC-shape,
+  Unicode-validity or canonical-equivalence checks, or promise JVM/database locale-casing equivalence.
 
 ## Onboarding, registration gating, and the last-admin guard
 
@@ -218,8 +223,19 @@ and cleanup batch size are bounded configuration.
 - **Audit rows** (`audit_log.detail`, jsonb) contain **identifiers, revision numbers, and checksums
   only** — never config bodies, header values, completion prompts/results, or passwords. This is enforced
   structurally: the audit encoder accepts only scalar values (String/Int/Long/Boolean/null) and throws
-  if handed an object body. The `LOGIN_FAILED` row records the normalized email as the login *identifier*
-  (never the password); `USER_PASSWORD_RESET` records actor + target only.
+  if handed an object body. `USER_PASSWORD_RESET` records actor + target only.
+- **Failed-login audit identifiers:** new `LOGIN_FAILED` rows use `entity_type = login_identifier`,
+  null actor, empty detail, and `entity_id = email-sha256-v1:<full lowercase 64-hex SHA-256 of the
+  submitted normalized UTF-8 email>` (80 characters), identically for unknown, wrong-password and
+  disabled-account failures. This unkeyed fingerprint is dictionary-guessable, correlatable personal
+  data — **not anonymity, encryption, authentication or identity proof**. Restricted audit access and
+  retention obligations are unchanged; the fingerprint represents the submitted identifier, not every
+  alias for an account.
+  Legacy `LOGIN_FAILED` / `user` / `<raw normalized identifier>` rows remain unchanged, alongside user
+  mutation rows using `user` / `<UUID>`; no schema migration or historical rewrite is performed.
+  Consumers must distinguish `(action, entity_type, entity_id)`, not a prefix heuristic (a legacy raw
+  identifier may itself look like `email-sha256-v1:…`). The audit API only paginates; operators/export
+  consumers must account for both namespaces across cutover, including historical raw personal data.
 - **Payload integrity and authenticity.** `X-Config-Checksum` and the ETag detect corruption but are
   not trust roots. Every production snapshot is authenticated by an Ed25519 detached signature over
   versioned metadata and the exact canonical bytes. The app selects an in-binary pinned X.509 public

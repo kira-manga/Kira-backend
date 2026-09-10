@@ -2,6 +2,7 @@ package me.manga.kira.backend.user.application
 
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.audit.domain.AuditAction
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.exception.ForbiddenException
 import me.manga.kira.backend.common.exception.UnauthorizedException
 import me.manga.kira.backend.config.KiraAuthProperties
@@ -49,7 +50,7 @@ class AuthService(
         return user
     }
 
-    /** Verify credentials and issue an access token. Generic 401 / 429 on failure/throttle. */
+    /** Bound the normalized email before throttle/lookup; then verify credentials (generic 401) and issue a token. */
     fun login(email: String, rawPassword: String, clientIp: String): LoginResult {
         val normalized = userService.normalizeEmail(email)
         throttle.checkLoginAllowed(normalized, clientIp)
@@ -59,9 +60,14 @@ class AuthService(
         if (user == null) {
             throttle.recordLoginFailure(normalized, clientIp)
             log.warn("Login failed (generic reason category)")
-            // Audit the failed attempt (no credential material — the normalized email is an identifier,
-            // never the password; PLAN §5/§6). Anonymous actor.
-            audit.record(AuditAction.LOGIN_FAILED, AuditService.ENTITY_USER, normalized, actorUserId = null)
+            // Anonymous full-identifier fingerprint; still correlatable personal data (PLAN §5/§6).
+            // The distinct type separates new rows from legacy LOGIN_FAILED/user/raw-email rows.
+            audit.record(
+                AuditAction.LOGIN_FAILED,
+                AuditService.ENTITY_LOGIN_IDENTIFIER,
+                "email-sha256-v1:${Sha256.hexUtf8(normalized)}",
+                actorUserId = null,
+            )
             throw UnauthorizedException("Invalid email or password.", code = "INVALID_CREDENTIALS")
         }
 

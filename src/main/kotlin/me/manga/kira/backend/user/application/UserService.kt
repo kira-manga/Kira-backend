@@ -1,5 +1,6 @@
 package me.manga.kira.backend.user.application
 
+import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.user.domain.DuplicateEmailException
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
@@ -16,8 +17,21 @@ import org.springframework.transaction.annotation.Transactional
  */
 @Service
 class UserService(private val users: UserRepository, private val passwordEncoder: PasswordEncoder, private val passwordPolicy: PasswordPolicy) {
-    /** Email is trim+lowercased before store and matching (PLAN §5). Password is NOT normalized. */
-    fun normalizeEmail(email: String): String = email.trim().lowercase()
+    /**
+     * Email is trim+lowercased, then bounded to 320 Unicode code points before store and matching
+     * (PLAN §4.2/§5). Count after lowercase expansion; a supplementary character counts once.
+     * Password is NOT normalized.
+     */
+    fun normalizeEmail(email: String): String {
+        val normalized = email.trim().lowercase()
+        if (normalized.codePointCount(0, normalized.length) > MAX_EMAIL_CODE_POINTS) {
+            throw BadRequestException(
+                "Email must be at most $MAX_EMAIL_CODE_POINTS Unicode code points after normalization.",
+                code = "EMAIL_TOO_LONG",
+            )
+        }
+        return normalized
+    }
 
     /**
      * Policy-check + hash the password, then insert a user. Case-insensitively unique email:
@@ -39,4 +53,8 @@ class UserService(private val users: UserRepository, private val passwordEncoder
 
     /** True if any ADMIN row exists — the seeder's idempotency guard (PLAN §6). */
     fun adminExists(): Boolean = users.adminExists()
+
+    private companion object {
+        const val MAX_EMAIL_CODE_POINTS = 320
+    }
 }
