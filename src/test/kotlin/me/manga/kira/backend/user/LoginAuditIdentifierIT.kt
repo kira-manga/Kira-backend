@@ -25,8 +25,12 @@ import java.time.Instant
 /** Real PostgreSQL regression for the normalized-email bound and failed-login audit namespace. */
 class LoginAuditIdentifierIT
 @Autowired
-constructor(private val mockMvc: MockMvc, private val objectMapper: ObjectMapper, private val users: UserRepository, private val audit: AuditRepository) :
-    AbstractIntegrationTest() {
+constructor(
+    private val mockMvc: MockMvc,
+    private val objectMapper: ObjectMapper,
+    private val users: UserRepository,
+    private val audit: AuditRepository,
+) : AbstractIntegrationTest() {
 
     private val password = "correct horse battery staple"
     private val wrongPassword = "not the account password"
