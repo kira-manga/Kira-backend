@@ -53,28 +53,29 @@ class AuthService(
     /** Bound the normalized email before throttle/lookup; then verify credentials (generic 401) and issue a token. */
     fun login(email: String, rawPassword: String, clientIp: String): LoginResult {
         val normalized = userService.normalizeEmail(email)
-        throttle.checkLoginAllowed(normalized, clientIp)
+        return throttle.beginLoginAttempt(normalized, clientIp).use { attempt ->
+            // CredentialVerifier performs one hash check even for an unknown/disabled account.
+            val user = credentialVerifier.verify(rawPassword, users.findByEmail(normalized))
+            if (user == null) {
+                // Explicit completion keeps a throttle-backend failure ahead of audit and the ordinary 401.
+                attempt.complete(false)
+                log.warn("Login failed (generic reason category)")
+                // Anonymous full-identifier fingerprint; still correlatable personal data (PLAN §5/§6).
+                // The distinct type separates new rows from legacy LOGIN_FAILED/user/raw-email rows.
+                audit.record(
+                    AuditAction.LOGIN_FAILED,
+                    AuditService.ENTITY_LOGIN_IDENTIFIER,
+                    "email-sha256-v1:${Sha256.hexUtf8(normalized)}",
+                    actorUserId = null,
+                )
+                throw UnauthorizedException("Invalid email or password.", code = "INVALID_CREDENTIALS")
+            }
 
-        // CredentialVerifier performs one hash check even for an unknown/disabled account.
-        val user = credentialVerifier.verify(rawPassword, users.findByEmail(normalized))
-        if (user == null) {
-            throttle.recordLoginFailure(normalized, clientIp)
-            log.warn("Login failed (generic reason category)")
-            // Anonymous full-identifier fingerprint; still correlatable personal data (PLAN §5/§6).
-            // The distinct type separates new rows from legacy LOGIN_FAILED/user/raw-email rows.
-            audit.record(
-                AuditAction.LOGIN_FAILED,
-                AuditService.ENTITY_LOGIN_IDENTIFIER,
-                "email-sha256-v1:${Sha256.hexUtf8(normalized)}",
-                actorUserId = null,
-            )
-            throw UnauthorizedException("Invalid email or password.", code = "INVALID_CREDENTIALS")
+            attempt.complete(true)
+            val token = jwtService.issue(user)
+            log.info("Login success id={} role={}", user.id, user.role)
+            LoginResult(token = token, role = user.role)
         }
-
-        throttle.recordLoginSuccess(normalized, clientIp)
-        val token = jwtService.issue(user)
-        log.info("Login success id={} role={}", user.id, user.role)
-        return LoginResult(token = token, role = user.role)
     }
 
     private companion object {

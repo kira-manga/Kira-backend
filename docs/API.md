@@ -197,8 +197,14 @@ Body `{email, password}`.
 - **401** `INVALID_CREDENTIALS` — the same generic response body for unknown-user / wrong-password /
   disabled account. All three paths perform one password-hash verification (a decoy hash for an
   unknown/disabled account).
-- **429** when either the normalized-email/client-IP identity bucket or the aggregate client-IP spray
-  bucket is temporarily blocked.
+- **429** when either the normalized-email/client-IP identity bucket or aggregate IP bucket is blocked,
+  its completed failures plus live attempts fill the threshold, or safe shared-store capacity is unavailable.
+  Admission reserves both dimensions before lookup/hash work. Only acknowledged, unexpired successful
+  completion permits a JWT. The default 30s attempt lease is not a BCrypt execution timeout; late success
+  also returns generic 429. See [SECURITY.md](SECURITY.md#auth-throttling--trusted-client-ip-resolution).
+- Shared throttle errors/null/malformed replies on admission **or completion** return **429
+  `AUTH_THROTTLE_UNAVAILABLE`**, `Retry-After: 5`, with no local fallback. Ordinary bad-credential
+  completion precedes its audit/401, so this dependency error retains precedence over that 401.
 
 ### `GET /api/v1/auth/me`  — USER or ADMIN
 - **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon.
@@ -293,6 +299,9 @@ values):
   "createdAt", "updatedAt" }` plus `ETag: "draft-N"`.
 - Step-up → `{ "token", "expiresAt", "scope": "source-admin-mutation" }`. The token is secret and
   must remain in server-side/HttpOnly session state; it is never logged or persisted in plaintext.
+  Password verification uses the same atomic two-dimension attempt admission as login; successful
+  completion must be acknowledged before a proof/grant is created. Throttle/lease denial is 429, and
+  shared-store unavailability is 429 `AUTH_THROTTLE_UNAVAILABLE` with `Retry-After: 5`.
 - `GET /admin/documents` item → `{ "documentRevision", "schemaVersion", "checksum", "sourceCount", "createdBy", "createdAt" }`.
 - `GET /admin/documents/{revision}` → **body = raw stored canonical bytes**; metadata in headers only
   (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`) — deliberately not a JSON envelope.
