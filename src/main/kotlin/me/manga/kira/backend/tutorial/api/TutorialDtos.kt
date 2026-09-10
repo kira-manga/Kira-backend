@@ -1,5 +1,6 @@
 package me.manga.kira.backend.tutorial.api
 
+import io.swagger.v3.oas.annotations.media.Schema
 import jakarta.validation.Valid
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.PositiveOrZero
@@ -19,6 +20,7 @@ import me.manga.kira.backend.tutorial.domain.MediaVariants
 import me.manga.kira.backend.tutorial.domain.StoredMedia
 import me.manga.kira.backend.tutorial.domain.TutorialContent
 import me.manga.kira.backend.tutorial.domain.TutorialStep
+import me.manga.kira.backend.tutorial.domain.TutorialValidator
 import java.time.Instant
 import java.util.UUID
 
@@ -29,8 +31,15 @@ data class LocalizedTextDto(@field:NotBlank val en: String, @field:NotBlank val 
     }
 }
 
+/** featuredPosition remains accepted and validated for compatibility, but category creation ignores it. */
+data class CreateCategoryRequest(
+    @field:NotBlank @field:Schema(maxLength = TutorialValidator.CATEGORY_SLUG_MAX_LENGTH) val slug: String,
+    @field:PositiveOrZero val position: Int? = null,
+    @field:PositiveOrZero val featuredPosition: Int? = null,
+)
+
 data class CreateIdentityRequest(
-    @field:NotBlank val slug: String,
+    @field:NotBlank @field:Schema(maxLength = TutorialValidator.TUTORIAL_SLUG_MAX_LENGTH) val slug: String,
     @field:PositiveOrZero val position: Int? = null,
     @field:PositiveOrZero val featuredPosition: Int? = null,
 )

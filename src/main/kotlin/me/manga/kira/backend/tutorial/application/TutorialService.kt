@@ -36,7 +36,7 @@ class TutorialService(
 
     @Transactional
     fun createCategory(slug: String, position: Int? = null): AdminCategoryView {
-        validator.slug(slug)
+        validator.categorySlug(slug)
         if (position != null && position < 0) throw BadRequestException("position must be non-negative.")
         val id = UUID.randomUUID()
         val created = repository.createCategory(id, slug, position ?: repository.nextCategoryPosition(), clock.instant())
@@ -148,7 +148,7 @@ class TutorialService(
 
     @Transactional
     fun createTutorial(slug: String, position: Int? = null, featuredPosition: Int? = null): AdminTutorialView {
-        validator.slug(slug)
+        validator.tutorialSlug(slug)
         if (position != null && position < 0) throw BadRequestException("position must be non-negative.")
         if (featuredPosition != null && featuredPosition < 0) throw BadRequestException("featuredPosition must be non-negative.")
         val id = UUID.randomUUID()
