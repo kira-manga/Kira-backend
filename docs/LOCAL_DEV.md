@@ -9,6 +9,8 @@ macOS. Authoritative spec: [`PLAN.md`](PLAN.md); versions: [`README.md`](README.
 - **Docker running** — required both for local dev (`docker compose`) and for the Testcontainers
   integration tests (`./gradlew build`). Docker Desktop, Colima, or Rancher all work.
 - **curl + jq** — used by the API walkthroughs below and in [`USAGE.md`](USAGE.md).
+- **Ed25519-capable OpenSSL** — use OpenSSL 3 with the existing Linux/macOS signing generator;
+  set `OPENSSL_BIN` to its executable if it is not found automatically.
 
 ### Colima / non-default Docker socket
 
@@ -43,6 +45,7 @@ single-quote values containing spaces, `#`, `$`, or other shell-special characte
 ```bash
 cp .env.example .env      # .env is gitignored — never commit it or any real secret
 # edit KIRA_ADMIN_EMAIL and KIRA_ADMIN_PASSWORD, then export every assignment into this shell
+set +x
 set -a; source .env; set +a
 ```
 
@@ -54,16 +57,50 @@ because the `dev` profile already has the matching local Docker coordinates.
 |---|---|---|
 | `KIRA_ADMIN_EMAIL`, `KIRA_ADMIN_PASSWORD` | admin seeding (on by default, incl. dev) | Startup fails fast if seeding is enabled but these are absent. Password must satisfy the policy (≥ 15 chars, ≤ 72 UTF-8 bytes); it is BCrypt-hashed and never logged. To run without seeding, set `KIRA_ADMIN_SEED_ENABLED=false`. |
 | `KIRA_JWT_SECRET` | outside the `dev` profile | Base64 that decodes to ≥ 256 bits, e.g. `openssl rand -base64 32`. The `dev` profile ships a clearly-insecure default so you don't need this locally. |
+| The four `KIRA_SIGNING_*` aliases below | every running profile, including `dev` | A valid active id and matching local Ed25519 pair are required at bean initialization. Missing, disabled, malformed or mismatched material refuses startup. |
 | `SPRING_DATASOURCE_URL/USERNAME/PASSWORD` | outside the `dev` profile | The `dev` profile reads the compose coordinates from `application-dev.yml` directly, so a plain local run needs none of these. |
 
-A minimal local `dev` run only needs `KIRA_ADMIN_EMAIL` + `KIRA_ADMIN_PASSWORD`.
+A minimal local `dev` run needs local document-signing material plus `KIRA_ADMIN_EMAIL` +
+`KIRA_ADMIN_PASSWORD` (unless admin seeding is explicitly disabled).
+
+### Local document signing
+
+Generate a **local-only** key pair once, from the repository root, using the existing Linux/macOS
+recipe. The directory is gitignored; the generator sets restrictive permissions and refuses to
+overwrite existing files. It prints the public key only. Do not enable shell tracing for secrets.
+
+```bash
+scripts/signing/generate-key.sh local-dev-01 .secrets/signing-dev
+```
+
+Export these four aliases in **each new shell**, reading the existing files; do not regenerate the
+pair merely to restart the app. The private file is PKCS#8 DER in standard Base64; the public file
+is X.509 SubjectPublicKeyInfo DER in standard Base64.
+
+```bash
+set +x
+export KIRA_SIGNING_ACTIVE_KEY_ID=local-dev-01
+export KIRA_SIGNING_PRIVATE_KEY="$(cat .secrets/signing-dev/local-dev-01.private.b64)"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID="$KIRA_SIGNING_ACTIVE_KEY_ID"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY="$(cat .secrets/signing-dev/local-dev-01.public.b64)"
+```
+
+Common `application.yml` explicitly maps these underscored aliases in every profile. There is no
+generated/default key or unsigned running mode: `KIRA_SIGNING_ENABLED=false` refuses initialization,
+even when global lazy initialization is enabled. Error messages identify `kira.signing.*` properties
+and this recipe without printing configured ids or key material. Never commit the local files, share
+them with production, install them as GitHub production secrets, or add them to shipping App trust
+pins. The separate production ceremony and complete-list rotation configuration are in
+[`SOURCE_DOCUMENT_SIGNING.md`](SOURCE_DOCUMENT_SIGNING.md).
 
 ## Running the app
 
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 docker compose up -d
+set +x
 set -a; source .env; set +a
+# Repeat the four signing exports from "Local document signing" above in this shell.
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 ```
 
@@ -93,7 +130,8 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 Integration tests share one `postgres:17.6-alpine` Testcontainer (started once, wired via
 `@ServiceConnection`) under the `test` profile — no docker-compose or `.env` needed for the test run,
-only a reachable Docker daemon.
+only a reachable Docker daemon. Their contexts provide ephemeral in-memory signing pairs through
+canonical test properties; no real signing keys or committed test private keys are needed.
 
 ## Seeding data (import the bundled document)
 
@@ -138,6 +176,9 @@ configuration, continue with [`USAGE.md`](USAGE.md).
 - **Admin seeding fail-fast.** If seeding is enabled (default) without `KIRA_ADMIN_EMAIL` /
   `KIRA_ADMIN_PASSWORD`, startup fails with a clear message. Source `.env` first, set both directly, or
   export `KIRA_ADMIN_SEED_ENABLED=false`.
+- **Document signing fail-fast.** Every running profile needs the four signing aliases above (or
+  equivalent complete canonical properties). Re-export the local pair in a new shell; disabling
+  signing is not a development workaround. Do not substitute production keys.
 - **`./gradlew --version` shows "Kotlin: 2.0.21".** That is Gradle 8.14.5's embedded script-compiler
   Kotlin, not the project's — sources compile with the pinned 2.1.21 plugin.
 - **Don't switch Spring Boot to 4.x** to "get the latest" — the 3.5.x pin is deliberate; a major upgrade

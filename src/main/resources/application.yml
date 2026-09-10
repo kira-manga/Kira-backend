@@ -27,6 +27,14 @@ spring:
       max-request-size: 5MB
 
 kira:
+  signing:
+    # Required in every running profile. Explicit aliases also support local development.
+    enabled: true
+    active-key-id: ${KIRA_SIGNING_ACTIVE_KEY_ID:}
+    private-key: ${KIRA_SIGNING_PRIVATE_KEY:}
+    verification-keys:
+      - key-id: ${KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID:}
+        public-key: ${KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY:}
   tutorial:
     media-directory: ${KIRA_TUTORIAL_MEDIA_DIRECTORY:./data/tutorial-media}
     seed-enabled: ${KIRA_TUTORIAL_SEED_ENABLED:true}
