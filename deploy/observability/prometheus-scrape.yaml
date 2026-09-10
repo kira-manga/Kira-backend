@@ -9,3 +9,30 @@ scrape_configs:
         labels:
           service: kira-backend
           environment: production
+
+  # TEMPLATE ONLY: the database/platform owner must supply private, TLS-verified exporter
+  # endpoints and any secret-manager-backed authentication. Empty targets intentionally alert.
+  # Exactly one authoritative, durable last-success gauge per declared role; see OBSERVABILITY.md.
+  - job_name: kira-backup
+    scheme: https
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: false
+    static_configs:
+      - targets: []
+        labels:
+          service: kira-backend
+          environment: production
+
+  - job_name: kira-restore-verification
+    scheme: https
+    metrics_path: /metrics
+    scrape_interval: 30s
+    scrape_timeout: 10s
+    honor_labels: false
+    static_configs:
+      - targets: []
+        labels:
+          service: kira-backend
+          environment: production

@@ -68,13 +68,49 @@ groups:
         annotations: {summary: "Bundled source imports are failing"}
 
       - alert: KiraBackupStale
-        expr: time() - kira_backup_last_success_timestamp_seconds > 900
+        expr: |
+          group by (job, service, environment) (
+            (time() - kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"} > 900)
+            and (kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"} > 0)
+          )
         for: 5m
         labels: {severity: critical}
         annotations: {summary: "No verified Kira backup has completed within the 15-minute RPO"}
 
       - alert: KiraRestoreVerificationStale
-        expr: time() - kira_restore_test_last_success_timestamp_seconds > 2678400
+        expr: |
+          group by (job, service, environment) (
+            (time() - kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"} > 2678400)
+            and (kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"} > 0)
+          )
         for: 1h
         labels: {severity: warning}
         annotations: {summary: "Kira disposable restore verification is older than 31 days"}
+
+      # One declared logical scope per role; instance/producer changes must not reset `for`.
+      # Absence recognition includes Prometheus lookback/staleness delay before this 5m grace.
+      - alert: KiraBackupTelemetryUnavailable
+        expr: |
+          group by (job, service, environment) (
+            absent(kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"})
+            or (kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"} <= 0)
+            or (kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"} > time())
+            or (kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"}
+                != kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production"})
+          )
+        for: 5m
+        labels: {severity: critical}
+        annotations: {summary: "Verified Kira backup telemetry is absent or invalid"}
+
+      - alert: KiraRestoreVerificationTelemetryUnavailable
+        expr: |
+          group by (job, service, environment) (
+            absent(kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"})
+            or (kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"} <= 0)
+            or (kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"} > time())
+            or (kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"}
+                != kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production"})
+          )
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Kira restore verification telemetry is absent or invalid"}
