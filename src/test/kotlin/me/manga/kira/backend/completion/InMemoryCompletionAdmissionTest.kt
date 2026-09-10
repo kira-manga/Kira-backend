@@ -1,5 +1,6 @@
 package me.manga.kira.backend.completion
 
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.completion.application.InMemoryCompletionAdmission
 import me.manga.kira.backend.config.KiraCompletionProperties
@@ -33,7 +34,7 @@ class InMemoryCompletionAdmissionTest {
         val permit = admission.acquire(UUID.randomUUID())
         assertEquals(
             "COMPLETION_CONCURRENCY_LIMIT",
-            assertThrows<TooManyRequestsException> { admission.acquire(UUID.randomUUID()) }.code,
+            assertThrows<ServiceUnavailableException> { admission.acquire(UUID.randomUUID()) }.code,
         )
         permit.close()
         permit.close()

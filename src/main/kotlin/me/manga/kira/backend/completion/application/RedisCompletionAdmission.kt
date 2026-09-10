@@ -1,5 +1,6 @@
 package me.manga.kira.backend.completion.application
 
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.observability.KiraMetrics
@@ -21,7 +22,7 @@ class RedisCompletionAdmission(
     private val metrics: KiraMetrics? = null,
 ) : CompletionAdmission {
     override fun acquire(userId: UUID): CompletionPermit {
-        val result = safely {
+        val result: Long? = try {
             redis.execute(
                 ACQUIRE_SCRIPT,
                 listOf(
@@ -35,7 +36,9 @@ class RedisCompletionAdmission(
                 properties.perUserDailyQuota.toString(),
                 properties.globalConcurrency.toString(),
                 concurrencyTtlMs().toString(),
-            ) ?: 0L
+            )
+        } catch (ignored: DataAccessException) {
+            coordinationUnavailable()
         }
         if (result != 0L) reject(result)
         val released = AtomicBoolean(false)
@@ -48,17 +51,32 @@ class RedisCompletionAdmission(
 
     private fun concurrencyTtlMs(): Long = (properties.queueTimeout + properties.timeout).multipliedBy(2).toMillis()
 
-    private fun reject(code: Long): Nothing {
+    private fun reject(code: Long?): Nothing {
         val (machineCode, retry) = when (code) {
             USER_RATE -> "COMPLETION_USER_RATE_LIMIT" to MINUTE_SECONDS
             GLOBAL_RATE -> "COMPLETION_GLOBAL_RATE_LIMIT" to MINUTE_SECONDS
             DAILY_QUOTA -> "COMPLETION_DAILY_QUOTA" to DAY_SECONDS
-            else -> "COMPLETION_CONCURRENCY_LIMIT" to 1L
+            CONCURRENCY -> "COMPLETION_CONCURRENCY_LIMIT" to 1L
+            else -> coordinationUnavailable()
         }
         metrics?.completionAdmission(machineCode.lowercase())
+        if (code == CONCURRENCY) {
+            throw ServiceUnavailableException("Completion limit exceeded. Try again later.", machineCode, retry)
+        }
         throw TooManyRequestsException("Completion limit exceeded. Try again later.", machineCode, retry)
     }
 
+    private fun coordinationUnavailable(): Nothing {
+        log.error("Shared completion admission unavailable; denying request")
+        metrics?.completionAdmission("coordination_unavailable")
+        throw ServiceUnavailableException(
+            "Completion service is temporarily unavailable. Try again later.",
+            "COMPLETION_COORDINATION_UNAVAILABLE",
+            FAILURE_RETRY_SECONDS,
+        )
+    }
+
+    // Release failure behavior is separate from pre-work admission (Backend #15).
     private fun <T> safely(block: () -> T): T = try {
         block()
     } catch (ignored: DataAccessException) {
