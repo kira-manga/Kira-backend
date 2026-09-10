@@ -40,6 +40,7 @@ in 404/409 details. Typed-exception → status mapping:
 | 415 | unsupported request media type | `UNSUPPORTED_MEDIA_TYPE` |
 | 422 | `ValidationFailedException` | `VALIDATION_FAILED` (+ `errors[]`) |
 | 429 | `TooManyRequestsException` | `TOO_MANY_REQUESTS` |
+| 503 | `ServiceUnavailableException` | `SERVICE_UNAVAILABLE` |
 | 500 | unexpected (stack trace logged server-side only) | — |
 
 ## Cross-cutting HTTP contract
@@ -359,13 +360,19 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo in v1) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large |
+| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo in v1) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large · 429 rate/quota · 503 admission unavailable |
 | `GET /api/v1/completions/{id}` | Fetch one — **owner or ADMIN only** (others → 404, never 403). | 200 · 404 |
 | `GET /api/v1/completions` | List the caller's own requests, newest first, paginated. ADMIN may pass `?userId=`. | 200 |
 
 - Request `{ "prompt": "…", "model"?: "…" }`. Blank prompt → **400** `BLANK_PROMPT`; prompt over
   `kira.completion.prompt-max-length` (default 8000) → **413** `PROMPT_TOO_LARGE`. A supplied `model`
   over **128 characters** is rejected before persistence with **400** `MODEL_TOO_LONG`.
+- Admission rejects per-user/global minute limits with **429** `COMPLETION_USER_RATE_LIMIT` /
+  `COMPLETION_GLOBAL_RATE_LIMIT` (`Retry-After: 60`), and daily quota with **429**
+  `COMPLETION_DAILY_QUOTA` (`Retry-After: 86400`). Global concurrency exhaustion is **503**
+  `COMPLETION_CONCURRENCY_LIMIT` (`Retry-After: 1`); unavailable or indeterminate Redis
+  acquisition is **503** `COMPLETION_COORDINATION_UNAVAILABLE` (`Retry-After: 5`). Retry delays
+  are guidance, not recovery guarantees or a promise that arbitrary POST retries are safe.
 - Response `CompletionResponse`:
 
 ```json
