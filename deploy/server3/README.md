@@ -16,16 +16,183 @@ prerequisites below require verification on the installed host, not just a valid
 - `nginx/*.conf` keeps the site and API virtual hosts independent from existing hosts.
 - `verify_hsts.py` is an explicitly invoked, read-only post-install header/redirect check for all
   four public hosts; it is not part of image deployment or a health check.
-- `kira-deploy` accepts an exact-SHA image stream, verifies it, preflights the candidate Compose
-  configuration before activation, backs up PostgreSQL before
-  migrations, initializes the tutorial-media volume for the backend image's declared numeric
-  UID/GID, health-gates activation, and restores the prior component image after a failed health
-  check. The deployment fails closed if the volume is not writable by that runtime identity.
-- `kira-deploy-gateway` restricts the CI SSH account to
-  `deploy backend|web|admin <40-character-sha>`.
-- `kira-deploy.sudoers` grants only the two root deploy commands. `kira-deploy.sshd.conf` forces every login for that account through the gateway and disables forwarding, TTYs, and password authentication.
+- `kira-deploy` validates a bounded image stream before load, captures the actual healthy owned
+  predecessor **image ID before any tag changes**, and activates/persists full immutable IDs. It
+  preflights Compose quietly, backs up PostgreSQL before migration, initializes Backend media for
+  the image's numeric UID:GID, and checks both the actual runtime ID and health. A failed deployment
+  remains failed even when a separately checked application rollback succeeds.
+- `scripts/ci/image_release.py` is the finite producer/consumer packet verifier. Install that exact
+  reviewed file as `/usr/local/libexec/kira-image-release.py` for the receiver's archive-only commands;
+  it has no runtime dependency on a sibling checkout or third-party Python package.
+- `kira-deploy-gateway` permits exactly the three wire forms documented below, never root-only
+  `activate`, `adopt` or `backup`. `kira-deploy.sudoers` retains the existing three component deploy
+  prefixes; the receiver itself enforces exact arguments. No sudoers grant was broadened.
+  `kira-deploy.sshd.conf` forces the gateway and disables forwarding, TTYs, and password authentication.
 
 Do not commit the production `*.env`, TLS keys, signing keys, initial administrator credentials, database dumps, or deployment private key.
+
+## Exact tested-image promotion
+
+Backend CI builds **once**, retaining the existing `VERSION=1.0.0` behavior. The container job
+reconciles Buildx's `imageid` with Docker's `.Id`, smokes that immutable ID with the unchanged
+production-profile smoke, confirms the tag still identifies it, saves that one tag once, and
+compresses once. The strict archive check binds raw image configuration to its SHA-256 image ID
+and the layer bytes to its DiffIDs. A registry manifest digest or `RepoDigests` is not this local
+Docker image ID. The Kubernetes/semantic-tag release workflow is a separate path.
+
+Only a push/main attempt can publish `backend-image-<run_id>-<run_attempt>`, containing exactly
+`image.tar.gz` and `receipt.json`. The receipt binds repository/source tree, producing workflow/run/
+attempt, trusted contract-file hashes, image ID/platform/revision, original and expanded archive
+bytes/digests, and the exact-ID smoke result. Upload is immutable (`overwrite: false`) with three-day
+retention. The artifact may exist before parallel supply-chain work finishes; it is **not eligible**
+until authenticated CI **and** that attempt's `verify`, `supply-chain` and `container` jobs succeed.
+
+`Deploy server3` retains the existing `workflow_run: CI/completed` entry and **never builds, runs,
+resaves or recompresses an image**. Its `contents: read` / `actions: read` token authenticates canonical
+repository `kira-manga/Kira-backend` (ID `1304735394`), active workflow ID/path, current and selected
+producer attempt, complete bounded job/artifact listings and the unique individual artifact record.
+It fails on missing API evidence, incomplete lists, skipped gates, forks, changed attempts, replaced/
+expired artifacts or digest mismatches; it never follows a replacement candidate or rebuilds one.
+
+Credential-free preflight (apart from the read-only workflow token) freezes the artifact ID, actual
+outer ZIP digest/length, source/tree/run/attempt and complete receipt/image/archive identity **before**
+the separate `production` environment job. Both jobs check out `${{ github.sha }}`: the trusted
+default-branch **consumer**, not `workflow_run.head_sha`'s producer-selected scripts. The fixed
+producer workflow/helper/smoke bytes and consumer workflow are compared against authenticated Git
+bytes. The event's producer source must still be current `main`; artifact creation must be less than
+72 hours old and its actual API expiry must be in the future. These checks run again after download,
+after environment approval, and immediately before SSH key materialization. Consumer attempts other
+than `1` are refused: use a new eligible producer completion, not a rerun that silently reselects.
+
+The Backend repository is **public by deliberate policy**. API authentication establishes provenance,
+not confidentiality. Candidate images/receipts must never contain secrets, signing material,
+production responses or private cross-repository review archives. API storage redirects are followed
+only as a new allowlisted HTTPS request without Authorization; signed URLs and raw responses are not
+logged. Only the original validated gzip is streamed to the fixed receiver.
+
+### Finite packet and installed receiver contract
+
+- Limits: 512 MiB outer ZIP and gzip, 2 GiB expanded Docker tar, 16 KiB receipt, exactly two regular
+  ZIP root files, 64 KiB ZIP directory, 4096 outer tar entries, 64 KiB image manifests and 1 MiB config.
+  Actual streamed/inflated bytes and EOF are checked, not just headers or gzip ISIZE. These are
+  initial ceilings, **not measured Backend image sizes**; there is no automatic limit increase.
+- Supported archive profile: one Docker-save image/tag with ordinary regular/directory outer
+  entries, raw config and uncompressed layer tars; modern `blobs/sha256/...` paths and a coherent
+  single-image OCI index are checked, including Moby's bounded inert legacy V1 config blobs.
+  Compressed/foreign layers, extra subjects/tags, inconsistent indexes, outer links/PAX extensions
+  and unsupported layouts fail closed. Layer filesystems are never extracted; links *inside* a
+  layer are normal opaque content. The authorized tiny Docker rehearsal must establish the actual
+  installed export shape; a synthetic fixture is not that proof.
+- Prerequisites: Python **3.10+**, Bash, GNU `timeout`/file utilities and `flock`, the supported Docker
+  Engine/Compose described below, and a Compose supporting application `--pull never`/`--no-build`.
+  Install the helper root-owned mode `0644`, receiver `/usr/local/sbin/kira-deploy` and gateway
+  `/usr/local/bin/kira-deploy-gateway` root-owned mode `0755`, with non-writable parent directories.
+  `/opt/kira`, release directories and the fixed helper/config paths must be root owned, nonsymlink,
+  and not group/other writable. Keep `images.env` mode `0600`, with exactly one unquoted
+  `KIRA_<COMPONENT>_IMAGE=<reference>` line per target; no export/whitespace/duplicate variants.
+  `ingress.env` must not shadow image keys. Neither file is shell code.
+- Coordinate installation of the reviewed helper, receiver and gateway **before** the new Backend
+  workflow is enabled. The legacy Backend three-token command is intentionally retired without
+  fallback. Current Web/Admin client protocols remain unchanged:
+
+  ```text
+  deploy backend <40-lowercase-hex-source> <64-lowercase-hex-gzip-sha256> sha256:<64-lowercase-hex-image-id>
+  deploy web <40-lowercase-hex-source>
+  deploy admin <40-lowercase-hex-source>
+  ```
+
+  Exact single spaces/argument counts are required. No quoting, flags, extra tokens, newlines,
+  arbitrary paths, `eval` or general command dispatch. Web/Admin derive their immutable ID from
+  their own bounded single-tag stream; they do **not** acquire Backend's receipt/UID/label rules.
+  In particular Web's unlabeled `USER node` image remains supported. Compatibility is not authority
+  to reinstall/re-enable a retired Admin key/grant/workflow or bypass its own approval controls.
+- Lock acquisition is bounded to 30 seconds; receive, full archive validation and Docker load each
+  have 90-second bounds. Docker/Compose commands and health polling are finite. The Backend SSH
+  operation has a five-minute total bound with pinned host keys, no agents/forwarding/passwords,
+  and owned key cleanup; Web's existing five-minute transfer bound is unchanged. Those local bounds
+  do not prove a canceled/killed client stopped a daemon-side or remote-root operation. Inspect a
+  pending transaction and actual host state before retrying; never infer cleanup from job cancellation.
+
+### Immutable host transaction and archive adoption
+
+Under the existing shared lock, normal deployment captures the actual container **`.Image`**,
+Compose project/service ownership, running/healthy state, and the separately resolved configured
+reference *before load*. An unhealthy/unowned runtime, unresolved predecessor, duplicate target or
+runtime/configuration mismatch stops the attempt. A missing container has **no previous healthy
+runtime**; a configured but nonrunning tag is not automatically restored or reported as one.
+
+After byte validation and quiet configuration preflight, the predecessor's configuration is pinned
+to its captured ID before a tag can be overwritten. Backend media initialization and migration use
+the verified candidate ID. Application activation/rollback use IDs with pulling/building disabled;
+separate digest-pinned PostgreSQL provisioning is not disabled. Success checks Compose's result,
+the actual container image and health, and the persisted ID and activation record.
+
+The host stores exact gzip bytes at `releases/<component>/<gzip-sha256>.tar.gz`, never overwriting an
+object. `releases/<component>/activation` contains `active <source> <image-id> <archive-sha256>` and
+`previous <source> <image-id> <archive-sha256>` (or `previous - - -`). `images.env` and each activation
+record are individually atomically replaced; they are **not a multi-file atomic transaction**.
+The persistent `pending` marker makes an interrupted/incomplete transition an explicit STOP.
+On failure, rollback must itself pass Compose, actual image/health and persistence checks; otherwise
+the report says failed/indeterminate, never “restored when available”. A failed first deployment removes
+only its owned candidate and reports `rollback=none`. Original deployment failure remains nonzero.
+
+Deployment/activation outcomes are finalized **after EXIT cleanup**, including the final receiver
+message. Backend transfer interprets only these fixed exit codes, after its own process/key cleanup;
+it never forwards or parses arbitrary remote stdout/stderr:
+
+| Exit | Meaning |
+|---|---|
+| `0` | Verified activation/no-op and owned cleanup succeeded. |
+| `70` | Refused before this attempt's activation; existing host health is **not asserted**. |
+| `71` | Deployment failed; healthy immutable predecessor and persistence were restored. |
+| `72` | First deployment failed; no predecessor existed and owned candidate removal was verified. |
+| `73` | Recovery incomplete/indeterminate; inspect actual runtime and pending state. |
+| `74` | Activation/no-op was verified, but owned post-activation cleanup failed. |
+
+Cleanup failure downgrades a provisional refusal/restoration/removal to `73`, not a healthy claim.
+Unknown exits, SSH `255`, signals, timeouts and local transfer/cleanup failures mean **unknown remote
+outcome**: inspect the host before retrying, without inferring rollback or daemon stoppage. These
+codes do not relax any STOP/reconciliation guard or grant emergency activation. Web/Admin retain
+their exact wire forms and nonzero-on-failure behavior; root-only backup/adoption retain their
+ordinary success/failure exit convention.
+
+Keep active and the previous **distinct successful image** archives. Repeating an identical healthy
+image is a no-op and does not rotate away the real predecessor. GitHub retention does not expire
+these host recovery archives. Only after a committed transition are unreferenced owned archive
+objects pruned; there is no global Docker prune. Failed attempts clean only their scratch/new
+uncommitted object. Cleanup or persistence failure is nonzero even if a container is healthy.
+
+Before the first rollout of this receiver, a healthy legacy runtime needs an explicit bounded
+archive adoption by an authorized root operator, for example:
+
+```text
+sudo /usr/local/sbin/kira-deploy adopt web <full-source-sha>
+```
+
+This checks the existing root-owned `releases/web-<source-sha>.tar.gz` against the **actual running
+image**, adopts its content-addressed bytes and records/pins that ID without loading or restarting it.
+The same command form supports Backend/Admin. If the legacy archive is absent, already overwritten
+by another same-SHA image, or otherwise mismatched, **STOP**. There is no automatic export/backup of
+the daemon's current image and no tag-based fallback; obtaining an authorized verified predecessor
+archive is a separate operator recovery action. Do not simply delete a pending marker or invent a
+healthy predecessor. Legacy-file retirement after verified adoption is an explicit operator action.
+
+Root-only `activate <component> sha256:<id>` selects an existing verified active/previous archive and
+uses the same normal transaction guards; it is not an unhealthy/unowned/drift/pending-state bypass.
+Abnormal-state recovery requires separately authorized reconciliation of actual runtime and records.
+All migrations remain **forward-only**; application rollback neither reverses schema/data changes
+nor guarantees compatibility with a migrated database.
+
+Focused offline tests (synthetic API/archives and disposable command stubs only):
+
+```bash
+python3 -B -m unittest discover -s scripts/ci -p 'test_image_release.py' -v
+```
+
+Installed hashes/permissions, Docker/Compose/Python behavior, genuine GitHub source/environment
+protection/token access, SSH authority retirement, and production state remain **EXTERNAL
+VERIFICATION REQUIRED**. These source tests do not deploy, authorize installation, establish public
+Web post-deployment behavior, or substitute for the separately authorized tiny real-Docker gate.
 
 ## GitHub production environment
 
@@ -83,7 +250,7 @@ Tomcat's `remote-ip-header`/`protocol-header` overrides must be absent or blank.
 alone does not prevent a `RemoteIpValve` when those overrides are present. Generic direct deployments
 retain their secure forwarding-off defaults outside server3.
 
-Each `activate_backend`, `activate_web`, and `activate_admin` path runs a quiet Compose configuration
+Each component deployment/recorded-activation path runs a quiet Compose configuration
 preflight with the candidate image and the migration profile, before service activation, migration,
 or tutorial-media volume mutation. Missing/empty ingress inputs or an invalid Compose/env combination
 fail without rendering configuration or parser diagnostics. This is a configuration gate, not proof
