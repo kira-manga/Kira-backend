@@ -1,5 +1,6 @@
 package me.manga.kira.backend.completion.application
 
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.observability.KiraMetrics
@@ -36,7 +37,7 @@ class InMemoryCompletionAdmission(private val properties: KiraCompletionProperti
             checkLimit(daily, properties.perUserDailyQuota, "COMPLETION_DAILY_QUOTA", DAY.seconds)
             if (active >= properties.globalConcurrency) {
                 metrics?.completionAdmission("concurrency_rejected")
-                throw TooManyRequestsException(
+                throw ServiceUnavailableException(
                     "Completion capacity is currently exhausted. Try again later.",
                     code = "COMPLETION_CONCURRENCY_LIMIT",
                     retryAfterSeconds = 1,

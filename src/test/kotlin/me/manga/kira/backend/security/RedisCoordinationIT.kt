@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.config.KiraCompletionProperties
@@ -60,7 +61,7 @@ class RedisCoordinationIT {
         clearRedis()
         val concurrencyProperties = quotaProperties.copy(perUserPerMinute = 0, globalConcurrency = 1)
         val held = RedisCompletionAdmission(template, concurrencyProperties).acquire(UUID.randomUUID())
-        assertThrows<TooManyRequestsException> {
+        assertThrows<ServiceUnavailableException> {
             RedisCompletionAdmission(template, concurrencyProperties).acquire(UUID.randomUUID())
         }
         held.close()
