@@ -24,6 +24,7 @@ kira:
   completion:
     enabled: true
     provider: echo
+    default-model: echo-1
     coordination-backend: memory
     instance-count: 1
     per-user-per-minute: 0

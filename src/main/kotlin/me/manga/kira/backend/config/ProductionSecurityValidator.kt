@@ -86,6 +86,7 @@ internal object ProductionSecurityPolicy {
             require((completion.apiKey?.length ?: 0) >= MIN_PROVIDER_KEY_LENGTH) {
                 "kira.completion.api-key is required and must be at least $MIN_PROVIDER_KEY_LENGTH characters"
             }
+            completion.requireDefaultModel()
             if (completion.instanceCount > 1) {
                 require(completion.coordinationBackend == "redis") {
                     "Multiple completion instances require Redis coordination"

@@ -202,7 +202,16 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
 ## Completion admission, provider, and retention
 
 Completions are disabled by default. Production startup fails if they are enabled without the HTTPS
-provider endpoint and API key. Echo exists only in explicit `dev`/`test` profiles. Admission applies
+provider endpoint, API key and nonblank `kira.completion.default-model` of at most 128 JVM UTF-16
+units. The native environment key is **`KIRA_COMPLETION_DEFAULTMODEL`**, not an additional YAML
+alias. Service construction validates the default before allocating its executor, including outside
+production. Disabled completion needs no default model or provider credentials. Echo and its
+configured `echo-1` default exist only in explicit `dev`/`test` profiles; there is no implicit
+production default. Null/blank request models use the configured value; nonblank request overrides
+and configured defaults are preserved exactly, not trimmed or normalized. Operators must verify
+model availability/authorization with their provider separately; startup does not query a catalog.
+
+Admission applies
 atomic per-user/global minute limits, a per-user daily quota, and a global concurrency lease before a
 request can enter the bounded executor. A multi-instance deployment must use Redis coordination;
 single-instance memory coordination must be declared explicitly. Overload returns 429 for rate/quota

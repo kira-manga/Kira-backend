@@ -351,13 +351,21 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo in v1) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large · 429 rate/quota · 503 admission unavailable |
+| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo only in dev/test) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large · 429 rate/quota · 503 admission unavailable |
 | `GET /api/v1/completions/{id}` | Fetch one — **owner or ADMIN only** (others → 404, never 403). | 200 · 404 |
 | `GET /api/v1/completions` | List the caller's own requests, newest first, paginated. ADMIN may pass `?userId=`. | 200 |
 
 - Request `{ "prompt": "…", "model"?: "…" }`. Blank prompt → **400** `BLANK_PROMPT`; prompt over
   `kira.completion.prompt-max-length` (default 8000) → **413** `PROMPT_TOO_LARGE`. A supplied `model`
-  over **128 characters** is rejected before persistence with **400** `MODEL_TOO_LONG`.
+  over **128 JVM UTF-16 units** is rejected before persistence with **400** `MODEL_TOO_LONG`, even
+  when it consists entirely of whitespace. This is the existing API bound, not PostgreSQL's
+  Unicode-character counting rule.
+- Omitted, null, empty or whitespace-only `model` uses `kira.completion.default-model` (native
+  environment key **`KIRA_COMPLETION_DEFAULTMODEL`**). The configured default must be nonblank and
+  at most 128 UTF-16 units; it is validated before the completion executor is created. Only the
+  explicit dev/test profiles supply `echo-1`; production has no implicit model fallback. A supplied
+  nonblank model remains an optional override. Both the effective default and explicit override
+  are persisted and forwarded exactly, without trimming, case folding or other normalization.
 - Admission rejects per-user/global minute limits with **429** `COMPLETION_USER_RATE_LIMIT` /
   `COMPLETION_GLOBAL_RATE_LIMIT` (`Retry-After: 60`), and daily quota with **429**
   `COMPLETION_DAILY_QUOTA` (`Retry-After: 86400`). Global concurrency exhaustion is **503**
@@ -373,8 +381,8 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 On success `result` is set and `errorCode`/`error` are null; on failure `errorCode` (a stable §10
 catalog value, e.g. `PROVIDER_TIMEOUT`) and `error` (a sanitized, bounded, generic message) are set
-and `result` is null. The prompt is never echoed back. The default model when `model` is omitted is
-`echo-1`. Error-code catalog: `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`,
+and `result` is null. The prompt is never echoed back. The example above uses the dev/test echo
+configuration. Error-code catalog: `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`,
 `INVALID_PROVIDER_RESPONSE`, `RESULT_TOO_LARGE` (reserved, unused in v1), `INTERNAL_COMPLETION_ERROR`
 (every unexpected exception maps here). Raw provider exceptions are never returned or stored — secured
 server logs only.

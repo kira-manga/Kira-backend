@@ -162,8 +162,9 @@ last enabled admin.
 
 ## 6. Use the development completion API
 
-The dev profile enables the explicit echo provider. Production must configure the HTTPS provider and
-all admission/retention controls described in [`SECURITY.md`](SECURITY.md):
+The dev profile enables the explicit echo provider and configures `echo-1` as its default model.
+Production must configure the HTTPS provider, an explicit `KIRA_COMPLETION_DEFAULTMODEL`, and all
+admission/retention controls described in [`SECURITY.md`](SECURITY.md):
 
 ```bash
 COMPLETION_JSON=$(curl --fail-with-body -sS -X POST "$KIRA_API_URL/completions" \
@@ -179,8 +180,10 @@ curl --fail-with-body -sS "$KIRA_API_URL/completions?page=0&size=20" \
   -H "Authorization: Bearer $USER_TOKEN" | jq
 ```
 
-A supplied `model` must be 128 characters or fewer; longer input returns 400 `MODEL_TOO_LONG` before
-anything is persisted.
+A supplied `model` must be 128 JVM UTF-16 units or fewer; longer input, including all-whitespace
+input, returns 400 `MODEL_TOO_LONG` before anything is persisted. Omitted/null/empty/whitespace-only
+models use the configured default; nonblank overrides and defaults are preserved exactly. The native
+environment key is `KIRA_COMPLETION_DEFAULTMODEL` (no underscore between DEFAULT and MODEL).
 
 ## 7. Edit and publish a source
 
@@ -265,6 +268,9 @@ published engine is `generic`. Read the grace-window rules before using terminal
   for bundled import, and a separate completion prompt character cap.
 - Use Redis coordination for authentication and completion admission whenever replica count exceeds
   one. Production startup rejects an unsafe multi-instance memory configuration.
+- Leave completion disabled or supply its HTTPS provider settings and a nonblank
+  `KIRA_COMPLETION_DEFAULTMODEL` of at most 128 UTF-16 units. There is no implicit production model;
+  verify the chosen model's availability and authorization with the provider separately.
 - Enable Ed25519 document signing and supply the active PKCS#8 private key, matching X.509 public key,
   and key id from the deployment secret store. See `SOURCE_DOCUMENT_SIGNING.md`.
 - Verify `kira.config.bundled-revision-floor` against the revision in the shipping app before cutover.
