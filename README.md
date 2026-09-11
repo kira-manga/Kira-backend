@@ -10,6 +10,11 @@ roles, admin source/user management with a full audit trail, Ed25519-signed docu
 optional authenticated completion service behind a production HTTPS provider abstraction. Echo is
 restricted to explicit development/test profiles.
 
+Bearer authentication rechecks enabled/current DB role and a per-user credential version. Password
+reset atomically advances that version and revokes older tokens on the next authentication check.
+Legacy tokens require one-time reauthentication; mixed-version traffic and old-image rollback are
+not revocation-safe. See [`Password-reset cutover`](docs/SECURITY.md#password-reset-semantics-and-coordinated-cutover).
+
 The service also owns bilingual website tutorials, immutable revisions, categories,
 ordering/featured state, and sanitized media; see [`docs/TUTORIALS.md`](docs/TUTORIALS.md).
 
@@ -127,8 +132,9 @@ disabled, malformed or mismatched material refuses startup, not a later publicat
 keys are supplied or generated automatically. The recipe needs Ed25519-capable OpenSSL (see
 [`Local document signing`](docs/LOCAL_DEV.md#local-document-signing)); tests supply ephemeral in-memory keys.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V13`); Hibernate
-only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/`, V1..V13 then
+V13.1 credential versions); Hibernate only validates against it. Swagger UI (dev profile only) is at
+`/swagger-ui/index.html`; the OpenAPI
 document is at `/v3/api-docs`.
 
 See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, seeding data, and gotchas.
@@ -172,7 +178,7 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V13 (catalog v2, editor drafts, step-up, changesets)
+  db/migration/    # forward-only V1..V13, then V13_1 credential versions (Flyway version 13.1)
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```

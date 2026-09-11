@@ -18,6 +18,7 @@ import java.time.Instant
 
 /**
  * Issues HS256 access tokens via Nimbus (PLAN §6). Claims: `sub` = user UUID, `email`, `role`,
+ * `credential_version` = canonical decimal string from the verified password's user snapshot,
  * `iss = kira.security.issuer`, `aud = [kira.security.audience]`, `iat`, `exp = iat + access-token-ttl`.
  * A static `kid` header is emitted from day one as the rotation seam (single active key in v1) — the
  * signing JWK carries the same `kid` so Nimbus's key selection matches the header.
@@ -41,8 +42,9 @@ class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecuri
             ),
         )
 
-    /** Mint a signed access token for [user]. Returns the compact token plus its lifetime. */
+    /** Mint from the supplied verified [user] snapshot, without a lookup. Returns token and lifetime. */
     fun issue(user: User, issuedAt: Instant = clock.instant()): IssuedToken {
+        require(user.credentialVersion >= 0) { "Credential version must be nonnegative." }
         val expiresAt = issuedAt.plus(properties.accessTokenTtl)
         val header = JwsHeader.with(MacAlgorithm.HS256).keyId(KEY_ID).build()
         val claims =
@@ -55,6 +57,7 @@ class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecuri
                 .expiresAt(expiresAt)
                 .claim(CLAIM_EMAIL, user.email)
                 .claim(CLAIM_ROLE, user.role.name)
+                .claim(CLAIM_CREDENTIAL_VERSION, user.credentialVersion.toString())
                 .build()
         val token = encoder.encode(JwtEncoderParameters.from(header, claims)).tokenValue
         return IssuedToken(value = token, expiresInSeconds = properties.accessTokenTtl.seconds)
@@ -64,6 +67,7 @@ class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecuri
         const val KEY_ID = "kira-hs256-1"
         const val CLAIM_EMAIL = "email"
         const val CLAIM_ROLE = "role"
+        const val CLAIM_CREDENTIAL_VERSION = "credential_version"
     }
 }
 

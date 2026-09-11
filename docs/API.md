@@ -7,7 +7,7 @@ envelope in [Error model](#error-model). Auth and token semantics are in [`SECUR
 lifecycle semantics in [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md).
 Tutorial publishing and its public/ADMIN route inventory are in [`TUTORIALS.md`](TUTORIALS.md).
 
-Auth levels: **anon** (no token), **USER** (bearer, any enabled user), **ADMIN** (bearer, `ADMIN`
+Auth levels: **anon** (no token), **USER** (current, non-revoked bearer for an enabled user), **ADMIN** (bearer, `ADMIN`
 role). Authorization is enforced in the security filter chain before dispatch; authorities are
 derived from the **DB role**, not the token claim.
 
@@ -34,7 +34,7 @@ in 404/409 details. Typed-exception → status mapping:
 | 404 | `NotFoundException` (+ subclasses); unmatched route | `NOT_FOUND`, `*_NOT_FOUND`, `NO_PUBLISHED_DOCUMENT` |
 | 405 | unsupported method | `METHOD_NOT_ALLOWED` |
 | 406 | unsupported response media type | `NOT_ACCEPTABLE` |
-| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, last-admin guard |
+| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, `CREDENTIAL_VERSION_EXHAUSTED`, last-admin guard |
 | 410 | `GoneException` | `GONE` (removed source) |
 | 413 | body/prompt limit | `PAYLOAD_TOO_LARGE`, `PROMPT_TOO_LARGE` |
 | 415 | unsupported request media type | `UNSUPPORTED_MEDIA_TYPE` |
@@ -208,7 +208,18 @@ Body `{email, password}`.
   completion precedes its audit/401, so this dependency error retains precedence over that 401.
 
 ### `GET /api/v1/auth/me`  — USER or ADMIN
-- **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon.
+- **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon/invalid/revoked bearer.
+
+New JWTs carry a private `credential_version` claim as a canonical decimal **string**, paired with
+the exact password snapshot verified at login. Every bearer request checks equality with the current
+database version, in addition to enabled/current-role enforcement. Password reset invalidates the
+target's older tokens at authentication checks after commit, including admin step-up requests even
+with the correct new password. Already-authenticated work is not retroactively cancelled, and this
+does not add revocation of previously issued step-up grants. Login racing reset can return an already
+stale token, never a refreshed version for an old verified password. Missing pre-upgrade claims and
+malformed/wrong-typed/mismatched versions receive the existing generic **401**; users must sign in again
+once at cutover. User/login response DTO shapes are unchanged. See the coordinated rollout and
+old-image rollback limits in [SECURITY.md](SECURITY.md#password-reset-semantics-and-coordinated-cutover).
 
 ### `POST /api/v1/auth/refresh`  — not registered
 No handler in v1 (refresh tokens are future work). Anonymous → **401** (the `anyRequest authenticated`
@@ -361,11 +372,14 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 | `POST /admin/users` | `{email, password, role}` → create. Password policy and normalized email bound of §2; email case-insensitively unique. Admin authentication/authorization precedes creation. | 201 · 409 duplicate · 400 (including `EMAIL_TOO_LONG`) |
 | `GET /admin/users` | Paginated (`?page&size`, size ≤ 100). | 200 |
 | `POST /admin/users/{id}/enable` | Re-enable a disabled user. | 200 · 404 |
-| `POST /admin/users/{id}/disable` | Disable (in-flight tokens die at the next request). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
-| `POST /admin/users/{id}/reset-password` | `{newPassword}` (policy-checked); audited, never logs the password. | 200 · 404 · 400 |
+| `POST /admin/users/{id}/disable` | Disable (bearer rejected at the next authentication check). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
+| `POST /admin/users/{id}/reset-password` | `{newPassword}` (policy-checked); atomically changes hash and advances credential version, revoking older tokens. Audit records actor/target only. | 200 · 404 · 400 · 409 `CREDENTIAL_VERSION_EXHAUSTED` |
 
 - Create → **201** `{ "id", "email", "role" }` (from `AdminUserResponse`; `POST` returns the created id).
 - List item → `{ "id", "email", "role", "enabled", "createdAt" }` — no password material, ever.
+- Reset, even to the same password, advances once; failure or rollback does not partially change
+  credentials or create a success audit. Counter exhaustion is a value-free **409** (`Password reset is
+  unavailable.`), not wraparound or a hash-only reset. Other users' tokens are unaffected.
 
 ---
 
