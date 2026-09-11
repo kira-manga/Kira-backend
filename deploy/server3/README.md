@@ -85,6 +85,8 @@ logged. Only the original validated gzip is streamed to the fixed receiver.
   installed export shape; a synthetic fixture is not that proof.
 - Prerequisites: Python **3.10+**, Bash, GNU `timeout`/file utilities and `flock`, the supported Docker
   Engine/Compose described below, and a Compose supporting application `--pull never`/`--no-build`.
+  The Backend backup path additionally requires **Linux, Python3.11+**, PostgreSQL17 clients in
+  the installed database image, and the reviewed backup helper/pin described under Operations.
   Install the helper root-owned mode `0644`, receiver `/usr/local/sbin/kira-deploy` and gateway
   `/usr/local/bin/kira-deploy-gateway` root-owned mode `0755`, with non-writable parent directories.
   `/opt/kira`, release directories and the fixed helper/config paths must be root owned, nonsymlink,
@@ -383,11 +385,126 @@ and rollout remain **EXTERNAL VERIFICATION REQUIRED**, not implied by a source o
 
 ## Operations and recovery
 
-Run deployments only through the workflow or restricted stream command. For a manual backup, freeze
-tutorial ADMIN mutations and run `sudo /usr/local/sbin/kira-deploy backup`. It must create a matched
-PostgreSQL dump and `kira-tutorial-media` archive with bundle checksums. Files remain root-only in
-`/opt/kira/backups`; the web cache volume is disposable. The independent `backup` command neither
-loads `ingress.env` nor invokes Compose/preflight, so ingress repair cannot prevent a data backup.
+Run deployments only through the workflow or restricted stream command. Backend backup publication
+requires the **jointly reviewed receiver and shared Backend29 helper**, not this receiver alone.
+No gateway/sudoers permission is broadened: `backup` remains a root-only command.
+
+### Install the reviewed backup helper and pin together
+
+Install the exact reviewed `scripts/db/backup_bundle.py` as
+`/usr/local/libexec/kira-backup-bundle.py`, root-owned mode0644, together with
+`/usr/local/libexec/kira-backup-bundle.sha256`, root-owned mode0644 (0600 also works).
+The pin contains **exactly the review-approved lowercase64-hex SHA256 plus newline**.
+Obtain that expected digest from the independently accepted source/artifact record; generating a
+new hash from arbitrary installed bytes is not provenance. Neither file may be a symlink or writable
+by group/others. Every ancestor must also be root-owned, nonsymlink and not writable by non-root.
+The receiver checks this custody and installed bytes before each helper invocation with
+`python3 -I -B`. Installation/replacement must exclude active receivers; hostile concurrent root is
+outside this custody boundary. Do not silently omit the pin, downgrade Python or substitute another
+verifier. Web/Admin's image-only helper/protocol remains unchanged.
+
+`/opt/kira/backups` must be an owned private0700 nonsymlink directory beneath trusted ancestors.
+Create it if absent; stop on an unexpected existing path instead of repairing owner files. The
+receiver creates unique `.stage.<random>` directories, never timestamp-only final filenames, and
+publishes whole generations using the shared Linux `renameat2(RENAME_NOREPLACE)` helper plus fsync.
+Missing safe-publication support, cross-device placement and failed fsync are errors, not reasons
+to fall back to overwrite. Installed filesystem/ACL/durability behavior remains externally verified.
+
+### Fresh external writer freeze **and drain**, before either backup path
+
+Exclude **every** relevant writer, including tutorial ADMIN mutations, and positively drain their
+in-flight database/filesystem work before requesting a backup or mutating Backend deployment.
+Docker pause is not a drain: for example, pausing after media deletion but before database commit
+can produce a correctly hashed but inconsistent pair. No media-service draining mechanism or
+production quiescence is established by this receiver. The owner must supply and retain that
+external exclusion through the backup, or through explicit reconciliation after a failure.
+
+For each invocation, an authorized root operator/system then creates
+`/opt/kira/backups/.writers-frozen-and-drained`, a regular nonsymlink root-owned0600 file containing
+exactly this one line, including its newline:
+
+```text
+KIRA_BACKUP_WRITERS_FROZEN_AND_DRAINED=yes
+```
+
+Create the marker exclusively under the deployment lock; do not overwrite an existing marker or
+pending obligation. It is an attestation, **not evidence of quiescence**. The restricted SSH
+environment cannot authorize it. After validating the marker and actual Backend identity/state,
+the receiver consumes it before the first mutating Backend Docker command, including image load,
+media initialization and PostgreSQL startup. An identical-image no-op precedes this backup path;
+it does not consume a marker. Do not leave/reuse a stale marker after a refusal/no-op or release
+writer exclusion while an unused marker remains: re-establish the external precondition for the
+next invocation. There is no automatic approval, freshness inference or freeze/drain bypass.
+
+With that prerequisite, a manual backup is:
+
+```text
+sudo /usr/local/sbin/kira-deploy backup
+```
+
+The independent `backup` command neither loads `ingress.env`/`images.env` nor invokes Compose,
+preflight or release recovery; ingress/configuration repair cannot prevent an otherwise authorized
+data backup. It does require the installed pinned helper and positively identified running
+PostgreSQL/media volume. Positively absent or owned stopped Backend needs no pause; an initially
+paused, foreign, replaced or uninspectable Backend is a STOP, never an instruction to unpause it.
+
+### Completed generations and failure custody
+
+A successful generation is `/opt/kira/backups/kira-<random>/`, containing the same-stem custom
+`.dump`, `.media.tar.gz` and versioned `.bundle.json`, plus private diagnostic TOC, operation/CID and
+digest records. The v1 manifest binds the two relative basenames, byte lengths and SHA256 values.
+The receiver requires an actual custom-dump TOC listing, a readable safe-profile media tar, and
+the pinned shared final selected-pair verifier before publication. A valid archive of empty media
+is supported for a new installation; zero-byte/corrupt archives are not. Files remain0600 under
+0700 directories; the web cache volume is disposable. Existing flat backups/generations are not
+overwritten, pruned, resealed or silently upgraded. Explicit NEW-backend legacy verification and
+relocated restore are described in [DISASTER_RECOVERY.md](../../docs/DISASTER_RECOVERY.md).
+
+Record the exact manifest digest and successful generation in the trusted encrypted off-host
+recovery catalog. A self-generated `bundle-pin` file is a checksum, not an external trust anchor,
+successful restore or retention service. Never select a backup by a newest-filename glob.
+
+Before the first Docker side effect, the receiver exclusively publishes and fsyncs
+`/opt/kira/backups/.pending`. This obligation binds one invocation, exact initial Backend ID/state,
+stage and target. Its short append-only phase records identify started versus positively completed
+operations; named helper containers also have invocation labels/CID files, and database execs use
+the exact PostgreSQL ID with invocation-specific `PGAPPNAME`. The recorded receiver PID is
+diagnostic, **not authority to signal a subsequently reused PID**. All conflicting Backup and
+Backend deploy/activate/adopt calls refuse this obligation across later lock acquisitions.
+Web/Admin do not mutate or discard it.
+
+Normal completion and EXIT/INT/TERM/HUP share the existing cleanup protocol. Only a positively
+completed owned pause permits one exact-ID unpause; no replacement, initial pause or unconfirmed
+pause is compensated. The resumed state is checked; cached `healthy` while `Paused=true` cannot
+qualify activation/restoration. A failed/unconfirmed unpause is never retried automatically. Other
+unfinished operations remain unresolved even if that owned Backend was successfully resumed.
+Repeated catchable signals cannot interrupt cleanup and turn uncertainty into a healthy claim.
+
+**Any retained `.pending` is operator STOP.** The receiver keeps its potentially writable stage
+and does not migrate or report restored71. A helper can rename a directory and then time out/fail
+before its fsync/return: the named **target may already exist** while the stage is absent. Both
+the named stage and target remain unselectable/unadvertised until positive reconciliation; do not
+claim either is absent or delete it while a daemon/local helper may still act. Previously completed
+generations remain untouched. If clearing `.pending` fails or its directory fsync fails, the receiver
+preserves/restores the same owned obligation inode best-effort and reports indeterminate failure;
+a failing storage system may prevent even that persistence. Stop conflicting work externally too.
+
+There is **no automatic reconcile/retry subcommand**. Under separately authorized root custody and
+the same deployment lock, inspect the exact obligation, containers/execs/helpers, stage **and**
+target; positively establish completed operations and exclude late effects, confirm the intended
+Backend state and reconcile any partially published bytes. Only then archive/remove the exact
+owned obligation and any proved-safe scratch, with a fresh freeze/drain attestation for a new
+attempt. Merely deleting `.pending`, waiting an arbitrary interval, observing one unpaused state,
+or killing a Docker CLI proves none of this. Retain the separate image-transaction pending record
+as required by the exact-image runbook. Backup uncertainty cannot earn an application rollback71;
+root-only backup remains ordinary success/nonzero failure, and signal outcomes remain unknown.
+
+Catchable-signal handling is not SIGKILL, power-loss or daemon-loss recovery. Installed writer
+exclusion/draining, exact helper/pin custody, daemon late-effect reconciliation, available space,
+backup duration and storage/fsync/crash behavior, encrypted off-host/PITR/retention, actual matched
+restore/migration/application drills and achieved RPO/RTO remain **EXTERNAL VERIFICATION REQUIRED**.
+This concerns NEW backend-data and installation recovery only; W06/old Firestore recovery is excluded.
+
 Automatic image rollback retains the installed Compose/Nginx isolation contract; do not restore an
 old shared Admin/Web network or remove header sanitization while trusted-ingress mode is enabled.
 
