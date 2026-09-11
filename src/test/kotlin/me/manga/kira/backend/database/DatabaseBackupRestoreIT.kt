@@ -27,7 +27,7 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Linux disposable drill: real portable backup in the two source-version successes, real restore in all cases,
+ * Linux disposable drill: real portable backup in the three source-version successes, real restore in all cases,
  * PG17.6 custom dump FILE BYTES, real Flyway predicates and media publication. No production credentials,
  * traffic, installed writer-drain or release-image proof. Fixed test-only bridges execute real clients in
  * their exact disposable containers; no host PG client fallback.
@@ -90,6 +90,69 @@ class DatabaseBackupRestoreIT {
             assertEquals("13", release.info().current().version.version)
             assertEquals((1..13).map(Int::toString), history(target).map { it.version })
             assertTrue(history(target).all { it.success })
+            assertUser(target, userId)
+        }
+    }
+
+    @Test
+    fun sourceThirteenOnePreservesCredentialsBeforeReleaseValidation() {
+        val directory = Files.createDirectory(
+            temporary.resolve("selected"),
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
+        ).toAbsolutePath().normalize()
+        withDatabases(producerOutput = directory) { source, target ->
+            flyway(source, "13.1").migrate()
+            val userId = UUID.randomUUID()
+            insertUser(source, userId)
+            execute(source, "UPDATE users SET credential_version=7 WHERE id='$userId'")
+            val originalCredentials = credentialSnapshot(source, userId)
+            assertEquals(7L, originalCredentials.first)
+            assertTrue(originalCredentials.second.isNotBlank(), "Source password hash must be present")
+            val originalHistory = history(source)
+            assertEquals((1..13).map(Int::toString) + "13.1", originalHistory.map { it.version })
+            assertTrue(originalHistory.all { it.success })
+            val pair = producedPair(source, directory)
+            val environment = targetEnvironment(target)
+
+            assertSuccess(restoreDatabase(pair, "13.1", environment))
+            assertDatabaseReceipt(pair, target, "13.1")
+            assertUser(target, userId)
+            assertEquals(originalHistory, history(target))
+            assertTrue(credentialSnapshot(target, userId) == originalCredentials, "Credential snapshot changed after database restore")
+            assertFalse(Files.exists(pair.mediaTarget))
+            assertFalse(Files.exists(pair.attempt.resolve("pair.json")))
+
+            // Only the frozen source13.1 pair may supply media; no release migration runs between stages.
+            Files.delete(pair.dump)
+            Files.delete(pair.media)
+            Files.delete(pair.manifest)
+            assertSuccess(run(listOf(scripts.resolve("restore-media.sh").toString(), pair.attempt.toString()), environment))
+            assertArrayEquals(mediaBytes, Files.readAllBytes(pair.mediaTarget.resolve("tutorial/item.bin")))
+            assertEquals(
+                PosixFilePermissions.fromString("rw-------"),
+                Files.getPosixFilePermissions(pair.mediaTarget.resolve("tutorial/item.bin")),
+            )
+            assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(pair.mediaTarget))
+            val pairReceipt = record(pair.attempt.resolve("pair.json"))
+            assertEquals("kira.restore-pair.v1", pairReceipt.path("schema").asText())
+            assertEquals(
+                sha256(Files.readAllBytes(pair.attempt.resolve("db.json"))),
+                pairReceipt.path("database_receipt_sha256").asText(),
+            )
+            assertEquals(pair.mediaTarget.toString(), pairReceipt.path("target").path("path").asText())
+            assertFalse(Files.exists(pair.attempt.resolve("STOP.json")))
+            assertEquals(originalHistory, history(target))
+            assertTrue(credentialSnapshot(target, userId) == originalCredentials, "Credential snapshot changed after paired restore")
+
+            // Distinct current-release gate AFTER pairing: an already-current source applies nothing.
+            // Pinned test resources are not exact release-image or revocation-continuity proof.
+            val release = flyway(target, "13.1")
+            assertTrue(release.info().pending().isEmpty())
+            assertEquals(0, release.migrate().migrationsExecuted)
+            assertTrue(release.validateWithResult().validationSuccessful)
+            assertEquals("13.1", release.info().current().version.version)
+            assertEquals(originalHistory, history(target))
+            assertTrue(credentialSnapshot(target, userId) == originalCredentials, "Credential snapshot changed after release validation")
             assertUser(target, userId)
         }
     }
@@ -204,8 +267,12 @@ class DatabaseBackupRestoreIT {
         Files.newInputStream(dump).use { input -> assertArrayEquals("PGDMP".toByteArray(Charsets.US_ASCII), input.readNBytes(5)) }
         assertEquals(
             setOf(
-                "drill.dump", "drill.dump.manifest", "drill.dump.sha256",
-                "drill.media.tar.gz", "drill.media.tar.gz.sha256", "drill.bundle.json",
+                "drill.dump",
+                "drill.dump.manifest",
+                "drill.dump.sha256",
+                "drill.media.tar.gz",
+                "drill.media.tar.gz.sha256",
+                "drill.bundle.json",
             ),
             Files.newDirectoryStream(directory).use { entries -> entries.map { it.fileName.toString() }.toSet() },
             "Only completed producer outputs remain: no retained stage or legacy bundle authority.",
@@ -308,14 +375,19 @@ class DatabaseBackupRestoreIT {
         )
     }
 
-    private fun restoreDatabase(pair: SelectedPair, version: String, environment: Map<String, String>): CommandResult =
-        run(
-            listOf(
-                scripts.resolve("verify-restore.sh").toString(), pair.manifest.toString(), pair.pin,
-                pair.dump.toString(), pair.media.toString(), version, pair.attempt.toString(), pair.mediaTarget.toString(),
-            ),
-            environment,
-        )
+    private fun restoreDatabase(pair: SelectedPair, version: String, environment: Map<String, String>): CommandResult = run(
+        listOf(
+            scripts.resolve("verify-restore.sh").toString(),
+            pair.manifest.toString(),
+            pair.pin,
+            pair.dump.toString(),
+            pair.media.toString(),
+            version,
+            pair.attempt.toString(),
+            pair.mediaTarget.toString(),
+        ),
+        environment,
+    )
 
     private fun assertDatabaseReceipt(pair: SelectedPair, target: PostgreSQLContainer<*>, sourceVersion: String) {
         val request = record(pair.attempt.resolve("request.json"))
@@ -359,6 +431,21 @@ class DatabaseBackupRestoreIT {
         }
     }
 
+    private fun credentialSnapshot(postgres: PostgreSQLContainer<*>, id: UUID): Pair<Long, String> =
+        DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password).use { connection ->
+            connection.prepareStatement("SELECT credential_version, password_hash FROM users WHERE id = ?").use { statement ->
+                statement.setObject(1, id)
+                statement.executeQuery().use { result ->
+                    assertTrue(result.next())
+                    val version = result.getLong("credential_version")
+                    assertFalse(result.wasNull())
+                    val passwordHash = requireNotNull(result.getString("password_hash"))
+                    assertFalse(result.next())
+                    version to passwordHash
+                }
+            }
+        }
+
     private fun history(postgres: PostgreSQLContainer<*>): List<HistoryRow> =
         DriverManager.getConnection(postgres.jdbcUrl, postgres.username, postgres.password).use { connection ->
             connection.createStatement().use { statement ->
@@ -369,8 +456,12 @@ class DatabaseBackupRestoreIT {
                         while (result.next()) {
                             add(
                                 HistoryRow(
-                                    result.getInt("installed_rank"), result.getString("version"), result.getString("type"),
-                                    result.getString("script"), result.getObject("checksum") as Int?, result.getBoolean("success"),
+                                    result.getInt("installed_rank"),
+                                    result.getString("version"),
+                                    result.getString("type"),
+                                    result.getString("script"),
+                                    result.getObject("checksum") as Int?,
+                                    result.getBoolean("success"),
                                 ),
                             )
                         }
@@ -448,33 +539,18 @@ class DatabaseBackupRestoreIT {
 
     private fun record(path: Path): JsonNode = ObjectMapper().readTree(Files.readAllBytes(path))
 
-    private fun executable(name: String): Path =
-        System.getenv("PATH").split(':')
-            .map { Path.of(it).resolve(name).toAbsolutePath() }
-            .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
-            ?: error("Real PG17 restore IT requires the Linux $name executable")
+    private fun executable(name: String): Path = System.getenv("PATH").split(':')
+        .map { Path.of(it).resolve(name).toAbsolutePath() }
+        .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
+        ?: error("Real PG17 restore IT requires the Linux $name executable")
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
     private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
-    private data class SelectedPair(
-        val manifest: Path,
-        val dump: Path,
-        val media: Path,
-        val pin: String,
-        val attempt: Path,
-        val mediaTarget: Path,
-    )
+    private data class SelectedPair(val manifest: Path, val dump: Path, val media: Path, val pin: String, val attempt: Path, val mediaTarget: Path)
 
-    private data class HistoryRow(
-        val rank: Int,
-        val version: String?,
-        val type: String,
-        val script: String,
-        val checksum: Int?,
-        val success: Boolean,
-    )
+    private data class HistoryRow(val rank: Int, val version: String?, val type: String, val script: String, val checksum: Int?, val success: Boolean)
 
     private data class CommandResult(val exitCode: Int, val output: String, val error: String)
 
