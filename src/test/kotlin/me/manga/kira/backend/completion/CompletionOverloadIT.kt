@@ -8,6 +8,7 @@ import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.UserRepository
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.springframework.beans.factory.annotation.Autowired
@@ -24,7 +25,7 @@ import java.util.concurrent.TimeUnit
     properties = [
         "kira.completion.provider=overload-test",
         "kira.completion.executor-threads=1",
-        "kira.completion.queue-capacity=1",
+        "kira.completion.queue-capacity=2",
         "kira.completion.queue-timeout=PT0.1S",
         "kira.completion.timeout=PT5S",
     ],
@@ -45,7 +46,7 @@ class CompletionOverloadIT : AbstractIntegrationTest() {
         val caller = Executors.newSingleThreadExecutor()
         try {
             val first = caller.submit { service.create(user.id, "hold", null) }
-            provider.started.await(2, TimeUnit.SECONDS)
+            assertTrue(provider.started.await(2, TimeUnit.SECONDS))
 
             val error = assertThrows<ServiceUnavailableException> { service.create(user.id, "must-not-run", null) }
             assertEquals("COMPLETION_OVERLOADED", error.code)
@@ -59,10 +60,13 @@ class CompletionOverloadIT : AbstractIntegrationTest() {
 
             provider.release.countDown()
             first.get(2, TimeUnit.SECONDS)
-            assertEquals(listOf("hold"), provider.prompts)
+            // A later call on the same single worker acknowledges that the canceled task was drained.
+            service.create(user.id, "after-cancel", null)
+            assertEquals(listOf("hold", "after-cancel"), provider.prompts)
         } finally {
             provider.release.countDown()
             caller.shutdownNow()
+            assertTrue(caller.awaitTermination(2, TimeUnit.SECONDS))
         }
     }
 }

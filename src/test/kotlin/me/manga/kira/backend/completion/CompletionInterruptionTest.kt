@@ -3,6 +3,7 @@ package me.manga.kira.backend.completion
 import me.manga.kira.backend.completion.application.CompletionAdmission
 import me.manga.kira.backend.completion.application.CompletionPermit
 import me.manga.kira.backend.completion.application.CompletionPersistence
+import me.manga.kira.backend.completion.application.CompletionPublication
 import me.manga.kira.backend.completion.application.CompletionService
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
@@ -30,12 +31,14 @@ class CompletionInterruptionTest {
         val id = UUID.randomUUID()
         val userId = UUID.randomUUID()
         val providerStarted = CountDownLatch(1)
+        val worker = AtomicReference<Thread>()
         val persistedWithoutInterrupt = AtomicBoolean(false)
         val provider =
             object : CompletionProvider {
                 override val name = "interrupt-test"
 
                 override fun complete(prompt: String, model: String): CompletionOutcome {
+                    worker.set(Thread.currentThread())
                     providerStarted.countDown()
                     return try {
                         CountDownLatch(1).await()
@@ -62,11 +65,11 @@ class CompletionInterruptionTest {
                 when (invocation.method.name) {
                     "createPending" -> id
 
-                    "markRunning" -> null
+                    "markRunning" -> true
 
                     "storeOutcome" -> {
                         persistedWithoutInterrupt.set(!Thread.currentThread().isInterrupted)
-                        failedView
+                        CompletionPublication(failedView, won = true)
                     }
 
                     else -> Answers.RETURNS_DEFAULTS.answer(invocation)
@@ -107,6 +110,13 @@ class CompletionInterruptionTest {
             assertTrue(interruptRestored.get())
         } finally {
             service.shutdown()
+            if (requestThread.isAlive) requestThread.interrupt()
+            requestThread.join(2_000)
+            worker.get()?.let {
+                it.join(2_000)
+                assertFalse(it.isAlive, "Owned completion worker did not stop")
+            }
+            assertFalse(requestThread.isAlive)
         }
     }
 }
