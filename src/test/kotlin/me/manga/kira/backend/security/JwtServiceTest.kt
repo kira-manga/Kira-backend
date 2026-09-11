@@ -67,7 +67,23 @@ class JwtServiceTest {
         // URL-typed Jwt.getIssuer() accessor must not be used.
         assertEquals(properties.issuer, decoded.getClaimAsString(JwtClaimNames.ISS))
         assertEquals(listOf(properties.audience), decoded.audience)
+        assertEquals("0", decoded.claims[JwtService.CLAIM_CREDENTIAL_VERSION])
         assertEquals(properties.accessTokenTtl.seconds, token.expiresInSeconds)
+    }
+
+    @Test
+    fun `credential version is a raw canonical string from the supplied snapshot`() {
+        listOf(0L, 7L, Long.MAX_VALUE).forEach { version ->
+            val snapshot = user().copy(credentialVersion = version)
+            val token = jwtService.issue(snapshot)
+            // Do not use getClaimAsString: a numeric claim must fail this exact-type oracle.
+            assertEquals(version.toString(), decoder.decode(token.value).claims[JwtService.CLAIM_CREDENTIAL_VERSION])
+        }
+    }
+
+    @Test
+    fun `negative credential version cannot be issued`() {
+        assertThrows(IllegalArgumentException::class.java) { jwtService.issue(user().copy(credentialVersion = -1)) }
     }
 
     @Test

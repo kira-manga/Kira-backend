@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.config.KiraAdminStudioProperties
 import me.manga.kira.backend.config.KiraAuthProperties
 import me.manga.kira.backend.config.KiraSecurityProperties
+import me.manga.kira.backend.support.JwtTestSupport
 import me.manga.kira.backend.support.MutableClock
 import me.manga.kira.backend.user.application.AuthService
 import me.manga.kira.backend.user.application.CredentialVerifier
@@ -20,9 +21,15 @@ import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.doReturn
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
+import org.mockito.Mockito.verifyNoMoreInteractions
 import org.mockito.Mockito.`when`
 import org.springframework.security.crypto.password.PasswordEncoder
+import org.springframework.security.oauth2.jose.jws.MacAlgorithm
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
+import org.springframework.security.oauth2.server.resource.InvalidBearerTokenException
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -146,6 +153,45 @@ class AuthAttemptCallerTest {
             assertEquals(1, completions)
         }
         verifyNoInteractions(tokens, grants, audit)
+    }
+
+    @Test
+    fun `login never promotes the verified password snapshot after reset or throttle completion`() {
+        val verified = user.copy(credentialVersion = 4)
+        var stored = verified
+        val events = mutableListOf<String>()
+        doAnswer { stored }.`when`(users).findByEmail(EMAIL)
+        doAnswer { stored }.`when`(users).findById(user.id)
+        doAnswer {
+            events.add("verified")
+            stored = verified.copy(passwordHash = "first-reset-hash", credentialVersion = 5)
+            true
+        }.`when`(encoder).matches(PASSWORD, verified.passwordHash)
+        val throttle = attemptThrottle { success ->
+            assertEquals(true, success)
+            assertEquals(5L, stored.credentialVersion)
+            events.add("completed")
+            stored = stored.copy(passwordHash = "second-reset-hash", credentialVersion = 6)
+        }
+        // Use a real issuer: issue(user)'s default Clock argument is evaluated on the instance.
+        val properties = KiraSecurityProperties(jwtSecret = JwtTestSupport.TEST_JWT_SECRET_BASE64)
+        val keyProvider = JwtKeyProvider(properties)
+        val realTokens = JwtService(keyProvider, properties, Clock.systemUTC())
+        val userService = UserService(users, encoder, mock(PasswordPolicy::class.java))
+        val service = AuthService(users, userService, CredentialVerifier(encoder), realTokens, throttle, KiraAuthProperties(), audit)
+
+        val result = service.login(EMAIL, PASSWORD, IP)
+
+        assertEquals(listOf("verified", "completed"), events)
+        verify(users).findByEmail(EMAIL)
+        verifyNoMoreInteractions(users) // No generation-only or whole-user reread after verification.
+        verifyNoInteractions(tokens, grants, audit)
+        val decoder = NimbusJwtDecoder.withSecretKey(keyProvider.secretKey).macAlgorithm(MacAlgorithm.HS256).build()
+        val decoded = decoder.decode(result.token.value)
+        assertEquals("4", decoded.claims[JwtService.CLAIM_CREDENTIAL_VERSION])
+        assertThrows<InvalidBearerTokenException> { DbUserJwtAuthenticationConverter(users).convert(decoded) }
+        val current = decoder.decode(realTokens.issue(stored).value)
+        DbUserJwtAuthenticationConverter(users).convert(current) // Positive control: generation6 is current.
     }
 
     private fun call(throttle: AuthThrottle, stepUp: Boolean) {
