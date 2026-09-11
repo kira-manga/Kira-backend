@@ -1,5 +1,6 @@
 package me.manga.kira.backend.user.infrastructure
 
+import me.manga.kira.backend.user.domain.CredentialVersionExhaustedException
 import me.manga.kira.backend.user.domain.PagedUsers
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
@@ -8,6 +9,8 @@ import me.manga.kira.backend.user.domain.UserRepository
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Repository
+import org.springframework.transaction.annotation.Transactional
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -39,22 +42,22 @@ class JpaUserRepositoryAdapter(private val jpa: SpringDataUserRepository) : User
         return jpa.save(entity).toDomain()
     }
 
+    @Transactional
     override fun setEnabled(id: UUID, enabled: Boolean) {
-        val entity = jpa.findById(id).orElseThrow { UserNotFoundException() }
-        entity.enabled = enabled
-        jpa.save(entity)
+        if (jpa.updateEnabled(id, enabled, Instant.now()) != 1) throw UserNotFoundException()
     }
 
+    @Transactional
     override fun updatePasswordHash(id: UUID, passwordHash: String) {
-        val entity = jpa.findById(id).orElseThrow { UserNotFoundException() }
-        entity.passwordHash = passwordHash
-        jpa.save(entity)
+        if (jpa.updatePasswordHashAndVersion(id, passwordHash, Instant.now(), Long.MAX_VALUE) != 1) {
+            if (!jpa.existsById(id)) throw UserNotFoundException()
+            throw CredentialVersionExhaustedException()
+        }
     }
 
+    @Transactional
     override fun updateRole(id: UUID, role: Role) {
-        val entity = jpa.findById(id).orElseThrow { UserNotFoundException() }
-        entity.role = role
-        jpa.save(entity)
+        if (jpa.updateRole(id, role.name, Instant.now()) != 1) throw UserNotFoundException()
     }
 
     override fun findPage(page: Int, size: Int): PagedUsers {
@@ -70,5 +73,6 @@ class JpaUserRepositoryAdapter(private val jpa: SpringDataUserRepository) : User
         enabled = enabled,
         createdAt = createdAt,
         updatedAt = updatedAt,
+        credentialVersion = credentialVersion,
     )
 }

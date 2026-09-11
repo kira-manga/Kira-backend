@@ -9,7 +9,8 @@ rules, and the `application*.yml` profiles. Authoritative spec: [`PLAN.md`](PLAN
 - **Scheme:** HS256 (symmetric) via Nimbus (`spring-security-oauth2-jose`). One shared in-process key —
   asymmetric signing is deliberately not introduced without a real multi-service key-distribution need.
   A `kid` header is emitted from day one as the rotation seam (single active key in v1).
-- **Claims:** `sub` = user UUID, `email`, `role` (`ADMIN|USER`), `iss = "kira-backend"`,
+- **Claims:** `sub` = user UUID, `email`, `role` (`ADMIN|USER`), `credential_version` (canonical
+  nonnegative decimal **string**, not a JSON number), `iss = "kira-backend"`,
   `aud = "kira-api"`, `iat`, `exp = iat + kira.security.access-token-ttl` (default **PT60M**).
 - **Verification:** `NimbusJwtDecoder.withSecretKey(...)` explicitly validates the signature, `exp`/`nbf`
   (60s clock skew), `iss`, and `aud`. Issuer/audience/skew/TTL are `kira.security.*` properties.
@@ -19,9 +20,9 @@ rules, and the `application*.yml` profiles. Authoritative spec: [`PLAN.md`](PLAN
   clearly marked insecure (`application-dev.yml`). **Rotation:** issue a new key, bump `kid`, and (when
   needed) run a bounded dual-accept window before retiring the old key.
 
-### DB-backed per-request check (why in-flight tokens die on disable)
+### DB-backed per-request check (disable and password-reset revocation)
 
-The enabled/role check lives **inside the authentication pipeline**, not in a controller argument
+The enabled/credential-version/role check lives **inside the authentication pipeline**, not in a controller argument
 resolver (which would only run when a handler injects it). A custom `jwtAuthenticationConverter`
 (`Converter<Jwt, AbstractAuthenticationToken>`) registered on `oauth2ResourceServer { jwt {} }` runs for
 **every** request that presents a bearer token, on every protected endpoint. After standard JWT
@@ -29,18 +30,53 @@ verification it:
 
 1. loads the user by `sub` (indexed PK read);
 2. **rejects a missing or `enabled = false` user with 401** (`InvalidBearerTokenException` → the
-   resource-server entry point) — so disabling a user takes effect on their next request everywhere,
-   with no token-version bookkeeping and no logout;
-3. derives granted authorities from the **DB `role`, not the token claim** — a server-side role change
+   resource-server entry point) — so disabling a user takes effect on their next authentication check;
+3. requires a raw string `credential_version` exactly equal to the current nonnegative DB version's
+   canonical decimal string. Missing/legacy, null, numeric, boolean, array/object, signed, padded,
+   leading-zero, fractional/exponent, non-ASCII, overflow and unequal claims all fail with the same
+   generic **401**. No coercing string getter, missing-to-zero fallback or time-based grace window;
+4. derives granted authorities from the **DB `role`, not the token claim** — a server-side role change
    takes effect on the target's next request, and a stale token role claim can never grant outdated
    access (the claim stays in the token as a diagnostic/client convenience only);
-4. exposes the loaded user as the authentication principal, so `CurrentUser` is a SecurityContext read
+5. exposes the loaded identity as the authentication principal, so `CurrentUser` is a SecurityContext read
    (no second DB query per request).
 
 Sessions are `STATELESS`; CSRF is disabled (pure bearer-token API); HTTP Basic / form login are
 disabled. CORS is disabled by default and, when explicitly configured, permits only HTTPS origins
 from `kira.security.allowed-origins` (never `*`, never credentials). Method security is on for the
 completion ownership check.
+
+### Password-reset semantics and coordinated cutover
+
+- `users.credential_version` is `BIGINT NOT NULL DEFAULT 0 CHECK (credential_version >= 0)`.
+  V13.1 (`V13_1__user_credential_version.sql`) backfills existing users to 0; new users start at 0.
+  This is not JPA optimistic locking or a second session store. The version is not added to user DTOs.
+- Every successful admin reset, even to the same password, updates the hash, increments the **stored**
+  version and stamps `updated_at` in one guarded database statement, inside the existing reset/audit
+  transaction. Concurrent resets each advance once; rollback restores both fields and audit. At
+  `Long.MAX_VALUE`, reset fails with generic **409** `CREDENTIAL_VERSION_EXHAUSTED`, without hash change
+  or success audit. Missing targets remain **404**. Passwords, hashes and version values are not audited.
+- Role/enabled mutations update only their own field and timestamp, never stale credential fields.
+  The bulk writes flush pending work and clear stale JPA state; enable/disable retain the existing
+  `security_state`-first lock and last-admin/no-op policy. They do not advance the credential version.
+- Login signs the **same immutable user snapshot whose password was verified**, after successful
+  throttle completion. It never rereads the version to upgrade an old-password login racing reset.
+  Such a race may return an immediately stale token; its next DB-backed check must reject it.
+- Revocation applies when authentication reads the user **after the reset commits**. It does not
+  retroactively cancel already-authenticated in-flight work. An old bearer cannot request admin
+  step-up even with the correct new password; independently stored, previously issued step-up grants
+  have no new generation/revocation protocol in this change.
+- **One-time reauthentication is intentional:** pre-upgrade tokens have no version claim and are
+  rejected, not accepted as version 0. Clients/operators must sign in again.
+- **Mixed old/new nodes and old-image rollback are not revocation-safe.** Old verifiers ignore the
+  claim, old issuers omit it, and old reset code does not increment it. Coordinate migration and
+  upgraded binaries, drain old nodes before resuming traffic, and do not use an old verifier as a
+  security-preserving rollback. The existing deployment receiver's rollback behavior is unchanged.
+  Production uses a separate migration job, not application-pod Flyway. Verify the actual installed
+  history/checksums first: 13.1 follows 13 and precedes reserved 14; histories already beyond 13.1 need
+  separately reviewed forward reconciliation, never out-of-order/repair/baseline or historical edits.
+  Installed schema, fleet cutover/rollback and real operator-session behavior are **EXTERNAL
+  VERIFICATION REQUIRED**; source tests do not establish those deployment facts.
 
 ## Passwords
 
