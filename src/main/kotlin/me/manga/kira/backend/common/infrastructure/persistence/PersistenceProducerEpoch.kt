@@ -19,6 +19,12 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     /** Prepared with this exact epoch, not a fresh owner minted after a failed business call. */
     fun prepareCleanup(): PersistenceJdbcCleanup? = if (actualForegroundCaller() && ownership.permitsCleanup(this) && !state.get().sealed) cleanup else null
 
+    /** Cold issuance for the exact future borrower; installation still grants no authority by itself. */
+    internal fun preparedCleanup(): PersistenceJdbcCleanup {
+        check(preparedFor(ownership))
+        return cleanup
+    }
+
     fun stopBusiness(authority: PersistenceJdbcCleanup): Boolean {
         if (!authority.matches(this, issuance) || !actualForegroundCaller() || !ownership.permitsCleanup(this)) return false
         return stopBusinessState()
@@ -57,6 +63,13 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     }
 
     fun sealedAndEnded(): Boolean = state.get().let { it.sealed && it.foreground == null && it.cancellations == 0L }
+
+    /** Reusable transfer seal on this departing epoch, never the physical owner's terminal seal. */
+    internal fun sealForTransfer(authority: PersistenceJdbcCleanup): Boolean {
+        if (!authority.matches(this, issuance) || !actualForegroundCaller() || !ownership.permitsCleanup(this)) return false
+        sealForTerminal()
+        return true
+    }
 
     fun poisoned(): Boolean = state.get().poison != null
 

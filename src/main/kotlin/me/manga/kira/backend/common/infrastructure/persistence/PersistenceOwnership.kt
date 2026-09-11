@@ -2,12 +2,16 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.locks.LockSupport
 
 /** Exact entry's producer and first-pool-delivery authority. Lease/return consent remains a separate integration. */
 internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry, private val binding: PersistencePhysicalFactoryBinding?) {
     private val current = AtomicReference<PersistenceProducerEpoch?>()
     private val poolDelivery = AtomicReference<PreparedPoolConnection?>()
     private val terminalSealed = AtomicBoolean()
+    private val poolState = AtomicReference<PersistenceJdbcPoolEpoch?>()
+    private val poolTransfer = AtomicReference<PersistenceJdbcPoolTransfer?>()
+    private val composed = AtomicBoolean()
     private var delivery = Delivery.UNEXPOSED // Only the exact entry's F/G owner changes delivery.
 
     /** Prepare on the future original caller, outside ownership locks and before any final delivery commit. */
@@ -32,14 +36,139 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         prepared.epoch.publishInstallation()
         current.set(prepared.epoch)
         poolDelivery.set(prepared)
+        poolState.set(prepared.state)
         delivery = Delivery.POOL
     }
 
     /** Pool identity is physical/binding authority, not the factory caller's thread identity. */
     internal fun poolEpoch(pool: PersistenceJdbcPoolIdentity): PersistenceProducerEpoch? {
         val delivered = poolDelivery.get() ?: return null
-        return delivered.epoch.takeIf { delivered.pool === pool && pool.matches(binding) && current.get() === it }
+        val state = poolState.get() ?: return null
+        return state.epoch.takeIf { delivered.pool === pool && pool.matches(binding) && !state.leased && current.get() === it }
     }
+
+    internal fun unboundPoolState(initial: PersistenceJdbcPoolEpoch): Boolean = !composed.get() &&
+        poolState.get() === initial && current.get() === initial.epoch
+
+    internal fun composedPoolState(pool: PersistenceJdbcPoolIdentity): PersistenceJdbcPoolEpoch? {
+        if (!composed.get() || poolDelivery.get()?.pool !== pool || !pool.matches(binding)) return null
+        return poolState.get()?.takeIf { current.get() === it.epoch }
+    }
+
+    internal fun currentPoolState(expected: PersistenceJdbcPoolEpoch): Boolean = poolState.get() === expected && current.get() === expected.epoch
+
+    internal fun claimPoolTransfer(transfer: PersistenceJdbcPoolTransfer): Boolean {
+        val physical = requireNotNull(binding)
+        check(!ownershipLockHeld())
+        while (transfer.canWaitActual()) {
+            if (!physical.ledger.lock.tryLock()) {
+                LockSupport.parkNanos(1_000_000)
+                continue
+            }
+            try {
+                if (!transfer.canWaitActual() || !currentPoolState(transfer.source) || !canTransfer()) return false
+                if (poolTransfer.get()?.actualEnded() == false) return false
+                val permitted = when (transfer.kind) {
+                    PersistenceJdbcPoolTransfer.Kind.BIND -> !composed.get() && !transfer.source.leased
+                    PersistenceJdbcPoolTransfer.Kind.CHECKOUT -> composed.get() && !transfer.source.leased
+                    PersistenceJdbcPoolTransfer.Kind.RETURN -> composed.get() && transfer.source.leased
+                }
+                if (!permitted) return false
+                poolTransfer.set(transfer)
+                if (transfer.kind !== PersistenceJdbcPoolTransfer.Kind.RETURN) {
+                    // Same state as admission: no selected-but-not-entered initial/pool call can
+                    // enter after this cut. Existing admitted work remains positively counted.
+                    transfer.source.epoch.sealForTerminal()
+                }
+                if (transfer.kind === PersistenceJdbcPoolTransfer.Kind.BIND) composed.set(true)
+                return true
+            } finally {
+                physical.ledger.lock.unlock()
+            }
+        }
+        return false
+    }
+
+    internal fun ownsTransfer(transfer: PersistenceJdbcPoolTransfer, context: PersistenceJdbcGuardContext? = null): Boolean =
+        poolTransfer.get() === transfer && transfer.actualCaller() && currentPoolState(transfer.source) &&
+            (context == null || transfer.source.context === context)
+
+    internal fun commitPoolTransfer(
+        transfer: PersistenceJdbcPoolTransfer,
+        next: PersistenceJdbcPoolEpoch,
+        facts: PersistenceJdbcTransferFacts,
+    ): Boolean {
+        val physical = requireNotNull(binding)
+        check(!ownershipLockHeld())
+        while (transfer.canWaitOutsideLocks()) {
+            if (!physical.ledger.lock.tryLock()) {
+                LockSupport.parkNanos(1_000_000)
+                continue
+            }
+            try {
+                if (!transfer.canWaitActual() || !ownsTransfer(transfer) || !canTransfer()) return false
+                if (poolDelivery.get()?.pool?.businessAdmissionOpen() != true) return false
+                if (!transfer.source.epoch.sealedAndEnded() || transfer.source.epoch.poisoned() || !facts.matches(transfer)) return false
+                if (next.leased != (transfer.kind === PersistenceJdbcPoolTransfer.Kind.CHECKOUT) || !next.epoch.preparedFor(this)) return false
+                // All Root attachment/graph allocation/scans already ended under the retained
+                // holder. These publications revoke the old owner before Hikari can recycle.
+                next.epoch.publishInstallation()
+                poolState.set(next)
+                current.set(next.epoch)
+                transfer.publishConsent()
+                return true
+            } finally {
+                physical.ledger.lock.unlock()
+            }
+        }
+        return false
+    }
+
+    /** Exact still-owned failure disposition; a post-consent old tail cannot retire its successor. */
+    internal fun retirePoolTransfer(transfer: PersistenceJdbcPoolTransfer): Boolean {
+        if (!transfer.actualCaller() || transfer.consented()) return false
+        if (poolTransfer.get() !== transfer || !currentPoolState(transfer.source)) return false
+        // No other transfer may start before this holder ends. Its failed disposition is
+        // published first; final-G transfer also rechecks retirementRequested.
+        entry.retirementRequested.set(true)
+        transfer.source.epoch.sealForTerminal()
+        return true
+    }
+
+    internal fun retireLeasedState(
+        expected: PersistenceJdbcPoolEpoch,
+        budget: PersistenceTimeBudget,
+        caller: PersistenceOwnedFactoryCaller,
+    ): Boolean {
+        val physical = requireNotNull(binding)
+        check(!ownershipLockHeld())
+        // The failed RETURN's original C5 caller/budget survive through this cleanup. Never
+        // recapture a cleared actual flag as a new, apparently uninterrupted allowance.
+        while (persistenceFactoryRemainingMillis(budget) > 0L && caller.sampleActualFlag() == null && caller.sampleOutsideLocks() == null &&
+            persistenceFactoryRemainingMillis(budget) > 0L
+        ) {
+            if (!physical.ledger.lock.tryLock()) {
+                LockSupport.parkNanos(1_000_000)
+                continue
+            }
+            try {
+                if (caller.sampleActualFlag() != null || persistenceFactoryRemainingMillis(budget) == 0L) return false
+                if (!expected.leased || !currentPoolState(expected)) return false
+                if (physical.ledger.current(entry.record) !== entry && !entry.retirementRequested.get()) return false
+                entry.retirementRequested.set(true)
+                expected.epoch.sealForTerminal()
+                return true
+            } finally {
+                physical.ledger.lock.unlock()
+            }
+        }
+        return false
+    }
+
+    private fun canTransfer(): Boolean = delivery === Delivery.POOL && !terminalSealed.get() && !entry.retirementRequested.get() &&
+        binding?.isClosed() == false && !binding.ledger.sealed && binding.ledger.current(entry.record) === entry &&
+        !entry.retiring && !entry.unknown && entry.dispatched && entry.opening === PersistencePhysicalOpeningPhase.SETTLED &&
+        entry.scopeEnded && entry.raw.get() != null
 
     /**
      * Producer foundation only. The separate typed F→G delivery performs its full original claim as
@@ -86,7 +215,8 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
     }
 
     /** Fixed summary only. In particular, an unsealed zero and actual F1 death prove nothing about this epoch. */
-    fun postOpeningCallsEnded(): Boolean = terminalSealed.get() && (current.get()?.sealedAndEnded() != false)
+    fun postOpeningCallsEnded(): Boolean = terminalSealed.get() && (current.get()?.sealedAndEnded() != false) &&
+        poolTransfer.get()?.actualEnded() != false
 
     internal fun permits(epoch: PersistenceProducerEpoch): Boolean = current.get() === epoch &&
         !terminalSealed.get() && !entry.retirementRequested.get() && binding?.isClosed() == false

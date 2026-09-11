@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import java.util.concurrent.atomic.AtomicInteger
@@ -67,45 +68,233 @@ class PoolLifecycleTest {
     }
 
     @Test
-    fun `many ambiguous callers coalesce one receipt and one authentic held acquisition tail keeps it pending`() = OwnedCallerTestScope().use { scope ->
-        val fixture = InertPoolFixture()
-        scope.beforeClose(fixture::close)
-        val entered = List(8) { scope.gate() }
-        val tails = List(8) { scope.gate() }
-        val receipts = List(8) { AtomicReference<PoolLifecycle.ShutdownReceipt>() }
-        val callers = entered.indices.map { index ->
-            scope.launch {
-                val ticket = fixture.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
-                check(ticket.enter())
-                try {
-                    entered[index].hold()
-                    val receipt = requireNotNull(ticket.handoff()) // MODEL ambiguous outcome; no native handle was manufactured.
-                    receipts[index].set(receipt)
-                    tails[index].hold()
-                    receipt
-                } finally {
-                    check(ticket.end())
+    fun `many ambiguous callers coalesce one receipt and one authentic held acquisition tail keeps it pending`() = InertPoolFixture().use { fixture ->
+        OwnedCallerTestScope().use { scope ->
+            val entered = List(8) { scope.gate() }
+            val tails = List(8) { scope.gate() }
+            val receipts = List(8) { AtomicReference<PoolLifecycle.ShutdownReceipt>() }
+            val callers = entered.indices.map { index ->
+                scope.launch {
+                    val ticket = fixture.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
+                    check(ticket.enter())
+                    try {
+                        entered[index].hold()
+                        val receipt = requireNotNull(ticket.handoff()) // MODEL ambiguous outcome; no native handle was manufactured.
+                        receipts[index].set(receipt)
+                        tails[index].hold()
+                        receipt
+                    } finally {
+                        check(ticket.end())
+                    }
                 }
             }
+            entered.forEach(OwnedCallerTestGate::awaitEntered)
+            assertEquals(8L, fixture.lifecycle.activeAcquisitions())
+            entered.forEach(OwnedCallerTestGate::release)
+            tails.forEach(OwnedCallerTestGate::awaitEntered)
+            val shared = requireNotNull(receipts.first().get())
+            receipts.forEach { assertSame(shared, it.get()) }
+            assertSame(shared, fixture.lifecycle.requestShutdown())
+            assertEquals(
+                PoolShutdownInvocation.INITIALIZATION_PENDING,
+                fixture.lifecycle.closePool(),
+                "An admitted lazy constructor must finish before the only close.",
+            )
+            assertEquals(PersistenceTerminalCall.NOT_INVOKED, fixture.lifecycle.firstCloseOutcome())
+            tails.dropLast(1).forEach(OwnedCallerTestGate::release)
+            callers.dropLast(1).forEach { assertSame(shared, it.value()) }
+            assertEquals(1L, fixture.lifecycle.activeAcquisitions())
+            assertFalse(fixture.lifecycle.acquisitionsEnded())
+            assertEquals(PoolShutdownObservation.PENDING, shared.observe())
+            tails.last().release()
+            assertSame(shared, callers.last().value())
+            assertTrue(fixture.lifecycle.acquisitionsEnded())
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            assertEquals(PoolShutdownObservation.POOL_ACTORS_UNPROVEN, shared.observe())
         }
-        entered.forEach(OwnedCallerTestGate::awaitEntered)
-        assertEquals(8L, fixture.lifecycle.activeAcquisitions())
-        entered.forEach(OwnedCallerTestGate::release)
-        tails.forEach(OwnedCallerTestGate::awaitEntered)
-        val shared = requireNotNull(receipts.first().get())
-        receipts.forEach { assertSame(shared, it.get()) }
-        assertSame(shared, fixture.lifecycle.requestShutdown())
-        assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool(), "A different shutdown caller may unblock active acquisitions.")
-        tails.dropLast(1).forEach(OwnedCallerTestGate::release)
-        callers.dropLast(1).forEach { assertSame(shared, it.value()) }
-        assertEquals(1L, fixture.lifecycle.activeAcquisitions())
-        assertFalse(fixture.lifecycle.acquisitionsEnded())
-        assertEquals(PoolShutdownObservation.PENDING, shared.observe())
-        tails.last().release()
-        assertSame(shared, callers.last().value())
-        assertTrue(fixture.lifecycle.acquisitionsEnded())
-        assertEquals(PoolShutdownObservation.POOL_ACTORS_UNPROVEN, shared.observe())
     }
+
+    @Test
+    fun `future return entitlement prevents a closed-population claim until consumed and the actual outer tail ends`() = InertPoolFixture().use { fixture ->
+        val acquisition = fixture.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
+        assertTrue(acquisition.enter())
+        var retained: PoolLifecycle.LeaseEntitlement? = null
+        try {
+            try {
+                assertNull(acquisition.prepareLeaseEntitlement(), "No future return right precedes capture of an actual handle.")
+                assertTrue(acquisition.capture(PhysicalTestConnection().raw)) // MODEL handle, no native Hikari lease.
+                retained = requireNotNull(acquisition.prepareLeaseEntitlement())
+                assertNull(acquisition.prepareLeaseEntitlement())
+            } finally {
+                assertTrue(acquisition.end())
+            }
+            val entitlement = requireNotNull(retained)
+            val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            assertEquals(PoolShutdownObservation.PENDING, receipt.observe())
+            assertEquals(1L, fixture.lifecycle.actorSnapshot().futureLeaseEntries)
+            val returning = requireNotNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
+            assertTrue(returning.enter(), "Previously issued cleanup remains counted after business admission is sealed.")
+            try {
+                assertEquals(0L, fixture.lifecycle.actorSnapshot().futureLeaseEntries)
+                assertEquals(1L, fixture.lifecycle.actorSnapshot().activeOperations)
+                assertNull(entitlement.prepareEviction(PersistenceTimeBudget.start(30_000)))
+                assertFalse(entitlement.revoke(), "The future right was already consumed; this cannot finish the active return tail.")
+                assertEquals(PoolShutdownObservation.ACTIVE_POOL_FRAME, receipt.observe())
+            } finally {
+                assertTrue(returning.end())
+            }
+            assertTrue(returning.actualFrameEnded())
+            assertFalse(returning.end())
+            assertEquals(PoolShutdownObservation.POOL_ACTORS_UNPROVEN, receipt.observe())
+        } finally {
+            retained?.revoke() // Only an unused MODEL future right; never substitutes for ending an admitted operation.
+        }
+    }
+
+    @Test
+    fun `unused entitlement revocation and original operation budget exclude later eviction without a replacement budget`() =
+        InertPoolFixture().use { fixture ->
+            val acquisition = fixture.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
+            assertTrue(acquisition.enter())
+            var retained: PoolLifecycle.LeaseEntitlement? = null
+            try {
+                try {
+                    assertTrue(acquisition.capture(PhysicalTestConnection().raw))
+                    retained = requireNotNull(acquisition.prepareLeaseEntitlement())
+                } finally {
+                    assertTrue(acquisition.end())
+                }
+                val entitlement = requireNotNull(retained)
+                val clock = AtomicLong()
+                val budget = PersistenceTimeBudget.start(10, clock::get)
+                val eviction = requireNotNull(entitlement.prepareEviction(budget))
+                clock.set(10_000_000)
+                assertFalse(eviction.enter())
+                assertEquals(1L, fixture.lifecycle.actorSnapshot().futureLeaseEntries)
+                assertNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
+                assertTrue(entitlement.revoke())
+                assertFalse(entitlement.revoke())
+                assertFalse(eviction.enter())
+                assertEquals(0L, fixture.lifecycle.actorSnapshot().futureLeaseEntries)
+            } finally {
+                retained?.revoke()
+            }
+        }
+
+    @Test
+    fun `foreign and fabricated return entitlements never enter or consume the authentic future right`() = InertPoolFixture().use { fixture ->
+        OwnedCallerTestScope().use { scope ->
+            val acquisition = fixture.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
+            assertTrue(acquisition.enter())
+            var retained: PoolLifecycle.LeaseEntitlement? = null
+            try {
+                try {
+                    assertTrue(acquisition.capture(PhysicalTestConnection().raw))
+                    retained = requireNotNull(acquisition.prepareLeaseEntitlement())
+                } finally {
+                    assertTrue(acquisition.end())
+                }
+                val entitlement = requireNotNull(retained)
+                val fake = PoolLifecycle.LeaseEntitlement.prepare(fixture.lifecycle, Any(), Thread.currentThread())
+                assertNull(fake.prepareReturn(PersistenceTimeBudget.start(30_000)))
+                assertFalse(fake.revoke())
+                assertTrue(
+                    scope.launch {
+                        assertNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
+                        assertFalse(entitlement.revoke())
+                        true
+                    }.value(),
+                )
+                assertEquals(1L, fixture.lifecycle.actorSnapshot().futureLeaseEntries)
+                assertTrue(entitlement.revoke())
+            } finally {
+                retained?.revoke()
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @ValueSource(strings = ["request", "handoff"])
+    fun `the first shutdown budget is retained across duplicate requests and cannot be replenished by observation`(origin: String) =
+        InertPoolFixture().use { fixture ->
+            val clock = AtomicLong()
+            val original = PersistenceTimeBudget.start(10, clock::get)
+            val receipt = if (origin == "handoff") {
+                val acquisition = fixture.lifecycle.prepareAcquisition(original)
+                assertTrue(acquisition.enter())
+                try {
+                    requireNotNull(acquisition.handoff())
+                } finally {
+                    assertTrue(acquisition.end())
+                }
+            } else {
+                requireNotNull(fixture.lifecycle.requestShutdown(original))
+            }
+            clock.set(10_000_000)
+            assertSame(receipt, fixture.lifecycle.requestShutdown(PersistenceTimeBudget.start(30_000)))
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            assertEquals(PoolShutdownObservation.PENDING, receipt.observe())
+            assertEquals(PoolShutdownObservation.PENDING, receipt.observe())
+        }
+
+    @Test
+    fun `MODEL entry bookkeeping failure remains sticky and restores the authentic enclosing caller frame`() = InertPoolFixture().use { outer ->
+        InertPoolFixture().use { inner ->
+            val enclosing = outer.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
+            assertTrue(enclosing.enter())
+            try {
+                val failure = IllegalStateException("MODEL acquisition clock observation failure.")
+                var failObservation = false
+                val budget = PersistenceTimeBudget.start(10) { if (failObservation) throw failure else 0L }
+                val acquisition = inner.lifecycle.prepareAcquisition(budget)
+                failObservation = true
+                assertSame(failure, assertThrows<IllegalStateException> { acquisition.enter() })
+                assertEquals(PoolAcquisitionDisposition.NOT_ENTERED, acquisition.disposition())
+                assertFalse(acquisition.actualFrameEnded())
+                assertSame(enclosing.frame, PoolCallFrames.current())
+                assertEquals(0L, inner.lifecycle.activeAcquisitions())
+                assertEquals(PoolActorFault.BOOKKEEPING_FAILED, inner.lifecycle.actorSnapshot().firstFailure)
+                assertTrue(inner.lifecycle.actorSnapshot().factorySealed)
+                assertFalse(inner.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000)).enter())
+            } finally {
+                assertTrue(enclosing.end())
+            }
+            val receipt = requireNotNull(inner.lifecycle.requestShutdown())
+            assertEquals(PoolShutdownInvocation.RETURNED, inner.lifecycle.closePool())
+            assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+        }
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @ValueSource(strings = ["sample", "restore"])
+    fun `MODEL close caller bookkeeping failure restores its pool frame but never upgrades the first close outcome`(failureAt: String) =
+        InertPoolFixture().use { fixture ->
+            OwnedCallerTestScope().use { scope ->
+                val failure = IllegalStateException("MODEL close caller bookkeeping failure.")
+                val behavior = OwnedCallerTestBehavior().apply {
+                    if (failureAt == "sample") sampleFailure = failure else restoreFailure = failure
+                }
+                val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+                val closer = scope.launch(OwnedCallerTestKind.OVERRIDING, behavior) {
+                    try {
+                        if (failureAt == "restore") (Thread.currentThread() as OverridingCallerThread).setActualFlag()
+                        val result = runCatching { fixture.lifecycle.closePool() }
+                        assertNull(PoolCallFrames.current(), "A flag failure must not bypass restoration of the pool caller lineage.")
+                        result
+                    } finally {
+                        Thread.interrupted() // Fixture cleanup only, after retaining the authentic close bookkeeping outcome.
+                    }
+                }
+                assertSame(failure, closer.value().exceptionOrNull())
+                assertEquals(PersistenceTerminalCall.RETURNED, fixture.lifecycle.firstCloseOutcome())
+                assertEquals(PoolActorFault.BOOKKEEPING_FAILED, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertEquals(failureAt == "restore", fixture.lifecycle.closeInterruptionObserved())
+                assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+                assertEquals(PoolShutdownInvocation.ALREADY_CLAIMED, fixture.lifecycle.closePool())
+                assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+            }
+        }
 
     @Test
     fun `wrong pool foreign caller and fabricated tickets cannot hand off or forget a privately captured handle`() = OwnedCallerTestScope().use { scope ->
@@ -239,9 +428,16 @@ private class InertPoolFixture(pool: HikariDataSource = HikariDataSource()) : Au
     val lifecycle = PoolLifecycle(pool, owner)
 
     override fun close() {
-        val invocation = lifecycle.closePool()
-        check(invocation === PoolShutdownInvocation.RETURNED || invocation === PoolShutdownInvocation.ALREADY_CLAIMED)
-        check(owner.observeShutdown() === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED)
+        val poolResult = runCatching {
+            val invocation = lifecycle.closePool()
+            check(invocation === PoolShutdownInvocation.RETURNED || invocation === PoolShutdownInvocation.ALREADY_CLAIMED)
+        }
+        val ownerResult = runCatching {
+            owner.requestShutdown()
+            check(owner.observeShutdown() === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED)
+        }
+        poolResult.getOrThrow()
+        ownerResult.getOrThrow()
     }
 }
 

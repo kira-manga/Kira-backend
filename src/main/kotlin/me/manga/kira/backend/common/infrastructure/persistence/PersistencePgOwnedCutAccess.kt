@@ -73,6 +73,7 @@ internal class PersistencePgOwnedCutAccess private constructor(
     fun firstCloseState(life: Life): Int = invoke(Operation.FIRST_CLOSE_STATE, life.cell) as Int
     fun liveNativeChildren(root: Root): Long = invoke(Operation.LIVE_NATIVE_CHILDREN, root.cell) as Long
     fun rootState(root: Root): Int = invoke(Operation.ROOT_STATE, root.cell) as Int
+    fun retentionState(root: Root): Int = invoke(Operation.RETENTION_STATE, root.cell) as Int
 
     fun prepareInvocation(owner: Owner, native: Any, callKey: Any, method: Method, arguments: Array<Any?>, inputs: PhysicalJdbcInputs): Invocation {
         val lives = java.lang.reflect.Array.newInstance(types.life, inputs.lives.size)
@@ -134,6 +135,7 @@ internal class PersistencePgOwnedCutAccess private constructor(
         FIRST_CLOSE_STATE,
         LIVE_NATIVE_CHILDREN,
         ROOT_STATE,
+        RETENTION_STATE,
         PREPARE_INVOCATION,
         ARM,
         INVOCATION_STATE,
@@ -150,6 +152,10 @@ internal class PersistencePgOwnedCutAccess private constructor(
         const val OPENING_CONSTRUCTION_FAILED = 16
         const val CLEANUP_FAILED = 1
         const val UNCERTAIN = 2
+        const val RETENTION_FAILURE = 1
+        const val RETENTION_UNRESOLVED = 2
+        const val RETENTION_UNPROVED = 4
+        const val RETENTION_MASK = RETENTION_FAILURE or RETENTION_UNRESOLVED or RETENTION_UNPROVED
         const val PASSIVE = 0
         const val NATIVE_STATEMENT = 1
         const val NATIVE_RESULT_SET = 2
@@ -200,6 +206,7 @@ internal class PersistencePgOwnedCutAccess private constructor(
                     Operation.FIRST_CLOSE_STATE to exact("firstCloseState", Integer.TYPE, types.life),
                     Operation.LIVE_NATIVE_CHILDREN to exact("liveNativeChildren", java.lang.Long.TYPE, types.root),
                     Operation.ROOT_STATE to exact("rootState", Integer.TYPE, types.root),
+                    Operation.RETENTION_STATE to exact("retentionState", Integer.TYPE, types.root),
                     Operation.PREPARE_INVOCATION to exact(
                         "prepareInvocation", types.invocation, types.owner, any, any, Method::class.java, objects, objects, lives, IntArray::class.java,
                     ),
@@ -447,6 +454,39 @@ internal class PersistencePgOwnedCutCustody(private val entry: PersistencePhysic
     fun hasCleanupFailure(): Boolean = observerFailed.get() || facadeFailed.get() || unresolvedOutput.get() ||
         openingFlags.get() and PersistencePgOwnedCutAccess.OPENING_CLEANUP_FAILED != 0 ||
         rootFlags.get() and PersistencePgOwnedCutAccess.CLEANUP_FAILED != 0
+
+    /**
+     * Reuse, not terminal disposal. Only the exact sealed/drained transfer holder may call this;
+     * native observation stays outside F/G/T. Positive physical custody may legitimately remain.
+     * Missing descriptors fail cold preparation; nonzero/unknown results never become clean facts.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun retainedStateSafe(selected: PersistencePgOwnedCutAccess.Root): Boolean {
+        check(!entry.jdbc.ownershipLockHeld())
+        if (!enabled || root.get() !== selected) return false
+        try {
+            val capsule = requireNotNull(opening.get())
+            refreshOpening(capsule)
+            observeRoot(selected)
+            val flags = openingFlags.get()
+            if (!returnedRecorded.get() || flags and PersistencePgOwnedCutAccess.OPENING_ENDED == 0) return false
+            if (flags and (
+                    PersistencePgOwnedCutAccess.OPENING_UNRESOLVED or PersistencePgOwnedCutAccess.OPENING_CLEANUP_FAILED or
+                        PersistencePgOwnedCutAccess.OPENING_CONSTRUCTION_FAILED
+                    ) != 0
+            ) return false
+            if (reuseUncertain()) return false
+            val retention = selected.access.retentionState(selected)
+            check(retention and PersistencePgOwnedCutAccess.RETENTION_MASK.inv() == 0)
+            return retention == 0 && !reuseUncertain()
+        } catch (failure: Throwable) {
+            observationFailed(failure) // Before boxing or the transfer holder's final count release.
+            return false
+        }
+    }
+
+    internal fun reuseUncertain(): Boolean = observerFailed.get() || facadeFailed.get() || unresolvedOutput.get() ||
+        unresolved.get() != null || rootFlags.get() != 0 || facadeChildren.get() != 0L
 
     private fun refreshOpening(capsule: PersistencePgOwnedCutAccess.Opening) {
         val flags = capsule.access.openingState(capsule)

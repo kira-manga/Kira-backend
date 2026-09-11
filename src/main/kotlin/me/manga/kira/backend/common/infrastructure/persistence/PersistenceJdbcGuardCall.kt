@@ -15,6 +15,7 @@ internal class PersistenceJdbcGuardCall private constructor(
     private var output: Any? = null
     private var outcome = PersistenceJdbcCallOutcome.RETURNED
     private var ended = false
+    private var finishedSuccessfully = false
     private var driver: PersistencePgOwnedCutAccess.Invocation? = null
     private var driverInputs: PhysicalJdbcInputs? = null
     private var driverArmAttempted = false
@@ -77,11 +78,43 @@ internal class PersistenceJdbcGuardCall private constructor(
                 finishDriver()
             } finally {
                 // Driver finalizers do not own or substitute this top/actual/one-use core end.
-                context.endFrame(this, parent)
-                ended = true
-                check(token.finish(outcome))
+                finishProducer()
             }
         }
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun finishProducer() {
+        try {
+            context.endFrame(this, parent)
+            check(token.finish(outcome))
+            ended = true
+            finishedSuccessfully = outcome === PersistenceJdbcCallOutcome.RETURNED && !driverUncertain && !driverPreparationFailure
+        } catch (failure: Throwable) {
+            retainBookkeepingFailure(failure)
+            throw failure
+        }
+    }
+
+    /** A failed upper TL restoration is unfinished producer custody, never a last-count receipt. */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun finishAfterDispatch(dispatch: PersistenceJdbcDispatch.Frame?) {
+        try {
+            dispatch?.end()
+        } catch (failure: Throwable) {
+            retainBookkeepingFailure(failure)
+            // Keep this exact frame, output and producer admitted. A later call cannot repair it.
+            throw context.adaptFailure(failure)
+        }
+        finish()
+    }
+
+    private fun retainBookkeepingFailure(failure: Throwable) {
+        outcome = PersistenceJdbcCallOutcome.OWNED_FAILURE
+        driverUncertain = true
+        token.observeFailure(outcome) // It may already have claimed end before a failed count publication.
+        context.bookkeepingFailed(this, failure, retain = !driverRetained)
+        driverRetained = true
     }
 
     private fun checkActualCaller() = check(!ended && Thread.currentThread() === actualCaller && context.actualFrame(this))
@@ -143,6 +176,8 @@ internal class PersistenceJdbcGuardCall private constructor(
     internal fun actualUnended(expected: PersistenceJdbcGuardContext): Boolean = context === expected && !ended && Thread.currentThread() === actualCaller
 
     internal fun parentFrame(): PersistenceJdbcGuardCall? = parent
+
+    internal fun returnedAfterFinalizers(): Boolean = ended && finishedSuccessfully && Thread.currentThread() === actualCaller
 
     internal fun ownsDriverInvocation(invocation: PersistencePgOwnedCutAccess.Invocation): Boolean = driver === invocation
 

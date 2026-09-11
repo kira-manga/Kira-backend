@@ -4,6 +4,7 @@ import java.lang.reflect.Method
 import java.sql.Connection
 import java.sql.SQLClientInfoException
 import java.sql.SQLException
+import java.util.IdentityHashMap
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -70,6 +71,10 @@ internal class PersistenceJdbcGuardContext private constructor(
     private val driverChildren = AtomicLong()
     private val driverFailed = AtomicBoolean()
     private val unresolvedDriver = AtomicBoolean()
+    // Lease/epoch exposure, not physical-native construction counting or a weak alias index.
+    // A canonical Life must have its OWN first return even if its parent implicitly closes it.
+    private val exposedNative = IdentityHashMap<Any, PersistencePgOwnedCutAccess.Life>()
+    internal val transaction = PersistenceJdbcTransaction()
 
     fun enter(identity: PersistenceJdbcGuardIdentity, kind: PersistenceJdbcGuardCallKind): PersistenceJdbcGuardCall {
         if (!identity.matches(this) || identity.epoch !== epoch) refuse()
@@ -97,6 +102,7 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     fun registerChild(identity: PersistenceJdbcGuardIdentity, life: PersistencePgOwnedCutAccess.Life? = null): PersistenceJdbcChild {
         requireCurrent(identity)
+        if (life?.nativeChild == true) exposedNative.putIfAbsent(life.cell, life)
         val child = PersistenceJdbcChild.prepare(this, identity, childAuthority, life)
         driverCustody?.rememberFacadeClose(life)
         if (!child.newFacadeCustody) return child
@@ -185,11 +191,45 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun hasOrdinaryOnlyProvenance(): Boolean = compatibilityOnly.get()
 
+    internal fun hasCurrentFrame(): Boolean = frames.get() != null
+
+    internal fun exposedNativeCount(): Int = exposedNative.size
+
+    /** Call only after authentic epoch sealing/drain, before any future Root attachment. */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun collectTransferFacts(transfer: PersistenceJdbcPoolTransfer): PersistenceJdbcTransferFacts? {
+        check(!ownership.ownershipLockHeld() && ownership.ownsTransfer(transfer, this))
+        if (!epoch.sealedAndEnded() || graphFailed() || children.get() != 0L || hasCurrentFrame()) return null
+        val root = driverRoot.get() ?: return null
+        try {
+            if (exposedNative.values.any { it.access.firstCloseState(it) != PersistencePgOwnedCutAccess.FIRST_RETURNED }) return null
+            if (driverCustody?.retainedStateSafe(root) != true) return null
+            if (transfer.requiresTransaction() && !transaction.clean()) return null
+            return PersistenceJdbcTransferFacts.prepare(this, transfer)
+        } catch (failure: Throwable) {
+            driverFailed.set(true)
+            driverCustody?.observationFailed(failure)
+            ownership.requestRetirement(epoch)
+            return null
+        }
+    }
+
+    /** The old registered holder retains raw/Root-attachment custody until its own actual end. */
+    internal fun attachForTransfer(raw: Connection, transfer: PersistenceJdbcPoolTransfer) {
+        check(!ownership.ownershipLockHeld() && ownership.ownsTransfer(transfer))
+        check(driverRoot.get() == null)
+        val selected = requireNotNull(driverCustody).attach(raw, this, epoch) ?: refuse()
+        driverRoot.set(selected)
+    }
+
+    internal fun transferFactsStillSafe(): Boolean = epoch.sealedAndEnded() && !graphFailed() && children.get() == 0L &&
+        driverCustody?.reuseUncertain() == false
+
     internal fun actualFrame(call: PersistenceJdbcGuardCall): Boolean = frames.get() === call
 
     internal fun endFrame(call: PersistenceJdbcGuardCall, parent: PersistenceJdbcGuardCall?) {
         check(frames.get() === call)
-        frames.set(parent)
+        if (parent == null) frames.remove() else frames.set(parent)
     }
 
     /** Only the selected facade, after typed admission and its exact private Entry.raw read. */
@@ -239,7 +279,9 @@ internal class PersistenceJdbcGuardContext private constructor(
             return null
         }
         try {
-            return requireNotNull(driverCustody).adopt(identity.driverOwner(selected), native, parent, disposable)
+            val life = requireNotNull(driverCustody).adopt(identity.driverOwner(selected), native, parent, disposable)
+            if (disposable && life.nativeChild) exposedNative.putIfAbsent(life.cell, life)
+            return life
         } catch (failure: Throwable) {
             frames.get()?.let { driverPreparationFailed(it, failure) }
             throw failure
@@ -321,6 +363,16 @@ internal class PersistenceJdbcGuardContext private constructor(
         check(actualFrame(call) && call.actualUnended(this))
         unresolvedDriver.set(true)
         driverCustody?.retainInvocation(call)
+    }
+
+    /** TL may already be partially restored; authenticate the exact still-unended actual caller,
+     * not a replacement top frame. Its failed count/dispatch custody is never silently released. */
+    internal fun bookkeepingFailed(call: PersistenceJdbcGuardCall, failure: Throwable, retain: Boolean) {
+        check(call.actualUnended(this))
+        driverFailed.set(true)
+        unresolvedDriver.set(true)
+        driverCustody?.observationFailed(failure)
+        if (retain) driverCustody?.retainInvocation(call)
     }
 
     private fun copyDriverSummary(selected: PersistencePgOwnedCutAccess.Root) {

@@ -32,6 +32,8 @@ int invocationState(Invocation invocation);
 int drainState(Invocation invocation);
 void disarm(Invocation invocation);
 void actualEnd(Invocation invocation);
+
+int retentionState(Root root); // Additive method23; see the source-only amendment below.
 ```
 
 Opening preparation/retention/arm is after genuine opening claim, outside F/G/T,
@@ -85,6 +87,69 @@ first-close-in-progress/constructing receiver custody, not facade count; failed-
 native outcomes leave a sticky failure/uncertainty flag instead of a false live
 operation. Core copies fixed values outside F/G/T before dropping its admitted call.
 No scanner traversal of these graphs/getters under G is authorized.
+
+## Source-only method23 amendment — retained state, not terminal reclamation
+
+The exact additional descriptor is
+`retentionState(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Root;)I`, public static.
+Closed bits: **FAILURE=1, UNRESOLVED=2, UNPROVED_RETENTION=4**; bits may combine.
+Only exact integer0 supplies the native retained-state fact. Unknown bits, missing/wrong
+descriptor, observation exception or unavailable/non-profile state deny reuse. Null Root
+returns UNRESOLVED. Core retains physical uncertainty before packaging observation failure.
+No existing rootState, firstCloseState, liveNativeChildren or terminal canReclaim meaning changes.
+
+Observe outside F/G/T and only after all old producers are genuinely sealed and actually
+drained, including disarmed invocation finalizers, foreign cancellation and abort. A null
+native current frame or an idle statement alone does not prove that cut. Core binds the
+observation to the exact Entry/epoch/one return attempt and separately proves physical readiness,
+transaction/reset outcomes and transfer authority. This method neither calls isClosed/SQL nor
+proves transport/timer/remote completion. It does not compact, close, clear, revoke, rebind or
+reset anything. Existing completed first-close nodes need not already have been compacted.
+
+Unfinished opening/construction/invocation/transfer/batch or inconsistent native bookkeeping
+denies reuse. Physical first-close/cleanup failure and uncertainty survive all fresh Roots.
+Actual physical constructor/counter/factory/first-close facts and exact receiver representations
+are checked; metadata emptiness is not a substitute for the native parameter/list/row contents.
+Only these live retained shapes qualify in this initial profile:
+
+* An exact PgPreparedStatement in one of the same physical TypeInfoCache's eight actual fields,
+  with successful factory, FIRST_NEVER/not revoked, idle live native state and no cancel timer.
+  The reader covers **all eight real fields**, not only membership of nodes still in native child
+  custody. Every nonnull field must refer to its canonical linked live statement; an actually
+  first-closed statement still held by a cache field denies reuse even after ordinary compaction
+  removed its Native node. Stock TypeInfo factories replace null fields, not closed receivers.
+  Its actual CachedQuery, parameter image, result wrappers and empty C/Q queues must match the
+  fixed profile. CachedQuery must be exact, non-function and String-keyed; its actual Query must
+  be the pinned core.v3 SimpleQuery (exact binary name and defining loader, since the class is
+  package-private), not a Query extension, subclass or composite. No Query method is invoked to
+  classify it. Every cached result requires its **own FIRST_RETURNED**. The complete parameter
+  image must contain no Owner or known-Life dependency. Fixed TypeInfo scalar setters retain
+  String, binary scalar byte[], unset slots or the native SQL-NULL marker (exact Object.class,
+  not a new raw sentinel getter). Deferred StreamWrapper/ByteStreamWriter/other representations
+  do not qualify even if their known-Life dependency set is empty.
+* An exact, inert **unexposed** PgResultSet shell whose real physical parent has its own
+  successful FIRST_RETURNED. The shell itself remains successful-factory, FIRST_NEVER/not
+  revoked and counted. Actual tuples must be an empty concrete ArrayList, with no cursor,
+  refcursor, delete statement, current row, insert/update state, row buffer or retained input
+  work. A nonnull original query must be identical to the closed parent's actual prepared query;
+  the same exact SimpleQuery profile applies, and the real parent class must be exactly
+  PgStatement or PgPreparedStatement. Other parent/query representations are conservatively
+  refused in this initial profile. There is no describe-origin marker or method-name whitelist.
+
+Exposure is deliberately not represented by this native summary: the separate core lease
+ledger, keyed by canonical Life.cell, requires every exposed disposable's **own FIRST_RETURNED**.
+Thus an exposed inert shell cannot pass combined consent merely because this method returns0.
+Hidden PgArray.getResultSet plain-parent Statements are **not** a third allowed live shape;
+they require genuine first close or conservative physical retirement. Other hidden/error-path
+children remain physically owned for terminal disposal, not forgotten after return refusal.
+
+This amendment is uncompiled/unexecuted source, not qualification of the retained old final JAR
+(which lacks method23). Successor source/delta manifests are in
+`review/working/app-29-real-pool-native-retention-02/` at workspace root; the previous01 packet
+and its pause/before manifests remain historical. Historical vendor
+manifests/patches, qualified artifacts and consumer artifact pins are not replaced by this edit.
+
+## Existing invocation contract (unchanged)
 
 Known arrays are same-length; each position indexes the containing top-level argument.
 Nested array/map/collection leaves can use that position; the leaf need not be

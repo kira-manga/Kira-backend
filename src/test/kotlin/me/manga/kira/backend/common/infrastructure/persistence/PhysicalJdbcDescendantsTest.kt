@@ -24,10 +24,14 @@ import java.sql.Ref
 import java.sql.ResultSet
 import java.sql.ResultSetMetaData
 import java.sql.SQLException
+import java.sql.SQLClientInfoException
 import java.sql.Statement
 import java.sql.Struct
 import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.Properties
+import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.withLock
 import java.sql.Array as JdbcArray
@@ -142,6 +146,93 @@ class PhysicalJdbcDescendantsTest {
         assertThrows<SQLException> { p.setObject(1, own) }
         assertEquals(0, f.setterCalls.get())
         assertEquals(0, f.arrayReadCalls.get())
+    }
+
+    @Test
+    fun `real private pool rotates fresh borrower roots on one physical session and denies stale graphs before native use`() =
+        withOwnedCutPool(database.value) { f ->
+            val first = f.pool.connection
+            val lease = ownedPoolLease(first)
+            assertSame(lease, ownedCutField(lease.state, "lease"), "Committed state retains even a lease whose acquisition tail cannot deliver it.")
+            val entry = f.entry(first)
+            val root = ownedPoolRoot(lease)
+            val pid = ownedPoolScalar(first, "SELECT pg_backend_pid()")
+            val metadata = first.metaData
+            val metadataLife = ownedPoolLife(metadata)
+            val staleArray = first.createArrayOf("int4", arrayOf(1, 2))
+            val staleInput = ownedCutInput(first)
+            val staleStatement = first.prepareStatement("SELECT 1")
+            val invokedAbort = AtomicInteger()
+            try {
+                staleArray.free()
+                staleInput.close()
+                staleStatement.close()
+                first.close()
+                assertTrue(lease.state.epoch.sealedAndEnded())
+                assertFalse(entry.jdbc.currentPoolState(lease.state))
+                assertFalse(entry.retirementRequested.get())
+                assertThrows<SQLClientInfoException> { first.setClientInfo("ApplicationName", "stale") }
+                assertThrows<SQLClientInfoException> { first.clientInfo = Properties() }
+                assertThrows<SQLException> { staleStatement.cancel() }
+                assertThrows<SQLException> { staleStatement.execute() }
+                assertThrows<IOException> { staleInput.read() }
+                staleStatement.close() // Duplicate facade close cannot issue another native first close.
+                first.close()
+                first.abort(Executor { invokedAbort.incrementAndGet() })
+                assertEquals(0, invokedAbort.get())
+
+                FactoryWorkerTestScope().use { callers ->
+                    val successor = callers.launch {
+                        f.pool.connection.use { second ->
+                            val next = ownedPoolLease(second)
+                            assertSame(entry, f.entry(second))
+                            assertNotSame(lease.state.epoch, next.state.epoch)
+                            assertNotSame(root.cell, ownedPoolRoot(next).cell)
+                            assertEquals(pid, ownedPoolScalar(second, "SELECT pg_backend_pid()"))
+                            assertSame(metadataLife.cell, ownedPoolLife(second.metaData).cell, "Passive physical Life is canonical, not reset on checkout.")
+                            assertThrows<SQLException> { metadata.databaseProductName }
+                            second.prepareStatement("SELECT ?::int[]").use { statement ->
+                                assertThrows<SQLException> { statement.setArray(1, staleArray) }
+                                assertThrows<SQLException> { statement.setObject(1, arrayOf(staleArray)) }
+                            }
+                            assertEquals(7, ownedPoolScalar(second, "SELECT 7"))
+                        }
+                        true
+                    }
+                    assertTrue(successor.join())
+                }
+                assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+            } finally {
+                first.close()
+            }
+        }
+
+    @Test
+    fun `real lease preserves Properties client info defaults and declared stale and foreign failure shapes`() = withOwnedCutPool(database.value) { f ->
+        val connection = f.pool.connection
+        try {
+            val defaults = Properties().apply { setProperty("ApplicationName", "kira-default-client") }
+            val properties = Properties(defaults)
+            connection.clientInfo = properties
+            assertEquals("kira-default-client", connection.getClientInfo("ApplicationName"))
+            assertEquals("kira-default-client", connection.clientInfo.getProperty("ApplicationName"))
+            assertTrue(properties.isEmpty(), "Upper adaptation must not mutate the caller's Properties/defaults.")
+            defaults.setProperty("ApplicationName", "kira-shadowed-default-client")
+            properties["ApplicationName"] = 7 // Properties.getProperty still falls back to its String default.
+            connection.clientInfo = properties
+            assertEquals("kira-shadowed-default-client", connection.getClientInfo("ApplicationName"))
+            assertEquals(7, properties["ApplicationName"], "The caller's explicit non-String entry is not overwritten.")
+            FactoryWorkerTestScope().use { callers ->
+                assertTrue(callers.launch {
+                    assertThrows<SQLClientInfoException> { connection.clientInfo = properties }
+                    assertThrows<SQLClientInfoException> { connection.setClientInfo("ApplicationName", "foreign") }
+                    true
+                }.join())
+            }
+        } finally {
+            connection.close()
+        }
+        assertThrows<SQLClientInfoException> { connection.clientInfo = Properties() }
     }
 
     @Test

@@ -56,7 +56,11 @@ import java.sql.Array as JdbcArray
  * The scanner never visits it, and no F/G/T lock protects its caller-lineage-only maps.
  * This is not a second physical registry and does not issue return/strict-profile consent.
  */
-internal class PhysicalJdbcDescendants(internal val context: PersistenceJdbcGuardContext, private val connection: PhysicalJdbcFacade) {
+internal class PhysicalJdbcDescendants(
+    internal val context: PersistenceJdbcGuardContext,
+    private val connection: Connection,
+    internal val lease: PersistenceJdbcLease? = null,
+) {
     private val aliases = PhysicalJdbcIdentityIndex<PhysicalJdbcNode>()
 
     // Native children are retained/count-once in the driver ledger. Facade-only resources
@@ -80,7 +84,7 @@ internal class PhysicalJdbcDescendants(internal val context: PersistenceJdbcGuar
         val seen = IdentityHashMap<Any, Boolean>()
         fun validate(value: Any?) {
             if (value == null || seen.put(value, true) != null) return
-            if (value is PhysicalJdbcFacade) {
+            if (value is PhysicalJdbcFacade || value is LeaseJdbcFacade) {
                 if (value !== connection) PersistenceJdbcGuardContext.refuse()
                 context.requireCurrent(identity)
                 return
@@ -119,6 +123,7 @@ internal class PhysicalJdbcDescendants(internal val context: PersistenceJdbcGuar
         structural: Boolean,
         receiver: PhysicalJdbcNode? = null,
     ): Array<Any?> {
+        if (lease != null) return adaptLeaseArguments(identity, arguments)
         val adapted = arguments.copyOf()
         for (index in adapted.indices) {
             val guard = knownGuard(adapted[index])
@@ -129,6 +134,53 @@ internal class PhysicalJdbcDescendants(internal val context: PersistenceJdbcGuar
             }
         }
         return adapted
+    }
+
+    /** Upper values become only their already-guarded lower delegates, never pgjdbc receivers. */
+    private fun adaptLeaseArguments(identity: PersistenceJdbcGuardIdentity, arguments: Array<Any?>): Array<Any?> {
+        val copies = IdentityHashMap<Any, Any>()
+        fun adapt(value: Any?): Any? {
+            if (value == null) return null
+            knownGuard(value)?.let { guard ->
+                val slot = arrayOf<Any?>(value)
+                guard.adaptArgument(this, identity, slot, 0, structural = true)
+                return slot[0]
+            }
+            copies[value]?.let { return it }
+            return when (value) {
+                is Array<*> -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val copy = java.lang.reflect.Array.newInstance(publicArrayComponent(value.javaClass.componentType), value.size) as Array<Any?>
+                    copies[value] = copy
+                    for (index in value.indices) copy[index] = adapt(value[index])
+                    copy
+                }
+                is Properties -> {
+                    val defaults = Properties()
+                    val copy = Properties(defaults)
+                    copies[value] = copy
+                    value.forEach { (key, item) -> copy[requireNotNull(adapt(key))] = requireNotNull(adapt(item)) }
+                    // JDBC declares Properties, not Map. Detach the effective String defaults,
+                    // retaining fallback even when an explicit entry has a non-String value.
+                    value.stringPropertyNames().forEach { key ->
+                        defaults.setProperty(key, value.getProperty(key))
+                    }
+                    copy
+                }
+                is Map<*, *> -> LinkedHashMap<Any?, Any?>().also { copy ->
+                    copies[value] = copy
+                    value.forEach { (key, item) -> copy[adapt(key)] = adapt(item) }
+                }
+                is Collection<*> -> {
+                    val copy: MutableCollection<Any?> = if (value is Set<*>) LinkedHashSet() else ArrayList()
+                    copies[value] = copy
+                    value.forEach { copy.add(adapt(it)) }
+                    copy
+                }
+                else -> value
+            }
+        }
+        return Array(arguments.size) { adapt(arguments[it]) }
     }
 
     internal fun guardOutput(call: PersistenceJdbcGuardCall, value: Any?, parent: PhysicalJdbcNode?, detachedFromParent: Boolean = false): Any? =
@@ -144,8 +196,11 @@ internal class PhysicalJdbcDescendants(internal val context: PersistenceJdbcGuar
         if (value == null) return null
         PhysicalJdbcCallbacks.callerValue(value, this, call.identity)?.let { return it }
         knownGuard(value)?.let {
-            it.requireInput(this, call.identity)
-            return value
+            if (lease == null || it.sameOwner(this, call.identity)) {
+                it.requireInput(this, call.identity)
+                return value
+            }
+            it.requireInput(lease.state.graph, call.identity)
         }
         if (value === connection) return value
         // All standard Connection backreferences are handled without asking the delegate. An
@@ -212,14 +267,15 @@ internal class PhysicalJdbcDescendants(internal val context: PersistenceJdbcGuar
         detachedFromParent: Boolean,
     ): Any {
         containers[value]?.let { return it }
-        val copy = Properties()
+        val defaults = Properties()
+        val copy = Properties(defaults)
         containers[value] = copy
         for ((key, item) in value) {
             copy[requireNotNull(guardOutput(call, key, parent, containers, detachedFromParent))] =
                 requireNotNull(guardOutput(call, item, parent, containers, detachedFromParent))
         }
-        // Properties defaults are not entries; preserve their effective detached String values.
-        value.stringPropertyNames().forEach { key -> if (!copy.containsKey(key)) copy.setProperty(key, value.getProperty(key)) }
+        // Properties.getProperty falls back even when a same-key entry has a non-String value.
+        value.stringPropertyNames().forEach { key -> defaults.setProperty(key, value.getProperty(key)) }
         return copy
     }
 
@@ -320,8 +376,12 @@ internal class PhysicalJdbcNode(
                 (surface.stream && (it.surface.xml || it.surface.kind in setOf(PhysicalJdbcKind.BLOB, PhysicalJdbcKind.CLOB, PhysicalJdbcKind.SQLXML)))
             )
     }
-    internal val driverLife: PersistencePgOwnedCutAccess.Life? = graph.context.adoptDriverLife(identity, native, lifecycleParent?.driverLife, surface.closes)
-    private val child = if (surface.closes) graph.context.registerChild(identity, driverLife) else null
+    internal val driverLife: PersistencePgOwnedCutAccess.Life? = if (graph.lease == null) {
+        graph.context.adoptDriverLife(identity, native, lifecycleParent?.driverLife, surface.closes)
+    } else {
+        null // Lower graph owns the actual canonical Life; Hikari proxy return is not a receipt.
+    }
+    private val child = if (surface.closes && graph.lease == null) graph.context.registerChild(identity, driverLife) else null
 
     internal fun createFacade(): Any {
         check(publicFacade == null)
@@ -375,7 +435,7 @@ internal class PhysicalJdbcNode(
         structural: Boolean,
     ) {
         requireInput(owner, expected)
-        if (acceptsNativeArgument(structural)) {
+        if (graph.lease != null || acceptsNativeArgument(structural)) {
             arguments[index] = native
         }
     }
@@ -388,15 +448,27 @@ internal class PhysicalJdbcNode(
 
     internal fun invokeApi(api: Class<*>, name: String, types: Array<Class<*>>, args: Array<Any?>): Any? = invokeClosed(api.getMethod(name, *types), args)
 
-    private fun invokeClosed(method: Method, arguments: Array<Any?>): Any? {
+    private fun invokeClosed(method: Method, arguments: Array<Any?>): Any? = try {
+        invokeGuarded(method, arguments)
+    } catch (failure: SQLException) {
+        // A failed dispatch/frame tail is still inside the public method's checked boundary.
+        // In particular a stream/XML facade must not leak a finally SQLException as UTE.
+        throw declaredFailure(method, failure)
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun invokeGuarded(method: Method, arguments: Array<Any?>): Any? {
         if (method.declaringClass === Any::class.java) return invokeObject(method, arguments)
         if (!surface.accepts(method)) PersistenceJdbcGuardContext.refuse()
         val cleanup = isCleanup(method)
         if (cleanup && closed.get()) return null // Never a second native close or a repaired receipt.
         val cancellation = isCancellation(method)
+        var dispatch: PersistenceJdbcDispatch.Frame? = null
         val call = try {
+            dispatch = graph.lease?.enterDispatch(cancellation)
             graph.context.enter(identity, callKind(cleanup, cancellation))
-        } catch (failure: SQLException) {
+        } catch (failure: Throwable) {
+            dispatch?.end()
             throw declaredFailure(method, failure)
         }
         var wrapping = false
@@ -437,9 +509,12 @@ internal class PhysicalJdbcNode(
                         return@runCatching statementParent!!.facade()
                     }
                     val adapted = graph.adaptArguments(call.identity, arguments, structural = surface.xml, receiver = this)
-                    val inputs = PhysicalJdbcInputs.prepare(graph, call.identity, arguments, adapted)
-                    call.prepareDriver(native, method, adapted, inputs)
-                    call.armDriver()
+                    if (graph.lease == null) {
+                        graph.context.transaction.beforeChild(method, surface.kind)
+                        val inputs = PhysicalJdbcInputs.prepare(graph, call.identity, arguments, adapted)
+                        call.prepareDriver(native, method, adapted, inputs)
+                        call.armDriver()
+                    }
                     val returned = method.invoke(native, *adapted)
                     call.captureOutput(returned) // Includes Object/getObject/container/XML paths before allocation.
                     wrapping = true
@@ -481,7 +556,7 @@ internal class PhysicalJdbcNode(
                 throw declaredFailure(method, reported)
             }
         } finally {
-            call.finish()
+            call.finishAfterDispatch(dispatch)
         }
     }
 

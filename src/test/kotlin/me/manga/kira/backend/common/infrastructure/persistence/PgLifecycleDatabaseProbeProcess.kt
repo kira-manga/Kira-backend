@@ -7,6 +7,7 @@ import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -72,6 +73,60 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
         val outcome = if (case.originalProvider) "DRIVER_CONTRACT_ONLY_ENDED" else "TRACKED_LOCAL_ENDED"
         check(output.lineSequence().count { it.startsWith("PG_LIFECYCLE_ROOT_CLEANUP result=$outcome ") } == 1)
         check(output.lineSequence().none { it.startsWith("PG_DATABASE_FAILED ") })
+    }
+
+    /** Separate negative oracle: a live retained cut plus acknowledged exact exit, never product disposal. */
+    fun awaitPendingPoolExit() {
+        check(case.poolPendingFailure)
+        val child = requireNotNull(process.get())
+        val deadline = PgLifecycleDatabaseDeadline(55_000)
+        handshake.await(PgLifecycleDatabasePhase.RETAINED, deadline = deadline, progress = ::requireAlive)
+        val retained = pendingPoolRetainedLine()
+        val exiting = "PG_POOL_PENDING_EXIT_REQUESTED ${case.label} nonce=$nonce cleanup=PROCESS_ONLY product_end=false"
+        while (true) {
+            requireAlive()
+            // A live pipe may end in an incomplete line. Only complete records can release EXIT.
+            val lines = outputPrefix().substringBeforeLast('\n', "").lineSequence().toList()
+            requireNoProductEnd(lines)
+            val witnessed = lines.filter { it.startsWith("PG_POOL_PENDING_") }
+            if (witnessed.isNotEmpty()) {
+                check(witnessed == listOf(retained)) { "Synthetic pending-pool live witness differs." }
+                break
+            }
+            deadline.pause()
+        }
+        requireAlive()
+        handshake.publish(PgLifecycleDatabasePhase.EXIT)
+        check(child.waitFor(deadline.millis(55_000), TimeUnit.MILLISECONDS)) { "Synthetic pending-pool child timed out." }
+        requireNotNull(outputCapture).awaitEnded(deadline)
+        val output = readOutput()
+        requireNotNull(outputCapture).requireComplete()
+        check(child.exitValue() == 23) { "Synthetic pending-pool process-only exit differs." }
+        check(output.endsWith('\n')) { "Synthetic pending-pool final record is truncated." }
+        val lines = output.lineSequence().toList()
+        requireNoProductEnd(lines)
+        check(lines.filter { it.startsWith("PG_POOL_PENDING_") } == listOf(retained, exiting)) {
+            "Synthetic pending-pool final witnesses differ."
+        }
+        // close() remains responsible for actual stream/reader/process cleanup and rejects any forced kill.
+    }
+
+    private fun pendingPoolRetainedLine(): String {
+        val cut = when (case.mode) {
+            PgLifecycleDatabaseMode.POOL_ACQUISITION_END_TL_FAILURE ->
+                "cut=ACQUISITION_END_TL acquisition=ENDING active_acquisitions=1 delivered=false future_entries=0 pool_close_claimed=false"
+            PgLifecycleDatabaseMode.POOL_CORE_LAST_COUNT_TL_FAILURE ->
+                "cut=RETURN_CORE_LAST_COUNT_TL native_actual_end=true core_producer_ended=false future_entries=0 transfer_consented=false"
+            else -> error("Not a closed pending-pool case.")
+        }
+        return "PG_POOL_PENDING_RETAINED ${case.label} nonce=$nonce $cut caller_terminated=true product_end=false"
+    }
+
+    private fun requireNoProductEnd(lines: List<String>) {
+        check(lines.none {
+            it.startsWith("PG_DATABASE_VERIFIED ") || it.startsWith("PG_DATABASE_SCENARIO_CLEANUP ") ||
+                it.startsWith("PG_LIFECYCLE_ROOT_CLEANUP ") || it.startsWith("PG_DATABASE_FAILED ") || it.startsWith("PG_POOL_PENDING_FAILED ")
+        }) { "A pending-pool cut must not claim normal product cleanup or hide a failure." }
     }
 
     fun outputPrefix(): String = requireNotNull(outputCapture).prefix()
@@ -159,7 +214,23 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
             driver,
             scram,
         )
-        return types.map { Path.of(it.protectionDomain.codeSource.location.toURI()) }.distinct().joinToString(File.pathSeparator)
+        val locations = types.map { Path.of(it.protectionDomain.codeSource.location.toURI()) }
+        // Ordinary controls keep their original closed classpath. These two real-pool cases add
+        // only the already selected stock6.3.3 artifact, not the entire test runtime or a fallback.
+        val poolLocation = if (case.poolPendingFailure) {
+            val hikari = Class.forName("com.zaxxer.hikari.HikariDataSource", false, loader)
+            val location = Path.of(hikari.protectionDomain.codeSource.location.toURI())
+            check(location.fileName.toString() == "HikariCP-6.3.3.jar" && Files.size(location) in 1..1_000_000)
+            val digest = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(location))
+            check(
+                digest.joinToString("") { "%02x".format(it.toInt() and 0xff) } ==
+                    "709f378c05756280939ce50fc1b1f1a53bb8e1899dc1b249f21f12703640b48b",
+            )
+            listOf(location)
+        } else {
+            emptyList()
+        }
+        return (locations + poolLocation).distinct().joinToString(File.pathSeparator)
     }
 }
 

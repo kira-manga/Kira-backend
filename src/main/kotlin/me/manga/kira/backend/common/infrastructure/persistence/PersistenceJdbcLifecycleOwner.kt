@@ -28,6 +28,9 @@ internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoi
 
     fun observeShutdown(): PersistenceLifecycleObservation = PersistenceManagedObserver.observe(root, PersistenceManagedObservation.SHUTDOWN)
 
+    internal fun observeShutdown(budget: PersistenceTimeBudget): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.SHUTDOWN, budget)
+
     fun snapshot(): PersistenceLifecycleSnapshot = root.snapshot()
 
     internal fun ownershipLockHeld(): Boolean = root.ownershipLockHeld()
