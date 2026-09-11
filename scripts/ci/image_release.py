@@ -828,11 +828,20 @@ def main():
     args = parser.parse_args()
     if args.action == 'receive':
         need(len(args.args) == 1, 'receive requires one fixed scratch path')
-        with deadline(90), Path(args.args[0]).open('xb') as target:
-            result = copy_bounded(sys.stdin.buffer, target, MAX_IMAGE)
-            need(result['bytes'] > 0, 'empty image stream')
-            target.flush()
-            os.fsync(target.fileno())
+        with deadline(90):
+            # An inherited default ACL can override umask-only narrowing. Request
+            # private permissions atomically, without touching an existing path.
+            descriptor = os.open(args.args[0], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                target = os.fdopen(descriptor, 'wb')
+            except BaseException:
+                os.close(descriptor)
+                raise
+            with target:
+                result = copy_bounded(sys.stdin.buffer, target, MAX_IMAGE)
+                need(result['bytes'] > 0, 'empty image stream')
+                target.flush()
+                os.fsync(target.fileno())
         return
     if args.action == 'archive':
         need(len(args.args) in (3, 5), 'archive requires component, source and fixed archive path')

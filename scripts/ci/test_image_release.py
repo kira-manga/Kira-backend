@@ -3,12 +3,15 @@
 Receiver tests execute a disposable copy of the REAL Bash control flow. Only its
 fixed root/helper/lock/PATH literals and root UID predicate are relocated to the
 fixture's current UID. Production has no environment-controlled root bypass.
-Docker, sudo, mv-failure and rm-failure commands are fixed fixture executables.
+Docker, sudo, mv/rm-failure and link-mode fault commands are fixed fixture executables.
 """
 
 import contextlib
 import copy
+import ctypes
+import ctypes.util
 import datetime as dt
+import errno
 import gzip
 import hashlib
 import io
@@ -31,6 +34,33 @@ import image_release as release
 SHA = 'a' * 40
 TREE = 'b' * 40
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def permissive_default_acl(directory):
+    """Linux-only regression condition, installed solely on an owned temp directory."""
+    library = ctypes.util.find_library('acl') if sys.platform == 'linux' else None
+    if not library:
+        raise unittest.SkipTest('Linux libacl unavailable; default-ACL regression NOT VERIFIED')
+    try:
+        acl = ctypes.CDLL(library, use_errno=True)
+    except OSError:
+        raise unittest.SkipTest('libacl cannot load; default-ACL regression NOT VERIFIED') from None
+    details = directory.lstat()
+    assert stat.S_ISDIR(details.st_mode) and details.st_uid == os.getuid() and stat.S_IMODE(details.st_mode) == 0o700
+    acl.acl_from_text.argtypes = [ctypes.c_char_p]; acl.acl_from_text.restype = ctypes.c_void_p
+    acl.acl_set_file.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_void_p]; acl.acl_set_file.restype = ctypes.c_int
+    acl.acl_free.argtypes = [ctypes.c_void_p]; acl.acl_free.restype = ctypes.c_int
+    value = acl.acl_from_text(b'user::rwx,group::rwx,other::rwx')
+    if not value:
+        raise OSError(ctypes.get_errno(), 'fixture ACL construction failed')
+    try:
+        if acl.acl_set_file(os.fsencode(directory), 0x4000, value) != 0:  # ACL_TYPE_DEFAULT on Linux.
+            code = ctypes.get_errno()
+            if code in (errno.ENOTSUP, errno.ENOSYS):
+                raise unittest.SkipTest('filesystem default ACL unavailable; regression NOT VERIFIED')
+            raise OSError(code, 'owned fixture default ACL installation failed')
+    finally:
+        acl.acl_free(value)
 
 
 def tiny_image(component='backend', variant='A', *, oci=False, legacy=False):
@@ -191,6 +221,58 @@ class ArchiveTests(unittest.TestCase):
     def test_strict_json(self):
         for raw in (b'{"id":1,"id":1}', b'{"number":NaN}', b'{"number":1e999}', b'{} trailing'):
             with self.subTest(raw=raw), self.assertRaises(release.Refused): release.parse_json(raw, 100)
+
+    def test_receive_cli_private_bytes_exclusive_paths_and_empty_refusal(self):
+        def receive(target, data):
+            return subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'scripts/ci/image_release.py'), 'receive', str(target)],
+                                  input=data, capture_output=True, timeout=5)
+        target = self.root / 'image.tar.gz'; data = b'opaque archive bytes\0\xff'
+        self.assertEqual(receive(target, data).returncode, 0)
+        self.assertEqual(target.read_bytes(), data)
+        before = target.lstat()
+        self.assertTrue(stat.S_ISREG(before.st_mode))
+        self.assertEqual(stat.S_IMODE(before.st_mode), 0o600)
+        self.assertEqual(receive(target, b'replacement').returncode, 1)
+        self.assertEqual(target.lstat(), before)
+        self.assertEqual(target.read_bytes(), data)
+        for destination in (target, self.root / 'absent'):
+            link = self.root / ('link-' + destination.name); link.symlink_to(destination)
+            self.assertEqual(receive(link, b'replacement').returncode, 1)
+            self.assertTrue(link.is_symlink())
+        self.assertFalse(self.root.joinpath('absent').exists())
+        self.assertEqual(target.read_bytes(), data)
+        empty = self.root / 'empty.tar.gz'
+        self.assertEqual(receive(empty, b'').returncode, 1)
+        self.assertEqual(empty.stat().st_size, 0)
+        # Keep the existing streaming primitive's exact limit / extra-byte refusal.
+        output = io.BytesIO()
+        self.assertEqual(release.copy_bounded(io.BytesIO(data), output, len(data))['bytes'], len(data))
+        self.assertEqual(output.getvalue(), data)
+        with self.assertRaisesRegex(release.Refused, '^stream byte limit$'):
+            release.copy_bounded(io.BytesIO(data + b'x'), io.BytesIO(), len(data))
+
+    def test_receive_fdopen_failure_closes_exclusively_created_descriptor(self):
+        target = self.root / 'handoff.tar.gz'; descriptors = []
+        actual_open = os.open
+        def create(*args, **kwargs):
+            descriptor = actual_open(*args, **kwargs); descriptors.append(descriptor); return descriptor
+        try:
+            with io.TextIOWrapper(io.BytesIO(b'fixture')) as source, \
+                 patch.object(release.sys, 'argv', ['image_release.py', 'receive', str(target)]), \
+                 patch.object(release.sys, 'stdin', source), patch.object(release.os, 'umask'), \
+                 patch.object(release.os, 'open', side_effect=create) as opened, \
+                 patch.object(release.os, 'fdopen', side_effect=OSError('synthetic fdopen failure')), \
+                 self.assertRaisesRegex(OSError, '^synthetic fdopen failure$'):
+                release.main()
+            opened.assert_called_once_with(str(target), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with self.assertRaises(OSError) as failure: os.fstat(descriptors[0])
+            self.assertEqual(failure.exception.errno, errno.EBADF)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        finally:
+            for descriptor in descriptors:
+                try: os.close(descriptor)
+                except OSError as error:
+                    if error.errno != errno.EBADF: raise
 
 
 class FakeAPI:
@@ -787,6 +869,13 @@ def flag(key): return s.get('flags', {}).get(key, False)
 
 if name == 'sudo':
     print(json.dumps(args)); sys.exit(0)
+if name == 'ln':
+    result = subprocess.call(['/usr/bin/ln'] + args)
+    if result == 0:
+        s.setdefault('links', []).append(args[-1])
+        if flag('unsafe_new_archive'): Path(args[-1]).chmod(0o666)
+        save()
+    sys.exit(result)
 if name in ('mv', 'rm'):
     c = s.get('container')
     if name == 'mv' and args[-1].endswith('/images.env') and c and c['image'] == s.get('B') and flag('fail_persist_once'):
@@ -839,6 +928,7 @@ if args and args[0] == 'load':
     s['images'][identity] = image
     for tag in manifest['RepoTags']: s['tags'][tag] = identity
     s['loads'] = s.get('loads', 0) + 1
+    if flag('unsafe_received_archive') and identity == s.get('B'): Path(args[-1]).chmod(0o666)
     if flag('missing_rollback') and identity == s.get('B'): s['images'].pop(s['A'], None)
     done()
 if args and args[0] == 'compose':
@@ -909,7 +999,7 @@ class ReceiverFixture:
         source = source.replace('$(stat -c %u "$1") == 0', '$(stat -c %u "$1") == ' + str(os.getuid()))
         source = source.replace('$EUID -eq 0', '$EUID -eq ' + str(os.getuid()))
         self.receiver = base / 'kira-deploy'; self.receiver.write_text(source); self.receiver.chmod(0o755)
-        for name in ('docker', 'sudo', 'mv', 'rm'):
+        for name in ('docker', 'sudo', 'mv', 'rm', 'ln'):
             path = self.bin / name; path.write_text(STUB.replace('@BASE@', repr(str(base)))); path.chmod(0o755)
         self.state_path = base / 'docker-state.json'
         self.A, _, a = tiny_image(component, 'A', oci=True, legacy=True)
@@ -944,6 +1034,60 @@ class ReceiverTests(unittest.TestCase):
     def assert_failed(self, result, message=None, code=70):
         self.assertEqual(result.returncode, code, (result.stdout + result.stderr).decode())
         if message: self.assertIn(message, result.stderr.decode())
+
+    def test_receive_cli_and_retained_archive_are_private_under_default_acl(self):
+        fixture = self.fixture()
+        directory = fixture.root / 'releases' / fixture.component
+        directory.mkdir(parents=True, mode=0o700)
+        permissive_default_acl(directory)
+        # A controlled counterexample to umask-only creation, NOT a claim about run05's ACL.
+        control = directory / 'umask-only-control'
+        legacy = subprocess.run([sys.executable, '-I', '-B', '-c',
+            "import os, sys; from pathlib import Path; os.umask(0o077); Path(sys.argv[1]).open('xb').close()", str(control)],
+            capture_output=True, timeout=5)
+        self.assertEqual(legacy.returncode, 0, legacy.stderr.decode())
+        self.assertEqual(stat.S_IMODE(control.stat().st_mode), 0o666)
+        control.unlink()
+        target = directory / 'direct-receive'
+        received = subprocess.run([sys.executable, '-I', '-B', str(fixture.helper), 'receive', str(target)],
+                                  input=fixture.archives['A'], capture_output=True, timeout=5)
+        self.assert_ok(received)
+        self.assertEqual(target.read_bytes(), fixture.archives['A'])
+        self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+        target.unlink()
+        # The real receiver's incoming directory inherits this default ACL too.
+        self.assert_ok(fixture.run('A'))
+        retained = fixture.archive('A').lstat()
+        self.assertTrue(stat.S_ISREG(retained.st_mode))
+        self.assertEqual(retained.st_uid, os.getuid())
+        self.assertEqual(stat.S_IMODE(retained.st_mode), 0o600)
+        self.assertEqual(retained.st_nlink, 1)  # Only the retained link survives owned incoming cleanup.
+        self.assertEqual(fixture.archive('A').read_bytes(), fixture.archives['A'])
+        self.assertFalse(list(directory.glob('.incoming.*')))
+
+    def test_retention_refuses_unsafe_source_or_link_without_repairing_existing_archive(self):
+        for fault in ('source', 'new-link', 'existing-target'):
+            with self.subTest(fault=fault):
+                fixture = self.fixture(); self.assert_ok(fixture.run('A'))
+                record = fixture.activation().read_bytes(); links = len(fixture.state()['links'])
+                if fault == 'existing-target':
+                    fixture.archive('B').write_bytes(fixture.archives['B']); fixture.archive('B').chmod(0o666)
+                else:
+                    fixture.flags(**{'unsafe_received_archive' if fault == 'source' else 'unsafe_new_archive': True})
+                result = fixture.run('B')
+                self.assert_failed(result, 'primary=archive-persistence; rollback=restored', code=71)
+                self.assertEqual(fixture.state()['container']['image'], fixture.A)
+                self.assertEqual(fixture.configured(), fixture.A)
+                self.assertEqual(fixture.activation().read_bytes(), record)
+                self.assertEqual(fixture.archive('A').read_bytes(), fixture.archives['A'])
+                self.assertEqual(stat.S_IMODE(fixture.archive('A').stat().st_mode), 0o600)
+                self.assertEqual(len(fixture.state()['links']), links + (fault == 'new-link'))
+                if fault == 'existing-target':
+                    self.assertEqual(fixture.archive('B').read_bytes(), fixture.archives['B'])
+                    self.assertEqual(stat.S_IMODE(fixture.archive('B').stat().st_mode), 0o666)
+                else: self.assertFalse(fixture.archive('B').exists())
+                self.assertFalse(fixture.activation().parent.joinpath('pending').exists())
+                self.assertFalse(list(fixture.activation().parent.glob('.incoming.*')))
 
     def test_gateway_exact_new_backend_and_unchanged_siblings(self):
         fixture = self.fixture()
@@ -997,6 +1141,15 @@ class ReceiverTests(unittest.TestCase):
                 self.assertEqual(app_up[-1]['image'], fixture.A)
                 for call in app_up:
                     self.assertIn('--no-build', call['args']); self.assertIn('--no-deps', call['args']); self.assertIn('never', call['args'])
+                # Repeating restored A is an identical-image no-op even though B
+                # overwrote the same-SHA mutable tag; retained bytes do not rotate.
+                record = fixture.activation().read_bytes(); loads = state['loads']
+                repeated = fixture.run('A')
+                self.assert_ok(repeated)
+                self.assertIn(b'already healthy at immutable image ' + fixture.A.encode(), repeated.stdout)
+                self.assertEqual(fixture.state()['loads'], loads)
+                self.assertEqual(fixture.activation().read_bytes(), record)
+                self.assertEqual(fixture.archive('A').read_bytes(), fixture.archives['A'])
 
     def test_successful_transition_and_repeat_retain_previous_distinct_archive(self):
         fixture = self.fixture()

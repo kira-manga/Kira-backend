@@ -243,8 +243,10 @@ store_archive() {
   if [[ -e $target || -L $target ]]; then
     owned_file "$target" && cmp --silent "$source" "$target" || return 1
   else
+    owned_file "$source" || return 1
     ln -- "$source" "$target" || return 1
     created_archive=$target
+    owned_file "$target" || return 1
   fi
 }
 prune_archives() {
