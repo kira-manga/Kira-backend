@@ -60,29 +60,33 @@ constructor(
         val bPid = AtomicInteger()
         val workers = Executors.newFixedThreadPool(2)
         try {
-            val first = workers.submit(Callable {
-                inTransaction {
-                    aPid.set(backendPid())
-                    users.updatePasswordHash(user.id, hashA)
-                    val updated = users.findById(user.id)!!
-                    assertState(updated, hashA, 1, Role.USER, true)
-                    aUpdated.countDown()
-                    await(releaseA, "first reset release")
-                    updated
-                }
-            })
+            val first = workers.submit(
+                Callable {
+                    inTransaction {
+                        aPid.set(backendPid())
+                        users.updatePasswordHash(user.id, hashA)
+                        val updated = users.findById(user.id)!!
+                        assertState(updated, hashA, 1, Role.USER, true)
+                        aUpdated.countDown()
+                        await(releaseA, "first reset release")
+                        updated
+                    }
+                },
+            )
             await(aUpdated, "first reset update")
-            val second = workers.submit(Callable {
-                inTransaction {
-                    bPid.set(backendPid())
-                    val stale = entityManager.find(UserEntity::class.java, user.id)
-                    assertEquals(0L, stale.credentialVersion) // A's update has not committed.
-                    bEntering.countDown()
-                    users.updatePasswordHash(user.id, hashB)
-                    assertFalse(entityManager.contains(stale))
-                    users.findById(user.id)!! // No test clear/refresh: the actual mutation owns freshness.
-                }
-            })
+            val second = workers.submit(
+                Callable {
+                    inTransaction {
+                        bPid.set(backendPid())
+                        val stale = entityManager.find(UserEntity::class.java, user.id)
+                        assertEquals(0L, stale.credentialVersion) // A's update has not committed.
+                        bEntering.countDown()
+                        users.updatePasswordHash(user.id, hashB)
+                        assertFalse(entityManager.contains(stale))
+                        users.findById(user.id)!! // No test clear/refresh: the actual mutation owns freshness.
+                    }
+                },
+            )
             await(bEntering, "second reset entry")
             awaitBlockedOn(bPid.get(), aPid.get())
             assertFalse(second.isDone, "the second reset must wait, not just race a start barrier")
@@ -221,23 +225,25 @@ constructor(
         val competitorCommitted = CountDownLatch(1)
         val workers = Executors.newSingleThreadExecutor()
         try {
-            val result = workers.submit(Callable {
-                inTransaction {
-                    val cached = entityManager.find(UserEntity::class.java, user.id)
-                    assertEquals(0L, cached.credentialVersion)
-                    loaded.countDown()
-                    await(competitorCommitted, "competing mutation commit")
-                    assertSame(cached, entityManager.find(UserEntity::class.java, user.id))
-                    assertEquals(user.passwordHash, cached.passwordHash)
-                    assertEquals(Role.USER, cached.role)
-                    assertTrue(cached.enabled) // The first-level context is deliberately stale.
-                    if (resetLast) users.updatePasswordHash(user.id, hash) else mutate(mutation, user.id, hash)
-                    assertFalse(entityManager.contains(cached))
-                    val fresh = users.findById(user.id)!! // No test-side refresh/clear.
-                    assertState(fresh, hash, 1, if (mutation == Mutation.PROMOTE) Role.ADMIN else Role.USER, mutation != Mutation.DISABLE)
-                    fresh
-                }
-            })
+            val result = workers.submit(
+                Callable {
+                    inTransaction {
+                        val cached = entityManager.find(UserEntity::class.java, user.id)
+                        assertEquals(0L, cached.credentialVersion)
+                        loaded.countDown()
+                        await(competitorCommitted, "competing mutation commit")
+                        assertSame(cached, entityManager.find(UserEntity::class.java, user.id))
+                        assertEquals(user.passwordHash, cached.passwordHash)
+                        assertEquals(Role.USER, cached.role)
+                        assertTrue(cached.enabled) // The first-level context is deliberately stale.
+                        if (resetLast) users.updatePasswordHash(user.id, hash) else mutate(mutation, user.id, hash)
+                        assertFalse(entityManager.contains(cached))
+                        val fresh = users.findById(user.id)!! // No test-side refresh/clear.
+                        assertState(fresh, hash, 1, if (mutation == Mutation.PROMOTE) Role.ADMIN else Role.USER, mutation != Mutation.DISABLE)
+                        fresh
+                    }
+                },
+            )
             await(loaded, "stale context preload")
             // These direct port calls have no outer transaction; each must commit on return.
             if (resetLast) mutate(mutation, user.id, hash) else users.updatePasswordHash(user.id, hash)
