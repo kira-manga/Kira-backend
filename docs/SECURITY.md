@@ -295,6 +295,17 @@ charges when a later dimension rejects; this is not an atomic all-or-nothing rol
 capacity stays 503/1, and indeterminate acquisition stays 503/5. Release failures remain visible 429/5
 and are not retried locally; preserving an already committed caller response is still Backend15 work.
 
+The queue timeout covers queue wait plus RUNNING persistence through invocation authorization;
+the separate provider timed wait begins only after that commit and authorization. Startup at the
+original deadline or later is rejected. PENDING→RUNNING, PENDING/RUNNING→FAILED and RUNNING→SUCCEEDED
+are checked conditional writes; one terminal status/outcome wins atomically. Pre-authorization
+cancellation prevents provider entry even if startup ignores interruption. Later Future cancellation
+requests interruption, not confirmed worker or remote termination; permit close is not such proof
+either. Database failure can still delay/prevent terminal persistence. GET/list use one read-only
+REPEATABLE READ snapshot across request and outcome queries, not a promise of the freshest data.
+Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention, and cleanup batch
+size are bounded configuration. Separate admission/release and physical-lifetime obligations remain.
+
 Redis concurrency counts **unexpired, unreleased UUIDv4 token leases**, not physical provider calls.
 The existing `kira:completion-admission:concurrency` key is a sorted set of tokens/deadlines. Acquisition
 validates state before writes, prunes deadlines `<= Redis TIME`, and reserves only a new token. Release
@@ -307,11 +318,13 @@ durations. Wrong types, malformed tokens/scores, too many members, or missing/sh
 without destructive repair. Unknown replies deny, never authorize speculative anonymous release.
 
 **Provider-lifetime obligation remains unresolved.** Queue/provider waits do not bound the earlier
-`createPending` database work; an acquired lease can expire before submission. A delayed worker can
-also resume from `markRunning` into the provider. Caller timeout requests `Future.cancel(true)` and
-then exits `use` without joining actual worker termination, so release can precede termination even
-before lease expiry. Redis cannot distinguish a crashed holder from a paused/live one or stop remote
-work. Backend12's terminal-state correction alone does not prove a physical concurrency cap. A strict
+`createPending` database work; an acquired lease can expire before submission. Backend12 prevents
+authorization after its startup deadline or a recorded pre-authorization cancellation, but that is not
+a Redis-lease validity check. A timely authorized worker can still be paused before provider entry or
+continue after release/expiry. Caller timeout requests `Future.cancel(true)` and then exits `use`
+without joining actual worker termination, so release can precede termination even before lease
+expiry. Redis cannot distinguish a crashed holder from a paused/live one or stop remote work.
+Backend12's terminal-state/startup guards alone do not prove a physical concurrency cap. A strict
 physical-provider bound still requires a connected termination/fencing and late-start/early-release
 design, review and validation; this logical protocol is no waiver or enablement approval. Completion
 remains disabled by default.
@@ -331,6 +344,8 @@ external. Auth coordination keys and scripts are unaffected.
 - **Completion data** (`completion_requests.prompt`, `completion_results.result`/`error`) is the only
   place prompts/results live. The scheduled bounded retention job expires stale in-flight requests and
   deletes terminal prompt/result rows older than `kira.completion.retention` (default seven days).
+  One stable ordered batch holds request locks before outcome writes/deletes; concurrent publishers
+  cannot invert that lock order or recreate a deleted request. This is not a historical-data repair.
   Prompt/result contents never appear in audit rows or logs. Provider credentials / `Authorization`
   are never logged.
 - **Audit rows** (`audit_log.detail`, jsonb) contain **identifiers, revision numbers, and checksums

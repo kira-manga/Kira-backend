@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C
+unset KIRA_BACKEND_IMAGE KIRA_WEB_IMAGE KIRA_ADMIN_IMAGE
+umask 077
 
 deployment_root=/opt/kira
 compose_file="$deployment_root/compose.yaml"
@@ -7,246 +11,457 @@ images_file="$deployment_root/images.env"
 ingress_file="$deployment_root/ingress.env"
 backup_root="$deployment_root/backups"
 release_root="$deployment_root/releases"
+archive_helper=/usr/local/libexec/kira-image-release.py
+incoming=''
+pending=''
+outcome=''
+final_message=''
 
-fail() {
-  printf 'kira-deploy: %s\n' "$*" >&2
-  exit 1
-}
-
+fail() { final_message=$*; exit 1; }
+helper() { /usr/bin/python3 -I -B "$archive_helper" "$@"; }
+docker_bounded() { timeout --signal=TERM --kill-after=5s 60s docker "$@"; }
 compose() {
-  docker compose --project-name kira --file "$compose_file" \
+  timeout --signal=TERM --kill-after=5s 180s docker compose --project-name kira --file "$compose_file" \
     --env-file "$images_file" --env-file "$ingress_file" "$@"
 }
-
-preflight_configuration() {
-  [[ -f $ingress_file && -r $ingress_file ]] || fail "server3 ingress.env is required and must be readable"
-  # Validate the same model used by activation, including the one-shot migration.
-  # Never emit rendered configuration or parser diagnostics containing env values.
-  if ! compose --profile tools config --quiet >/dev/null 2>&1; then
-    fail "server3 Compose configuration preflight failed; check the installed Compose and environment files"
-  fi
+component_compose() {
+  local image=$1
+  shift
+  ( export "$image_key=$image"; compose "$@"; )
 }
 
-wait_healthy() {
-  local container=$1
-  local attempts=${2:-30}
-  local status
-  for _ in $(seq 1 "$attempts"); do
-    status=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container" 2>/dev/null || true)
-    if [[ $status == healthy ]]; then
-      return 0
-    fi
-    if [[ $status == exited || $status == dead ]]; then
-      docker logs --tail 100 "$container" >&2 || true
-      return 1
-    fi
+cleanup() {
+  local status=$? cleanup_failed=false
+  local uncertain='receiver outcome indeterminate; inspect actual runtime, images.env and pending transaction; no restoration claim'
+  trap - EXIT
+  if [[ -n $incoming ]] && ! rm -rf -- "$incoming"; then
+    cleanup_failed=true
+  fi
+  if [[ -n $outcome ]]; then
+    # Only explicit checked outcomes qualify. Unexpected exits cannot reuse a
+    # provisional success/restoration; signal/transport-like exits stay unknown.
+    case "$status:$outcome" in
+      0:0|1:70|1:71|1:72|1:73|1:74)
+        if [[ -n $final_message ]]; then status=$outcome
+        else status=73; final_message=$uncertain; fi
+        ;;
+      *)
+        if (( status < 128 )); then status=73; fi
+        final_message=$uncertain
+        ;;
+    esac
+  fi
+  if [[ $cleanup_failed == true ]]; then
+    if [[ -n $outcome ]]; then
+      case $status in
+        0|74) status=74; final_message='activation/no-op verified; owned incoming cleanup failed; inspect host before retrying' ;;
+        *)
+          if (( status < 128 )); then status=73; fi
+          final_message="owned incoming cleanup failed; $uncertain"
+          ;;
+      esac
+    else status=1; final_message='owned incoming cleanup failed'; fi
+  fi
+  # No final healthy/restored message precedes EXIT cleanup.
+  if [[ -n $final_message ]]; then
+    if (( status == 0 )); then printf 'kira-deploy: %s\n' "$final_message"
+    else printf 'kira-deploy: %s\n' "$final_message" >&2; fi
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+# A canceled client or killed Docker CLI does NOT prove the daemon operation stopped.
+# Leave the persistent pending marker for explicit operator reconciliation, not a false rollback claim.
+trap 'final_message="interrupted; inspect pending transaction and actual runtime"; exit 130' INT
+trap 'final_message="interrupted; inspect pending transaction and actual runtime"; exit 143' TERM
+
+owned_file() {
+  [[ -f $1 && ! -L $1 && $(stat -c %u "$1") == 0 && $(stat -c %a "$1") =~ ^[046][04][04]$ ]]
+}
+owned_directory() {
+  [[ -d $1 && ! -L $1 && $(stat -c %u "$1") == 0 && $(stat -c %a "$1") =~ ^7[05][05]$ ]]
+}
+select_component() {
+  component=$1
+  case "$component" in
+    backend) image_key=KIRA_BACKEND_IMAGE; health_seconds=120 ;;
+    web) image_key=KIRA_WEB_IMAGE; health_seconds=80 ;;
+    admin) image_key=KIRA_ADMIN_IMAGE; health_seconds=80 ;;
+    *) fail 'unknown component' ;;
+  esac
+  container="kira-$component"
+  component_root="$release_root/$component"
+  state_file="$component_root/activation"
+  pending="$component_root/pending"
+}
+check_installation() {
+  [[ $EUID -eq 0 ]] || fail 'root receiver required'
+  owned_directory "$deployment_root" && owned_file "$compose_file" && owned_file "$images_file" &&
+    owned_file "$ingress_file" && owned_file "$archive_helper" || fail 'unsafe or missing installed files/ownership'
+  (( $(stat -c %s "$images_file") <= 65536 )) || fail 'image configuration byte limit'
+  # images.env is the sole persisted image authority. Do not allow the later env
+  # file to shadow it. Neither file is ever sourced or rendered into logs.
+  if grep -Eq '^[[:space:]]*(export[[:space:]]+)?KIRA_(BACKEND|WEB|ADMIN)_IMAGE([[:space:]=]|$)' "$ingress_file"; then
+    fail 'ingress.env may not override image targets'
+  fi
+  if [[ ! -e $release_root ]]; then install -d -m 700 "$release_root"; fi
+  owned_directory "$release_root" || fail 'unsafe release directory'
+  if [[ ! -e $component_root ]]; then install -d -m 700 "$component_root"; fi
+  owned_directory "$component_root" || fail 'unsafe component release directory'
+  [[ ! -e $pending && ! -L $pending ]] || fail 'incomplete prior transaction; operator reconciliation required'
+}
+configured_image() {
+  local value
+  value=$(awk -v key="$image_key" '
+    $0 ~ "^[ \t]*(export[ \t]+)?" key "([ \t=]|$)" {
+      if ($0 !~ "^" key "=[A-Za-z0-9_./:@-]+$") bad=1
+      count++; value=substr($0,length(key)+2)
+    }
+    END { if (bad || count != 1) exit 1; print value }
+  ' "$images_file") || return 1
+  [[ $value =~ ^sha256:[0-9a-f]{64}$ || $value =~ ^kira-$component:[A-Za-z0-9_.-]+$ ]] || return 1
+  printf '%s\n' "$value"
+}
+set_image() {
+  local value=$1 temporary
+  configured_image >/dev/null || return 1
+  temporary=$(mktemp "$deployment_root/images.env.XXXXXX") || return 1
+  if ! awk -F= -v key="$image_key" -v value="$value" '$1 == key { print key "=" value; next } { print }' \
+      "$images_file" > "$temporary" || ! chmod 600 "$temporary" || ! mv -fT "$temporary" "$images_file"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+  [[ $(configured_image) == "$value" ]]
+}
+preflight_configuration() {
+  # Quietly validate the exact candidate model, including the migration service.
+  component_compose "$1" --profile tools config --quiet >/dev/null 2>&1
+}
+
+runtime() {
+  local found result extra
+  found=$(docker_bounded container ls --all --no-trunc --filter "name=^/$container$" --format '{{.ID}}') || return 1
+  runtime_id=''
+  runtime_container=''
+  if [[ -z $found ]]; then return 0; fi
+  [[ $found =~ ^[0-9a-f]{64}$ ]] || return 1
+  result=$(docker_bounded container inspect --format \
+    '{{.Id}} {{.Image}} {{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}' "$container") || return 1
+  read -r runtime_container runtime_id runtime_running runtime_health runtime_project runtime_service extra <<< "$result"
+  [[ -z $extra && $runtime_container == "$found" && $runtime_id =~ ^sha256:[0-9a-f]{64}$ &&
+     $runtime_project == kira && $runtime_service == "$component" ]]
+}
+capture_predecessor() {
+  original_config=$(configured_image) || fail 'missing, duplicate or ambiguous configured image target'
+  runtime || fail 'cannot establish owned runtime identity'
+  previous_id=$runtime_id
+  if [[ -n $previous_id ]]; then
+    [[ $runtime_running == true && $runtime_health == healthy ]] || fail 'existing runtime is not healthy; operator recovery required'
+    local configured_id
+    configured_id=$(docker_bounded image inspect --format '{{.Id}}' "$original_config") || fail 'configured image cannot be resolved before load'
+    [[ $configured_id == "$previous_id" ]] || fail 'runtime/configured image drift; operator reconciliation required'
+  fi
+}
+wait_component() {
+  local expected=$1 end=$((SECONDS + health_seconds))
+  while (( SECONDS < end )); do
+    runtime || return 1
+    [[ -n $runtime_id && $runtime_id == "$expected" ]] || return 1
+    if [[ $runtime_running == true && $runtime_health == healthy ]]; then return 0; fi
+    [[ $runtime_running == true && $runtime_health != unhealthy ]] || return 1
     sleep 4
   done
-  docker logs --tail 100 "$container" >&2 || true
+  return 1
+}
+wait_database() {
+  local status end=$((SECONDS + 120))
+  while (( SECONDS < end )); do
+    status=$(docker_bounded inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' kira-postgres) || return 1
+    [[ $status != exited && $status != dead && $status != unhealthy ]] || return 1
+    if [[ $status == healthy ]]; then return 0; fi
+    sleep 4
+  done
   return 1
 }
 
-set_image() {
-  local key=$1
-  local value=$2
-  local temporary
-  temporary=$(mktemp "$deployment_root/images.env.XXXXXX")
-  awk -F= -v key="$key" -v value="$value" '
-    BEGIN { updated = 0 }
-    $1 == key { print key "=" value; updated = 1; next }
-    { print }
-    END { if (!updated) print key "=" value }
-  ' "$images_file" > "$temporary"
-  chmod 600 "$temporary"
-  mv "$temporary" "$images_file"
+read_state() {
+  active_source=''; active_id=''; active_archive=''
+  prior_source=''; prior_id=''; prior_archive=''
+  if [[ ! -e $state_file && ! -L $state_file ]]; then return 0; fi
+  owned_file "$state_file" && (( $(stat -c %s "$state_file") <= 512 )) || return 1
+  local lines
+  mapfile -t lines < "$state_file"
+  [[ ${#lines[@]} -eq 2 && ${lines[0]} =~ ^active\ ([0-9a-f]{40})\ (sha256:[0-9a-f]{64})\ ([0-9a-f]{64})$ ]] || return 1
+  active_source=${BASH_REMATCH[1]}; active_id=${BASH_REMATCH[2]}; active_archive=${BASH_REMATCH[3]}
+  if [[ ${lines[1]} == 'previous - - -' ]]; then return 0; fi
+  [[ ${lines[1]} =~ ^previous\ ([0-9a-f]{40})\ (sha256:[0-9a-f]{64})\ ([0-9a-f]{64})$ ]] || return 1
+  prior_source=${BASH_REMATCH[1]}; prior_id=${BASH_REMATCH[2]}; prior_archive=${BASH_REMATCH[3]}
+  [[ $prior_id != "$active_id" && $prior_archive != "$active_archive" ]]
 }
-
-configured_image() {
-  local key=$1
-  awk -F= -v key="$key" '$1 == key { print $2; exit }' "$images_file"
+write_state() {
+  local source=$1 image=$2 archive=$3 old_source=$4 old_id=$5 old_archive=$6 temporary
+  if [[ -z $image ]]; then rm -f -- "$state_file"; return $?; fi
+  temporary=$(mktemp "$component_root/activation.XXXXXX") || return 1
+  if ! { printf 'active %s %s %s\n' "$source" "$image" "$archive";
+         printf 'previous %s %s %s\n' "${old_source:--}" "${old_id:--}" "${old_archive:--}"; } > "$temporary" ||
+     ! chmod 600 "$temporary" || ! mv -fT "$temporary" "$state_file"; then
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+check_record_archive() {
+  local source=$1 image=$2 archive=$3 file="$component_root/$3.tar.gz"
+  owned_file "$file" || return 1
+  helper archive "$component" "$source" "$file" "$archive" "$image" >/dev/null
+}
+check_predecessor_archive() {
+  read_state || fail 'invalid activation record; operator reconciliation required'
+  if [[ -n $previous_id ]]; then
+    [[ $active_id == "$previous_id" ]] || fail 'predecessor has no matching record; root-only legacy archive adoption required'
+    check_record_archive "$active_source" "$active_id" "$active_archive" || fail 'predecessor archive missing or mismatched; STOP before load'
+    if [[ -n $prior_id ]]; then
+      check_record_archive "$prior_source" "$prior_id" "$prior_archive" || fail 'previous distinct archive missing or mismatched'
+    fi
+  else
+    [[ -z $active_id ]] || fail 'record exists without its runtime; explicit operator recovery required'
+  fi
+  saved_source=$active_source; saved_id=$active_id; saved_archive=$active_archive
+  saved_prior_source=$prior_source; saved_prior_id=$prior_id; saved_prior_archive=$prior_archive
+}
+begin_transaction() {
+  # Each persistent file is replaced atomically. This journal marks the interval
+  # between replacements; a process/host interruption is visibly incomplete.
+  ( set -o noclobber
+    { printf 'candidate %s %s %s\n' "$revision" "$candidate_id" "$candidate_archive";
+      printf 'predecessor %s %s %s\n' "${saved_source:--}" "${previous_id:--}" "${saved_archive:--}"; } > "$pending"
+  ) || return 1
+  [[ -z $previous_id ]] || set_image "$previous_id"
+}
+store_archive() {
+  local source=$1 archive=$2 target="$component_root/$2.tar.gz"
+  created_archive=''
+  if [[ -e $target || -L $target ]]; then
+    owned_file "$target" && cmp --silent "$source" "$target" || return 1
+  else
+    owned_file "$source" || return 1
+    ln -- "$source" "$target" || return 1
+    created_archive=$target
+    owned_file "$target" || return 1
+  fi
+}
+prune_archives() {
+  local file name
+  for file in "$component_root"/*.tar.gz; do
+    [[ -e $file || -L $file ]] || continue
+    name=${file##*/}
+    [[ $name =~ ^([0-9a-f]{64})\.tar\.gz$ ]] || continue
+    [[ ${BASH_REMATCH[1]} != "$candidate_archive" && ${BASH_REMATCH[1]} != "$saved_archive" ]] || continue
+    owned_file "$file" && rm -- "$file" || return 1
+  done
 }
 
 prepare_tutorial_media_volume() {
-  local image=$1
-  local image_user uid gid
-  image_user=$(docker image inspect --format '{{.Config.User}}' "$image")
-  [[ $image_user =~ ^([0-9]+):([0-9]+)$ ]] ||
-    fail "backend image must declare a numeric uid:gid"
-  uid=${BASH_REMATCH[1]}
-  gid=${BASH_REMATCH[2]}
-
-  docker volume create kira-tutorial-media >/dev/null
-  docker run --rm --network none --read-only \
-    --user 0:0 --entrypoint sh \
-    --volume kira-tutorial-media:/var/lib/kira/tutorial-media \
-    "$image" -ec \
-    'chown "$1:$2" "$3"; chmod 750 "$3"' \
-    sh "$uid" "$gid" /var/lib/kira/tutorial-media
-
-  docker run --rm --network none --read-only \
-    --user "$image_user" --entrypoint sh \
-    --volume kira-tutorial-media:/var/lib/kira/tutorial-media \
-    "$image" -ec \
-    'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' \
-    sh /var/lib/kira/tutorial-media
+  local image=$1 image_user uid gid
+  image_user=$(docker_bounded image inspect --format '{{.Config.User}}' "$image") || return 1
+  [[ $image_user =~ ^([0-9]+):([0-9]+)$ ]] || return 1
+  uid=${BASH_REMATCH[1]}; gid=${BASH_REMATCH[2]}
+  docker_bounded volume create kira-tutorial-media >/dev/null &&
+    docker_bounded run --pull=never --rm --network none --read-only --user 0:0 --entrypoint sh \
+      --volume kira-tutorial-media:/var/lib/kira/tutorial-media "$image" -ec \
+      'chown "$1:$2" "$3"; chmod 750 "$3"' sh "$uid" "$gid" /var/lib/kira/tutorial-media &&
+    docker_bounded run --pull=never --rm --network none --read-only --user "$image_user" --entrypoint sh \
+      --volume kira-tutorial-media:/var/lib/kira/tutorial-media "$image" -ec \
+      'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' sh /var/lib/kira/tutorial-media
 }
-
-rollback_component() {
-  local component=$1
-  local image=$2
-  [[ -n $image ]] || return 0
-  docker image inspect "$image" >/dev/null 2>&1 || return 0
-  if [[ $component == backend ]]; then
-    KIRA_BACKEND_IMAGE="$image" compose up --detach --no-deps backend
-    wait_healthy kira-backend 30 || true
-  elif [[ $component == web ]]; then
-    KIRA_WEB_IMAGE="$image" compose up --detach --no-deps web
-    wait_healthy kira-web 20 || true
-  else
-    KIRA_ADMIN_IMAGE="$image" compose up --detach --no-deps admin
-    wait_healthy kira-admin 20 || true
-  fi
-}
-
 backup_database() {
-  install -d -m 700 "$backup_root"
-  local stamp destination media_destination helper_image paused=false
+  install -d -m 700 "$backup_root" || return 1
+  local stamp destination media_destination helper_image paused=false status=0
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
   destination="$backup_root/kira-$stamp.dump"
   media_destination="$backup_root/kira-$stamp.media.tar.gz"
-  if docker inspect kira-backend >/dev/null 2>&1 && [[ $(docker inspect --format '{{.State.Running}}' kira-backend) == true ]]; then
-    docker pause kira-backend >/dev/null
+  if docker_bounded inspect kira-backend >/dev/null 2>&1 && [[ $(docker_bounded inspect --format '{{.State.Running}}' kira-backend) == true ]]; then
+    docker_bounded pause kira-backend >/dev/null || return 1
     paused=true
   fi
   if ! {
-    docker exec kira-postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination"
-    docker exec -i kira-postgres pg_restore --list < "$destination" > "$destination.manifest"
-    helper_image=$(docker inspect --format '{{.Config.Image}}' kira-postgres)
-    docker run --rm --network none --read-only \
+    docker_bounded exec kira-postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination" &&
+    docker_bounded exec -i kira-postgres pg_restore --list < "$destination" > "$destination.manifest" &&
+    helper_image=$(docker_bounded inspect --format '{{.Config.Image}}' kira-postgres) &&
+    docker_bounded run --pull=never --rm --network none --read-only \
       -v kira-tutorial-media:/media:ro -v "$backup_root":/backup \
-      "$helper_image" tar -C /media -czf "/backup/$(basename "$media_destination")" .
-    tar -tzf "$media_destination" >/dev/null
-    chmod 600 "$destination" "$destination.manifest" "$media_destination"
-    sha256sum "$destination" > "$destination.sha256"
-    sha256sum "$media_destination" > "$media_destination.sha256"
-    sha256sum "$destination" "$media_destination" > "$backup_root/kira-$stamp.bundle.sha256"
+      "$helper_image" tar -C /media -czf "/backup/$(basename "$media_destination")" . &&
+    timeout --kill-after=5s 60s tar -tzf "$media_destination" >/dev/null &&
+    chmod 600 "$destination" "$destination.manifest" "$media_destination" &&
+    sha256sum "$destination" > "$destination.sha256" &&
+    sha256sum "$media_destination" > "$media_destination.sha256" &&
+    sha256sum "$destination" "$media_destination" > "$backup_root/kira-$stamp.bundle.sha256" &&
     chmod 600 "$destination.sha256" "$media_destination.sha256" "$backup_root/kira-$stamp.bundle.sha256"
-  }; then
-    [[ $paused == false ]] || docker unpause kira-backend >/dev/null
-    fail "matched database/tutorial-media backup failed"
-  fi
-  [[ $paused == false ]] || docker unpause kira-backend >/dev/null
+  }; then status=1; fi
+  if [[ $paused == true ]] && ! docker_bounded unpause kira-backend >/dev/null; then status=1; fi
+  return "$status"
 }
 
-activate_backend() {
-  local image=$1
-  local previous
-  [[ $image =~ ^kira-backend:[A-Za-z0-9_.-]+$ ]] || fail "invalid backend image"
-  KIRA_BACKEND_IMAGE="$image" preflight_configuration
-  previous=$(configured_image KIRA_BACKEND_IMAGE)
-  docker image inspect "$image" >/dev/null
-  prepare_tutorial_media_volume "$image"
-  compose up --detach postgres
-  wait_healthy kira-postgres 30
-  backup_database
-  KIRA_BACKEND_IMAGE="$image" compose --profile tools run --rm backend-migrate
-  if ! KIRA_BACKEND_IMAGE="$image" compose up --detach --no-deps backend; then
-    rollback_component backend "$previous"
-    fail "backend activation failed; restored the previous image when available"
-  fi
-  if ! wait_healthy kira-backend 30; then
-    rollback_component backend "$previous"
-    fail "backend health check failed; restored the previous image when available"
-  fi
-  set_image KIRA_BACKEND_IMAGE "$image"
+restore_persistence() {
+  set_image "${previous_id:-$original_config}" &&
+    write_state "$saved_source" "$saved_id" "$saved_archive" "$saved_prior_source" "$saved_prior_id" "$saved_prior_archive" || return 1
+  # Remove only a new, uncommitted object created by this failed attempt.
+  if [[ -n ${created_archive:-} ]]; then rm -- "$created_archive" || return 1; fi
+  rm -- "$pending" || return 1
+  [[ $(configured_image) == "${previous_id:-$original_config}" ]] || return 1
+  read_state && [[ $active_id == "$saved_id" && $prior_id == "$saved_prior_id" ]]
 }
-
-activate_web() {
-  local image=$1
-  local previous
-  [[ $image =~ ^kira-web:[A-Za-z0-9_.-]+$ ]] || fail "invalid web image"
-  KIRA_WEB_IMAGE="$image" preflight_configuration
-  previous=$(configured_image KIRA_WEB_IMAGE)
-  docker image inspect "$image" >/dev/null
-  if ! KIRA_WEB_IMAGE="$image" compose up --detach --no-deps web; then
-    rollback_component web "$previous"
-    fail "web activation failed; restored the previous image when available"
+rollback_component() {
+  local resolved
+  if [[ -n $previous_id ]]; then
+    resolved=$(docker_bounded image inspect --format '{{.Id}}' "$previous_id") || return 1
+    [[ $resolved == "$previous_id" ]] || return 1
+    component_compose "$previous_id" up --detach --no-deps --no-build --pull never "$component" >/dev/null 2>&1 &&
+      wait_component "$previous_id" && restore_persistence && wait_component "$previous_id"
+  else
+    # A configured tag with no previously running container is not a rollback.
+    runtime || return 1
+    if [[ -n $runtime_id ]]; then
+      [[ $runtime_id == "$candidate_id" ]] || return 1
+      docker_bounded rm --force "$runtime_container" >/dev/null || return 1
+    fi
+    runtime && [[ -z $runtime_id ]] && restore_persistence
   fi
-  if ! wait_healthy kira-web 20; then
-    rollback_component web "$previous"
-    fail "web health check failed; restored the previous image when available"
-  fi
-  set_image KIRA_WEB_IMAGE "$image"
 }
-
-activate_admin() {
-  local image=$1
-  local previous
-  [[ $image =~ ^kira-admin:[A-Za-z0-9_.-]+$ ]] || fail "invalid admin image"
-  KIRA_ADMIN_IMAGE="$image" preflight_configuration
-  previous=$(configured_image KIRA_ADMIN_IMAGE)
-  docker image inspect "$image" >/dev/null
-  if ! KIRA_ADMIN_IMAGE="$image" compose up --detach --no-deps admin; then
-    rollback_component admin "$previous"
-    fail "admin activation failed; restored the previous image when available"
+abort_attempt() {
+  local primary=$1
+  if rollback_component; then
+    if [[ -n $previous_id ]]; then
+      outcome=71
+      fail "primary=$primary; rollback=restored healthy immutable predecessor $previous_id; migrations remain forward-only"
+    fi
+    outcome=72
+    fail "primary=$primary; rollback=none (no previous healthy runtime); owned candidate removed"
   fi
-  if ! wait_healthy kira-admin 20; then
-    rollback_component admin "$previous"
-    fail "admin health check failed; restored the previous image when available"
-  fi
-  set_image KIRA_ADMIN_IMAGE "$image"
+  fail "primary=$primary; rollback=FAILED; inspect actual runtime, images.env and pending transaction; no restoration claim"
 }
-
+verify_loaded() {
+  local result loaded_id loaded_os loaded_arch loaded_user loaded_revision extra
+  result=$(docker_bounded image inspect --format '{{.Id}}' "kira-$component:$revision") || return 1
+  [[ $result == "$candidate_id" ]] || return 1
+  # The archive config hashes to candidate_id; after load that full ID must exist,
+  # not merely some old expected ID left in the daemon's cache.
+  result=$(docker_bounded image inspect --format '{{.Id}}' "$candidate_id") || return 1
+  [[ $result == "$candidate_id" ]] || return 1
+  if [[ $component == backend ]]; then
+    result=$(docker_bounded image inspect --format '{{.Id}} {{.Os}} {{.Architecture}} {{.Config.User}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$candidate_id") || return 1
+    read -r loaded_id loaded_os loaded_arch loaded_user loaded_revision extra <<< "$result"
+    [[ -z $extra && $loaded_id == "$candidate_id" && $loaded_os == linux && $loaded_arch == amd64 &&
+       $loaded_user =~ ^[0-9]+:[0-9]+$ && $loaded_revision == "$revision" ]] || return 1
+  fi
+}
+activate_candidate() {
+  if [[ $component == backend ]]; then
+    prepare_tutorial_media_volume "$candidate_id" || abort_attempt media-initialization
+    compose up --detach postgres >/dev/null 2>&1 && wait_database || abort_attempt database-startup
+    backup_database || abort_attempt database-backup
+    component_compose "$candidate_id" --profile tools run --rm --no-deps --pull never backend-migrate >/dev/null 2>&1 || abort_attempt migration
+  fi
+  component_compose "$candidate_id" up --detach --no-deps --no-build --pull never "$component" >/dev/null 2>&1 || abort_attempt activation
+  wait_component "$candidate_id" || abort_attempt runtime-identity-or-health
+}
 deploy_stream() {
-  local component=$1
-  local revision=$2
-  [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail "revision must be a full Git SHA"
-  install -d -m 700 "$release_root"
-  local archive="$release_root/$component-$revision.tar.gz"
-  local image
-  case "$component" in
-    backend) image="kira-backend:$revision" ;;
-    web) image="kira-web:$revision" ;;
-    admin) image="kira-admin:$revision" ;;
-    *) fail "unknown component" ;;
-  esac
-  umask 077
-  cat > "$archive"
-  gzip --test "$archive"
-  gzip --decompress --stdout "$archive" | docker load >/dev/null
-  docker image inspect "$image" >/dev/null || fail "archive did not contain $image"
-  case "$component" in
-    backend) activate_backend "$image" ;;
-    web) activate_web "$image" ;;
-    admin) activate_admin "$image" ;;
-  esac
+  revision=$1
+  local expected_archive=${2:-} expected_id=${3:-} result extra
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail 'revision must be a full Git SHA'
+  check_installation
+  capture_predecessor  # Actual .Image, ownership and healthy state BEFORE any load.
+  check_predecessor_archive
+  incoming=$(mktemp -d "$component_root/.incoming.XXXXXXXX") || fail 'cannot allocate incoming scratch'
+  helper receive "$incoming/image.tar.gz" || fail 'bounded image receive failed'
+  local validation=(archive "$component" "$revision" "$incoming/image.tar.gz")
+  if [[ -n $expected_archive ]]; then validation+=("$expected_archive" "$expected_id"); fi
+  result=$(helper "${validation[@]}") || fail 'archive validation failed before Docker load'
+  read -r candidate_id candidate_archive extra <<< "$result"
+  [[ -z $extra && $candidate_id =~ ^sha256:[0-9a-f]{64}$ && $candidate_archive =~ ^[0-9a-f]{64}$ ]] || fail 'invalid archive checker result'
+  preflight_configuration "$candidate_id" || fail 'quiet Compose configuration preflight failed'
+  if [[ -n $previous_id && $candidate_id == "$previous_id" ]]; then
+    outcome=73
+    wait_component "$previous_id" && set_image "$previous_id" || fail 'identical candidate runtime/configuration recheck failed'
+    outcome=0
+    printf -v final_message 'already healthy at immutable image %s; active/previous archives unchanged' "$previous_id"
+    return 0
+  fi
+  created_archive=''
+  outcome=73
+  begin_transaction || abort_attempt predecessor-persistence
+  timeout --signal=TERM --kill-after=5s 90s docker load --input "$incoming/image.tar.gz" >/dev/null 2>&1 || abort_attempt image-load
+  verify_loaded || abort_attempt loaded-image-identity
+  activate_candidate
+  store_archive "$incoming/image.tar.gz" "$candidate_archive" || abort_attempt archive-persistence
+  set_image "$candidate_id" &&
+    write_state "$revision" "$candidate_id" "$candidate_archive" "$saved_source" "$saved_id" "$saved_archive" || abort_attempt activation-persistence
+  read_state && [[ $active_id == "$candidate_id" && $active_archive == "$candidate_archive" && $prior_id == "$saved_id" ]] &&
+    [[ $(configured_image) == "$candidate_id" ]] && wait_component "$candidate_id" || abort_attempt committed-identity-check
+  rm -- "$pending" || abort_attempt transaction-finalization
+  # Only after a committed transition, and never a global Docker prune.
+  outcome=0
+  prune_archives || { outcome=74; fail 'activation committed; unreferenced owned archive cleanup FAILED'; }
+  printf -v final_message 'activated source=%s archive=%s image=%s; previous=%s' "$revision" "$candidate_archive" "$candidate_id" "${saved_id:-none}"
 }
 
+adopt_legacy() {
+  revision=$1
+  [[ $revision =~ ^[0-9a-f]{40}$ ]] || fail 'legacy adoption needs a full source SHA'
+  check_installation
+  capture_predecessor
+  [[ -n $previous_id && ! -e $state_file && ! -L $state_file ]] || fail 'adoption requires a healthy owned runtime and no existing record'
+  local legacy="$release_root/$component-$revision.tar.gz" result extra
+  owned_file "$legacy" || fail 'legacy archive is missing or not root owned; no automatic image export'
+  result=$(helper archive "$component" "$revision" "$legacy") || fail 'legacy archive is not a supported bounded image'
+  read -r candidate_id candidate_archive extra <<< "$result"
+  [[ -z $extra && $candidate_id == "$previous_id" ]] || fail 'legacy archive does not contain the actual running image; STOP'
+  preflight_configuration "$candidate_id" || fail 'quiet adoption configuration preflight failed'
+  saved_source=''; saved_archive=''
+  begin_transaction || fail 'adoption persistence incomplete; inspect pending transaction'
+  store_archive "$legacy" "$candidate_archive" && set_image "$candidate_id" &&
+    write_state "$revision" "$candidate_id" "$candidate_archive" '' '' '' &&
+    wait_component "$candidate_id" && rm -- "$pending" || fail 'adoption persistence incomplete; inspect pending transaction'
+  printf -v final_message 'adopted verified legacy archive for immutable image %s; no runtime changed' "$candidate_id"
+}
+activate_recorded() {
+  local target=$1 source archive
+  [[ $target =~ ^sha256:[0-9a-f]{64}$ ]] || fail 'root activation requires a full immutable image ID'
+  check_installation
+  read_state || fail 'invalid activation record'
+  if [[ $target == "$active_id" ]]; then source=$active_source; archive=$active_archive
+  elif [[ $target == "$prior_id" ]]; then source=$prior_source; archive=$prior_archive
+  else fail 'root activation target must be a recorded active/previous image'; fi
+  check_record_archive "$source" "$target" "$archive" || fail 'recorded recovery archive unavailable'
+  # Reuse validation/transaction checks, not a tag fallback or a schema rollback.
+  deploy_stream "$source" "$archive" "$target" < "$component_root/$archive.tar.gz"
+}
 with_lock() {
   exec 9>/run/lock/kira-deploy.lock
-  flock --exclusive 9
+  flock --exclusive --wait 30 9 || fail 'deployment lock deadline exceeded'
   "$@"
 }
 
 case ${1:-} in
   deploy)
-    [[ $# -eq 3 ]] || fail "usage: kira-deploy deploy COMPONENT GIT_SHA"
-    with_lock deploy_stream "$2" "$3"
+    outcome=70
+    if [[ $# -eq 5 && $2 == backend && $3 =~ ^[0-9a-f]{40}$ && $4 =~ ^[0-9a-f]{64}$ && $5 =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      select_component "$2"; with_lock deploy_stream "$3" "$4" "$5"
+    elif [[ $# -eq 3 && ( $2 == web || $2 == admin ) && $3 =~ ^[0-9a-f]{40}$ ]]; then
+      select_component "$2"; with_lock deploy_stream "$3"
+    else fail 'invalid exact deploy command; legacy Backend three-token command is retired'; fi
     ;;
   activate)
-    [[ $# -eq 3 ]] || fail "usage: kira-deploy activate COMPONENT IMAGE"
-    case "$2" in
-      backend) with_lock activate_backend "$3" ;;
-      web) with_lock activate_web "$3" ;;
-      admin) with_lock activate_admin "$3" ;;
-      *) fail "unknown component" ;;
-    esac
+    outcome=70
+    [[ $# -eq 3 ]] || fail 'usage: kira-deploy activate COMPONENT sha256:IMAGE_ID (root only)'
+    select_component "$2"; with_lock activate_recorded "$3"
+    ;;
+  adopt)
+    [[ $# -eq 3 ]] || fail 'usage: kira-deploy adopt COMPONENT GIT_SHA (root only)'
+    select_component "$2"; with_lock adopt_legacy "$3"
     ;;
   backup)
-    [[ $# -eq 1 ]] || fail "usage: kira-deploy backup"
-    with_lock backup_database
+    [[ $# -eq 1 && $EUID -eq 0 ]] || fail 'usage: kira-deploy backup (root only)'
+    with_lock backup_database || fail 'matched database/tutorial-media backup failed'
     ;;
-  *)
-    fail "supported commands: deploy, activate, backup"
-    ;;
+  *) fail 'supported root commands: deploy, activate, adopt, backup' ;;
 esac

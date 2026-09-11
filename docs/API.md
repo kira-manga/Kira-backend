@@ -412,3 +412,13 @@ server logs only.
 Provider work runs on `kira.completion.executor-threads` workers (default 8) with a bounded
 `kira.completion.queue-capacity` (default 64). Saturation fails the request outcome as
 `PROVIDER_UNAVAILABLE` instead of growing an unbounded in-memory queue.
+
+`kira.completion.queue-timeout` (default2s) includes queue wait and RUNNING persistence through
+provider-start authorization. Startup at or after that deadline is rejected. Startup expiry or
+saturation returns503 `COMPLETION_OVERLOADED` (`Retry-After: 1`) only if that failure won terminal
+publication. The separate provider timed wait (`kira.completion.timeout`, default30s) starts at
+authorization; an already observable completed result may win at its wait boundary. Neither timeout
+acknowledges termination of an already authorized worker/remote call. Database outcome persistence
+is outside these budgets. Terminal outcomes cannot be replaced, and canceled pre-start work cannot
+later claim provider entry. GET/list combine request and outcome data from one read-only snapshot
+as of the first SELECT; a later independent read may observe a newer terminal outcome.

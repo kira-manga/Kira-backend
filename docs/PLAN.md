@@ -706,9 +706,10 @@ rollback. Rotation keeps old and new public keys in an explicit overlap window. 
 
 ## 10. Completion service
 
-The service remains provider-agnostic and disabled by default. Logical admission accounting does not
-establish a physical provider concurrency bound: the connected late-start/early-release and actual
-termination/fencing obligation remains unresolved (see `SECURITY.md`, completion admission).
+The service remains provider-agnostic and disabled by default. Neither lifecycle safety below nor
+logical admission accounting establishes a physical provider concurrency bound. The connected
+late-start/early-release and actual termination/fencing obligation remains unresolved
+(see `SECURITY.md`, completion admission).
 
 - **Port (domain):** `interface CompletionProvider { val name: String; fun complete(prompt: String, model: String): CompletionOutcome }` where `CompletionOutcome` = `Success(result: String, latencyMs: Int)` | `Failure(error: String)`. No Spring types in the interface.
 - **Providers:** `EchoCompletionProvider` is available only in explicit `dev`/`test` profiles.
@@ -727,14 +728,37 @@ termination/fencing obligation remains unresolved (see `SECURITY.md`, completion
   unsafe production selection fails startup. Controllers know only `CompletionService`;
   `CompletionService` knows only the port. Provider secrets never appear in an API response, stored
   error, audit entry, or application log.
-- **Transaction & failure boundaries (normative — a DB transaction is NEVER held open across a provider call):** (1) short tx: insert `completion_requests` row `PENDING` → commit; (2) short tx: update to `RUNNING` → commit; (3) invoke the provider **outside any DB transaction** on a bounded executor (`kira.completion.executor-threads`, default 8; `queue-capacity`, default 64), wrapped in a timeout (`kira.completion.timeout`, default 30s) — a slow/hung provider must not pin a connection-pool slot or a row lock, and executor saturation becomes a stored `FAILED` result with `PROVIDER_UNAVAILABLE`; (4) short tx: store the sanitized outcome — `SUCCEEDED` with the result truncated to `kira.completion.max-result-length` (default 100 000 chars, truncation recorded), or `FAILED` with a **sanitized client-visible message + stable error code** (below). A crash between (2) and (4) leaves a `RUNNING` row — harmless, visible, and exactly why the status exists. The request timeout includes time spent waiting in the bounded queue. The **echo provider goes through this same orchestration path** (queue, timeout, truncation, sanitization, error mapping) so a future real provider changes zero orchestration code.
+- **Transaction & failure boundaries:** (1) insert `PENDING` and commit; (2) conditionally claim
+  `PENDING → RUNNING` and commit; (3) authorize and invoke the provider **outside any DB transaction**
+  on the bounded executor (`executor-threads`, default8; `queue-capacity`, default64); (4) conditionally
+  publish `SUCCEEDED` with the result truncated to `max-result-length` (default100000), or `FAILED`
+  with the sanitized message and stable code, inserting its outcome in the same short transaction.
+  Failure/cancellation before provider startup may instead publish `PENDING → FAILED`. The first
+  terminal publication wins; late workers cannot change that status, timestamp, or outcome. A crash
+  can leave nonterminal work for retention recovery. Database failure can still prevent publication.
+- **Startup and provider timeouts:** `kira.completion.queue-timeout` (default2s) covers the bounded
+  queue **and** RUNNING persistence through invocation authorization. Authorization at or after the
+  original monotonic deadline is rejected; a timely authorized start wins over a caller waking late.
+  Queue/startup expiry and executor saturation publish `FAILED/PROVIDER_UNAVAILABLE` and return503
+  overload only when that candidate won publication. `kira.completion.timeout` (default30s) starts
+  at authorization, not before its status transaction. Its remaining budget controls a timed Future
+  wait: an already observable completed result can win at the wait boundary, not a strict physical
+  completion-time guarantee. Cancellation recorded before authorization prevents provider invocation
+  even when startup ignores interruption. After authorization, interruption is cooperative and does
+  not acknowledge worker or remote termination. Terminal persistence is outside both wait budgets.
+  Echo goes through the same orchestration, truncation, sanitization, and error mapping.
 - **Stable error-code catalog (normative — persisted in `completion_results.error_code`, exposed in the API):** a bounded enum, not free text: `PROVIDER_TIMEOUT` (the §10 timeout elapsed), `PROVIDER_UNAVAILABLE` (connect/transport failure), `PROVIDER_REJECTED` (the provider refused the request), `INVALID_PROVIDER_RESPONSE` (unparseable/contract-violating provider output), `RESULT_TOO_LARGE` (result over the max even for truncation policy — when truncation is disallowed), `INTERNAL_COMPLETION_ERROR` (anything else — **every unknown/unexpected exception maps here**, never to a leaked message). Failure responses expose both fields: `{"errorCode": "PROVIDER_TIMEOUT", "error": "The completion request could not be completed."}` — the `error` message is sanitized, bounded, and generic; the `errorCode` is the machine-actionable part. **Raw provider exceptions are never returned to clients and never stored** — stack traces and provider internals appear only in secured server logs (request-id-correlated, §6 logging). Successful requests carry `error_code = NULL` and `error = NULL` (DB CHECK-enforced, §5); a failed request never carries a `result` (CHECK `chk_result_xor_error`). `CompletionErrorTaxonomyIT` (§11 test 49) proves timeout, provider rejection, unexpected-exception mapping, and response sanitization.
 - **Data hygiene & retention:** prompts/results live only in the two completion tables and are never
   written to audit rows or logs. A scheduled, bounded cleanup expires abandoned in-flight work and
   deletes terminal prompt/result rows after `kira.completion.retention` (seven days by default).
+  Cleanup locks one stable ordered request-ID batch first, rechecks state, and expires/deletes those
+  same pairs in request-before-result ownership order; it does not repair old inconsistent rows.
 - **Persistence:** every accepted call records its request and terminal result/error in short
   transactions; no database transaction spans a provider call. Cancellation and timeout transitions
-  are compare-and-set guarded so late workers cannot overwrite terminal state.
+  are compare-and-set guarded so late workers cannot overwrite terminal state. GET/list assemble
+  requests and outcomes in method-local read-only REPEATABLE READ transactions, as of their first
+  SELECT; a subsequent independent read sees newer commits. Their service callers remain
+  nontransactional; joining an ambient transaction would not upgrade its isolation.
 - **Admission:** per-user/global limits, daily quota, logical concurrent permits, executor capacity,
   and separate queue/provider waits reject with 429/503 and retry guidance. Redis is mandatory for
   multiple instances; memory requires an explicitly declared single-instance topology. Redis counts

@@ -7,59 +7,88 @@ on:
 
 permissions:
   contents: read
-  packages: read
+  actions: read
+
+env:
+  CI_RUN_ID: ${{ github.event.workflow_run.id }}
+  CI_RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+  CI_SHA: ${{ github.event.workflow_run.head_sha }}
 
 concurrency:
   group: kira-backend-server3-production
   cancel-in-progress: false
 
 jobs:
-  deploy:
+  preflight:
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
-      github.event.workflow_run.event == 'push'
+      github.event.workflow_run.event == 'push' &&
+      github.repository == 'kira-manga/Kira-backend'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      candidate: ${{ steps.candidate.outputs.candidate }}
+      artifact_id: ${{ steps.candidate.outputs.artifact_id }}
+      zip_sha256: ${{ steps.candidate.outputs.zip_sha256 }}
+      zip_bytes: ${{ steps.candidate.outputs.zip_bytes }}
+    steps:
+      - name: Check out this trusted consumer, never producer-selected scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Allocate owned candidate scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Authenticate and freeze one immutable candidate before production approval
+        id: candidate
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/image_release.py verify
+      - name: Remove only owned candidate scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup
+
+  deploy:
+    needs: preflight
     runs-on: ubuntu-latest
     environment: production
-    timeout-minutes: 40
+    timeout-minutes: 20
+    env:
+      EXPECTED_CANDIDATE: ${{ needs.preflight.outputs.candidate }}
+      EXPECTED_ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
+      EXPECTED_ZIP_SHA256: ${{ needs.preflight.outputs.zip_sha256 }}
+      EXPECTED_ZIP_BYTES: ${{ needs.preflight.outputs.zip_bytes }}
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check out the same trusted consumer after approval
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Build exact-SHA image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          load: true
-          push: false
-          tags: kira-backend:${{ github.event.workflow_run.head_sha }}
-          build-args: |
-            VERSION=${{ github.event.workflow_run.head_sha }}
-            VCS_REF=${{ github.event.workflow_run.head_sha }}
-            BUILD_DATE=1970-01-01T00:00:00Z
-            KIRA_PACKAGES_USER=${{ github.actor }}
-          secrets: |
-            github_token=${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Configure pinned SSH host
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Allocate owned promotion scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Reverify the frozen artifact ID, original bytes, and exact image
         env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/image_release.py verify
+      - name: Recheck freshness before keys, then stream the original verified gzip
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
           DEPLOY_KEY: ${{ secrets.SERVER3_SSH_PRIVATE_KEY }}
           KNOWN_HOSTS: ${{ secrets.SERVER3_KNOWN_HOSTS }}
-        run: |
-          install -d -m 700 ~/.ssh
-          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/kira_server3
-          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/kira_server3 ~/.ssh/known_hosts
-      - name: Stream image and deploy
-        env:
           DEPLOY_HOST: ${{ vars.SERVER3_HOST }}
           DEPLOY_PORT: ${{ vars.SERVER3_PORT }}
           DEPLOY_USER: ${{ vars.SERVER3_USER }}
-          REVISION: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          docker save "kira-backend:$REVISION" | gzip -9 | \
-            ssh -i ~/.ssh/kira_server3 -p "${DEPLOY_PORT:-22}" \
-              -o BatchMode=yes -o IdentitiesOnly=yes \
-              "$DEPLOY_USER@$DEPLOY_HOST" "deploy backend $REVISION"
+        run: python3 -B scripts/ci/image_release.py transfer
+      - name: Remove only owned credentials and candidate scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup

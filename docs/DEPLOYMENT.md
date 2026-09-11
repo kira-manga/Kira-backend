@@ -5,6 +5,28 @@ the supported production topology: two stateless application replicas behind a T
 PostgreSQL and Redis services, health probes, rolling updates, a disruption budget, restricted pod
 security, and bounded ingress traffic. It is a template, not a claim that infrastructure exists.
 
+## Server3 exact-image path (separate from Kubernetes/tag releases)
+
+Server3's [runbook](../deploy/server3/README.md#exact-tested-image-promotion) documents its shared
+Compose receiver and immutable image/archive recovery contract. Backend CI builds once and smokes
+the actual Docker image ID; the `workflow_run` consumer authenticates that successful main attempt
+and its finite, three-day artifact, verifies original bytes and image identity, and never rebuilds.
+It freezes the artifact before the separate production approval job and rechecks current-main /
+72-hour freshness immediately before keys/transfer. Consumer reruns are refused.
+
+The host captures the healthy owned running `.Image` before load and uses full local image IDs for
+activation, migration and checked application rollback. Active/previous **distinct successful**
+gzip archives are content-addressed and survive GitHub expiry. Runtime/config drift or an absent
+verified predecessor archive is an operator STOP, not a silent backup/tag fallback. The Backend wire
+command now binds source, gzip SHA-256 and image ID; Web/Admin keep their existing three-token forms.
+Root-only archive adoption is required for a healthy legacy predecessor without a matching record.
+
+Backend is intentionally public: artifact authentication is not confidentiality. No credentials,
+signing material, production responses or private review archives belong in image artifacts/logs.
+Source/stub checks are not installed-host or production proof. Coordinate reviewed receiver/helper/
+gateway installation and separately verify GitHub protections and SSH authority before rollout.
+Neither application rollback path below nor Server3's ID rollback reverses database migrations.
+
 ## Required overlay
 
 Before applying it, create an environment overlay that replaces `api.kira.example`, the TLS secret,
