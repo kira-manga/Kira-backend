@@ -197,7 +197,9 @@ class CompletionService(
         return try {
             val started = when (val decision = startup.await()) {
                 is CompletionStartup.Decision.Authorized -> decision
+
                 is CompletionStartup.Decision.Failed -> return executionFailure(decision.cause, startNanos)
+
                 CompletionStartup.Decision.Expired -> {
                     startup.cancel()
                     future.cancel(true)
@@ -209,6 +211,7 @@ class CompletionService(
                         overloaded = true,
                     )
                 }
+
                 CompletionStartup.Decision.Rejected, CompletionStartup.Decision.Cancelled -> return Resolved.Failure(
                     CompletionErrorCode.INTERNAL_COMPLETION_ERROR,
                     "provider startup was not authorized",

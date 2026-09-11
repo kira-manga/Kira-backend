@@ -64,16 +64,19 @@ class CompletionLifecycleTest {
         val persistence = mock(CompletionPersistence::class.java) { invocation ->
             when (invocation.method.name) {
                 "createPending" -> view.id
+
                 "markRunning" -> {
                     worker.set(Thread.currentThread())
                     if (throwFromClaim) error("synthetic startup failure")
                     false
                 }
+
                 "storeOutcome" -> {
                     assertEquals(CompletionStatus.FAILED, invocation.getArgument<CompletionStatus>(1))
                     assertEquals(CompletionErrorCode.INTERNAL_COMPLETION_ERROR, invocation.getArgument<CompletionErrorCode>(4))
                     CompletionPublication(view, won = true)
                 }
+
                 else -> Answers.RETURNS_DEFAULTS.answer(invocation)
             }
         }

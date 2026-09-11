@@ -157,14 +157,18 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
         val start = CyclicBarrier(3)
         val callers = Executors.newFixedThreadPool(2)
         try {
-            val success = callers.submit(Callable {
-                start.await()
-                publish(id, CompletionStatus.SUCCEEDED)
-            })
-            val failure = callers.submit(Callable {
-                start.await()
-                publish(id, CompletionStatus.FAILED)
-            })
+            val success = callers.submit(
+                Callable {
+                    start.await()
+                    publish(id, CompletionStatus.SUCCEEDED)
+                },
+            )
+            val failure = callers.submit(
+                Callable {
+                    start.await()
+                    publish(id, CompletionStatus.FAILED)
+                },
+            )
             start.await(5, TimeUnit.SECONDS)
             val publications = listOf(success.get(5, TimeUnit.SECONDS), failure.get(5, TimeUnit.SECONDS))
 
@@ -205,11 +209,13 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
         val release = CountDownLatch(1)
         val caller = Executors.newSingleThreadExecutor()
         try {
-            val lateStart = caller.submit(Callable {
-                entered.countDown()
-                assertTrue(release.await(5, TimeUnit.SECONDS)) // Outside the real transaction and row lock.
-                persistence.markRunning(id)
-            })
+            val lateStart = caller.submit(
+                Callable {
+                    entered.countDown()
+                    assertTrue(release.await(5, TimeUnit.SECONDS)) // Outside the real transaction and row lock.
+                    persistence.markRunning(id)
+                },
+            )
             assertTrue(entered.await(5, TimeUnit.SECONDS))
             assertTrue(publish(id, CompletionStatus.SUCCEEDED).won)
             val terminal = snapshot(id)
@@ -318,14 +324,18 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
         val start = CyclicBarrier(3)
         val callers = Executors.newFixedThreadPool(2)
         try {
-            val publisher = callers.submit(Callable {
-                start.await()
-                runCatching { publish(id, CompletionStatus.SUCCEEDED) }
-            })
-            val cleanup = callers.submit(Callable {
-                start.await()
-                retention.cleanExpired()
-            })
+            val publisher = callers.submit(
+                Callable {
+                    start.await()
+                    runCatching { publish(id, CompletionStatus.SUCCEEDED) }
+                },
+            )
+            val cleanup = callers.submit(
+                Callable {
+                    start.await()
+                    retention.cleanExpired()
+                },
+            )
             start.await(5, TimeUnit.SECONDS)
             val publication = publisher.get(5, TimeUnit.SECONDS)
             assertEquals(1, cleanup.get(5, TimeUnit.SECONDS))
@@ -415,18 +425,21 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
         }
         when (row["status"]) {
             "PENDING", "RUNNING" -> assertEquals(0, count)
+
             "SUCCEEDED" -> {
                 assertEquals(1, count)
                 assertNotNull(row["result"])
                 assertNull(row["error"])
                 assertNull(row["error_code"])
             }
+
             "FAILED" -> {
                 assertEquals(1, count)
                 assertNull(row["result"])
                 assertNotNull(row["error"])
                 assertNotNull(row["error_code"])
             }
+
             else -> error("Unexpected completion state")
         }
     }
@@ -438,16 +451,26 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
     ): CompletionPersistence = mock(CompletionPersistence::class.java) { invocation ->
         when (invocation.method.name) {
             "createPending" -> persistence.createPending(
-                invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2), invocation.getArgument(3),
+                invocation.getArgument(0),
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+                invocation.getArgument(3),
             ).also(onPending)
+
             "markRunning" -> claim(invocation.getArgument(0))
+
             "storeOutcome" -> {
                 onOutcome()
                 persistence.storeOutcome(
-                    invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2),
-                    invocation.getArgument(3), invocation.getArgument(4), invocation.getArgument(5),
+                    invocation.getArgument(0),
+                    invocation.getArgument(1),
+                    invocation.getArgument(2),
+                    invocation.getArgument(3),
+                    invocation.getArgument(4),
+                    invocation.getArgument(5),
                 )
             }
+
             else -> Answers.RETURNS_DEFAULTS.answer(invocation)
         }
     }
@@ -518,10 +541,8 @@ class CompletionLifecycleTestConfig {
 
     @Bean
     @Primary
-    fun lifecycleResults(
-        @Qualifier("jpaCompletionResultRepositoryAdapter") delegate: CompletionResultRepository,
-        entityManager: EntityManager,
-    ) = LifecycleResults(delegate, entityManager)
+    fun lifecycleResults(@Qualifier("jpaCompletionResultRepositoryAdapter") delegate: CompletionResultRepository, entityManager: EntityManager) =
+        LifecycleResults(delegate, entityManager)
 }
 
 class LifecycleRequests(private val delegate: CompletionRequestRepository) : CompletionRequestRepository by delegate {
