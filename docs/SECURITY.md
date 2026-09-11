@@ -287,16 +287,44 @@ production default. Null/blank request models use the configured value; nonblank
 and configured defaults are preserved exactly, not trimmed or normalized. Operators must verify
 model availability/authorization with their provider separately; startup does not query a catalog.
 
-Admission applies
-atomic per-user/global minute limits, a per-user daily quota, and a global concurrency lease before a
-request can enter the bounded executor. A multi-instance deployment must use Redis coordination;
-single-instance memory coordination must be declared explicitly. Overload returns 429 for rate/quota
-limits or 503 with `Retry-After` for queue/concurrency/provider availability failures.
+Admission checks per-user/global minute limits, a per-user daily quota, and logical concurrent permits
+before the bounded executor. Multiple instances require Redis; single-instance memory coordination
+must be declared explicitly. Redis retains its existing fixed per-counter windows and earlier-counter
+charges when a later dimension rejects; this is not an atomic all-or-nothing rolling-window claim
+(Backend14 remains separate). Rate/quota rejection stays 429 with Retry-After 60/86400; concurrency
+capacity stays 503/1, and indeterminate acquisition stays 503/5. Release failures remain visible 429/5
+and are not retried locally; preserving an already committed caller response is still Backend15 work.
 
-Queue wait and provider execution have separate timeouts. A request is marked running only after the
-worker begins, canceled work cannot later overwrite its terminal state, and every acquired concurrency
-lease is released. Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention,
-and cleanup batch size are bounded configuration.
+Redis concurrency counts **unexpired, unreleased UUIDv4 token leases**, not physical provider calls.
+The existing `kira:completion-admission:concurrency` key is a sorted set of tokens/deadlines. Acquisition
+validates state before writes, prunes deadlines `<= Redis TIME`, and reserves only a new token. Release
+removes only its captured token; missing/expired/replayed tokens cannot decrement successor permits.
+The allowance is twice queue-plus-provider timeout, with positive whole-millisecond durations and
+checked exact arithmetic; timestamps/deadlines are limited to `2^53 - 1`. The **Redis-only** capacity
+guard is **1..4096** (default8), bounding token inspection; it neither clamps configuration nor changes the
+memory backend. Key expiry covers the greatest member deadline, even across different valid lease
+durations. Wrong types, malformed tokens/scores, too many members, or missing/short key expiry deny
+without destructive repair. Unknown replies deny, never authorize speculative anonymous release.
+
+**Provider-lifetime obligation remains unresolved.** Queue/provider waits do not bound the earlier
+`createPending` database work; an acquired lease can expire before submission. A delayed worker can
+also resume from `markRunning` into the provider. Caller timeout requests `Future.cancel(true)` and
+then exits `use` without joining actual worker termination, so release can precede termination even
+before lease expiry. Redis cannot distinguish a crashed holder from a paused/live one or stop remote
+work. Backend12's terminal-state correction alone does not prove a physical concurrency cap. A strict
+physical-provider bound still requires a connected termination/fencing and late-start/early-release
+design, review and validation; this logical protocol is no waiver or enablement approval. Completion
+remains disabled by default.
+
+**Redis assumptions and stopped/drained cutover:** all completion nodes need one shared, non-evicting
+Redis authority (`noeviction` or equivalent), consistent capacity/protocol, and controlled clock/state
+continuity. These multi-key scripts do not support Redis Cluster or guarantee bounds through arbitrary
+clock jumps, state loss or asynchronous failover. Redis 7+ is required; the fixture uses 7.4.7. A legacy
+integer is rejected, not imported/deleted, and there is no parallel old/new semaphore namespace.
+Stop admission and every old writer, drain/resolve actual outstanding work, and prevent old-version
+restarts before cutover. Waiting one TTL is not a verified drain. Any confirmed-stale-state reset or
+rollback requires an explicit stopped/drained operational procedure; installed enforcement remains
+external. Auth coordination keys and scripts are unaffected.
 
 ## Retention & privacy
 

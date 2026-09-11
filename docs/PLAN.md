@@ -706,8 +706,9 @@ rollback. Rotation keeps old and new public keys in an explicit overlap window. 
 
 ## 10. Completion service
 
-The service remains provider-agnostic, but its admission, lifecycle, and retention paths are complete
-for production use. It is disabled by default.
+The service remains provider-agnostic and disabled by default. Logical admission accounting does not
+establish a physical provider concurrency bound: the connected late-start/early-release and actual
+termination/fencing obligation remains unresolved (see `SECURITY.md`, completion admission).
 
 - **Port (domain):** `interface CompletionProvider { val name: String; fun complete(prompt: String, model: String): CompletionOutcome }` where `CompletionOutcome` = `Success(result: String, latencyMs: Int)` | `Failure(error: String)`. No Spring types in the interface.
 - **Providers:** `EchoCompletionProvider` is available only in explicit `dev`/`test` profiles.
@@ -734,11 +735,13 @@ for production use. It is disabled by default.
 - **Persistence:** every accepted call records its request and terminal result/error in short
   transactions; no database transaction spans a provider call. Cancellation and timeout transitions
   are compare-and-set guarded so late workers cannot overwrite terminal state.
-- **Admission:** atomic per-user/global rolling limits, daily per-user quota, global concurrency,
-  executor capacity, and separate queue/provider timeouts reject overload predictably with 429 or 503
-  plus retry guidance. Redis Lua coordination is mandatory for multiple instances; a bounded in-memory
-  implementation is permitted only for an explicitly declared single-instance topology. Coordination
-  failure denies new work.
+- **Admission:** per-user/global limits, daily quota, logical concurrent permits, executor capacity,
+  and separate queue/provider waits reject with 429/503 and retry guidance. Redis is mandatory for
+  multiple instances; memory requires an explicitly declared single-instance topology. Redis counts
+  unexpired/unreleased token leases, not confirmed running providers; its existing fixed rate windows
+  and earlier-counter accounting remain separate work. Coordination failure denies new work. The
+  bounded protocol, stopped/drained cutover, release-error behavior and unresolved physical-lifetime
+  requirement are explicit in `SECURITY.md`.
 
 ---
 

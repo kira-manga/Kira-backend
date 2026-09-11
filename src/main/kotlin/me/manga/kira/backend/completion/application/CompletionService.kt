@@ -216,7 +216,7 @@ class CompletionService(
                     Resolved.Failure(CompletionErrorCode.PROVIDER_REJECTED, outcome.error, null, elapsedMs(startNanos))
             }
         } catch (ex: TimeoutException) {
-            future.cancel(true) // interrupt the worker so it does not linger past the timeout
+            future.cancel(true) // Request interruption; worker/remote termination is not acknowledged here.
             Resolved.Failure(CompletionErrorCode.PROVIDER_TIMEOUT, "provider call timed out", ex, elapsedMs(startNanos))
         } catch (ex: ExecutionException) {
             val cause = ex.cause

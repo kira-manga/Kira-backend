@@ -51,16 +51,20 @@ data class KiraCompletionProperties(
     val coordinationBackend: String = "memory",
     @field:Positive
     val instanceCount: Int = 1,
-    /** Per-user rolling-minute request cap. Zero disables this specific cap. */
+    /** Per-user minute cap (memory rolling; Redis fixed window). Zero disables this specific cap. */
     @field:PositiveOrZero
     val perUserPerMinute: Int = 10,
-    /** Service-wide rolling-minute request cap. Zero disables this specific cap. */
+    /** Service-wide minute cap (memory rolling; Redis fixed window). Zero disables this specific cap. */
     @field:PositiveOrZero
     val globalPerMinute: Int = 100,
     /** Per-user daily request cap. Zero disables this specific cap. */
     @field:PositiveOrZero
     val perUserDailyQuota: Int = 100,
-    /** Global provider calls allowed concurrently across the configured topology. */
+    /**
+     * Logical admitted permits, not confirmed physical provider lifetimes. Redis counts unexpired,
+     * unreleased token leases and requires 1..4096 to bound state inspection; memory is unchanged.
+     * Caller cancellation/close does not acknowledge actual worker or remote-provider termination.
+     */
     @field:Positive
     val globalConcurrency: Int = 8,
     /** Prompt/result retention. Expired rows are deleted by the scheduled cleanup. */
