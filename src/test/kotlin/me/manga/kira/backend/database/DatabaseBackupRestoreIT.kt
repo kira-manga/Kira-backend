@@ -13,9 +13,11 @@ import org.junit.jupiter.api.io.TempDir
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.springframework.security.crypto.factory.PasswordEncoderFactories
+import org.testcontainers.containers.BindMode
 import org.testcontainers.containers.PostgreSQLContainer
 import org.testcontainers.utility.DockerImageName
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.Path
 import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.PosixFilePermissions
@@ -25,9 +27,10 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
- * Linux disposable drill: the real portable restore scripts/helper, PG17.6 custom dump FILE BYTES,
- * real Flyway predicates and media publication. No production credentials, traffic or release-image proof.
- * The fixed test-only bridges execute real clients in the target container; no host PG client fallback.
+ * Linux disposable drill: real portable backup in the two source-version successes, real restore in all cases,
+ * PG17.6 custom dump FILE BYTES, real Flyway predicates and media publication. No production credentials,
+ * traffic, installed writer-drain or release-image proof. Fixed test-only bridges execute real clients in
+ * their exact disposable containers; no host PG client fallback.
  */
 class DatabaseBackupRestoreIT {
     @TempDir
@@ -36,12 +39,16 @@ class DatabaseBackupRestoreIT {
     @ParameterizedTest
     @ValueSource(strings = ["12", "13"])
     fun `selected source pair survives real restore before separate release thirteen migration`(sourceVersion: String) {
-        withDatabases { source, target ->
+        val directory = Files.createDirectory(
+            temporary.resolve("selected"),
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
+        ).toAbsolutePath().normalize()
+        withDatabases(producerOutput = directory) { source, target ->
             flyway(source, sourceVersion).migrate()
             val userId = UUID.randomUUID()
             insertUser(source, userId)
             val originalHistory = history(source)
-            val pair = selectedPair(source)
+            val pair = producedPair(source, directory)
             val environment = targetEnvironment(target)
 
             assertSuccess(restoreDatabase(pair, sourceVersion, environment))
@@ -173,6 +180,98 @@ class DatabaseBackupRestoreIT {
         val pin = created.output.trimEnd('\n')
         assertEquals(sha256(Files.readAllBytes(manifest)), pin)
         return SelectedPair(manifest, dump, media, pin, temporary.resolve("attempt"), temporary.resolve("restored-media"))
+    }
+
+    private fun producedPair(source: PostgreSQLContainer<*>, directory: Path): SelectedPair {
+        val live = Files.createDirectories(temporary.resolve("source-media/tutorial"))
+        Files.write(live.resolve("item.bin"), mediaBytes)
+        val dump = directory.resolve("drill.dump")
+        val media = directory.resolve("drill.media.tar.gz")
+        val manifest = directory.resolve("drill.bundle.json")
+        val produced = run(
+            listOf(scripts.resolve("backup.sh").toString(), dump.toString(), live.parent.toAbsolutePath().toString()),
+            sourceEnvironment(source, directory),
+        )
+        assertSuccess(produced)
+        val prefix = "backup bundle created; inventory SHA-256: "
+        assertTrue(
+            Regex("${Regex.escape(prefix)}[0-9a-f]{64}\n").matches(produced.output),
+            "producer must return its inventory digest",
+        )
+        val pin = produced.output.removePrefix(prefix).trimEnd('\n')
+        assertEquals(sha256(Files.readAllBytes(manifest)), pin)
+        // The real pg_dump wrote this exact bind-mounted file; no exec stdout transports dump bytes.
+        Files.newInputStream(dump).use { input -> assertArrayEquals("PGDMP".toByteArray(Charsets.US_ASCII), input.readNBytes(5)) }
+        assertEquals(
+            setOf(
+                "drill.dump", "drill.dump.manifest", "drill.dump.sha256",
+                "drill.media.tar.gz", "drill.media.tar.gz.sha256", "drill.bundle.json",
+            ),
+            Files.newDirectoryStream(directory).use { entries -> entries.map { it.fileName.toString() }.toSet() },
+            "Only completed producer outputs remain: no retained stage or legacy bundle authority.",
+        )
+        return SelectedPair(manifest, dump, media, pin, temporary.resolve("attempt"), temporary.resolve("restored-media"))
+    }
+
+    private fun sourceEnvironment(source: PostgreSQLContainer<*>, directory: Path): Map<String, String> {
+        val docker = executable("docker")
+        require(source.containerId.matches(Regex("[0-9a-f]{64}")))
+        val uid = Files.getAttribute(directory, "unix:uid", LinkOption.NOFOLLOW_LINKS) as Int
+        val gid = Files.getAttribute(directory, "unix:gid", LinkOption.NOFOLLOW_LINKS) as Int
+        require(uid >= 0 && gid >= 0) { "Unsupported host fixture UID/GID" }
+        val clientUser = "$uid:$gid"
+        val nonce = UUID.randomUUID().toString()
+        val probe = directory.resolve(".mount-probe-$nonce")
+        assertFalse(Files.exists(probe, LinkOption.NOFOLLOW_LINKS))
+        assertSuccess(
+            run(
+                listOf(
+                    docker.toString(), "exec", "--user", clientUser, source.containerId,
+                    "sh", "-c", "set -euC; umask 077; printf '%s' \"\$1\" > \"\$2\"",
+                    "kira-bind-probe", nonce, probe.toString(),
+                ),
+            ),
+        )
+        // Unshared daemon filesystems or incompatible UID mappings must fail, never use another directory or relaxed modes.
+        assertTrue(Files.isRegularFile(probe, LinkOption.NOFOLLOW_LINKS), "Container did not write the exact host fixture directory")
+        assertArrayEquals(nonce.toByteArray(Charsets.US_ASCII), Files.readAllBytes(probe))
+        assertEquals(uid, Files.getAttribute(probe, "unix:uid", LinkOption.NOFOLLOW_LINKS) as Int)
+        assertEquals(gid, Files.getAttribute(probe, "unix:gid", LinkOption.NOFOLLOW_LINKS) as Int)
+        assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(probe))
+        Files.delete(probe)
+
+        val bin = Files.createDirectory(
+            temporary.resolve("pg17-source-clients"),
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
+        )
+        for (name in listOf("pg_dump", "pg_restore")) {
+            val bridge = bin.resolve(name)
+            Files.writeString(
+                bridge,
+                """
+                |#!/bin/sh
+                |set -eu
+                |exec ${shellQuote(docker.toString())} exec -i --user $clientUser \
+                |  --env PGPASSWORD --env PGSSLMODE --env PGCLIENTENCODING ${source.containerId} $name "${'$'}@"
+                |
+                """.trimMargin(),
+            )
+            Files.setPosixFilePermissions(bridge, PosixFilePermissions.fromString("rwx------"))
+        }
+        // Only the clients use the fixture owner's numeric identity; the PostgreSQL server user is unchanged.
+        // --file reaches the same private host stage unchanged; pg_restore --list receives raw stdin.
+        return mapOf(
+            "PATH" to "$bin:${System.getenv("PATH")}",
+            "PGHOST" to "127.0.0.1",
+            "PGPORT" to "5432",
+            "PGDATABASE" to source.databaseName,
+            "PGUSER" to source.username,
+            "PGPASSWORD" to source.password,
+            "PGSSLMODE" to "disable", // Isolated fixture only, not an installed TLS assertion.
+            "KIRA_ENVIRONMENT" to "test",
+            // This fixture's source/media writes have completed; the flag does not prove installed writer exclusion/drain.
+            "KIRA_BACKUP_WRITERS_FROZEN_AND_DRAINED" to "yes",
+        )
     }
 
     private fun targetEnvironment(target: PostgreSQLContainer<*>): Map<String, String> {
@@ -307,8 +406,15 @@ class DatabaseBackupRestoreIT {
         .validateOnMigrate(true)
         .load()
 
-    private fun withDatabases(action: (PostgreSQLContainer<*>, PostgreSQLContainer<*>) -> Unit) {
+    private fun withDatabases(producerOutput: Path? = null, action: (PostgreSQLContainer<*>, PostgreSQLContainer<*>) -> Unit) {
         PostgreSQLContainer(image).withDatabaseName("kira_source").withUsername("kira").withPassword("test-only").use { source ->
+            if (producerOutput != null) {
+                require(producerOutput.isAbsolute && producerOutput == producerOutput.toRealPath()) {
+                    "Nonsymlink absolute output required"
+                }
+                assertEquals(PosixFilePermissions.fromString("rwx------"), Files.getPosixFilePermissions(producerOutput))
+                source.withFileSystemBind(producerOutput.toString(), producerOutput.toString(), BindMode.READ_WRITE)
+            }
             PostgreSQLContainer(image).withDatabaseName("kira_restore_fixture").withUsername("kira").withPassword("test-only").use { target ->
                 source.start()
                 target.start()
