@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.security.JwtService
+import me.manga.kira.backend.sourceconfig.HeaderFilterSafetyFixtures
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
@@ -11,6 +12,9 @@ import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
 import me.manga.kira.backend.user.domain.UserRepository
+import org.junit.jupiter.api.Assertions.assertArrayEquals
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.MediaType
@@ -205,6 +209,58 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     ).firstOrNull()
 
     protected fun sourceRowCount(): Long = jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs", Long::class.java)!!
+
+    /** Capture both real public protocols after a successful baseline publication (never two 404s). */
+    protected fun publicState(): PublicState = PublicState(
+        document = getPublicDocument().andExpect { status { isOk() } }.andReturn().response.contentAsByteArray,
+        manifest = mockMvc.get("/api/v2/source-config/manifest").andExpect { status { isOk() } }.andReturn().response.contentAsByteArray,
+        pointer = requireNotNull(latestPointer()),
+        snapshots = snapshotCount(),
+        catalogs = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalogs", Long::class.java)!!,
+        entries = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalog_entries", Long::class.java)!!,
+        publishedPointers = jdbcTemplate.query(
+            "SELECT api, current_published_revision_id FROM source_configs WHERE current_published_revision_id IS NOT NULL",
+            { rs, _ -> rs.getString("api") to rs.getObject("current_published_revision_id", UUID::class.java) },
+        ).toMap(),
+    )
+
+    protected fun assertPublicStateUnchanged(before: PublicState) {
+        val after = publicState()
+        assertArrayEquals(before.document, after.document, "public v1 bytes must not change")
+        assertArrayEquals(before.manifest, after.manifest, "public v2 manifest bytes must not change")
+        assertEquals(before.pointer, after.pointer, "the shared latest pointer must not move")
+        assertEquals(before.snapshots, after.snapshots, "no new v1 snapshot")
+        assertEquals(before.catalogs, after.catalogs, "no new v2 catalog")
+        assertEquals(before.entries, after.entries, "no new public source entry")
+        assertEquals(before.publishedPointers, after.publishedPointers, "published source revisions must not change")
+    }
+
+    protected fun assertPublicArtifactAbsent(api: String, number: Int) {
+        assertEquals(
+            0L,
+            jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM published_source_catalog_entries WHERE api = ? AND source_revision = ?",
+                Long::class.java,
+                api,
+                number,
+            ),
+        )
+        mockMvc.get("/api/v2/source-config/sources/$api/revisions/$number").andExpect { status { isNotFound() } }
+    }
+
+    protected fun assertNoDiagnosticSentinels(payload: String) {
+        HeaderFilterSafetyFixtures.sentinels.forEach { assertFalse(payload.contains(it), "validation/error payload must not echo submitted values") }
+    }
+
+    protected class PublicState(
+        val document: ByteArray,
+        val manifest: ByteArray,
+        val pointer: Long,
+        val snapshots: Long,
+        val catalogs: Long,
+        val entries: Long,
+        val publishedPointers: Map<String, UUID>,
+    )
 
     private fun adminPost(path: String): ResultActionsDsl = mockMvc.post(path) { header("Authorization", "Bearer $adminToken") }
 

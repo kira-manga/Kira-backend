@@ -85,6 +85,42 @@ jobs:
             build/reports/osv.json
             build/reports/gitleaks.json
 
+  observability-rules:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    env:
+      KIRA_PACKAGES_USER: ""
+      KIRA_PACKAGES_READ_TOKEN: ""
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Validate recovery rules and scrape template
+        shell: bash
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d "${RUNNER_TEMP:?}/kira-promtool.XXXXXXXX")"
+          trap 'rm -rf -- "$work"' EXIT
+          trap 'exit 130' INT
+          trap 'exit 143' TERM
+          version=3.14.0
+          archive="prometheus-${version}.linux-amd64.tar.gz"
+          # Official v3.14.0 sha256sums.txt; only promtool is extracted from the pinned archive.
+          sha256=f665c6da19eb7ba399c915d30c7d9793c9b417bf8a749b504bc470678631478d
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --connect-timeout 10 --max-time 120 \
+            "https://github.com/prometheus/prometheus/releases/download/v${version}/${archive}" \
+            --output "$work/$archive"
+          printf '%s  %s\n' "$sha256" "$work/$archive" | sha256sum --check --strict
+          tar --extract --gzip --file "$work/$archive" --directory "$work" \
+            "prometheus-${version}.linux-amd64/promtool"
+          promtool="$work/prometheus-${version}.linux-amd64/promtool"
+          timeout --kill-after=5s 30s "$promtool" check rules deploy/observability/alerts.yaml
+          timeout --kill-after=5s 60s "$promtool" test rules deploy/observability/alerts.test.yaml
+          timeout --kill-after=5s 30s "$promtool" check config deploy/observability/prometheus-scrape.yaml
+
   container:
     needs: verify
     runs-on: ubuntu-latest

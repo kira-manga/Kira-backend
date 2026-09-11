@@ -167,6 +167,7 @@ data class FilterOptionSpec(val value: String, val label: String = "")
 data class FilterRequestSpec(
     /** `query` | `path` | `form` | `header` | `body-json` (PLAN §8 rule 22). */
     val target: String,
+    /** Header targets require an allowed, non-sensitive ASCII HTTP token; brackets remain legal for query/form names. */
     val param: String,
     /** `single` | `csv` | `repeat` | `json-array` (PLAN §8 rule 22). */
     val encode: String = "single",
