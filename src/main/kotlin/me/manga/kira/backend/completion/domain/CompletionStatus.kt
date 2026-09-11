@@ -3,10 +3,9 @@ package me.manga.kira.backend.completion.domain
 /**
  * The lifecycle of a completion request (PLAN §5/§10 — the `completion_requests.status` CHECK values).
  *
- * The three-transaction orchestration walks `PENDING → RUNNING → (SUCCEEDED | FAILED)`. A process crash
- * between marking `RUNNING` and storing the outcome leaves a `RUNNING` row — harmless, visible, and
- * exactly why the status exists (PLAN §10). The `RUNNING` state also enables async execution later with
- * no schema change.
+ * Normal execution walks `PENDING → RUNNING → (SUCCEEDED | FAILED)`; failed/canceled startup may
+ * instead move `PENDING → FAILED`. Conditional writes never leave a terminal state. A process crash
+ * can leave a nonterminal row, which the bounded retention job eventually expires (PLAN §10).
  */
 enum class CompletionStatus {
     PENDING,
