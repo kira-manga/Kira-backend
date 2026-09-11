@@ -3,6 +3,7 @@ package me.manga.kira.backend.completion
 import me.manga.kira.backend.completion.application.CompletionAdmission
 import me.manga.kira.backend.completion.application.CompletionPermit
 import me.manga.kira.backend.completion.application.CompletionPersistence
+import me.manga.kira.backend.completion.application.CompletionPublication
 import me.manga.kira.backend.completion.application.CompletionService
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
@@ -92,18 +93,21 @@ class CompletionDefaultModelTest {
                     id
                 }
 
-                "markRunning" -> null
+                "markRunning" -> true
 
-                "storeOutcome" -> CompletionView(
-                    id = id,
-                    userId = userId,
-                    provider = provider.name,
-                    model = requireNotNull(pendingModel.get()),
-                    status = invocation.getArgument(1),
-                    result = invocation.getArgument(2),
-                    error = invocation.getArgument(3),
-                    errorCode = invocation.getArgument(4),
-                    createdAt = Instant.EPOCH,
+                "storeOutcome" -> CompletionPublication(
+                    CompletionView(
+                        id = id,
+                        userId = userId,
+                        provider = provider.name,
+                        model = requireNotNull(pendingModel.get()),
+                        status = invocation.getArgument(1),
+                        result = invocation.getArgument(2),
+                        error = invocation.getArgument(3),
+                        errorCode = invocation.getArgument(4),
+                        createdAt = Instant.EPOCH,
+                    ),
+                    won = true,
                 )
 
                 else -> Answers.RETURNS_DEFAULTS.answer(invocation)

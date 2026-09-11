@@ -29,10 +29,10 @@ data class KiraCompletionProperties(
     val endpoint: String? = null,
     /** Bearer credential for the production HTTP provider; environment/secret manager only. */
     val apiKey: String? = null,
-    /** Provider-call timeout; the call runs outside any DB transaction (PLAN §10). */
+    /** Timed provider wait after startup authorization; no DB transaction spans the call (PLAN §10). */
     @field:NotNull
     val timeout: Duration = Duration.ofSeconds(30),
-    /** Maximum time work may wait for a provider worker before overload rejection. */
+    /** Queue + RUNNING-commit/startup authorization budget, before overload rejection. */
     @field:NotNull
     val queueTimeout: Duration = Duration.ofSeconds(2),
     /** Max stored result length before truncation (truncation is recorded) (PLAN §10). */

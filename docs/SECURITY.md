@@ -293,16 +293,24 @@ request can enter the bounded executor. A multi-instance deployment must use Red
 single-instance memory coordination must be declared explicitly. Overload returns 429 for rate/quota
 limits or 503 with `Retry-After` for queue/concurrency/provider availability failures.
 
-Queue wait and provider execution have separate timeouts. A request is marked running only after the
-worker begins, canceled work cannot later overwrite its terminal state, and every acquired concurrency
-lease is released. Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention,
-and cleanup batch size are bounded configuration.
+The queue timeout covers queue wait plus RUNNING persistence through invocation authorization;
+the separate provider timed wait begins only after that commit and authorization. Startup at the
+original deadline or later is rejected. PENDING→RUNNING, PENDING/RUNNING→FAILED and RUNNING→SUCCEEDED
+are checked conditional writes; one terminal status/outcome wins atomically. Pre-authorization
+cancellation prevents provider entry even if startup ignores interruption. Later Future cancellation
+requests interruption, not confirmed worker or remote termination; permit close is not such proof
+either. Database failure can still delay/prevent terminal persistence. GET/list use one read-only
+REPEATABLE READ snapshot across request and outcome queries, not a promise of the freshest data.
+Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention, and cleanup batch
+size are bounded configuration. Separate admission/release and physical-lifetime obligations remain.
 
 ## Retention & privacy
 
 - **Completion data** (`completion_requests.prompt`, `completion_results.result`/`error`) is the only
   place prompts/results live. The scheduled bounded retention job expires stale in-flight requests and
   deletes terminal prompt/result rows older than `kira.completion.retention` (default seven days).
+  One stable ordered batch holds request locks before outcome writes/deletes; concurrent publishers
+  cannot invert that lock order or recreate a deleted request. This is not a historical-data repair.
   Prompt/result contents never appear in audit rows or logs. Provider credentials / `Authorization`
   are never logged.
 - **Audit rows** (`audit_log.detail`, jsonb) contain **identifiers, revision numbers, and checksums
