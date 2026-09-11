@@ -4,6 +4,9 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LC_ALL=C
 unset KIRA_BACKEND_IMAGE KIRA_WEB_IMAGE KIRA_ADMIN_IMAGE
 umask 077
+# EXIT may run inside a function whose command stderr is suppressed. Keep only
+# the final diagnostic channel; do not restore/unmute child-command stderr.
+exec {receiver_stderr_fd}>&2
 
 deployment_root=/opt/kira
 compose_file="$deployment_root/compose.yaml"
@@ -91,7 +94,7 @@ cleanup() {
   # No final healthy/restored message precedes EXIT cleanup.
   if [[ -n $final_message ]]; then
     if (( status == 0 )); then printf 'kira-deploy: %s\n' "$final_message"
-    else printf 'kira-deploy: %s\n' "$final_message" >&2; fi
+    else printf 'kira-deploy: %s\n' "$final_message" >&"$receiver_stderr_fd"; fi
   fi
   exit "$status"
 }
