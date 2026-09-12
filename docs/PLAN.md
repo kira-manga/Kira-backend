@@ -832,6 +832,15 @@ establish physical provider termination or resolve the separate admission/lease 
   plus retry guidance. Redis Lua coordination is mandatory for multiple instances; a bounded in-memory
   implementation is permitted only for an explicitly declared single-instance topology. Coordination
   failure denies new work.
+- **Release after work:** permit close makes at most one application release attempt. Expected Redis
+  coordination errors (`DataAccessException`) or a null release reply produce one fixed sanitized
+  warning and the bounded `release_unconfirmed` admission metric; they do not replace the committed
+  response or an existing primary error, and do not clear a restored caller interrupt. Programming/JVM
+  errors are not broadly swallowed. No application retry or compensating delete is performed.
+  Recovery remains the existing counter TTL: a failed-before-write release may retain capacity until
+  expiry; an applied but unacknowledged release may already free it. The guard does not prevent
+  Lettuce reconnect replay or delayed in-flight execution. Arbitrarily stale first closes, Redis
+  continuity and physical-worker ownership remain separate limitations; close is not termination.
 
 ---
 

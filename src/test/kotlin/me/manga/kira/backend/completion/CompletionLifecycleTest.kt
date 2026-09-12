@@ -6,6 +6,7 @@ import me.manga.kira.backend.completion.application.CompletionPermit
 import me.manga.kira.backend.completion.application.CompletionPersistence
 import me.manga.kira.backend.completion.application.CompletionPublication
 import me.manga.kira.backend.completion.application.CompletionService
+import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
@@ -15,12 +16,16 @@ import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.observability.KiraMetrics
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.Answers
 import org.mockito.Mockito.mock
+import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.data.redis.core.StringRedisTemplate
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -41,8 +46,10 @@ class CompletionLifecycleTest {
                 else -> Answers.RETURNS_DEFAULTS.answer(invocation)
             }
         }
-        val provider = recordingProvider(AtomicInteger())
-        val service = service(provider, persistence)
+        val providerCalls = AtomicInteger()
+        val releaseCalls = AtomicInteger()
+        val provider = recordingProvider(providerCalls)
+        val service = service(provider, persistence, failingReleaseAdmission(releaseCalls))
         // Actual executor rejection; no worker/provider was started, and no fake exception mapping.
         service.shutdown()
 
@@ -50,9 +57,36 @@ class CompletionLifecycleTest {
             val error = assertThrows<ServiceUnavailableException> { service.create(view.userId, "synthetic", null) }
             assertEquals("COMPLETION_OVERLOADED", error.code)
             assertEquals(1L, error.retryAfterSeconds)
+            assertEquals(0, error.suppressed.size)
         } else {
-            assertEquals(view, service.create(view.userId, "synthetic", null))
+            assertSame(view, service.create(view.userId, "synthetic", null))
         }
+        assertEquals(0, providerCalls.get())
+        assertEquals(1, releaseCalls.get())
+    }
+
+    @Test
+    fun `persistence failure remains primary when Redis release is unconfirmed`() {
+        val id = UUID.randomUUID()
+        val userId = UUID.randomUUID()
+        val sentinel = DataAccessResourceFailureException("synthetic persistence failure")
+        val persistence = mock(CompletionPersistence::class.java) { invocation ->
+            when (invocation.method.name) {
+                "createPending" -> id
+                "storeOutcome" -> throw sentinel
+                else -> Answers.RETURNS_DEFAULTS.answer(invocation)
+            }
+        }
+        val providerCalls = AtomicInteger()
+        val releaseCalls = AtomicInteger()
+        val service = service(recordingProvider(providerCalls), persistence, failingReleaseAdmission(releaseCalls))
+        service.shutdown()
+
+        val error = assertThrows<DataAccessResourceFailureException> { service.create(userId, "synthetic", null) }
+        assertSame(sentinel, error)
+        assertEquals(0, error.suppressed.size)
+        assertEquals(0, providerCalls.get())
+        assertEquals(1, releaseCalls.get())
     }
 
     @ParameterizedTest
@@ -94,7 +128,13 @@ class CompletionLifecycleTest {
         }
     }
 
-    private fun service(provider: CompletionProvider, persistence: CompletionPersistence): CompletionService = CompletionService(
+    private fun service(
+        provider: CompletionProvider,
+        persistence: CompletionPersistence,
+        admission: CompletionAdmission = object : CompletionAdmission {
+            override fun acquire(userId: UUID): CompletionPermit = CompletionPermit {}
+        },
+    ): CompletionService = CompletionService(
         listOf(provider),
         KiraCompletionProperties(
             provider = provider.name,
@@ -104,11 +144,29 @@ class CompletionLifecycleTest {
             queueTimeout = Duration.ofDays(1),
         ),
         persistence,
-        object : CompletionAdmission {
-            override fun acquire(userId: UUID): CompletionPermit = CompletionPermit {}
-        },
+        admission,
         mock(KiraMetrics::class.java),
     )
+
+    private fun failingReleaseAdmission(releaseCalls: AtomicInteger): CompletionAdmission {
+        val redis = mock(StringRedisTemplate::class.java) { invocation ->
+            if (invocation.method.name == "execute") {
+                when (invocation.getArgument<List<String>>(1).size) {
+                    4 -> 0L
+
+                    1 -> {
+                        releaseCalls.incrementAndGet()
+                        throw DataAccessResourceFailureException("private Redis connection detail")
+                    }
+
+                    else -> error("Unexpected Redis operation")
+                }
+            } else {
+                Answers.RETURNS_DEFAULTS.answer(invocation)
+            }
+        }
+        return RedisCompletionAdmission(redis, KiraCompletionProperties())
+    }
 
     private fun recordingProvider(calls: AtomicInteger): CompletionProvider = object : CompletionProvider {
         override val name = "lifecycle-test"

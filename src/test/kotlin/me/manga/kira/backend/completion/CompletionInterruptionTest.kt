@@ -1,10 +1,9 @@
 package me.manga.kira.backend.completion
 
-import me.manga.kira.backend.completion.application.CompletionAdmission
-import me.manga.kira.backend.completion.application.CompletionPermit
 import me.manga.kira.backend.completion.application.CompletionPersistence
 import me.manga.kira.backend.completion.application.CompletionPublication
 import me.manga.kira.backend.completion.application.CompletionService
+import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
@@ -12,17 +11,22 @@ import me.manga.kira.backend.completion.domain.CompletionStatus
 import me.manga.kira.backend.completion.domain.CompletionView
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.observability.KiraMetrics
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.Mockito.mock
+import org.springframework.dao.DataAccessResourceFailureException
+import org.springframework.data.redis.core.StringRedisTemplate
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class CompletionInterruptionTest {
@@ -75,24 +79,43 @@ class CompletionInterruptionTest {
                     else -> Answers.RETURNS_DEFAULTS.answer(invocation)
                 }
             }
-        val admission =
-            object : CompletionAdmission {
-                override fun acquire(userId: UUID): CompletionPermit = CompletionPermit {}
+        val releaseCalls = AtomicInteger()
+        val releaseEnteredWithInterrupt = AtomicBoolean(false)
+        val redis =
+            mock(StringRedisTemplate::class.java) { invocation ->
+                if (invocation.method.name == "execute") {
+                    when (invocation.getArgument<List<String>>(1).size) {
+                        4 -> 0L
+
+                        1 -> {
+                            releaseCalls.incrementAndGet()
+                            releaseEnteredWithInterrupt.set(Thread.currentThread().isInterrupted)
+                            throw DataAccessResourceFailureException("private Redis connection detail")
+                        }
+
+                        else -> error("Unexpected Redis operation")
+                    }
+                } else {
+                    Answers.RETURNS_DEFAULTS.answer(invocation)
+                }
             }
+        val properties = KiraCompletionProperties(provider = provider.name, defaultModel = "model", executorThreads = 1, queueCapacity = 1)
+        val admission = RedisCompletionAdmission(redis, properties)
         val service =
             CompletionService(
                 listOf(provider),
-                KiraCompletionProperties(provider = provider.name, defaultModel = "model", executorThreads = 1, queueCapacity = 1),
+                properties,
                 persistence,
                 admission,
                 mock(KiraMetrics::class.java),
             )
         val interruptRestored = AtomicBoolean(false)
         val failure = AtomicReference<Throwable?>()
+        val returnedView = AtomicReference<CompletionView?>()
         val requestThread =
             Thread {
                 try {
-                    service.create(userId, "prompt", "model")
+                    returnedView.set(service.create(userId, "prompt", "model"))
                     interruptRestored.set(Thread.currentThread().isInterrupted)
                 } catch (ex: Throwable) {
                     failure.set(ex)
@@ -106,7 +129,10 @@ class CompletionInterruptionTest {
 
             assertFalse(requestThread.isAlive)
             assertNull(failure.get())
+            assertSame(failedView, returnedView.get())
             assertTrue(persistedWithoutInterrupt.get())
+            assertEquals(1, releaseCalls.get())
+            assertTrue(releaseEnteredWithInterrupt.get())
             assertTrue(interruptRestored.get())
         } finally {
             service.shutdown()
