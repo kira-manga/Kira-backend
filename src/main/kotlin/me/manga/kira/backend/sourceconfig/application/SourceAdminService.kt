@@ -74,6 +74,8 @@ class SourceAdminService(
     fun createSource(rawJson: String, actorId: UUID): SourceMutationResult {
         val model = SourceConfigParser.parseStrictSource(rawJson)
         StructuralAuthoringGate.check(model, pathApi = null)
+        // New heads change the complete inventory; serialize before checking identity or allocating position.
+        publishedDocuments.lockPublicationState()
         if (sources.existsByApi(model.api)) throw SourceAlreadyExistsException(model.api)
 
         val head =

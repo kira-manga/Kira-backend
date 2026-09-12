@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
  * equal to its stored-neutral twin).
  */
 class ImportNoChangesIsNoOpIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     // An active source + a source carrying an EXPLICIT non-neutral lifecycle:"disabled" (§9/§12.2).
     private fun document() = SourceConfigFixtures.document(

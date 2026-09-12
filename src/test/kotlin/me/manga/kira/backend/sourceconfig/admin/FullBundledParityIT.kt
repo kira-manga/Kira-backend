@@ -1,7 +1,6 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import me.manga.kira.backend.common.Sha256
-import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -11,7 +10,8 @@ import org.springframework.beans.factory.annotation.Autowired
 
 /**
  * PLAN §11 test 32 — `FullBundledParityIT`: *the real production document survives the whole pipeline*.
- * Parse the FULL `bundled-full.json` (45 sources: 12 generic + 33 legacy, schemaVersion 1, revision 4)
+ * Parse the real 45-source migration input, with all 12 complete generic stanzas rebound to the
+ * approved revision-6 App reference and the 33 historical legacy definitions preserved,
  * with the compatibility parser → validate whole (zero errors) → canonicalize → re-parse → semantic
  * equality (source count + every api identity, incl. the non-ASCII `"مانجا بارك"`) → import it
  * transactionally via the endpoint. Public artifacts intentionally contain only the 12 converted
@@ -24,7 +24,8 @@ class FullBundledParityIT : AbstractAdminSourceIT() {
 
     @Test
     fun `the full bundled document parses, validates, canonicalizes, imports, serves and re-checksums`() {
-        val raw = SourceConfigFixtures.loadFixture("bundled-full.json")
+        val rawBytes = approvedBootstrapPayload()
+        val raw = rawBytes.toString(Charsets.UTF_8)
 
         // Parse (compatibility) → 45 sources, apis preserved incl. non-ASCII.
         val document = SourceConfigParser.parseCompatibleDocument(raw)
@@ -40,13 +41,16 @@ class FullBundledParityIT : AbstractAdminSourceIT() {
         // Canonicalize → re-parse canonical → semantic equality (source count + every api identity/order).
         val canonical = SourceConfigParser.canonicalDocument(document)
         val reparsed = SourceConfigParser.parseCompatibleDocument(canonical)
+        assertEquals(document, reparsed, "every expanded model field survives canonicalization")
         assertEquals(document.sources.size, reparsed.sources.size)
         assertEquals(payloadApis, reparsed.sources.map { it.api }, "api identities + order preserved through canonical")
 
-        // Import transactionally via the endpoint → all 45 created, one snapshot.
+        // Initial import transactionally via the raw endpoint → all 45 created, one snapshot.
         val importBody =
-            objectMapper.readTree(importBundled(raw).andExpect { status { isOk() } }.andReturn().response.contentAsString)
-        assertEquals(45, importBody.get("created").size(), "all 45 sources created")
+            objectMapper.readTree(bootstrapRequest(rawBytes).andExpect { status { isOk() } }.andReturn().response.contentAsString)
+        assertEquals(45L, sourceRowCount(), "all 45 sources created")
+        assertEquals(importBody.get("documentRevision").asLong(), latestPointer())
+        assertEquals(importBody.get("documentRevision"), importBody.get("catalogRevision"))
         assertEquals(1L, snapshotCount(), "one snapshot for the whole import")
 
         // Serve it via the PUBLIC endpoint → only the 12 approved generic sources, in payload order.
@@ -59,6 +63,7 @@ class FullBundledParityIT : AbstractAdminSourceIT() {
         val approvedApis = document.sources.filter { it.engine == "generic" }.map { it.api }
         assertEquals(12, served.sources.size)
         assertEquals(approvedApis, served.sources.map { it.api }, "public document contains only converted generic sources")
+        assertEquals(document.sources.filter { it.engine == "generic" }, served.sources, "every approved generic field survives import and serving")
         assertTrue(served.sources.none { it.engine != "generic" })
 
         // The served raw bytes re-checksum to the ETag + X-Config-Checksum (no re-serialization drift).

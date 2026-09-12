@@ -39,6 +39,8 @@ import java.util.concurrent.atomic.AtomicReference
 @Import(SummaryConsistencyTestConfig::class)
 @Timeout(30)
 class PublicSourceSummaryConsistencyIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
+
     @Autowired
     private lateinit var query: SourceQueryService
 
@@ -53,6 +55,7 @@ class PublicSourceSummaryConsistencyIT : AbstractAdminSourceIT() {
 
     @Test
     fun `removal after document selection preserves the complete old summary generation`() {
+        val initialSummaries = readSummaries()
         val target = originalTarget()
         val targetPublishedAt = publishNew(target)
         clock.advance(Duration.ofSeconds(1))
@@ -67,12 +70,13 @@ class PublicSourceSummaryConsistencyIT : AbstractAdminSourceIT() {
             sourceAdminService.remove(target.api, target.api, admin.id)
         }
         val survivorSummary = expectedSummary(survivor, survivorPublishedAt)
-        assertEquals(listOf(expectedSummary(target, targetPublishedAt, lifecycle = "removed"), survivorSummary), old)
-        assertEquals(listOf(survivorSummary), fresh)
+        assertEquals(initialSummaries + listOf(expectedSummary(target, targetPublishedAt, lifecycle = "removed"), survivorSummary), old)
+        assertEquals(initialSummaries + survivorSummary, fresh)
     }
 
     @Test
     fun `new revision after document selection cannot relabel old content with new metadata`() {
+        val initialSummaries = readSummaries()
         val original = originalTarget()
         val originalPublishedAt = publishNew(original)
         clock.advance(Duration.ofSeconds(1))
@@ -93,8 +97,8 @@ class PublicSourceSummaryConsistencyIT : AbstractAdminSourceIT() {
             sourceAdminService.publish(original.api, 2, admin.id)
         }
         val survivorSummary = expectedSummary(survivor, survivorPublishedAt)
-        assertEquals(listOf(expectedSummary(original, originalPublishedAt), survivorSummary), old)
-        assertEquals(listOf(expectedSummary(updated, updatedPublishedAt, revision = 2), survivorSummary), fresh)
+        assertEquals(initialSummaries + listOf(expectedSummary(original, originalPublishedAt), survivorSummary), old)
+        assertEquals(initialSummaries + listOf(expectedSummary(updated, updatedPublishedAt, revision = 2), survivorSummary), fresh)
     }
 
     private fun originalTarget(): SourceConfig = SourceConfigFixtures.validGenericSource("Zeta").copy(

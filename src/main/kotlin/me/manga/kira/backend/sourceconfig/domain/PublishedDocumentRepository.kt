@@ -35,9 +35,20 @@ interface PublishedDocumentRepository {
      * Lock the singleton `document_publication_state` row `FOR UPDATE` (PLAN §9 step 1 — the GLOBAL
      * publication lock every state-visible document mutation takes first, before any source-row lock, so
      * mutations serialize with no lost updates and no deadlock). Returns the current pointer under the
-     * lock. Must run inside a transaction; the lock releases at commit.
+     * lock. Must run inside a transaction; the lock releases at commit. Missing, multiple, or
+     * incoherent singleton rows fail closed; a present row with a null pointer is not a missing row.
      */
     fun lockPublicationState(): Long?
+
+    /** Coherent singleton phase/receipt, including immutable origin-artifact checksum verification. */
+    fun initialSourceCatalogState(): InitialSourceCatalogState
+
+    /**
+     * Reassert G and atomically finalize exactly one still-PENDING singleton: receipt + latest pointer
+     * + COMPLETE. Both immutable artifacts must already exist in the same transaction. Never an
+     * adoption/backfill API; a completed receipt is immutable.
+     */
+    fun completeInitialSourceCatalog(receipt: InitialSourceCatalogReceipt)
 
     /** Consume the next monotonic `document_revision` from `seq_document_revision` (PLAN §5/§9 step 8). */
     fun nextDocumentRevision(): Long

@@ -133,9 +133,16 @@ keys are supplied or generated automatically. The recipe needs Ed25519-capable O
 [`Local document signing`](docs/LOCAL_DEV.md#local-document-signing)); tests supply ephemeral in-memory keys.
 
 `ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/`, V1..V13 then
-V13.1 credential versions); Hibernate only validates against it. Swagger UI (dev profile only) is at
-`/swagger-ui/index.html`; the OpenAPI
-document is at `/v3/api-docs`.
+V13.1 credential versions and V13.2 bootstrap state); Hibernate only validates against it. Swagger UI
+(dev profile only) is at `/swagger-ui/index.html`; the OpenAPI document is at `/v3/api-docs`.
+
+Bootstrap a fresh eligible source catalog **before ordinary authoring**, using the raw
+`POST /api/v1/admin/source-catalog-v2/cutover/import-bundled` and a reviewed frozen payload.
+Ordinary import/publication requires durable COMPLETE; the old confirmation-only POST no longer
+mutates. Populated installations require separately reviewed reconciliation, actual migration-history
+eligibility and old-writer drain, not automatic adoption/reset. See
+[`Migration and cutover`](docs/MIGRATION_BUNDLED_TO_REMOTE.md) and
+[`Local bootstrap`](docs/LOCAL_DEV.md#seeding-data-atomic-initial-bootstrap).
 
 See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, seeding data, and gotchas.
 
@@ -178,7 +185,7 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1..V13, then V13_1 credential versions (Flyway version 13.1)
+  db/migration/    # forward-only V1..V13, V13_1 credential versions, V13_2 bootstrap state
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```

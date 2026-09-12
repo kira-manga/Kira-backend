@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
  * revision; the one-published-per-source partial unique index holds throughout.
  */
 class PublishStateRulesIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `publishable-revision-states rules hold and there is always one published revision`() {

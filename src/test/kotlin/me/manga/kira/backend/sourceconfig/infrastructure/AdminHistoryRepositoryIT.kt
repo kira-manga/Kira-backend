@@ -49,7 +49,12 @@ class AdminHistoryRepositoryIT : AbstractAdminSourceIT() {
             seedDocuments(previousCount + 1, count)
             seedValidations(source, previousCount + 1, count)
             if (previousCount == 0) pointSourceAtFirstRevision(source)
-            jdbcTemplate.update("UPDATE document_publication_state SET latest_document_revision = ? WHERE id = 1", 100L + count * 2)
+            // This direct historical-read fixture is deliberately NOT publication authority. Its
+            // synthetic retained snapshots represent an unadopted installation, never COMPLETE.
+            jdbcTemplate.update(
+                "UPDATE document_publication_state SET bootstrap_phase = 'reconciliation_required', latest_document_revision = ? WHERE id = 1",
+                100L + count * 2,
+            )
             verifyToastFixtures(source)
             val before = storedState()
 

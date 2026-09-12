@@ -2,11 +2,15 @@ package me.manga.kira.backend.sourceconfig.application
 
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.sourceconfig.domain.AssemblySource
+import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPhase
+import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPolicy
+import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPolicyRejected
 import me.manga.kira.backend.sourceconfig.domain.NewPublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.NewPublishedSourceCatalog
 import me.manga.kira.backend.sourceconfig.domain.PublishedCatalogEntry
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
+import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalog
 import me.manga.kira.backend.sourceconfig.domain.PublishedSourceCatalogRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
@@ -25,6 +29,7 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
+import java.time.Instant
 import java.time.format.DateTimeFormatter
 import java.time.temporal.ChronoUnit
 import java.util.UUID
@@ -36,7 +41,8 @@ import java.util.UUID
  * (step 3). Split out from [SourceAdminService] per PLAN §3/§15.6 so the assembly (ordering, lifecycle
  * injection, checksum, single-Clock instant) is a cohesive, testable unit reused by import (Phase 8).
  *
- * The ONE Clock instant taken here (truncated to ISO-8601 UTC seconds, PLAN §5) is the document's
+ * The ONE Clock instant (sampled here for ordinary publication, supplied by the initial orchestrator
+ * for bootstrap, and truncated to ISO-8601 UTC seconds, PLAN §5) is the document's
  * `generatedAt`, the snapshot row's `created_at`, AND the value the caller stamps into the publication
  * audit detail (PLAN §9 steps 7–8) — application time and DB time can never diverge.
  */
@@ -48,6 +54,7 @@ class DocumentAssemblyService(
     private val validator: SourceConfigValidator,
     private val documentSigner: DocumentSigner,
     private val clock: Clock,
+    private val initialCatalogPolicy: InitialSourceCatalogPolicy,
 ) {
 
     /**
@@ -57,11 +64,41 @@ class DocumentAssemblyService(
      */
     @Transactional(propagation = Propagation.MANDATORY)
     fun materialize(actorId: UUID): PublishedDocument {
-        // Step 4 — authoritative current state under the lock (cannot be stale; every writer queues on step 1).
+        // MANDATORY proves a transaction, not G ownership. Reassert the exact-one singleton lock.
+        publishedDocuments.lockPublicationState()
+        if (publishedDocuments.initialSourceCatalogState().phase != InitialSourceCatalogPhase.COMPLETE) {
+            throw GenericV2CutoverRejected("initial catalog bootstrap must be complete before ordinary publication")
+        }
         val assemblySources = sources.findSourcesForAssembly()
+        val publication = materializeLocked(assemblySources, actorId, clock.instant().truncatedTo(ChronoUnit.SECONDS))
+        publishedDocuments.updatePointer(publication.document.documentRevision, publication.document.createdAt)
+        return publication.document
+    }
 
-        // Steps 7 (part) — ONE instant for generatedAt / created_at / audit detail.
-        val instant = clock.instant().truncatedTo(ChronoUnit.SECONDS)
+    /**
+     * Only the initial transaction may use this entry. Revalidate actual effective state under G,
+     * insert both artifacts, but leave the PENDING/null pointer untouched for the final receipt CAS.
+     * [instant] is the initial orchestrator's one shared publication/audit/receipt clock sample.
+     */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun materializeInitialBootstrap(actorId: UUID, instant: Instant): MaterializedPublication {
+        publishedDocuments.lockPublicationState()
+        if (publishedDocuments.initialSourceCatalogState().phase != InitialSourceCatalogPhase.PENDING) {
+            throw GenericV2CutoverRejected("initial materialization requires pending bootstrap state")
+        }
+        check(publishedDocuments.snapshotCount() == 0L) { "pending bootstrap has unexpected publication history" }
+        val assemblySources = sources.findSourcesForAssembly()
+        try {
+            initialCatalogPolicy.requirePublicationInventory(sources.findAll(null), assemblySources)
+        } catch (ex: InitialSourceCatalogPolicyRejected) {
+            throw GenericV2CutoverRejected(ex.message ?: "initial publication inventory was rejected")
+        }
+        check(instant.nano == 0) { "initial publication instant must use whole UTC seconds" }
+        return materializeLocked(assemblySources, actorId, instant)
+    }
+
+    private fun materializeLocked(assemblySources: List<AssemblySource>, actorId: UUID, instant: Instant): MaterializedPublication {
+        // ONE instant for generatedAt / both created_at values / audit / receipt.
         val generatedAt = DateTimeFormatter.ISO_INSTANT.format(instant)
 
         // Step 8 (part) — consume the monotonic revision (before building, since it is part of the bytes).
@@ -119,18 +156,19 @@ class DocumentAssemblyService(
 
         // Source-catalog v2 is materialized in the SAME transaction and shares this revision. The
         // latest pointer cannot expose the document until its corresponding manifest is durable.
-        materializeCatalog(
-            assemblySources = assemblySources,
-            catalogRevision = revision,
-            generatedAt = generatedAt,
-            instant = instant,
-            actorId = actorId,
-            previousDocumentRevision = previousRevision,
-        )
+        val catalog =
+            materializeCatalog(
+                assemblySources = assemblySources,
+                catalogRevision = revision,
+                generatedAt = generatedAt,
+                instant = instant,
+                actorId = actorId,
+                previousDocumentRevision = previousRevision,
+            )
 
-        // Step 9 — move the authoritative latest pointer (both document + catalog rows now exist).
-        publishedDocuments.updatePointer(revision, instant)
-        return snapshot
+        // The normal entry moves the pointer; initial bootstrap finalizes pointer/receipt/phase in
+        // one CAS after both artifacts exist. Neither path can expose only one artifact family.
+        return MaterializedPublication(snapshot, catalog)
     }
 
     /**
@@ -189,10 +227,10 @@ class DocumentAssemblyService(
         assemblySources: List<AssemblySource>,
         catalogRevision: Long,
         generatedAt: String,
-        instant: java.time.Instant,
+        instant: Instant,
         actorId: UUID,
         previousDocumentRevision: Long?,
-    ) {
+    ): PublishedSourceCatalog {
         val previousCatalog = previousDocumentRevision?.let(publishedCatalogs::findByRevision)
         val currentApis = assemblySources.mapTo(linkedSetOf()) { it.api }
         val removedApis =
@@ -268,7 +306,7 @@ class DocumentAssemblyService(
                     ),
                 ),
             ) { "source-catalog v2 requires configured Ed25519 signing" }
-        publishedCatalogs.insert(
+        return publishedCatalogs.insert(
             NewPublishedSourceCatalog(
                 catalogRevision = catalogRevision,
                 schemaVersion = CATALOG_SCHEMA_VERSION,
@@ -310,3 +348,5 @@ class DocumentAssemblyService(
         private const val PLACEHOLDER_GENERATED_AT = "1970-01-01T00:00:00Z"
     }
 }
+
+data class MaterializedPublication(val document: PublishedDocument, val catalog: PublishedSourceCatalog)

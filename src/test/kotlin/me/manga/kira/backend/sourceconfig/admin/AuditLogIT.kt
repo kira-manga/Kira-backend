@@ -11,6 +11,7 @@ import java.util.UUID
  * entity; the audit `detail` contains NO config bodies, header values, or prompts (PLAN §5/§6 log-hygiene).
  */
 class AuditLogIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `publish and disable write hygienic audit rows`() {

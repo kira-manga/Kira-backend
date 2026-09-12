@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import me.manga.kira.backend.common.CanonicalJson
+import me.manga.kira.backend.sourceconfig.InitialSourceCatalogFixtures
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import me.manga.kira.backend.sourceconfig.application.DocumentAssemblyService
 import me.manga.kira.backend.sourceconfig.domain.AssemblySource
@@ -66,12 +67,13 @@ class DocumentOrderDeterminismIT : AbstractAdminSourceIT() {
 
     @Test
     fun `a bundled import serves stanzas in payload order`() {
+        bootstrapInitialCatalog()
         // Positions are assigned from payload order on create (PLAN §5(c)/§12.2), so the served document
         // preserves the approved generic subset's relative payload order. Legacy stanzas are
         // retained for admins but never enter a public artifact.
-        importBundled(SourceConfigFixtures.loadFixture("bundled-trimmed.json")).andExpect { status { isOk() } }
+        importBundled(InitialSourceCatalogFixtures.postBootstrapTrimmedDocument()).andExpect { status { isOk() } }
         assertEquals(
-            listOf("Azora", "SwatManga"),
+            listOf("Imported Azora", "Imported SwatManga") + initialGenericApis,
             publicServedDocument().sources.map { it.api },
             "served document must preserve the generic payload order",
         )

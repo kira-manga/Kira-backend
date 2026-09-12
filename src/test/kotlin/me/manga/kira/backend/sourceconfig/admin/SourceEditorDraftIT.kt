@@ -13,6 +13,7 @@ import org.springframework.test.web.servlet.put
 class SourceEditorDraftIT : AbstractAdminSourceIT() {
     @Test
     fun `unsafe header quick publish rolls back its new revision and preserves editor and public state`() {
+        bootstrapInitialCatalog()
         val original = SourceConfigFixtures.validGenericSource("HeaderEditor")
         createSource(original).andExpect { status { isCreated() } }
         publish(original.api, 1).andExpect { status { isOk() } }
@@ -226,6 +227,8 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
 
     @Test
     fun `quick publish is atomic and requires one-time password step-up`() {
+        bootstrapInitialCatalog()
+        val snapshotsBefore = snapshotCount()
         val original = SourceConfigFixtures.validGenericSource("QuickPublish")
         createSource(original).andExpect { status { isCreated() } }
         mockMvc.post("/api/v1/admin/sources/QuickPublish/editor-draft") {
@@ -251,7 +254,7 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
             jsonPath("$.errors[0].code") { value("ADMIN_STEP_UP_REQUIRED") }
         }
         assertEquals(1, revisionCount("QuickPublish"))
-        assertEquals(0, snapshotCount())
+        assertEquals(snapshotsBefore, snapshotCount())
 
         val proof = issueStepUp()
         mockMvc.post("/api/v1/admin/sources/QuickPublish/editor-draft/publish") {
@@ -266,7 +269,7 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
             jsonPath("$.publication.documentRevision") { isNumber() }
         }
         assertEquals(2, revisionCount("QuickPublish"))
-        assertEquals(1, snapshotCount())
+        assertEquals(snapshotsBefore + 1, snapshotCount())
         assertEquals("active", sourceStatus("QuickPublish"))
 
         mockMvc.post("/api/v1/admin/sources/QuickPublish/editor-draft/publish") {
@@ -278,6 +281,6 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
             jsonPath("$.errors[0].code") { value("ADMIN_STEP_UP_REQUIRED") }
         }
         assertEquals(2, revisionCount("QuickPublish"), "used proof cannot create another revision")
-        assertEquals(1, snapshotCount(), "used proof cannot publish another snapshot")
+        assertEquals(snapshotsBefore + 1, snapshotCount(), "used proof cannot publish another snapshot")
     }
 }
