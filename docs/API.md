@@ -48,6 +48,8 @@ in 404/409 details. Typed-exception → status mapping:
 - **Pagination:** `?page=0&size=20`; `size` max **100** (`GET /admin/users`, `GET /completions`).
   `page < 0` or `size < 1`/`size > 100` → 400. Response envelope: `{items, page, size, total}`.
   `GET /sources` is deliberately **not** paginated — it returns the bounded document as a plain array.
+  The two admin source/document history lists are an array-compatible **keyset exception**;
+  see [Admin history windows](#admin-history-windows). Other pagination contracts are unchanged.
 - **Multi-value filters** (`?lifecycle=`, `?engine=`, `?status=`): comma-separated within one query
   param; an unknown token → 400.
 - **Request-body size:** every request body is capped at **256 KiB** before MVC parsing, except
@@ -269,7 +271,7 @@ Tier-1 checks still run before finalization or publication.
 | `GET /admin/sources` | All sources incl. drafts/retired/removed. Query `?status=`. | 200 |
 | `GET /admin/sources/{api}` | Full admin head view. | 200 · 404 |
 | `POST /admin/sources/{api}/revisions` | New draft revision (`body.api` must equal `{api}`). | 201 · 404 · 400 |
-| `GET /admin/sources/{api}/revisions` | Revision list. | 200 · 404 |
+| `GET /admin/sources/{api}/revisions` | Bounded revision metadata window; optional `size` / `beforeRevision`. | 200 · 400 · 404 |
 | `GET /admin/sources/{api}/revisions/{n}` | Full stored config JSON + metadata. | 200 · 404 |
 | `POST /admin/sources/{api}/revisions/{n}/validate` | Re-run validation (preview; stores result). | 200 (even when invalid) · 404 |
 | `GET /admin/sources/{api}/revisions/{n}/validation` | Latest stored validation result. | 200 · 404 |
@@ -296,7 +298,7 @@ Tier-1 checks still run before finalization or publication.
 | `GET /admin/audit?page=0&size=50` | Read identifiers-only audit metadata; maximum page size is 100. | 200 · 400 |
 | `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
 | `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
-| `GET /admin/documents` | Published snapshots (metadata list). | 200 |
+| `GET /admin/documents` | Bounded snapshot metadata window; optional `size` / `beforeRevision`. | 200 · 400 |
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |
 | `POST /admin/documents/republish` | Force-materialize a new snapshot from current state (always a new revision). | 200 |
@@ -330,6 +332,36 @@ values):
 - `GET /admin/documents` item → `{ "documentRevision", "schemaVersion", "checksum", "sourceCount", "createdBy", "createdAt" }`.
 - `GET /admin/documents/{revision}` → **body = raw stored canonical bytes**; metadata in headers only
   (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`) — deliberately not a JSON envelope.
+
+### Admin history windows
+
+`GET /admin/sources/{api}/revisions` and `GET /admin/documents` retain their **raw array** bodies and
+existing item fields. Both accept `size` (default **20**, range **1..100**) and optional exclusive
+`beforeRevision`. The latter is a positive decimal source revision (at most **2147483647**) or
+document revision (at most **9223372036854775807**). Only ASCII digits are accepted; leading zeros
+are accepted numerically (`size=020`). Empty, repeated (even identical), signed, whitespace-padded,
+nondecimal, zero or overflowing recognized values return value-free **400 `INVALID_HISTORY_PAGE`**
+before the history service. There is no unlimited mode, total count, or offset/page-number parameter.
+
+Without a cursor, the window contains the newest `size` revisions, returned in **ascending revision
+order**. With a cursor, only revisions strictly below it are eligible. Gaps are legal; a cursor
+need not identify an existing row. If older rows remain, `X-Kira-History-Next-Before` is the smallest
+returned revision in canonical positive decimal. Pass it unchanged as the next `beforeRevision`.
+Exactly `size` remaining rows is terminal: no header. Empty histories/windows return `200 []`
+without a header; an unknown source still returns 404.
+
+For revisions `[2,5,9,14,20]` and `size=2`, windows are `[14,20]` (cursor `14`), `[5,9]` (cursor `5`),
+then `[2]` (no cursor). Refresh without a cursor to see new revisions. Newer inserts do not displace
+older seeks, but status/validity may change between requests; this is not a multi-request snapshot.
+Missing validity remains omitted, not false. Latest validity retains the existing
+`validated_at DESC` semantics, with no promised winner for equal timestamps.
+
+Each data query projects at most `size+1` metadata rows; canonical payloads, notes, signatures and
+validation finding arrays are not loaded. Source history uses one head lookup plus one summary
+query with bounded latest-validity probes; document history uses one summary query. Stored history,
+detail/validation routes, raw bytes/ETags and publication pointers are unchanged. These lists no
+longer mean “all history”: older Admin clients still parse the array but need the companion pager
+to reach older windows. Do not emulate the old response by automatically fetching every window.
 
 **Publishable-revision rules** (409 codes): re-publish the current published revision → 200 no-op;
 a `superseded` revision → `REVISION_SUPERSEDED`; a draft older than the published revision →
