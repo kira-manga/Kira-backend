@@ -36,6 +36,7 @@ import java.sql.SQLException
 import java.sql.Statement
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -574,6 +575,7 @@ class PersistencePgOwnedCutIntegrationTest {
 
     @Test
     fun `failed post consent real Hikari tail seals actor admission but cannot retire the successor epoch`() = withOwnedCutPool(database.value) { f ->
+        f.shutdownDiagnosticCase = OwnedCutShutdownDiagnosticCase.FAILED_POST_CONSENT_TAIL
         f.expectedPoolUnknown = true
         assertConsentedOldTail(f, failTail = true)
     }
@@ -727,7 +729,10 @@ class PersistencePgOwnedCutIntegrationTest {
 
     @Test
     fun `throwing original RETURN override leaves F G T free and retires its exact source without a second return`() =
-        withOwnedCutPool(database.value) { f -> assertOwnedReturnCaller(f, ReturnCallerFault.SAMPLE) }
+        withOwnedCutPool(database.value) { f ->
+            f.shutdownDiagnosticCase = OwnedCutShutdownDiagnosticCase.RETURN_SAMPLE
+            assertOwnedReturnCaller(f, ReturnCallerFault.SAMPLE)
+        }
 
     @Test
     fun `actual RETURN interruption defeats a false override while outer actor custody survives held restoration`() =
@@ -1248,10 +1253,13 @@ internal fun withOwnedCutPool(database: PgLifecycleDatabaseFixture, test: (Owned
     }
 }
 
+internal enum class OwnedCutShutdownDiagnosticCase { RETURN_SAMPLE, FAILED_POST_CONSENT_TAIL }
+
 /** Test-only assertion handles. Production has no pool, raw, epoch or entitlement getter. */
 internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDataSource) : AutoCloseable {
     val lifecycle = ownedCutField(pool, "lifecycle") as PoolLifecycle
     var expectedPoolUnknown = false
+    var shutdownDiagnosticCase: OwnedCutShutdownDiagnosticCase? = null
 
     fun entry(connection: Connection): PersistencePhysicalEntry {
         val state = ownedPoolLease(connection).state
@@ -1260,11 +1268,25 @@ internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDa
 
     override fun close() {
         val receipt = requireNotNull(pool.requestShutdown())
-        assertTrue(pool.shutdownInvocation() in setOf(PoolShutdownInvocation.RETURNED, PoolShutdownInvocation.ALREADY_CLAIMED))
+        var invocation: PoolShutdownInvocation? = null
+        shutdownDiagnostic("BEFORE_SHUTDOWN", invocation)
+        try {
+            invocation = pool.shutdownInvocation()
+        } finally {
+            shutdownDiagnostic("AFTER_SHUTDOWN", invocation)
+        }
+        assertTrue(invocation in setOf(PoolShutdownInvocation.RETURNED, PoolShutdownInvocation.ALREADY_CLAIMED))
         var observation = PoolShutdownObservation.PENDING
-        awaitLifecycleFact {
-            observation = receipt.observe()
-            observation !== PoolShutdownObservation.PENDING
+        var observed = false
+        try {
+            awaitLifecycleFact {
+                observation = receipt.observe()
+                observed = true
+                observation !== PoolShutdownObservation.PENDING
+            }
+        } catch (failure: Throwable) {
+            shutdownDiagnostic("OBSERVATION_FAILED", invocation, if (observed) observation else null)
+            throw failure
         }
         val expected = if (scope.expectedUnknown || expectedPoolUnknown) {
             PoolShutdownObservation.UNKNOWN
@@ -1278,6 +1300,43 @@ internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDa
         assertEquals(0, actors.constructing)
         assertTrue(actors.factorySealed)
         assertTrue(actors.retiredGenerations > 0L, "A real stock-Hikari population, not an inert MODEL shell, ended.")
+    }
+
+    /** Best-effort, non-atomic scalar reads only; never a lifecycle observer, cleanup action or completion proof. */
+    @Suppress("TooGenericExceptionCaught")
+    private fun shutdownDiagnostic(
+        phase: String,
+        invocation: PoolShutdownInvocation?,
+        observation: PoolShutdownObservation? = null,
+    ) {
+        val case = shutdownDiagnosticCase ?: return
+        try {
+            val budget = ownedCutField(lifecycle, "shutdownBudget") as PersistenceTimeBudget
+            val remainingMillis = persistenceFactoryRemainingMillis(budget)
+            val actors = lifecycle.actorSnapshot()
+            val hikari = requireNotNull(ownedCutField(pool, "pool"))
+            val hikariPool = requireNotNull(ownedCutField(hikari, "pool"))
+            val closer = ownedCutField(hikariPool, "closeConnectionExecutor") as ThreadPoolExecutor
+            println(
+                "OWNED_CUT_SHUTDOWN_DIAGNOSTIC case=${case.name} phase=$phase status=CAPTURED" +
+                    " budget_remaining_ms=$remainingMillis invocation_result=${invocation?.name ?: "NOT_RETURNED"}" +
+                    " first_close=${lifecycle.firstCloseOutcome().name} observation=${observation?.name ?: "NOT_OBSERVED"}" +
+                    " actor_capacity=${actors.capacity} actor_retained=${actors.retainedGenerations}" +
+                    " actor_constructing=${actors.constructing} actor_retired=${actors.retiredGenerations}" +
+                    " actor_factory_sealed=${actors.factorySealed} actor_fault=${actors.firstFailure?.name ?: "NONE"}" +
+                    " future_lease_entries=${actors.futureLeaseEntries} active_operations=${actors.activeOperations}" +
+                    " close_queue_size=${closer.queue.size} close_pool_size=${closer.poolSize}" +
+                    " close_active_count=${closer.activeCount} close_completed_tasks=${closer.completedTaskCount}" +
+                    " close_shutdown=${closer.isShutdown} close_terminated=${closer.isTerminated}",
+            )
+        } catch (_: Throwable) {
+            // Neither a failed read nor failed diagnostic output may replace or mutate the original test failure.
+            try {
+                println("OWNED_CUT_SHUTDOWN_DIAGNOSTIC case=${case.name} phase=$phase status=UNAVAILABLE")
+            } catch (_: Throwable) {
+                // Best effort only; do not attach, adapt or rethrow a diagnostic failure.
+            }
+        }
     }
 }
 
