@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.api
 
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import jakarta.validation.Valid
 import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.PayloadTooLargeException
@@ -26,6 +27,7 @@ import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import me.manga.kira.backend.sourceconfig.domain.SourceOperationalMode
 import org.springframework.http.HttpStatus
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.util.MultiValueMap
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
@@ -84,7 +86,16 @@ class AdminSourcesController(
         SourceMutationResponse.of(sourceAdminService.createRevision(api, httpRequest.readBody(), admin.id))
 
     @GetMapping("/{api}/revisions")
-    fun listRevisions(@PathVariable api: String): List<RevisionSummaryResponse> = sourceAdminService.listRevisions(api).map { RevisionSummaryResponse.of(it) }
+    fun listRevisions(
+        @PathVariable api: String,
+        @RequestParam parameters: MultiValueMap<String, String>,
+        response: HttpServletResponse,
+    ): List<RevisionSummaryResponse> {
+        val page = AdminHistoryParameters.parse(parameters, Int.MAX_VALUE.toLong())
+        val window = sourceAdminService.listRevisions(api, page.size, page.beforeRevision?.toInt())
+        window.nextBeforeRevision?.let { response.setHeader(AdminHistoryParameters.NEXT_BEFORE_HEADER, it.toString()) }
+        return window.items.map { RevisionSummaryResponse.of(it) }
+    }
 
     @GetMapping("/{api}/revisions/{number}")
     fun getRevision(@PathVariable api: String, @PathVariable number: Int): RevisionDetailResponse =

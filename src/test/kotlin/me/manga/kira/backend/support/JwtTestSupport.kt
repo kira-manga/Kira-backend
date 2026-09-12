@@ -2,9 +2,11 @@ package me.manga.kira.backend.support
 
 import com.nimbusds.jose.JWSAlgorithm
 import com.nimbusds.jose.JWSHeader
+import com.nimbusds.jose.JWSObject
+import com.nimbusds.jose.Payload
 import com.nimbusds.jose.crypto.MACSigner
 import com.nimbusds.jwt.JWTClaimsSet
-import com.nimbusds.jwt.SignedJWT
+import me.manga.kira.backend.security.JwtService
 import java.time.Duration
 import java.time.Instant
 import java.util.Base64
@@ -39,6 +41,8 @@ object JwtTestSupport {
         issuedAt: Instant = Instant.now(),
         expiresAt: Instant = Instant.now().plus(Duration.ofMinutes(60)),
         keyId: String = KEY_ID,
+        credentialVersion: Any? = "0",
+        includeCredentialVersion: Boolean = true,
     ): String {
         val header = JWSHeader.Builder(JWSAlgorithm.HS256).keyID(keyId).build()
         val claims =
@@ -52,7 +56,11 @@ object JwtTestSupport {
                 .claim("email", email)
                 .claim("role", role)
                 .build()
-        val jwt = SignedJWT(header, claims)
+        // Write the raw map so even an explicit JSON null is signed, rather than omitted by
+        // JWTClaimsSet's default null-claim serialization. Legacy absence remains a separate case.
+        val payload = claims.toJSONObject()
+        if (includeCredentialVersion) payload[JwtService.CLAIM_CREDENTIAL_VERSION] = credentialVersion
+        val jwt = JWSObject(header, Payload(payload))
         jwt.sign(MACSigner(secretBytes))
         return jwt.serialize()
     }

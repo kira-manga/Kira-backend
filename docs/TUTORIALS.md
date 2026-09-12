@@ -74,14 +74,47 @@ permanently public.
 
 ## Seed and storage
 
-The bundled seed runs only when both tutorial identity tables are empty. It publishes the four
-pre-migration guides, categories/order/featured positions, and six screenshot variants. It never
-merges into or overwrites administrator-authored data. Set `KIRA_TUTORIAL_SEED_ENABLED=false` to
-disable it and `KIRA_TUTORIAL_MEDIA_DIRECTORY` to the dedicated mounted volume.
+When enabled, the bundled seed imports six screenshot assets **before checking whether both tutorial
+identity tables are empty**. Those imports can rewrite missing/mismatched seed files even if the
+identity-table guard subsequently prevents creation of the four pre-migration guides, categories,
+order and featured positions. It is not a safe concurrent bootstrap protocol or a repair operation
+for an existing installation. Do not rerun it to reconcile unexpected data.
 
-Startup fails if a published media row has no file or if a published pointer/category/media relation
-is inconsistent. PostgreSQL stores metadata and references only; media bytes belong in the
-`kira-tutorial-media` volume.
+The ordinary two-replica Kubernetes Deployment explicitly sets `KIRA_TUTORIAL_SEED_ENABLED="false"`
+and `KIRA_TUTORIAL_MEDIA_DIRECTORY=/var/lib/kira/tutorial-media`, backed by the same stable
+namespace-local **`kira-tutorial-media` Filesystem/RWX PVC** for every pod. `/tmp` has separate bounded
+ephemeral scratch and is not the media store. PostgreSQL stores metadata/references, not media bytes.
+See [DEPLOYMENT.md](DEPLOYMENT.md#shared-tutorial-media-storage-and-fresh-bootstrap) for the unresolved
+class/capacity template, ownership, retention and installed multi-node acceptance gates. No provider,
+permissions or durability are established just by the RWX/fsGroup declarations.
+
+### Separately authorized first seed
+
+Before admitting normal traffic to a genuinely fresh installation, the service/platform owners must
+approve and perform one **serialized, quarantined bootstrap** using the exact release image,
+migrated database and selected shared claim. Positively establish freshness and exclusive writer
+admission/custody; exclude and drain other application, seed and maintenance writers, including
+rolling/terminating processes. Unexpected existing rows or media are an operator **STOP**, not
+permission to delete, replace or rerun seed. Do not reduce the committed steady-state replicas or
+introduce a privileged initialization container to bypass storage permissions.
+
+Enable tutorial seeding only for that isolated, authorized operation. Keep traffic quarantined until
+there is positive evidence of successful completion, the expected guides/categories/order and six
+asset variants, matching DB/media references and bytes on the intended claim. Stop the bootstrap
+writer and retain seed=false for ordinary replicas. Verify both normal replicas read the resulting
+media before releasing traffic. No bootstrap Job/controller or concurrency safety guarantee is
+provided by this repository slice; the installed procedure and completion remain external gates.
+
+The existing startup validator still fails if a published media row has no regular file or if a
+published pointer/category/media relation is inconsistent. **Empty tutorial tables can pass it and
+readiness without any initial guides.** It is not a file-hash, writeability, continuous media-health
+or bootstrap-completion test. Do not weaken it or use a green readiness result as first-seed evidence.
+
+Back up and restore the database and media as a matched encrypted pair under the writer exclusion
+**and positive drain** protocol in [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md). The filesystem/DB
+transaction gap (Backend #5) is not solved by persistence alone. That helper refuses an existing
+restore target, even if empty; a mounted PVC root requires a separately approved isolated restore/
+custody mapping, not a direct in-place invocation or deletion of the stable claim.
 
 An older binary with the pre-fix startup validator rejects an archived category that retains a
 PUBLISHED child. This correction does not make rollback to that binary safe; retain a compatible

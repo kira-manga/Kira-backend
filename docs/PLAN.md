@@ -169,7 +169,7 @@ kira-backend/
 
 ## 4. API design
 
-All endpoints under `/api/v1`. Errors use the problem envelope from §2. Pagination: `?page=0&size=20`, response `PageResponse{items, page, size, total}`.
+All endpoints under `/api/v1`. Errors use the problem envelope from §2. Offset pagination: `?page=0&size=20`, response `PageResponse{items, page, size, total}`. The two admin source/document history lists retain raw arrays and use the bounded keyset exception in §4.5.
 
 ### 4.1 App-facing (public, read-only, no auth)
 
@@ -208,7 +208,7 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 | `GET /api/v1/admin/sources` | All sources incl. drafts/retired/removed; filter `?status=`. | 200 |
 | `GET /api/v1/admin/sources/{api}` | Full admin view: current status, current published revision no., latest revision no., timestamps. | 200; 404 |
 | `POST /api/v1/admin/sources/{api}/revisions` | New draft revision (body = full `SourceConfig`, **STRICT authoring parser**, then the same **Tier-1 structural gate** as create — nothing persisted on a gate failure). `body.api` **must equal** the path `{api}` → mismatch is 400 `API_ID_MISMATCH` (Tier-1); the api identity is immutable after creation. Payload `lifecycle` must be `"active"` (else 400 `LIFECYCLE_NOT_AUTHORABLE`, Tier-1). Revision number allocated **under a `SELECT … FOR UPDATE` lock on the source head row** (§5 — concurrent creations must not collide). Auto-validates (Tier-2) + stores result, returns it. | 201; 404; 400 |
-| `GET /api/v1/admin/sources/{api}/revisions` | Revision list: `{revisionNumber, status, checksum, createdBy, createdAt, publishedAt, valid}`. | 200; 404 |
+| `GET /api/v1/admin/sources/{api}/revisions` | Bounded revision metadata window (§4.5): `{revisionNumber, status, checksum, createdBy, createdAt, publishedAt, valid}`. | 200; 400; 404 |
 | `GET /api/v1/admin/sources/{api}/revisions/{n}` | Full stored config JSON of that revision + metadata. | 200; 404 |
 | `POST /api/v1/admin/sources/{api}/revisions/{n}/validate` | Re-run validation (validation preview — no state change beyond storing the result). Returns `{valid, errors:[{code, path, message}], warnings:[{code, path, message}]}`. Also validates the source **in candidate-document context** (unique-api etc., §8). | 200 (even when invalid — the *result* reports invalid); 404 |
 | `GET /api/v1/admin/sources/{api}/revisions/{n}/validation` | Latest stored validation result for the revision. | 200; 404 |
@@ -219,7 +219,7 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 | `POST /api/v1/admin/sources/{api}/retire` | `disabled → retired` **only** (direct `active → retired` is 409 — the mandatory soft-disable stage is enforced, honoring the "no silent deletion: disabled in the document before ever dropped" contract in §12.4). Stanza stays in document as `lifecycle:"removed"` (app vocabulary — §9 mapping). New snapshot. | 200; 409 |
 | `POST /api/v1/admin/sources/{api}/remove` | `retired → removed` (terminal). Stanza dropped from the document entirely. New snapshot. Body `{confirm: "<api>"}` required (foot-gun guard). | 200; 409 (must pass through `disabled` then `retired` first) |
 | `POST /api/v1/admin/sources/{api}/rollback` | Body `{toRevision: n}`. Copies revision *n*'s **content** into a **new** revision (number = latest+1), validates, publishes it. History is never mutated; revision numbers only grow. **Rollback copies content only — it does NOT restore the source's server lifecycle from that era** (status follows the publish rules above: active stays active, disabled stays disabled). | 200 with `{newRevisionNumber, documentRevision}`; 422 if the old config no longer validates (rules may have tightened); 409 retired/removed; 404 |
-| `GET /api/v1/admin/documents` | Published document snapshots: `{documentRevision, schemaVersion, checksum, sourceCount, createdBy, createdAt}`. | 200 |
+| `GET /api/v1/admin/documents` | Bounded snapshot metadata window (§4.5): `{documentRevision, schemaVersion, checksum, sourceCount, createdBy, createdAt}`. | 200; 400 |
 | `GET /api/v1/admin/documents/{revision}` | **Body = the raw stored canonical bytes of that snapshot** (same raw-bytes writer as the public endpoint — never re-serialized), metadata in headers only (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`). Deliberately NOT a JSON metadata envelope — the list endpoint above is the metadata view; wrapping would break the serve-stored-bytes/checksum guarantee. | 200; 404 |
 | `POST /api/v1/admin/documents/validate` | Validate the **candidate** document (assembled from current published revisions + lifecycle states) without publishing — whole-document preview. | 200 `{valid, errors[]}` |
 | `POST /api/v1/admin/documents/republish` | Force-materialize a new snapshot from current state (recovery / after canonicalization changes). **Always creates a new snapshot with a new document revision, even when the canonical content is unchanged** — that is its purpose (deliberate recovery tool; the caller decides). | 200 |
@@ -234,12 +234,29 @@ Prod onboarding mechanism (registration is disabled in prod): admins create user
 | `POST /api/v1/admin/users` | `{email, password, role}` → create user (password policy and normalized email bound of §4.2 apply; email trim+lowercased, case-insensitively unique). Response never echoes the password. | 201; 409 duplicate; 400 (including `EMAIL_TOO_LONG`) |
 | `GET /api/v1/admin/users` | Paginated list: `{id, email, role, enabled, createdAt}` — **no password material, ever**. | 200 |
 | `POST /api/v1/admin/users/{id}/enable` | Re-enable a disabled user. | 200; 404 |
-| `POST /api/v1/admin/users/{id}/disable` | Disable: user can no longer log in; in-flight tokens die at the next request because the authentication pipeline re-checks `enabled` (§6). **Guard: refuses (409) to disable the last enabled ADMIN** — recovery from an all-admins-disabled state would otherwise require manual SQL. The guard is **serialized via the `security_state` singleton row lock** (§5): a bare count-then-disable check is racy — two concurrent transactions each observe 2 enabled admins and disable different ones → zero. Enable/disable (and any future role mutation) lock `security_state FOR UPDATE` first, then count. `ConcurrentLastAdminDisableIT` proves it. | 200; 404; 409 last-admin guard |
-| `POST /api/v1/admin/users/{id}/reset-password` | `{newPassword}` (policy-checked). Explicit, audited (`USER_PASSWORD_RESET` — the audit row records actor + target, never the password). | 200; 404; 400 |
+| `POST /api/v1/admin/users/{id}/disable` | Disable: user can no longer log in; bearer tokens are rejected at the next authentication check of `enabled` (§6), without cancelling already-authenticated work. **Guard: refuses (409) to disable the last enabled ADMIN** — recovery from an all-admins-disabled state would otherwise require manual SQL. The guard is **serialized via the `security_state` singleton row lock** (§5): a bare count-then-disable check is racy — two concurrent transactions each observe 2 enabled admins and disable different ones → zero. Enable/disable (and any future role mutation) lock `security_state FOR UPDATE` first, then count. `ConcurrentLastAdminDisableIT` proves it. | 200; 404; 409 last-admin guard |
+| `POST /api/v1/admin/users/{id}/reset-password` | `{newPassword}` (policy-checked). Atomically replaces hash and advances credential version, revoking older tokens (§6). Audited (`USER_PASSWORD_RESET` — actor + target only, never credential values). | 200; 404; 400; 409 `CREDENTIAL_VERSION_EXHAUSTED` |
 
 ### 4.5 Cross-cutting HTTP contract (normative)
 
-- **Pagination:** `?page=0&size=20`; `size` max **100** (larger → 400), `page`/`size` negative or non-numeric → 400. Applies to every paginated endpoint.
+- **Offset pagination:** `?page=0&size=20`; `size` max **100** (larger → 400), `page`/`size` negative or non-numeric → 400. The existing users/completions/audit envelopes are unchanged.
+- **Admin history keyset exception:** `GET /admin/sources/{api}/revisions` and `GET /admin/documents`
+  retain raw array/item shapes. `size` defaults to **20**, range **1..100**; optional exclusive
+  `beforeRevision` is positive and bounded to source **Int** / document **Long**. Recognized query
+  values accept ASCII digits and leading zeros numerically; empty, repeated, signed, whitespace,
+  nondecimal, zero/negative and overflow fail with value-free 400 `INVALID_HISTORY_PAGE` before the
+  history service. Select newest `size+1` scalar summaries below the bound, discard lookahead, then
+  return the retained window **ASC**. Only when older rows remain, `X-Kira-History-Next-Before` is
+  the smallest retained revision as canonical positive decimal. Empty or exactly-size terminal
+  windows omit it; unknown source stays 404. Gapped/nonexistent cursor keys are legal; no arithmetic
+  successor, count, offset or unlimited mode. Limit revisions before indexed `validated_at DESC`
+  latest-validity probes, preserving true/false/NULL and existing timestamp-tie semantics. No
+  canonical payloads, notes/signatures or finding JSON are materialized for lists: one document
+  data SELECT or source-head lookup plus one revision-summary SELECT (authentication is separate).
+  Detail/raw/validation routes and immutable history/publication pointers do not change. A refresh
+  starts at newest; status/validity can change across requests. This is not a snapshot guarantee.
+  Backend-first remains array-wire compatible, not all-history compatible; Admin's companion
+  pager is required for older navigation. See [API history examples](API.md#admin-history-windows).
 - **Request-body limits:** a pre-MVC replayable-body filter enforces default max **256 KiB** and
   `import-bundled` max **5 MiB** for declared or streamed/chunked bodies; completion prompt over its max
   length → **413** (one consistent status, not sometimes-400).
@@ -266,9 +283,24 @@ V2__source_config.sql
 V3__published_documents.sql
 V4__audit_log.sql
 V5__completions.sql
+V6__completion_retention.sql
+V7__signed_published_documents.sql
+V8__enforce_completion_result_xor.sql
+V9__tutorials.sql
+V10__source_catalog_v2.sql
+V11__source_editor_drafts.sql
+V12__admin_step_up_grants.sql
+V13__source_changesets.sql
+V13_1__user_credential_version.sql
 ```
 
-**Migration order matches build order (deliberate):** the phased build (§15) creates audit in Phase 6 and completions in Phase 9 — audit therefore MUST have the lower version number, or a fresh environment migrated mid-campaign would see V5 applied before V4 exists (Flyway out-of-order hazard). `outOfOrder` stays **false** (default); versions are appended strictly in build order. `FlywayMigrationIT` asserts the history contains exactly V1..V<latest> in order.
+**Migration order matches build order (deliberate):** the phased build (§15) creates audit in Phase 6 and completions in Phase 9 — audit therefore MUST have the lower version number, or a fresh environment migrated mid-campaign would see V5 applied before V4 exists (Flyway out-of-order hazard). `outOfOrder` stays **false** (default); versions advance in Flyway numeric order. `FlywayMigrationIT` asserts the exact current inventory in that order, including normalized version `13.1`.
+
+V13.1 is a new forward migration after 13 and before reserved 14, not a rewrite of V13 or a placeholder
+for 14. Before deployment, prove the actual installed history/checksums and absence of a collision.
+Histories already beyond 13.1 require separate forward reconciliation; never enable out-of-order,
+repair/baseline a history or edit old migration bytes to force acceptance. Production runs migrations
+in a separate job. Source acceptance is not installed migration/cutover evidence (§6, SECURITY.md).
 
 **Document-vs-per-source decision (justified):** authoring truth is **per-source revisions** (`source_configs` + `source_config_revisions`) because every admin operation (draft, validate, publish, rollback, lifecycle) is per-source and needs per-source history; the served artifact is a **materialized whole-document snapshot** (`published_documents`) because (a) the app consumes one `SourceConfigDocument` with one monotonic `revision` and one checksum → stable strong ETag requires stable bytes, (b) serving stored canonical bytes makes what-the-app-got auditable and reproducible per revision, (c) whole-document anti-rollback (`revision` must only grow — the app's `RemoteSourceConfigManager` rejects any document with `revision <` accepted floor) becomes a single DB sequence. Assembling on the fly from per-source rows would make ETag/checksum recomputed-per-request and history unreproducible.
 
@@ -284,16 +316,26 @@ Number determinism is trivial here — the model contains only `Int`/`Long`/`Boo
 
 ### Tables
 
-**`users`** (V1)
+**`users`** (V1, credential version added by V13.1)
 
 | column | type | constraints |
 |---|---|---|
 | id | uuid | PK, default `gen_random_uuid()` |
 | email | varchar(320) | NOT NULL; case-insensitive uniqueness enforced in the DB: `CREATE UNIQUE INDEX uq_users_email_lower ON users(lower(email));` (app layer ALSO trims + lowercases and bounds the normalized result to 320 Unicode code points before store — §4.2) |
 | password_hash | varchar(255) | NOT NULL — sized for `DelegatingPasswordEncoder` `{id}hash` format, so the schema is not coupled to BCrypt forever (initial encoder IS `{bcrypt}`; cost calibrated on deployment hardware, not frozen at 10) |
+| credential_version | bigint | NOT NULL default 0, CHECK (`credential_version >= 0`); same-snapshot password generation, not JPA `@Version` (§6). Existing rows backfill to 0. |
 | role | varchar(16) | NOT NULL, CHECK (`role IN ('ADMIN','USER')`) |
 | enabled | boolean | NOT NULL default true |
 | created_at / updated_at | timestamptz | NOT NULL default now() |
+
+Password reset sets hash, `credential_version = credential_version + 1` and `updated_at` in **one**
+parameterized update guarded below `Long.MAX_VALUE`, joining the existing reset/audit transaction.
+The increment uses the stored value, not a stale Kotlin snapshot. Concurrent updates serialize on
+the user row; rollback restores hash/version/audit together. At MAX, fail with value-free **409**
+`CREDENTIAL_VERSION_EXHAUSTED`, no hash change or success audit; a missing row remains **404**.
+Role/enabled mutations target only their own field and timestamp. All three bulk mutations flush
+pending work then clear stale JPA state; same-transaction rereads are fresh and a later flush cannot
+restore old credentials. Enable/disable retain the separate last-admin lock order below.
 
 **`security_state`** (V1) — singleton row serializing admin-account mutations (the last-admin guard, §4.4, and any future role-changing)
 
@@ -449,9 +491,37 @@ not anonymity, encryption, authentication or identity proof; access/retention ru
 
 ## 6. Security model
 
-- **Auth flow:** `POST /auth/login` → `AuthService` loads user by email → BCrypt verify → `JwtService` issues an **HS256 JWT** via Nimbus (`spring-security-oauth2-jose`): claims `sub` = user UUID, `email`, `role` (`ADMIN`|`USER`), `iss = "kira-backend"`, **`aud = "kira-api"`**, `iat`, `exp = iat + kira.security.access-token-ttl` (default **PT60M**). Resource-server side: `NimbusJwtDecoder.withSecretKey(...)` configured to **explicitly validate signature, `exp`, `nbf` when present, issuer, and audience** (default validators + `JwtIssuerValidator` + `JwtClaimValidator("aud")`; clock skew 60s). **The DB-backed enabled-check lives INSIDE the authentication pipeline** — a custom `jwtAuthenticationConverter` (`Converter<Jwt, AbstractAuthenticationToken>`) registered on `oauth2ResourceServer { jwt {} }`, which Spring invokes for EVERY request that presents a bearer token, on every protected endpoint (a controller **argument resolver is NOT the enforcement point** — it only runs when a handler injects that argument): after standard JWT verification the converter (1) loads the user by `sub` (indexed PK read); (2) missing or `enabled = false` → throws an `AuthenticationException` subtype (e.g. `InvalidBearerTokenException`) → the resource-server entry point returns **401**; (3) derives the granted authorities from the **DB `role`, not the token claim** — server-side role and enabled changes take effect on the target's next request, and a stale token role claim can never grant outdated access (the claim stays in the token as diagnostic/client convenience only, never trusted for authorization); (4) exposes the loaded domain user as the authentication principal, so the `CurrentUser` resolver is a SecurityContext read — no second DB query per request. Still no custom servlet **filter** — the converter is the standard extension point of `oauth2ResourceServer { jwt {} }`. HS256 with one shared in-process key is deliberate for a single service — asymmetric signing is NOT introduced without a real multi-service key-distribution need; a `kid` header is emitted from day one as the rotation seam (single active key in v1).
+- **Auth flow:** `POST /auth/login` → user lookup → BCrypt verify → acknowledged throttle completion
+  → `JwtService` issues an **HS256 JWT** via Nimbus from the **same immutable verified User snapshot**.
+  Claims: `sub` = UUID, `email`, `role` (`ADMIN`|`USER`), `credential_version` = canonical nonnegative
+  decimal **string**, `iss = "kira-backend"`, `aud = "kira-api"`, `iat`, `exp = iat +
+  kira.security.access-token-ttl` (default **PT60M**). Never refresh only the version after BCrypt:
+  login racing reset may issue an immediately stale token, not a new-generation token for an old hash.
+  The decoder still explicitly validates signature, `exp`/`nbf`, issuer and audience (60s clock skew).
+  The standard `jwtAuthenticationConverter` runs inside the authentication pipeline for EVERY bearer
+  request, before controller dispatch: (1) load user by `sub`; (2) missing/disabled → generic **401**;
+  (3) require a raw String claim exactly equal to the nonnegative DB Long's canonical decimal string;
+  (4) derive authorities from the **current DB role**, never the diagnostic token role;
+  (5) expose only the loaded identity as principal, so `CurrentUser` needs no second DB read.
+  No coercing getter, parser normalization, missing-to-zero fallback or timestamp grace. Absent/null,
+  wrong-type, signed/padded/leading-zero, fractional/exponent, Unicode/overflow and unequal versions
+  all fail with the same generic **401**. No credential fields are added to DTOs. This standard converter
+  is not a custom servlet filter. HS256/single key and the `kid` rotation seam remain unchanged.
 - **JWT key handling:** `kira.security.jwt-secret` bound from env `KIRA_JWT_SECRET` = **Base64-encoded cryptographically random key that decodes to ≥ 256 bits** (generate: `openssl rand -base64 32`), NOT an arbitrary human passphrase. Startup fails fast if missing, not valid Base64, or < 32 decoded bytes (except a documented dev-profile default clearly marked insecure). Documented in SECURITY.md: key format, issuer, audience, TTL, clock skew, rotation procedure (new key + `kid` bump + bounded dual-accept window when needed).
-- **Disabled-user revocation (decided, no token-version machinery):** tokens stay stateless, but the `jwtAuthenticationConverter` above loads the user row on every token-authenticated request and **rejects missing/`enabled = false` with 401** — disabling a user is therefore effective on their next request, on **every** protected endpoint (auth, completion read/write, admin — not just handlers that inject `CurrentUser`), without token-version bookkeeping. Login is likewise refused. (`DisabledUserAuthIT` proves all of: `/auth/me`, completion read+write, and admin endpoints rejecting a disabled user's still-valid token; plus DB-role-change taking effect against a token carrying the old role claim.)
+- **Disabled-user revocation (independent of credential version):** tokens stay stateless; every
+  bearer authentication reads the current row and rejects missing/disabled users with **401** everywhere.
+  Login is likewise refused. Enabled/role changes do not increment the credential version and retain
+  the existing DB-authority policy (`DisabledUserAuthIT`, `ConcurrentLastAdminDisableIT`).
+- **Password-reset revocation and limits:** every successful reset, including a reset to the same
+  password, advances the stored version once (§5); old target tokens are rejected at DB-backed
+  authentication reads after commit, including `/admin/step-up` even with the correct new password.
+  Other users' tokens are unaffected. Already-authenticated in-flight work is not cancelled; no new
+  revocation protocol for independently stored step-up grants is implied. Legacy unversioned tokens
+  fail closed, intentionally requiring one-time reauthentication. Mixed-version nodes and rollback
+  to an old verifier are **not revocation-safe**: old issuers omit the claim, old converters ignore
+  it, and old reset code does not advance it. Coordinate schema/new-binary cutover and drain old
+  nodes; existing receiver rollback behavior is unchanged. Actual installed history, fleet rollout/
+  rollback and operator-session behavior remain **EXTERNAL VERIFICATION REQUIRED** (SECURITY.md).
 - **Secret handling:** DB creds via `SPRING_DATASOURCE_*` env. `.env` gitignored; `.env.example` committed with placeholders only; `docker-compose.yml` carries only the throwaway local DB password.
 - **Password policy & hashing:** min **15 chars** (NIST SP 800-63B guidance for single-factor password auth; this is a small-audience operator API where password managers are assumed — usability cost ≈ 0), max **72 UTF-8 bytes** (the BCrypt input limit, enforced explicitly with a clear 400 rather than silent truncation; the byte cap is documented as encoder-derived — moving to Argon2 later via the delegating encoder lifts it), **no composition rules, no expiry, no silent trimming/normalization** of the password itself. Encoder bean = `DelegatingPasswordEncoder` with `{bcrypt}` as the initial id (hash format stays portable; BCrypt cost calibrated on real deployment hardware at setup — target ≥ ~100 ms — not hardcoded at strength 10 forever). Optional-but-recommended: a small embedded top-common-passwords blocklist check.
 - **Auth throttling (mandatory):** login and admin password step-up use opaque once-only attempt
@@ -779,7 +849,7 @@ late-start/early-release and actual termination/fencing obligation remains unres
 3. Generic-source rejections: unknown pagination type; missing home+featured; blank endpoint url; raw `{query}` in url and in jsonBody; unknown method/format; unknown listFilter op/mode; unknown transform fn; unknown dateStrategy; **any** imageStrategy (empty whitelist); each filter rule §8 items 16–27 — invalid id regex, duplicate id, type pinning for `sort`/`genres`, options presence/absence, duplicate option values, every defaults case (multiselect `default` misuse, non-option default, non-boolean toggle, non-numeric number, required-without-default), every encode↔target and encode↔type incompatibility, reserved-var shadowing, path-target-without-default, appliesTo to a missing endpoint, form-target collision with formBody, body-json missing placeholder, query param hardcoded, visibleWhen unknown/self/empty-anyOf/out-of-vocabulary, excludeOf non-multiselect/chained/overlapping-defaults, and a visibleWhen **dependency cycle**.
 4. `LifecycleStateMachineTest` — every allowed transition succeeds; every disallowed one (esp. `active → removed` skipping retired, and anything from `removed`) throws.
 5. `CanonicalJsonTest` — canonical bytes are deterministic; defaults are omitted; **two semantically-equal documents authored with different map key orders (headers/endpoints/fields) canonicalize to identical bytes** (the `kcj-1` key-sort guarantee, §5); checksum is stable across parse→serialize round-trips; a re-parsed canonical document is semantically equal to the input model (shape-parity guarantee); no trailing newline, no insignificant whitespace.
-6. `JwtServiceTest` — issue→decode round-trip; expired token rejected; tampered signature rejected; role claim mapped.
+6. `JwtServiceTest` — issue→decode round-trip; expired/tampered tokens rejected; role and raw canonical credential-version string at0/nonzero/MAX; negative version cannot be issued. `AuthAttemptCallerTest` also proves no post-verification version promotion when resets race password verification and throttle completion.
 7. `PasswordHashingTest` — BCrypt hash verifies; hash ≠ plaintext; two hashes of same password differ (salt).
 8. `EchoCompletionProviderTest` — echoes prompt, records model.
 8b. `ContractInventoryTest` — parity protection for the mirrored contract: field-name/type inventory of every §7 data class (via serialization of a fully-populated instance), default values, enum vocabularies (siteState, lifecycle, filter types/targets/encodes, methods, formats), the transform whitelist, date-strategy whitelist, pagination whitelist, and the **empty** image-strategy whitelist — any drift from the app's `SourceConfig.kt`/`DefaultStrategyRegistry` fails loudly. Seed the validator suite by **porting the app's real tests** (`DefaultSourceConfigValidatorTest`, `DefaultSourceConfigValidatorFilterTest` in `sources/engine/src/commonTest/`) rather than recreating approximate coverage.
@@ -796,7 +866,7 @@ late-start/early-release and actual termination/fencing obligation remains unres
 17. `ImportBundledIT` — import a trimmed real bundled fixture (2 generic + 2 legacy stanzas) → sources created + published + document serves them **in payload order** (positions assigned per §12.2); re-import of the identical payload → no-op per §12.2 (zero new per-source revisions, zero new snapshots); import with one bad stanza → 422, nothing persisted; incoming `revision`/`generatedAt` do NOT drive server revision allocation; a terminally `removed` source is not revived by import; changed content for a `retired` source → `skippedRetired`, nothing stored; an existing draft-only source → `skippedDraft`, with no new revision or snapshot and no accidental publication.
 18. `CompletionIT` — anon → 401; USER posts prompt → 201, row in both tables, provider `echo`, result `echo: …`; owner can `GET` it; a different USER gets 404 for it; ADMIN can read it.
 19. `AuditLogIT` — publish + disable write audit rows with actor, action, entity; audit `detail` contains **no config bodies, header values, or prompts**.
-20. `FlywayMigrationIT` — context boots against a clean container (implicitly validates all migrations); `flyway_schema_history` contains **exactly the migrations that exist at the current phase, in version order** (the expectation grows with the build: V1..V3 when it first runs in Phase 5, V1..V4 from Phase 6, and its FINAL form — exactly V1 users, V2 source_config, V3 published_documents, V4 audit_log, V5 completions, in order, `outOfOrder=false` — from Phase 9 onward). It must never reference a migration its phase hasn't created.
+20. `FlywayMigrationIT` — context boots against a clean container; `flyway_schema_history` contains **exactly the migrations present, in version order**, currently V1..V13 then13.1 (`outOfOrder=false`). Earlier phase expectations remain historical; the test must never reference a migration not yet present. Fresh-schema credential default/nonnegative/NOT NULL behavior is exercised directly in PostgreSQL.
 
 **Amendment-mandated tests (each names the invariant it protects):**
 
@@ -815,10 +885,10 @@ late-start/early-release and actual termination/fencing obligation remains unres
 33. `HistoricalRevisionChecksumIT` — *stored canonical bytes are the reproducible source of truth*: persist a revision, reload `config_canonical_json` cold, recompute SHA-256 → equals the stored checksum byte-for-byte (§5).
 34. `RawBytesChecksumIT` — *what is served is what was checksummed*: fetch the public document, hash the raw response bytes → equals the `ETag`/`X-Config-Checksum` (no message-converter re-serialization drift) (§4.1).
 35. `IfNoneMatchVariantsIT` — *conditional-GET correctness*: `If-None-Match: *` → 304; multiple comma-separated ETags including the current → 304; non-matching list → 200; a **weak validator `W/"<current-hash>"` → 304** (If-None-Match requires weak comparison, §4.1); 304 responses carry no body (§4.1).
-36. `RealBearerTokenIT` — *the real decoder path works end-to-end*: obtain a token via actual `POST /auth/login`, call a protected endpoint with it through the real `NimbusJwtDecoder` (not the mocked `jwt()` post-processor); tampered audience/issuer/expiry variants → 401 (§6).
+36. `RealBearerTokenIT` — actual login and real `NimbusJwtDecoder`, not mocked `jwt()`; audience/issuer/expiry/signature failures; authorized reset revokes USER completion read/write and ADMIN/step-up access even with the new password; old-password denial/new-login success/repeated reset; strict legacy/raw-type/canonical/mismatch claims with positive controls; generic MAX409 preserves credentials/audit/token validity (§6).
 37. `DisabledUserAuthIT` — *disable is effective immediately, on EVERY protected endpoint*: disable a user; their previously-issued valid-signature token → 401 on the next request to **each** of `/auth/me`, completion read AND write, and an admin endpoint (for a disabled ADMIN) — proving the check lives in the authentication pipeline (jwtAuthenticationConverter), not in a per-controller argument resolver; login refused with the generic message; and a DB-side role change takes effect against a token still carrying the old role claim (authorities come from the DB, §6).
 38. `AuthenticationRateLimitIT` — *throttling engages and resets*: repeated failed logins for one account/IP → 429 with generic body; window expiry or success resets; a different account+IP is unaffected (no cross-account lockout) (§6).
-39. `FlywayIncrementalOrderIT` — *migrations apply in phase order without `outOfOrder`, from every meaningful baseline*: (a) migrate V1..V3 only (the Phase-5 world), then apply V4+V5 on top — accepted; (b) migrate V1..V4 only (the Phase-6 world), then apply V5 — accepted; the reverse (a lower version appearing after a higher one is applied) is the hazard this ordering rule prevents (§5). **Runs from Phase 9 onward** (it needs V5 to exist — it cannot be listed in an earlier phase's gate).
+39. `FlywayIncrementalOrderIT` — migrations advance with `outOfOrder=false`: preserve V3→latest and V4→latest phase scenarios; populated V13→13.1 backfills/defaults version0 and enforces nonnegative/NOT NULL without changing old user fields or any prior history/checksum. A database already beyond the new version is not repaired by this test (§5).
 
 40. `DocumentOrderDeterminismIT` — *one normative source order*: the same source set returned by the repository in multiple shuffled orders assembles to byte-identical canonical documents with identical checksums/ETags; assembled order is `(position ASC, api ASC)`; a bundled import serves stanzas in payload order (§5 source ordering).
 41. `StartupConsistencyIT` — *the revision floors and the latest pointer are validated at startup, never silently repaired*: fresh empty DB (pointer NULL, no snapshots, sequence at seed) → starts; existing snapshots with consistent pointer → starts; `minimum-server-revision <= bundled-revision-floor` → fails fast; sequence-next < `minimum-server-revision` → fails fast; pointer ≠ MAX(document_revision), a snapshot above the pointer, pointer NULL with snapshots present, or sequence-next ≤ latest revision → fails fast with the recovery-runbook message (§5).
@@ -832,6 +902,7 @@ late-start/early-release and actual termination/fencing obligation remains unres
 49. `CompletionErrorTaxonomyIT` — *failures map to stable codes and sanitized messages*: a provider timeout → `FAILED` + `error_code = PROVIDER_TIMEOUT`; a provider rejection → `PROVIDER_REJECTED`; an unexpected provider exception → `INTERNAL_COMPLETION_ERROR` with a generic bounded `error` message, no stack trace or exception class name in the response OR the row; success rows carry NULL `error_code`/`error`; no row ever has both `result` and `error` (DB CHECK) (§10 catalog).
 50. `ClientIpResolutionIT` — *throttling cannot be spoofed or unbounded*: with trusted-proxy mode OFF (default), a spoofed `X-Forwarded-For` neither escapes the sender's throttle bucket nor pollutes the spoofed victim's; with trusted-proxy mode ON and the peer in `trusted-proxies`, the forwarded client IP is used; malformed/oversized forwarding headers fall back safely to the remote address; the store enforces max-entries with deterministic eviction, TTL expiry, and reset-after-success (§6 trusted client-IP resolution).
 51. `SourceOperationalModeIT` — *the quick three-state control is atomic and fail-closed*: password step-up is required; enabled/disabled/maintenance transitions publish exactly one document and signed v2 catalog revision; maintenance creates immutable `siteState` content; identical requests are no-ops; one-time proofs cannot be reused; and unrelated source states are rejected.
+52. `UserCredentialMutationIT` — real PostgreSQL row-lock wait before the second reset, hash/version1 then winning hash/version2; deliberately stale JPA contexts for reset versus role/enabled in both orderings; same-transaction freshness without test refresh, pending unrelated-write preservation, timestamps/direct port transactions, reset/audit rollback and safe commit, guarded MAX refusal and missing-target errors. These authored checks require execution evidence; they do not prove installed rollout or already-authenticated request cancellation.
 
 ---
 

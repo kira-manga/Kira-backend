@@ -34,8 +34,8 @@ interface RevisionRepository {
     /** The highest per-source revision number, or null if the source has no revisions. */
     fun latestRevisionNumber(sourceConfigId: UUID): Int?
 
-    /** All of a source's revisions, ordered by `revision_number` ascending (the admin revision list). */
-    fun findAllForSource(sourceConfigId: UUID): List<SourceRevision>
+    /** Metadata only, newest first, below the optional exclusive cursor; [limit] includes one lookahead row (at most 101). */
+    fun findSummaryWindow(sourceConfigId: UUID, beforeRevision: Int?, limit: Int): List<SourceRevisionSummary>
 
     /**
      * Flip a `published` revision to `superseded` (PLAN §9). Called FIRST in the publish transaction so

@@ -1,11 +1,16 @@
 package me.manga.kira.backend.sourceconfig.infrastructure
 
+import me.manga.kira.backend.sourceconfig.domain.HistoryWindow
 import me.manga.kira.backend.sourceconfig.domain.NewPublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
+import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentSummary
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.RowMapper
 import org.springframework.stereotype.Repository
 import java.time.Instant
+import java.time.OffsetDateTime
+import java.util.UUID
 
 /**
  * Adapts the published-document Spring Data repositories to the [PublishedDocumentRepository] port
@@ -85,7 +90,18 @@ class JpaPublishedDocumentRepositoryAdapter(
 
     override fun findByRevision(revision: Long): PublishedDocument? = documents.findByDocumentRevision(revision)?.toDomain()
 
-    override fun findAllOrderedByRevision(): List<PublishedDocument> = documents.findAllByOrderByDocumentRevisionAsc().map { it.toDomain() }
+    override fun findSummaryWindow(beforeRevision: Long?, limit: Int): List<PublishedDocumentSummary> {
+        require(limit in 1..HistoryWindow.MAX_SIZE + 1)
+        val sql =
+            "SELECT document_revision, schema_version, checksum, source_count, created_by, created_at FROM published_documents " +
+                (if (beforeRevision == null) "" else "WHERE document_revision < ? ") +
+                "ORDER BY document_revision DESC LIMIT ?"
+        return if (beforeRevision == null) {
+            jdbcTemplate.query(sql, SUMMARY_MAPPER, limit)
+        } else {
+            jdbcTemplate.query(sql, SUMMARY_MAPPER, beforeRevision, limit)
+        }
+    }
 
     private fun PublishedDocumentEntity.toDomain(): PublishedDocument = PublishedDocument(
         id = requireNotNull(id) { "persisted PublishedDocumentEntity must have an id" },
@@ -109,5 +125,16 @@ class JpaPublishedDocumentRepositoryAdapter(
     private companion object {
         const val SINGLETON_ID = 1
         const val SEQUENCE_NAME = "seq_document_revision"
+        val SUMMARY_MAPPER =
+            RowMapper { rs, _ ->
+                PublishedDocumentSummary(
+                    documentRevision = rs.getLong("document_revision"),
+                    schemaVersion = rs.getInt("schema_version"),
+                    checksum = rs.getString("checksum"),
+                    sourceCount = rs.getInt("source_count"),
+                    createdBy = rs.getObject("created_by", UUID::class.java),
+                    createdAt = rs.getObject("created_at", OffsetDateTime::class.java).toInstant(),
+                )
+            }
     }
 }

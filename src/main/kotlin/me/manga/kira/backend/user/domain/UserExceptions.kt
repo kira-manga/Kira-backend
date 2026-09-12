@@ -15,6 +15,9 @@ class DuplicateEmailException : ConflictException("Email is already registered."
 /** 404 — no user with the given id. */
 class UserNotFoundException : NotFoundException("User not found.", code = "USER_NOT_FOUND")
 
+/** 409 — password reset cannot advance the credential version. Never expose stored values. */
+class CredentialVersionExhaustedException : ConflictException("Password reset is unavailable.", code = "CREDENTIAL_VERSION_EXHAUSTED")
+
 /**
  * 409 — the requested change would disable the last enabled ADMIN (PLAN §4.4 last-admin guard).
  * Enforced under the `security_state` row lock so it holds under concurrency.

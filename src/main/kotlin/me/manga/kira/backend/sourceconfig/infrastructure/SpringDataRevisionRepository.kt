@@ -20,8 +20,6 @@ interface SpringDataRevisionRepository : JpaRepository<SourceConfigRevisionEntit
 
     fun findBySourceConfigIdAndRevisionNumber(sourceConfigId: UUID, revisionNumber: Int): SourceConfigRevisionEntity?
 
-    fun findAllBySourceConfigIdOrderByRevisionNumberAsc(sourceConfigId: UUID): List<SourceConfigRevisionEntity>
-
     @Query("SELECT max(r.revisionNumber) FROM SourceConfigRevisionEntity r WHERE r.sourceConfigId = :sourceId")
     fun maxRevisionNumber(@Param("sourceId") sourceConfigId: UUID): Int?
 

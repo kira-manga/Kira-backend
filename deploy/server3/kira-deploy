@@ -4,6 +4,9 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export LC_ALL=C
 unset KIRA_BACKEND_IMAGE KIRA_WEB_IMAGE KIRA_ADMIN_IMAGE
 umask 077
+# EXIT may run inside a function whose command stderr is suppressed. Keep only
+# the final diagnostic channel; do not restore/unmute child-command stderr.
+exec {receiver_stderr_fd}>&2
 
 deployment_root=/opt/kira
 compose_file="$deployment_root/compose.yaml"
@@ -12,6 +15,19 @@ ingress_file="$deployment_root/ingress.env"
 backup_root="$deployment_root/backups"
 release_root="$deployment_root/releases"
 archive_helper=/usr/local/libexec/kira-image-release.py
+backup_helper=/usr/local/libexec/kira-backup-bundle.py
+backup_pin=/usr/local/libexec/kira-backup-bundle.sha256
+backup_pending="$backup_root/.pending"
+backup_attestation="$backup_root/.writers-frozen-and-drained"
+backup_stage=''
+backup_target=''
+backup_invocation=''
+backup_record_id=''
+backup_backend=''
+backup_initial_running=''
+backup_active=false
+backup_inflight=''
+backup_reason='backup prerequisite refused'
 incoming=''
 pending=''
 outcome=''
@@ -31,9 +47,16 @@ component_compose() {
 }
 
 cleanup() {
-  local status=$? cleanup_failed=false
+  local status=$? cleanup_failed=false backup_failed=false
   local uncertain='receiver outcome indeterminate; inspect actual runtime, images.env and pending transaction; no restoration claim'
   trap - EXIT
+  # Defer catchable signals without interrupting the owned unpause/STOP proof.
+  # Keep the first signal status, including one first received during cleanup;
+  # ignoring it entirely would wrongly preserve a provisional healthy outcome.
+  trap 'if (( status < 128 )); then status=130; fi; final_message=$uncertain' INT
+  trap 'if (( status < 128 )); then status=143; fi; final_message=$uncertain' TERM
+  trap 'if (( status < 128 )); then status=129; fi; final_message=$uncertain' HUP
+  if ! backup_exit_cleanup; then backup_failed=true; fi
   if [[ -n $incoming ]] && ! rm -rf -- "$incoming"; then
     cleanup_failed=true
   fi
@@ -62,10 +85,16 @@ cleanup() {
       esac
     else status=1; final_message='owned incoming cleanup failed'; fi
   fi
+  if [[ $backup_failed == true ]]; then
+    if [[ -n $outcome ]]; then
+      if (( status < 128 )); then status=73; fi
+    elif (( status < 128 )); then status=1; fi
+    final_message="backup custody unresolved; STOP: inspect $backup_pending and its exact operation/container/stage/target; no restoration claim"
+  fi
   # No final healthy/restored message precedes EXIT cleanup.
   if [[ -n $final_message ]]; then
     if (( status == 0 )); then printf 'kira-deploy: %s\n' "$final_message"
-    else printf 'kira-deploy: %s\n' "$final_message" >&2; fi
+    else printf 'kira-deploy: %s\n' "$final_message" >&"$receiver_stderr_fd"; fi
   fi
   exit "$status"
 }
@@ -74,6 +103,7 @@ trap cleanup EXIT
 # Leave the persistent pending marker for explicit operator reconciliation, not a false rollback claim.
 trap 'final_message="interrupted; inspect pending transaction and actual runtime"; exit 130' INT
 trap 'final_message="interrupted; inspect pending transaction and actual runtime"; exit 143' TERM
+trap 'final_message="interrupted; inspect pending transaction and actual runtime"; exit 129' HUP
 
 owned_file() {
   [[ -f $1 && ! -L $1 && $(stat -c %u "$1") == 0 && $(stat -c %a "$1") =~ ^[046][04][04]$ ]]
@@ -96,6 +126,9 @@ select_component() {
 }
 check_installation() {
   [[ $EUID -eq 0 ]] || fail 'root receiver required'
+  if [[ $component == backend ]]; then
+    backup_no_pending || fail 'backup obligation pending or unsafe backup custody; operator reconciliation required'
+  fi
   owned_directory "$deployment_root" && owned_file "$compose_file" && owned_file "$images_file" &&
     owned_file "$ingress_file" && owned_file "$archive_helper" || fail 'unsafe or missing installed files/ownership'
   (( $(stat -c %s "$images_file") <= 65536 )) || fail 'image configuration byte limit'
@@ -146,9 +179,10 @@ runtime() {
   if [[ -z $found ]]; then return 0; fi
   [[ $found =~ ^[0-9a-f]{64}$ ]] || return 1
   result=$(docker_bounded container inspect --format \
-    '{{.Id}} {{.Image}} {{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}' "$container") || return 1
-  read -r runtime_container runtime_id runtime_running runtime_health runtime_project runtime_service extra <<< "$result"
+    '{{.Id}} {{.Image}} {{.State.Running}} {{.State.Paused}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}' "$container") || return 1
+  read -r runtime_container runtime_id runtime_running runtime_paused runtime_health runtime_project runtime_service extra <<< "$result"
   [[ -z $extra && $runtime_container == "$found" && $runtime_id =~ ^sha256:[0-9a-f]{64}$ &&
+     $runtime_running =~ ^(true|false)$ && $runtime_paused =~ ^(true|false)$ &&
      $runtime_project == kira && $runtime_service == "$component" ]]
 }
 capture_predecessor() {
@@ -156,7 +190,7 @@ capture_predecessor() {
   runtime || fail 'cannot establish owned runtime identity'
   previous_id=$runtime_id
   if [[ -n $previous_id ]]; then
-    [[ $runtime_running == true && $runtime_health == healthy ]] || fail 'existing runtime is not healthy; operator recovery required'
+    [[ $runtime_running == true && $runtime_paused == false && $runtime_health == healthy ]] || fail 'existing runtime is not healthy/unpaused; operator recovery required'
     local configured_id
     configured_id=$(docker_bounded image inspect --format '{{.Id}}' "$original_config") || fail 'configured image cannot be resolved before load'
     [[ $configured_id == "$previous_id" ]] || fail 'runtime/configured image drift; operator reconciliation required'
@@ -167,8 +201,8 @@ wait_component() {
   while (( SECONDS < end )); do
     runtime || return 1
     [[ -n $runtime_id && $runtime_id == "$expected" ]] || return 1
-    if [[ $runtime_running == true && $runtime_health == healthy ]]; then return 0; fi
-    [[ $runtime_running == true && $runtime_health != unhealthy ]] || return 1
+    if [[ $runtime_running == true && $runtime_paused == false && $runtime_health == healthy ]]; then return 0; fi
+    [[ $runtime_running == true && $runtime_paused == false && $runtime_health != unhealthy ]] || return 1
     sleep 4
   done
   return 1
@@ -260,45 +294,266 @@ prune_archives() {
   done
 }
 
+backup_trusted_directory() {
+  local directory=$1
+  [[ $directory == /* ]] || return 1
+  while :; do
+    owned_directory "$directory" || return 1
+    [[ $directory == / ]] && break
+    directory=${directory%/*}; directory=${directory:-/}
+  done
+}
+backup_private_directory() {
+  backup_trusted_directory "$1" && [[ $(stat -c %a "$1") == 700 ]]
+}
+backup_no_pending() {
+  backup_trusted_directory "$deployment_root" || return 1
+  if [[ -e $backup_root || -L $backup_root ]]; then backup_private_directory "$backup_root" || return 1; fi
+  [[ ! -e $backup_pending && ! -L $backup_pending ]]
+}
+backup_digest_file() {
+  owned_file "$1" && [[ $(stat -c %s "$1") == 65 ]] &&
+    grep --binary-files=without-match -qxE '[0-9a-f]{64}' "$1" || return 1
+  cat -- "$1"
+}
+backup_check_helper() {
+  local expected actual
+  backup_trusted_directory "${backup_helper%/*}" && backup_trusted_directory "${backup_pin%/*}" &&
+    owned_file "$backup_helper" && owned_file "$backup_pin" || return 1
+  expected=$(backup_digest_file "$backup_pin") || return 1
+  actual=$(sha256sum -- "$backup_helper") || return 1
+  [[ ${actual%% *} == "$expected" ]]
+}
+bundle_helper() {
+  backup_check_helper || return 1
+  timeout --signal=TERM --kill-after=5s 60s /usr/bin/python3 -I -B "$backup_helper" "$@"
+}
+backup_sync() {
+  # Only this receiver's small obligation and already-finished owned files/dirs.
+  # No manifest implementation or alternate shared-helper protocol lives here.
+  timeout --signal=TERM --kill-after=5s 60s /usr/bin/python3 -I -B - "$@" <<'PY'
+import os
+import stat
+import sys
+
+try:
+    for name in sys.argv[1:]:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            info = os.fstat(fd)
+            if (not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode))
+                    or info.st_uid != os.geteuid() or info.st_mode & 0o022):
+                raise ValueError('unsafe synchronization target')
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+except (OSError, ValueError):
+    sys.stderr.write('kira-deploy: owned backup synchronization failed\n')
+    sys.exit(1)
+PY
+}
+backup_owns_pending() {
+  [[ -n $backup_record_id ]] && owned_file "$backup_pending" &&
+    [[ $(stat -c '%d:%i' "$backup_pending") == "$backup_record_id" ]]
+}
+backup_restore_pending() {
+  local record
+  backup_owns_pending && return 0
+  [[ ! -e $backup_pending && ! -L $backup_pending ]] || return 1
+  # A successful/ambiguous directory rename may have moved the same inode.
+  for record in "$backup_stage/obligation" "$backup_target/obligation"; do
+    if owned_file "$record" && [[ $(stat -c '%d:%i' "$record") == "$backup_record_id" ]]; then
+      ln -T -- "$record" "$backup_pending" && backup_sync "$backup_pending" "$backup_root" &&
+        backup_owns_pending
+      return $?
+    fi
+  done
+  return 1
+}
+backup_event() {
+  # An append-only, bounded-per-invocation custody record, not a replay engine.
+  [[ $1 =~ ^(start|complete|observed|stop)$ && $2 =~ ^[a-z][a-z0-9-]*$ &&
+     $3 =~ ^[A-Za-z0-9_./:-]+$ ]] && backup_owns_pending || return 1
+  printf '%s %s %s\n' "$1" "$2" "$3" >> "$backup_pending" && backup_sync "$backup_pending"
+}
+backup_operation() {
+  local phase=$1 target=$2
+  shift 2
+  backup_inflight=$phase
+  backup_event start "$phase" "$target" || return 1
+  # A nonzero/timeout/interrupt is not a daemon-completion receipt.
+  "$@" 2>/dev/null || return 1
+  backup_event complete "$phase" "$target" || return 1
+  backup_inflight=''
+}
+backup_inspect_container() {
+  local name=$1 service=$2 found result extra
+  backup_found=''; backup_found_image=''; backup_found_running=absent; backup_found_paused=absent
+  found=$(docker_bounded container ls --all --no-trunc --filter "name=^/$name$" --format '{{.ID}}') || return 1
+  [[ -n $found ]] || return 0
+  [[ $found =~ ^[0-9a-f]{64}$ ]] || return 1
+  result=$(docker_bounded container inspect --format \
+    '{{.Id}} {{.Image}} {{.State.Running}} {{.State.Paused}} {{index .Config.Labels "com.docker.compose.project"}} {{index .Config.Labels "com.docker.compose.service"}}' "$found") || return 1
+  local project actual_service
+  read -r backup_found backup_found_image backup_found_running backup_found_paused project actual_service extra <<< "$result"
+  [[ -z $extra && $backup_found == "$found" && $backup_found_image =~ ^sha256:[0-9a-f]{64}$ &&
+     $backup_found_running =~ ^(true|false)$ && $backup_found_paused =~ ^(true|false)$ &&
+     $project == kira && $actual_service == "$service" ]]
+}
+backup_backend_state() {
+  backup_inspect_container kira-backend backend || return 1
+  [[ $backup_found == "$backup_backend" && $backup_found_running == "$backup_initial_running" ]] || return 1
+  [[ -z $backup_backend || $backup_found_paused == "$1" ]]
+}
+backup_begin() {
+  local attestation='KIRA_BACKUP_WRITERS_FROZEN_AND_DRAINED=yes' attestation_id initial_paused
+  backup_reason='backup obligation pending or unsafe backup/helper custody'
+  backup_no_pending && backup_check_helper || return 1
+  if [[ ! -e $backup_root ]]; then mkdir -m 700 -- "$backup_root" || return 1; fi
+  backup_private_directory "$backup_root" || return 1
+  backup_reason='fresh root-owned writers-frozen-and-drained attestation required'
+  owned_file "$backup_attestation" && [[ $(stat -c %a "$backup_attestation") == 600 &&
+    $(stat -c %s "$backup_attestation") == $((${#attestation} + 1)) ]] &&
+    grep --binary-files=without-match -qxF "$attestation" "$backup_attestation" || return 1
+  attestation_id=$(stat -c '%d:%i' "$backup_attestation") || return 1
+  backup_reason='cannot establish an owned initially unpaused Backend (absence must be positive)'
+  backup_inspect_container kira-backend backend || return 1
+  [[ -z $backup_found || $backup_found_paused == false ]] || return 1
+  backup_backend=$backup_found; backup_initial_running=$backup_found_running; initial_paused=$backup_found_paused
+  backup_reason='cannot establish private durable backup obligation'
+  backup_stage=$(mktemp -d "$backup_root/.stage.XXXXXXXXXXXX") || return 1
+  chmod 700 "$backup_stage" && backup_private_directory "$backup_stage" || return 1
+  backup_invocation="kira-${backup_stage##*.stage.}"
+  [[ $backup_invocation =~ ^kira-[A-Za-z0-9]{12}$ ]] || return 1
+  backup_target="$backup_root/$backup_invocation"
+  [[ ! -e $backup_target && ! -L $backup_target ]] || return 1
+  ( set -o noclobber
+    printf 'kira.backup-obligation.v1\ninvocation=%s\nreceiver-pid=%s\nstage=%s\ntarget=%s\nbackend=%s\ninitial-running=%s\ninitial-paused=%s\n' \
+      "$backup_invocation" "$$" "$backup_stage" "$backup_target" "${backup_backend:-absent}" \
+      "$backup_initial_running" "$initial_paused" > "$backup_stage/obligation"
+  ) && chmod 600 "$backup_stage/obligation" && backup_sync "$backup_stage/obligation" "$backup_stage" || return 1
+  backup_record_id=$(stat -c '%d:%i' "$backup_stage/obligation") || return 1
+  # The inode is known before linking: EXIT can recognize an interrupted link.
+  ln -T -- "$backup_stage/obligation" "$backup_pending" || return 1
+  backup_active=true
+  backup_sync "$backup_root" || return 1
+  # One fresh external freeze+drain assertion, consumed before any Docker mutation.
+  ln -T -- "$backup_attestation" "$backup_stage/writers-frozen-and-drained" &&
+    [[ $(stat -c '%d:%i' "$backup_attestation") == "$attestation_id" &&
+       $(stat -c '%d:%i' "$backup_stage/writers-frozen-and-drained") == "$attestation_id" ]] &&
+    backup_sync "$backup_stage/writers-frozen-and-drained" "$backup_stage" &&
+    rm -- "$backup_attestation" && backup_sync "$backup_root" &&
+    backup_event observed writers-frozen-and-drained "$backup_invocation"
+}
+backup_resume() {
+  local fact=0
+  backup_owns_pending || return 1
+  grep -qxF "complete pause $backup_backend" "$backup_pending" || fact=$?
+  (( fact <= 1 )) || return 1
+  if (( fact == 1 )); then
+    # Never compensate an unconfirmed pause request, even if currently unpaused.
+    fact=0
+    grep -qxF "start pause $backup_backend" "$backup_pending" || fact=$?
+    [[ $fact == 1 ]] && backup_backend_state false
+    return $?
+  fi
+  fact=0
+  grep -qxF "start unpause $backup_backend" "$backup_pending" || fact=$?
+  (( fact <= 1 )) || return 1
+  if (( fact == 0 )); then
+    # No repeated mutation after an already attempted unpause (including timeout).
+    grep -qxF "observed resumed $backup_backend" "$backup_pending" && backup_backend_state false
+    return $?
+  fi
+  backup_backend_state true &&
+    backup_operation unpause "$backup_backend" docker_bounded unpause "$backup_backend" >/dev/null &&
+    backup_backend_state false && backup_event observed resumed "$backup_backend"
+}
+backup_exit_cleanup() {
+  if [[ $backup_active != true ]] && ! backup_owns_pending; then return 0; fi
+  # Preserve the exact obligation if an unlink succeeded but its fsync/return did not.
+  backup_restore_pending || return 1
+  backup_resume || :
+  backup_event stop receiver-exit "${backup_inflight:--}" || :
+  # Even a successful owned unpause does not resolve another outstanding daemon
+  # operation. Retain both potentially writable stage/target and durable STOP.
+  return 1
+}
+backup_clear_pending() {
+  backup_event complete publication "$backup_invocation" &&
+    backup_sync "$backup_target" "$backup_root" && backup_owns_pending || return 1
+  rm -- "$backup_pending" || return 1
+  if ! backup_sync "$backup_root"; then
+    backup_restore_pending || :
+    return 1
+  fi
+  backup_active=false
+}
 prepare_tutorial_media_volume() {
   local image=$1 image_user uid gid
   image_user=$(docker_bounded image inspect --format '{{.Config.User}}' "$image") || return 1
   [[ $image_user =~ ^([0-9]+):([0-9]+)$ ]] || return 1
   uid=${BASH_REMATCH[1]}; gid=${BASH_REMATCH[2]}
-  docker_bounded volume create kira-tutorial-media >/dev/null &&
-    docker_bounded run --pull=never --rm --network none --read-only --user 0:0 --entrypoint sh \
+  backup_operation media-volume kira-tutorial-media docker_bounded volume create kira-tutorial-media >/dev/null &&
+    backup_operation media-initialize "$backup_invocation-initialize" docker_bounded run --pull=never --rm \
+      --name "$backup_invocation-initialize" --cidfile "$backup_stage/initialize.cid" \
+      --label "me.manga.kira.backup-invocation=$backup_invocation" --network none --read-only --user 0:0 --entrypoint sh \
       --volume kira-tutorial-media:/var/lib/kira/tutorial-media "$image" -ec \
       'chown "$1:$2" "$3"; chmod 750 "$3"' sh "$uid" "$gid" /var/lib/kira/tutorial-media &&
-    docker_bounded run --pull=never --rm --network none --read-only --user "$image_user" --entrypoint sh \
+    backup_operation media-access "$backup_invocation-access" docker_bounded run --pull=never --rm \
+      --name "$backup_invocation-access" --cidfile "$backup_stage/access.cid" \
+      --label "me.manga.kira.backup-invocation=$backup_invocation" --network none --read-only --user "$image_user" --entrypoint sh \
       --volume kira-tutorial-media:/var/lib/kira/tutorial-media "$image" -ec \
-      'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' sh /var/lib/kira/tutorial-media
+      'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' sh /var/lib/kira/tutorial-media &&
+    chmod 600 "$backup_stage/initialize.cid" "$backup_stage/access.cid"
 }
 backup_database() {
-  install -d -m 700 "$backup_root" || return 1
-  local stamp destination media_destination helper_image paused=false status=0
-  stamp=$(date -u +%Y%m%dT%H%M%SZ)
-  destination="$backup_root/kira-$stamp.dump"
-  media_destination="$backup_root/kira-$stamp.media.tar.gz"
-  if docker_bounded inspect kira-backend >/dev/null 2>&1 && [[ $(docker_bounded inspect --format '{{.State.Running}}' kira-backend) == true ]]; then
-    docker_bounded pause kira-backend >/dev/null || return 1
-    paused=true
+  local destination media_destination bundle postgres_id postgres_image digest verified
+  if [[ $backup_active != true ]]; then backup_begin || return 1; fi
+  backup_reason='matched backup failed; retained obligation requires operator reconciliation'
+  backup_backend_state false || return 1
+  if [[ $backup_initial_running == true ]]; then
+    backup_operation pause "$backup_backend" docker_bounded pause "$backup_backend" >/dev/null &&
+      backup_backend_state true || return 1
   fi
-  if ! {
-    docker_bounded exec kira-postgres sh -ec 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination" &&
-    docker_bounded exec -i kira-postgres pg_restore --list < "$destination" > "$destination.manifest" &&
-    helper_image=$(docker_bounded inspect --format '{{.Config.Image}}' kira-postgres) &&
-    docker_bounded run --pull=never --rm --network none --read-only \
-      -v kira-tutorial-media:/media:ro -v "$backup_root":/backup \
-      "$helper_image" tar -C /media -czf "/backup/$(basename "$media_destination")" . &&
-    timeout --kill-after=5s 60s tar -tzf "$media_destination" >/dev/null &&
-    chmod 600 "$destination" "$destination.manifest" "$media_destination" &&
-    sha256sum "$destination" > "$destination.sha256" &&
-    sha256sum "$media_destination" > "$media_destination.sha256" &&
-    sha256sum "$destination" "$media_destination" > "$backup_root/kira-$stamp.bundle.sha256" &&
-    chmod 600 "$destination.sha256" "$media_destination.sha256" "$backup_root/kira-$stamp.bundle.sha256"
-  }; then status=1; fi
-  if [[ $paused == true ]] && ! docker_bounded unpause kira-backend >/dev/null; then status=1; fi
-  return "$status"
+  backup_inspect_container kira-postgres postgres && [[ -n $backup_found &&
+    $backup_found_running == true && $backup_found_paused == false ]] || return 1
+  postgres_id=$backup_found; postgres_image=$backup_found_image
+  docker_bounded volume inspect kira-tutorial-media >/dev/null 2>&1 || return 1
+  destination="$backup_stage/$backup_invocation.dump"
+  media_destination="$backup_stage/$backup_invocation.media.tar.gz"
+  bundle="$backup_stage/$backup_invocation.bundle.json"
+  # All mutations have durable start/completion records. exec is bound to the
+  # exact PostgreSQL ID and invocation-specific PGAPPNAME; no CLI death inference.
+  backup_operation dump "$postgres_id:$backup_invocation-dump" docker_bounded exec \
+    --env "PGAPPNAME=$backup_invocation-dump" "$postgres_id" sh -ec \
+    'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --compress=9' > "$destination" &&
+    backup_operation dump-list "$postgres_id:$backup_invocation-list" docker_bounded exec -i \
+      --env "PGAPPNAME=$backup_invocation-list" "$postgres_id" pg_restore --list < "$destination" > "$destination.manifest" &&
+    backup_operation media-archive "$backup_invocation-media" docker_bounded run --pull=never --rm \
+      --name "$backup_invocation-media" --cidfile "$backup_stage/media.cid" \
+      --label "me.manga.kira.backup-invocation=$backup_invocation" --network none --read-only --entrypoint tar \
+      -v kira-tutorial-media:/media:ro -v "$backup_stage":/backup "$postgres_image" \
+      -C /media -czf "/backup/$backup_invocation.media.tar.gz" . &&
+    backup_operation media-list "$backup_invocation" timeout --signal=TERM --kill-after=5s 60s \
+      tar -tzf "$media_destination" >/dev/null &&
+    chmod 600 "$destination" "$destination.manifest" "$media_destination" "$backup_stage/media.cid" &&
+    backup_operation bundle-create "$backup_invocation" bundle_helper create \
+      --bundle "$bundle" --dump "$destination" --media "$media_destination" > "$backup_stage/bundle-pin" &&
+    chmod 600 "$backup_stage/bundle-pin" || return 1
+  digest=$(backup_digest_file "$backup_stage/bundle-pin") || return 1
+  backup_operation bundle-verify "$backup_invocation" bundle_helper verify \
+    --bundle "$bundle" --dump "$destination" --media "$media_destination" --expected-sha256 "$digest" > "$backup_stage/verified-pin" &&
+    chmod 600 "$backup_stage/verified-pin" || return 1
+  verified=$(backup_digest_file "$backup_stage/verified-pin") || return 1
+  [[ $verified == "$digest" ]] && backup_resume && backup_backend_state false &&
+    backup_sync "$destination" "$destination.manifest" "$media_destination" "$bundle" \
+      "$backup_stage/bundle-pin" "$backup_stage/verified-pin" "$backup_stage/media.cid" "$backup_stage" &&
+    backup_operation publish "$backup_target" bundle_helper publish-directory --stage "$backup_stage" --target "$backup_target" >/dev/null &&
+    backup_clear_pending || return 1
+  if [[ -z $outcome ]]; then
+    printf -v final_message 'matched backup published: %s; manifest-sha256=%s; off-host custody remains required' "$backup_target" "$digest"
+  fi
 }
 
 restore_persistence() {
@@ -329,6 +584,10 @@ rollback_component() {
 }
 abort_attempt() {
   local primary=$1
+  if [[ $backup_active == true ]] || backup_owns_pending; then
+    outcome=73
+    fail "primary=$primary; backup obligation unresolved; inspect exact daemon effects; no restoration claim"
+  fi
   if rollback_component; then
     if [[ -n $previous_id ]]; then
       outcome=71
@@ -357,7 +616,8 @@ verify_loaded() {
 activate_candidate() {
   if [[ $component == backend ]]; then
     prepare_tutorial_media_volume "$candidate_id" || abort_attempt media-initialization
-    compose up --detach postgres >/dev/null 2>&1 && wait_database || abort_attempt database-startup
+    backup_operation database-startup kira-postgres compose up --detach postgres >/dev/null 2>&1 &&
+      wait_database || abort_attempt database-startup
     backup_database || abort_attempt database-backup
     component_compose "$candidate_id" --profile tools run --rm --no-deps --pull never backend-migrate >/dev/null 2>&1 || abort_attempt migration
   fi
@@ -386,10 +646,16 @@ deploy_stream() {
     printf -v final_message 'already healthy at immutable image %s; active/previous archives unchanged' "$previous_id"
     return 0
   fi
+  if [[ $component == backend ]]; then backup_begin || fail "$backup_reason"; fi
   created_archive=''
   outcome=73
   begin_transaction || abort_attempt predecessor-persistence
-  timeout --signal=TERM --kill-after=5s 90s docker load --input "$incoming/image.tar.gz" >/dev/null 2>&1 || abort_attempt image-load
+  if [[ $component == backend ]]; then
+    backup_operation image-load "$candidate_id" timeout --signal=TERM --kill-after=5s 90s \
+      docker load --input "$incoming/image.tar.gz" >/dev/null 2>&1 || abort_attempt image-load
+  else
+    timeout --signal=TERM --kill-after=5s 90s docker load --input "$incoming/image.tar.gz" >/dev/null 2>&1 || abort_attempt image-load
+  fi
   verify_loaded || abort_attempt loaded-image-identity
   activate_candidate
   store_archive "$incoming/image.tar.gz" "$candidate_archive" || abort_attempt archive-persistence
@@ -461,7 +727,7 @@ case ${1:-} in
     ;;
   backup)
     [[ $# -eq 1 && $EUID -eq 0 ]] || fail 'usage: kira-deploy backup (root only)'
-    with_lock backup_database || fail 'matched database/tutorial-media backup failed'
+    with_lock backup_database || fail "$backup_reason"
     ;;
   *) fail 'supported root commands: deploy, activate, adopt, backup' ;;
 esac

@@ -7,7 +7,7 @@ envelope in [Error model](#error-model). Auth and token semantics are in [`SECUR
 lifecycle semantics in [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md).
 Tutorial publishing and its public/ADMIN route inventory are in [`TUTORIALS.md`](TUTORIALS.md).
 
-Auth levels: **anon** (no token), **USER** (bearer, any enabled user), **ADMIN** (bearer, `ADMIN`
+Auth levels: **anon** (no token), **USER** (current, non-revoked bearer for an enabled user), **ADMIN** (bearer, `ADMIN`
 role). Authorization is enforced in the security filter chain before dispatch; authorities are
 derived from the **DB role**, not the token claim.
 
@@ -34,7 +34,7 @@ in 404/409 details. Typed-exception → status mapping:
 | 404 | `NotFoundException` (+ subclasses); unmatched route | `NOT_FOUND`, `*_NOT_FOUND`, `NO_PUBLISHED_DOCUMENT` |
 | 405 | unsupported method | `METHOD_NOT_ALLOWED` |
 | 406 | unsupported response media type | `NOT_ACCEPTABLE` |
-| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, last-admin guard |
+| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, `CREDENTIAL_VERSION_EXHAUSTED`, last-admin guard |
 | 410 | `GoneException` | `GONE` (removed source) |
 | 413 | body/prompt limit | `PAYLOAD_TOO_LARGE`, `PROMPT_TOO_LARGE` |
 | 415 | unsupported request media type | `UNSUPPORTED_MEDIA_TYPE` |
@@ -48,6 +48,8 @@ in 404/409 details. Typed-exception → status mapping:
 - **Pagination:** `?page=0&size=20`; `size` max **100** (`GET /admin/users`, `GET /completions`).
   `page < 0` or `size < 1`/`size > 100` → 400. Response envelope: `{items, page, size, total}`.
   `GET /sources` is deliberately **not** paginated — it returns the bounded document as a plain array.
+  The two admin source/document history lists are an array-compatible **keyset exception**;
+  see [Admin history windows](#admin-history-windows). Other pagination contracts are unchanged.
 - **Multi-value filters** (`?lifecycle=`, `?engine=`, `?status=`): comma-separated within one query
   param; an unknown token → 400.
 - **Request-body size:** every request body is capped at **256 KiB** before MVC parsing, except
@@ -136,6 +138,8 @@ Summaries of the sources in the current document, ordered by the normative docum
 
 `iconRemoteUrl` is omitted when the stanza has none. `lifecycle` is the **app vocabulary** — a
 server-`retired` source appears as `"removed"`. Draft-only and server-`removed` sources never appear.
+Each response uses one catalog generation for stanza fields and source revision/publication metadata;
+a concurrent publication may yield the old or new generation, never a mixture.
 
 ### `GET /api/v1/sources/{api}`
 The single published `SourceConfig` stanza, served as raw canonical bytes, **consistent with the
@@ -208,7 +212,18 @@ Body `{email, password}`.
   completion precedes its audit/401, so this dependency error retains precedence over that 401.
 
 ### `GET /api/v1/auth/me`  — USER or ADMIN
-- **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon.
+- **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon/invalid/revoked bearer.
+
+New JWTs carry a private `credential_version` claim as a canonical decimal **string**, paired with
+the exact password snapshot verified at login. Every bearer request checks equality with the current
+database version, in addition to enabled/current-role enforcement. Password reset invalidates the
+target's older tokens at authentication checks after commit, including admin step-up requests even
+with the correct new password. Already-authenticated work is not retroactively cancelled, and this
+does not add revocation of previously issued step-up grants. Login racing reset can return an already
+stale token, never a refreshed version for an old verified password. Missing pre-upgrade claims and
+malformed/wrong-typed/mismatched versions receive the existing generic **401**; users must sign in again
+once at cutover. User/login response DTO shapes are unchanged. See the coordinated rollout and
+old-image rollback limits in [SECURITY.md](SECURITY.md#password-reset-semantics-and-coordinated-cutover).
 
 ### `POST /api/v1/auth/refresh`  — not registered
 No handler in v1 (refresh tokens are future work). Anonymous → **401** (the `anyRequest authenticated`
@@ -258,7 +273,7 @@ Tier-1 checks still run before finalization or publication.
 | `GET /admin/sources` | All sources incl. drafts/retired/removed. Query `?status=`. | 200 |
 | `GET /admin/sources/{api}` | Full admin head view. | 200 · 404 |
 | `POST /admin/sources/{api}/revisions` | New draft revision (`body.api` must equal `{api}`). | 201 · 404 · 400 |
-| `GET /admin/sources/{api}/revisions` | Revision list. | 200 · 404 |
+| `GET /admin/sources/{api}/revisions` | Bounded revision metadata window; optional `size` / `beforeRevision`. | 200 · 400 · 404 |
 | `GET /admin/sources/{api}/revisions/{n}` | Full stored config JSON + metadata. | 200 · 404 |
 | `POST /admin/sources/{api}/revisions/{n}/validate` | Re-run validation (preview; stores result). | 200 (even when invalid) · 404 |
 | `GET /admin/sources/{api}/revisions/{n}/validation` | Latest stored validation result. | 200 · 404 |
@@ -285,7 +300,7 @@ Tier-1 checks still run before finalization or publication.
 | `GET /admin/audit?page=0&size=50` | Read identifiers-only audit metadata; maximum page size is 100. | 200 · 400 |
 | `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
 | `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
-| `GET /admin/documents` | Published snapshots (metadata list). | 200 |
+| `GET /admin/documents` | Bounded snapshot metadata window; optional `size` / `beforeRevision`. | 200 · 400 |
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |
 | `POST /admin/documents/republish` | Force-materialize a new snapshot from current state (always a new revision). | 200 |
@@ -319,6 +334,36 @@ values):
 - `GET /admin/documents` item → `{ "documentRevision", "schemaVersion", "checksum", "sourceCount", "createdBy", "createdAt" }`.
 - `GET /admin/documents/{revision}` → **body = raw stored canonical bytes**; metadata in headers only
   (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`) — deliberately not a JSON envelope.
+
+### Admin history windows
+
+`GET /admin/sources/{api}/revisions` and `GET /admin/documents` retain their **raw array** bodies and
+existing item fields. Both accept `size` (default **20**, range **1..100**) and optional exclusive
+`beforeRevision`. The latter is a positive decimal source revision (at most **2147483647**) or
+document revision (at most **9223372036854775807**). Only ASCII digits are accepted; leading zeros
+are accepted numerically (`size=020`). Empty, repeated (even identical), signed, whitespace-padded,
+nondecimal, zero or overflowing recognized values return value-free **400 `INVALID_HISTORY_PAGE`**
+before the history service. There is no unlimited mode, total count, or offset/page-number parameter.
+
+Without a cursor, the window contains the newest `size` revisions, returned in **ascending revision
+order**. With a cursor, only revisions strictly below it are eligible. Gaps are legal; a cursor
+need not identify an existing row. If older rows remain, `X-Kira-History-Next-Before` is the smallest
+returned revision in canonical positive decimal. Pass it unchanged as the next `beforeRevision`.
+Exactly `size` remaining rows is terminal: no header. Empty histories/windows return `200 []`
+without a header; an unknown source still returns 404.
+
+For revisions `[2,5,9,14,20]` and `size=2`, windows are `[14,20]` (cursor `14`), `[5,9]` (cursor `5`),
+then `[2]` (no cursor). Refresh without a cursor to see new revisions. Newer inserts do not displace
+older seeks, but status/validity may change between requests; this is not a multi-request snapshot.
+Missing validity remains omitted, not false. Latest validity retains the existing
+`validated_at DESC` semantics, with no promised winner for equal timestamps.
+
+Each data query projects at most `size+1` metadata rows; canonical payloads, notes, signatures and
+validation finding arrays are not loaded. Source history uses one head lookup plus one summary
+query with bounded latest-validity probes; document history uses one summary query. Stored history,
+detail/validation routes, raw bytes/ETags and publication pointers are unchanged. These lists no
+longer mean “all history”: older Admin clients still parse the array but need the companion pager
+to reach older windows. Do not emulate the old response by automatically fetching every window.
 
 **Publishable-revision rules** (409 codes): re-publish the current published revision → 200 no-op;
 a `superseded` revision → `REVISION_SUPERSEDED`; a draft older than the published revision →
@@ -361,11 +406,14 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 | `POST /admin/users` | `{email, password, role}` → create. Password policy and normalized email bound of §2; email case-insensitively unique. Admin authentication/authorization precedes creation. | 201 · 409 duplicate · 400 (including `EMAIL_TOO_LONG`) |
 | `GET /admin/users` | Paginated (`?page&size`, size ≤ 100). | 200 |
 | `POST /admin/users/{id}/enable` | Re-enable a disabled user. | 200 · 404 |
-| `POST /admin/users/{id}/disable` | Disable (in-flight tokens die at the next request). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
-| `POST /admin/users/{id}/reset-password` | `{newPassword}` (policy-checked); audited, never logs the password. | 200 · 404 · 400 |
+| `POST /admin/users/{id}/disable` | Disable (bearer rejected at the next authentication check). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
+| `POST /admin/users/{id}/reset-password` | `{newPassword}` (policy-checked); atomically changes hash and advances credential version, revoking older tokens. Audit records actor/target only. | 200 · 404 · 400 · 409 `CREDENTIAL_VERSION_EXHAUSTED` |
 
 - Create → **201** `{ "id", "email", "role" }` (from `AdminUserResponse`; `POST` returns the created id).
 - List item → `{ "id", "email", "role", "enabled", "createdAt" }` — no password material, ever.
+- Reset, even to the same password, advances once; failure or rollback does not partially change
+  credentials or create a success audit. Counter exhaustion is a value-free **409** (`Password reset is
+  unavailable.`), not wraparound or a hash-only reset. Other users' tokens are unaffected.
 
 ---
 

@@ -1,8 +1,9 @@
 """Offline stdlib checks; never Docker, SSH, CI, production or a product build.
 
 Receiver tests execute a disposable copy of the REAL Bash control flow. Only its
-fixed root/helper/lock/PATH literals and root UID predicate are relocated to the
-fixture's current UID. Production has no environment-controlled root bypass.
+fixed root/helper/lock/PATH literals, trusted-ancestor stop and root UID predicate
+are relocated to the private fixture/current UID. Production has no environment-
+controlled root bypass.
 Docker, sudo, mv/rm-failure and link-mode fault commands are fixed fixture executables.
 """
 
@@ -867,13 +868,101 @@ def done(code=0, output=''):
 
 def flag(key): return s.get('flags', {}).get(key, False)
 
+def obligation():
+    path = BASE / 'root/backups/.pending'
+    return path.read_text().splitlines() if path.is_file() else []
+
+def last_event():
+    lines = obligation()
+    if lines and lines[-1].split()[0] in ('start', 'complete', 'observed', 'stop'):
+        return lines[-1].split()
+    return []
+
+def signal_receiver(value):
+    pid = int(next(line.split('=', 1)[1] for line in obligation() if line.startswith('receiver-pid=')))
+    # Signal cases use the existing owned-command controller; its unreaped
+    # session leader, not a guessed PID or an unrelated terminal, is the target.
+    assert pid == os.getsid(0) == os.getpgid(pid)
+    s.setdefault('signal_deliveries', []).append(value)
+    save()
+    os.kill(pid, getattr(signal, value))
+
+def before_phase(phase):
+    if flag('fail_phase') == phase: done(1)
+    if flag('timeout_phase') == phase: done(124)
+    if flag('signal_phase') == phase:
+        signal_receiver(flag('signal_kind'))
+        done(97)
+
+def completed_mutation(phase):
+    blocked = flag('block_backup_redirection')
+    if (phase == 'pause' and blocked == 'dump') or (phase == 'dump' and blocked == 'dump-list'):
+        record = dict(line.split('=', 1) for line in obligation() if '=' in line)
+        suffix = '.dump' if blocked == 'dump' else '.dump.manifest'
+        (Path(record['stage']) / (record['invocation'] + suffix)).mkdir(mode=0o700)
+    if flag('timeout_after_phase') == phase: done(124)
+    if flag('signal_after_phase') == phase:
+        signal_receiver(flag('signal_kind'))
+    if phase == 'unpause' and flag('repeat_cleanup_signal') and s.get('signal_deliveries'):
+        signal_receiver(flag('repeat_cleanup_signal'))
+    done()
+
+if name == 'timeout':
+    index = next(i for i, value in enumerate(args) if not value.startswith('--'))
+    command = args[index + 1:]
+    assert command
+    event = last_event()
+    if command[0] == '/usr/bin/python3':
+        assert command[:3] == ['/usr/bin/python3', '-I', '-B']
+        if command[3] == '-':
+            # A controlled failed fsync, never a weakened production fsync.
+            key = ':'.join(event[:2]) if event else 'initial'
+            if flag('fail_sync') == key: done(1)
+            if (flag('fail_clear_sync_once') and command[4:] == [str(BASE / 'root/backups')]
+                    and not (BASE / 'root/backups/.pending').exists() and s.get('published')):
+                s['flags']['fail_clear_sync_once'] = False; done(1)
+        else:
+            assert command[3] == str(BASE / 'backup_bundle.py')
+            verb = command[4]
+            assert verb in ('create', 'verify', 'publish-directory')
+            phase = {'create': 'bundle-create', 'verify': 'bundle-verify', 'publish-directory': 'publish'}[verb]
+            before_phase(phase)
+            if verb == 'publish-directory' and flag('race_publish_target'):
+                target = Path(command[command.index('--target') + 1])
+                target.mkdir(mode=0o700)
+                (target / 'unrelated').write_bytes(b'preserve this unrelated destination')
+            result = subprocess.call(['/usr/bin/timeout'] + args)
+            s = json.loads(state_path.read_text())
+            if result == 0 and verb == 'create' and flag('mutate_after_create'):
+                Path(command[command.index('--dump') + 1]).write_bytes(b'changed after manifest creation')
+            if result == 0 and verb == 'verify' and flag('replace_before_unpause'):
+                s['retired_backend'] = s['container']
+                s['container'] = dict(s['container'], id='d' * 64, paused=False)
+            if result == 0 and verb == 'publish-directory':
+                s['published'] = True
+                if flag('timeout_after_publish'): done(124)
+            done(result)
+    else:
+        assert command[0] in ('docker', 'tar')  # Neither can fall through to a real daemon.
+    sys.exit(subprocess.call(['/usr/bin/timeout'] + args))
+
+if name in ('chmod', 'mktemp', 'sha256sum', 'tar'):
+    if name == 'mktemp' and flag('fail_allocation') and any('/backups/.stage.' in arg for arg in args): done(1)
+    if name == 'sha256sum' and flag('fail_helper_hash') and args[-1] == str(BASE / 'backup_bundle.py'): done(1)
+    if name == 'chmod' and flag('fail_backup_permissions') and any(arg.endswith('.dump') for arg in args): done(1)
+    if name == 'tar':
+        assert args[0] == '-tzf' and '/backups/.stage.' in args[-1]
+        before_phase('media-list')
+    sys.exit(subprocess.call(['/usr/bin/' + name] + args))
+
 if name == 'sudo':
     print(json.dumps(args)); sys.exit(0)
 if name == 'ln':
+    if flag('fail_pending_link') and args[-1] == str(BASE / 'root/backups/.pending'): done(1)
     result = subprocess.call(['/usr/bin/ln'] + args)
     if result == 0:
         s.setdefault('links', []).append(args[-1])
-        if flag('unsafe_new_archive'): Path(args[-1]).chmod(0o666)
+        if flag('unsafe_new_archive') and args[-1].endswith('.tar.gz'): Path(args[-1]).chmod(0o666)
         save()
     sys.exit(result)
 if name in ('mv', 'rm'):
@@ -887,6 +976,8 @@ if name in ('mv', 'rm'):
         os.kill(os.getppid(), signal.SIGTERM); done()
     if name == 'rm' and args[-1].endswith('/pending') and flag('fail_pending_cleanup'):
         done(1)
+    if name == 'rm' and args[-1] == str(BASE / 'root/backups/.writers-frozen-and-drained') and flag('fail_attestation_consume'): done(1)
+    if name == 'rm' and args[-1] == str(BASE / 'root/backups/.pending') and flag('fail_backup_pending_clear'): done(1)
     if name == 'rm' and args[-1].endswith('.tar.gz') and flag('fail_archive_cleanup'):
         done(1)
     sys.exit(subprocess.call(['/usr/bin/' + name] + args))
@@ -894,20 +985,30 @@ if name in ('mv', 'rm'):
 s.setdefault('calls', []).append({'args': args, 'image': os.environ.get('KIRA_' + s['component'].upper() + '_IMAGE')})
 component = s['component']
 container = s.get('container')
+postgres = s.get('postgres')
+event = last_event()
+phase = event[1] if event and event[0] == 'start' else None
 
 def info(ref):
     identity = s['tags'].get(ref, ref)
     return s['images'].get(identity)
 
-def container_text():
-    if not container: done(1)
-    return ' '.join([container['id'], container['image'], str(container.get('running', True)).lower(),
-                     container.get('health', 'healthy'), container.get('project', 'kira'), container.get('service', component)])
+def container_text(selected):
+    if not selected: done(1)
+    fields = [selected['id'], selected['image'], str(selected.get('running', True)).lower(),
+              str(selected.get('paused', False)).lower()]
+    if '.State.Health' in args[3]: fields.append(selected.get('health', 'healthy'))
+    return ' '.join(fields + [selected.get('project', 'kira'), selected.get('service', component)])
 
 if args[:2] == ['container', 'ls']:
-    done(output=container['id'] if container else '')
+    query = args[args.index('--filter') + 1]
+    assert query in ('name=^/kira-' + component + '$', 'name=^/kira-backend$', 'name=^/kira-postgres$')
+    if query == 'name=^/kira-backend$' and flag('fail_backend_inspect'): done(1)
+    selected = postgres if query == 'name=^/kira-postgres$' else container
+    done(output=selected['id'] if selected else '')
 if args[:2] == ['container', 'inspect']:
-    done(output=container_text())
+    selected = next((c for c in (container, postgres) if c and args[-1] in (c['id'], 'kira-' + c['service'])), None)
+    done(output=container_text(selected))
 if args[:2] == ['image', 'inspect']:
     image = info(args[-1])
     if image is None: done(1)
@@ -919,6 +1020,7 @@ if args[:2] == ['image', 'inspect']:
                              image['Config'].get('Labels', {}).get('org.opencontainers.image.revision', '')]))
     done(output=json.dumps([image]))
 if args and args[0] == 'load':
+    before_phase(phase)
     with tarfile.open(args[-1], 'r:gz') as bundle:
         manifest = json.load(bundle.extractfile('manifest.json'))[0]
         raw = bundle.extractfile(manifest['Config']).read(); config = json.loads(raw)
@@ -930,7 +1032,7 @@ if args and args[0] == 'load':
     s['loads'] = s.get('loads', 0) + 1
     if flag('unsafe_received_archive') and identity == s.get('B'): Path(args[-1]).chmod(0o666)
     if flag('missing_rollback') and identity == s.get('B'): s['images'].pop(s['A'], None)
-    done()
+    completed_mutation(phase)
 if args and args[0] == 'compose':
     tail = args[args.index('--env-file') + 2:]
     if 'config' in tail: done(1 if flag('fail_preflight') else 0)
@@ -939,7 +1041,9 @@ if args and args[0] == 'compose':
     if not image:
         for line in (BASE / 'root/images.env').read_text().splitlines():
             if line.startswith('KIRA_' + component.upper() + '_IMAGE='): image = line.split('=', 1)[1]
-    if service == 'postgres': done()
+    if service == 'postgres':
+        before_phase(phase)
+        completed_mutation(phase)
     if service == 'backend-migrate':
         s.setdefault('migrations', []).append(image)
         done(1 if flag('fail_migration') else 0)
@@ -948,27 +1052,60 @@ if args and args[0] == 'compose':
     if flag('fail_rollback') and image == s.get('A') and s.get('loads', 0) > 1: done(1)
     actual = s['A'] if flag('wrong_runtime') and image == s.get('B') else image
     s['container'] = {'id': hashlib.sha256((component + actual).encode()).hexdigest(), 'image': actual,
-                      'running': True, 'health': 'healthy', 'project': 'kira', 'service': component}
+                      'running': True, 'paused': False, 'health': 'healthy', 'project': 'kira', 'service': component}
     if image == s.get('B') and (flag('fail_activation') or flag('fail_health')):
         s['container']['health'] = 'unhealthy'
         done(1 if flag('fail_activation') else 0)
     done()
 if args and args[0] == 'inspect':
     if args[-1] == 'kira-postgres':
-        done(output='postgres:fixture' if '{{.Config.Image}}' in args else 'healthy')
+        done(output='healthy')
     if not container: done(1)
     done(output='true' if '{{.State.Running}}' in args else json.dumps([container]))
-if args[:2] == ['volume', 'create']: done(output='kira-tutorial-media')
+if args[:2] == ['volume', 'create']:
+    before_phase(phase)
+    completed_mutation(phase)
+if args[:2] == ['volume', 'inspect']: done()
 if args and args[0] == 'run':
-    if 'postgres:fixture' in args:
+    before_phase(phase)
+    assert '--name' in args and '--cidfile' in args
+    identity = hashlib.sha256(args[args.index('--name') + 1].encode()).hexdigest()
+    Path(args[args.index('--cidfile') + 1]).write_text(identity + '\n')
+    s.setdefault('helpers', []).append({'id': identity, 'name': args[args.index('--name') + 1], 'phase': phase})
+    if postgres['image'] in args:
         volume = next(x for x in args if x.endswith(':/backup'))
         destination = Path(volume[:-8]) / Path(args[args.index('-czf') + 1]).name
-        with tarfile.open(destination, 'w:gz'): pass
-    done()
+        with tarfile.open(destination, 'w:gz') as archive:
+            if flag('unsafe_media'):
+                member = tarfile.TarInfo('unsafe-link'); member.type = tarfile.SYMTYPE; member.linkname = '../../escape'
+                archive.addfile(member)
+            elif flag('media_file'):
+                data = b'representative fixture media'
+                member = tarfile.TarInfo('./tutorial/file.bin'); member.size = len(data)
+                archive.addfile(member, io.BytesIO(data))
+        if flag('empty_media_bytes'): destination.write_bytes(b'')
+        if flag('corrupt_media'): destination.write_bytes(b'not a gzip tar')
+    completed_mutation(phase)
 if args and args[0] == 'exec':
+    before_phase(phase)
+    assert postgres['id'] in args and '--env' in args and any(value.startswith('PGAPPNAME=kira-') for value in args)
     if flag('fail_backup'): done(1)
-    done(output='synthetic-dump-or-manifest')
-if args and args[0] in ('pause', 'unpause'): done()
+    if 'pg_restore' in args:
+        data = sys.stdin.buffer.read(65536)
+        if not data.startswith(b'PGDMP-receiver-fixture'): done(1)
+        print('representative checked fixture TOC')
+    elif not flag('empty_dump'):
+        sys.stdout.buffer.write(b'bad custom dump' if flag('corrupt_dump') else b'PGDMP-receiver-fixture\n')
+    completed_mutation(phase)
+if args and args[0] in ('pause', 'unpause'):
+    operation = args[0]
+    assert container and args[-1] == container['id']  # Reusable names are never mutation targets.
+    s[operation + '_attempts'] = s.get(operation + '_attempts', 0) + 1
+    before_phase(phase)
+    assert container['paused'] == (operation == 'unpause')
+    container['paused'] = operation == 'pause'
+    s[operation + '_effects'] = s.get(operation + '_effects', 0) + 1
+    completed_mutation(phase)
 if args and args[0] == 'rm':
     if not container or args[-1] != container['id']: done(1)
     s['container'] = None; done()
@@ -982,6 +1119,15 @@ class ReceiverFixture:
         self.root = base / 'root'; self.root.mkdir(mode=0o700)
         self.bin = base / 'bin'; self.bin.mkdir()
         self.helper = base / 'image_release.py'; self.helper.write_bytes((ROOT / 'scripts/ci/image_release.py').read_bytes()); self.helper.chmod(0o644)
+        self.bundle_helper = base / 'backup_bundle.py'
+        self.bundle_pin = base / 'backup_bundle.sha256'
+        if component == 'backend':
+            # The one real shared implementation, never a second verifier in this
+            # harness. Backend28 requires the separately accepted Backend29 file.
+            self.bundle_helper.write_bytes((ROOT / 'scripts/db/backup_bundle.py').read_bytes())
+            self.bundle_helper.chmod(0o644)
+            self.bundle_pin.write_text(release.digest(self.bundle_helper.read_bytes()) + '\n')
+            self.bundle_pin.chmod(0o644)
         for name in ('compose.yaml', 'images.env', 'ingress.env'):
             path = self.root / name; path.write_text('' if name != 'images.env' else
                 '\n'.join('KIRA_' + c.upper() + '_IMAGE=kira-' + c + ':' + SHA for c in ('backend', 'web', 'admin')) + '\n')
@@ -989,23 +1135,30 @@ class ReceiverFixture:
         source = (ROOT / 'deploy/server3/kira-deploy').read_text()
         substitutions = {'deployment_root=/opt/kira': 'deployment_root=' + str(self.root),
                          'archive_helper=/usr/local/libexec/kira-image-release.py': 'archive_helper=' + str(self.helper),
+                         'backup_helper=/usr/local/libexec/kira-backup-bundle.py': 'backup_helper=' + str(self.bundle_helper),
+                         'backup_pin=/usr/local/libexec/kira-backup-bundle.sha256': 'backup_pin=' + str(self.bundle_pin),
                          '/run/lock/kira-deploy.lock': str(base / 'deployment.lock'),
+                         '[[ $directory == / ]] && break': '[[ $directory == ' + repr(str(base)) + ' ]] && break',
                          'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin':
                              'export PATH=' + str(self.bin) + ':/usr/bin:/bin'}
         for old, new in substitutions.items():
             assert source.count(old) == 1
             source = source.replace(old, new)
+        # Relocate the trusted-ancestor boundary to this private fixture root,
+        # never /tmp or an environment-controlled production bypass.
         # Only the installed-root UID comparison changes for unprivileged CI tests.
         source = source.replace('$(stat -c %u "$1") == 0', '$(stat -c %u "$1") == ' + str(os.getuid()))
         source = source.replace('$EUID -eq 0', '$EUID -eq ' + str(os.getuid()))
         self.receiver = base / 'kira-deploy'; self.receiver.write_text(source); self.receiver.chmod(0o755)
-        for name in ('docker', 'sudo', 'mv', 'rm', 'ln'):
+        for name in ('docker', 'sudo', 'mv', 'rm', 'ln', 'timeout', 'chmod', 'mktemp', 'sha256sum', 'tar'):
             path = self.bin / name; path.write_text(STUB.replace('@BASE@', repr(str(base)))); path.chmod(0o755)
         self.state_path = base / 'docker-state.json'
         self.A, _, a = tiny_image(component, 'A', oci=True, legacy=True)
         self.B, _, b = tiny_image(component, 'B', oci=True, legacy=True)
         self.archives = {'A': gzip.compress(docker_bytes(a), mtime=0), 'B': gzip.compress(docker_bytes(b), mtime=0)}
         self.state_path.write_text(json.dumps({'component': component, 'images': {}, 'tags': {}, 'container': None,
+                                             'postgres': {'id': 'f' * 64, 'image': 'sha256:' + 'e' * 64,
+                                                          'running': True, 'paused': False, 'project': 'kira', 'service': 'postgres'},
                                              'flags': {}, 'calls': [], 'A': self.A, 'B': self.B}))
 
     def state(self): return json.loads(self.state_path.read_text())
@@ -1014,10 +1167,37 @@ class ReceiverFixture:
     def flags(self, **flags): self.update(lambda s: s['flags'].update(flags))
     def args(self, variant):
         return ['deploy', self.component, SHA] + ([release.digest(self.archives[variant]), getattr(self, variant)] if self.component == 'backend' else [])
-    def run(self, variant='A', args=None, data=None):
-        return subprocess.run(['bash', str(self.receiver), *(self.args(variant) if args is None else args)],
-                              input=self.archives[variant] if data is None else data, stdout=subprocess.PIPE,
-                              stderr=subprocess.PIPE, timeout=30)
+    def attest(self):
+        self.root.joinpath('backups').mkdir(mode=0o700, exist_ok=True)
+        marker = self.root / 'backups/.writers-frozen-and-drained'
+        marker.write_text('KIRA_BACKUP_WRITERS_FROZEN_AND_DRAINED=yes\n'); marker.chmod(0o600)
+
+    def run(self, variant='A', args=None, data=None, *, attest=True, owned=False):
+        if self.component == 'backend' and attest: self.attest()
+        argv = ['bash', str(self.receiver), *(self.args(variant) if args is None else args)]
+        payload = self.archives[variant] if data is None else data
+        if not owned:
+            return subprocess.run(argv, input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=30)
+        # Reuse the existing wait-owner/session-group finalizer for signal cases.
+        # It retains WNOWAIT ownership until both bounded cleanup signals and
+        # the actual reap; failures cannot leave a fixture child silently alive.
+        stderr = self.base / 'owned-receiver.stderr'
+        output = io.BytesIO()
+        with tempfile.TemporaryFile() as source:
+            source.write(payload); source.seek(0)
+            code = release.command(['bash', '-c', 'error=$1; shift; exec "$@" 2>"$error"',
+                                    'owned-receiver', str(stderr), *argv], stdin=source,
+                                   output=output, return_status=True, seconds=30)
+        return subprocess.CompletedProcess(argv, code, output.getvalue(), stderr.read_bytes())
+
+    def seed_backend(self, *, running=True, paused=False, project='kira'):
+        self.update(lambda state: state.update(container={'id': 'c' * 64, 'image': self.A, 'running': running,
+                                                         'paused': paused, 'health': 'healthy', 'project': project, 'service': 'backend'}))
+
+    def backup_pending(self): return self.root / 'backups/.pending'
+    def backup_generations(self): return sorted(self.root.glob('backups/kira-*'))
+    def backup_record(self):
+        return dict(line.split('=', 1) for line in self.backup_pending().read_text().splitlines() if '=' in line)
     def activation(self): return self.root / 'releases' / self.component / 'activation'
     def archive(self, variant): return self.root / 'releases' / self.component / (release.digest(self.archives[variant]) + '.tar.gz')
     def configured(self):
@@ -1245,9 +1425,298 @@ class ReceiverTests(unittest.TestCase):
             with self.subTest(flag=flag):
                 fixture = self.fixture('backend'); self.assert_ok(fixture.run())
                 fixture.flags(**{flag: True})
-                self.assert_failed(fixture.run('B'), 'rollback=restored', code=71)
+                self.assert_failed(fixture.run('B'), 'backup custody unresolved' if flag == 'fail_backup' else 'rollback=restored',
+                                   code=73 if flag == 'fail_backup' else 71)
                 self.assertEqual(fixture.state()['container']['image'], fixture.A)
                 if flag == 'fail_backup': self.assertEqual(fixture.state()['migrations'], [fixture.A])
+
+    def test_backup_requires_one_fresh_private_drain_attestation_not_ssh_environment(self):
+        for invalid in ('missing', 'wrong-value', 'mode', 'symlink', 'nul'):
+            with self.subTest(invalid=invalid):
+                fixture = self.fixture('backend')
+                if invalid != 'missing':
+                    fixture.attest()
+                    marker = fixture.root / 'backups/.writers-frozen-and-drained'
+                    if invalid == 'wrong-value': marker.write_text('yes\n')
+                    if invalid == 'mode': marker.chmod(0o644)
+                    if invalid == 'nul': marker.write_bytes(b'KIRA_BACKUP_WRITERS_FROZEN_AND_DRAINED=yes\0')
+                    if invalid == 'symlink':
+                        marker.rename(marker.with_name('saved-attestation'))
+                        marker.symlink_to('saved-attestation')
+                with patch.dict(os.environ, {'KIRA_BACKUP_WRITERS_FROZEN_AND_DRAINED': 'yes'}):
+                    self.assert_failed(fixture.run(attest=False), 'attestation required', code=70)
+                self.assertEqual(fixture.state().get('loads', 0), 0)
+                self.assertEqual(fixture.state().get('migrations', []), [])
+                self.assertFalse(fixture.backup_pending().exists())
+                self.assertEqual(fixture.backup_generations(), [])
+        fixture = self.fixture('backend'); fixture.seed_backend()
+        self.assert_ok(fixture.run(args=['backup'], data=b''))
+        calls = len(fixture.state()['calls'])
+        self.assertFalse(fixture.root.joinpath('backups/.writers-frozen-and-drained').exists())
+        self.assert_failed(fixture.run(args=['backup'], data=b'', attest=False), 'attestation required', code=1)
+        self.assertEqual(len(fixture.state()['calls']), calls)
+
+    def test_backup_helper_pin_and_ancestor_custody_precede_mutation(self):
+        for invalid in ('missing-helper', 'changed-helper', 'helper-mode', 'helper-link', 'missing-pin',
+                        'pin-mode', 'pin-link', 'pin-nul', 'pin-extra-line', 'ancestor-mode', 'hash-error'):
+            with self.subTest(invalid=invalid):
+                fixture = self.fixture('backend')
+                if invalid == 'missing-helper': fixture.bundle_helper.unlink()
+                if invalid == 'changed-helper':
+                    fixture.bundle_helper.write_bytes(fixture.bundle_helper.read_bytes() + b'\n# changed after reviewed pin\n')
+                if invalid == 'helper-mode': fixture.bundle_helper.chmod(0o666)
+                if invalid == 'helper-link':
+                    fixture.bundle_helper.rename(fixture.base / 'saved-helper.py')
+                    fixture.bundle_helper.symlink_to('saved-helper.py')
+                if invalid == 'missing-pin': fixture.bundle_pin.unlink()
+                if invalid == 'pin-mode': fixture.bundle_pin.chmod(0o666)
+                if invalid == 'pin-link':
+                    fixture.bundle_pin.rename(fixture.base / 'saved-pin.sha256')
+                    fixture.bundle_pin.symlink_to('saved-pin.sha256')
+                if invalid == 'pin-nul': fixture.bundle_pin.write_bytes(b'a' * 64 + b'\0')
+                if invalid == 'pin-extra-line': fixture.bundle_pin.write_text('a' * 64 + '\n\n')
+                if invalid == 'ancestor-mode': fixture.base.chmod(0o777)
+                if invalid == 'hash-error': fixture.flags(fail_helper_hash=True)
+                try:
+                    self.assert_failed(fixture.run(), code=70)
+                    self.assertEqual(fixture.state().get('loads', 0), 0)
+                    self.assertFalse(fixture.backup_pending().exists())
+                finally:
+                    fixture.base.chmod(0o700)
+
+    def test_standalone_backups_publish_distinct_private_generations_without_ingress_or_compose(self):
+        fixture = self.fixture('backend'); fixture.seed_backend()
+        for name in ('ingress.env', 'compose.yaml', 'images.env'): fixture.root.joinpath(name).unlink()
+        # Valid empty media is an ordinary supported tar, not a zero-byte file.
+        self.assert_ok(fixture.run(args=['backup'], data=b''))
+        first = fixture.backup_generations()[0]
+        first_bytes = {path.name: path.read_bytes() for path in first.iterdir()}
+        fixture.flags(media_file=True)
+        self.assert_ok(fixture.run(args=['backup'], data=b''))
+        generations = fixture.backup_generations()
+        self.assertEqual(len(generations), 2)
+        self.assertEqual({path.name: path.read_bytes() for path in first.iterdir()}, first_bytes)
+        for directory in generations:
+            self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+            manifest_path, = directory.glob('*.bundle.json')
+            manifest = json.loads(manifest_path.read_bytes())
+            self.assertEqual(manifest['schema'], 'kira.backup-bundle.v1')
+            for kind in ('dump', 'media'):
+                member = directory / manifest[kind]['name']
+                self.assertEqual(member.parent, directory)
+                self.assertEqual(member.stat().st_size, manifest[kind]['bytes'])
+                self.assertEqual(release.digest(member.read_bytes()), manifest[kind]['sha256'])
+            for member in directory.iterdir():
+                self.assertFalse(member.is_symlink())
+                self.assertEqual(stat.S_IMODE(member.stat().st_mode), 0o600)
+        self.assertFalse(fixture.backup_pending().exists())
+        self.assertEqual(list(fixture.root.glob('backups/.stage.*')), [])
+        self.assertEqual(fixture.state()['pause_effects'], 2)
+        self.assertEqual(fixture.state()['unpause_effects'], 2)
+        self.assertFalse(fixture.state()['container']['paused'])
+        self.assertFalse(any(call['args'][0] in ('compose', 'load') for call in fixture.state()['calls']))
+
+    def test_backup_initial_absence_or_stop_must_be_positive_and_paused_or_foreign_is_refused(self):
+        for kind in ('absent', 'stopped', 'paused', 'foreign', 'inspect-error', 'unknown-running'):
+            with self.subTest(kind=kind):
+                fixture = self.fixture('backend')
+                if kind != 'absent': fixture.seed_backend(running=kind != 'stopped', paused=kind == 'paused',
+                                                         project='other' if kind == 'foreign' else 'kira')
+                if kind == 'inspect-error': fixture.flags(fail_backend_inspect=True)
+                if kind == 'unknown-running': fixture.update(lambda state: state['container'].update(running='unknown'))
+                result = fixture.run(args=['backup'], data=b'')
+                if kind in ('absent', 'stopped'):
+                    self.assert_ok(result)
+                    self.assertEqual(len(fixture.backup_generations()), 1)
+                else:
+                    self.assert_failed(result, 'initially unpaused', code=1)
+                    self.assertEqual(fixture.backup_generations(), [])
+                self.assertEqual(fixture.state().get('pause_attempts', 0), 0)
+                self.assertEqual(fixture.state().get('unpause_attempts', 0), 0)
+                self.assertFalse(fixture.backup_pending().exists())
+
+    def test_backend_cached_healthy_but_paused_is_not_a_predecessor(self):
+        fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+        fixture.update(lambda state: state['container'].update(paused=True))
+        loads = fixture.state()['loads']
+        self.assert_failed(fixture.run('B'), 'not healthy/unpaused', code=70)
+        self.assertEqual(fixture.state()['loads'], loads)
+        self.assertTrue(fixture.state()['container']['paused'])
+        self.assertEqual(fixture.state().get('unpause_attempts', 0), 0)
+
+    def test_backup_each_command_failure_retains_stop_before_migration_and_preserves_old_bundle(self):
+        before_pause = ('image-load', 'media-volume', 'media-initialize', 'media-access', 'database-startup', 'pause')
+        after_pause = ('dump', 'dump-list', 'media-archive', 'media-list', 'bundle-create', 'bundle-verify', 'unpause', 'publish')
+        for phase in before_pause + after_pause:
+            with self.subTest(phase=phase):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                old = fixture.backup_generations()[0]
+                old_bytes = {p.name: p.read_bytes() for p in old.iterdir()}
+                fixture.flags(fail_phase=phase)
+                result = fixture.run('B')
+                self.assert_failed(result, 'backup custody unresolved', code=73)
+                self.assertEqual(result.stdout, b'')
+                self.assertNotIn(b'rollback=restored', result.stderr)
+                self.assertEqual(fixture.state()['migrations'], [fixture.A])
+                self.assertTrue(fixture.backup_pending().is_file())
+                self.assertIn('start ' + phase + ' ', fixture.backup_pending().read_text())
+                self.assertEqual(fixture.backup_generations(), [old])
+                self.assertEqual({p.name: p.read_bytes() for p in old.iterdir()}, old_bytes)
+                self.assertEqual(fixture.state().get('unpause_effects', 0),
+                                 1 if phase in after_pause and phase != 'unpause' else 0)
+                self.assertEqual(fixture.state()['container']['paused'], phase == 'unpause')
+
+    def test_backup_local_allocation_permissions_attestation_and_sync_fail_closed(self):
+        for flags, code, pending in [({'fail_allocation': True}, 70, False),
+                                      ({'fail_pending_link': True}, 70, False),
+                                      ({'fail_attestation_consume': True}, 73, True),
+                                      ({'block_backup_redirection': 'dump'}, 73, True),
+                                      ({'block_backup_redirection': 'dump-list'}, 73, True),
+                                      ({'fail_backup_permissions': True}, 73, True),
+                                      ({'fail_sync': 'complete:dump'}, 73, True)]:
+            with self.subTest(flags=flags):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                prior = fixture.backup_generations()
+                fixture.flags(**flags)
+                self.assert_failed(fixture.run('B'), code=code)
+                self.assertEqual(fixture.backup_pending().exists(), pending)
+                self.assertEqual(fixture.state()['migrations'], [fixture.A])
+                self.assertEqual(fixture.backup_generations(), prior)
+                self.assertFalse(fixture.state()['container']['paused'])
+
+    def test_backup_signals_at_long_phases_and_repeated_cleanup_signal_unpause_once(self):
+        for kind, code in (('SIGINT', 130), ('SIGTERM', 143), ('SIGHUP', 129)):
+            for phase in ('dump', 'dump-list', 'media-archive', 'media-list', 'bundle-create', 'bundle-verify', 'publish'):
+                with self.subTest(kind=kind, phase=phase):
+                    fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                    prior = fixture.backup_generations()
+                    fixture.flags(signal_kind=kind, signal_phase=phase, repeat_cleanup_signal='SIGTERM')
+                    result = fixture.run('B', owned=True)
+                    self.assert_failed(result, 'backup custody unresolved', code=code)
+                    self.assertEqual(result.stdout, b'')
+                    self.assertEqual(fixture.state()['unpause_effects'], 1)
+                    self.assertEqual(fixture.state()['unpause_attempts'], 1)
+                    self.assertEqual(fixture.state()['signal_deliveries'], [kind] if phase == 'publish' else [kind, 'SIGTERM'])
+                    self.assertFalse(fixture.state()['container']['paused'])
+                    self.assertEqual(fixture.state()['migrations'], [fixture.A])
+                    self.assertEqual(fixture.backup_generations(), prior)
+                    self.assertTrue(fixture.backup_pending().exists())
+
+    def test_pause_and_unpause_return_signal_windows_do_not_fabricate_completed_receipts(self):
+        for phase in ('pause', 'unpause'):
+            with self.subTest(phase=phase):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                fixture.flags(signal_after_phase=phase, signal_kind='SIGTERM')
+                self.assert_failed(fixture.run('B', owned=True), 'backup custody unresolved', code=143)
+                record = fixture.backup_pending().read_text()
+                self.assertIn('start ' + phase + ' ', record)
+                self.assertNotIn('complete ' + phase + ' ', record)
+                self.assertEqual(fixture.state().get('unpause_attempts', 0), 1 if phase == 'unpause' else 0)
+                self.assertEqual(fixture.state()['container']['paused'], phase == 'pause')
+                self.assertEqual(fixture.state()['migrations'], [fixture.A])
+
+    def test_cross_invocation_stop_blocks_all_backend_commands_and_survives_web_work(self):
+        fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+        fixture.flags(timeout_after_phase='media-archive')
+        self.assert_failed(fixture.run('B'), 'backup custody unresolved', code=73)
+        record = fixture.backup_record()
+        stage = Path(record['stage'])
+        media = stage / (record['invocation'] + '.media.tar.gz')
+        self.assertTrue(media.is_file())
+        helper, = [h for h in fixture.state()['helpers'] if h['name'] == record['invocation'] + '-media']
+        self.assertEqual((stage / 'media.cid').read_text().strip(), helper['id'])
+        # A model of a daemon write AFTER its CLI ended: no process is claimed
+        # terminated, and the retained stage remains unselectable and undeleted.
+        media.write_bytes(b'late daemon bytes')
+        pending_bytes = fixture.backup_pending().read_bytes()
+        pending_inode = fixture.backup_pending().stat().st_ino
+        calls = len(fixture.state()['calls'])
+        for args, code in [(['backup'], 1), (fixture.args('B'), 70),
+                           (['activate', 'backend', fixture.A], 70), (['adopt', 'backend', SHA], 1)]:
+            self.assert_failed(fixture.run('B', args=args), 'backup obligation pending', code=code)
+            self.assertEqual(len(fixture.state()['calls']), calls)
+            self.assertEqual(fixture.backup_pending().read_bytes(), pending_bytes)
+            self.assertEqual(media.read_bytes(), b'late daemon bytes')
+        backend = copy.deepcopy(fixture.state()['container'])
+        fixture.update(lambda state: state.update(component='web', backend_for_backup=state['container'], container=None))
+        _, _, files = tiny_image('web', 'unrelated', oci=True, legacy=True)
+        self.assert_ok(fixture.run(args=['deploy', 'web', SHA], data=gzip.compress(docker_bytes(files), mtime=0), attest=False))
+        self.assertEqual(fixture.state()['backend_for_backup'], backend)
+        self.assertEqual(fixture.backup_pending().read_bytes(), pending_bytes)
+        self.assertEqual(fixture.backup_pending().stat().st_ino, pending_inode)
+        self.assertTrue(stage.exists())
+
+    def test_ambiguous_pause_may_take_effect_later_and_never_authorizes_retry_unpause(self):
+        fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+        fixture.flags(timeout_phase='pause')
+        self.assert_failed(fixture.run('B'), code=73)
+        self.assertFalse(fixture.state()['container']['paused'])
+        self.assertEqual(fixture.state().get('unpause_attempts', 0), 0)
+        record = fixture.backup_pending().read_bytes()
+        fixture.update(lambda state: state['container'].update(paused=True))
+        self.assert_failed(fixture.run(args=['backup'], data=b''), 'backup obligation pending', code=1)
+        self.assertTrue(fixture.state()['container']['paused'])
+        self.assertEqual(fixture.state().get('unpause_attempts', 0), 0)
+        self.assertEqual(fixture.backup_pending().read_bytes(), record)
+
+    def test_empty_corrupt_unsafe_or_changed_selected_backup_bytes_are_not_promoted(self):
+        for flag in ('empty_dump', 'corrupt_dump', 'empty_media_bytes', 'corrupt_media', 'unsafe_media', 'mutate_after_create'):
+            with self.subTest(flag=flag):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                prior = fixture.backup_generations()
+                fixture.flags(**{flag: True})
+                self.assert_failed(fixture.run('B'), 'backup custody unresolved', code=73)
+                self.assertEqual(fixture.backup_generations(), prior)
+                self.assertEqual(fixture.state()['migrations'], [fixture.A])
+                self.assertEqual(fixture.state()['unpause_effects'], 1)
+                self.assertFalse(fixture.state()['container']['paused'])
+
+    def test_publication_collision_and_post_rename_timeout_preserve_actual_partial_effects(self):
+        for flag in ('race_publish_target', 'timeout_after_publish'):
+            with self.subTest(flag=flag):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                fixture.flags(**{flag: True})
+                self.assert_failed(fixture.run('B'), 'backup custody unresolved', code=73)
+                record = fixture.backup_record()
+                stage, target = Path(record['stage']), Path(record['target'])
+                self.assertTrue(target.is_dir())  # Never falsely assert publication had no effect.
+                if flag == 'race_publish_target':
+                    self.assertEqual((target / 'unrelated').read_bytes(), b'preserve this unrelated destination')
+                    self.assertTrue(stage.exists())
+                    self.assertEqual(list(target.glob('*.bundle.json')), [])
+                else:
+                    self.assertFalse(stage.exists())
+                    self.assertEqual(len(list(target.glob('*.bundle.json'))), 1)
+                    self.assertEqual((target / 'obligation').stat().st_ino, fixture.backup_pending().stat().st_ino)
+                self.assertEqual(fixture.state()['migrations'], [fixture.A])
+                self.assertEqual(fixture.state()['unpause_effects'], 1)
+                self.assert_failed(fixture.run(args=['backup'], data=b''), 'backup obligation pending', code=1)
+
+    def test_pending_clear_or_fsync_failure_keeps_or_restores_the_same_obligation_inode(self):
+        for flag in ('fail_backup_pending_clear', 'fail_clear_sync_once'):
+            with self.subTest(flag=flag):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                fixture.flags(**{flag: True})
+                self.assert_failed(fixture.run('B'), 'backup custody unresolved', code=73)
+                record = fixture.backup_record()
+                self.assertFalse(Path(record['stage']).exists())
+                target_record = Path(record['target']) / 'obligation'
+                self.assertEqual(target_record.stat().st_ino, fixture.backup_pending().stat().st_ino)
+                self.assertEqual(target_record.read_bytes(), fixture.backup_pending().read_bytes())
+                self.assertEqual(fixture.state()['migrations'], [fixture.A])
+                self.assertFalse(fixture.state()['container']['paused'])
+
+    def test_replaced_backend_is_never_unpaused_or_reported_as_restored(self):
+        fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+        original = fixture.state()['container']['id']
+        fixture.flags(replace_before_unpause=True)
+        self.assert_failed(fixture.run('B'), 'backup custody unresolved', code=73)
+        self.assertEqual(fixture.state()['retired_backend']['id'], original)
+        self.assertTrue(fixture.state()['retired_backend']['paused'])
+        self.assertNotEqual(fixture.state()['container']['id'], original)
+        self.assertEqual(fixture.state().get('unpause_attempts', 0), 0)
+        self.assertEqual(fixture.state()['migrations'], [fixture.A])
+        self.assertEqual(fixture.backup_record()['backend'], original)
 
     def test_exit_cleanup_finalizes_refused_restored_removed_noop_and_prune_outcomes(self):
         for kind, code in [('refused', 73), ('restored', 73), ('removed', 73), ('noop', 74), ('prune', 74)]:
