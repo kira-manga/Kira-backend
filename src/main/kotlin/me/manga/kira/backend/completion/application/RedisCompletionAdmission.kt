@@ -41,10 +41,11 @@ class RedisCompletionAdmission(
             coordinationUnavailable()
         }
         if (result != 0L) reject(result)
-        val released = AtomicBoolean(false)
+        // Guard the application attempt only; the Redis client may replay an in-flight command.
+        val releaseAttempted = AtomicBoolean(false)
         return CompletionPermit {
-            if (released.compareAndSet(false, true)) {
-                safely { redis.execute(RELEASE_SCRIPT, listOf("$KEY_PREFIX:concurrency")) }
+            if (releaseAttempted.compareAndSet(false, true)) {
+                release()
             }
         }
     }
@@ -76,17 +77,16 @@ class RedisCompletionAdmission(
         )
     }
 
-    // Release failure behavior is separate from pre-work admission (Backend #15).
-    private fun <T> safely(block: () -> T): T = try {
-        block()
-    } catch (ignored: DataAccessException) {
-        log.error("Shared completion admission unavailable; denying request")
-        metrics?.completionAdmission("coordination_unavailable")
-        throw TooManyRequestsException(
-            "Completion service is temporarily unavailable. Try again later.",
-            "COMPLETION_COORDINATION_UNAVAILABLE",
-            FAILURE_RETRY_SECONDS,
-        )
+    private fun release() {
+        val result = try {
+            redis.execute(RELEASE_SCRIPT, listOf("$KEY_PREFIX:concurrency"))
+        } catch (ignored: DataAccessException) {
+            null
+        }
+        if (result == null) {
+            log.warn("Shared completion admission release unconfirmed")
+            metrics?.completionAdmission("release_unconfirmed")
+        }
     }
 
     private companion object {

@@ -442,6 +442,9 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
   `COMPLETION_CONCURRENCY_LIMIT` (`Retry-After: 1`); unavailable or indeterminate Redis
   acquisition is **503** `COMPLETION_COORDINATION_UNAVAILABLE` (`Retry-After: 5`). Retry delays
   are guidance, not recovery guarantees or a promise that arbitrary POST retries are safe.
+- Expected Redis coordination failure (or a null reply) during permit release does not replace the
+  normal **201** committed view or an existing primary error. Release diagnostics are server-side
+  only; no client retry signal is added, and this does not make POST idempotent.
 - Response `CompletionResponse`:
 
 ```json

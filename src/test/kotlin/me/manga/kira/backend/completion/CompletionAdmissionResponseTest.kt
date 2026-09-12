@@ -1,21 +1,29 @@
 package me.manga.kira.backend.completion
 
+import ch.qos.logback.classic.Level
+import ch.qos.logback.classic.Logger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
+import io.micrometer.core.instrument.Tag
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import me.manga.kira.backend.common.GlobalExceptionHandler
-import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.completion.application.CompletionAdmission
 import me.manga.kira.backend.completion.application.InMemoryCompletionAdmission
 import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.config.KiraCompletionProperties
+import me.manga.kira.backend.observability.KiraMetrics
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.CsvSource
 import org.junit.jupiter.params.provider.NullSource
 import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.Answers
 import org.mockito.Mockito.mock
+import org.slf4j.LoggerFactory
 import org.springframework.dao.DataAccessResourceFailureException
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.http.MediaType
@@ -93,15 +101,41 @@ class CompletionAdmissionResponseTest {
         assertEquals(listOf(4, 1), redis.keyCounts)
     }
 
-    @Test
-    fun `release failure keeps its separate current behavior and cannot retry on second close`() {
-        val redis = RedisFixture(releaseFailure = true)
-        val permit = redis.admission.acquire(USER)
-        val failure = assertThrows<TooManyRequestsException> { permit.close() }
-        assertEquals("COMPLETION_COORDINATION_UNAVAILABLE", failure.code)
-        assertEquals(5L, failure.retryAfterSeconds)
-        permit.close()
-        assertEquals(listOf(4, 1), redis.keyCounts)
+    @ParameterizedTest
+    @ValueSource(booleans = [true, false])
+    fun `unconfirmed Redis release preserves the result and reports once per application attempt`(releaseFailure: Boolean) {
+        val registry = SimpleMeterRegistry()
+        val logger = LoggerFactory.getLogger(RedisCompletionAdmission::class.java) as Logger
+        val appender = ListAppender<ILoggingEvent>().apply {
+            context = logger.loggerContext
+            start()
+        }
+        logger.addAppender(appender)
+        try {
+            val redis = RedisFixture(releaseFailure = releaseFailure, releaseResult = null, metrics = KiraMetrics(registry))
+            val permit = redis.admission.acquire(USER)
+            val expected = Any()
+            assertSame(expected, permit.use { expected })
+            permit.close()
+            assertEquals(listOf(4, 1), redis.keyCounts)
+
+            val event = appender.list.single()
+            assertEquals(logger.name, event.loggerName)
+            assertEquals(Level.WARN, event.level)
+            assertEquals("Shared completion admission release unconfirmed", event.formattedMessage)
+            assertNull(event.argumentArray)
+            assertNull(event.throwableProxy)
+
+            val counter = registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter()
+            assertEquals(1.0, counter.count())
+            assertEquals(listOf(Tag.of("outcome", "release_unconfirmed")), counter.id.tags)
+            assertNull(registry.find("kira.completion.admission.events").tag("outcome", "coordination_unavailable").counter())
+            assertEquals(1, registry.meters.size)
+        } finally {
+            logger.detachAppender(appender)
+            appender.stop()
+            registry.close()
+        }
     }
 
     private class Endpoint(admission: CompletionAdmission) {
@@ -130,7 +164,13 @@ class CompletionAdmissionResponseTest {
         }
     }
 
-    private class RedisFixture(result: Long? = 0L, acquireFailure: Boolean = false, releaseFailure: Boolean = false) {
+    private class RedisFixture(
+        result: Long? = 0L,
+        acquireFailure: Boolean = false,
+        releaseFailure: Boolean = false,
+        releaseResult: Long? = 0L,
+        metrics: KiraMetrics? = null,
+    ) {
         val keyCounts = mutableListOf<Int>()
         private val redis = mock(StringRedisTemplate::class.java) { call ->
             if (call.method.name == "execute") {
@@ -144,12 +184,12 @@ class CompletionAdmissionResponseTest {
                 if (shouldFail) {
                     throw DataAccessResourceFailureException("private Redis connection detail")
                 }
-                if (count == 4) result else 0L
+                if (count == 4) result else releaseResult
             } else {
                 Answers.RETURNS_DEFAULTS.answer(call)
             }
         }
-        val admission = RedisCompletionAdmission(redis, properties())
+        val admission = RedisCompletionAdmission(redis, properties(), metrics)
     }
 
     @RestController
