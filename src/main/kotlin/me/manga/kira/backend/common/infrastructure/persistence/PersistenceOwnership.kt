@@ -93,11 +93,7 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         poolTransfer.get() === transfer && transfer.actualCaller() && currentPoolState(transfer.source) &&
             (context == null || transfer.source.context === context)
 
-    internal fun commitPoolTransfer(
-        transfer: PersistenceJdbcPoolTransfer,
-        next: PersistenceJdbcPoolEpoch,
-        facts: PersistenceJdbcTransferFacts,
-    ): Boolean {
+    internal fun commitPoolTransfer(transfer: PersistenceJdbcPoolTransfer, next: PersistenceJdbcPoolEpoch, facts: PersistenceJdbcTransferFacts): Boolean {
         val physical = requireNotNull(binding)
         check(!ownershipLockHeld())
         while (transfer.canWaitOutsideLocks()) {
@@ -157,12 +153,19 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
                 continue
             }
             try {
-                if (caller.sampleActualFlag() != null || persistenceFactoryRemainingMillis(budget) == 0L) return PersistenceLeaseRetirementClaim.Refused
-                if (!expected.leased || !currentPoolState(expected)) return PersistenceLeaseRetirementClaim.Refused
-                if (physical.ledger.current(entry.record) !== entry && !entry.retirementRequested.get()) return PersistenceLeaseRetirementClaim.Refused
-                entry.retirementRequested.set(true)
-                expected.epoch.sealForTerminal()
-                return PersistenceLeaseRetirementClaim.Claimed
+                return when {
+                    caller.sampleActualFlag() != null || persistenceFactoryRemainingMillis(budget) == 0L -> PersistenceLeaseRetirementClaim.Refused
+
+                    !expected.leased || !currentPoolState(expected) -> PersistenceLeaseRetirementClaim.Refused
+
+                    physical.ledger.current(entry.record) !== entry && !entry.retirementRequested.get() -> PersistenceLeaseRetirementClaim.Refused
+
+                    else -> {
+                        entry.retirementRequested.set(true)
+                        expected.epoch.sealForTerminal()
+                        PersistenceLeaseRetirementClaim.Claimed
+                    }
+                }
             } finally {
                 physical.ledger.lock.unlock()
             }

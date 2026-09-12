@@ -23,13 +23,12 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
     }
 
     /** These are current-value checks only. Immutable-from-launch provenance is an independent qualification prerequisite. */
-    internal fun profileSupported(pool: HikariDataSource, installed: Boolean): Boolean =
-        pool.javaClass === HikariDataSource::class.java &&
-            (if (installed) pool.threadFactory === factory else pool.threadFactory == null) &&
-            pool.scheduledExecutor == null && pool.metricsTrackerFactory == null && pool.metricRegistry == null &&
-            pool.healthCheckRegistry == null && !pool.isRegisterMbeans && !pool.isAllowPoolSuspension &&
-            pool.exceptionOverride == null && pool.exceptionOverrideClassName == null && pool.initializationFailTimeout == -1L &&
-            absentOrFalse("com.zaxxer.hikari.blockUntilFilled") && absentOrFalse("com.zaxxer.hikari.enableRequestBoundaries")
+    internal fun profileSupported(pool: HikariDataSource, installed: Boolean): Boolean = pool.javaClass === HikariDataSource::class.java &&
+        (if (installed) pool.threadFactory === factory else pool.threadFactory == null) &&
+        pool.scheduledExecutor == null && pool.metricsTrackerFactory == null && pool.metricRegistry == null &&
+        pool.healthCheckRegistry == null && !pool.isRegisterMbeans && !pool.isAllowPoolSuspension &&
+        pool.exceptionOverride == null && pool.exceptionOverrideClassName == null && pool.initializationFailTimeout == -1L &&
+        absentOrFalse("com.zaxxer.hikari.blockUntilFilled") && absentOrFalse("com.zaxxer.hikari.enableRequestBoundaries")
 
     internal fun failLocked(fault: PoolActorFault) {
         check(Thread.holdsLock(gate))
@@ -53,7 +52,8 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
     internal fun actualCreatorLocked(): PoolCreatorCompletion? {
         check(Thread.holdsLock(gate))
         val actual = actorFrame.get() ?: return null
-        if (actual.owner !== this || actual.thread !== Thread.currentThread() || !actual.entered || actual.completion.hasEnded()) return null
+        if (actual.owner !== this || actual.thread !== Thread.currentThread() || !actual.entered) return null
+        if (actual.completion.hasEnded()) return null
         return actual.completion.takeIf { cells[actual.index] === actual }
     }
 
@@ -63,8 +63,7 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
         for (index in cells.indices) {
             val generation = synchronized(gate) { cells[index] } ?: continue
             val thread = generation.thread ?: continue
-            if (thread === Thread.currentThread()) continue
-            if (thread.state !== Thread.State.TERMINATED || thread.isAlive) continue
+            if (thread === Thread.currentThread() || thread.state !== Thread.State.TERMINATED || thread.isAlive) continue
             synchronized(gate) {
                 if (cells[index] === generation && generation.constructionEnded && generation.published) {
                     if (!generation.entered || !generation.completion.hasEnded()) failLocked(PoolActorFault.WORKER_FAILED)
@@ -192,7 +191,11 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
             returned = true
         } finally {
             try {
-                if (!contextInstalled) refuse(PoolActorFault.BOOKKEEPING_FAILED) else if (!returned) refuse(PoolActorFault.WORKER_FAILED)
+                if (!contextInstalled) {
+                    refuse(PoolActorFault.BOOKKEEPING_FAILED)
+                } else if (!returned) {
+                    refuse(PoolActorFault.WORKER_FAILED)
+                }
             } finally {
                 try {
                     val actual = actorFrame.get()
@@ -216,12 +219,7 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
 
     private fun absentOrFalse(name: String): Boolean = System.getProperty(name).let { it == null || it.equals("false", ignoreCase = true) }
 
-    private class Generation(
-        val owner: PoolActorCustody,
-        val index: Int,
-        val delegate: Runnable,
-        val creator: PoolCreatorCompletion,
-    ) {
+    private class Generation(val owner: PoolActorCustody, val index: Int, val delegate: Runnable, val creator: PoolCreatorCompletion) {
         val issuance = Any()
         val completion = PoolCreatorCompletion.prepare(issuance)
 

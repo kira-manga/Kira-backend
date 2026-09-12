@@ -73,61 +73,60 @@ class PoolActorCustodyTest {
 
     @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
     @ValueSource(strings = ["incident-first", "hard-first", "operation-hard"])
-    fun `MODEL RETURN incident preserves authentic creation and generic or factory hard faults stay dominant`(order: String) =
-        ActorFixture().use { fixture ->
-            val acquisition = fixture.creator()
+    fun `MODEL RETURN incident preserves authentic creation and generic or factory hard faults stay dominant`(order: String) = ActorFixture().use { fixture ->
+        val acquisition = fixture.creator()
+        try {
+            assertTrue(acquisition.capture(PhysicalTestConnection().raw)) // MODEL handle; the enclosing creator remains genuinely active.
+            val entitlement = requireNotNull(acquisition.prepareLeaseEntitlement())
+            val returning = requireNotNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
+            assertTrue(returning.enter())
             try {
-                assertTrue(acquisition.capture(PhysicalTestConnection().raw)) // MODEL handle; the enclosing creator remains genuinely active.
-                val entitlement = requireNotNull(acquisition.prepareLeaseEntitlement())
-                val returning = requireNotNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
-                assertTrue(returning.enter())
-                try {
-                    assertNull(fixture.lifecycle.actorSnapshot().firstFailure)
+                assertNull(fixture.lifecycle.actorSnapshot().firstFailure)
+                assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
+                if (order == "hard-first") assertNull(fixture.pool.threadFactory.newThread(null))
+                assertTrue(returning.recordReturnIncidentBeforeEnd())
+                assertFalse(fixture.lifecycle.businessReady())
+                assertFalse(fixture.lifecycle.businessAdmissionOpen())
+                if (order == "incident-first") {
                     assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
-                    if (order == "hard-first") assertNull(fixture.pool.threadFactory.newThread(null))
-                    assertTrue(returning.recordReturnIncidentBeforeEnd())
-                    assertFalse(fixture.lifecycle.businessReady())
-                    assertFalse(fixture.lifecycle.businessAdmissionOpen())
-                    if (order == "incident-first") {
-                        assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
-                        val calls = AtomicInteger()
-                        val actor = requireNotNull(
-                            fixture.emit(
-                                Runnable {
-                                    assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
-                                    assertFalse(fixture.lifecycle.businessAdmissionOpen())
-                                    calls.incrementAndGet()
-                                },
-                            ),
-                        )
-                        actor.start()
-                        awaitActorTermination(actor)
-                        assertEquals(1, calls.get())
-                        assertNull(fixture.pool.threadFactory.newThread(null)) // Genuine later hard refusal, not another incident classification.
-                        assertEquals(1L, fixture.lifecycle.actorSnapshot().retiredGenerations)
-                    } else if (order == "operation-hard") {
-                        assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
-                        assertTrue(returning.failBeforeEnd(), "The exact generic hard API must still seal despite an earlier incident.")
-                    }
-                    val first = if (order == "hard-first") PoolActorFault.UNAUTHENTICATED_CREATION else PoolActorFault.BOOKKEEPING_FAILED
-                    assertEquals(first, fixture.lifecycle.actorSnapshot().firstFailure)
-                    assertTrue(fixture.lifecycle.actorSnapshot().factorySealed)
-                    assertTrue(returning.recordReturnIncidentBeforeEnd())
-                    assertNull(fixture.emit(Runnable { error("An incident must never reopen a hard-sealed factory.") }))
-                    assertEquals(first, fixture.lifecycle.actorSnapshot().firstFailure)
-                    assertTrue(fixture.lifecycle.actorSnapshot().factorySealed)
-                    assertEquals(0, fixture.lifecycle.actorSnapshot().retainedGenerations)
-                    assertEquals(1L, fixture.lifecycle.actorSnapshot().activeOperations)
-                    assertSame(returning.frame, PoolCallFrames.current())
-                    assertFalse(returning.actualFrameEnded() || returning.frame.completion.hasEnded())
-                } finally {
-                    assertTrue(returning.end())
+                    val calls = AtomicInteger()
+                    val actor = requireNotNull(
+                        fixture.emit(
+                            Runnable {
+                                assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
+                                assertFalse(fixture.lifecycle.businessAdmissionOpen())
+                                calls.incrementAndGet()
+                            },
+                        ),
+                    )
+                    actor.start()
+                    awaitActorTermination(actor)
+                    assertEquals(1, calls.get())
+                    assertNull(fixture.pool.threadFactory.newThread(null)) // Genuine later hard refusal, not another incident classification.
+                    assertEquals(1L, fixture.lifecycle.actorSnapshot().retiredGenerations)
+                } else if (order == "operation-hard") {
+                    assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
+                    assertTrue(returning.failBeforeEnd(), "The exact generic hard API must still seal despite an earlier incident.")
                 }
+                val first = if (order == "hard-first") PoolActorFault.UNAUTHENTICATED_CREATION else PoolActorFault.BOOKKEEPING_FAILED
+                assertEquals(first, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertTrue(fixture.lifecycle.actorSnapshot().factorySealed)
+                assertTrue(returning.recordReturnIncidentBeforeEnd())
+                assertNull(fixture.emit(Runnable { error("An incident must never reopen a hard-sealed factory.") }))
+                assertEquals(first, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertTrue(fixture.lifecycle.actorSnapshot().factorySealed)
+                assertEquals(0, fixture.lifecycle.actorSnapshot().retainedGenerations)
+                assertEquals(1L, fixture.lifecycle.actorSnapshot().activeOperations)
+                assertSame(returning.frame, PoolCallFrames.current())
+                assertFalse(returning.actualFrameEnded() || returning.frame.completion.hasEnded())
             } finally {
-                // Only now may this uninitialized MODEL acquisition record its separate hard startup failure.
-                assertTrue(acquisition.end())
+                assertTrue(returning.end())
             }
+        } finally {
+            // Only now may this uninitialized MODEL acquisition record its separate hard startup failure.
+            assertTrue(acquisition.end())
         }
+    }
 
     @Test
     fun `ordinary unstarted platform Thread has no inherited app context and foreign or reentrant run cannot execute its delegate twice`() =
@@ -284,43 +283,42 @@ class PoolActorCustodyTest {
         }
 
     @Test
-    fun `stock executor replacement from complete Worker finally retains its authentic creator even after the task throws`() =
-        ActorFixture().use { fixture ->
-            OwnedCallerTestScope().use { scope ->
-                val firstHeld = scope.gate()
-                val secondHeld = scope.gate()
-                val firstThread = AtomicReference<Thread>()
-                val secondThread = AtomicReference<Thread>()
-                val executor = ThreadPoolExecutor(1, 1, 5, TimeUnit.SECONDS, LinkedBlockingQueue(), fixture.pool.threadFactory)
-                fixture.own(executor)
-                val acquisition = fixture.creator()
-                try {
-                    executor.execute {
-                        firstThread.set(Thread.currentThread())
-                        firstHeld.hold()
-                        throw IllegalStateException("MODEL task failure, real Worker replacement finally.")
-                    }
-                    firstHeld.awaitEntered()
-                    executor.execute {
-                        secondThread.set(Thread.currentThread())
-                        assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
-                        secondHeld.hold()
-                    }
-                    firstHeld.release()
-                    secondHeld.awaitEntered()
-                    awaitActorTermination(requireNotNull(firstThread.get()))
-                    assertNotNull(secondThread.get(), "A complete Worker, not just the throwing task, authenticates replacement creation.")
-                    assertFalse(firstThread.get() === secondThread.get())
-                    assertEquals(2, fixture.lifecycle.actorSnapshot().retainedGenerations)
-                    assertEquals(PoolActorFault.WORKER_FAILED, fixture.lifecycle.actorSnapshot().firstFailure)
-                    assertFalse(fixture.lifecycle.businessAdmissionOpen())
-                } finally {
-                    firstHeld.release()
-                    secondHeld.release()
-                    assertTrue(acquisition.end())
+    fun `stock executor replacement from complete Worker finally retains its authentic creator even after the task throws`() = ActorFixture().use { fixture ->
+        OwnedCallerTestScope().use { scope ->
+            val firstHeld = scope.gate()
+            val secondHeld = scope.gate()
+            val firstThread = AtomicReference<Thread>()
+            val secondThread = AtomicReference<Thread>()
+            val executor = ThreadPoolExecutor(1, 1, 5, TimeUnit.SECONDS, LinkedBlockingQueue(), fixture.pool.threadFactory)
+            fixture.own(executor)
+            val acquisition = fixture.creator()
+            try {
+                executor.execute {
+                    firstThread.set(Thread.currentThread())
+                    firstHeld.hold()
+                    error("MODEL task failure, real Worker replacement finally.")
                 }
+                firstHeld.awaitEntered()
+                executor.execute {
+                    secondThread.set(Thread.currentThread())
+                    assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
+                    secondHeld.hold()
+                }
+                firstHeld.release()
+                secondHeld.awaitEntered()
+                awaitActorTermination(requireNotNull(firstThread.get()))
+                assertNotNull(secondThread.get(), "A complete Worker, not just the throwing task, authenticates replacement creation.")
+                assertFalse(firstThread.get() === secondThread.get())
+                assertEquals(2, fixture.lifecycle.actorSnapshot().retainedGenerations)
+                assertEquals(PoolActorFault.WORKER_FAILED, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertFalse(fixture.lifecycle.businessAdmissionOpen())
+            } finally {
+                firstHeld.release()
+                secondHeld.release()
+                assertTrue(acquisition.end())
             }
         }
+    }
 
     @Test
     fun `stock caller-runs work stays in its actual acquisition extent even though no factory callback occurs`() = ActorFixture().use { fixture ->
@@ -383,24 +381,25 @@ class PoolActorCustodyTest {
 
     @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
     @ValueSource(strings = ["F", "G"])
-    fun `factory never publishes under a held ownership lock and its seal recheck needs no lock or profile callback`(held: String) = ActorFixture().use { fixture ->
-        val root = actorField(fixture.owner, "root") as PersistenceJdbcDriverRoot
-        val binding = actorField(root.ordinary, "binding") as PersistencePhysicalFactoryBinding
-        val lock = if (held == "F") binding.rendezvous.lock else binding.ledger.lock
-        val acquisition = fixture.creator()
-        try {
-            lock.withLock {
-                assertTrue(fixture.lifecycle.businessAdmissionOpen())
-                assertFalse(fixture.lifecycle.isAuthenticPoolCaller())
-                assertNull(fixture.emit(Runnable { error("Ownership-locked factory callback must not publish.") }))
-                assertFalse(fixture.lifecycle.businessAdmissionOpen())
+    fun `factory never publishes under a held ownership lock and its seal recheck needs no lock or profile callback`(held: String) =
+        ActorFixture().use { fixture ->
+            val root = actorField(fixture.owner, "root") as PersistenceJdbcDriverRoot
+            val binding = actorField(root.ordinary, "binding") as PersistencePhysicalFactoryBinding
+            val lock = if (held == "F") binding.rendezvous.lock else binding.ledger.lock
+            val acquisition = fixture.creator()
+            try {
+                lock.withLock {
+                    assertTrue(fixture.lifecycle.businessAdmissionOpen())
+                    assertFalse(fixture.lifecycle.isAuthenticPoolCaller())
+                    assertNull(fixture.emit(Runnable { error("Ownership-locked factory callback must not publish.") }))
+                    assertFalse(fixture.lifecycle.businessAdmissionOpen())
+                }
+                assertEquals(PoolActorFault.UNAUTHENTICATED_CREATION, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertEquals(0, fixture.lifecycle.actorSnapshot().retainedGenerations)
+            } finally {
+                assertTrue(acquisition.end())
             }
-            assertEquals(PoolActorFault.UNAUTHENTICATED_CREATION, fixture.lifecycle.actorSnapshot().firstFailure)
-            assertEquals(0, fixture.lifecycle.actorSnapshot().retainedGenerations)
-        } finally {
-            assertTrue(acquisition.end())
         }
-    }
 }
 
 /** All cleanup ownership is retained before any explicit fixture start/submit. NEW is never started by cleanup to obtain a receipt. */

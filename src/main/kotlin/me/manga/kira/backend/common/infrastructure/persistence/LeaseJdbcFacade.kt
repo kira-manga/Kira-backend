@@ -38,22 +38,29 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
 
     override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? = try {
         invokeConnection(proxy, method, args)
+    } catch (failure: SQLClientInfoException) {
+        throw failure
     } catch (failure: SQLException) {
         // Admission (including stale/foreign credentials), adaptation AND finally failures all
         // obey this narrower checked declaration; the JDK proxy must not wrap them in UTE.
-        if (method.name == "setClientInfo" && failure !is SQLClientInfoException) throw lease.state.context.clientInfo(failure)
+        if (method.name == "setClientInfo") throw lease.state.context.clientInfo(failure)
         throw failure
     }
 
     private fun invokeConnection(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
-        if (method.declaringClass === Any::class.java) return when (method.name) {
-            "toString" -> "LeaseJdbcConnection(redacted)"
-            "equals" -> proxy === args?.singleOrNull()
-            "hashCode" -> System.identityHashCode(proxy)
-            else -> PersistenceJdbcGuardContext.refuse()
+        if (method.declaringClass === Any::class.java) {
+            return when (method.name) {
+                "toString" -> "LeaseJdbcConnection(redacted)"
+                "equals" -> proxy === args?.singleOrNull()
+                "hashCode" -> System.identityHashCode(proxy)
+                else -> PersistenceJdbcGuardContext.refuse()
+            }
         }
         check(method.declaringClass === Connection::class.java || method.declaringClass === Wrapper::class.java)
-        if (method.name == "close") { lease.close(); return null }
+        if (method.name == "close") {
+            lease.close()
+            return null
+        }
         if (method.name == "abort") {
             lease.abort(args?.singleOrNull() as? Executor ?: PersistenceJdbcGuardContext.refuse())
             return null
@@ -61,9 +68,9 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
         if (method.name == "isClosed" && lease.closed()) return true
         val dispatch = lease.enterDispatch()
         val context = lease.state.context
-        val call = try {
+        val call = runCatching {
             context.enter(lease.identity, PersistenceJdbcGuardCallKind.BUSINESS)
-        } catch (failure: Throwable) {
+        }.getOrElse { failure ->
             dispatch.end()
             throw failure
         }
@@ -78,7 +85,9 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
                             if ((arguments.singleOrNull() as? Class<*>)?.isInstance(self) != true) PersistenceJdbcGuardContext.refuse()
                             self
                         }
+
                         "isWrapperFor" -> (arguments.singleOrNull() as? Class<*>)?.isInstance(self) == true
+
                         else -> {
                             val adapted = graph.connectionArguments(call, method, arguments)
                             val returned = method.invoke(handle, *adapted)
@@ -94,7 +103,11 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
                     if (!completed) call.failedBeforeBoxing(wrapping)
                 }
             }.getOrElse { failure ->
-                val actual = if (failure.javaClass === InvocationTargetException::class.java) (failure as InvocationTargetException).targetException else failure
+                val actual = if (failure.javaClass === InvocationTargetException::class.java) {
+                    (failure as InvocationTargetException).targetException
+                } else {
+                    failure
+                }
                 val reported = call.failure(actual, wrapping)
                 if (method.name == "setClientInfo" && reported is SQLException && reported !is SQLClientInfoException) throw context.clientInfo(reported)
                 throw reported

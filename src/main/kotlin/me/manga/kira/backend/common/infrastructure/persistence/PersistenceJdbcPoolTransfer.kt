@@ -77,8 +77,7 @@ internal class PersistenceJdbcPoolTransfer private constructor(
         return canWaitOutsideLocks()
     }
 
-    internal fun commit(next: PersistenceJdbcPoolEpoch, facts: PersistenceJdbcTransferFacts): Boolean =
-        ownership.commitPoolTransfer(this, next, facts)
+    internal fun commit(next: PersistenceJdbcPoolEpoch, facts: PersistenceJdbcTransferFacts): Boolean = ownership.commitPoolTransfer(this, next, facts)
 
     /** Invoked only in the prevalidated G commit; no allocation, attachment or native call here. */
     internal fun publishConsent() = committed.set(true)

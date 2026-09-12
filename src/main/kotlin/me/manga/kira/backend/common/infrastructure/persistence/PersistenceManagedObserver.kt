@@ -9,11 +9,7 @@ internal object PersistenceManagedObserver {
         return observe(root, target, budget)
     }
 
-    fun observe(
-        root: PersistenceJdbcDriverRoot,
-        target: PersistenceManagedObservation,
-        budget: PersistenceTimeBudget,
-    ): PersistenceLifecycleObservation {
+    fun observe(root: PersistenceJdbcDriverRoot, target: PersistenceManagedObservation, budget: PersistenceTimeBudget): PersistenceLifecycleObservation {
         val caller = Thread.currentThread()
         if (!trusted(caller)) return PersistenceLifecycleObservation.UNSUPPORTED_OBSERVER
         var interrupted = false

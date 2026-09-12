@@ -23,8 +23,8 @@ import java.sql.PreparedStatement
 import java.sql.Ref
 import java.sql.ResultSet
 import java.sql.ResultSetMetaData
-import java.sql.SQLException
 import java.sql.SQLClientInfoException
+import java.sql.SQLException
 import java.sql.Statement
 import java.sql.Struct
 import java.util.Collections
@@ -223,11 +223,13 @@ class PhysicalJdbcDescendantsTest {
             assertEquals("kira-shadowed-default-client", connection.getClientInfo("ApplicationName"))
             assertEquals(7, properties["ApplicationName"], "The caller's explicit non-String entry is not overwritten.")
             FactoryWorkerTestScope().use { callers ->
-                assertTrue(callers.launch {
-                    assertThrows<SQLClientInfoException> { connection.clientInfo = properties }
-                    assertThrows<SQLClientInfoException> { connection.setClientInfo("ApplicationName", "foreign") }
-                    true
-                }.join())
+                assertTrue(
+                    callers.launch {
+                        assertThrows<SQLClientInfoException> { connection.clientInfo = properties }
+                        assertThrows<SQLClientInfoException> { connection.setClientInfo("ApplicationName", "foreign") }
+                        true
+                    }.join(),
+                )
             }
         } finally {
             connection.close()

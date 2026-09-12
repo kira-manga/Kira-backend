@@ -41,8 +41,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.LockSupport
+import java.util.concurrent.locks.ReentrantLock
 
 /** Requires the qualified private runtime artifact. Missing owned-cut support fails; there is no stock/skip fallback. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -58,215 +58,11 @@ class PersistencePgOwnedCutIntegrationTest {
         if (database.isInitialized()) database.value.close()
     }
 
+    private fun registeredFinalJarConsumerDrivers(): List<Driver> = java.util.Collections.list(DriverManager.getDrivers())
+
     @Test
     fun `required adapter resolves all22 exact descriptors and rejects missing changed or foreign helper`() {
-        val prepared = PersistenceDriverBootstrap.prepare()
-        val driver = prepared.construct()
-        val loader = driver.javaClass.classLoader
-        val access = PersistencePgOwnedCutAccess.prepare(prepared, driver.javaClass)
-        val helper = Class.forName(OWNED_CUT_HELPER, false, loader)
-        assertSame(loader, helper.classLoader)
-        val marker = Class.forName("$OWNED_CUT_HELPER\$1", false, loader)
-        assertMarkerShape(loader, helper, marker)
-        fun cell(name: String): Class<*> = Class.forName("$OWNED_CUT_HELPER\$$name", false, loader).also {
-            assertSame(loader, it.classLoader)
-            assertSame(helper, it.declaringClass)
-            assertTrue(Modifier.isPublic(it.modifiers) && Modifier.isFinal(it.modifiers) && Modifier.isStatic(it.modifiers))
-        }
-        val opening = cell("Opening")
-        val root = cell("Root")
-        val owner = cell("Owner")
-        val life = cell("Life")
-        val invocation = cell("Invocation")
-        val objects = Array<Any?>::class.java
-        val lives = java.lang.reflect.Array.newInstance(life, 0).javaClass
-        val nativeConnection = Class.forName("$OWNED_CUT_HELPER\$NativeConnection", false, loader)
-        val native = Class.forName("$OWNED_CUT_HELPER\$Native", false, loader)
-        // Recorded native02 descriptors and exact constructor flags, independent of the adapter's shape predicate.
-        val constructorArguments = mapOf(
-            opening to listOf(Driver::class.java, Any::class.java),
-            root to listOf(nativeConnection, Any::class.java, Any::class.java),
-            owner to listOf(root),
-            life to listOf(nativeConnection, life, Integer.TYPE, native),
-            invocation to listOf(owner, Any::class.java, Any::class.java, Method::class.java, objects, objects, lives, IntArray::class.java),
-        )
-        constructorArguments.forEach { (type, arguments) ->
-            assertEquals(2, type.declaredConstructors.size)
-            val explicit = type.getDeclaredConstructor(*arguments.toTypedArray())
-            assertEquals(Modifier.PRIVATE, explicit.modifiers)
-            assertFalse(explicit.isSynthetic)
-            val bridge = type.getDeclaredConstructor(*(arguments + marker).toTypedArray())
-            assertEquals(0x1000, bridge.modifiers)
-            assertTrue(bridge.isSynthetic)
-            arguments.forEachIndexed { index, argument ->
-                assertSame(argument, explicit.parameterTypes[index])
-                assertSame(argument, bridge.parameterTypes[index])
-            }
-            assertSame(marker, bridge.parameterTypes.last())
-        }
-        val descriptors = mapOf(
-            "prepareRuntime" to (Void.TYPE to emptyList()),
-            "prepareOpening" to (opening to listOf(Driver::class.java, Any::class.java)),
-            "armOpening" to (Void.TYPE to listOf(opening)),
-            "recordReturned" to (Void.TYPE to listOf(opening, Connection::class.java)),
-            "endOpening" to (Void.TYPE to listOf(opening)),
-            "openingState" to (Integer.TYPE to listOf(opening)),
-            "cleanupOpening" to (Void.TYPE to listOf(opening)),
-            "attach" to (root to listOf(opening, Connection::class.java, Any::class.java, Any::class.java)),
-            "owner" to (owner to listOf(root)),
-            "life" to (life to listOf(owner, Any::class.java, life, java.lang.Boolean.TYPE)),
-            "isLive" to (java.lang.Boolean.TYPE to listOf(owner, life)),
-            "revoke" to (java.lang.Boolean.TYPE to listOf(owner, life)),
-            "lifeKind" to (Integer.TYPE to listOf(life)),
-            "firstCloseState" to (Integer.TYPE to listOf(life)),
-            "liveNativeChildren" to (java.lang.Long.TYPE to listOf(root)),
-            "rootState" to (Integer.TYPE to listOf(root)),
-            "retentionState" to (Integer.TYPE to listOf(root)),
-            "prepareInvocation" to
-                (invocation to listOf(owner, Any::class.java, Any::class.java, Method::class.java, objects, objects, lives, IntArray::class.java)),
-            "arm" to (Void.TYPE to listOf(invocation)),
-            "invocationState" to (Integer.TYPE to listOf(invocation)),
-            "drainState" to (Integer.TYPE to listOf(invocation)),
-            "disarm" to (Void.TYPE to listOf(invocation)),
-            "actualEnd" to (Void.TYPE to listOf(invocation)),
-        )
-        val resolved = (ownedCutField(access, "methods") as Map<*, *>).values.map { it as Method }.associateBy { it.name }
-        // Historical selector name stays stable; the successor requires all23 with no old-JAR fallback.
-        assertEquals(23, resolved.size)
-        assertEquals(descriptors.keys, resolved.keys)
-        descriptors.forEach { (name, descriptor) ->
-            val method = helper.getDeclaredMethod(name, *descriptor.second.toTypedArray())
-            assertEquals(method, resolved.getValue(name))
-            assertSame(descriptor.first, method.returnType)
-            assertTrue(Modifier.isPublic(method.modifiers) && Modifier.isStatic(method.modifiers))
-            assertFalse(method.isBridge || method.isSynthetic || Modifier.isAbstract(method.modifiers))
-        }
-        val verifyConsumerInputs = assertFinalJarConsumerProvenance(
-            "required",
-            driver.javaClass,
-            listOf(helper, marker, opening, root, owner, life, invocation),
-        )
-        CutDescriptorDefect.entries.forEach { defect ->
-            // Only negative cold linkage: authentic artifact class bytes, never a synthetic successful Driver.
-            val deniedLoader = CutDescriptorDefectLoader(loader, defect)
-            val denied = PersistenceDriverBootstrap.prepareWithLoader(deniedLoader)
-            val driverType = Class.forName("org.postgresql.Driver", false, deniedLoader)
-            assertSame(deniedLoader, driverType.classLoader)
-            assertTrue(denied.ownsTimerDriverClass(driverType))
-            deniedLoader.assertConstructorDefect()
-            assertEndpointFailure(PersistenceBoundaryFailureCode.UNSUPPORTED_JDBC_DRIVER) {
-                PersistencePgOwnedCutAccess.prepare(denied, driverType)
-            }
-        }
-        verifyConsumerInputs()
-    }
-
-    private fun assertMarkerShape(loader: ClassLoader?, helper: Class<*>, marker: Class<*>) {
-        assertSame(loader, marker.classLoader)
-        assertSame(helper, marker.enclosingClass)
-        assertNull(marker.declaringClass)
-        assertNull(marker.enclosingMethod)
-        assertNull(marker.enclosingConstructor)
-        assertTrue(marker.isAnonymousClass && marker.isSynthetic)
-        assertEquals(0, marker.modifiers and (Modifier.PUBLIC or Modifier.PROTECTED or Modifier.PRIVATE))
-        assertEquals(0, marker.declaredFields.size)
-        assertEquals(0, marker.declaredMethods.size)
-        assertEquals(0, marker.declaredConstructors.size)
-    }
-
-    /** Actual positive Classes under the explicit development profile, not hashes of Class.getResource bytes. */
-    private fun assertFinalJarConsumerProvenance(witnessName: String, driverType: Class<*>, cutTypes: List<Class<*>>): () -> Unit {
-        assertTrue(witnessName == "required" || witnessName == "original")
-        fun input(name: String): String = requireNotNull(System.getProperty("kira.finalJarConsumer.$name")) {
-            "The required consumer test needs its explicit final-JAR profile: $name"
-        }
-        assertEquals("app-29-final-jar-consumer-profile-04", input("profile"))
-        val jar = Path.of(input("jar")).toRealPath()
-        val checker = Path.of(input("checker")).toRealPath()
-        fun sha256(path: Path): String = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))
-            .joinToString("") { "%02x".format(it) }
-        val verifyInputs = {
-            assertEquals("50f7dc4a6314cc5105f4990be26ba8be65ae242e1f7e62652cc60d6a2c0e03df", sha256(jar))
-            assertEquals("857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288", sha256(checker))
-        }
-        verifyInputs()
-        val loader = requireNotNull(driverType.classLoader)
-        assertSame(javaClass.classLoader, loader)
-        assertSame(Thread.currentThread().contextClassLoader, loader)
-        assertEquals("org.postgresql.Driver", driverType.name)
-        val witness = linkedMapOf("profile" to input("profile"), "witness" to witnessName)
-        val loaderIdentity = "${loader.javaClass.name}@${Integer.toHexString(System.identityHashCode(loader))}"
-        fun associate(type: Class<*>, expected: Path) {
-            assertSame(loader, type.classLoader)
-            val source = requireNotNull(type.protectionDomain.codeSource).location.toURI()
-            assertEquals("file", source.scheme)
-            val actual = Path.of(source).toRealPath()
-            assertEquals(expected, actual)
-            witness["class.${type.name}.source"] = actual.toString()
-            witness["class.${type.name}.loader"] = loaderIdentity
-        }
-        fun literal(name: String): Class<*> = Class.forName(name, false, loader)
-        (listOf(driverType) + cutTypes).forEach { associate(it, jar) }
-        val info = literal("org.postgresql.util.DriverInfo")
-        val cleaner = literal("org.postgresql.util.LazyCleanerImpl")
-        val wrapper = literal("org.postgresql.util.LazyCleanerImpl\$CleanableWrapper")
-        val scram = literal("org.postgresql.shaded.com.ongres.scram.client.ScramClient")
-        listOf(info, cleaner, wrapper, scram).forEach { associate(it, jar) }
-        associate(literal("org.checkerframework.checker.nullness.qual.NonNull"), checker)
-        assertEquals("42.7.12-kira.1", driverType.`package`.implementationVersion)
-        assertEquals("42.7.12-kira.1", info.getField("DRIVER_VERSION").get(null))
-        val cleanerField = cleaner.getDeclaredField("cleaner")
-        assertEquals(Modifier.PRIVATE or Modifier.FINAL, cleanerField.modifiers)
-        assertSame(Cleaner::class.java, cleanerField.type)
-        assertSame(Cleaner.Cleanable::class.java, wrapper.getDeclaredField("nativeCleanable").type)
-        witness["mr.cleaner.field"] = cleanerField.type.name
-        witness["mr.wrapper.field"] = wrapper.getDeclaredField("nativeCleanable").type.name
-        val registered = java.util.Collections.list(DriverManager.getDrivers())
-        // acceptsURL parses only; Gate A never calls connect or initializes the lazy database fixture.
-        val providers = registered.filter { it.acceptsURL("jdbc:postgresql://127.0.0.1/gate_a_no_connection") }
-        assertEquals(1, providers.size)
-        assertSame(driverType, providers.single().javaClass)
-        registered.forEachIndexed { index, provider -> witness["registered.$index"] = provider.javaClass.name }
-        witness["postgres.provider.count"] = providers.size.toString()
-        witness["jar.sha256"] = sha256(jar)
-        witness["checker.sha256"] = sha256(checker)
-        val report = Path.of(input("report")).resolveSibling("worker-runtime-$witnessName.txt")
-        recordFinalJarConsumerJvm(witness, Path.of(input("javaHome")), report)
-        witness["provenance"] = "PASS"
-        assertTrue(witness.values.none { '\n' in it || '\r' in it })
-        Files.writeString(
-            report,
-            witness.entries.joinToString("\n", postfix = "\n") { "${it.key}=${it.value}" },
-            StandardOpenOption.CREATE_NEW,
-        )
-        return verifyInputs
-    }
-
-    private fun recordFinalJarConsumerJvm(witness: MutableMap<String, String>, expectedHome: Path, report: Path) {
-        val home = Path.of(System.getProperty("java.home")).toRealPath()
-        assertEquals(expectedHome.toRealPath(), home)
-        assertEquals(21, Runtime.version().feature())
-        val process = ProcessHandle.current()
-        val info = process.info()
-        val executable = Path.of(info.command().orElseThrow()).toRealPath()
-        assertEquals(home.resolve("bin/java").toRealPath(), executable)
-        witness["worker.pid"] = process.pid().toString()
-        witness["worker.executable"] = executable.toString()
-        witness["java.home"] = home.toString()
-        witness["java.runtime.version"] = Runtime.version().toString()
-        witness["java.vm.name"] = System.getProperty("java.vm.name")
-        witness["java.vm.version"] = System.getProperty("java.vm.version")
-        val arguments = ManagementFactory.getRuntimeMXBean().inputArguments
-        val forbidden = listOf(
-            "-javaagent:", "-agentlib:", "-agentpath:", "-Xbootclasspath", "--patch-module", "--upgrade-module-path", "--module-path",
-            "-Djava.system.class.loader", "-Djava.class.path=", "-Djdk.util.jar.", "-XX:SharedArchiveFile=", "-XX:ArchiveClassesAtExit=",
-        )
-        assertFalse(arguments.any { argument -> forbidden.any { argument.startsWith(it) } })
-        assertTrue(arguments.containsAll(listOf("-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading")))
-        assertTrue(arguments.contains("-Xlog:class+load=info:file=${report.parent}/class-load-%p.txt:uptime,level,tags"))
-        listOf("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS").forEach { assertNull(System.getenv(it)) }
-        arguments.forEachIndexed { index, argument -> witness["jvm.arg.$index"] = argument }
-        info.arguments().orElseThrow().forEachIndexed { index, argument -> witness["process.arg.$index"] = argument }
+        assertRequiredOwnedCutDescriptors(this, this::registeredFinalJarConsumerDrivers)
     }
 
     @Test
@@ -275,26 +71,8 @@ class PersistencePgOwnedCutIntegrationTest {
         var primaryFailure: Throwable? = null
         try {
             withOwnedCutConnection(database.value, originalProvider = true) { f ->
-                assertEquals("app-29-gate-b-hosted-01", System.getProperty("kira.finalJarConsumer.gate"))
-                val access = f.opening.access
-                val driverType = ownedCutField(access, "driverType") as Class<*>
-                val methods = (ownedCutField(access, "methods") as Map<*, *>).values.map { it as Method }
-                val helper = methods.map { it.declaringClass }.distinct().single()
-                val types = requireNotNull(ownedCutField(access, "types"))
-                val opaque = listOf("opening", "root", "owner", "life", "invocation").map { ownedCutField(types, it) as Class<*> }
-                assertSame(opaque.first(), f.opening.cell.javaClass)
-                val marker = opaque.first().declaredConstructors.single { it.isSynthetic }.parameterTypes.last()
-                assertEquals(OWNED_CUT_HELPER, helper.name)
-                assertEquals("org.postgresql.jdbc.PgConnection", f.raw.javaClass.name)
-                verifyConsumerInputs = assertFinalJarConsumerProvenance("original", driverType, listOf(helper, marker, f.raw.javaClass) + opaque)
-                assertSame(PersistenceDriverAttemptPolicy.ORIGINAL_PROVIDER, f.entry.policy)
-                assertNull(requireNotNull(f.entry.driverOpening).image)
-                assertNull(f.entry.driverScope)
-                assertNull(f.entry.transports)
-                assertTrue(f.entry.driverCut.enabled)
-                assertSame(f.raw, ownedCutField(f.opening.cell, "returned"))
-                assertEquals(PersistencePgOwnedCutAccess.OPENING_ENDED, f.opening.access.openingState(f.opening))
-                assertNull((ownedCutField(f.entry.driverCut, "root") as AtomicReference<*>).get())
+                verifyConsumerInputs = assertOriginalProviderProvenance(this, f, this::registeredFinalJarConsumerDrivers)
+                assertOriginalProviderOpening(f)
                 f.connection.createStatement().use { statement ->
                     statement.executeQuery("SELECT 1").use { result ->
                         assertTrue(result.next())
@@ -310,13 +88,7 @@ class PersistencePgOwnedCutIntegrationTest {
             throw failure
         } finally {
             // After BOTH outer use blocks (connection retirement and scope close), even when either fails.
-            try {
-                verifyConsumerInputs?.invoke()
-            } catch (recheckFailure: Throwable) {
-                val failure = primaryFailure
-                if (failure == null) throw recheckFailure
-                if (failure !== recheckFailure) failure.addSuppressed(recheckFailure)
-            }
+            recheckFinalJarConsumerInputs(verifyConsumerInputs, primaryFailure)
         }
     }
 
@@ -528,45 +300,44 @@ class PersistencePgOwnedCutIntegrationTest {
     }
 
     @Test
-    fun `real native finalizers end before the held core last count and a racing terminal seal still denies return`() =
-        withOwnedCutPool(database.value) { f ->
-            val connection = f.pool.connection
-            val lease = ownedPoolLease(connection)
-            val entry = f.entry(connection)
-            val root = ownedPoolRoot(lease)
-            try {
-                CoreLastCountBarrier(lease).use { barrier ->
-                    FactoryWorkerTestScope().use { workers ->
-                        val observer = workers.launch {
-                            barrier.awaitEntered()
-                            try {
-                                assertTrue(barrier.nativeEnded(), "This seam is AFTER native actualEnd, not a native-finalizer suspension claim.")
-                                assertTrue(lease.state.epoch.foregroundActive())
-                                assertFalse(lease.state.epoch.sealedAndEnded())
-                                assertTrue(entry.jdbc.currentPoolState(lease.state))
-                                assertSame(root.cell, ownedPoolRoot(lease).cell)
-                                assertFalse((ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer).consented())
-                                requireNotNull(f.pool.requestShutdown())
-                                awaitLifecycleFact { !entry.jdbc.permitsCleanup(lease.state.epoch) }
-                                assertFalse(entry.jdbc.postOpeningCallsEnded())
-                                assertFalse(requireNotNull(entry.terminalWork).producerDrainProven())
-                                connection.close() // No second real return, despite the held first one.
-                            } finally {
-                                barrier.release()
-                            }
-                            true
+    fun `real native finalizers end before the held core last count and a racing terminal seal still denies return`() = withOwnedCutPool(database.value) { f ->
+        val connection = f.pool.connection
+        val lease = ownedPoolLease(connection)
+        val entry = f.entry(connection)
+        val root = ownedPoolRoot(lease)
+        try {
+            CoreLastCountBarrier(lease).use { barrier ->
+                FactoryWorkerTestScope().use { workers ->
+                    val observer = workers.launch {
+                        barrier.awaitEntered()
+                        try {
+                            assertTrue(barrier.nativeEnded(), "This seam is AFTER native actualEnd, not a native-finalizer suspension claim.")
+                            assertTrue(lease.state.epoch.foregroundActive())
+                            assertFalse(lease.state.epoch.sealedAndEnded())
+                            assertTrue(entry.jdbc.currentPoolState(lease.state))
+                            assertSame(root.cell, ownedPoolRoot(lease).cell)
+                            assertFalse((ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer).consented())
+                            requireNotNull(f.pool.requestShutdown())
+                            awaitLifecycleFact { !entry.jdbc.permitsCleanup(lease.state.epoch) }
+                            assertFalse(entry.jdbc.postOpeningCallsEnded())
+                            assertFalse(requireNotNull(entry.terminalWork).producerDrainProven())
+                            connection.close() // No second real return, despite the held first one.
+                        } finally {
+                            barrier.release()
                         }
-                        assertThrows<SQLException> { connection.close() }
-                        assertTrue(observer.join())
+                        true
                     }
-                    assertFalse(barrier.timedOut.get())
+                    assertThrows<SQLException> { connection.close() }
+                    assertTrue(observer.join())
                 }
-                awaitLifecycleFact { f.scope.entries().none { it === entry } }
-                assertFalse((ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer).consented())
-            } finally {
-                connection.close()
+                assertFalse(barrier.timedOut.get())
             }
+            awaitLifecycleFact { f.scope.entries().none { it === entry } }
+            assertFalse((ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer).consented())
+        } finally {
+            connection.close()
         }
+    }
 
     @Test
     fun `consented real Hikari recycle tail retains no successor eviction or abort authority`() = withOwnedCutPool(database.value) { f ->
@@ -708,78 +479,30 @@ class PersistencePgOwnedCutIntegrationTest {
     }
 
     @Test
-    fun `exact retirement sample result preserves its Throwable and does not absorb adjacent budget failure`() =
-        withOwnedCutPool(database.value) { f ->
-            OwnedCallerTestScope().use { callers ->
-                val behavior = OwnedCallerTestBehavior()
-                val caller = callers.launch(OwnedCallerTestKind.OVERRIDING, behavior) {
-                    val connection = f.pool.connection
-                    val lease = ownedPoolLease(connection)
-                    val entry = f.entry(connection)
-                    val original = PersistenceOwnedFactoryCaller.capture()
-                    val clock = AtomicLong()
-                    val budget = PersistenceTimeBudget.start(1_000, clock::get)
-                    val problem = IllegalStateException("Injected exact retirement sample failure.")
-                    try {
-                        // Direct internal-boundary probes, not a manufactured admitted RETURN or an eviction receipt.
-                        val samples = behavior.samples.get()
-                        behavior.sampleFailure = problem
-                        val result = entry.jdbc.retireLeasedState(lease.state, budget, original)
-                        assertTrue(result is PersistenceLeaseRetirementClaim.CallerSampleFailed)
-                        assertSame(problem, (result as PersistenceLeaseRetirementClaim.CallerSampleFailed).failure)
-                        assertEquals(
-                            samples + 1,
-                            behavior.samples.get(),
-                            "Only the exact outside-lock sample produces this result, without retry or adaptation.",
-                        )
-                        assertTrue(original.isCurrent())
-                        assertTrue(entry.jdbc.currentPoolState(lease.state))
-                        assertFalse(entry.retirementRequested.get() || lease.state.epoch.sealedAndEnded())
-                        assertEquals(1L, f.lifecycle.actorSnapshot().futureLeaseEntries)
-                        assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
-                        clock.set(TimeUnit.MILLISECONDS.toNanos(1_000))
-                        assertSame(PersistenceLeaseRetirementClaim.Refused, entry.jdbc.retireLeasedState(lease.state, budget, original))
-                        assertEquals(samples + 1, behavior.samples.get(), "Original expiry short-circuits the still-throwing override.")
-                        behavior.sampleFailure = null
-                        val reads = java.util.concurrent.atomic.AtomicInteger()
-                        val clockProblem = IllegalStateException("Injected retirement budget recheck failure.")
-                        val brokenBudget = PersistenceTimeBudget.start(1_000) {
-                            if (reads.incrementAndGet() == 3) throw clockProblem
-                            0L
-                        }
-                        assertSame(
-                            clockProblem,
-                            assertThrows<IllegalStateException> { entry.jdbc.retireLeasedState(lease.state, brokenBudget, original) },
-                            "The budget check after a successful sample is not a CallerSampleFailed outcome.",
-                        )
-                        assertEquals(3, reads.get())
-                        assertEquals(samples + 2, behavior.samples.get())
-                        assertFalse(entry.retirementRequested.get())
-                        assertNull(f.lifecycle.actorSnapshot().firstFailure)
-                        // A separate direct claim probe, not a reset/replacement of any admitted RETURN allowance.
-                        assertSame(
-                            PersistenceLeaseRetirementClaim.Claimed,
-                            entry.jdbc.retireLeasedState(lease.state, PersistenceTimeBudget.start(1_000), original),
-                        )
-                        assertTrue(entry.retirementRequested.get() && lease.state.epoch.sealedAndEnded())
-                        assertThrows<SQLException> { connection.close() } // The one real RETURN keeps its original 1s budget/finalizers.
-                        val entitlement = ownedCutField(lease, "entitlement") as PoolLifecycle.LeaseEntitlement
-                        val operation = ownedCutField(entitlement, "prepared") as PoolLifecycle.Operation
-                        assertTrue(operation.actualFrameEnded())
-                        assertEquals(TimeUnit.MILLISECONDS.toNanos(1_000), ownedCutField(operation.frame.budget, "allowanceNanos"))
-                        connection.close()
-                        assertSame(operation, ownedCutField(entitlement, "prepared"))
-                        awaitLifecycleFact { f.scope.entries().none { it === entry } }
-                        true
-                    } finally {
-                        behavior.sampleFailure = null
-                        connection.close()
-                    }
+    fun `exact retirement sample result preserves its Throwable and does not absorb adjacent budget failure`() = withOwnedCutPool(database.value) { f ->
+        OwnedCallerTestScope().use { callers ->
+            val behavior = OwnedCallerTestBehavior()
+            val caller = callers.launch(OwnedCallerTestKind.OVERRIDING, behavior) {
+                val connection = f.pool.connection
+                val lease = ownedPoolLease(connection)
+                val entry = f.entry(connection)
+                val original = PersistenceOwnedFactoryCaller.capture()
+                val clock = AtomicLong()
+                val budget = PersistenceTimeBudget.start(1_000, clock::get)
+                val problem = IllegalStateException("Injected exact retirement sample failure.")
+                try {
+                    assertExactRetirementSample(f, behavior, connection, lease, entry, original, clock, budget, problem)
+                    awaitLifecycleFact { f.scope.entries().none { it === entry } }
+                    true
+                } finally {
+                    behavior.sampleFailure = null
+                    connection.close()
                 }
-                assertTrue(caller.value())
-                assertEquals(Thread.State.TERMINATED, caller.thread.state)
             }
+            assertTrue(caller.value())
+            assertEquals(Thread.State.TERMINATED, caller.thread.state)
         }
+    }
 
     @Test
     fun `blocked overriding original checkout sample retains its real holder with F G T free before successful delivery`() =
@@ -802,11 +525,10 @@ class PersistencePgOwnedCutIntegrationTest {
         withOwnedCutPool(database.value) { f -> assertOwnedReturnCaller(f, ReturnCallerFault.EXPIRE) }
 
     @Test
-    fun `throwing original RETURN override leaves F G T free and retires its exact source without a second return`() =
-        withOwnedCutPool(database.value) { f ->
-            f.shutdownDiagnosticCase = OwnedCutShutdownDiagnosticCase.RETURN_SAMPLE
-            assertOwnedReturnCaller(f, ReturnCallerFault.SAMPLE)
-        }
+    fun `throwing original RETURN override leaves F G T free and retires its exact source without a second return`() = withOwnedCutPool(database.value) { f ->
+        f.shutdownDiagnosticCase = OwnedCutShutdownDiagnosticCase.RETURN_SAMPLE
+        assertOwnedReturnCaller(f, ReturnCallerFault.SAMPLE)
+    }
 
     @Test
     fun `actual RETURN interruption defeats a false override while outer actor custody survives held restoration`() =
@@ -841,27 +563,7 @@ class PersistencePgOwnedCutIntegrationTest {
             val problem = IllegalStateException("Injected authentic RETURN TL installation failure.")
             try {
                 ThrowingReturnEntry(f.lifecycle, problem).use { fault ->
-                    assertSame(problem, assertThrows<IllegalStateException> { connection.close() })
-                    val operation = ownedCutField(entitlement, "prepared") as PoolLifecycle.Operation
-                    assertSame(operation.frame, fault.selected)
-                    assertEquals("REFUSED", requireNotNull(ownedCutField(operation.frame, "phase")).toString())
-                    assertFalse(operation.frame.hasEntered(), "The real installation threw before counted admission.")
-                    assertFalse(operation.actualFrameEnded(), "REFUSED is not a manufactured ENDED receipt.")
-                    assertFalse(operation.frame.completion.hasEnded())
-                    assertNull(PoolCallFrames.current(), "restoreUnadmitted must remove the actually published frame.")
-                    assertEquals(1, fault.injections)
-                    assertTrue(fault.outsideOwnershipLocks)
-                    assertEquals("REVOKED", requireNotNull(ownedCutField(entitlement, "phase")).toString())
-                    assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
-                    assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
-                    assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
-                    assertNull(ownedCutField(lease, "transfer"))
-                    assertSame(lower, ownedCutField(handle, "delegate"), "No Hikari close or reset was reached.")
-                    assertTrue(lease.closed() && entry.retirementRequested.get())
-                    assertTrue(lease.state.epoch.sealedAndEnded())
-                    connection.close()
-                    assertSame(operation, ownedCutField(entitlement, "prepared"), "Duplicate close issues no new allowance or operation.")
-                    assertEquals(1, fault.injections)
+                    assertRefusedReturnEntry(f, connection, lease, entry, handle, lower, entitlement, problem, fault)
                 }
                 awaitLifecycleFact { f.scope.entries().none { it === entry } }
             } finally {
@@ -955,6 +657,363 @@ class PersistencePgOwnedCutIntegrationTest {
         }
 }
 
+private fun assertRequiredOwnedCutDescriptors(testInstance: PersistencePgOwnedCutIntegrationTest, registeredDrivers: () -> List<Driver>) {
+    val prepared = PersistenceDriverBootstrap.prepare()
+    val driver = prepared.construct()
+    val loader = driver.javaClass.classLoader
+    val access = PersistencePgOwnedCutAccess.prepare(prepared, driver.javaClass)
+    val helper = Class.forName(OWNED_CUT_HELPER, false, loader)
+    assertSame(loader, helper.classLoader)
+    val marker = Class.forName("$OWNED_CUT_HELPER\$1", false, loader)
+    assertMarkerShape(loader, helper, marker)
+    fun cell(name: String): Class<*> = Class.forName("$OWNED_CUT_HELPER\$$name", false, loader).also {
+        assertSame(loader, it.classLoader)
+        assertSame(helper, it.declaringClass)
+        assertTrue(Modifier.isPublic(it.modifiers) && Modifier.isFinal(it.modifiers) && Modifier.isStatic(it.modifiers))
+    }
+    val opening = cell("Opening")
+    val root = cell("Root")
+    val owner = cell("Owner")
+    val life = cell("Life")
+    val invocation = cell("Invocation")
+    val objects = Array<Any?>::class.java
+    val lives = java.lang.reflect.Array.newInstance(life, 0).javaClass
+    val nativeConnection = Class.forName("$OWNED_CUT_HELPER\$NativeConnection", false, loader)
+    val native = Class.forName("$OWNED_CUT_HELPER\$Native", false, loader)
+    // Recorded native02 descriptors and exact constructor flags, independent of the adapter's shape predicate.
+    val constructorArguments = mapOf(
+        opening to listOf(Driver::class.java, Any::class.java),
+        root to listOf(nativeConnection, Any::class.java, Any::class.java),
+        owner to listOf(root),
+        life to listOf(nativeConnection, life, Integer.TYPE, native),
+        invocation to listOf(owner, Any::class.java, Any::class.java, Method::class.java, objects, objects, lives, IntArray::class.java),
+    )
+    assertOwnedCutConstructors(constructorArguments, marker)
+    val descriptors = mapOf(
+        "prepareRuntime" to (Void.TYPE to emptyList()),
+        "prepareOpening" to (opening to listOf(Driver::class.java, Any::class.java)),
+        "armOpening" to (Void.TYPE to listOf(opening)),
+        "recordReturned" to (Void.TYPE to listOf(opening, Connection::class.java)),
+        "endOpening" to (Void.TYPE to listOf(opening)),
+        "openingState" to (Integer.TYPE to listOf(opening)),
+        "cleanupOpening" to (Void.TYPE to listOf(opening)),
+        "attach" to (root to listOf(opening, Connection::class.java, Any::class.java, Any::class.java)),
+        "owner" to (owner to listOf(root)),
+        "life" to (life to listOf(owner, Any::class.java, life, java.lang.Boolean.TYPE)),
+        "isLive" to (java.lang.Boolean.TYPE to listOf(owner, life)),
+        "revoke" to (java.lang.Boolean.TYPE to listOf(owner, life)),
+        "lifeKind" to (Integer.TYPE to listOf(life)),
+        "firstCloseState" to (Integer.TYPE to listOf(life)),
+        "liveNativeChildren" to (java.lang.Long.TYPE to listOf(root)),
+        "rootState" to (Integer.TYPE to listOf(root)),
+        "retentionState" to (Integer.TYPE to listOf(root)),
+        "prepareInvocation" to
+            (invocation to listOf(owner, Any::class.java, Any::class.java, Method::class.java, objects, objects, lives, IntArray::class.java)),
+        "arm" to (Void.TYPE to listOf(invocation)),
+        "invocationState" to (Integer.TYPE to listOf(invocation)),
+        "drainState" to (Integer.TYPE to listOf(invocation)),
+        "disarm" to (Void.TYPE to listOf(invocation)),
+        "actualEnd" to (Void.TYPE to listOf(invocation)),
+    )
+    val resolved = (ownedCutField(access, "methods") as Map<*, *>).values.map { it as Method }.associateBy { it.name }
+    // Historical selector name stays stable; the successor requires all23 with no old-JAR fallback.
+    assertEquals(23, resolved.size)
+    assertEquals(descriptors.keys, resolved.keys)
+    descriptors.forEach { (name, descriptor) ->
+        val method = helper.getDeclaredMethod(name, *descriptor.second.toTypedArray())
+        assertEquals(method, resolved.getValue(name))
+        assertSame(descriptor.first, method.returnType)
+        assertTrue(Modifier.isPublic(method.modifiers) && Modifier.isStatic(method.modifiers))
+        assertFalse(method.isBridge || method.isSynthetic || Modifier.isAbstract(method.modifiers))
+    }
+    val verifyConsumerInputs = assertFinalJarConsumerProvenance(
+        testInstance,
+        "required",
+        driver.javaClass,
+        listOf(helper, marker, opening, root, owner, life, invocation),
+        registeredDrivers,
+    )
+    CutDescriptorDefect.entries.forEach { defect ->
+        // Only negative cold linkage: authentic artifact class bytes, never a synthetic successful Driver.
+        val deniedLoader = CutDescriptorDefectLoader(loader, defect)
+        val denied = PersistenceDriverBootstrap.prepareWithLoader(deniedLoader)
+        val driverType = Class.forName("org.postgresql.Driver", false, deniedLoader)
+        assertSame(deniedLoader, driverType.classLoader)
+        assertTrue(denied.ownsTimerDriverClass(driverType))
+        deniedLoader.assertConstructorDefect()
+        assertEndpointFailure(PersistenceBoundaryFailureCode.UNSUPPORTED_JDBC_DRIVER) {
+            PersistencePgOwnedCutAccess.prepare(denied, driverType)
+        }
+    }
+    verifyConsumerInputs()
+}
+
+private fun assertOwnedCutConstructors(constructorArguments: Map<Class<*>, List<Class<*>>>, marker: Class<*>) {
+    constructorArguments.forEach { (type, arguments) ->
+        assertEquals(2, type.declaredConstructors.size)
+        val explicit = type.getDeclaredConstructor(*arguments.toTypedArray())
+        assertEquals(Modifier.PRIVATE, explicit.modifiers)
+        assertFalse(explicit.isSynthetic)
+        val bridge = type.getDeclaredConstructor(*(arguments + marker).toTypedArray())
+        assertEquals(0x1000, bridge.modifiers)
+        assertTrue(bridge.isSynthetic)
+        arguments.forEachIndexed { index, argument ->
+            assertSame(argument, explicit.parameterTypes[index])
+            assertSame(argument, bridge.parameterTypes[index])
+        }
+        assertSame(marker, bridge.parameterTypes.last())
+    }
+}
+
+private fun assertMarkerShape(loader: ClassLoader?, helper: Class<*>, marker: Class<*>) {
+    assertSame(loader, marker.classLoader)
+    assertSame(helper, marker.enclosingClass)
+    assertNull(marker.declaringClass)
+    assertNull(marker.enclosingMethod)
+    assertNull(marker.enclosingConstructor)
+    assertTrue(marker.isAnonymousClass && marker.isSynthetic)
+    assertEquals(0, marker.modifiers and (Modifier.PUBLIC or Modifier.PROTECTED or Modifier.PRIVATE))
+    assertEquals(0, marker.declaredFields.size)
+    assertEquals(0, marker.declaredMethods.size)
+    assertEquals(0, marker.declaredConstructors.size)
+}
+
+private fun assertOriginalProviderProvenance(
+    testInstance: PersistencePgOwnedCutIntegrationTest,
+    f: OwnedCutConnection,
+    registeredDrivers: () -> List<Driver>,
+): () -> Unit {
+    assertEquals("app-29-gate-b-hosted-01", System.getProperty("kira.finalJarConsumer.gate"))
+    val access = f.opening.access
+    val driverType = ownedCutField(access, "driverType") as Class<*>
+    val methods = (ownedCutField(access, "methods") as Map<*, *>).values.map { it as Method }
+    val helper = methods.map { it.declaringClass }.distinct().single()
+    val types = requireNotNull(ownedCutField(access, "types"))
+    val opaque = listOf("opening", "root", "owner", "life", "invocation").map { ownedCutField(types, it) as Class<*> }
+    assertSame(opaque.first(), f.opening.cell.javaClass)
+    val marker = opaque.first().declaredConstructors.single { it.isSynthetic }.parameterTypes.last()
+    assertEquals(OWNED_CUT_HELPER, helper.name)
+    assertEquals("org.postgresql.jdbc.PgConnection", f.raw.javaClass.name)
+    return assertFinalJarConsumerProvenance(testInstance, "original", driverType, listOf(helper, marker, f.raw.javaClass) + opaque, registeredDrivers)
+}
+
+private fun assertOriginalProviderOpening(f: OwnedCutConnection) {
+    assertSame(PersistenceDriverAttemptPolicy.ORIGINAL_PROVIDER, f.entry.policy)
+    assertNull(requireNotNull(f.entry.driverOpening).image)
+    assertNull(f.entry.driverScope)
+    assertNull(f.entry.transports)
+    assertTrue(f.entry.driverCut.enabled)
+    assertSame(f.raw, ownedCutField(f.opening.cell, "returned"))
+    assertEquals(PersistencePgOwnedCutAccess.OPENING_ENDED, f.opening.access.openingState(f.opening))
+    assertNull((ownedCutField(f.entry.driverCut, "root") as AtomicReference<*>).get())
+}
+
+/** Actual positive Classes under the explicit development profile, not hashes of Class.getResource bytes. */
+private fun assertFinalJarConsumerProvenance(
+    testInstance: PersistencePgOwnedCutIntegrationTest,
+    witnessName: String,
+    driverType: Class<*>,
+    cutTypes: List<Class<*>>,
+    registeredDrivers: () -> List<Driver>,
+): () -> Unit {
+    assertTrue(witnessName == "required" || witnessName == "original")
+    fun input(name: String): String = requireNotNull(System.getProperty("kira.finalJarConsumer.$name")) {
+        "The required consumer test needs its explicit final-JAR profile: $name"
+    }
+    assertEquals("app-29-final-jar-consumer-profile-04", input("profile"))
+    val jar = Path.of(input("jar")).toRealPath()
+    val checker = Path.of(input("checker")).toRealPath()
+    fun sha256(path: Path): String = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))
+        .joinToString("") { "%02x".format(it) }
+    val verifyInputs = {
+        assertEquals("50f7dc4a6314cc5105f4990be26ba8be65ae242e1f7e62652cc60d6a2c0e03df", sha256(jar))
+        assertEquals("857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288", sha256(checker))
+    }
+    verifyInputs()
+    val loader = requireNotNull(driverType.classLoader)
+    assertSame(testInstance.javaClass.classLoader, loader)
+    assertSame(Thread.currentThread().contextClassLoader, loader)
+    assertEquals("org.postgresql.Driver", driverType.name)
+    val witness = linkedMapOf("profile" to input("profile"), "witness" to witnessName)
+    val loaderIdentity = "${loader.javaClass.name}@${Integer.toHexString(System.identityHashCode(loader))}"
+    fun associate(type: Class<*>, expected: Path) {
+        assertSame(loader, type.classLoader)
+        val source = requireNotNull(type.protectionDomain.codeSource).location.toURI()
+        assertEquals("file", source.scheme)
+        val actual = Path.of(source).toRealPath()
+        assertEquals(expected, actual)
+        witness["class.${type.name}.source"] = actual.toString()
+        witness["class.${type.name}.loader"] = loaderIdentity
+    }
+    fun literal(name: String): Class<*> = Class.forName(name, false, loader)
+    (listOf(driverType) + cutTypes).forEach { associate(it, jar) }
+    val info = literal("org.postgresql.util.DriverInfo")
+    val cleaner = literal("org.postgresql.util.LazyCleanerImpl")
+    val wrapper = literal("org.postgresql.util.LazyCleanerImpl\$CleanableWrapper")
+    val scram = literal("org.postgresql.shaded.com.ongres.scram.client.ScramClient")
+    listOf(info, cleaner, wrapper, scram).forEach { associate(it, jar) }
+    associate(literal("org.checkerframework.checker.nullness.qual.NonNull"), checker)
+    assertEquals("42.7.12-kira.1", driverType.`package`.implementationVersion)
+    assertEquals("42.7.12-kira.1", info.getField("DRIVER_VERSION").get(null))
+    val cleanerField = cleaner.getDeclaredField("cleaner")
+    assertEquals(Modifier.PRIVATE or Modifier.FINAL, cleanerField.modifiers)
+    assertSame(Cleaner::class.java, cleanerField.type)
+    assertSame(Cleaner.Cleanable::class.java, wrapper.getDeclaredField("nativeCleanable").type)
+    witness["mr.cleaner.field"] = cleanerField.type.name
+    witness["mr.wrapper.field"] = wrapper.getDeclaredField("nativeCleanable").type.name
+    val registered = registeredDrivers()
+    // acceptsURL parses only; Gate A never calls connect or initializes the lazy database fixture.
+    val providers = registered.filter { it.acceptsURL("jdbc:postgresql://127.0.0.1/gate_a_no_connection") }
+    assertEquals(1, providers.size)
+    assertSame(driverType, providers.single().javaClass)
+    registered.forEachIndexed { index, provider -> witness["registered.$index"] = provider.javaClass.name }
+    witness["postgres.provider.count"] = providers.size.toString()
+    witness["jar.sha256"] = sha256(jar)
+    witness["checker.sha256"] = sha256(checker)
+    val report = Path.of(input("report")).resolveSibling("worker-runtime-$witnessName.txt")
+    recordFinalJarConsumerJvm(witness, Path.of(input("javaHome")), report)
+    witness["provenance"] = "PASS"
+    assertTrue(witness.values.none { '\n' in it || '\r' in it })
+    Files.writeString(
+        report,
+        witness.entries.joinToString("\n", postfix = "\n") { "${it.key}=${it.value}" },
+        StandardOpenOption.CREATE_NEW,
+    )
+    return verifyInputs
+}
+
+private fun recordFinalJarConsumerJvm(witness: MutableMap<String, String>, expectedHome: Path, report: Path) {
+    val home = Path.of(System.getProperty("java.home")).toRealPath()
+    assertEquals(expectedHome.toRealPath(), home)
+    assertEquals(21, Runtime.version().feature())
+    val process = ProcessHandle.current()
+    val info = process.info()
+    val executable = Path.of(info.command().orElseThrow()).toRealPath()
+    assertEquals(home.resolve("bin/java").toRealPath(), executable)
+    witness["worker.pid"] = process.pid().toString()
+    witness["worker.executable"] = executable.toString()
+    witness["java.home"] = home.toString()
+    witness["java.runtime.version"] = Runtime.version().toString()
+    witness["java.vm.name"] = System.getProperty("java.vm.name")
+    witness["java.vm.version"] = System.getProperty("java.vm.version")
+    val arguments = ManagementFactory.getRuntimeMXBean().inputArguments
+    val forbidden = listOf(
+        "-javaagent:", "-agentlib:", "-agentpath:", "-Xbootclasspath", "--patch-module", "--upgrade-module-path", "--module-path",
+        "-Djava.system.class.loader", "-Djava.class.path=", "-Djdk.util.jar.", "-XX:SharedArchiveFile=", "-XX:ArchiveClassesAtExit=",
+    )
+    assertFalse(arguments.any { argument -> forbidden.any { argument.startsWith(it) } })
+    assertTrue(arguments.containsAll(listOf("-XX:+DisableAttachMechanism", "-XX:-EnableDynamicAgentLoading")))
+    assertTrue(arguments.contains("-Xlog:class+load=info:file=${report.parent}/class-load-%p.txt:uptime,level,tags"))
+    listOf("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS").forEach { assertNull(System.getenv(it)) }
+    arguments.forEachIndexed { index, argument -> witness["jvm.arg.$index"] = argument }
+    info.arguments().orElseThrow().forEachIndexed { index, argument -> witness["process.arg.$index"] = argument }
+}
+
+private fun recheckFinalJarConsumerInputs(verifyConsumerInputs: (() -> Unit)?, primaryFailure: Throwable?) {
+    try {
+        verifyConsumerInputs?.invoke()
+    } catch (recheckFailure: Throwable) {
+        val failure = primaryFailure
+        if (failure == null) throw recheckFailure
+        if (failure !== recheckFailure) failure.addSuppressed(recheckFailure)
+    }
+}
+
+private fun assertExactRetirementSample(
+    f: OwnedCutPool,
+    behavior: OwnedCallerTestBehavior,
+    connection: Connection,
+    lease: PersistenceJdbcLease,
+    entry: PersistencePhysicalEntry,
+    original: PersistenceOwnedFactoryCaller,
+    clock: AtomicLong,
+    budget: PersistenceTimeBudget,
+    problem: IllegalStateException,
+) {
+    // Direct internal-boundary probes, not a manufactured admitted RETURN or an eviction receipt.
+    val samples = behavior.samples.get()
+    behavior.sampleFailure = problem
+    val result = entry.jdbc.retireLeasedState(lease.state, budget, original)
+    assertTrue(result is PersistenceLeaseRetirementClaim.CallerSampleFailed)
+    assertSame(problem, (result as PersistenceLeaseRetirementClaim.CallerSampleFailed).failure)
+    assertEquals(
+        samples + 1,
+        behavior.samples.get(),
+        "Only the exact outside-lock sample produces this result, without retry or adaptation.",
+    )
+    assertTrue(original.isCurrent())
+    assertTrue(entry.jdbc.currentPoolState(lease.state))
+    assertFalse(entry.retirementRequested.get() || lease.state.epoch.sealedAndEnded())
+    assertEquals(1L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+    assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
+    clock.set(TimeUnit.MILLISECONDS.toNanos(1_000))
+    assertSame(PersistenceLeaseRetirementClaim.Refused, entry.jdbc.retireLeasedState(lease.state, budget, original))
+    assertEquals(samples + 1, behavior.samples.get(), "Original expiry short-circuits the still-throwing override.")
+    behavior.sampleFailure = null
+    val reads = java.util.concurrent.atomic.AtomicInteger()
+    val clockProblem = IllegalStateException("Injected retirement budget recheck failure.")
+    val brokenBudget = PersistenceTimeBudget.start(1_000) {
+        if (reads.incrementAndGet() == 3) throw clockProblem
+        0L
+    }
+    assertSame(
+        clockProblem,
+        assertThrows<IllegalStateException> { entry.jdbc.retireLeasedState(lease.state, brokenBudget, original) },
+        "The budget check after a successful sample is not a CallerSampleFailed outcome.",
+    )
+    assertEquals(3, reads.get())
+    assertEquals(samples + 2, behavior.samples.get())
+    assertFalse(entry.retirementRequested.get())
+    assertNull(f.lifecycle.actorSnapshot().firstFailure)
+    // A separate direct claim probe, not a reset/replacement of any admitted RETURN allowance.
+    assertSame(
+        PersistenceLeaseRetirementClaim.Claimed,
+        entry.jdbc.retireLeasedState(lease.state, PersistenceTimeBudget.start(1_000), original),
+    )
+    assertTrue(entry.retirementRequested.get() && lease.state.epoch.sealedAndEnded())
+    assertThrows<SQLException> { connection.close() } // The one real RETURN keeps its original 1s budget/finalizers.
+    val entitlement = ownedCutField(lease, "entitlement") as PoolLifecycle.LeaseEntitlement
+    val operation = ownedCutField(entitlement, "prepared") as PoolLifecycle.Operation
+    assertTrue(operation.actualFrameEnded())
+    assertEquals(TimeUnit.MILLISECONDS.toNanos(1_000), ownedCutField(operation.frame.budget, "allowanceNanos"))
+    connection.close()
+    assertSame(operation, ownedCutField(entitlement, "prepared"))
+}
+
+private fun assertRefusedReturnEntry(
+    f: OwnedCutPool,
+    connection: Connection,
+    lease: PersistenceJdbcLease,
+    entry: PersistencePhysicalEntry,
+    handle: Connection,
+    lower: Any,
+    entitlement: PoolLifecycle.LeaseEntitlement,
+    problem: IllegalStateException,
+    fault: ThrowingReturnEntry,
+) {
+    assertSame(problem, assertThrows<IllegalStateException> { connection.close() })
+    val operation = ownedCutField(entitlement, "prepared") as PoolLifecycle.Operation
+    assertSame(operation.frame, fault.selected)
+    assertEquals("REFUSED", requireNotNull(ownedCutField(operation.frame, "phase")).toString())
+    assertFalse(operation.frame.hasEntered(), "The real installation threw before counted admission.")
+    assertFalse(operation.actualFrameEnded(), "REFUSED is not a manufactured ENDED receipt.")
+    assertFalse(operation.frame.completion.hasEnded())
+    assertNull(PoolCallFrames.current(), "restoreUnadmitted must remove the actually published frame.")
+    assertEquals(1, fault.injections)
+    assertTrue(fault.outsideOwnershipLocks)
+    assertEquals("REVOKED", requireNotNull(ownedCutField(entitlement, "phase")).toString())
+    assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+    assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
+    assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
+    assertNull(ownedCutField(lease, "transfer"))
+    assertSame(lower, ownedCutField(handle, "delegate"), "No Hikari close or reset was reached.")
+    assertTrue(lease.closed() && entry.retirementRequested.get())
+    assertTrue(lease.state.epoch.sealedAndEnded())
+    connection.close()
+    assertSame(operation, ownedCutField(entitlement, "prepared"), "Duplicate close issues no new allowance or operation.")
+    assertEquals(1, fault.injections)
+}
+
 /**
  * Two check-only child cases in the existing sanitized negative-probe process. They deliberately
  * do NOT use the successful OwnedCutPool/PgLifecycleTestScope close contract: neither retained
@@ -1015,8 +1074,10 @@ internal object OwnedPoolPendingProbe {
         val cut = when (case.mode) {
             PgLifecycleDatabaseMode.POOL_ACQUISITION_END_TL_FAILURE ->
                 "cut=ACQUISITION_END_TL acquisition=ENDING active_acquisitions=1 delivered=false future_entries=0 pool_close_claimed=false"
+
             PgLifecycleDatabaseMode.POOL_CORE_LAST_COUNT_TL_FAILURE ->
                 "cut=RETURN_CORE_LAST_COUNT_TL native_actual_end=true core_producer_ended=false future_entries=0 transfer_consented=false"
+
             else -> error("Not a closed pending-pool child case.")
         }
         println("PG_POOL_PENDING_RETAINED ${case.label} nonce=$nonce $cut caller_terminated=true product_end=false")
@@ -1150,14 +1211,13 @@ internal object OwnedPoolPendingProbe {
     }
 
     /** Throw before the real delegate removal, AFTER actor claimEnd and the genuine checkout commit. */
-    private class AcquisitionEndFailure(
-        private val lifecycle: PoolLifecycle,
-        private val entry: PersistencePhysicalEntry,
-        private val problem: Throwable,
-    ) : ThreadLocal<PoolCallFrame?>(), AutoCloseable {
+    private class AcquisitionEndFailure(private val lifecycle: PoolLifecycle, private val entry: PersistencePhysicalEntry, private val problem: Throwable) :
+        ThreadLocal<PoolCallFrame?>(),
+        AutoCloseable {
         private val caller = Thread.currentThread()
         private val storage = requireNotNull(ownedCutField(PoolCallFrames, "storage"))
         private val field = storage.javaClass.getDeclaredField("current").apply { check(trySetAccessible()) }
+
         @Suppress("UNCHECKED_CAST")
         private val delegate = field.get(storage) as ThreadLocal<PoolCallFrame?>
         var selected: PoolCallFrame? = null
@@ -1213,14 +1273,13 @@ internal object OwnedPoolPendingProbe {
     }
 
     /** The same genuine final lower clearWarnings boundary as the held-count test, now a nonhealable removal failure. */
-    private class CoreLastCountFailure(
-        private val lease: PersistenceJdbcLease,
-        private val entry: PersistencePhysicalEntry,
-        private val problem: Throwable,
-    ) : ThreadLocal<PersistenceJdbcGuardCall?>(), AutoCloseable {
+    private class CoreLastCountFailure(private val lease: PersistenceJdbcLease, private val entry: PersistencePhysicalEntry, private val problem: Throwable) :
+        ThreadLocal<PersistenceJdbcGuardCall?>(),
+        AutoCloseable {
         private val caller = Thread.currentThread()
         private val context = lease.state.context
         private val field = context.javaClass.getDeclaredField("frames").apply { check(trySetAccessible()) }
+
         @Suppress("UNCHECKED_CAST")
         private val delegate = field.get(context) as ThreadLocal<PersistenceJdbcGuardCall?>
         private val driver = PersistenceJdbcGuardCall::class.java.getDeclaredField("driver").apply { check(trySetAccessible()) }
@@ -1385,11 +1444,7 @@ internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDa
 
     /** Best-effort, non-atomic scalar reads only; never a lifecycle observer, cleanup action or completion proof. */
     @Suppress("TooGenericExceptionCaught")
-    private fun shutdownDiagnostic(
-        phase: String,
-        invocation: PoolShutdownInvocation?,
-        observation: PoolShutdownObservation? = null,
-    ) {
+    private fun shutdownDiagnostic(phase: String, invocation: PoolShutdownInvocation?, observation: PoolShutdownObservation? = null) {
         val case = shutdownDiagnosticCase ?: return
         try {
             val budget = ownedCutField(lifecycle, "shutdownBudget") as PersistenceTimeBudget
@@ -1437,8 +1492,7 @@ internal fun ownedPoolLower(guard: Any): Any {
     return requireNotNull(ownedCutField(delegated, "delegate")).also { assertNotNull(PhysicalJdbcDescendants.knownGuard(it)) }
 }
 
-internal fun ownedPoolLife(guard: Any): PersistencePgOwnedCutAccess.Life =
-    requireNotNull(PhysicalJdbcDescendants.knownGuard(ownedPoolLower(guard))?.driverLife)
+internal fun ownedPoolLife(guard: Any): PersistencePgOwnedCutAccess.Life = requireNotNull(PhysicalJdbcDescendants.knownGuard(ownedPoolLower(guard))?.driverLife)
 
 internal fun ownedPoolScalar(connection: Connection, sql: String): Int = connection.createStatement().use { statement ->
     statement.executeQuery(sql).use { result ->
@@ -1579,11 +1633,16 @@ private fun assertOwnedReturnCaller(f: OwnedCutPool, fault: ReturnCallerFault) {
             originalDelegate.set(requireNotNull(ownedCutField(ownedCutField(lease, "handle") as Connection, "delegate")))
             behavior.sampleGate = sample
             val samplesUntilCut = when (fault) {
-                ReturnCallerFault.EXPIRE -> 3 // Final commit sample, after genuine native/core finalizers and successor preparation.
+                // Final commit sample, after genuine native/core finalizers and successor preparation.
+                ReturnCallerFault.EXPIRE -> 3
+
+                // Before any Hikari return/reset call.
                 ReturnCallerFault.RESTORE,
                 ReturnCallerFault.INTERRUPTED_EXCEPTION,
                 ReturnCallerFault.INTERRUPTED_RESTORE_INTERRUPTED,
-                ReturnCallerFault.INTERRUPTED_RESTORE_ERROR -> 1 // Before any Hikari return/reset call.
+                ReturnCallerFault.INTERRUPTED_RESTORE_ERROR,
+                -> 1
+
                 else -> 2 // The former second claim sample was under G.
             }
             behavior.gateAtSample = behavior.samples.get() + samplesUntilCut
@@ -1621,65 +1680,106 @@ private fun assertOwnedReturnCaller(f: OwnedCutPool, fault: ReturnCallerFault) {
                 awaitLifecycleFact(2_000) { persistenceFactoryRemainingMillis(transfer.budget) == 0L }
                 assertTrue(entry.jdbc.currentPoolState(lease.state))
             }
+
             ReturnCallerFault.SAMPLE,
             ReturnCallerFault.INTERRUPTED_EXCEPTION,
             ReturnCallerFault.INTERRUPTED_RESTORE_INTERRUPTED,
-            ReturnCallerFault.INTERRUPTED_RESTORE_ERROR -> behavior.sampleFailure = problem
+            ReturnCallerFault.INTERRUPTED_RESTORE_ERROR,
+            -> behavior.sampleFailure = problem
+
             ReturnCallerFault.ACTUAL_FLAG, ReturnCallerFault.RESTORE -> (caller.thread as OverridingCallerThread).setActualFlag()
         }
         sample.release()
         if (restorationExpected) {
             restore.awaitEntered()
-            assertTransferLocksAvailable(f, entry)
-            assertTrue(entry.retirementRequested.get(), "Failure disposition must be visible BEFORE an overridable self-interrupt.")
-            assertFalse(transfer.consented() || operation.actualFrameEnded())
-            assertFalse(operation.frame.completion.hasEnded(), "Even the creator completion must remain unpublished throughout this callback.")
-            assertEquals("ACTIVE", requireNotNull(ownedCutField(operation.frame, "phase")).toString())
-            assertEquals(1, behavior.restores.get(), "Observe the sole restoration while the authentic RETURN is still counted.")
-            assertTrue(lease.closed())
-            assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
-            assertEquals(1L, f.lifecycle.actorSnapshot().activeOperations)
-            assertFalse((caller.thread as OverridingCallerThread).actualFlag())
-            if (fault === ReturnCallerFault.ACTUAL_FLAG) {
-                assertTrue(transfer.actualEnded(), "The genuine lower failure tail ended, but the outer RETURN actor has not.")
-            } else {
-                assertFalse(transfer.actualEnded())
-                assertSame(originalDelegate.get(), ownedCutField(ownedCutField(lease, "handle") as Connection, "delegate"))
-            }
+            assertHeldReturnRestoration(f, entry, transfer, operation, behavior, lease, fault, caller, originalDelegate)
             restore.release()
         }
         val outcome = caller.value().exceptionOrNull()
         assertEquals(Thread.State.TERMINATED, caller.thread.state)
-        if (fault === ReturnCallerFault.INTERRUPTED_RESTORE_ERROR) {
-            assertSame(restorationProblem, outcome, "An adapter Error is rethrown unchanged, never adapted or retried.")
-        } else {
-            assertTrue(outcome is SQLException)
-            assertNull(outcome?.cause, "Neither original nor adapter-thrown InterruptedException is retained in the SQL envelope.")
-        }
-        assertTrue(lease.closed() && entry.retirementRequested.get() && transfer.actualEnded())
-        assertFalse(transfer.consented())
-        assertEquals(fault === ReturnCallerFault.SAMPLE || interruptedSample, transfer.callerSamplingFailed())
-        assertTrue(operation.actualFrameEnded())
-        assertSame(operation, ownedCutField(entitlement, "prepared"))
-        assertSame(operation.frame.budget, transfer.budget)
-        if (fault === ReturnCallerFault.EXPIRE) assertEquals(0L, persistenceFactoryRemainingMillis(transfer.budget))
-        assertEquals(fault === ReturnCallerFault.ACTUAL_FLAG || fault === ReturnCallerFault.INTERRUPTED_EXCEPTION, flagAfter.get())
-        assertEquals(if (restorationExpected) 1 else 0, behavior.restores.get(), "No second restoration may run before or after actual RETURN end.")
-        assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
-        assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
-        if (f.expectedPoolUnknown) assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
-        if (fault === ReturnCallerFault.SAMPLE) {
-            assertEquals(
-                behavior.gateAtSample + 1,
-                behavior.samples.get(),
-                "The exact repeated retirement sample still occurs once under the original allowance.",
-            )
-            assertFalse(
-                f.lifecycle.actorSnapshot().factorySealed,
-                "The positively identified second sample must not fall into the opaque eviction hard catch.",
-            )
-        }
+        assertEndedReturnState(fault, lease, entry, transfer, entitlement, operation, interruptedSample, restorationProblem, outcome)
+        assertReturnCallerCompletion(f, fault, behavior, flagAfter, restorationExpected)
         awaitLifecycleFact { f.scope.entries().none { it === entry } }
+    }
+}
+
+private fun assertHeldReturnRestoration(
+    f: OwnedCutPool,
+    entry: PersistencePhysicalEntry,
+    transfer: PersistenceJdbcPoolTransfer,
+    operation: PoolLifecycle.Operation,
+    behavior: OwnedCallerTestBehavior,
+    lease: PersistenceJdbcLease,
+    fault: ReturnCallerFault,
+    caller: OwnedCallerTestCall<*>,
+    originalDelegate: AtomicReference<Any>,
+) {
+    assertTransferLocksAvailable(f, entry)
+    assertTrue(entry.retirementRequested.get(), "Failure disposition must be visible BEFORE an overridable self-interrupt.")
+    assertFalse(transfer.consented() || operation.actualFrameEnded())
+    assertFalse(operation.frame.completion.hasEnded(), "Even the creator completion must remain unpublished throughout this callback.")
+    assertEquals("ACTIVE", requireNotNull(ownedCutField(operation.frame, "phase")).toString())
+    assertEquals(1, behavior.restores.get(), "Observe the sole restoration while the authentic RETURN is still counted.")
+    assertTrue(lease.closed())
+    assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+    assertEquals(1L, f.lifecycle.actorSnapshot().activeOperations)
+    assertFalse((caller.thread as OverridingCallerThread).actualFlag())
+    if (fault === ReturnCallerFault.ACTUAL_FLAG) {
+        assertTrue(transfer.actualEnded(), "The genuine lower failure tail ended, but the outer RETURN actor has not.")
+    } else {
+        assertFalse(transfer.actualEnded())
+        assertSame(originalDelegate.get(), ownedCutField(ownedCutField(lease, "handle") as Connection, "delegate"))
+    }
+}
+
+private fun assertEndedReturnState(
+    fault: ReturnCallerFault,
+    lease: PersistenceJdbcLease,
+    entry: PersistencePhysicalEntry,
+    transfer: PersistenceJdbcPoolTransfer,
+    entitlement: PoolLifecycle.LeaseEntitlement,
+    operation: PoolLifecycle.Operation,
+    interruptedSample: Boolean,
+    restorationProblem: Throwable?,
+    outcome: Throwable?,
+) {
+    if (fault === ReturnCallerFault.INTERRUPTED_RESTORE_ERROR) {
+        assertSame(restorationProblem, outcome, "An adapter Error is rethrown unchanged, never adapted or retried.")
+    } else {
+        assertTrue(outcome is SQLException)
+        assertNull(outcome?.cause, "Neither original nor adapter-thrown InterruptedException is retained in the SQL envelope.")
+    }
+    assertTrue(lease.closed() && entry.retirementRequested.get() && transfer.actualEnded())
+    assertFalse(transfer.consented())
+    assertEquals(fault === ReturnCallerFault.SAMPLE || interruptedSample, transfer.callerSamplingFailed())
+    assertTrue(operation.actualFrameEnded())
+    assertSame(operation, ownedCutField(entitlement, "prepared"))
+    assertSame(operation.frame.budget, transfer.budget)
+    if (fault === ReturnCallerFault.EXPIRE) assertEquals(0L, persistenceFactoryRemainingMillis(transfer.budget))
+}
+
+private fun assertReturnCallerCompletion(
+    f: OwnedCutPool,
+    fault: ReturnCallerFault,
+    behavior: OwnedCallerTestBehavior,
+    flagAfter: AtomicBoolean,
+    restorationExpected: Boolean,
+) {
+    assertEquals(fault === ReturnCallerFault.ACTUAL_FLAG || fault === ReturnCallerFault.INTERRUPTED_EXCEPTION, flagAfter.get())
+    assertEquals(if (restorationExpected) 1 else 0, behavior.restores.get(), "No second restoration may run before or after actual RETURN end.")
+    assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+    assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
+    if (f.expectedPoolUnknown) assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
+    if (fault === ReturnCallerFault.SAMPLE) {
+        assertEquals(
+            behavior.gateAtSample + 1,
+            behavior.samples.get(),
+            "The exact repeated retirement sample still occurs once under the original allowance.",
+        )
+        assertFalse(
+            f.lifecycle.actorSnapshot().factorySealed,
+            "The positively identified second sample must not fall into the opaque eviction hard catch.",
+        )
     }
 }
 
@@ -1697,10 +1797,13 @@ private fun assertTransferLocksAvailable(f: OwnedCutPool, entry: PersistencePhys
 }
 
 /** One exact private actor-storage instance; preserve its single global TL key and every real value. */
-private class ThrowingReturnEntry(private val lifecycle: PoolLifecycle, private val problem: Throwable) : ThreadLocal<PoolCallFrame?>(), AutoCloseable {
+private class ThrowingReturnEntry(private val lifecycle: PoolLifecycle, private val problem: Throwable) :
+    ThreadLocal<PoolCallFrame?>(),
+    AutoCloseable {
     private val caller = Thread.currentThread()
     private val storage = requireNotNull(ownedCutField(PoolCallFrames, "storage"))
     private val field = storage.javaClass.getDeclaredField("current").apply { check(trySetAccessible()) }
+
     @Suppress("UNCHECKED_CAST")
     private val delegate = field.get(storage) as ThreadLocal<PoolCallFrame?>
     var selected: PoolCallFrame? = null
@@ -1738,10 +1841,13 @@ private class ThrowingReturnEntry(private val lifecycle: PoolLifecycle, private 
 }
 
 /** Test-only exact instance-TL interception. All storage stays in the original ThreadLocal. */
-private class CoreLastCountBarrier(private val lease: PersistenceJdbcLease) : ThreadLocal<PersistenceJdbcGuardCall?>(), AutoCloseable {
+private class CoreLastCountBarrier(private val lease: PersistenceJdbcLease) :
+    ThreadLocal<PersistenceJdbcGuardCall?>(),
+    AutoCloseable {
     private val context = lease.state.context
     private val caller = Thread.currentThread()
     private val field = context.javaClass.getDeclaredField("frames").apply { check(trySetAccessible()) }
+
     @Suppress("UNCHECKED_CAST")
     private val delegate = field.get(context) as ThreadLocal<PersistenceJdbcGuardCall?>
     private val driver = PersistenceJdbcGuardCall::class.java.getDeclaredField("driver").apply { check(trySetAccessible()) }
@@ -1774,10 +1880,12 @@ private class CoreLastCountBarrier(private val lease: PersistenceJdbcLease) : Th
     override fun set(value: PersistenceJdbcGuardCall?) = delegate.set(value)
 
     override fun remove() {
-        if (Thread.currentThread() === caller && delegate.get() === selected && selected != null && once.compareAndSet(false, true)) {
-            entered.countDown()
-            // Timeout records a failed assertion but still lets the actual frame finish/clean up.
-            if (!released.await(5, TimeUnit.SECONDS)) timedOut.set(true)
+        if (Thread.currentThread() === caller && delegate.get() === selected && selected != null) {
+            if (once.compareAndSet(false, true)) {
+                entered.countDown()
+                // Timeout records a failed assertion but still lets the actual frame finish/clean up.
+                if (!released.await(5, TimeUnit.SECONDS)) timedOut.set(true)
+            }
         }
         delegate.remove()
     }
@@ -1795,16 +1903,15 @@ private class CoreLastCountBarrier(private val lease: PersistenceJdbcLease) : Th
 }
 
 /** Stock ConcurrentBag's instance TL get is after STATE_NOT_IN_USE; no driver/metrics callback is installed. */
-private class ConsentedRecycleBarrier(
-    private val fixture: OwnedCutPool,
-    private val lease: PersistenceJdbcLease,
-    private val failTail: Boolean,
-) : ThreadLocal<Any?>(), AutoCloseable {
+private class ConsentedRecycleBarrier(private val fixture: OwnedCutPool, private val lease: PersistenceJdbcLease, private val failTail: Boolean) :
+    ThreadLocal<Any?>(),
+    AutoCloseable {
     private val caller = Thread.currentThread()
     private val hikari = requireNotNull(ownedCutField(fixture.pool, "pool"))
     private val pool = requireNotNull(ownedCutField(hikari, "pool"))
     private val bag = requireNotNull(ownedCutField(pool, "connectionBag"))
     private val field = bag.javaClass.getDeclaredField("threadLocalList").apply { check(trySetAccessible()) }
+
     @Suppress("UNCHECKED_CAST")
     private val delegate = field.get(bag) as ThreadLocal<Any?>
     private val once = AtomicBoolean()
@@ -1875,21 +1982,7 @@ private fun assertConsentedOldTail(f: OwnedCutPool, failTail: Boolean) {
                         assertEquals(0, aborts.get())
                         barrier.release()
                         assertTrue(tailEnded.await(5, TimeUnit.SECONDS))
-                        assertTrue(entry.jdbc.currentPoolState(current.state))
-                        assertFalse(entry.retirementRequested.get(), "The old consented tail cannot evict/poison this successor.")
-                        assertFalse(current.state.epoch.poisoned())
-                        if (failTail) {
-                            assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
-                            assertFalse(
-                                f.lifecycle.actorSnapshot().factorySealed,
-                                "The failed old tail preserves this authentic successor RETURN's creator rights.",
-                            )
-                            assertThrows<SQLException> { borrowed.createStatement() }
-                            assertThrows<SQLException> { borrowed.close() }
-                        } else {
-                            assertEquals(5, ownedPoolScalar(borrowed, "SELECT 5"))
-                            borrowed.close()
-                        }
+                        assertConsentedTailSuccessor(f, entry, current, borrowed, failTail)
                         next = null
                     } finally {
                         barrier.release()
@@ -1898,7 +1991,7 @@ private fun assertConsentedOldTail(f: OwnedCutPool, failTail: Boolean) {
                     true
                 }
                 try {
-                    if (failTail) assertThrows<SQLException> { first.close() } else first.close()
+                    assertConsentedOldTailClose(first, failTail)
                 } finally {
                     barrier.release()
                     tailEnded.countDown()
@@ -1910,6 +2003,34 @@ private fun assertConsentedOldTail(f: OwnedCutPool, failTail: Boolean) {
     } finally {
         tailEnded.countDown()
         first.close()
+    }
+}
+
+private fun assertConsentedOldTailClose(first: Connection, failTail: Boolean) {
+    if (failTail) assertThrows<SQLException> { first.close() } else first.close()
+}
+
+private fun assertConsentedTailSuccessor(
+    f: OwnedCutPool,
+    entry: PersistencePhysicalEntry,
+    current: PersistenceJdbcLease,
+    borrowed: Connection,
+    failTail: Boolean,
+) {
+    assertTrue(entry.jdbc.currentPoolState(current.state))
+    assertFalse(entry.retirementRequested.get(), "The old consented tail cannot evict/poison this successor.")
+    assertFalse(current.state.epoch.poisoned())
+    if (failTail) {
+        assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
+        assertFalse(
+            f.lifecycle.actorSnapshot().factorySealed,
+            "The failed old tail preserves this authentic successor RETURN's creator rights.",
+        )
+        assertThrows<SQLException> { borrowed.createStatement() }
+        assertThrows<SQLException> { borrowed.close() }
+    } else {
+        assertEquals(5, ownedPoolScalar(borrowed, "SELECT 5"))
+        borrowed.close()
     }
 }
 
@@ -2130,7 +2251,14 @@ internal fun assertOwnedCutSetterSqlIdentity(statement: PreparedStatement, input
 }
 
 private const val OWNED_CUT_HELPER = "org.postgresql.jdbc.KiraOwnedJdbcCut"
-private enum class CutDescriptorDefect { MISSING_HELPER, MISSING_DESCRIPTOR, MISSING_RETENTION_DESCRIPTOR, FOREIGN_HELPER, VISIBLE_CONSTRUCTOR, UNMARKED_BRIDGE }
+private enum class CutDescriptorDefect {
+    MISSING_HELPER,
+    MISSING_DESCRIPTOR,
+    MISSING_RETENTION_DESCRIPTOR,
+    FOREIGN_HELPER,
+    VISIBLE_CONSTRUCTOR,
+    UNMARKED_BRIDGE,
+}
 
 /** Cold denial cases only; does not construct an alternate driver or touch the installed artifact/cache. */
 private class CutDescriptorDefectLoader(parent: ClassLoader, private val defect: CutDescriptorDefect) : ClassLoader(parent) {
@@ -2143,7 +2271,8 @@ private class CutDescriptorDefectLoader(parent: ClassLoader, private val defect:
             val bytes = requireNotNull(parent.getResourceAsStream(name.replace('.', '/') + ".class")).use { it.readAllBytes() }
             if (name == OWNED_CUT_HELPER && defect in setOf(CutDescriptorDefect.MISSING_DESCRIPTOR, CutDescriptorDefect.MISSING_RETENTION_DESCRIPTOR)) {
                 // Rename exactly this UTF-8 method name, preserving class shape and every other descriptor.
-                val target = (if (defect === CutDescriptorDefect.MISSING_RETENTION_DESCRIPTOR) "retentionState" else "recordReturned").toByteArray(Charsets.UTF_8)
+                val target = (if (defect === CutDescriptorDefect.MISSING_RETENTION_DESCRIPTOR) "retentionState" else "recordReturned")
+                    .toByteArray(Charsets.UTF_8)
                 val matches = (0..bytes.size - target.size).filter { at -> target.indices.all { bytes[at + it] == target[it] } }
                 assertEquals(1, matches.size)
                 bytes[matches.single() + target.lastIndex] = 'X'.code.toByte()

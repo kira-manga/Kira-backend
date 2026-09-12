@@ -71,6 +71,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     private val driverChildren = AtomicLong()
     private val driverFailed = AtomicBoolean()
     private val unresolvedDriver = AtomicBoolean()
+
     // Lease/epoch exposure, not physical-native construction counting or a weak alias index.
     // A canonical Life must have its OWN first return even if its parent implicitly closes it.
     private val exposedNative = IdentityHashMap<Any, PersistencePgOwnedCutAccess.Life>()
@@ -79,7 +80,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     fun enter(identity: PersistenceJdbcGuardIdentity, kind: PersistenceJdbcGuardCallKind): PersistenceJdbcGuardCall {
         if (!identity.matches(this) || identity.epoch !== epoch) refuse()
         if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION && !identity.originalCaller()) refuse()
-        reconcileAncestors() // Observe genuine ancestor failure before granting a nested business token.
+        reconcileAncestors(this, frames) // Observe genuine ancestor failure before granting a nested business token.
         if (!ownership.permitsCleanup(identity.epoch)) refuse()
         val token = when (kind) {
             PersistenceJdbcGuardCallKind.BUSINESS -> identity.epoch.enterForeground()
@@ -92,7 +93,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     fun requireCurrent(identity: PersistenceJdbcGuardIdentity) {
         val actual = identity.originalCaller() || frames.get()?.permitsCancellation(identity) == true
         if (!identity.matches(this) || identity.epoch !== epoch || !actual) refuse()
-        reconcileAncestors()
+        reconcileAncestors(this, frames)
         if (!ownership.permitsCleanup(identity.epoch)) refuse()
     }
 
@@ -128,7 +129,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     /** The lower physical close/abort are closed terminal requests, not foreign foreground business. */
     internal fun enterTerminal(): PersistenceJdbcGuardCall {
         if (ownership.poolEpoch(pool) !== epoch) refuse()
-        reconcileAncestors()
+        reconcileAncestors(this, frames)
         val cleanup = epoch.cancellationCleanup() ?: refuse()
         val identity = PersistenceJdbcGuardIdentity.prepare(this, epoch, cleanup)
         val token = epoch.enterCleanupCancellation(cleanup) ?: refuse()
@@ -199,13 +200,16 @@ internal class PersistenceJdbcGuardContext private constructor(
     @Suppress("TooGenericExceptionCaught")
     internal fun collectTransferFacts(transfer: PersistenceJdbcPoolTransfer): PersistenceJdbcTransferFacts? {
         check(!ownership.ownershipLockHeld() && ownership.ownsTransfer(transfer, this))
-        if (!epoch.sealedAndEnded() || graphFailed() || children.get() != 0L || hasCurrentFrame()) return null
+        if (!epoch.sealedAndEnded() || graphFailed() || children.get() != 0L) return null
+        if (hasCurrentFrame()) return null
         val root = driverRoot.get() ?: return null
         try {
-            if (exposedNative.values.any { it.access.firstCloseState(it) != PersistencePgOwnedCutAccess.FIRST_RETURNED }) return null
-            if (driverCustody?.retainedStateSafe(root) != true) return null
-            if (transfer.requiresTransaction() && !transaction.clean()) return null
-            return PersistenceJdbcTransferFacts.prepare(this, transfer)
+            return when {
+                exposedNative.values.any { it.access.firstCloseState(it) != PersistencePgOwnedCutAccess.FIRST_RETURNED } -> null
+                driverCustody?.retainedStateSafe(root) != true -> null
+                transfer.requiresTransaction() && !transaction.clean() -> null
+                else -> PersistenceJdbcTransferFacts.prepare(this, transfer)
+            }
         } catch (failure: Throwable) {
             driverFailed.set(true)
             driverCustody?.observationFailed(failure)
@@ -313,7 +317,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     }
 
     internal fun authenticDriverObservation(authority: Any, call: PersistenceJdbcGuardCall, invocation: PersistencePgOwnedCutAccess.Invocation?): Boolean =
-        authority === driverAuthority && authenticAncestor(call) && if (invocation == null) {
+        authority === driverAuthority && authenticAncestor(this, call, frames) && if (invocation == null) {
             actualFrame(call)
         } else {
             call.ownsDriverInvocation(invocation) && invocation.callKey === call && invocation.owner.root === driverRoot.get()
@@ -385,25 +389,6 @@ internal class PersistenceJdbcGuardContext private constructor(
         }
     }
 
-    private fun reconcileAncestors() {
-        var current = frames.get()
-        while (current != null) {
-            check(current.actualUnended(this))
-            current.reconcileDriverFromAncestor()
-            current = current.parentFrame()
-        }
-    }
-
-    private fun authenticAncestor(call: PersistenceJdbcGuardCall): Boolean {
-        if (!call.actualUnended(this)) return false
-        var current = frames.get()
-        while (current != null) {
-            if (current === call) return true
-            current = current.parentFrame()
-        }
-        return false
-    }
-
     private fun wrapToken(
         identity: PersistenceJdbcGuardIdentity,
         token: PersistenceProducerEpoch.Call,
@@ -432,4 +417,23 @@ internal class PersistenceJdbcGuardContext private constructor(
 
         internal fun refuse(): Nothing = throw SQLException("Persistence JDBC operation refused.")
     }
+}
+
+private fun reconcileAncestors(context: PersistenceJdbcGuardContext, frames: ThreadLocal<PersistenceJdbcGuardCall?>) {
+    var current = frames.get()
+    while (current != null) {
+        check(current.actualUnended(context))
+        current.reconcileDriverFromAncestor()
+        current = current.parentFrame()
+    }
+}
+
+private fun authenticAncestor(context: PersistenceJdbcGuardContext, call: PersistenceJdbcGuardCall, frames: ThreadLocal<PersistenceJdbcGuardCall?>): Boolean {
+    if (!call.actualUnended(context)) return false
+    var current = frames.get()
+    while (current != null) {
+        if (current === call) return true
+        current = current.parentFrame()
+    }
+    return false
 }

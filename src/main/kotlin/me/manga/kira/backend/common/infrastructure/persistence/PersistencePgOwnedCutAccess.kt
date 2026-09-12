@@ -474,7 +474,9 @@ internal class PersistencePgOwnedCutCustody(private val entry: PersistencePhysic
                     PersistencePgOwnedCutAccess.OPENING_UNRESOLVED or PersistencePgOwnedCutAccess.OPENING_CLEANUP_FAILED or
                         PersistencePgOwnedCutAccess.OPENING_CONSTRUCTION_FAILED
                     ) != 0
-            ) return false
+            ) {
+                return false
+            }
             if (reuseUncertain()) return false
             val retention = selected.access.retentionState(selected)
             check(retention and PersistencePgOwnedCutAccess.RETENTION_MASK.inv() == 0)

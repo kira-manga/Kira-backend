@@ -165,27 +165,11 @@ private class PhysicalConnectionCalls(
         if (method.name == "isClosed" && entry.jdbc.retirementRequested()) return true
         val dispatch = PersistenceJdbcDispatch.current()
         // A present old credential is never upgraded using this Thread's pool membership.
-        val state = if (dispatch != null) {
-            dispatch.select(self, entry.jdbc)
-        } else if (entry.jdbc.unboundPoolState(initial)) {
-            initial // Explicit pre-composition typed capability, never a composed fallback.
-        } else {
-            if (!pool.authenticPoolCaller()) PersistenceJdbcGuardContext.refuse()
-            entry.jdbc.composedPoolState(pool)?.takeUnless { it.leased } ?: PersistenceJdbcGuardContext.refuse()
-        }
+        val state = selectState(dispatch)
         val context = state.context
         val returning = dispatch?.returning() == true
         val call = try {
-            when {
-                dispatch != null -> context.enter(
-                    dispatch.identity,
-                    if (returning || terminal) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS,
-                )
-                terminal -> context.enterTerminal()
-                else -> context.enterRoot(
-                    if (entry.jdbc.unboundPoolState(initial)) PersistenceJdbcGuardCallKind.BUSINESS else PersistenceJdbcGuardCallKind.CLEANUP,
-                )
-            }
+            enterCall(context, dispatch, returning, terminal)
         } catch (failure: SQLException) {
             throw declaredFailure(context, method, failure)
         }
@@ -195,15 +179,22 @@ private class PhysicalConnectionCalls(
             var completed = false
             return runCatching {
                 try {
-                    val arguments = args?.let { source -> Array<Any?>(source.size) { source[it] } } ?: emptyArray()
+                    val arguments = copyArguments(args)
                     val result = when (method.name) {
                         "unwrap" -> unwrap(arguments.singleOrNull() as? Class<*>)
+
                         "isWrapperFor" -> (arguments.singleOrNull() as? Class<*>)?.isInstance(self) == true
-                        "close" -> { context.requestTerminal(call); null }
+
+                        "close" -> {
+                            context.requestTerminal(call)
+                            null
+                        }
+
                         "abort" -> {
                             context.dispatchAbort(call, arguments.singleOrNull() as? Executor ?: PersistenceJdbcGuardContext.refuse())
                             null
                         }
+
                         else -> {
                             val adapted = state.graph.connectionArguments(call, method, arguments)
                             context.transaction.beforeConnection(method, adapted, returning)
@@ -233,7 +224,11 @@ private class PhysicalConnectionCalls(
                     }
                 }
             }.getOrElse { failure ->
-                val actual = if (failure.javaClass === InvocationTargetException::class.java) (failure as InvocationTargetException).targetException else failure
+                val actual = if (failure.javaClass === InvocationTargetException::class.java) {
+                    (failure as InvocationTargetException).targetException
+                } else {
+                    failure
+                }
                 throw declaredFailure(context, method, call.failure(actual, wrapping))
             }
         } finally {
@@ -242,6 +237,35 @@ private class PhysicalConnectionCalls(
             if (returning && method.name == "clearWarnings" && call.returnedAfterFinalizers()) dispatch!!.lease.afterClearWarnings(self, call)
         }
     }
+
+    private fun selectState(dispatch: PersistenceJdbcDispatch.Frame?): PersistenceJdbcPoolEpoch = if (dispatch != null) {
+        dispatch.select(self, entry.jdbc)
+    } else if (entry.jdbc.unboundPoolState(initial)) {
+        initial // Explicit pre-composition typed capability, never a composed fallback.
+    } else {
+        if (!pool.authenticPoolCaller()) PersistenceJdbcGuardContext.refuse()
+        entry.jdbc.composedPoolState(pool)?.takeUnless { it.leased } ?: PersistenceJdbcGuardContext.refuse()
+    }
+
+    private fun enterCall(
+        context: PersistenceJdbcGuardContext,
+        dispatch: PersistenceJdbcDispatch.Frame?,
+        returning: Boolean,
+        terminal: Boolean,
+    ): PersistenceJdbcGuardCall = when {
+        dispatch != null -> context.enter(
+            dispatch.identity,
+            if (returning || terminal) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS,
+        )
+
+        terminal -> context.enterTerminal()
+
+        else -> context.enterRoot(
+            if (entry.jdbc.unboundPoolState(initial)) PersistenceJdbcGuardCallKind.BUSINESS else PersistenceJdbcGuardCallKind.CLEANUP,
+        )
+    }
+
+    private fun copyArguments(args: Array<out Any?>?): Array<Any?> = args?.let { source -> Array<Any?>(source.size) { source[it] } } ?: emptyArray()
 
     private fun declaredFailure(context: PersistenceJdbcGuardContext, method: Method, failure: Throwable): Throwable =
         if (method.name == "setClientInfo" && failure is SQLException && failure !is SQLClientInfoException) context.clientInfo(failure) else failure

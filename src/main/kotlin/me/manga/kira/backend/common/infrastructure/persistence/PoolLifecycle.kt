@@ -14,6 +14,7 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     private val accepted = AtomicBoolean()
     private val firstClose = AtomicReference<CloseAttempt?>()
     private var shutdownBudget: PersistenceTimeBudget? = null
+
     @Volatile
     private var businessSealed = false
 
@@ -40,9 +41,11 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
             installed = true
             return true
         } finally {
-            if (!installed) synchronized(gate) {
-                installation = Installation.REFUSED
-                actors.failLocked(PoolActorFault.UNSUPPORTED_PROFILE)
+            if (!installed) {
+                synchronized(gate) {
+                    installation = Installation.REFUSED
+                    actors.failLocked(PoolActorFault.UNSUPPORTED_PROFILE)
+                }
             }
         }
     }
@@ -139,8 +142,10 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
             val decision = synchronized(gate) {
                 when {
                     firstClose.get() != null -> PoolShutdownInvocation.ALREADY_CLAIMED
+
                     // Conservative for all admitted getConnection frames, including the first potentially constructing one.
                     acquisitions != 0L || startup === Startup.INITIALIZING -> PoolShutdownInvocation.INITIALIZATION_PENDING
+
                     else -> {
                         check(firstClose.compareAndSet(null, attempt))
                         frame.activate(issuance)
@@ -271,9 +276,8 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
             val admitted = synchronized(gate) {
                 if (persistenceFactoryRemainingMillis(frame.budget) == 0L) return@synchronized false
                 if (operation == null) {
-                    if (businessSealed || installation === Installation.INSTALLING || startup === Startup.INITIALIZING || startup === Startup.FAILED) {
-                        return@synchronized false
-                    }
+                    if (businessSealed || installation === Installation.INSTALLING) return@synchronized false
+                    if (startup === Startup.INITIALIZING || startup === Startup.FAILED) return@synchronized false
                     val count = Math.addExact(acquisitions, 1L)
                     if (installation === Installation.INSTALLED && startup === Startup.NEW) {
                         startup = Startup.INITIALIZING
@@ -382,9 +386,12 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         return synchronized(gate) {
             val frame = operation.frame
             val entitlement = operation.entitlement
-            if (!frame.authentic(this, issuance) || frame.kind !== PoolCallKind.RETURN || !frame.active() || PoolCallFrames.current() !== frame ||
-                !entitlement.authentic(this, issuance) || !entitlement.preparedForLocked(issuance, operation)
-            ) return@synchronized false
+            if (!frame.authentic(this, issuance) || frame.kind !== PoolCallKind.RETURN || !frame.active()) {
+                return@synchronized false
+            }
+            if (PoolCallFrames.current() !== frame || !entitlement.authentic(this, issuance) || !entitlement.preparedForLocked(issuance, operation)) {
+                return@synchronized false
+            }
             // Only the exact prepared current RETURN can reveal broken retained accounting.
             if (!entitlement.consumedLocked(issuance) || operations <= 0L) {
                 actors.failLocked(PoolActorFault.BOOKKEEPING_FAILED)
@@ -399,7 +406,8 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         if (!ticket.frame.authentic(this, issuance) || owner.ownershipLockHeld()) return null
         val entitlement = LeaseEntitlement.prepare(this, issuance, Thread.currentThread())
         return synchronized(gate) {
-            if (businessSealed || !ticket.frame.active() || PoolCallFrames.current() !== ticket.frame || !ticket.hasCaptured() || ticket.entitlement != null) return null
+            if (businessSealed || !ticket.frame.active() || PoolCallFrames.current() !== ticket.frame) return null
+            if (!ticket.hasCaptured() || ticket.entitlement != null) return null
             val count = Math.addExact(futureEntries, 1L)
             ticket.entitlement = entitlement
             futureEntries = count
@@ -427,17 +435,22 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     private fun observe(candidate: ShutdownReceipt): PoolShutdownObservation {
         if (candidate !== receipt || !accepted.get()) return PoolShutdownObservation.UNACCEPTED
         val frame = PoolCallFrames.current()
-        if (frame != null) return when (frame.kind) {
-            PoolCallKind.ACQUISITION -> PoolShutdownObservation.ACTIVE_ACQUISITION
-            PoolCallKind.SHUTDOWN -> PoolShutdownObservation.ACTIVE_SHUTDOWN_FRAME
-            else -> PoolShutdownObservation.ACTIVE_POOL_FRAME
+        if (frame != null) {
+            return when (frame.kind) {
+                PoolCallKind.ACQUISITION -> PoolShutdownObservation.ACTIVE_ACQUISITION
+                PoolCallKind.SHUTDOWN -> PoolShutdownObservation.ACTIVE_SHUTDOWN_FRAME
+                else -> PoolShutdownObservation.ACTIVE_POOL_FRAME
+            }
         }
         if (PoolActorCustody.currentThreadOwnsActorFrame()) return PoolShutdownObservation.ACTIVE_POOL_ACTOR
         if (owner.ownershipLockHeld()) return PoolShutdownObservation.OWNERSHIP_LOCK_HELD
-        val attempt = firstClose.get() ?: return PoolShutdownObservation.PENDING
-        if (!attempt.ended.get()) return PoolShutdownObservation.PENDING
-        if (!synchronized(gate) { closedPopulationReadyLocked() }) return PoolShutdownObservation.PENDING
-        return observeEndedPool(attempt)
+        val attempt = firstClose.get()
+        return when {
+            attempt == null -> PoolShutdownObservation.PENDING
+            !attempt.ended.get() -> PoolShutdownObservation.PENDING
+            !synchronized(gate) { closedPopulationReadyLocked() } -> PoolShutdownObservation.PENDING
+            else -> observeEndedPool(attempt)
+        }
     }
 
     private fun observeEndedPool(attempt: CloseAttempt): PoolShutdownObservation {
@@ -449,21 +462,21 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         // This existing owner observer may wait, but only outside F/G/T and every counted caller/Worker extent.
         val native = owner.observeShutdown(budget)
         if (native === PersistenceLifecycleObservation.PENDING) return PoolShutdownObservation.PENDING
-        if (native !== PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && native !== PersistenceLifecycleObservation.DRIVER_CONTRACT_ONLY_ENDED) {
-            return PoolShutdownObservation.UNKNOWN
-        }
-        if (attempt.outcome.get() !== PersistenceTerminalCall.RETURNED || attempt.interrupted.get() || attempt.bookkeepingFailed.get() ||
-            actorState === PoolActorObservation.UNKNOWN
-        ) {
-            return PoolShutdownObservation.UNKNOWN
-        }
-        if (synchronized(gate) { installation !== Installation.INSTALLED } || actorState === PoolActorObservation.UNPROVEN) {
-            return PoolShutdownObservation.POOL_ACTORS_UNPROVEN
-        }
-        return if (native === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED) {
-            PoolShutdownObservation.TRACKED_LOCAL_ENDED
-        } else {
-            PoolShutdownObservation.DRIVER_CONTRACT_ONLY_ENDED
+        return when {
+            native !== PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && native !== PersistenceLifecycleObservation.DRIVER_CONTRACT_ONLY_ENDED ->
+                PoolShutdownObservation.UNKNOWN
+
+            attempt.outcome.get() !== PersistenceTerminalCall.RETURNED || attempt.interrupted.get() || attempt.bookkeepingFailed.get() ->
+                PoolShutdownObservation.UNKNOWN
+
+            actorState === PoolActorObservation.UNKNOWN -> PoolShutdownObservation.UNKNOWN
+
+            synchronized(gate) { installation !== Installation.INSTALLED } || actorState === PoolActorObservation.UNPROVEN ->
+                PoolShutdownObservation.POOL_ACTORS_UNPROVEN
+
+            native === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED -> PoolShutdownObservation.TRACKED_LOCAL_ENDED
+
+            else -> PoolShutdownObservation.DRIVER_CONTRACT_ONLY_ENDED
         }
     }
 
@@ -484,7 +497,8 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         fun enter(): Boolean = pool.enterAcquisition(this)
 
         fun capture(returned: Connection): Boolean {
-            if (!frame.actualCaller() || !frame.active() || PoolCallFrames.current() !== frame || handle != null) return false
+            if (!frame.actualCaller() || !frame.active() || PoolCallFrames.current() !== frame) return false
+            if (handle != null) return false
             handle = returned
             return true
         }

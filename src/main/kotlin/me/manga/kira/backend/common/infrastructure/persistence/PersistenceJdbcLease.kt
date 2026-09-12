@@ -78,24 +78,7 @@ internal class PersistenceJdbcLease private constructor(
         if (Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
         if (ownership.ownershipLockHeld()) PersistenceJdbcGuardContext.refuse()
         val budget = PersistenceTimeBudget.start(1_000)
-        var entered = false
-        val operation = try {
-            returnCaller = PersistenceOwnedFactoryCaller.capture() // Metadata only, outside F/G/T.
-            val prepared = entitlement.prepareReturn(budget) ?: PersistenceJdbcGuardContext.refuse()
-            if (!prepared.enter()) PersistenceJdbcGuardContext.refuse()
-            entered = true
-            prepared
-        } finally {
-            if (!entered) {
-                try {
-                    deliveryFailed()
-                } finally {
-                    // Only AVAILABLE can be revoked. A partially admitted authentic frame keeps
-                    // its consumed right/count; never invent its end or issue a replacement budget.
-                    entitlement.revoke()
-                }
-            }
-        }
+        val operation = enterReturn(budget)
         var dispatch: PersistenceJdbcDispatch.Frame? = null
         var failure: Throwable? = null
         var bookkeepingFailure: SQLException? = null
@@ -124,18 +107,7 @@ internal class PersistenceJdbcLease private constructor(
                     ownership.requestRetirement(state.epoch)
                     state.epoch.sealForTerminal()
                     if (attempt != null && !attempt.actualEnded()) attempt.reject()
-                    try {
-                        // Exact source ownership is claimed before the private Hikari eviction.
-                        // This is still inside the consumed RETURN frame, never a second ingress.
-                        val retirement = owner.evictOwned(this, handle, budget)
-                        if (retirement is PersistenceLeaseRetirementClaim.CallerSampleFailed) {
-                            operation.recordReturnIncidentBeforeEnd()
-                            if (failure == null) failure = retirement.failure
-                        }
-                    } catch (problem: Throwable) {
-                        operation.failBeforeEnd()
-                        if (failure == null) failure = problem
-                    }
+                    failure = evictReturningLease(operation, budget, failure)
                 }
             } finally {
                 try {
@@ -147,61 +119,139 @@ internal class PersistenceJdbcLease private constructor(
                     // or end failure must never send an already-restored InterruptedException
                     // through another interrupting adapter, especially after the actor has ended.
                     bookkeepingFailure = state.context.adaptFailure(IllegalStateException("Persistence return bookkeeping refused."))
-                    val originalFailure = failure
-                    if (originalFailure !is InterruptedException) {
-                        try {
-                            requireNotNull(returnCaller).restoreAfterFailure()
-                        } catch (problem: Throwable) {
-                            operation.failBeforeEnd()
-                            if (originalFailure == null) throw problem
-                        }
-                    }
-                    // For an original InterruptedException this adapter IS the sole restoration.
-                    // Both its callback and its own failure stay inside this genuine RETURN.
-                    failure = originalFailure?.let { state.context.adaptFailure(it) }
+                    failure = restoreReturnFailure(operation, failure)
+                } catch (problem: Error) {
+                    operation.failBeforeEnd()
+                    failure = problem
                 } catch (problem: Throwable) {
                     operation.failBeforeEnd()
-                    failure = if (problem is Error) problem else bookkeepingFailure ?: problem
+                    failure = bookkeepingFailure ?: problem
                 } finally {
-                    var holderEnded = transfer?.actualEnded() != false
-                    try {
-                        val attempt = transfer
-                        if (attempt != null && !attempt.actualEnded()) {
-                            attempt.end()
-                            holderEnded = true
-                        }
-                    } catch (problem: Throwable) {
-                        operation.failBeforeEnd()
-                        if (failure == null) failure = if (problem is Error) problem else bookkeepingFailure ?: problem
-                    }
-                    var dispatchEnded = dispatch == null
-                    try {
-                        dispatch?.end()
-                        dispatchEnded = true
-                    } catch (problem: Throwable) {
-                        operation.failBeforeEnd()
-                        if (failure == null) failure = if (problem is Error) problem else bookkeepingFailure ?: problem
-                    } finally {
-                        phase.set(Phase.CLOSED)
-                        // Never publish an ended actor frame while its holder/TL tail is unresolved.
-                        // A consented old tail records only actor uncertainty, not successor eviction.
-                        if (holderEnded && dispatchEnded) {
-                            try {
-                                if (!operation.end() || !operation.actualFrameEnded()) {
-                                    operation.failBeforeEnd()
-                                    if (failure == null) failure = requireNotNull(bookkeepingFailure)
-                                }
-                            } catch (problem: Throwable) {
-                                if (failure == null) failure = if (problem is Error) problem else bookkeepingFailure ?: problem
-                            }
-                        } else {
-                            operation.failBeforeEnd()
-                        }
-                    }
+                    failure = endReturnTail(operation, dispatch, failure, bookkeepingFailure)
                 }
             }
         }
         failure?.let { throw it } // Already adapted, or an adapter/Error outcome; never another callback.
+    }
+
+    private fun enterReturn(budget: PersistenceTimeBudget): PoolLifecycle.Operation {
+        var entered = false
+        return try {
+            returnCaller = PersistenceOwnedFactoryCaller.capture() // Metadata only, outside F/G/T.
+            val prepared = entitlement.prepareReturn(budget) ?: PersistenceJdbcGuardContext.refuse()
+            if (!prepared.enter()) PersistenceJdbcGuardContext.refuse()
+            entered = true
+            prepared
+        } finally {
+            if (!entered) {
+                try {
+                    deliveryFailed()
+                } finally {
+                    // Only AVAILABLE can be revoked. A partially admitted authentic frame keeps
+                    // its consumed right/count; never invent its end or issue a replacement budget.
+                    entitlement.revoke()
+                }
+            }
+        }
+    }
+
+    private fun evictReturningLease(operation: PoolLifecycle.Operation, budget: PersistenceTimeBudget, originalFailure: Throwable?): Throwable? {
+        var failure = originalFailure
+        runCatching {
+            // Exact source ownership is claimed before the private Hikari eviction.
+            // This is still inside the consumed RETURN frame, never a second ingress.
+            val retirement = owner.evictOwned(this, handle, budget)
+            if (retirement is PersistenceLeaseRetirementClaim.CallerSampleFailed) {
+                operation.recordReturnIncidentBeforeEnd()
+                if (failure == null) failure = retirement.failure
+            }
+        }.onFailure { problem ->
+            operation.failBeforeEnd()
+            if (failure == null) failure = problem
+        }
+        return failure
+    }
+
+    private fun restoreReturnFailure(operation: PoolLifecycle.Operation, originalFailure: Throwable?): Throwable? {
+        if (originalFailure !is InterruptedException) {
+            runCatching {
+                requireNotNull(returnCaller).restoreAfterFailure()
+            }.onFailure { problem ->
+                operation.failBeforeEnd()
+                if (originalFailure == null) throw problem
+            }
+        }
+        // For an original InterruptedException this adapter IS the sole restoration.
+        // Both its callback and its own failure stay inside this genuine RETURN.
+        return originalFailure?.let { state.context.adaptFailure(it) }
+    }
+
+    private fun endReturnTail(
+        operation: PoolLifecycle.Operation,
+        dispatch: PersistenceJdbcDispatch.Frame?,
+        originalFailure: Throwable?,
+        bookkeepingFailure: SQLException?,
+    ): Throwable? {
+        var failure = originalFailure
+        var holderEnded = transfer?.actualEnded() != false
+        runCatching {
+            val attempt = transfer
+            if (attempt != null && !attempt.actualEnded()) {
+                attempt.end()
+                holderEnded = true
+            }
+        }.onFailure { problem ->
+            operation.failBeforeEnd()
+            if (failure == null) {
+                failure = when (problem) {
+                    is Error -> problem
+                    else -> bookkeepingFailure ?: problem
+                }
+            }
+        }
+        var dispatchEnded = dispatch == null
+        try {
+            runCatching {
+                dispatch?.end()
+                dispatchEnded = true
+            }.onFailure { problem ->
+                operation.failBeforeEnd()
+                if (failure == null) {
+                    failure = when (problem) {
+                        is Error -> problem
+                        else -> bookkeepingFailure ?: problem
+                    }
+                }
+            }
+        } finally {
+            phase.set(Phase.CLOSED)
+            // Never publish an ended actor frame while its holder/TL tail is unresolved.
+            // A consented old tail records only actor uncertainty, not successor eviction.
+            if (holderEnded && dispatchEnded) {
+                failure = endReturnedFrame(operation, failure, bookkeepingFailure)
+            } else {
+                operation.failBeforeEnd()
+            }
+        }
+        return failure
+    }
+
+    private fun endReturnedFrame(operation: PoolLifecycle.Operation, originalFailure: Throwable?, bookkeepingFailure: SQLException?): Throwable? {
+        var failure = originalFailure
+        runCatching {
+            if (!operation.end() || !operation.actualFrameEnded()) {
+                operation.failBeforeEnd()
+                if (failure == null) failure = requireNotNull(bookkeepingFailure)
+            }
+        }.onFailure { problem ->
+            if (failure == null) {
+                failure = when (problem) {
+                    is Error -> problem
+                    else -> bookkeepingFailure ?: problem
+                }
+            }
+        }
+        return failure
     }
 
     internal fun returnTransfer(expected: PhysicalJdbcFacade): PersistenceJdbcPoolTransfer? = transfer?.takeIf {
@@ -215,9 +265,11 @@ internal class PersistenceJdbcLease private constructor(
     }
 
     internal fun claimEviction(expectedOwner: GuardedDataSource, candidate: Connection, budget: PersistenceTimeBudget): PersistenceLeaseRetirementClaim {
-        if (owner !== expectedOwner || handle !== candidate || Thread.currentThread() !== original || phase.get() !== Phase.RETURNING ||
-            transfer?.consented() == true || !ownership.currentPoolState(state) || !evictionClaimed.compareAndSet(false, true)
-        ) return PersistenceLeaseRetirementClaim.Refused
+        if (owner !== expectedOwner || handle !== candidate || Thread.currentThread() !== original) return PersistenceLeaseRetirementClaim.Refused
+        if (phase.get() !== Phase.RETURNING || transfer?.consented() == true || !ownership.currentPoolState(state)) {
+            return PersistenceLeaseRetirementClaim.Refused
+        }
+        if (!evictionClaimed.compareAndSet(false, true)) return PersistenceLeaseRetirementClaim.Refused
         return ownership.retireLeasedState(state, budget, requireNotNull(returnCaller))
     }
 
@@ -245,11 +297,7 @@ internal object PersistenceJdbcDispatch {
 
     internal fun enter(lease: PersistenceJdbcLease, returning: Boolean): Frame = Frame(lease, returning, frames.get()).also { frames.set(it) }
 
-    internal class Frame internal constructor(
-        internal val lease: PersistenceJdbcLease,
-        private val returning: Boolean,
-        private val parent: Frame?,
-    ) {
+    internal class Frame internal constructor(internal val lease: PersistenceJdbcLease, private val returning: Boolean, private val parent: Frame?) {
         private val caller = Thread.currentThread()
         private var ended = false
         internal val identity: PersistenceJdbcGuardIdentity get() = lease.identity

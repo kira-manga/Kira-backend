@@ -9,8 +9,8 @@ internal class PersistenceJdbcTransaction {
     private var unknown = false
 
     fun beforeConnection(method: Method, arguments: Array<Any?>, returning: Boolean) {
-        if (method.name == "setAutoCommit" && arguments.singleOrNull() == true && (unknown || (returning && pending))) {
-            PersistenceJdbcGuardContext.refuse()
+        if (method.name == "setAutoCommit" && arguments.singleOrNull() == true) {
+            if (unknown || (returning && pending)) PersistenceJdbcGuardContext.refuse()
         }
         if (method.name !in LOCAL_CONNECTION_STATE) nativeWork()
     }
@@ -21,11 +21,14 @@ internal class PersistenceJdbcTransaction {
                 autoCommit = result as Boolean
                 if (autoCommit == true) pending = false
             }
+
             "setAutoCommit" -> {
                 autoCommit = arguments.single() as Boolean
                 if (autoCommit == true) pending = false
             }
+
             "commit" -> pending = false
+
             "rollback" -> if (arguments.isEmpty()) pending = false
         }
     }
@@ -59,6 +62,7 @@ internal class PersistenceJdbcTransaction {
 
     companion object {
         private val OUTCOME_METHODS = setOf("commit", "rollback", "setAutoCommit")
+
         // Only the exact pinned PgConnection's non-SQL local state routes are exempt. In
         // particular getCatalog/getSchema/setSchema/createArrayOf/savepoint routes are NOT.
         private val LOCAL_CONNECTION_STATE = setOf(

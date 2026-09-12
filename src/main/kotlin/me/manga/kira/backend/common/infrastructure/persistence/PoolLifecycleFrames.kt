@@ -75,13 +75,8 @@ internal class PoolCallFrame private constructor(
     override fun toString(): String = "PoolCallFrame(redacted)"
 
     companion object {
-        internal fun prepare(
-            pool: PoolLifecycle,
-            issuance: Any,
-            kind: PoolCallKind,
-            caller: Thread,
-            budget: PersistenceTimeBudget,
-        ): PoolCallFrame = PoolCallFrame(pool, issuance, kind, caller, budget)
+        internal fun prepare(pool: PoolLifecycle, issuance: Any, kind: PoolCallKind, caller: Thread, budget: PersistenceTimeBudget): PoolCallFrame =
+            PoolCallFrame(pool, issuance, kind, caller, budget)
     }
 }
 

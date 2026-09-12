@@ -115,18 +115,22 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
         val cut = when (case.mode) {
             PgLifecycleDatabaseMode.POOL_ACQUISITION_END_TL_FAILURE ->
                 "cut=ACQUISITION_END_TL acquisition=ENDING active_acquisitions=1 delivered=false future_entries=0 pool_close_claimed=false"
+
             PgLifecycleDatabaseMode.POOL_CORE_LAST_COUNT_TL_FAILURE ->
                 "cut=RETURN_CORE_LAST_COUNT_TL native_actual_end=true core_producer_ended=false future_entries=0 transfer_consented=false"
+
             else -> error("Not a closed pending-pool case.")
         }
         return "PG_POOL_PENDING_RETAINED ${case.label} nonce=$nonce $cut caller_terminated=true product_end=false"
     }
 
     private fun requireNoProductEnd(lines: List<String>) {
-        check(lines.none {
-            it.startsWith("PG_DATABASE_VERIFIED ") || it.startsWith("PG_DATABASE_SCENARIO_CLEANUP ") ||
-                it.startsWith("PG_LIFECYCLE_ROOT_CLEANUP ") || it.startsWith("PG_DATABASE_FAILED ") || it.startsWith("PG_POOL_PENDING_FAILED ")
-        }) { "A pending-pool cut must not claim normal product cleanup or hide a failure." }
+        check(
+            lines.none {
+                it.startsWith("PG_DATABASE_VERIFIED ") || it.startsWith("PG_DATABASE_SCENARIO_CLEANUP ") ||
+                    it.startsWith("PG_LIFECYCLE_ROOT_CLEANUP ") || it.startsWith("PG_DATABASE_FAILED ") || it.startsWith("PG_POOL_PENDING_FAILED ")
+            },
+        ) { "A pending-pool cut must not claim normal product cleanup or hide a failure." }
     }
 
     fun outputPrefix(): String = requireNotNull(outputCapture).prefix()

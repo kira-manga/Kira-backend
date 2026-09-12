@@ -18,7 +18,8 @@ internal class GuardedDataSource(
     private val endpoint: ResolvedPersistenceEndpoint,
     maximumPoolSize: Int,
     private val launchProfile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.UNKNOWN,
-) : DataSource, AutoCloseable {
+) : DataSource,
+    AutoCloseable {
     private val pool = HikariDataSource()
     private val lifecycle = PoolLifecycle(pool, owner)
     private val lower = PrivateJdbcDataSource(owner, endpoint, lifecycle)
@@ -76,19 +77,23 @@ internal class GuardedDataSource(
             try {
                 if (!delivered) {
                     if (obtained || endAttempted) acquisition.failBeforeEnd()
-                    try {
-                        facade?.deliveryFailed()
-                    } finally {
-                        try {
-                            entitlement?.revoke() // This connection was never returned to a borrower.
-                        } finally {
-                            acquisition.handoff() // Exact state retains the handle; no guessed raw close.
-                        }
-                    }
+                    cleanupUndelivered(acquisition, facade, entitlement)
                 }
             } finally {
                 // An ENDING failure is retained, not retried as though it were an untouched frame.
                 if (!endAttempted && !acquisition.end()) lifecycle.requestShutdown(budget)
+            }
+        }
+    }
+
+    private fun cleanupUndelivered(acquisition: PoolLifecycle.Acquisition, facade: LeaseJdbcFacade?, entitlement: PoolLifecycle.LeaseEntitlement?) {
+        try {
+            facade?.deliveryFailed()
+        } finally {
+            try {
+                entitlement?.revoke() // This connection was never returned to a borrower.
+            } finally {
+                acquisition.handoff() // Exact state retains the handle; no guessed raw close.
             }
         }
     }

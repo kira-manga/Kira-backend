@@ -155,6 +155,7 @@ internal class PhysicalJdbcDescendants(
                     for (index in value.indices) copy[index] = adapt(value[index])
                     copy
                 }
+
                 is Properties -> {
                     val defaults = Properties()
                     val copy = Properties(defaults)
@@ -167,16 +168,19 @@ internal class PhysicalJdbcDescendants(
                     }
                     copy
                 }
+
                 is Map<*, *> -> LinkedHashMap<Any?, Any?>().also { copy ->
                     copies[value] = copy
                     value.forEach { (key, item) -> copy[adapt(key)] = adapt(item) }
                 }
+
                 is Collection<*> -> {
                     val copy: MutableCollection<Any?> = if (value is Set<*>) LinkedHashSet() else ArrayList()
                     copies[value] = copy
                     value.forEach { copy.add(adapt(it)) }
                     copy
                 }
+
                 else -> value
             }
         }
