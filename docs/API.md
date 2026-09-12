@@ -138,6 +138,8 @@ Summaries of the sources in the current document, ordered by the normative docum
 
 `iconRemoteUrl` is omitted when the stanza has none. `lifecycle` is the **app vocabulary** — a
 server-`retired` source appears as `"removed"`. Draft-only and server-`removed` sources never appear.
+Each response uses one catalog generation for stanza fields and source revision/publication metadata;
+a concurrent publication may yield the old or new generation, never a mixture.
 
 ### `GET /api/v1/sources/{api}`
 The single published `SourceConfig` stanza, served as raw canonical bytes, **consistent with the
