@@ -1,6 +1,7 @@
 package me.manga.kira.backend.completion
 
 import me.manga.kira.backend.completion.domain.CompletionOutcome
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.completion.infrastructure.EchoCompletionProvider
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -19,6 +20,7 @@ class EchoCompletionProviderTest {
     @Test
     fun `name is echo`() {
         assertEquals("echo", provider.name)
+        assertEquals(CompletionProviderLifetime.SYNCHRONOUS, provider.lifetime)
     }
 
     @Test

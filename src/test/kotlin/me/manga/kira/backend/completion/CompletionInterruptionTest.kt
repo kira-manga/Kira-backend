@@ -7,6 +7,7 @@ import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.completion.domain.CompletionStatus
 import me.manga.kira.backend.completion.domain.CompletionView
 import me.manga.kira.backend.config.KiraCompletionProperties
@@ -35,11 +36,16 @@ class CompletionInterruptionTest {
         val id = UUID.randomUUID()
         val userId = UUID.randomUUID()
         val providerStarted = CountDownLatch(1)
+        val providerRelease = CountDownLatch(1)
+        val releaseObserved = CountDownLatch(1)
         val worker = AtomicReference<Thread>()
         val persistedWithoutInterrupt = AtomicBoolean(false)
         val provider =
             object : CompletionProvider {
                 override val name = "interrupt-test"
+
+                // Audited test fake: every return or throw ends all local work.
+                override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
                 override fun complete(prompt: String, model: String): CompletionOutcome {
                     worker.set(Thread.currentThread())
@@ -48,6 +54,14 @@ class CompletionInterruptionTest {
                         CountDownLatch(1).await()
                         CompletionOutcome.Success("unreachable", 0)
                     } catch (_: InterruptedException) {
+                        while (true) {
+                            try {
+                                providerRelease.await()
+                                break
+                            } catch (_: InterruptedException) {
+                                // Deliberately retain actual local work after caller cancellation.
+                            }
+                        }
                         CompletionOutcome.Failure("worker cancelled")
                     }
                 }
@@ -80,25 +94,10 @@ class CompletionInterruptionTest {
                 }
             }
         val releaseCalls = AtomicInteger()
+        val activationCalls = AtomicInteger()
+        val token = AtomicReference<String>()
         val releaseEnteredWithInterrupt = AtomicBoolean(false)
-        val redis =
-            mock(StringRedisTemplate::class.java) { invocation ->
-                if (invocation.method.name == "execute") {
-                    when (invocation.getArgument<List<String>>(1).size) {
-                        4 -> 0L
-
-                        1 -> {
-                            releaseCalls.incrementAndGet()
-                            releaseEnteredWithInterrupt.set(Thread.currentThread().isInterrupted)
-                            throw DataAccessResourceFailureException("private Redis connection detail")
-                        }
-
-                        else -> error("Unexpected Redis operation")
-                    }
-                } else {
-                    Answers.RETURNS_DEFAULTS.answer(invocation)
-                }
-            }
+        val redis = redisTemplate(releaseCalls, activationCalls, token, releaseEnteredWithInterrupt, releaseObserved)
         val properties = KiraCompletionProperties(provider = provider.name, defaultModel = "model", executorThreads = 1, queueCapacity = 1)
         val admission = RedisCompletionAdmission(redis, properties)
         val service =
@@ -131,10 +130,15 @@ class CompletionInterruptionTest {
             assertNull(failure.get())
             assertSame(failedView, returnedView.get())
             assertTrue(persistedWithoutInterrupt.get())
-            assertEquals(1, releaseCalls.get())
-            assertTrue(releaseEnteredWithInterrupt.get())
+            assertEquals(1, activationCalls.get())
+            assertEquals(0, releaseCalls.get(), "Caller exit cannot release still-running provider work")
             assertTrue(interruptRestored.get())
+            providerRelease.countDown()
+            assertTrue(releaseObserved.await(2, TimeUnit.SECONDS), "Actual body exit owes the deferred release")
+            assertEquals(1, releaseCalls.get())
+            assertFalse(releaseEnteredWithInterrupt.get(), "Owed cleanup runs with a cleared preexisting interrupt")
         } finally {
+            providerRelease.countDown()
             service.shutdown()
             if (requestThread.isAlive) requestThread.interrupt()
             requestThread.join(2_000)
@@ -143,6 +147,43 @@ class CompletionInterruptionTest {
                 assertFalse(it.isAlive, "Owned completion worker did not stop")
             }
             assertFalse(requestThread.isAlive)
+        }
+    }
+
+    private fun redisTemplate(
+        releaseCalls: AtomicInteger,
+        activationCalls: AtomicInteger,
+        token: AtomicReference<String>,
+        releaseEnteredWithInterrupt: AtomicBoolean,
+        releaseObserved: CountDownLatch,
+    ): StringRedisTemplate = mock(StringRedisTemplate::class.java) { invocation ->
+        if (invocation.method.name == "execute") {
+            val args = invocation.rawArguments[2] as Array<*>
+            when (args[0]) {
+                "acquire" -> {
+                    assertEquals(4, invocation.getArgument<List<String>>(1).size)
+                    token.set(args[1] as String)
+                    0L
+                }
+
+                "activate" -> {
+                    assertEquals(token.get(), args[1])
+                    activationCalls.incrementAndGet()
+                    1L
+                }
+
+                "release" -> {
+                    assertEquals(token.get(), args[1])
+                    releaseCalls.incrementAndGet()
+                    releaseEnteredWithInterrupt.set(Thread.currentThread().isInterrupted)
+                    releaseObserved.countDown()
+                    throw DataAccessResourceFailureException("private Redis connection detail")
+                }
+
+                else -> error("Unexpected Redis operation")
+            }
+        } else {
+            Answers.RETURNS_DEFAULTS.answer(invocation)
         }
     }
 }

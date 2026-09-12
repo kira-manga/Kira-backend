@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.completion.application.CompletionService
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.UserRepository
@@ -79,6 +80,9 @@ class OverloadProviderConfig {
 
 class OverloadTestProvider : CompletionProvider {
     override val name = "overload-test"
+
+    // Audited test fake: every return or throw ends all local work.
+    override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
     val started = CountDownLatch(1)
     val release = CountDownLatch(1)
     val prompts = mutableListOf<String>()

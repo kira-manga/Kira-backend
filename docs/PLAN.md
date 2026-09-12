@@ -776,14 +776,20 @@ rollback. Rotation keeps old and new public keys in an explicit overlap window. 
 
 ## 10. Completion service
 
-The service remains provider-agnostic and is disabled by default. Lifecycle safety below does not
-establish physical provider termination or resolve the separate admission/lease limitations.
+Completion is disabled by default. Enabled service construction accepts only audited synchronous
+providers whose every method exit ends all their work. A two-party execution owner and acknowledged
+pending-to-pin activation connect admission to those local lifetimes; shared bounds still require
+the retained Redis authority and stopped/drained cutover in `SECURITY.md`. Local return, interruption
+or socket close is not proof of remote termination: the generic HTTP adapter remains unsupported.
 
-- **Port (domain):** `interface CompletionProvider { val name: String; fun complete(prompt: String, model: String): CompletionOutcome }` where `CompletionOutcome` = `Success(result: String, latencyMs: Int)` | `Failure(error: String)`. No Spring types in the interface.
+- **Port (domain):** `CompletionProvider` exposes `name`, code-owned `lifetime`, and
+  `complete(prompt, model): CompletionOutcome`, where `CompletionOutcome` is
+  `Success(result, latencyMs)` or `Failure(error)`. The lifetime defaults to `UNKNOWN`; only an audited
+  `SYNCHRONOUS` implementation may declare every exit ends all work. No Spring types or config override.
 - **Providers:** `EchoCompletionProvider` is available only in explicit `dev`/`test` profiles.
-  Production uses the generic HTTPS provider adapter, configured through environment-only endpoint,
-  model, and API-key values. Enabling completion in production without a valid HTTPS provider fails
-  startup; disabling the feature requires no provider credential or default model.
+  Production policy requires HTTP, but its generic adapter cannot acknowledge remote termination and
+  remains `UNKNOWN`. Enabled production completion therefore fails startup until a supported provider
+  contract is integrated; there is no silent echo fallback. Disabled startup needs no credential/model.
 - **Default model:** `kira.completion.default-model` (native environment key
   `KIRA_COMPLETION_DEFAULTMODEL`) must be explicitly configured when enabled, nonblank and at most
   128 JVM UTF-16 units. Production policy and service construction share that guard; the service
@@ -792,12 +798,14 @@ establish physical provider termination or resolve the separate admission/lease 
   remains an exact override under the existing API length gate. Neither value is trimmed or
   normalized before persistence or provider invocation. A 129-unit whitespace request is still
   rejected by the controller before fallback, not accepted as an omitted value.
-- **Selection:** `kira.completion.provider` selects a bean from the injected provider set; unknown or
-  unsafe production selection fails startup. Controllers know only `CompletionService`;
+- **Selection:** `kira.completion.provider` selects a bean from the injected provider set; unknown names
+  or unsupported lifetimes fail before the service executor/metrics binding or admission/invocation.
+  This does not prevent allocation in already-injected provider constructors. Controllers know only `CompletionService`;
   `CompletionService` knows only the port. Provider secrets never appear in an API response, stored
   error, audit entry, or application log.
 - **Transaction & failure boundaries:** (1) insert `PENDING` and commit; (2) conditionally claim
-  `PENDING → RUNNING` and commit; (3) authorize and invoke the provider **outside any DB transaction**
+  `PENDING → RUNNING` and commit; (3) activate the exact live admission reservation, then authorize and
+  invoke the provider **outside any DB transaction**
   on the bounded executor (`executor-threads`, default8; `queue-capacity`, default64); (4) conditionally
   publish `SUCCEEDED` with the result truncated to `max-result-length` (default100000), or `FAILED`
   with the sanitized message and stable code, inserting its outcome in the same short transaction.
@@ -805,7 +813,9 @@ establish physical provider termination or resolve the separate admission/lease 
   terminal publication wins; late workers cannot change that status, timestamp, or outcome. A crash
   can leave nonterminal work for retention recovery. Database failure can still prevent publication.
 - **Startup and provider timeouts:** `kira.completion.queue-timeout` (default2s) covers the bounded
-  queue **and** RUNNING persistence through invocation authorization. Authorization at or after the
+  queue, RUNNING persistence **and admission activation** through invocation authorization. The
+  original deadline is not restarted by activation; it does not cover earlier `createPending` work.
+  Authorization at or after the
   original monotonic deadline is rejected; a timely authorized start wins over a caller waking late.
   Queue/startup expiry and executor saturation publish `FAILED/PROVIDER_UNAVAILABLE` and return503
   overload only when that candidate won publication. `kira.completion.timeout` (default30s) starts
@@ -815,32 +825,46 @@ establish physical provider termination or resolve the separate admission/lease 
   even when startup ignores interruption. After authorization, interruption is cooperative and does
   not acknowledge worker or remote termination. Terminal persistence is outside both wait budgets.
   Echo goes through the same orchestration, truncation, sanitization, and error mapping.
-- **Stable error-code catalog (normative — persisted in `completion_results.error_code`, exposed in the API):** a bounded enum, not free text: `PROVIDER_TIMEOUT` (the §10 timeout elapsed), `PROVIDER_UNAVAILABLE` (connect/transport failure), `PROVIDER_REJECTED` (the provider refused the request), `INVALID_PROVIDER_RESPONSE` (unparseable/contract-violating provider output), `RESULT_TOO_LARGE` (result over the max even for truncation policy — when truncation is disallowed), `INTERNAL_COMPLETION_ERROR` (anything else — **every unknown/unexpected exception maps here**, never to a leaked message). Failure responses expose both fields: `{"errorCode": "PROVIDER_TIMEOUT", "error": "The completion request could not be completed."}` — the `error` message is sanitized, bounded, and generic; the `errorCode` is the machine-actionable part. **Raw provider exceptions are never returned to clients and never stored** — stack traces and provider internals appear only in secured server logs (request-id-correlated, §6 logging). Successful requests carry `error_code = NULL` and `error = NULL` (DB CHECK-enforced, §5); a failed request never carries a `result` (CHECK `chk_result_xor_error`). `CompletionErrorTaxonomyIT` (§11 test 49) proves timeout, provider rejection, unexpected-exception mapping, and response sanitization.
+  Missing/expired activation instead proposes sanitized `FAILED/PROVIDER_UNAVAILABLE` with503
+  `COMPLETION_CONCURRENCY_LIMIT`/Retry-After1; indeterminate activation uses503
+  `COMPLETION_COORDINATION_UNAVAILABLE`/Retry-After5. Only a winning publication emits that503;
+  an earlier terminal winner remains authoritative.
+- **Stable error-code catalog (normative — persisted in `completion_results.error_code`, exposed in the API):** a bounded enum, not free text: `PROVIDER_TIMEOUT` (the §10 timeout elapsed), `PROVIDER_UNAVAILABLE` (startup/admission or connect/transport unavailability), `PROVIDER_REJECTED` (the provider refused the request), `INVALID_PROVIDER_RESPONSE` (unparseable/contract-violating provider output), `RESULT_TOO_LARGE` (result over the max even for truncation policy — when truncation is disallowed), `INTERNAL_COMPLETION_ERROR` (anything else — **every unknown/unexpected exception maps here**, never to a leaked message). Failure responses expose both fields: `{"errorCode": "PROVIDER_TIMEOUT", "error": "The completion request could not be completed."}` — the `error` message is sanitized, bounded, and generic; the `errorCode` is the machine-actionable part. **Raw provider exceptions are never returned to clients and never stored** — stack traces and provider internals appear only in secured server logs (request-id-correlated, §6 logging). Successful requests carry `error_code = NULL` and `error = NULL` (DB CHECK-enforced, §5); a failed request never carries a `result` (CHECK `chk_result_xor_error`). `CompletionErrorTaxonomyIT` (§11 test 49) proves timeout, provider rejection, unexpected-exception mapping, and response sanitization.
 - **Data hygiene & retention:** prompts/results live only in the two completion tables and are never
   written to audit rows or logs. A scheduled, bounded cleanup expires abandoned in-flight work and
   deletes terminal prompt/result rows after `kira.completion.retention` (seven days by default).
   Cleanup locks one stable ordered request-ID batch first, rechecks state, and expires/deletes those
   same pairs in request-before-result ownership order; it does not repair old inconsistent rows.
+  Database retention neither releases execution pins nor proves provider termination.
 - **Persistence:** every accepted call records its request and terminal result/error in short
   transactions; no database transaction spans a provider call. Cancellation and timeout transitions
   are compare-and-set guarded so late workers cannot overwrite terminal state. GET/list assemble
   requests and outcomes in method-local read-only REPEATABLE READ transactions, as of their first
   SELECT; a subsequent independent read sees newer commits. Their service callers remain
   nontransactional; joining an ambient transaction would not upgrade its isolation.
-- **Admission:** atomic per-user/global rolling limits, daily per-user quota, global concurrency,
-  executor capacity, and separate queue/provider timeouts reject overload predictably with 429 or 503
-  plus retry guidance. Redis Lua coordination is mandatory for multiple instances; a bounded in-memory
-  implementation is permitted only for an explicitly declared single-instance topology. Coordination
-  failure denies new work.
-- **Release after work:** permit close makes at most one application release attempt. Expected Redis
-  coordination errors (`DataAccessException`) or a null release reply produce one fixed sanitized
-  warning and the bounded `release_unconfirmed` admission metric; they do not replace the committed
-  response or an existing primary error, and do not clear a restored caller interrupt. Programming/JVM
-  errors are not broadly swallowed. No application retry or compensating delete is performed.
-  Recovery remains the existing counter TTL: a failed-before-write release may retain capacity until
-  expiry; an applied but unacknowledged release may already free it. The guard does not prevent
-  Lettuce reconnect replay or delayed in-flight execution. Arbitrarily stale first closes, Redis
-  continuity and physical-worker ownership remain separate limitations; close is not termination.
+- **Admission:** per-user/global limits, daily quota, pending reservations plus execution pins, executor capacity,
+  and separate queue/provider waits reject with 429/503 and retry guidance. Redis is mandatory for
+  multiple instances; memory requires an explicitly declared single-instance topology. Redis counts
+  unexpired pending UUID reservations plus nonexpiring pins; its existing fixed rate windows
+  and earlier-counter accounting remain separate work. Coordination failure denies new work. The
+  bounded protocol, stopped/drained cutover and recovery requirements are explicit in `SECURITY.md`.
+- **Execution ownership:** wrap admission before `createPending`. Only real Callable entry may take
+  ownership; prior caller close prevents entry. After entry, release requires both caller relinquishment
+  and actual synchronous body exit. Normal body exit merely records completion while the caller is open,
+  so its Future can resolve and its outcome can commit before release I/O. Timeout/cancellation/shutdown
+  is not exit: interruption-ignoring work retains its pin until actual exit. The bounded executor is
+  unchanged; shutdown requests interruption/drains its queue, not a join. Never-started callers unwind
+  through their original startup deadline/finally; immediate shutdown reclamation is not promised.
+- **Release after work:** one application release attempt removes only its token. Known Redis invocation/
+  decoding errors (`DataAccessException`, `SerializationException`, `ClassCastException`) or invalid/null
+  acknowledgements emit one fixed sanitized warning and bounded `release_unconfirmed` metric, without
+  replacing the committed response or primary error. Only owed cleanup temporarily clears an existing
+  interrupt and restores it afterward, preserving any new interrupt. Arbitrary programming/provider/SQL
+  errors are not swallowed. No application retry or compensating delete occurs; Lettuce replay/delayed
+  wire execution remains possible. Slow cleanup can delay HTTP return, not the normal provider Future.
+  Pending-only reservations may expire; activated pins do not. Unconfirmed cleanup may already have
+  freed capacity or retain it until verified stopped/drained recovery. This safety-over-crash-availability
+  policy is not permission for timeout-based resets, deployment or completion enablement.
 
 ---
 

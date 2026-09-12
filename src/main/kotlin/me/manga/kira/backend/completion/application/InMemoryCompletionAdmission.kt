@@ -11,7 +11,6 @@ import java.time.Duration
 import java.time.Instant
 import java.util.ArrayDeque
 import java.util.UUID
-import java.util.concurrent.atomic.AtomicBoolean
 
 /** Single-instance admission controller used by tests, development, and explicitly validated one-pod deployments. */
 @Component
@@ -48,9 +47,31 @@ class InMemoryCompletionAdmission(private val properties: KiraCompletionProperti
             daily.addLast(now)
             active += 1
         }
-        val released = AtomicBoolean(false)
-        return CompletionPermit {
-            if (released.compareAndSet(false, true)) synchronized(lock) { active = (active - 1).coerceAtLeast(0) }
+        return object : CompletionPermit {
+            private var activated = false
+            private var closed = false
+
+            override fun activate(): CompletionActivation = synchronized(lock) {
+                when {
+                    closed -> CompletionActivation.EXPIRED
+
+                    activated -> CompletionActivation.UNAVAILABLE
+
+                    else -> {
+                        activated = true
+                        CompletionActivation.ACTIVATED
+                    }
+                }
+            }
+
+            override fun close() {
+                synchronized(lock) {
+                    if (!closed) {
+                        closed = true
+                        active = (active - 1).coerceAtLeast(0)
+                    }
+                }
+            }
         }
     }
 

@@ -313,32 +313,85 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
 
 ## Completion admission, provider, and retention
 
-Completions are disabled by default. Production startup fails if they are enabled without the HTTPS
-provider endpoint, API key and nonblank `kira.completion.default-model` of at most 128 JVM UTF-16
-units. The native environment key is **`KIRA_COMPLETION_DEFAULTMODEL`**, not an additional YAML
-alias. Service construction validates the default before allocating its executor, including outside
-production. Disabled completion needs no default model or provider credentials. Echo and its
-configured `echo-1` default exist only in explicit `dev`/`test` profiles; there is no implicit
-production default. Null/blank request models use the configured value; nonblank request overrides
-and configured defaults are preserved exactly, not trimmed or normalized. Operators must verify
-model availability/authorization with their provider separately; startup does not query a catalog.
+Completions are disabled by default. Enabled service construction requires a nonblank
+`kira.completion.default-model` of at most 128 JVM UTF-16 units, then a code-audited provider whose
+every synchronous method exit ends all its work. The lifetime capability defaults to `UNKNOWN` and
+has no configuration escape hatch. These guards precede the service executor/metrics binding and
+admission/invocation, not already-injected provider constructors. Echo and its configured `echo-1`
+default exist only in explicit `dev`/`test` profiles. Production policy requires HTTP with valid HTTPS
+endpoint/API key, but the generic HTTP adapter remains UNKNOWN: return, socket close and interruption
+cannot acknowledge remote termination. **Enabled production completion therefore remains unavailable**
+until a supported provider contract is integrated; there is no implicit echo substitution.
 
-Admission applies
-atomic per-user/global minute limits, a per-user daily quota, and a global concurrency lease before a
-request can enter the bounded executor. A multi-instance deployment must use Redis coordination;
-single-instance memory coordination must be declared explicitly. Overload returns 429 for rate/quota
-limits or 503 with `Retry-After` for queue/concurrency/provider availability failures.
+Disabled startup needs no default model or provider credentials. The native default-model environment
+key is **`KIRA_COMPLETION_DEFAULTMODEL`**, not an additional YAML alias. Null/blank request models use
+the configured value; nonblank request overrides and configured defaults remain exact, not trimmed or
+normalized. Startup does not query a provider model catalog.
 
-The queue timeout covers queue wait plus RUNNING persistence through invocation authorization;
-the separate provider timed wait begins only after that commit and authorization. Startup at the
-original deadline or later is rejected. PENDING→RUNNING, PENDING/RUNNING→FAILED and RUNNING→SUCCEEDED
-are checked conditional writes; one terminal status/outcome wins atomically. Pre-authorization
-cancellation prevents provider entry even if startup ignores interruption. Later Future cancellation
-requests interruption, not confirmed worker or remote termination; permit close is not such proof
-either. Database failure can still delay/prevent terminal persistence. GET/list use one read-only
-REPEATABLE READ snapshot across request and outcome queries, not a promise of the freshest data.
-Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention, and cleanup batch
-size are bounded configuration. Separate admission/release and physical-lifetime obligations remain.
+Admission checks per-user/global minute limits, daily quota, and pending reservations plus execution
+pins before the bounded executor. Multiple instances require Redis; memory keeps a nonexpiring counter
+for an explicitly declared single process. Redis retains its fixed per-counter windows and charges
+earlier counters when a later dimension rejects; this is not all-or-nothing rolling accounting
+(Backend14 remains separate). Rate/quota rejection stays 429 with Retry-After 60/86400; concurrency
+capacity stays 503/1 and indeterminate acquisition stays 503/5.
+
+The queue timeout covers queue wait, RUNNING persistence and activation through invocation authorization,
+without restarting its original deadline. It does not cover earlier `createPending` work. Worker order
+is actual entry→canClaim→committed RUNNING→acknowledged activation→authorize→provider. Startup at the
+deadline or later, or canceled before authorization, cannot invoke. Missing/expired activation proposes
+sanitized FAILED/PROVIDER_UNAVAILABLE and 503/1 `COMPLETION_CONCURRENCY_LIMIT`; indeterminate activation
+uses 503/5 `COMPLETION_COORDINATION_UNAVAILABLE`. Only a winning conditional publication emits that 503;
+an earlier terminal winner remains authoritative. Provider timed wait starts at authorization; neither
+wait is a termination acknowledgement. Database failure can still delay/prevent publication. GET/list
+retain their read-only REPEATABLE READ snapshot across request and outcome queries.
+
+The existing `kira:completion-admission:concurrency` key is one bounded **hash**: UUIDv4→canonical pending
+deadline or explicit `PINNED`. Acquisition validates before writes, prunes only pending deadlines
+`<= Redis TIME`, counts pending plus pins and reserves a new token. Activation requires that exact
+still-live pending token and an acknowledged atomic conversion; absent/expired/duplicate/unknown
+activation grants no work and never reacquires a token. Any pin makes key retention **nonexpiring**.
+Pending-only expiry covers its greatest deadline; release removes only its captured token and preserves
+every peer pin/live deadline. Pending allowance remains twice queue-plus-provider timeout, with positive
+whole milliseconds and checked arithmetic up to `2^53 - 1`. The Redis-only capacity guard stays 1..4096
+(default8), not a clamp or memory limit. Wrong types, malformed fields, oversized state, expiring pins
+or missing/short pending-only expiry are refused without repair. Known schema errors precede writes;
+unknown/partial server operations are not treated as successful acknowledgements.
+
+**Actual execution ownership:** a wrapper is created immediately after acquisition, before createPending.
+Caller close before Callable entry prevents entry and claims one release attempt. Once entry wins, the
+second of caller relinquishment and actual synchronous body exit claims cleanup outside the state lock.
+Normal body exit records completion only, so its Future can resolve and publication commit before slow
+release. On timeout/interruption, a still-running body retains its pin until actual exit. Future done,
+cancellation, terminal database status and shutdown are not actual exit. The executor remains fixed and
+bounded; shutdown requests interruption/drains the queue without joining. Never-started callers unwind
+through their startup deadline/finally; immediate shutdown cleanup is not promised.
+
+Owed release is attempted once at application level. Known Redis invocation/decoding failures
+(`DataAccessException`, `SerializationException`, `ClassCastException`) and invalid/null acknowledgements
+emit fixed WARN `Shared completion admission release unconfirmed` and bounded `release_unconfirmed`,
+without replacing committed responses or primary errors. No dynamic identifier/exception detail is
+logged for cleanup. Only owed cleanup temporarily clears an existing interrupt and restores it in
+finally, without clearing a newly arrived interrupt. Provider/SQL/programming failures are not broadly
+swallowed. No application retry or compensating delete occurs; driver replay/delayed wire execution
+remains possible. Failed activation unwinds only through owner-owed token cleanup after body settlement.
+
+**Safety-over-crash-availability policy:** pending reservations may expire, but pins survive crash,
+unresolved work or unconfirmed release until separately verified stopped/drained recovery. An
+unconfirmed release may also already have freed its token; it is not a receipt either way. Retention
+cleanup of database rows does not release pins or prove work ended. Finite automatic recovery after
+activation would require a genuine provider-enforced termination/capacity/fencing contract, not a
+longer TTL, renewal or timeout reset. This disabled candidate does not authorize production operation,
+reset, rollout or completion enablement.
+
+**Redis assumptions and stopped/drained cutover:** all completion nodes need one shared, non-evicting
+authority (`noeviction` or equivalent), consistent capacity/protocol and controlled clock/state continuity.
+These multi-key scripts do not support Redis Cluster or guarantee bounds through arbitrary state loss,
+clock jumps or asynchronous failover. Redis 7+ is required; the fixture uses 7.4.7. Both legacy integers
+and earlier logical zsets are rejected, not imported/deleted; there is no parallel semaphore namespace.
+Stop admission and every old writer, drain/resolve actual outstanding work and prevent old-version
+restarts before cutover. Waiting one TTL is not verified drain. A confirmed-stale-state reset or rollback
+requires a separately approved stopped/drained procedure; installed enforcement and supported remote
+provider guarantees remain external. Auth coordination keys/scripts and database retention are unchanged.
 
 ## Retention & privacy
 

@@ -8,6 +8,7 @@ import me.manga.kira.backend.completion.application.CompletionAdmission
 import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.security.JwtService
 import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.user.domain.Role
@@ -66,8 +67,7 @@ constructor(
 ) : AbstractIntegrationTest() {
     @BeforeEach
     fun resetReleaseFixture() {
-        transport.keyCounts.clear()
-        transport.onRelease = null
+        transport.reset()
         provider.calls.set(0)
     }
 
@@ -101,7 +101,10 @@ constructor(
                     header { doesNotExist("Retry-After") }
                 }.andReturn().response
 
-                assertEquals(listOf(4, 1), transport.keyCounts, "One successful acquire and one entered release fault")
+                assertEquals(listOf(4, 1, 1), transport.keyCounts, "Acquire and activation succeed before the release-only fault")
+                assertEquals(listOf("acquire", "activate", "release"), transport.operations)
+                assertEquals(1, transport.tokens.toSet().size)
+                assertEquals(4, UUID.fromString(transport.tokens.distinct().single()).version())
                 val snapshot = checkNotNull(committed) { "Release did not observe the independently committed pair" }
                 val expected = objectMapper.valueToTree<JsonNode>(snapshot)
                 assertEquals(expected, objectMapper.readTree(response.contentAsString))
@@ -133,7 +136,8 @@ constructor(
                 assertEquals(1, provider.calls.get())
                 assertEquals(1L, jdbcTemplate.queryForObject("SELECT count(*) FROM completion_requests", Long::class.java))
                 assertEquals(1L, jdbcTemplate.queryForObject("SELECT count(*) FROM completion_results", Long::class.java))
-                assertEquals(listOf(4, 1), transport.keyCounts)
+                assertEquals(listOf(4, 1, 1), transport.keyCounts)
+                assertEquals(listOf("acquire", "activate", "release"), transport.operations)
                 assertEquals(unconfirmedBefore + 1.0, admissionEvents("release_unconfirmed"))
                 assertEquals(unavailableBefore, admissionEvents("coordination_unavailable"))
             } finally {
@@ -207,6 +211,9 @@ class CompletionReleaseFailureHttpConfig {
 
 class ReleaseFailureHttpProvider : CompletionProvider {
     override val name: String = RELEASE_PROVIDER
+
+    // Audited test fake: every return or throw ends all local work.
+    override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
     val calls = AtomicInteger()
 
     override fun complete(prompt: String, model: String): CompletionOutcome {
@@ -222,20 +229,50 @@ class ReleaseFailureHttpProvider : CompletionProvider {
 /** The real Redis admission still owns acquisition, result mapping, close and diagnostics. */
 class ReleaseFailureHttpTransport {
     val keyCounts = mutableListOf<Int>()
+    val operations = mutableListOf<String>()
+    val tokens = mutableListOf<String>()
+    private var acquiredToken: String? = null
     var onRelease: (() -> Unit)? = null
+
+    fun reset() {
+        keyCounts.clear()
+        operations.clear()
+        tokens.clear()
+        acquiredToken = null
+        onRelease = null
+    }
+
     val redis: StringRedisTemplate = mock(StringRedisTemplate::class.java) { call ->
         if (call.method.name == "execute") {
-            val keyCount = call.getArgument<List<String>>(1).size
-            keyCounts.add(keyCount)
-            when (keyCount) {
-                4 -> 0L
+            val keys = call.getArgument<List<String>>(1)
+            val args = call.rawArguments[2] as Array<*>
+            val operation = args[0] as String
+            val token = args[1] as String
+            keyCounts += keys.size
+            operations += operation
+            tokens += token
+            when (operation) {
+                "acquire" -> {
+                    assertEquals(4, keys.size)
+                    check(acquiredToken == null)
+                    acquiredToken = token
+                    0L
+                }
 
-                1 -> {
+                "activate" -> {
+                    assertEquals(1, keys.size)
+                    assertEquals(acquiredToken, token)
+                    1L
+                }
+
+                "release" -> {
+                    assertEquals(1, keys.size)
+                    assertEquals(acquiredToken, token)
                     checkNotNull(onRelease) { "Missing commit observer at release" }.invoke()
                     throw DataAccessResourceFailureException(PRIVATE_REDIS_DETAIL)
                 }
 
-                else -> error("Unexpected Redis admission key count")
+                else -> error("Unexpected Redis admission operation")
             }
         } else {
             Answers.RETURNS_DEFAULTS.answer(call)
