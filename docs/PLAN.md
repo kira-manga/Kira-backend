@@ -169,7 +169,7 @@ kira-backend/
 
 ## 4. API design
 
-All endpoints under `/api/v1`. Errors use the problem envelope from §2. Pagination: `?page=0&size=20`, response `PageResponse{items, page, size, total}`.
+All endpoints under `/api/v1`. Errors use the problem envelope from §2. Offset pagination: `?page=0&size=20`, response `PageResponse{items, page, size, total}`. The two admin source/document history lists retain raw arrays and use the bounded keyset exception in §4.5.
 
 ### 4.1 App-facing (public, read-only, no auth)
 
@@ -208,7 +208,7 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 | `GET /api/v1/admin/sources` | All sources incl. drafts/retired/removed; filter `?status=`. | 200 |
 | `GET /api/v1/admin/sources/{api}` | Full admin view: current status, current published revision no., latest revision no., timestamps. | 200; 404 |
 | `POST /api/v1/admin/sources/{api}/revisions` | New draft revision (body = full `SourceConfig`, **STRICT authoring parser**, then the same **Tier-1 structural gate** as create — nothing persisted on a gate failure). `body.api` **must equal** the path `{api}` → mismatch is 400 `API_ID_MISMATCH` (Tier-1); the api identity is immutable after creation. Payload `lifecycle` must be `"active"` (else 400 `LIFECYCLE_NOT_AUTHORABLE`, Tier-1). Revision number allocated **under a `SELECT … FOR UPDATE` lock on the source head row** (§5 — concurrent creations must not collide). Auto-validates (Tier-2) + stores result, returns it. | 201; 404; 400 |
-| `GET /api/v1/admin/sources/{api}/revisions` | Revision list: `{revisionNumber, status, checksum, createdBy, createdAt, publishedAt, valid}`. | 200; 404 |
+| `GET /api/v1/admin/sources/{api}/revisions` | Bounded revision metadata window (§4.5): `{revisionNumber, status, checksum, createdBy, createdAt, publishedAt, valid}`. | 200; 400; 404 |
 | `GET /api/v1/admin/sources/{api}/revisions/{n}` | Full stored config JSON of that revision + metadata. | 200; 404 |
 | `POST /api/v1/admin/sources/{api}/revisions/{n}/validate` | Re-run validation (validation preview — no state change beyond storing the result). Returns `{valid, errors:[{code, path, message}], warnings:[{code, path, message}]}`. Also validates the source **in candidate-document context** (unique-api etc., §8). | 200 (even when invalid — the *result* reports invalid); 404 |
 | `GET /api/v1/admin/sources/{api}/revisions/{n}/validation` | Latest stored validation result for the revision. | 200; 404 |
@@ -219,7 +219,7 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 | `POST /api/v1/admin/sources/{api}/retire` | `disabled → retired` **only** (direct `active → retired` is 409 — the mandatory soft-disable stage is enforced, honoring the "no silent deletion: disabled in the document before ever dropped" contract in §12.4). Stanza stays in document as `lifecycle:"removed"` (app vocabulary — §9 mapping). New snapshot. | 200; 409 |
 | `POST /api/v1/admin/sources/{api}/remove` | `retired → removed` (terminal). Stanza dropped from the document entirely. New snapshot. Body `{confirm: "<api>"}` required (foot-gun guard). | 200; 409 (must pass through `disabled` then `retired` first) |
 | `POST /api/v1/admin/sources/{api}/rollback` | Body `{toRevision: n}`. Copies revision *n*'s **content** into a **new** revision (number = latest+1), validates, publishes it. History is never mutated; revision numbers only grow. **Rollback copies content only — it does NOT restore the source's server lifecycle from that era** (status follows the publish rules above: active stays active, disabled stays disabled). | 200 with `{newRevisionNumber, documentRevision}`; 422 if the old config no longer validates (rules may have tightened); 409 retired/removed; 404 |
-| `GET /api/v1/admin/documents` | Published document snapshots: `{documentRevision, schemaVersion, checksum, sourceCount, createdBy, createdAt}`. | 200 |
+| `GET /api/v1/admin/documents` | Bounded snapshot metadata window (§4.5): `{documentRevision, schemaVersion, checksum, sourceCount, createdBy, createdAt}`. | 200; 400 |
 | `GET /api/v1/admin/documents/{revision}` | **Body = the raw stored canonical bytes of that snapshot** (same raw-bytes writer as the public endpoint — never re-serialized), metadata in headers only (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`). Deliberately NOT a JSON metadata envelope — the list endpoint above is the metadata view; wrapping would break the serve-stored-bytes/checksum guarantee. | 200; 404 |
 | `POST /api/v1/admin/documents/validate` | Validate the **candidate** document (assembled from current published revisions + lifecycle states) without publishing — whole-document preview. | 200 `{valid, errors[]}` |
 | `POST /api/v1/admin/documents/republish` | Force-materialize a new snapshot from current state (recovery / after canonicalization changes). **Always creates a new snapshot with a new document revision, even when the canonical content is unchanged** — that is its purpose (deliberate recovery tool; the caller decides). | 200 |
@@ -239,7 +239,24 @@ Prod onboarding mechanism (registration is disabled in prod): admins create user
 
 ### 4.5 Cross-cutting HTTP contract (normative)
 
-- **Pagination:** `?page=0&size=20`; `size` max **100** (larger → 400), `page`/`size` negative or non-numeric → 400. Applies to every paginated endpoint.
+- **Offset pagination:** `?page=0&size=20`; `size` max **100** (larger → 400), `page`/`size` negative or non-numeric → 400. The existing users/completions/audit envelopes are unchanged.
+- **Admin history keyset exception:** `GET /admin/sources/{api}/revisions` and `GET /admin/documents`
+  retain raw array/item shapes. `size` defaults to **20**, range **1..100**; optional exclusive
+  `beforeRevision` is positive and bounded to source **Int** / document **Long**. Recognized query
+  values accept ASCII digits and leading zeros numerically; empty, repeated, signed, whitespace,
+  nondecimal, zero/negative and overflow fail with value-free 400 `INVALID_HISTORY_PAGE` before the
+  history service. Select newest `size+1` scalar summaries below the bound, discard lookahead, then
+  return the retained window **ASC**. Only when older rows remain, `X-Kira-History-Next-Before` is
+  the smallest retained revision as canonical positive decimal. Empty or exactly-size terminal
+  windows omit it; unknown source stays 404. Gapped/nonexistent cursor keys are legal; no arithmetic
+  successor, count, offset or unlimited mode. Limit revisions before indexed `validated_at DESC`
+  latest-validity probes, preserving true/false/NULL and existing timestamp-tie semantics. No
+  canonical payloads, notes/signatures or finding JSON are materialized for lists: one document
+  data SELECT or source-head lookup plus one revision-summary SELECT (authentication is separate).
+  Detail/raw/validation routes and immutable history/publication pointers do not change. A refresh
+  starts at newest; status/validity can change across requests. This is not a snapshot guarantee.
+  Backend-first remains array-wire compatible, not all-history compatible; Admin's companion
+  pager is required for older navigation. See [API history examples](API.md#admin-history-windows).
 - **Request-body limits:** a pre-MVC replayable-body filter enforces default max **256 KiB** and
   `import-bundled` max **5 MiB** for declared or streamed/chunked bodies; completion prompt over its max
   length → **413** (one consistent status, not sometimes-400).

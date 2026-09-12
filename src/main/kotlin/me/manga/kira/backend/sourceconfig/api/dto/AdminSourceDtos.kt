@@ -12,7 +12,8 @@ import me.manga.kira.backend.sourceconfig.application.RollbackOutcome
 import me.manga.kira.backend.sourceconfig.application.SourceAdminView
 import me.manga.kira.backend.sourceconfig.application.SourceMutationResult
 import me.manga.kira.backend.sourceconfig.application.SourceOperationalModeOutcome
-import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
+import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentSummary
+import me.manga.kira.backend.sourceconfig.domain.SourceRevisionSummary
 import me.manga.kira.backend.sourceconfig.validation.ValidationError
 import me.manga.kira.backend.sourceconfig.validation.ValidationResult
 import me.manga.kira.backend.sourceconfig.validation.ValidationWarning
@@ -112,18 +113,15 @@ data class RevisionSummaryResponse(
     val valid: Boolean?,
 ) {
     companion object {
-        fun of(view: RevisionView): RevisionSummaryResponse {
-            val r = view.revision
-            return RevisionSummaryResponse(
-                revisionNumber = r.revisionNumber,
-                status = r.status.wire,
-                checksum = r.checksum,
-                createdBy = r.createdBy,
-                createdAt = r.createdAt,
-                publishedAt = r.publishedAt,
-                valid = view.valid,
-            )
-        }
+        fun of(r: SourceRevisionSummary): RevisionSummaryResponse = RevisionSummaryResponse(
+            revisionNumber = r.revisionNumber,
+            status = r.status.wire,
+            checksum = r.checksum,
+            createdBy = r.createdBy,
+            createdAt = r.createdAt,
+            publishedAt = r.publishedAt,
+            valid = r.valid,
+        )
     }
 }
 
@@ -205,7 +203,7 @@ data class DocumentSummaryResponse(
     val createdAt: Instant,
 ) {
     companion object {
-        fun of(doc: PublishedDocument) = DocumentSummaryResponse(
+        fun of(doc: PublishedDocumentSummary) = DocumentSummaryResponse(
             documentRevision = doc.documentRevision,
             schemaVersion = doc.schemaVersion,
             checksum = doc.checksum,

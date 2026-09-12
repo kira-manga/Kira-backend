@@ -51,8 +51,8 @@ interface PublishedDocumentRepository {
     /** A stored snapshot by its document revision, or null (admin `GET /documents/{revision}`). */
     fun findByRevision(revision: Long): PublishedDocument?
 
-    /** All snapshots ordered by `document_revision` ascending (admin `GET /documents` list). */
-    fun findAllOrderedByRevision(): List<PublishedDocument>
+    /** Metadata only, newest first, below the optional exclusive cursor; [limit] includes one lookahead row (at most 101). */
+    fun findSummaryWindow(beforeRevision: Long?, limit: Int): List<PublishedDocumentSummary>
 }
 
 /**
