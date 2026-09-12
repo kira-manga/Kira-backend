@@ -113,7 +113,7 @@ internal class PersistenceJdbcLease private constructor(
             handle.close() // No epoch foreground ancestor around this complete Hikari/return extent.
             if (!attempt.consented()) PersistenceJdbcGuardContext.refuse()
         } catch (problem: Throwable) {
-            if (transfer?.consented() == true || transfer?.callerSamplingFailed() == true) operation.failBeforeEnd()
+            if (transfer?.consented() == true || transfer?.callerSamplingFailed() == true) operation.recordReturnIncidentBeforeEnd()
             failure = problem
         } finally {
             try {
@@ -127,7 +127,11 @@ internal class PersistenceJdbcLease private constructor(
                     try {
                         // Exact source ownership is claimed before the private Hikari eviction.
                         // This is still inside the consumed RETURN frame, never a second ingress.
-                        owner.evictOwned(this, handle, budget)
+                        val retirement = owner.evictOwned(this, handle, budget)
+                        if (retirement is PersistenceLeaseRetirementClaim.CallerSampleFailed) {
+                            operation.recordReturnIncidentBeforeEnd()
+                            if (failure == null) failure = retirement.failure
+                        }
                     } catch (problem: Throwable) {
                         operation.failBeforeEnd()
                         if (failure == null) failure = problem
@@ -210,10 +214,10 @@ internal class PersistenceJdbcLease private constructor(
         lower.finishReturn(this, call)
     }
 
-    internal fun claimEviction(expectedOwner: GuardedDataSource, candidate: Connection, budget: PersistenceTimeBudget): Boolean {
+    internal fun claimEviction(expectedOwner: GuardedDataSource, candidate: Connection, budget: PersistenceTimeBudget): PersistenceLeaseRetirementClaim {
         if (owner !== expectedOwner || handle !== candidate || Thread.currentThread() !== original || phase.get() !== Phase.RETURNING ||
             transfer?.consented() == true || !ownership.currentPoolState(state) || !evictionClaimed.compareAndSet(false, true)
-        ) return false
+        ) return PersistenceLeaseRetirementClaim.Refused
         return ownership.retireLeasedState(state, budget, requireNotNull(returnCaller))
     }
 

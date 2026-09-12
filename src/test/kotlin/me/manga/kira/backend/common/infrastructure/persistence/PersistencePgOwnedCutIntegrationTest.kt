@@ -708,6 +708,80 @@ class PersistencePgOwnedCutIntegrationTest {
     }
 
     @Test
+    fun `exact retirement sample result preserves its Throwable and does not absorb adjacent budget failure`() =
+        withOwnedCutPool(database.value) { f ->
+            OwnedCallerTestScope().use { callers ->
+                val behavior = OwnedCallerTestBehavior()
+                val caller = callers.launch(OwnedCallerTestKind.OVERRIDING, behavior) {
+                    val connection = f.pool.connection
+                    val lease = ownedPoolLease(connection)
+                    val entry = f.entry(connection)
+                    val original = PersistenceOwnedFactoryCaller.capture()
+                    val clock = AtomicLong()
+                    val budget = PersistenceTimeBudget.start(1_000, clock::get)
+                    val problem = IllegalStateException("Injected exact retirement sample failure.")
+                    try {
+                        // Direct internal-boundary probes, not a manufactured admitted RETURN or an eviction receipt.
+                        val samples = behavior.samples.get()
+                        behavior.sampleFailure = problem
+                        val result = entry.jdbc.retireLeasedState(lease.state, budget, original)
+                        assertTrue(result is PersistenceLeaseRetirementClaim.CallerSampleFailed)
+                        assertSame(problem, (result as PersistenceLeaseRetirementClaim.CallerSampleFailed).failure)
+                        assertEquals(
+                            samples + 1,
+                            behavior.samples.get(),
+                            "Only the exact outside-lock sample produces this result, without retry or adaptation.",
+                        )
+                        assertTrue(original.isCurrent())
+                        assertTrue(entry.jdbc.currentPoolState(lease.state))
+                        assertFalse(entry.retirementRequested.get() || lease.state.epoch.sealedAndEnded())
+                        assertEquals(1L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+                        assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
+                        clock.set(TimeUnit.MILLISECONDS.toNanos(1_000))
+                        assertSame(PersistenceLeaseRetirementClaim.Refused, entry.jdbc.retireLeasedState(lease.state, budget, original))
+                        assertEquals(samples + 1, behavior.samples.get(), "Original expiry short-circuits the still-throwing override.")
+                        behavior.sampleFailure = null
+                        val reads = java.util.concurrent.atomic.AtomicInteger()
+                        val clockProblem = IllegalStateException("Injected retirement budget recheck failure.")
+                        val brokenBudget = PersistenceTimeBudget.start(1_000) {
+                            if (reads.incrementAndGet() == 3) throw clockProblem
+                            0L
+                        }
+                        assertSame(
+                            clockProblem,
+                            assertThrows<IllegalStateException> { entry.jdbc.retireLeasedState(lease.state, brokenBudget, original) },
+                            "The budget check after a successful sample is not a CallerSampleFailed outcome.",
+                        )
+                        assertEquals(3, reads.get())
+                        assertEquals(samples + 2, behavior.samples.get())
+                        assertFalse(entry.retirementRequested.get())
+                        assertNull(f.lifecycle.actorSnapshot().firstFailure)
+                        // A separate direct claim probe, not a reset/replacement of any admitted RETURN allowance.
+                        assertSame(
+                            PersistenceLeaseRetirementClaim.Claimed,
+                            entry.jdbc.retireLeasedState(lease.state, PersistenceTimeBudget.start(1_000), original),
+                        )
+                        assertTrue(entry.retirementRequested.get() && lease.state.epoch.sealedAndEnded())
+                        assertThrows<SQLException> { connection.close() } // The one real RETURN keeps its original 1s budget/finalizers.
+                        val entitlement = ownedCutField(lease, "entitlement") as PoolLifecycle.LeaseEntitlement
+                        val operation = ownedCutField(entitlement, "prepared") as PoolLifecycle.Operation
+                        assertTrue(operation.actualFrameEnded())
+                        assertEquals(TimeUnit.MILLISECONDS.toNanos(1_000), ownedCutField(operation.frame.budget, "allowanceNanos"))
+                        connection.close()
+                        assertSame(operation, ownedCutField(entitlement, "prepared"))
+                        awaitLifecycleFact { f.scope.entries().none { it === entry } }
+                        true
+                    } finally {
+                        behavior.sampleFailure = null
+                        connection.close()
+                    }
+                }
+                assertTrue(caller.value())
+                assertEquals(Thread.State.TERMINATED, caller.thread.state)
+            }
+        }
+
+    @Test
     fun `blocked overriding original checkout sample retains its real holder with F G T free before successful delivery`() =
         withOwnedCutPool(database.value) { f -> assertOwnedCheckoutCaller(f, CheckoutCallerFault.NONE) }
 
@@ -1300,6 +1374,13 @@ internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDa
         assertEquals(0, actors.constructing)
         assertTrue(actors.factorySealed)
         assertTrue(actors.retiredGenerations > 0L, "A real stock-Hikari population, not an inert MODEL shell, ended.")
+        if (shutdownDiagnosticCase != null) {
+            assertEquals(PoolShutdownObservation.UNKNOWN, observation)
+            assertEquals(PoolActorFault.BOOKKEEPING_FAILED, actors.firstFailure)
+            assertEquals(0, actors.retainedGenerations, "The two clean incident cuts must retain no live or unresolved NEW generation.")
+            assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+            assertEquals(actors, lifecycle.actorSnapshot())
+        }
     }
 
     /** Best-effort, non-atomic scalar reads only; never a lifecycle observer, cleanup action or completion proof. */
@@ -1587,6 +1668,17 @@ private fun assertOwnedReturnCaller(f: OwnedCutPool, fault: ReturnCallerFault) {
         assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
         assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
         if (f.expectedPoolUnknown) assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
+        if (fault === ReturnCallerFault.SAMPLE) {
+            assertEquals(
+                behavior.gateAtSample + 1,
+                behavior.samples.get(),
+                "The exact repeated retirement sample still occurs once under the original allowance.",
+            )
+            assertFalse(
+                f.lifecycle.actorSnapshot().factorySealed,
+                "The positively identified second sample must not fall into the opaque eviction hard catch.",
+            )
+        }
         awaitLifecycleFact { f.scope.entries().none { it === entry } }
     }
 }
@@ -1733,7 +1825,10 @@ private class ConsentedRecycleBarrier(
             if (!released.await(5, TimeUnit.SECONDS)) timedOut.set(true)
             // The authentic original RETURN actor still exists, but its exact source credential
             // was revoked before this point. This call MUST be a no-op against the successor.
-            fixture.pool.evictOwned(lease, ownedCutField(lease, "handle") as Connection, attempt.budget)
+            assertSame(
+                PersistenceLeaseRetirementClaim.Refused,
+                fixture.pool.evictOwned(lease, ownedCutField(lease, "handle") as Connection, attempt.budget),
+            )
             if (failTail) throw SQLException("Injected post-consent Hikari bookkeeping failure.")
         }
         return value
@@ -1785,6 +1880,10 @@ private fun assertConsentedOldTail(f: OwnedCutPool, failTail: Boolean) {
                         assertFalse(current.state.epoch.poisoned())
                         if (failTail) {
                             assertEquals(PoolActorFault.BOOKKEEPING_FAILED, f.lifecycle.actorSnapshot().firstFailure)
+                            assertFalse(
+                                f.lifecycle.actorSnapshot().factorySealed,
+                                "The failed old tail preserves this authentic successor RETURN's creator rights.",
+                            )
                             assertThrows<SQLException> { borrowed.createStatement() }
                             assertThrows<SQLException> { borrowed.close() }
                         } else {

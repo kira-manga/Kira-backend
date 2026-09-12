@@ -214,6 +214,91 @@ class PoolLifecycleTest {
         }
     }
 
+    @Test
+    fun `MODEL exact RETURN incident retains custody and seals only the empty UNKNOWN cut`() = InertPoolFixture().use { fixture ->
+        InertPoolFixture().use { other ->
+            OwnedCallerTestScope().use { callers ->
+                val entitlement = modelLeaseEntitlement(fixture.lifecycle)
+                val evictionEntitlement = modelLeaseEntitlement(fixture.lifecycle)
+                val budget = PersistenceTimeBudget.start(30_000)
+                val returning = requireNotNull(entitlement.prepareReturn(budget))
+                val otherBefore = other.lifecycle.actorSnapshot()
+                val prepared = fixture.lifecycle.actorSnapshot()
+                assertNull(prepared.firstFailure)
+                assertFalse(prepared.factorySealed, "No MODEL initialization fault may mask the final-seal branch.")
+                assertFalse(returning.recordReturnIncidentBeforeEnd())
+                assertEquals(prepared, fixture.lifecycle.actorSnapshot())
+                assertTrue(returning.enter())
+                try {
+                    val active = fixture.lifecycle.actorSnapshot()
+                    val forged = PoolLifecycle.Operation.prepare(fixture.lifecycle, returning.frame, entitlement)
+                    val wrongPool = PoolLifecycle.Operation.prepare(other.lifecycle, returning.frame, entitlement)
+                    assertFalse(
+                        forged.recordReturnIncidentBeforeEnd(),
+                        "Sharing the exact active frame and consumed right is not prepared-Operation identity.",
+                    )
+                    assertFalse(wrongPool.recordReturnIncidentBeforeEnd())
+                    assertTrue(callers.launch { !returning.recordReturnIncidentBeforeEnd() }.value())
+                    assertEquals(active, fixture.lifecycle.actorSnapshot())
+                    assertEquals(otherBefore, other.lifecycle.actorSnapshot())
+                    val eviction = requireNotNull(evictionEntitlement.prepareEviction(budget))
+                    assertTrue(eviction.enter())
+                    try {
+                        val nested = fixture.lifecycle.actorSnapshot()
+                        assertFalse(eviction.recordReturnIncidentBeforeEnd(), "An authentic EVICTION is not a RETURN incident grant.")
+                        assertFalse(returning.recordReturnIncidentBeforeEnd(), "Even the authentic RETURN must be the current top frame.")
+                        assertSame(eviction.frame, PoolCallFrames.current())
+                        assertEquals(nested, fixture.lifecycle.actorSnapshot())
+                    } finally {
+                        assertTrue(eviction.end())
+                    }
+                    assertFalse(eviction.recordReturnIncidentBeforeEnd())
+                    assertTrue(returning.recordReturnIncidentBeforeEnd())
+                    val incident = fixture.lifecycle.actorSnapshot()
+                    assertEquals(PoolActorFault.BOOKKEEPING_FAILED, incident.firstFailure)
+                    assertFalse(incident.factorySealed)
+                    assertEquals(0L, incident.futureLeaseEntries)
+                    assertEquals(1L, incident.activeOperations)
+                    assertSame(returning.frame, PoolCallFrames.current())
+                    assertSame(budget, returning.frame.budget)
+                    assertFalse(returning.actualFrameEnded() || returning.frame.completion.hasEnded())
+                    assertFalse(entitlement.revoke())
+                    assertNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
+                    assertFalse(fixture.lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000)).enter())
+                    assertTrue(returning.recordReturnIncidentBeforeEnd())
+                    assertFalse(
+                        forged.recordReturnIncidentBeforeEnd(),
+                        "An earlier incident must not give the forged operation hard-failure authority either.",
+                    )
+                    assertEquals(incident, fixture.lifecycle.actorSnapshot())
+                } finally {
+                    assertTrue(returning.end())
+                    evictionEntitlement.revoke() // Only an unused MODEL right if an earlier assertion failed.
+                }
+                assertFalse(returning.recordReturnIncidentBeforeEnd())
+                assertTrue(returning.actualFrameEnded() && returning.frame.completion.hasEnded())
+                assertNull(PoolCallFrames.current())
+                val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+                assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+                assertFalse(
+                    fixture.lifecycle.actorSnapshot().factorySealed,
+                    "No earlier hard failure or shutdown invocation seals this MODEL population.",
+                )
+                assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+                val ended = fixture.lifecycle.actorSnapshot()
+                assertEquals(PoolActorFault.BOOKKEEPING_FAILED, ended.firstFailure)
+                assertEquals(0L, ended.futureLeaseEntries)
+                assertEquals(0L, ended.activeOperations)
+                assertEquals(0, ended.constructing)
+                assertEquals(0, ended.retainedGenerations)
+                assertTrue(ended.factorySealed)
+                assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+                assertEquals(ended, fixture.lifecycle.actorSnapshot())
+                assertEquals(otherBefore, other.lifecycle.actorSnapshot())
+            }
+        }
+    }
+
     @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
     @ValueSource(strings = ["request", "handoff"])
     fun `the first shutdown budget is retained across duplicate requests and cannot be replenished by observation`(origin: String) =
@@ -419,6 +504,18 @@ class PoolLifecycleTest {
         lock.withLock { assertEquals(PoolShutdownObservation.OWNERSHIP_LOCK_HELD, shared.observe()) }
         assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
         assertEquals(PoolShutdownObservation.POOL_ACTORS_UNPROVEN, shared.observe())
+    }
+}
+
+/** MODEL captured handles only; the uninstalled inert pool cannot inject a startup fault into the incident oracle. */
+private fun modelLeaseEntitlement(lifecycle: PoolLifecycle): PoolLifecycle.LeaseEntitlement {
+    val acquisition = lifecycle.prepareAcquisition(PersistenceTimeBudget.start(30_000))
+    assertTrue(acquisition.enter())
+    return try {
+        assertTrue(acquisition.capture(PhysicalTestConnection().raw))
+        requireNotNull(acquisition.prepareLeaseEntitlement())
+    } finally {
+        assertTrue(acquisition.end())
     }
 }
 

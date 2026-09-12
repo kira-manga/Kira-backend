@@ -102,10 +102,12 @@ internal class GuardedDataSource(
 
     internal fun businessReady(): Boolean = launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY && lifecycle.businessReady()
 
-    internal fun evictOwned(lease: PersistenceJdbcLease, handle: Connection, budget: PersistenceTimeBudget) {
+    internal fun evictOwned(lease: PersistenceJdbcLease, handle: Connection, budget: PersistenceTimeBudget): PersistenceLeaseRetirementClaim {
         if (!lifecycle.isAuthenticPoolCaller()) PersistenceJdbcGuardContext.refuse()
-        if (!lease.claimEviction(this, handle, budget)) return
+        val claim = lease.claimEviction(this, handle, budget)
+        if (claim !== PersistenceLeaseRetirementClaim.Claimed) return claim
         pool.evictConnection(handle) // Exact nontransferable source retirement was claimed first.
+        return claim
     }
 
     fun requestShutdown(): PoolLifecycle.ShutdownReceipt? = lifecycle.requestShutdown()

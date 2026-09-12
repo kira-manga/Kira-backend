@@ -135,34 +135,39 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         return true
     }
 
+    @Suppress("TooGenericExceptionCaught")
     internal fun retireLeasedState(
         expected: PersistenceJdbcPoolEpoch,
         budget: PersistenceTimeBudget,
         caller: PersistenceOwnedFactoryCaller,
-    ): Boolean {
+    ): PersistenceLeaseRetirementClaim {
         val physical = requireNotNull(binding)
         check(!ownershipLockHeld())
         // The failed RETURN's original C5 caller/budget survive through this cleanup. Never
         // recapture a cleared actual flag as a new, apparently uninterrupted allowance.
-        while (persistenceFactoryRemainingMillis(budget) > 0L && caller.sampleActualFlag() == null && caller.sampleOutsideLocks() == null &&
-            persistenceFactoryRemainingMillis(budget) > 0L
-        ) {
+        while (persistenceFactoryRemainingMillis(budget) > 0L && caller.sampleActualFlag() == null) {
+            val interruption = try {
+                caller.sampleOutsideLocks()
+            } catch (failure: Throwable) {
+                return PersistenceLeaseRetirementClaim.CallerSampleFailed(failure)
+            }
+            if (interruption != null || persistenceFactoryRemainingMillis(budget) <= 0L) return PersistenceLeaseRetirementClaim.Refused
             if (!physical.ledger.lock.tryLock()) {
                 LockSupport.parkNanos(1_000_000)
                 continue
             }
             try {
-                if (caller.sampleActualFlag() != null || persistenceFactoryRemainingMillis(budget) == 0L) return false
-                if (!expected.leased || !currentPoolState(expected)) return false
-                if (physical.ledger.current(entry.record) !== entry && !entry.retirementRequested.get()) return false
+                if (caller.sampleActualFlag() != null || persistenceFactoryRemainingMillis(budget) == 0L) return PersistenceLeaseRetirementClaim.Refused
+                if (!expected.leased || !currentPoolState(expected)) return PersistenceLeaseRetirementClaim.Refused
+                if (physical.ledger.current(entry.record) !== entry && !entry.retirementRequested.get()) return PersistenceLeaseRetirementClaim.Refused
                 entry.retirementRequested.set(true)
                 expected.epoch.sealForTerminal()
-                return true
+                return PersistenceLeaseRetirementClaim.Claimed
             } finally {
                 physical.ledger.lock.unlock()
             }
         }
-        return false
+        return PersistenceLeaseRetirementClaim.Refused
     }
 
     private fun canTransfer(): Boolean = delivery === Delivery.POOL && !terminalSealed.get() && !entry.retirementRequested.get() &&
@@ -256,5 +261,16 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
 
     companion object {
         private val INSTALL_CALLER_PHASES = setOf(PersistenceOwnedCallerPhase.ATTACHED, PersistenceOwnedCallerPhase.TAKEN)
+    }
+}
+
+/** Source-retirement claim or exact caller-sample failure only; never a Hikari/native completion receipt. */
+internal sealed interface PersistenceLeaseRetirementClaim {
+    data object Refused : PersistenceLeaseRetirementClaim
+
+    data object Claimed : PersistenceLeaseRetirementClaim
+
+    class CallerSampleFailed(val failure: Throwable) : PersistenceLeaseRetirementClaim {
+        override fun toString(): String = "PersistenceLeaseRetirementClaim.CallerSampleFailed(redacted)"
     }
 }

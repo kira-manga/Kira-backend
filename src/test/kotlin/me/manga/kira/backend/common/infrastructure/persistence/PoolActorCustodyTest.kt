@@ -71,6 +71,64 @@ class PoolActorCustodyTest {
         assertEquals(0, calls.get())
     }
 
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @ValueSource(strings = ["incident-first", "hard-first", "operation-hard"])
+    fun `MODEL RETURN incident preserves authentic creation and generic or factory hard faults stay dominant`(order: String) =
+        ActorFixture().use { fixture ->
+            val acquisition = fixture.creator()
+            try {
+                assertTrue(acquisition.capture(PhysicalTestConnection().raw)) // MODEL handle; the enclosing creator remains genuinely active.
+                val entitlement = requireNotNull(acquisition.prepareLeaseEntitlement())
+                val returning = requireNotNull(entitlement.prepareReturn(PersistenceTimeBudget.start(30_000)))
+                assertTrue(returning.enter())
+                try {
+                    assertNull(fixture.lifecycle.actorSnapshot().firstFailure)
+                    assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
+                    if (order == "hard-first") assertNull(fixture.pool.threadFactory.newThread(null))
+                    assertTrue(returning.recordReturnIncidentBeforeEnd())
+                    assertFalse(fixture.lifecycle.businessReady())
+                    assertFalse(fixture.lifecycle.businessAdmissionOpen())
+                    if (order == "incident-first") {
+                        assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
+                        val calls = AtomicInteger()
+                        val actor = requireNotNull(
+                            fixture.emit(
+                                Runnable {
+                                    assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
+                                    assertFalse(fixture.lifecycle.businessAdmissionOpen())
+                                    calls.incrementAndGet()
+                                },
+                            ),
+                        )
+                        actor.start()
+                        awaitActorTermination(actor)
+                        assertEquals(1, calls.get())
+                        assertNull(fixture.pool.threadFactory.newThread(null)) // Genuine later hard refusal, not another incident classification.
+                        assertEquals(1L, fixture.lifecycle.actorSnapshot().retiredGenerations)
+                    } else if (order == "operation-hard") {
+                        assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
+                        assertTrue(returning.failBeforeEnd(), "The exact generic hard API must still seal despite an earlier incident.")
+                    }
+                    val first = if (order == "hard-first") PoolActorFault.UNAUTHENTICATED_CREATION else PoolActorFault.BOOKKEEPING_FAILED
+                    assertEquals(first, fixture.lifecycle.actorSnapshot().firstFailure)
+                    assertTrue(fixture.lifecycle.actorSnapshot().factorySealed)
+                    assertTrue(returning.recordReturnIncidentBeforeEnd())
+                    assertNull(fixture.emit(Runnable { error("An incident must never reopen a hard-sealed factory.") }))
+                    assertEquals(first, fixture.lifecycle.actorSnapshot().firstFailure)
+                    assertTrue(fixture.lifecycle.actorSnapshot().factorySealed)
+                    assertEquals(0, fixture.lifecycle.actorSnapshot().retainedGenerations)
+                    assertEquals(1L, fixture.lifecycle.actorSnapshot().activeOperations)
+                    assertSame(returning.frame, PoolCallFrames.current())
+                    assertFalse(returning.actualFrameEnded() || returning.frame.completion.hasEnded())
+                } finally {
+                    assertTrue(returning.end())
+                }
+            } finally {
+                // Only now may this uninitialized MODEL acquisition record its separate hard startup failure.
+                assertTrue(acquisition.end())
+            }
+        }
+
     @Test
     fun `ordinary unstarted platform Thread has no inherited app context and foreign or reentrant run cannot execute its delegate twice`() =
         ActorFixture().use { fixture ->

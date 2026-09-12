@@ -377,6 +377,24 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         return true
     }
 
+    private fun recordReturnIncidentBeforeEnd(operation: Operation): Boolean {
+        if (owner.ownershipLockHeld()) return false
+        return synchronized(gate) {
+            val frame = operation.frame
+            val entitlement = operation.entitlement
+            if (!frame.authentic(this, issuance) || frame.kind !== PoolCallKind.RETURN || !frame.active() || PoolCallFrames.current() !== frame ||
+                !entitlement.authentic(this, issuance) || !entitlement.preparedForLocked(issuance, operation)
+            ) return@synchronized false
+            // Only the exact prepared current RETURN can reveal broken retained accounting.
+            if (!entitlement.consumedLocked(issuance) || operations <= 0L) {
+                actors.failLocked(PoolActorFault.BOOKKEEPING_FAILED)
+                return@synchronized false
+            }
+            actors.recordCallerIncidentLocked()
+            true // No holder/count/frame end, new allowance or native/epoch disposition.
+        }
+    }
+
     private fun prepareLeaseEntitlement(ticket: Acquisition): LeaseEntitlement? {
         if (!ticket.frame.authentic(this, issuance) || owner.ownershipLockHeld()) return null
         val entitlement = LeaseEntitlement.prepare(this, issuance, Thread.currentThread())
@@ -527,6 +545,10 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         internal fun canEnterLocked(authority: Any, operation: Operation): Boolean = issuance === authority &&
             phase === EntitlementPhase.AVAILABLE && prepared === operation
 
+        internal fun preparedForLocked(authority: Any, operation: Operation): Boolean = issuance === authority && prepared === operation
+
+        internal fun consumedLocked(authority: Any): Boolean = issuance === authority && phase === EntitlementPhase.CONSUMED
+
         internal fun consumeLocked(authority: Any) {
             check(issuance === authority && phase === EntitlementPhase.AVAILABLE)
             phase = EntitlementPhase.CONSUMED
@@ -555,6 +577,9 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         fun enter(): Boolean = pool.enterOperation(this)
 
         fun failBeforeEnd(): Boolean = pool.failBeforeEnd(frame)
+
+        /** An accounted RETURN incident keeps its original outer extent and existing creator authority, never new business. */
+        fun recordReturnIncidentBeforeEnd(): Boolean = pool.recordReturnIncidentBeforeEnd(this)
 
         fun end(): Boolean = pool.endFrame(frame)
 

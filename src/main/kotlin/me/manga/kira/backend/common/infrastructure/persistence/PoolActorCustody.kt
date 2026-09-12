@@ -38,6 +38,13 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
         owner.sealBusinessForActorFaultLocked()
     }
 
+    /** Accounted RETURN failure denies business without revoking the existing authenticated creator closure. */
+    internal fun recordCallerIncidentLocked() {
+        check(Thread.holdsLock(gate))
+        if (firstFailure == null) firstFailure = PoolActorFault.BOOKKEEPING_FAILED
+        owner.sealBusinessForActorFaultLocked() // Never reopens an earlier hard factory seal.
+    }
+
     internal fun failedLocked(): Boolean {
         check(Thread.holdsLock(gate))
         return firstFailure != null
@@ -80,8 +87,8 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
             unproved = true
         }
         if (unproved) return PoolActorObservation.UNPROVEN
-        if (firstFailure != null) return PoolActorObservation.UNKNOWN
         factorySealed = true // No current or future authentic creator remains under this same protocol.
+        if (firstFailure != null) return PoolActorObservation.UNKNOWN
         return PoolActorObservation.ENDED
     }
 
