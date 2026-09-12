@@ -179,13 +179,13 @@ class PersistencePgOwnedCutIntegrationTest {
         fun input(name: String): String = requireNotNull(System.getProperty("kira.finalJarConsumer.$name")) {
             "The required consumer test needs its explicit final-JAR profile: $name"
         }
-        assertEquals("app-29-final-jar-consumer-profile-03", input("profile"))
+        assertEquals("app-29-final-jar-consumer-profile-04", input("profile"))
         val jar = Path.of(input("jar")).toRealPath()
         val checker = Path.of(input("checker")).toRealPath()
         fun sha256(path: Path): String = MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(path))
             .joinToString("") { "%02x".format(it) }
         val verifyInputs = {
-            assertEquals("a4150232fa8f30797ae67091e65417da4e8d26c98610a1bac541d953ad6403d3", sha256(jar))
+            assertEquals("50f7dc4a6314cc5105f4990be26ba8be65ae242e1f7e62652cc60d6a2c0e03df", sha256(jar))
             assertEquals("857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288", sha256(checker))
         }
         verifyInputs()
