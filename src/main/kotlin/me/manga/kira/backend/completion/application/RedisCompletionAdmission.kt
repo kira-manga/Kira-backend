@@ -43,7 +43,8 @@ class RedisCompletionAdmission(
                 "$KEY_PREFIX:user-day:$userId",
                 "$KEY_PREFIX:concurrency",
             ),
-            "acquire", token,
+            "acquire",
+            token,
             properties.perUserPerMinute.toString(),
             properties.globalPerMinute.toString(),
             properties.perUserDailyQuota.toString(),
@@ -55,7 +56,11 @@ class RedisCompletionAdmission(
         return CompletionPermit {
             if (released.compareAndSet(false, true)) {
                 val reply = execute(
-                    listOf("$KEY_PREFIX:concurrency"), "release", token, properties.globalConcurrency.toString(), releasing = true,
+                    listOf("$KEY_PREFIX:concurrency"),
+                    "release",
+                    token,
+                    properties.globalConcurrency.toString(),
+                    releasing = true,
                 )
                 if (reply != 0L && reply != 1L) coordinationUnavailable(releasing = true)
             }

@@ -133,17 +133,26 @@ class RedisCompletionAdmissionIT {
                     template.delete(KEY)
                     template.opsForValue().set(KEY, "1", Duration.ofMinutes(1))
                 }
+
                 "hash" -> {
                     template.delete(KEY)
                     template.opsForHash<String, String>().put(KEY, "legacy", "1")
                 }
+
                 "fraction" -> template.opsForZSet().add(KEY, token, deadline - 0.5)
+
                 "infinite" -> template.opsForZSet().add(KEY, token, Double.POSITIVE_INFINITY)
+
                 "negative" -> template.opsForZSet().add(KEY, token, -1.0)
+
                 "range" -> template.opsForZSet().add(KEY, token, MAX_INTEGER.toDouble() + 1)
+
                 "token" -> template.opsForZSet().add(KEY, "not-a-uuid", deadline.toDouble())
+
                 "capacity" -> repeat(2) { template.opsForZSet().add(KEY, UUID.randomUUID().toString(), deadline.toDouble()) }
+
                 "persistent" -> template.persist(KEY)
+
                 "early-expiry" -> template.expireAt(KEY, Instant.ofEpochMilli(deadline - 1_000))
             }
             val before = snapshot()
@@ -253,9 +262,14 @@ class RedisCompletionAdmissionIT {
     private fun keys() = listOf("$PREFIX:user-minute:$USER", "$PREFIX:global-minute", "$PREFIX:user-day:$USER", KEY)
 
     private fun properties(timeoutMs: Long = 1_000) = KiraCompletionProperties(
-        coordinationBackend = "redis", instanceCount = 2, globalConcurrency = 2,
-        perUserPerMinute = 0, globalPerMinute = 0, perUserDailyQuota = 0,
-        queueTimeout = Duration.ofMillis(timeoutMs), timeout = Duration.ofMillis(timeoutMs),
+        coordinationBackend = "redis",
+        instanceCount = 2,
+        globalConcurrency = 2,
+        perUserPerMinute = 0,
+        globalPerMinute = 0,
+        perUserDailyQuota = 0,
+        queueTimeout = Duration.ofMillis(timeoutMs),
+        timeout = Duration.ofMillis(timeoutMs),
     )
 
     companion object {
@@ -263,6 +277,7 @@ class RedisCompletionAdmissionIT {
         private const val KEY = "$PREFIX:concurrency"
         private const val MAX_INTEGER = 9_007_199_254_740_991L
         private val USER = UUID.randomUUID()
+
         // The same production resource, not a transcribed/simulated release protocol.
         private val SCRIPT = DefaultRedisScript<Long>().apply {
             setLocation(ClassPathResource("redis/completion-admission.lua"))
@@ -270,7 +285,8 @@ class RedisCompletionAdmissionIT {
         }
         private val EXPIRY = DefaultRedisScript("return redis.call('PEXPIRETIME', KEYS[1])", Long::class.java)
         private val NOW = DefaultRedisScript(
-            "local t = redis.call('TIME'); return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)", Long::class.java,
+            "local t = redis.call('TIME'); return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)",
+            Long::class.java,
         )
         private val redis = GenericContainer(DockerImageName.parse("redis:7.4.7-alpine")).withExposedPorts(6379).also { it.start() }
         private val factory = LettuceConnectionFactory(
