@@ -43,6 +43,7 @@ class CompletionInterruptionTest {
         val provider =
             object : CompletionProvider {
                 override val name = "interrupt-test"
+
                 // Audited test fake: every return or throw ends all local work.
                 override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
@@ -96,37 +97,7 @@ class CompletionInterruptionTest {
         val activationCalls = AtomicInteger()
         val token = AtomicReference<String>()
         val releaseEnteredWithInterrupt = AtomicBoolean(false)
-        val redis =
-            mock(StringRedisTemplate::class.java) { invocation ->
-                if (invocation.method.name == "execute") {
-                    val args = invocation.rawArguments[2] as Array<*>
-                    when (args[0]) {
-                        "acquire" -> {
-                            assertEquals(4, invocation.getArgument<List<String>>(1).size)
-                            token.set(args[1] as String)
-                            0L
-                        }
-
-                        "activate" -> {
-                            assertEquals(token.get(), args[1])
-                            activationCalls.incrementAndGet()
-                            1L
-                        }
-
-                        "release" -> {
-                            assertEquals(token.get(), args[1])
-                            releaseCalls.incrementAndGet()
-                            releaseEnteredWithInterrupt.set(Thread.currentThread().isInterrupted)
-                            releaseObserved.countDown()
-                            throw DataAccessResourceFailureException("private Redis connection detail")
-                        }
-
-                        else -> error("Unexpected Redis operation")
-                    }
-                } else {
-                    Answers.RETURNS_DEFAULTS.answer(invocation)
-                }
-            }
+        val redis = redisTemplate(releaseCalls, activationCalls, token, releaseEnteredWithInterrupt, releaseObserved)
         val properties = KiraCompletionProperties(provider = provider.name, defaultModel = "model", executorThreads = 1, queueCapacity = 1)
         val admission = RedisCompletionAdmission(redis, properties)
         val service =
@@ -176,6 +147,43 @@ class CompletionInterruptionTest {
                 assertFalse(it.isAlive, "Owned completion worker did not stop")
             }
             assertFalse(requestThread.isAlive)
+        }
+    }
+
+    private fun redisTemplate(
+        releaseCalls: AtomicInteger,
+        activationCalls: AtomicInteger,
+        token: AtomicReference<String>,
+        releaseEnteredWithInterrupt: AtomicBoolean,
+        releaseObserved: CountDownLatch,
+    ): StringRedisTemplate = mock(StringRedisTemplate::class.java) { invocation ->
+        if (invocation.method.name == "execute") {
+            val args = invocation.rawArguments[2] as Array<*>
+            when (args[0]) {
+                "acquire" -> {
+                    assertEquals(4, invocation.getArgument<List<String>>(1).size)
+                    token.set(args[1] as String)
+                    0L
+                }
+
+                "activate" -> {
+                    assertEquals(token.get(), args[1])
+                    activationCalls.incrementAndGet()
+                    1L
+                }
+
+                "release" -> {
+                    assertEquals(token.get(), args[1])
+                    releaseCalls.incrementAndGet()
+                    releaseEnteredWithInterrupt.set(Thread.currentThread().isInterrupted)
+                    releaseObserved.countDown()
+                    throw DataAccessResourceFailureException("private Redis connection detail")
+                }
+
+                else -> error("Unexpected Redis operation")
+            }
+        } else {
+            Answers.RETURNS_DEFAULTS.answer(invocation)
         }
     }
 }

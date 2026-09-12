@@ -157,6 +157,7 @@ class CompletionLifecycleTest {
         val releasedWhileActive = AtomicBoolean()
         val provider = object : CompletionProvider {
             override val name = "lifecycle-test"
+
             // Every path performs only this synchronous, explicitly gated local work.
             override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
@@ -542,6 +543,7 @@ class CompletionLifecycleTest {
 
     private fun recordingProvider(calls: AtomicInteger, onCall: () -> Unit = {}): CompletionProvider = object : CompletionProvider {
         override val name = "lifecycle-test"
+
         // Audited test fake: every return or throw ends all local work.
         override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
@@ -556,7 +558,9 @@ class CompletionLifecycleTest {
         mock(CompletionPersistence::class.java) { invocation ->
             when (invocation.method.name) {
                 "createPending" -> UUID.randomUUID()
+
                 "markRunning" -> true
+
                 "storeOutcome" -> {
                     val view = CompletionView(
                         id = invocation.getArgument(0),

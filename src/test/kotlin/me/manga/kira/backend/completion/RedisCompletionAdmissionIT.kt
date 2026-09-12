@@ -232,6 +232,7 @@ class RedisCompletionAdmissionIT {
                 if (operation == "acquire") token.set(args[1]) else assertEquals(token.get(), args[1])
                 when (operation) {
                     "acquire", "release" -> template.execute(script, scriptKeys, *args)
+
                     "activate" -> {
                         assertEquals(1L, template.execute(script, scriptKeys, *args))
                         null // Real mutation happened, but the adapter receives no authoritative acknowledgement.
@@ -651,6 +652,7 @@ class RedisCompletionAdmissionIT {
         }
         private val provider = object : CompletionProvider {
             override val name = "redis-lifetime-test"
+
             // Each injected body above is synchronous local work; none starts detached tasks or a transport.
             override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 

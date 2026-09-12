@@ -175,6 +175,7 @@ class TaxonomyTestProviderConfig {
 /** A controllable [CompletionProvider] (name `test`) whose behavior is keyed off the prompt (test-only). */
 class ControllableTestCompletionProvider : CompletionProvider {
     override val name: String = "test"
+
     // Audited test fake: every return or throw ends all local work.
     override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 

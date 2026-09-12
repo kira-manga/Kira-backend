@@ -494,6 +494,7 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
         private lateinit var executor: BoundedCompletionExecutor
         private val provider = object : CompletionProvider {
             override val name = "lifecycle-test"
+
             // Audited test fake: every return or throw ends all local work.
             override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 

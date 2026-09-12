@@ -42,7 +42,8 @@ internal class CompletionExecutionOwnership(private val permit: CompletionPermit
 
     /** Called only under lock; never perform provider, Redis or persistence work here. */
     private fun claimRelease(): Boolean {
-        if (releaseAttempted || !callerClosed || (entered && !exited)) return false
+        if (releaseAttempted || !callerClosed) return false
+        if (entered && !exited) return false
         releaseAttempted = true
         return true
     }

@@ -80,6 +80,7 @@ class OverloadProviderConfig {
 
 class OverloadTestProvider : CompletionProvider {
     override val name = "overload-test"
+
     // Audited test fake: every return or throw ends all local work.
     override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
     val started = CountDownLatch(1)

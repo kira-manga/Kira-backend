@@ -211,6 +211,7 @@ class CompletionReleaseFailureHttpConfig {
 
 class ReleaseFailureHttpProvider : CompletionProvider {
     override val name: String = RELEASE_PROVIDER
+
     // Audited test fake: every return or throw ends all local work.
     override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
     val calls = AtomicInteger()

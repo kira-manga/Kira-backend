@@ -132,6 +132,7 @@ class CompletionDefaultModelTest {
         val calls = AtomicInteger()
         val provider = object : CompletionProvider {
             override val name = "recording-model-test"
+
             // This fake records values synchronously; no work outlives complete.
             override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 

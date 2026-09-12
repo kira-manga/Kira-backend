@@ -178,7 +178,8 @@ class CompletionAdmissionResponseTest {
     @Test
     fun `invalid release acknowledgements and known decode failures preserve the outcome without retry`() {
         listOf(null, -1L, 2L, 0, "0", listOf(1L), SerializationException("private detail"), ClassCastException()).forEach { reply ->
-            SimpleMeterRegistry().use { registry ->
+            val registry = SimpleMeterRegistry()
+            try {
                 val redis = RedisFixture(releaseResult = reply, metrics = KiraMetrics(registry))
                 val permit = redis.admission.acquire(USER)
                 assertEquals(CompletionActivation.ACTIVATED, permit.activate())
@@ -189,6 +190,8 @@ class CompletionAdmissionResponseTest {
                 assertEquals(1, redis.tokens.toSet().size)
                 assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
                 assertNull(registry.find("kira.completion.admission.events").tag("outcome", "coordination_unavailable").counter())
+            } finally {
+                registry.close()
             }
         }
     }
