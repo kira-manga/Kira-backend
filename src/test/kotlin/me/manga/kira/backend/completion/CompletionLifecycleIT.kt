@@ -3,15 +3,15 @@ package me.manga.kira.backend.completion
 import jakarta.persistence.EntityManager
 import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.completion.application.BoundedCompletionExecutor
-import me.manga.kira.backend.completion.application.CompletionAdmission
-import me.manga.kira.backend.completion.application.CompletionPermit
 import me.manga.kira.backend.completion.application.CompletionPersistence
 import me.manga.kira.backend.completion.application.CompletionPublication
 import me.manga.kira.backend.completion.application.CompletionRetentionService
 import me.manga.kira.backend.completion.application.CompletionService
+import me.manga.kira.backend.completion.application.InMemoryCompletionAdmission
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.completion.domain.CompletionRequestPage
 import me.manga.kira.backend.completion.domain.CompletionRequestRecord
 import me.manga.kira.backend.completion.domain.CompletionRequestRepository
@@ -46,6 +46,7 @@ import org.springframework.context.annotation.Import
 import org.springframework.context.annotation.Primary
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Timestamp
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -493,6 +494,8 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
         private lateinit var executor: BoundedCompletionExecutor
         private val provider = object : CompletionProvider {
             override val name = "lifecycle-test"
+            // Audited test fake: every return or throw ends all local work.
+            override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
             override fun complete(prompt: String, model: String): CompletionOutcome {
                 check(!TransactionSynchronizationManager.isActualTransactionActive()) { "Provider must run outside a transaction" }
@@ -510,9 +513,7 @@ class CompletionLifecycleIT : AbstractIntegrationTest() {
                 queueTimeout = queueTimeout,
             ),
             persistence,
-            object : CompletionAdmission {
-                override fun acquire(userId: UUID): CompletionPermit = CompletionPermit {}
-            },
+            InMemoryCompletionAdmission(KiraCompletionProperties(globalConcurrency = 1), Clock.systemUTC()),
             mock(KiraMetrics::class.java) { invocation ->
                 if (invocation.method.name == "bindCompletionExecutor") executor = invocation.getArgument(0)
                 Answers.RETURNS_DEFAULTS.answer(invocation)

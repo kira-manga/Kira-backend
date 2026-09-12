@@ -41,6 +41,11 @@ internal class CompletionStartup(queueTimeout: Duration, private val nanoTime: (
         synchronized(lock) { decision.complete(Decision.Failed(cause)) }
     }
 
+    fun admissionDenied(activation: CompletionActivation) {
+        require(activation != CompletionActivation.ACTIVATED) { "Activated admission is not a startup denial" }
+        synchronized(lock) { decision.complete(Decision.AdmissionDenied(activation)) }
+    }
+
     /** Must happen before requesting Future interruption; an authorized start remains historical fact. */
     fun cancel() {
         synchronized(lock) {
@@ -74,6 +79,8 @@ internal class CompletionStartup(queueTimeout: Duration, private val nanoTime: (
         data class Authorized(val atNanos: Long) : Decision
 
         data class Failed(val cause: Throwable) : Decision
+
+        data class AdmissionDenied(val activation: CompletionActivation) : Decision
 
         data object Rejected : Decision
 

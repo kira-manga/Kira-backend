@@ -421,7 +421,7 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo only in dev/test) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large · 429 rate/quota · 503 admission unavailable |
+| `POST /api/v1/completions` | `{prompt, model?}` → run the configured supported provider (echo only in dev/test) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large · 429 rate/quota · 503 admission unavailable |
 | `GET /api/v1/completions/{id}` | Fetch one — **owner or ADMIN only** (others → 404, never 403). | 200 · 404 |
 | `GET /api/v1/completions` | List the caller's own requests, newest first, paginated. ADMIN may pass `?userId=`. | 200 |
 
@@ -430,6 +430,9 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
   over **128 JVM UTF-16 units** is rejected before persistence with **400** `MODEL_TOO_LONG`, even
   when it consists entirely of whitespace. This is the existing API bound, not PostgreSQL's
   Unicode-character counting rule.
+- Completion remains disabled by default. Enabled construction requires an audited synchronous
+  provider whose every exit ends all work. Generic HTTP has UNKNOWN lifetime and is rejected; production
+  completion remains unavailable until a supported provider contract exists. No silent echo fallback.
 - Omitted, null, empty or whitespace-only `model` uses `kira.completion.default-model` (native
   environment key **`KIRA_COMPLETION_DEFAULTMODEL`**). The configured default must be nonblank and
   at most 128 UTF-16 units; it is validated before the completion executor is created. Only the
@@ -442,6 +445,12 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
   `COMPLETION_CONCURRENCY_LIMIT` (`Retry-After: 1`); unavailable or indeterminate Redis
   acquisition is **503** `COMPLETION_COORDINATION_UNAVAILABLE` (`Retry-After: 5`). Retry delays
   are guidance, not recovery guarantees or a promise that arbitrary POST retries are safe.
+- After `PENDING`/`RUNNING`, failed activation proposes sanitized `FAILED/PROVIDER_UNAVAILABLE`:
+  absent/expired reservation uses the same capacity503/1 and indeterminate coordination uses503/5.
+  That503 is returned only when the failure wins conditional publication; an earlier winner is preserved.
+- Expected Redis coordination/decoding failure (or an invalid/null reply) during permit release does not replace the
+  normal **201** committed view or an existing primary error. Release diagnostics are server-side
+  only; no client retry signal is added, and this does not make POST idempotent.
 - Response `CompletionResponse`:
 
 ```json

@@ -1,21 +1,32 @@
 package me.manga.kira.backend.security
 
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
+import me.manga.kira.backend.completion.application.CompletionActivation
 import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.config.KiraSecurityProperties
+import me.manga.kira.backend.observability.KiraMetrics
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.Answers
+import org.mockito.Mockito.mock
+import org.springframework.dao.DataAccessResourceFailureException
 import org.springframework.data.redis.connection.RedisStandaloneConfiguration
 import org.springframework.data.redis.connection.lettuce.LettuceConnectionFactory
 import org.springframework.data.redis.core.StringRedisTemplate
+import org.springframework.data.redis.core.script.DefaultRedisScript
+import org.springframework.data.redis.core.script.RedisScript
 import org.testcontainers.containers.GenericContainer
 import org.testcontainers.utility.DockerImageName
 import java.time.Duration
@@ -274,7 +285,212 @@ class RedisCoordinationIT {
         held.close()
     }
 
+    @ParameterizedTest(name = "unconfirmed pending release [{index}] applyBeforeFailure={0}")
+    @ValueSource(booleans = [false, true])
+    fun `later completion closes do not repeat an unconfirmed pending release`(applyBeforeFailure: Boolean) {
+        val properties = KiraCompletionProperties(
+            coordinationBackend = "redis",
+            instanceCount = 2,
+            perUserPerMinute = 0,
+            globalPerMinute = 0,
+            perUserDailyQuota = 0,
+            globalConcurrency = 1,
+            queueTimeout = Duration.ofMillis(500),
+            timeout = Duration.ofMillis(500),
+        )
+        val maximumTtl = (properties.queueTimeout + properties.timeout).multipliedBy(2).toMillis()
+        assertEquals(2_000L, maximumTtl)
+        val healthy = RedisCompletionAdmission(template, properties)
+        val fault = CompletionReleaseFault(applyBeforeFailure)
+        val registry = SimpleMeterRegistry()
+        try {
+            val first = RedisCompletionAdmission(fault.redis, properties, KiraMetrics(registry)).acquire(UUID.randomUUID())
+            val firstToken = requireNotNull(fault.token)
+            val firstState = completionState()
+            assertEquals(setOf(firstToken), firstState.keys)
+            assertTrue(firstState.getValue(firstToken).toLong() > completionNow())
+            val outcome = first.use {
+                assertEquals(firstState, completionState())
+                assertTrue(ttl(COMPLETION_KEY) in 1L..maximumTtl)
+                "normal outcome"
+            }
+            assertEquals("normal outcome", outcome)
+            assertEquals(listOf(4, 1), fault.keyCounts)
+            assertEquals(listOf("acquire", "release"), fault.operations)
+            assertEquals(if (applyBeforeFailure) 1 else 0, fault.forwardedReleases)
+            assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
+
+            if (applyBeforeFailure) {
+                assertFalse(exists(COMPLETION_KEY), "The actual release Lua removed the pending token before the injected failure")
+            } else {
+                assertEquals(firstState, completionState())
+                assertTrue(ttl(COMPLETION_KEY) in 1L..maximumTtl)
+                assertCompletionCapacityDenied(healthy)
+                awaitExpired(COMPLETION_KEY) // Observe production TTL expiry; never force EXPIRE/DEL.
+                assertEquals(-2L, ttl(COMPLETION_KEY))
+            }
+
+            healthy.acquire(UUID.randomUUID()).use {
+                val successor = completionState()
+                assertEquals(1, successor.size)
+                assertFalse(firstToken in successor)
+                assertTrue(ttl(COMPLETION_KEY) in 1L..maximumTtl)
+                // Probe repeated application closes only while healthy successor B demonstrably owns capacity.
+                repeat(2) { first.close() }
+                assertEquals(listOf(4, 1), fault.keyCounts)
+                assertEquals(listOf("acquire", "release"), fault.operations)
+                assertEquals(if (applyBeforeFailure) 1 else 0, fault.forwardedReleases)
+                assertEquals(successor, completionState())
+                assertTrue(ttl(COMPLETION_KEY) in 1L..maximumTtl)
+                assertCompletionCapacityDenied(healthy)
+                assertEquals(successor, completionState())
+                assertTrue(ttl(COMPLETION_KEY) in 1L..maximumTtl)
+                assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
+            }
+            assertFalse(exists(COMPLETION_KEY)) // B's healthy close performs normal owned cleanup.
+        } finally {
+            registry.close()
+        }
+    }
+
+    @ParameterizedTest(name = "unconfirmed pinned release [{index}] applyBeforeFailure={0}")
+    @ValueSource(booleans = [false, true])
+    fun `unconfirmed pin release retains capacity unless real removal happened before the transport failure`(applyBeforeFailure: Boolean) {
+        val properties = KiraCompletionProperties(
+            coordinationBackend = "redis",
+            instanceCount = 2,
+            perUserPerMinute = 0,
+            globalPerMinute = 0,
+            perUserDailyQuota = 0,
+            globalConcurrency = 1,
+            queueTimeout = Duration.ofMillis(500),
+            timeout = Duration.ofMillis(500),
+        )
+        val healthy = RedisCompletionAdmission(template, properties)
+        val fault = CompletionReleaseFault(applyBeforeFailure)
+        val registry = SimpleMeterRegistry()
+        try {
+            val first = RedisCompletionAdmission(fault.redis, properties, KiraMetrics(registry)).acquire(UUID.randomUUID())
+            val token = requireNotNull(fault.token)
+            val formerDeadline = completionState().getValue(token).toLong()
+            assertEquals(CompletionActivation.ACTIVATED, first.activate())
+            val pin = mapOf(token to "PINNED")
+            assertEquals(pin, completionState())
+            assertEquals(-1L, ttl(COMPLETION_KEY))
+            assertEquals("normal outcome", first.use { "normal outcome" })
+            assertEquals(listOf("acquire", "activate", "release"), fault.operations)
+            assertEquals(listOf(4, 1, 1), fault.keyCounts)
+            assertEquals(if (applyBeforeFailure) 1 else 0, fault.forwardedReleases)
+            assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
+
+            if (applyBeforeFailure) {
+                assertFalse(exists(COMPLETION_KEY), "The real token-specific Lua removed the pin before the injected failure")
+                healthy.acquire(UUID.randomUUID()).use { successor ->
+                    assertEquals(CompletionActivation.ACTIVATED, successor.activate())
+                    val successorPin = completionState()
+                    assertEquals(1, successorPin.size)
+                    assertFalse(token in successorPin)
+                    assertEquals(listOf("PINNED"), successorPin.values.toList())
+                    repeat(2) { first.close() } // Application-close probes only, not a wire replay claim.
+                    assertEquals(successorPin, completionState())
+                    assertEquals(-1L, ttl(COMPLETION_KEY))
+                    assertCompletionCapacityDenied(healthy)
+                    assertEquals(listOf("acquire", "activate", "release"), fault.operations)
+                    assertEquals(1, fault.forwardedReleases)
+                    assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
+                }
+                assertFalse(exists(COMPLETION_KEY))
+            } else {
+                awaitCompletionTime(formerDeadline + 50) // Genuine Redis TIME beyond the old allowance, never forced expiry.
+                assertEquals(pin, completionState())
+                assertEquals(-1L, ttl(COMPLETION_KEY))
+                assertCompletionCapacityDenied(healthy)
+                repeat(2) { first.close() }
+                assertEquals(pin, completionState())
+                assertEquals(-1L, ttl(COMPLETION_KEY))
+                assertEquals(listOf("acquire", "activate", "release"), fault.operations)
+                assertEquals(0, fault.forwardedReleases)
+                assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
+                // The owned ephemeral Redis fixture may retain this pin until test teardown; no recovery/reset is inferred.
+            }
+        } finally {
+            registry.close() // Keep the registry live through every successor/protected-capacity assertion.
+        }
+    }
+
+    private fun completionState(): Map<String, String> = template.opsForHash<String, String>().entries(COMPLETION_KEY)
+
+    private fun completionNow(): Long = requireNotNull(template.execute(COMPLETION_NOW, emptyList()))
+
+    private fun awaitCompletionTime(until: Long) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3)
+        while (completionNow() < until && System.nanoTime() < deadline) Thread.sleep(10)
+        assertTrue(completionNow() >= until, "Redis TIME must pass the actual pending deadline within the bounded wait")
+    }
+
+    private fun assertCompletionCapacityDenied(admission: RedisCompletionAdmission) {
+        val failure = assertThrows<ServiceUnavailableException> { admission.acquire(UUID.randomUUID()) }
+        assertEquals(503, failure.status.value())
+        assertEquals("COMPLETION_CONCURRENCY_LIMIT", failure.code)
+        assertEquals(1L, failure.retryAfterSeconds)
+    }
+
+    /** Models two transport outcomes, not Lettuce reconnect/replay or delayed wire execution. */
+    private class CompletionReleaseFault(private val applyBeforeFailure: Boolean) {
+        val keyCounts = mutableListOf<Int>()
+        val operations = mutableListOf<String>()
+        var token: String? = null
+            private set
+        var forwardedReleases = 0
+            private set
+        val redis: StringRedisTemplate = mock(StringRedisTemplate::class.java) { call ->
+            if (call.method.name == "execute") {
+                val script = call.getArgument<RedisScript<Long>>(0)
+                val keys = call.getArgument<List<String>>(1)
+                val args = (call.rawArguments[2] as Array<*>).map { it as String }.toTypedArray()
+                val operation = args[0]
+                val capturedToken = args[1]
+                keyCounts.add(keys.size)
+                operations.add(operation)
+                when (operation) {
+                    "acquire" -> {
+                        assertEquals(4, keys.size)
+                        assertNull(token)
+                        assertEquals(4, UUID.fromString(capturedToken).version())
+                        token = capturedToken
+                        template.execute(script, keys, *args)
+                    }
+
+                    "activate" -> {
+                        assertEquals(1, keys.size)
+                        assertEquals(token, capturedToken)
+                        template.execute(script, keys, *args).also { assertEquals(1L, it) }
+                    }
+
+                    "release" -> {
+                        assertEquals(1, keys.size)
+                        assertEquals(token, capturedToken)
+                        if (applyBeforeFailure) {
+                            forwardedReleases += 1
+                            assertEquals(1L, template.execute(script, keys, *args))
+                        }
+                        throw DataAccessResourceFailureException("private Redis release detail")
+                    }
+
+                    else -> error("Unexpected Redis admission operation")
+                }
+            } else {
+                Answers.RETURNS_DEFAULTS.answer(call)
+            }
+        }
+    }
+
     companion object {
+        private const val COMPLETION_KEY = "kira:completion-admission:concurrency"
+        private val COMPLETION_NOW = DefaultRedisScript(
+            "local t = redis.call('TIME'); return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)",
+            Long::class.java,
+        )
         private const val PREFIX = "kira:auth-throttle:v2"
         private const val INDEX = "$PREFIX:index"
         private const val EMAIL = "reader@example.com"

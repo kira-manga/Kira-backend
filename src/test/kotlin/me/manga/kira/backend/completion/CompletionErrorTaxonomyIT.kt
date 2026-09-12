@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.security.JwtService
 import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.user.domain.Role
@@ -174,6 +175,8 @@ class TaxonomyTestProviderConfig {
 /** A controllable [CompletionProvider] (name `test`) whose behavior is keyed off the prompt (test-only). */
 class ControllableTestCompletionProvider : CompletionProvider {
     override val name: String = "test"
+    // Audited test fake: every return or throw ends all local work.
+    override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
     override fun complete(prompt: String, model: String): CompletionOutcome = when (prompt.trim()) {
         // Sleeps well past the shortened timeout → the orchestrator times out and interrupts it.

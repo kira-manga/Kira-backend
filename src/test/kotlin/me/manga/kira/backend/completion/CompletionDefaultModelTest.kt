@@ -1,19 +1,23 @@
 package me.manga.kira.backend.completion
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.completion.application.CompletionAdmission
-import me.manga.kira.backend.completion.application.CompletionPermit
 import me.manga.kira.backend.completion.application.CompletionPersistence
 import me.manga.kira.backend.completion.application.CompletionPublication
 import me.manga.kira.backend.completion.application.CompletionService
+import me.manga.kira.backend.completion.application.InMemoryCompletionAdmission
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.completion.domain.CompletionStatus
 import me.manga.kira.backend.completion.domain.CompletionView
+import me.manga.kira.backend.completion.infrastructure.HttpCompletionProvider
 import me.manga.kira.backend.config.KiraCompletionProperties
 import me.manga.kira.backend.observability.KiraMetrics
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.junit.jupiter.api.assertThrows
@@ -21,6 +25,10 @@ import org.mockito.Answers
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
+import org.springframework.boot.test.context.runner.ApplicationContextRunner
+import org.springframework.test.util.ReflectionTestUtils
+import java.net.http.HttpClient
+import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -69,6 +77,52 @@ class CompletionDefaultModelTest {
         }
     }
 
+    @Test
+    fun `UNKNOWN and actual HTTP providers reject before executor metrics admission or invocation`() {
+        val unknown = object : CompletionProvider {
+            override val name = "unknown-lifetime-test"
+
+            override fun complete(prompt: String, model: String): CompletionOutcome = error("UNKNOWN provider must not be invoked")
+        }
+        assertUnknownRejected(unknown)
+
+        // Injection may already construct HTTP's client; the service guard does not claim otherwise.
+        val http = HttpCompletionProvider(KiraCompletionProperties(), ObjectMapper())
+        try {
+            assertUnknownRejected(http)
+        } finally {
+            // No request is sent. Close this test-owned constructor resource, not any shared client.
+            (ReflectionTestUtils.getField(http, "client") as HttpClient).close()
+        }
+    }
+
+    @Test
+    fun `disabled service startup needs no model provider credentials or collaborators`() {
+        ApplicationContextRunner()
+            .withUserConfiguration(CompletionService::class.java)
+            .withPropertyValues("kira.completion.enabled=false")
+            .run { context ->
+                assertNull(context.startupFailure)
+                assertTrue(context.getBeansOfType(CompletionService::class.java).isEmpty())
+                assertTrue(context.getBeansOfType(CompletionProvider::class.java).isEmpty())
+            }
+    }
+
+    private fun assertUnknownRejected(provider: CompletionProvider) {
+        assertEquals(CompletionProviderLifetime.UNKNOWN, provider.lifetime)
+        val persistence = mock(CompletionPersistence::class.java)
+        val admission = mock(CompletionAdmission::class.java)
+        val metrics = mock(KiraMetrics::class.java)
+        val properties = KiraCompletionProperties(provider = provider.name, defaultModel = CONFIGURED_MODEL, executorThreads = 0)
+
+        val failure = assertThrows<IllegalStateException> {
+            CompletionService(listOf(provider), properties, persistence, admission, metrics)
+        }
+
+        assertEquals("Selected CompletionProvider must end all work on every synchronous method exit", failure.message)
+        verifyNoInteractions(persistence, admission, metrics)
+    }
+
     private fun assertEffectiveModel(requested: String?, expected: String) {
         val id = UUID.randomUUID()
         val userId = UUID.randomUUID()
@@ -78,6 +132,8 @@ class CompletionDefaultModelTest {
         val calls = AtomicInteger()
         val provider = object : CompletionProvider {
             override val name = "recording-model-test"
+            // This fake records values synchronously; no work outlives complete.
+            override val lifetime = CompletionProviderLifetime.SYNCHRONOUS
 
             override fun complete(prompt: String, model: String): CompletionOutcome {
                 worker.set(Thread.currentThread())
@@ -113,9 +169,7 @@ class CompletionDefaultModelTest {
                 else -> Answers.RETURNS_DEFAULTS.answer(invocation)
             }
         }
-        val admission = object : CompletionAdmission {
-            override fun acquire(userId: UUID): CompletionPermit = CompletionPermit {}
-        }
+        val admission = InMemoryCompletionAdmission(KiraCompletionProperties(globalConcurrency = 1), Clock.systemUTC())
         val service = CompletionService(
             listOf(provider),
             KiraCompletionProperties(

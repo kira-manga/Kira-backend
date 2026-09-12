@@ -16,8 +16,9 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Shared rate/quota admission and token-owned, unexpired/unreleased logical leases, not a physical
- * provider concurrency guarantee. Requires the stopped/drained Redis protocol cutover in SECURITY.md.
+ * Shared rate/quota admission with expiring pending reservations and acknowledged, nonexpiring pins.
+ * Physical ownership additionally requires the service owner and audited provider lifetime contract.
+ * Requires the stopped/drained Redis protocol cutover and retained authority in SECURITY.md.
  */
 @Component
 @ConditionalOnProperty(prefix = "kira.completion", name = ["coordination-backend"], havingValue = "redis")
@@ -32,7 +33,7 @@ class RedisCompletionAdmission(
         }
     }
 
-    private val leaseMillis = concurrencyTtlMs()
+    private val pendingMillis = pendingTtlMs()
 
     override fun acquire(userId: UUID): CompletionPermit {
         val token = UUID.randomUUID().toString()
@@ -49,25 +50,47 @@ class RedisCompletionAdmission(
             properties.globalPerMinute.toString(),
             properties.perUserDailyQuota.toString(),
             properties.globalConcurrency.toString(),
-            leaseMillis.toString(),
+            pendingMillis.toString(),
         )
         if (result != 0L) reject(result)
-        val released = AtomicBoolean(false)
-        return CompletionPermit {
-            if (released.compareAndSet(false, true)) {
-                val reply = execute(
-                    listOf("$KEY_PREFIX:concurrency"),
-                    "release",
-                    token,
-                    properties.globalConcurrency.toString(),
-                    releasing = true,
-                )
-                if (reply != 0L && reply != 1L) coordinationUnavailable(releasing = true)
+        return object : CompletionPermit {
+            private val activationAttempted = AtomicBoolean(false)
+
+            // Guard the application attempt only; the Redis client may replay an in-flight command.
+            private val releaseAttempted = AtomicBoolean(false)
+
+            override fun activate(): CompletionActivation {
+                if (releaseAttempted.get()) return CompletionActivation.EXPIRED
+                if (!activationAttempted.compareAndSet(false, true)) return activationUnavailable()
+                return this@RedisCompletionAdmission.activate(token)
+            }
+
+            override fun close() {
+                if (releaseAttempted.compareAndSet(false, true)) release(token)
             }
         }
     }
 
-    private fun concurrencyTtlMs(): Long {
+    private fun activate(token: String): CompletionActivation {
+        val result = execute(listOf("$KEY_PREFIX:concurrency"), "activate", token, properties.globalConcurrency.toString())
+        return when (result) {
+            1L -> CompletionActivation.ACTIVATED
+
+            0L -> {
+                metrics?.completionAdmission("completion_concurrency_limit")
+                CompletionActivation.EXPIRED
+            }
+
+            else -> activationUnavailable()
+        }
+    }
+
+    private fun activationUnavailable(): CompletionActivation {
+        recordCoordinationUnavailable()
+        return CompletionActivation.UNAVAILABLE
+    }
+
+    private fun pendingTtlMs(): Long {
         require(listOf(properties.queueTimeout, properties.timeout).all { it.nano % 1_000_000 == 0 }) {
             "Redis completion queue/provider timeouts must be positive whole milliseconds"
         }
@@ -80,17 +103,16 @@ class RedisCompletionAdmission(
         return lease
     }
 
-    private fun execute(keys: List<String>, vararg args: String, releasing: Boolean = false): Long = try {
+    private fun execute(keys: List<String>, vararg args: String): Long? = try {
         // Do not cast an unexpected serializer/transport reply into an admission acknowledgement.
         val reply: Any? = redis.execute(SCRIPT, keys, *args)
-        if (reply !is Long) coordinationUnavailable(releasing)
-        reply
+        reply as? Long
     } catch (ignored: DataAccessException) {
-        coordinationUnavailable(releasing)
+        null
     } catch (ignored: SerializationException) {
-        coordinationUnavailable(releasing)
+        null
     } catch (ignored: ClassCastException) {
-        coordinationUnavailable(releasing)
+        null
     }
 
     private fun reject(code: Long?): Nothing {
@@ -108,22 +130,26 @@ class RedisCompletionAdmission(
         throw TooManyRequestsException("Completion limit exceeded. Try again later.", machineCode, retry)
     }
 
-    private fun coordinationUnavailable(releasing: Boolean = false): Nothing {
-        log.error("Shared completion admission unavailable; denying request")
-        metrics?.completionAdmission("coordination_unavailable")
-        // Release failure remains visible with its existing response; Backend #15 is separate.
-        if (releasing) {
-            throw TooManyRequestsException(
-                "Completion service is temporarily unavailable. Try again later.",
-                "COMPLETION_COORDINATION_UNAVAILABLE",
-                FAILURE_RETRY_SECONDS,
-            )
-        }
+    private fun coordinationUnavailable(): Nothing {
+        recordCoordinationUnavailable()
         throw ServiceUnavailableException(
             "Completion service is temporarily unavailable. Try again later.",
             "COMPLETION_COORDINATION_UNAVAILABLE",
             FAILURE_RETRY_SECONDS,
         )
+    }
+
+    private fun recordCoordinationUnavailable() {
+        log.error("Shared completion admission unavailable; denying request")
+        metrics?.completionAdmission("coordination_unavailable")
+    }
+
+    private fun release(token: String) {
+        val result = execute(listOf("$KEY_PREFIX:concurrency"), "release", token, properties.globalConcurrency.toString())
+        if (result != 0L && result != 1L) {
+            log.warn("Shared completion admission release unconfirmed")
+            metrics?.completionAdmission("release_unconfirmed")
+        }
     }
 
     private companion object {

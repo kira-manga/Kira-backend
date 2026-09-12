@@ -1,5 +1,6 @@
 package me.manga.kira.backend.completion
 
+import me.manga.kira.backend.completion.application.CompletionActivation
 import me.manga.kira.backend.completion.application.CompletionStartup
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -128,5 +129,27 @@ class CompletionStartupTest {
         now.addAndGet(9)
         assertTrue(startup.authorize())
         assertEquals(now.get(), (startup.await() as CompletionStartup.Decision.Authorized).atNanos)
+    }
+
+    @Test
+    fun `activation time still consumes the original startup budget and cannot replace a prior decision`() {
+        val now = AtomicLong(100)
+        val startup = CompletionStartup(Duration.ofNanos(10), now::get)
+        assertTrue(startup.canClaim())
+        now.set(110) // A committed RUNNING claim plus activation used the entire original budget.
+        assertFalse(startup.authorize())
+        startup.admissionDenied(CompletionActivation.UNAVAILABLE)
+        assertEquals(CompletionStartup.Decision.Expired, startup.await())
+
+        val cancelled = CompletionStartup(Duration.ofDays(1))
+        cancelled.cancel()
+        cancelled.admissionDenied(CompletionActivation.EXPIRED)
+        assertEquals(CompletionStartup.Decision.Cancelled, cancelled.await())
+
+        val denied = CompletionStartup(Duration.ofDays(1))
+        denied.admissionDenied(CompletionActivation.UNAVAILABLE)
+        assertEquals(CompletionStartup.Decision.AdmissionDenied(CompletionActivation.UNAVAILABLE), denied.await())
+        assertFalse(denied.authorize())
+        assertThrows<IllegalArgumentException> { denied.admissionDenied(CompletionActivation.ACTIVATED) }
     }
 }

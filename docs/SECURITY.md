@@ -313,67 +313,85 @@ hours, clock skew is shorter than the TTL, and invalid trusted-proxy entries fai
 
 ## Completion admission, provider, and retention
 
-Completions are disabled by default. Production startup fails if they are enabled without the HTTPS
-provider endpoint, API key and nonblank `kira.completion.default-model` of at most 128 JVM UTF-16
-units. The native environment key is **`KIRA_COMPLETION_DEFAULTMODEL`**, not an additional YAML
-alias. Service construction validates the default before allocating its executor, including outside
-production. Disabled completion needs no default model or provider credentials. Echo and its
-configured `echo-1` default exist only in explicit `dev`/`test` profiles; there is no implicit
-production default. Null/blank request models use the configured value; nonblank request overrides
-and configured defaults are preserved exactly, not trimmed or normalized. Operators must verify
-model availability/authorization with their provider separately; startup does not query a catalog.
+Completions are disabled by default. Enabled service construction requires a nonblank
+`kira.completion.default-model` of at most 128 JVM UTF-16 units, then a code-audited provider whose
+every synchronous method exit ends all its work. The lifetime capability defaults to `UNKNOWN` and
+has no configuration escape hatch. These guards precede the service executor/metrics binding and
+admission/invocation, not already-injected provider constructors. Echo and its configured `echo-1`
+default exist only in explicit `dev`/`test` profiles. Production policy requires HTTP with valid HTTPS
+endpoint/API key, but the generic HTTP adapter remains UNKNOWN: return, socket close and interruption
+cannot acknowledge remote termination. **Enabled production completion therefore remains unavailable**
+until a supported provider contract is integrated; there is no implicit echo substitution.
 
-Admission checks per-user/global minute limits, a per-user daily quota, and logical concurrent permits
-before the bounded executor. Multiple instances require Redis; single-instance memory coordination
-must be declared explicitly. Redis retains its existing fixed per-counter windows and earlier-counter
-charges when a later dimension rejects; this is not an atomic all-or-nothing rolling-window claim
+Disabled startup needs no default model or provider credentials. The native default-model environment
+key is **`KIRA_COMPLETION_DEFAULTMODEL`**, not an additional YAML alias. Null/blank request models use
+the configured value; nonblank request overrides and configured defaults remain exact, not trimmed or
+normalized. Startup does not query a provider model catalog.
+
+Admission checks per-user/global minute limits, daily quota, and pending reservations plus execution
+pins before the bounded executor. Multiple instances require Redis; memory keeps a nonexpiring counter
+for an explicitly declared single process. Redis retains its fixed per-counter windows and charges
+earlier counters when a later dimension rejects; this is not all-or-nothing rolling accounting
 (Backend14 remains separate). Rate/quota rejection stays 429 with Retry-After 60/86400; concurrency
-capacity stays 503/1, and indeterminate acquisition stays 503/5. Release failures remain visible 429/5
-and are not retried locally; preserving an already committed caller response is still Backend15 work.
+capacity stays 503/1 and indeterminate acquisition stays 503/5.
 
-The queue timeout covers queue wait plus RUNNING persistence through invocation authorization;
-the separate provider timed wait begins only after that commit and authorization. Startup at the
-original deadline or later is rejected. PENDING→RUNNING, PENDING/RUNNING→FAILED and RUNNING→SUCCEEDED
-are checked conditional writes; one terminal status/outcome wins atomically. Pre-authorization
-cancellation prevents provider entry even if startup ignores interruption. Later Future cancellation
-requests interruption, not confirmed worker or remote termination; permit close is not such proof
-either. Database failure can still delay/prevent terminal persistence. GET/list use one read-only
-REPEATABLE READ snapshot across request and outcome queries, not a promise of the freshest data.
-Prompt/result sizes, executor threads, queue capacity, limits, timeouts, retention, and cleanup batch
-size are bounded configuration. Separate admission/release and physical-lifetime obligations remain.
+The queue timeout covers queue wait, RUNNING persistence and activation through invocation authorization,
+without restarting its original deadline. It does not cover earlier `createPending` work. Worker order
+is actual entry→canClaim→committed RUNNING→acknowledged activation→authorize→provider. Startup at the
+deadline or later, or canceled before authorization, cannot invoke. Missing/expired activation proposes
+sanitized FAILED/PROVIDER_UNAVAILABLE and 503/1 `COMPLETION_CONCURRENCY_LIMIT`; indeterminate activation
+uses 503/5 `COMPLETION_COORDINATION_UNAVAILABLE`. Only a winning conditional publication emits that 503;
+an earlier terminal winner remains authoritative. Provider timed wait starts at authorization; neither
+wait is a termination acknowledgement. Database failure can still delay/prevent publication. GET/list
+retain their read-only REPEATABLE READ snapshot across request and outcome queries.
 
-Redis concurrency counts **unexpired, unreleased UUIDv4 token leases**, not physical provider calls.
-The existing `kira:completion-admission:concurrency` key is a sorted set of tokens/deadlines. Acquisition
-validates state before writes, prunes deadlines `<= Redis TIME`, and reserves only a new token. Release
-removes only its captured token; missing/expired/replayed tokens cannot decrement successor permits.
-The allowance is twice queue-plus-provider timeout, with positive whole-millisecond durations and
-checked exact arithmetic; timestamps/deadlines are limited to `2^53 - 1`. The **Redis-only** capacity
-guard is **1..4096** (default8), bounding token inspection; it neither clamps configuration nor changes the
-memory backend. Key expiry covers the greatest member deadline, even across different valid lease
-durations. Wrong types, malformed tokens/scores, too many members, or missing/short key expiry deny
-without destructive repair. Unknown replies deny, never authorize speculative anonymous release.
+The existing `kira:completion-admission:concurrency` key is one bounded **hash**: UUIDv4→canonical pending
+deadline or explicit `PINNED`. Acquisition validates before writes, prunes only pending deadlines
+`<= Redis TIME`, counts pending plus pins and reserves a new token. Activation requires that exact
+still-live pending token and an acknowledged atomic conversion; absent/expired/duplicate/unknown
+activation grants no work and never reacquires a token. Any pin makes key retention **nonexpiring**.
+Pending-only expiry covers its greatest deadline; release removes only its captured token and preserves
+every peer pin/live deadline. Pending allowance remains twice queue-plus-provider timeout, with positive
+whole milliseconds and checked arithmetic up to `2^53 - 1`. The Redis-only capacity guard stays 1..4096
+(default8), not a clamp or memory limit. Wrong types, malformed fields, oversized state, expiring pins
+or missing/short pending-only expiry are refused without repair. Known schema errors precede writes;
+unknown/partial server operations are not treated as successful acknowledgements.
 
-**Provider-lifetime obligation remains unresolved.** Queue/provider waits do not bound the earlier
-`createPending` database work; an acquired lease can expire before submission. Backend12 prevents
-authorization after its startup deadline or a recorded pre-authorization cancellation, but that is not
-a Redis-lease validity check. A timely authorized worker can still be paused before provider entry or
-continue after release/expiry. Caller timeout requests `Future.cancel(true)` and then exits `use`
-without joining actual worker termination, so release can precede termination even before lease
-expiry. Redis cannot distinguish a crashed holder from a paused/live one or stop remote work.
-Backend12's terminal-state/startup guards alone do not prove a physical concurrency cap. A strict
-physical-provider bound still requires a connected termination/fencing and late-start/early-release
-design, review and validation; this logical protocol is no waiver or enablement approval. Completion
-remains disabled by default.
+**Actual execution ownership:** a wrapper is created immediately after acquisition, before createPending.
+Caller close before Callable entry prevents entry and claims one release attempt. Once entry wins, the
+second of caller relinquishment and actual synchronous body exit claims cleanup outside the state lock.
+Normal body exit records completion only, so its Future can resolve and publication commit before slow
+release. On timeout/interruption, a still-running body retains its pin until actual exit. Future done,
+cancellation, terminal database status and shutdown are not actual exit. The executor remains fixed and
+bounded; shutdown requests interruption/drains the queue without joining. Never-started callers unwind
+through their startup deadline/finally; immediate shutdown cleanup is not promised.
+
+Owed release is attempted once at application level. Known Redis invocation/decoding failures
+(`DataAccessException`, `SerializationException`, `ClassCastException`) and invalid/null acknowledgements
+emit fixed WARN `Shared completion admission release unconfirmed` and bounded `release_unconfirmed`,
+without replacing committed responses or primary errors. No dynamic identifier/exception detail is
+logged for cleanup. Only owed cleanup temporarily clears an existing interrupt and restores it in
+finally, without clearing a newly arrived interrupt. Provider/SQL/programming failures are not broadly
+swallowed. No application retry or compensating delete occurs; driver replay/delayed wire execution
+remains possible. Failed activation unwinds only through owner-owed token cleanup after body settlement.
+
+**Safety-over-crash-availability policy:** pending reservations may expire, but pins survive crash,
+unresolved work or unconfirmed release until separately verified stopped/drained recovery. An
+unconfirmed release may also already have freed its token; it is not a receipt either way. Retention
+cleanup of database rows does not release pins or prove work ended. Finite automatic recovery after
+activation would require a genuine provider-enforced termination/capacity/fencing contract, not a
+longer TTL, renewal or timeout reset. This disabled candidate does not authorize production operation,
+reset, rollout or completion enablement.
 
 **Redis assumptions and stopped/drained cutover:** all completion nodes need one shared, non-evicting
-Redis authority (`noeviction` or equivalent), consistent capacity/protocol, and controlled clock/state
-continuity. These multi-key scripts do not support Redis Cluster or guarantee bounds through arbitrary
-clock jumps, state loss or asynchronous failover. Redis 7+ is required; the fixture uses 7.4.7. A legacy
-integer is rejected, not imported/deleted, and there is no parallel old/new semaphore namespace.
-Stop admission and every old writer, drain/resolve actual outstanding work, and prevent old-version
-restarts before cutover. Waiting one TTL is not a verified drain. Any confirmed-stale-state reset or
-rollback requires an explicit stopped/drained operational procedure; installed enforcement remains
-external. Auth coordination keys and scripts are unaffected.
+authority (`noeviction` or equivalent), consistent capacity/protocol and controlled clock/state continuity.
+These multi-key scripts do not support Redis Cluster or guarantee bounds through arbitrary state loss,
+clock jumps or asynchronous failover. Redis 7+ is required; the fixture uses 7.4.7. Both legacy integers
+and earlier logical zsets are rejected, not imported/deleted; there is no parallel semaphore namespace.
+Stop admission and every old writer, drain/resolve actual outstanding work and prevent old-version
+restarts before cutover. Waiting one TTL is not verified drain. A confirmed-stale-state reset or rollback
+requires a separately approved stopped/drained procedure; installed enforcement and supported remote
+provider guarantees remain external. Auth coordination keys/scripts and database retention are unchanged.
 
 ## Retention & privacy
 
