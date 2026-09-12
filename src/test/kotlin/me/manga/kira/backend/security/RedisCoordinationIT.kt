@@ -299,7 +299,8 @@ class RedisCoordinationIT {
         assertEquals(2_000L, maximumTtl)
         val healthy = RedisCompletionAdmission(template, properties)
         val fault = CompletionReleaseFault(applyBeforeFailure)
-        SimpleMeterRegistry().use { registry ->
+        val registry = SimpleMeterRegistry()
+        try {
             val first = RedisCompletionAdmission(fault.redis, properties, KiraMetrics(registry)).acquire(UUID.randomUUID())
             val outcome = first.use {
                 assertEquals("1", template.opsForValue().get(COMPLETION_KEY))
@@ -335,6 +336,8 @@ class RedisCoordinationIT {
                 assertEquals(1.0, registry.get("kira.completion.admission.events").tag("outcome", "release_unconfirmed").counter().count())
             }
             assertFalse(exists(COMPLETION_KEY)) // B's healthy close performs normal owned cleanup.
+        } finally {
+            registry.close()
         }
     }
 
