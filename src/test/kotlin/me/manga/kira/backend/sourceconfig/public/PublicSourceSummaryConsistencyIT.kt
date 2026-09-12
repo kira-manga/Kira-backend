@@ -207,6 +207,5 @@ class SummaryConsistencyTestConfig {
 class SummaryReadDocuments(private val delegate: PublishedDocumentRepository) : PublishedDocumentRepository by delegate {
     val afterRead = AtomicReference<((PublishedDocument?) -> Unit)?>()
 
-    override fun findByRevision(revision: Long): PublishedDocument? =
-        delegate.findByRevision(revision).also { afterRead.getAndSet(null)?.invoke(it) }
+    override fun findByRevision(revision: Long): PublishedDocument? = delegate.findByRevision(revision).also { afterRead.getAndSet(null)?.invoke(it) }
 }
