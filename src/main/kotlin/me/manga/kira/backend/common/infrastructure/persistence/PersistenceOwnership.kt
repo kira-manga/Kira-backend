@@ -12,7 +12,24 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
     private val poolState = AtomicReference<PersistenceJdbcPoolEpoch?>()
     private val poolTransfer = AtomicReference<PersistenceJdbcPoolTransfer?>()
     private val composed = AtomicBoolean()
+    private val terminalCompletion = PersistenceTerminalReclamation.prepare(this)
     private var delivery = Delivery.UNEXPOSED // Only the exact entry's F/G owner changes delivery.
+
+    internal fun terminalCompletion(): PersistenceTerminalReclamation = terminalCompletion
+
+    internal fun phaseEpoch(): PersistenceProducerEpoch? = current.get()
+
+    internal fun retireExpiredPhaseLocked(expected: PersistenceProducerEpoch) {
+        val physical = requireNotNull(binding)
+        check(physical.ledger.lock.isHeldByCurrentThread)
+        if (physical.ledger.current(entry.record) === entry && current.get() === expected) entry.retirementRequested.set(true)
+    }
+
+    /** Only the already-proved terminal conjunction in PersistencePhysicalCompletion calls this. */
+    internal fun reclaimedLocked() {
+        requireCurrentLocks()
+        terminalCompletion.publish(this)
+    }
 
     /** Prepare on the future original caller, outside ownership locks and before any final delivery commit. */
     fun prepareEpoch(): PersistenceProducerEpoch {

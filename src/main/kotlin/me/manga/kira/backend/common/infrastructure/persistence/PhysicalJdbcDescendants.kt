@@ -102,6 +102,7 @@ internal class PhysicalJdbcDescendants(
             } else if (value is Collection<*>) {
                 value.forEach(::validate)
             } else if (isCallerOwnedCallback(value)) {
+                if (context.hasPhase()) PersistenceJdbcGuardContext.refuse()
                 // Ordinary caller-owned callbacks retain their normal dispatch, never strict credit.
                 context.ordinaryCompatibilityOnly()
             }
@@ -460,17 +461,20 @@ internal class PhysicalJdbcNode(
         throw declaredFailure(method, failure)
     }
 
-    @Suppress("TooGenericExceptionCaught")
+    // One child invocation retains logical close, driver/output custody and final dispatch accounting in the same extent.
+    @Suppress("TooGenericExceptionCaught", "LongMethod")
     private fun invokeGuarded(method: Method, arguments: Array<Any?>): Any? {
         if (method.declaringClass === Any::class.java) return invokeObject(method, arguments)
         if (!surface.accepts(method)) PersistenceJdbcGuardContext.refuse()
         val cleanup = isCleanup(method)
         if (cleanup && closed.get()) return null // Never a second native close or a repaired receipt.
         val cancellation = isCancellation(method)
+        val kind = callKind(cleanup, cancellation)
+        graph.lease?.completion?.phase?.beforeJdbcCall(kind)
         var dispatch: PersistenceJdbcDispatch.Frame? = null
         val call = try {
-            dispatch = graph.lease?.enterDispatch(cancellation)
-            graph.context.enter(identity, callKind(cleanup, cancellation))
+            dispatch = graph.lease?.enterDispatch(kind)
+            graph.context.enter(identity, kind)
         } catch (failure: Throwable) {
             dispatch?.end()
             throw declaredFailure(method, failure)
@@ -541,6 +545,7 @@ internal class PhysicalJdbcNode(
                     guarded
                 } finally {
                     if (!completed) {
+                        graph.context.phaseJdbcFailure()
                         call.reconcileDriver()
                         if (closing) {
                             child?.closeFailed()
@@ -561,6 +566,7 @@ internal class PhysicalJdbcNode(
             }
         } finally {
             call.finishAfterDispatch(dispatch)
+            if (completed) graph.lease?.completion?.phase?.afterJdbcCall(kind)
         }
     }
 

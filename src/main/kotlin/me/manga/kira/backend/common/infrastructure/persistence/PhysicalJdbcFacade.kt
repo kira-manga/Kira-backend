@@ -21,7 +21,8 @@ internal class PhysicalJdbcFacade private constructor(private val calls: Physica
         handle: Connection,
         entitlement: PoolLifecycle.LeaseEntitlement,
         budget: PersistenceTimeBudget,
-    ): LeaseJdbcFacade = calls.prepareLease(owner, handle, entitlement, budget)
+        completion: PersistenceLeaseCompletion,
+    ): LeaseJdbcFacade = calls.prepareLease(owner, handle, entitlement, budget, completion)
 
     internal fun finishReturn(lease: PersistenceJdbcLease, call: PersistenceJdbcGuardCall) = calls.finishReturn(lease, call)
 
@@ -96,20 +97,25 @@ private class PhysicalConnectionCalls(
         handle: Connection,
         entitlement: PoolLifecycle.LeaseEntitlement,
         budget: PersistenceTimeBudget,
+        completion: PersistenceLeaseCompletion,
     ): LeaseJdbcFacade {
         if (!owner.ownsPool(pool) || !pool.authenticPoolCaller() || !pool.businessReady()) PersistenceJdbcGuardContext.refuse()
         val source = entry.jdbc.composedPoolState(pool)?.takeUnless { it.leased } ?: PersistenceJdbcGuardContext.refuse()
         val cleanup = source.epoch.prepareCleanup() ?: PersistenceJdbcGuardContext.refuse()
         val transfer = PersistenceJdbcPoolTransfer.prepare(entry.jdbc, source, PersistenceJdbcPoolTransfer.Kind.CHECKOUT, budget)
+        completion.bindCheckout(entry.jdbc, transfer)
         var interruptedException = false
         try {
             if (!transfer.claim()) PersistenceJdbcGuardContext.refuse()
             if (!transfer.sealAndDrain(cleanup)) PersistenceJdbcGuardContext.refuse()
             val facts = source.context.collectTransferFacts(transfer) ?: PersistenceJdbcGuardContext.refuse()
             val next = successor(transfer, leased = true)
-            val lease = PersistenceJdbcLease.prepare(owner, self, entry.jdbc, next, handle, entitlement)
+            val lease = PersistenceJdbcLease.prepare(owner, self, entry.jdbc, next, handle, entitlement, completion)
+            completion.bindLease(lease)
             val facade = LeaseJdbcFacade.prepare(lease, handle)
+            completion.phase?.bindFacade(lease, facade)
             if (!pool.businessReady() || !transfer.commit(next, facts)) PersistenceJdbcGuardContext.refuse()
+            completion.accepted(lease)
             return facade
         } catch (failure: InterruptedException) {
             interruptedException = true
@@ -174,6 +180,7 @@ private class PhysicalConnectionCalls(
             throw declaredFailure(context, method, failure)
         }
         var invoked = false
+        var nativeReturned = false
         try {
             var wrapping = false
             var completed = false
@@ -205,9 +212,11 @@ private class PhysicalConnectionCalls(
                             call.armDriver()
                             invoked = true
                             val returned = method.invoke(raw, *adapted)
+                            nativeReturned = true
+                            // Record the actual native result before capture/wrapping/finalizers can fail.
+                            context.transaction.connectionReturned(method, adapted, returned)
                             call.captureOutput(returned)
                             wrapping = true
-                            context.transaction.connectionReturned(method, adapted, returned)
                             call.reconcileDriver()
                             state.graph.connectionResult(call, method, returned)
                         }
@@ -217,7 +226,8 @@ private class PhysicalConnectionCalls(
                     result
                 } finally {
                     if (!completed) {
-                        if (invoked) context.transaction.connectionFailed(method)
+                        if (invoked && !nativeReturned) context.transaction.connectionFailed(method)
+                        context.phaseJdbcFailure()
                         if (context.transaction.uncertain()) context.requestTerminal(call)
                         call.reconcileDriver()
                         call.failedBeforeBoxing(wrapping)
@@ -255,7 +265,7 @@ private class PhysicalConnectionCalls(
     ): PersistenceJdbcGuardCall = when {
         dispatch != null -> context.enter(
             dispatch.identity,
-            if (returning || terminal) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS,
+            if (returning || terminal) PersistenceJdbcGuardCallKind.CLEANUP else dispatch.kind,
         )
 
         terminal -> context.enterTerminal()

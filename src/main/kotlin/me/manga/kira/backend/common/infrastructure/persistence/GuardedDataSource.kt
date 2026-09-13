@@ -50,13 +50,14 @@ internal class GuardedDataSource(
         val budget = PersistenceTimeBudget.start(endpoint.loginPolicy.durationMillis)
         if (!businessReady()) PersistenceJdbcGuardContext.refuse()
         val acquisition = lifecycle.prepareAcquisition(budget)
-        if (!acquisition.enter()) PersistenceJdbcGuardContext.refuse()
+        val completion = PersistencePhaseOwnership.prepareAcquisition(this, acquisition)
         var entitlement: PoolLifecycle.LeaseEntitlement? = null
         var facade: LeaseJdbcFacade? = null
         var obtained = false
         var endAttempted = false
         var delivered = false
         try {
+            if (!acquisition.enter()) PersistenceJdbcGuardContext.refuse()
             val handle = pool.connection
             obtained = true
             // Capture before any unwrap, association, allocation or facade construction can fail.
@@ -66,11 +67,13 @@ internal class GuardedDataSource(
             }
             entitlement = acquisition.prepareLeaseEntitlement() ?: PersistenceJdbcGuardContext.refuse()
             val physical = handle.unwrap(PhysicalJdbcFacade::class.java)
-            val prepared = physical.prepareLease(this, handle, entitlement, budget)
+            val prepared = physical.prepareLease(this, handle, entitlement, budget, completion)
             facade = prepared
             endAttempted = true
             if (!acquisition.end() || !acquisition.actualFrameEnded()) PersistenceJdbcGuardContext.refuse()
             // No borrower exposure until the actual acquisition TL/bookkeeping tail has ended.
+            if (persistenceFactoryRemainingMillis(budget) == 0L) PersistenceJdbcGuardContext.refuse()
+            completion.phase?.requireAcceptedLease()
             delivered = true
             return prepared
         } finally {
@@ -81,7 +84,11 @@ internal class GuardedDataSource(
                 }
             } finally {
                 // An ENDING failure is retained, not retried as though it were an untouched frame.
-                if (!endAttempted && !acquisition.end()) lifecycle.requestShutdown(budget)
+                try {
+                    if (!endAttempted && acquisition.entered() && !acquisition.end()) lifecycle.requestShutdown(budget)
+                } finally {
+                    completion.ingressEnded()
+                }
             }
         }
     }

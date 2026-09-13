@@ -7,6 +7,7 @@ internal class PersistenceJdbcTransaction {
     private var autoCommit: Boolean? = null
     private var pending = false
     private var unknown = false
+    private var outcome = PersistenceDatabaseOutcome.NONE
 
     fun beforeConnection(method: Method, arguments: Array<Any?>, returning: Boolean) {
         if (method.name == "setAutoCommit" && arguments.singleOrNull() == true) {
@@ -27,14 +28,25 @@ internal class PersistenceJdbcTransaction {
                 if (autoCommit == true) pending = false
             }
 
-            "commit" -> pending = false
+            "commit" -> {
+                pending = false
+                if (outcome !== PersistenceDatabaseOutcome.UNKNOWN) outcome = PersistenceDatabaseOutcome.COMMITTED
+            }
 
-            "rollback" -> if (arguments.isEmpty()) pending = false
+            "rollback" -> if (arguments.isEmpty()) {
+                pending = false
+                // A later rollback cannot undo an acknowledged commit or resolve a lost commit reply.
+                if (outcome === PersistenceDatabaseOutcome.NONE) outcome = PersistenceDatabaseOutcome.ROLLED_BACK
+            }
         }
     }
 
     fun connectionFailed(method: Method) {
-        if (method.name in OUTCOME_METHODS) unknown = true
+        if (method.name in OUTCOME_METHODS) {
+            unknown = true
+            // Reset/cleanup failure is a reuse failure, not evidence that a known DB result changed.
+            if (outcome === PersistenceDatabaseOutcome.NONE) outcome = PersistenceDatabaseOutcome.UNKNOWN
+        }
     }
 
     fun beforeChild(method: Method, kind: PhysicalJdbcKind) {
@@ -51,13 +63,15 @@ internal class PersistenceJdbcTransaction {
 
     fun uncertain(): Boolean = unknown
     fun clean(): Boolean = !unknown && autoCommit != null && !pending
+    fun databaseOutcome(): PersistenceDatabaseOutcome = outcome
 
     /** Only prebuilt successor state receives the proven current state; old state is never reset. */
     fun inherit(previous: PersistenceJdbcTransaction) {
-        check(autoCommit == null && !pending && !unknown)
+        check(autoCommit == null && !pending && !unknown && outcome === PersistenceDatabaseOutcome.NONE)
         autoCommit = previous.autoCommit
         pending = previous.pending
         unknown = previous.unknown
+        // The physical connection's local settings transfer; the departing transaction's result does not.
     }
 
     companion object {
@@ -71,3 +85,6 @@ internal class PersistenceJdbcTransaction {
         )
     }
 }
+
+/** Lower native facts only. Spring completion, attempted rollback and lease disposal are not DB results. */
+internal enum class PersistenceDatabaseOutcome { NONE, COMMITTED, ROLLED_BACK, UNKNOWN }

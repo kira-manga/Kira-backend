@@ -11,6 +11,19 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     private val issuance = Any()
     private val cleanup = PersistenceJdbcCleanup.prepare(this, issuance)
 
+    @Volatile private var phase: PersistencePhaseContext? = null
+
+    internal fun attachPhase(owner: PersistencePhaseContext) {
+        check(preparedFor(ownership) && phase == null && !ownership.ownershipLockHeld())
+        phase = owner
+    }
+
+    /** Existing scanner association only. Clock sampling is forbidden under F/G/T. */
+    internal fun phaseDeadlineExpired(): Boolean {
+        check(!ownership.ownershipLockHeld())
+        return phase?.deadlineExpired() == true
+    }
+
     fun enterForeground(budget: PersistenceTimeBudget? = null): Call? = enter(Kind.FOREGROUND, budget)
 
     /** Only this closed cancellation authority crosses threads; foreground/transaction lineage never does. */
@@ -38,7 +51,8 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
         }
     }
 
-    fun enterCleanup(authority: PersistenceJdbcCleanup): Call? = if (authority.matches(this, issuance)) enter(Kind.CLEANUP, null) else null
+    fun enterCleanup(authority: PersistenceJdbcCleanup, budget: PersistenceTimeBudget? = null): Call? =
+        if (authority.matches(this, issuance)) enter(Kind.CLEANUP, budget) else null
 
     internal fun cancellationCleanup(): PersistenceJdbcCleanup? = cleanup.takeIf { ownership.permitsCleanup(this) && !state.get().sealed }
 

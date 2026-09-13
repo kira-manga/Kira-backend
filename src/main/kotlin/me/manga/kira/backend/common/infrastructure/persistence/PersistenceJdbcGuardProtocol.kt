@@ -52,7 +52,11 @@ internal class PersistenceJdbcGuardIdentity private constructor(
     }
 }
 
-/** One entry's lower graph, fixed summaries only. The admitted caller owns all dynamic descendant storage. */
+/**
+ * One entry's lower graph, fixed summaries only. The admitted caller owns all dynamic descendant storage.
+ * Entry, child, native-driver and phase seams deliberately share this exact graph and its private authorities.
+ */
+@Suppress("TooManyFunctions")
 internal class PersistenceJdbcGuardContext private constructor(
     private val ownership: PersistenceOwnership,
     private val pool: PersistenceJdbcPoolIdentity,
@@ -77,15 +81,32 @@ internal class PersistenceJdbcGuardContext private constructor(
     private val exposedNative = IdentityHashMap<Any, PersistencePgOwnedCutAccess.Life>()
     internal val transaction = PersistenceJdbcTransaction()
 
+    @Volatile private var phase: PersistencePhaseContext? = null
+
+    internal fun attachPhase(owner: PersistencePhaseContext) {
+        check(phase == null && !ownership.ownershipLockHeld())
+        phase = owner
+    }
+
+    internal fun hasPhase(): Boolean = phase != null
+
+    internal fun phaseJdbcFailure() {
+        if (phase != null) {
+            phase?.jdbcFailure()
+            ownership.requestRetirement(epoch)
+        }
+    }
+
     fun enter(identity: PersistenceJdbcGuardIdentity, kind: PersistenceJdbcGuardCallKind): PersistenceJdbcGuardCall {
         if (!identity.matches(this) || identity.epoch !== epoch) refuse()
         if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION && !identity.originalCaller()) refuse()
         reconcileAncestors(this, frames) // Observe genuine ancestor failure before granting a nested business token.
         if (!ownership.permitsCleanup(identity.epoch)) refuse()
+        val budget = phase?.callBudget(kind)
         val token = when (kind) {
-            PersistenceJdbcGuardCallKind.BUSINESS -> identity.epoch.enterForeground()
-            PersistenceJdbcGuardCallKind.CLEANUP -> identity.epoch.enterCleanup(identity.cleanup)
-            PersistenceJdbcGuardCallKind.CANCELLATION -> identity.epoch.enterCancellation()
+            PersistenceJdbcGuardCallKind.BUSINESS -> identity.epoch.enterForeground(budget)
+            PersistenceJdbcGuardCallKind.CLEANUP -> identity.epoch.enterCleanup(identity.cleanup, budget)
+            PersistenceJdbcGuardCallKind.CANCELLATION -> identity.epoch.enterCancellation(budget)
         } ?: refuse()
         return wrapToken(identity, token, kind)
     }

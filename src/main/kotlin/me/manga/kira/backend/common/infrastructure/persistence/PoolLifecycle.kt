@@ -492,9 +492,17 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     internal class Acquisition private constructor(private val pool: PoolLifecycle, internal val frame: PoolCallFrame) {
         private var handle: Connection? = null
         private var shared: ShutdownReceipt? = null
+        private var refusedBeforeEntry = false
         internal var entitlement: LeaseEntitlement? = null
 
-        fun enter(): Boolean = pool.enterAcquisition(this)
+        fun enter(): Boolean = pool.enterAcquisition(this).also { admitted ->
+            // Only a returned refusal proves the unadmitted TL/restoration path actually ended.
+            refusedBeforeEntry = !admitted && !frame.hasEntered()
+        }
+
+        internal fun entered(): Boolean = frame.hasEntered()
+
+        internal fun completionProven(): Boolean = frame.ended() || refusedBeforeEntry
 
         fun capture(returned: Connection): Boolean {
             if (!frame.actualCaller() || !frame.active() || PoolCallFrames.current() !== frame) return false
@@ -547,6 +555,10 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         /** Outside F/G/T. Consuming a real operation already revokes future ingress; its current outer tail remains counted. */
         fun revoke(): Boolean = pool.revoke(this)
 
+        internal fun completionProven(): Boolean = synchronized(pool.gate) {
+            phase === EntitlementPhase.REVOKED || (phase === EntitlementPhase.CONSUMED && prepared?.completionProven() == true)
+        }
+
         internal fun authentic(owner: PoolLifecycle, authority: Any): Boolean = pool === owner && issuance === authority && caller === Thread.currentThread()
 
         internal fun prepareLocked(authority: Any, operation: Operation): Boolean {
@@ -588,7 +600,13 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         internal val frame: PoolCallFrame,
         internal val entitlement: LeaseEntitlement,
     ) {
-        fun enter(): Boolean = pool.enterOperation(this)
+        private var refusedBeforeEntry = false
+
+        fun enter(): Boolean = pool.enterOperation(this).also { admitted ->
+            refusedBeforeEntry = !admitted && !frame.hasEntered()
+        }
+
+        internal fun completionProven(): Boolean = frame.ended() || refusedBeforeEntry
 
         fun failBeforeEnd(): Boolean = pool.failBeforeEnd(frame)
 

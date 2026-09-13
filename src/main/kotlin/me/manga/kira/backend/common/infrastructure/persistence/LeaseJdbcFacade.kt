@@ -14,6 +14,8 @@ import java.util.concurrent.Executor
 internal class LeaseJdbcFacade private constructor(private val calls: LeaseConnectionCalls) : Connection by calls.proxy {
     internal fun deliveryFailed() = calls.deliveryFailed()
 
+    internal fun matches(lease: PersistenceJdbcLease): Boolean = calls.matches(lease)
+
     override fun toString(): String = "LeaseJdbcFacade(redacted)"
 
     companion object {
@@ -36,6 +38,8 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
 
     fun deliveryFailed() = lease.deliveryFailed()
 
+    fun matches(candidate: PersistenceJdbcLease): Boolean = lease === candidate
+
     override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? = try {
         invokeConnection(proxy, method, args)
     } catch (failure: SQLClientInfoException) {
@@ -47,6 +51,8 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
         throw failure
     }
 
+    // The checked-failure adapter and dispatch finally must enclose the same single connection invocation.
+    @Suppress("CyclomaticComplexMethod")
     private fun invokeConnection(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
         if (method.declaringClass === Any::class.java) {
             return when (method.name) {
@@ -66,10 +72,13 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
             return null
         }
         if (method.name == "isClosed" && lease.closed()) return true
-        val dispatch = lease.enterDispatch()
+        val phase = lease.completion.phase
+        val kind = phase?.connectionKind(method, args) ?: PersistenceJdbcGuardCallKind.BUSINESS
+        phase?.beforeJdbcCall(kind)
+        val dispatch = lease.enterDispatch(kind)
         val context = lease.state.context
         val call = runCatching {
-            context.enter(lease.identity, PersistenceJdbcGuardCallKind.BUSINESS)
+            context.enter(lease.identity, kind)
         }.getOrElse { failure ->
             dispatch.end()
             throw failure
@@ -103,6 +112,7 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
                     if (!completed) call.failedBeforeBoxing(wrapping)
                 }
             }.getOrElse { failure ->
+                context.phaseJdbcFailure()
                 val actual = if (failure.javaClass === InvocationTargetException::class.java) {
                     (failure as InvocationTargetException).targetException
                 } else {
@@ -114,6 +124,7 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
             }
         } finally {
             call.finishAfterDispatch(dispatch)
+            if (completed) phase?.afterJdbcCall(kind)
         }
     }
 }

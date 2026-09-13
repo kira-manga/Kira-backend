@@ -14,6 +14,7 @@ internal class PersistenceJdbcLease private constructor(
     internal val state: PersistenceJdbcPoolEpoch,
     private val handle: Connection,
     private val entitlement: PoolLifecycle.LeaseEntitlement,
+    internal val completion: PersistenceLeaseCompletion,
 ) {
     private val original = Thread.currentThread()
     internal val cleanup = state.epoch.preparedCleanup()
@@ -37,28 +38,50 @@ internal class PersistenceJdbcLease private constructor(
     }
 
     internal fun requireBusiness(cancellation: Boolean = false) {
+        if (completion.phase !== PersistencePhaseOwnership.current() && !cancellation) PersistenceJdbcGuardContext.refuse()
+        if (completion.logicallyReleased()) PersistenceJdbcGuardContext.refuse()
         if (phase.get() !== Phase.OPEN || !ownership.currentPoolState(state) || !ownership.permits(state.epoch)) PersistenceJdbcGuardContext.refuse()
         if (!cancellation && Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
         if (!owner.businessReady()) PersistenceJdbcGuardContext.refuse()
     }
 
-    internal fun select(expected: PhysicalJdbcFacade, expectedOwner: PersistenceOwnership, returning: Boolean): PersistenceJdbcPoolEpoch {
+    internal fun select(
+        expected: PhysicalJdbcFacade,
+        expectedOwner: PersistenceOwnership,
+        returning: Boolean,
+        kind: PersistenceJdbcGuardCallKind,
+    ): PersistenceJdbcPoolEpoch {
         if (lower !== expected || ownership !== expectedOwner || !ownership.currentPoolState(state)) PersistenceJdbcGuardContext.refuse()
         if (Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
         if (returning) {
             if (phase.get() !== Phase.RETURNING || transfer?.consented() == true) PersistenceJdbcGuardContext.refuse()
         } else {
-            requireBusiness()
+            requireDispatch(kind)
         }
         return state
     }
 
-    internal fun enterDispatch(cancellation: Boolean = false): PersistenceJdbcDispatch.Frame {
-        requireBusiness(cancellation)
-        return PersistenceJdbcDispatch.enter(this, returning = false)
+    internal fun enterDispatch(kind: PersistenceJdbcGuardCallKind = PersistenceJdbcGuardCallKind.BUSINESS): PersistenceJdbcDispatch.Frame {
+        requireDispatch(kind)
+        return PersistenceJdbcDispatch.enter(this, returning = false, kind = kind)
     }
 
-    internal fun closed(): Boolean = phase.get() !== Phase.OPEN || ownership.retirementRequested()
+    private fun requireDispatch(kind: PersistenceJdbcGuardCallKind) {
+        if (kind === PersistenceJdbcGuardCallKind.BUSINESS || completion.phase == null) {
+            requireBusiness(kind === PersistenceJdbcGuardCallKind.CANCELLATION)
+        } else {
+            if (phase.get() !== Phase.OPEN || !ownership.currentPoolState(state) || !ownership.permitsCleanup(state.epoch)) {
+                PersistenceJdbcGuardContext.refuse()
+            }
+            if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION &&
+                (Thread.currentThread() !== original || completion.phase !== PersistencePhaseOwnership.current())
+            ) {
+                PersistenceJdbcGuardContext.refuse()
+            }
+        }
+    }
+
+    internal fun closed(): Boolean = phase.get() !== Phase.OPEN || completion.logicallyReleased() || ownership.retirementRequested()
 
     internal fun abort(executor: Executor) {
         if (closed()) return
@@ -76,8 +99,38 @@ internal class PersistenceJdbcLease private constructor(
     internal fun close() {
         if (phase.get() !== Phase.OPEN) return
         if (Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
+        if (completion.phase != null) {
+            completion.logicalRelease() // Spring release is not Hikari/native return or permit proof.
+            return
+        }
+        closeActual(PersistenceTimeBudget.start(1_000))
+    }
+
+    internal fun finishScoped(scope: PersistencePhaseContext, budget: PersistenceTimeBudget) {
+        if (completion.phase !== scope) PersistenceJdbcGuardContext.refuse()
+        scope.requireFinalizer(this)
+        if (!completion.logicallyReleased()) PersistenceJdbcGuardContext.refuse()
+        closeActual(budget)
+    }
+
+    internal fun retireScoped(scope: PersistencePhaseContext) {
+        if (completion.phase !== scope || Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
+        // In particular, a consented old return tail has no authority over its successor.
+        if (phase.get() !== Phase.OPEN || transfer?.consented() == true) return
+        try {
+            closeActual(scope.cleanupBudget(), retire = true)
+        } catch (_: Throwable) {
+            scope.jdbcFailure()
+            // The original operation/entitlement and terminal receipt, not this catch, decide completion.
+        }
+    }
+
+    // Every reuse veto stays inside the original return attempt, before Hikari close and its retained finally tail.
+    @Suppress("TooGenericExceptionCaught", "ComplexCondition")
+    private fun closeActual(budget: PersistenceTimeBudget, retire: Boolean = false) {
+        if (phase.get() !== Phase.OPEN) return
+        if (Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
         if (ownership.ownershipLockHeld()) PersistenceJdbcGuardContext.refuse()
-        val budget = PersistenceTimeBudget.start(1_000)
         val operation = enterReturn(budget)
         var dispatch: PersistenceJdbcDispatch.Frame? = null
         var failure: Throwable? = null
@@ -86,13 +139,16 @@ internal class PersistenceJdbcLease private constructor(
             check(phase.compareAndSet(Phase.OPEN, Phase.RETURNING))
             val attempt = PersistenceJdbcPoolTransfer.prepare(ownership, state, PersistenceJdbcPoolTransfer.Kind.RETURN, budget, requireNotNull(returnCaller))
             transfer = attempt
+            completion.retainTransfer(attempt)
             if (!attempt.claim()) PersistenceJdbcGuardContext.refuse()
             if (!state.epoch.stopBusiness(cleanup)) PersistenceJdbcGuardContext.refuse()
-            if (state.epoch.poisoned() || state.context.graphFailed() || state.context.transaction.uncertain()) {
+            if (retire || state.epoch.poisoned() || state.context.graphFailed() || state.context.transaction.uncertain()) {
                 attempt.reject()
                 PersistenceJdbcGuardContext.refuse()
             }
-            dispatch = PersistenceJdbcDispatch.enter(this, returning = true)
+            val frame = PersistenceJdbcDispatch.enter(this, returning = true)
+            dispatch = frame
+            completion.retainDispatch(frame)
             handle.close() // No epoch foreground ancestor around this complete Hikari/return extent.
             if (!attempt.consented()) PersistenceJdbcGuardContext.refuse()
         } catch (problem: Throwable) {
@@ -128,6 +184,7 @@ internal class PersistenceJdbcLease private constructor(
                     failure = bookkeepingFailure ?: problem
                 } finally {
                     failure = endReturnTail(operation, dispatch, failure, bookkeepingFailure)
+                    PersistencePhaseOwnership.reconcileLoans()
                 }
             }
         }
@@ -139,6 +196,7 @@ internal class PersistenceJdbcLease private constructor(
         return try {
             returnCaller = PersistenceOwnedFactoryCaller.capture() // Metadata only, outside F/G/T.
             val prepared = entitlement.prepareReturn(budget) ?: PersistenceJdbcGuardContext.refuse()
+            completion.retainReturn(prepared)
             if (!prepared.enter()) PersistenceJdbcGuardContext.refuse()
             entered = true
             prepared
@@ -285,7 +343,8 @@ internal class PersistenceJdbcLease private constructor(
             state: PersistenceJdbcPoolEpoch,
             handle: Connection,
             entitlement: PoolLifecycle.LeaseEntitlement,
-        ): PersistenceJdbcLease = PersistenceJdbcLease(owner, lower, ownership, state, handle, entitlement)
+            completion: PersistenceLeaseCompletion,
+        ): PersistenceJdbcLease = PersistenceJdbcLease(owner, lower, ownership, state, handle, entitlement, completion)
     }
 }
 
@@ -295,18 +354,29 @@ internal object PersistenceJdbcDispatch {
 
     internal fun current(): Frame? = frames.get()
 
-    internal fun enter(lease: PersistenceJdbcLease, returning: Boolean): Frame = Frame(lease, returning, frames.get()).also { frames.set(it) }
+    internal fun enter(
+        lease: PersistenceJdbcLease,
+        returning: Boolean,
+        kind: PersistenceJdbcGuardCallKind = if (returning) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS,
+    ): Frame = Frame(lease, returning, kind, frames.get()).also { frames.set(it) }
 
-    internal class Frame internal constructor(internal val lease: PersistenceJdbcLease, private val returning: Boolean, private val parent: Frame?) {
+    internal class Frame internal constructor(
+        internal val lease: PersistenceJdbcLease,
+        private val returning: Boolean,
+        internal val kind: PersistenceJdbcGuardCallKind,
+        private val parent: Frame?,
+    ) {
         private val caller = Thread.currentThread()
         private var ended = false
         internal val identity: PersistenceJdbcGuardIdentity get() = lease.identity
 
         internal fun returning(): Boolean = !ended && returning
 
+        internal fun actualEnded(): Boolean = ended
+
         internal fun select(lower: PhysicalJdbcFacade, ownership: PersistenceOwnership): PersistenceJdbcPoolEpoch {
             if (ended || caller !== Thread.currentThread() || frames.get() !== this) PersistenceJdbcGuardContext.refuse()
-            return lease.select(lower, ownership, returning)
+            return lease.select(lower, ownership, returning, kind)
         }
 
         internal fun end() {
