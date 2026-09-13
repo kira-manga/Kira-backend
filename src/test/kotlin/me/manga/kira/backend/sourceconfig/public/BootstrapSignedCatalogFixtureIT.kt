@@ -291,8 +291,7 @@ class BootstrapSignedCatalogFixtureIT : AbstractAdminSourceIT() {
         // The security decoder uses wall time. Retain real JWT issuance and authorization, not an expired fixed-time token or a bypass.
         @Bean
         @Primary
-        fun backend22WallClockJwtService(keys: JwtKeyProvider, properties: KiraSecurityProperties): JwtService =
-            JwtService(keys, properties, Clock.systemUTC())
+        fun backend22WallClockJwtService(keys: JwtKeyProvider, properties: KiraSecurityProperties): JwtService = JwtService(keys, properties, Clock.systemUTC())
     }
 
     private companion object {
