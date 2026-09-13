@@ -576,7 +576,9 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
                                             entry.jdbc.requestRetirement(lease.state.epoch)
                                             awaitLifecycleFact { !entry.jdbc.permitsCleanup(lease.state.epoch) && entry.terminalWork != null }
                                             diagnostics.reached(CreatorTailStage.RETIREMENT_OBSERVED)
-                                            assertThrows<SQLException> { lease.enterDispatch() }
+                                            org.junit.jupiter.api.Assertions.assertThrows(SQLException::class.java) {
+                                                lease.enterDispatch()
+                                            }
                                             assertFalse(f.ownedPool.lifecycle.isAuthenticPoolCaller())
                                             assertFalse(lease.completion.quiescent())
                                             assertEquals(1, f.admission.activeOwners())
