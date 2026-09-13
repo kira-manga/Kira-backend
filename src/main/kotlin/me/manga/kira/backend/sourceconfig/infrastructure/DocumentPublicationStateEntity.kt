@@ -4,6 +4,8 @@ import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import org.hibernate.annotations.JdbcTypeCode
+import org.hibernate.type.SqlTypes
 import java.time.Instant
 import java.util.UUID
 
@@ -27,16 +29,20 @@ class DocumentPublicationStateEntity(
     var bootstrapPhase: String = "pending",
     @Column(name = "bootstrap_policy_id", length = 128)
     var bootstrapPolicyId: String? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "bootstrap_reference_sha256", columnDefinition = "char(64)")
     var bootstrapReferenceSha256: String? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "bootstrap_payload_sha256", columnDefinition = "char(64)")
     var bootstrapPayloadSha256: String? = null,
     @Column(name = "bootstrap_document_revision")
     var bootstrapDocumentRevision: Long? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "bootstrap_document_checksum", columnDefinition = "char(64)")
     var bootstrapDocumentChecksum: String? = null,
     @Column(name = "bootstrap_catalog_revision")
     var bootstrapCatalogRevision: Long? = null,
+    @JdbcTypeCode(SqlTypes.CHAR)
     @Column(name = "bootstrap_catalog_checksum", columnDefinition = "char(64)")
     var bootstrapCatalogChecksum: String? = null,
     @Column(name = "bootstrap_completed_at")
