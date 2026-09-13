@@ -33,10 +33,16 @@ remain independent repositories and builds.
   admin-visible and publishable for reviewed generic revisions, but absent from all public routes.
 - The accepted public App source at `4b4f9539bce70e7179385ce61ab035282bc5ac75` bundles
   `SourceConfigDocument` revision **6**, used by its catalog-v2 client as `bundled.revision`.
-  The backend's `kira.config.bundled-revision-floor` retains default **5**; this is not evidence of
-  a separate App floor of 5 or a deployed binary. Actual shipped floors/configuration and bootstrap
+  The backend's `kira.config.bundled-revision-floor` defaults to **6**, aligned with that source
+  bundle, not an attestation of a deployed binary. Actual shipped floors/configuration and bootstrap
   compatibility need [separate verification](MIGRATION_BUNDLED_TO_REMOTE.md#3-the-two-floor-revision-model).
   Older revision-4/default-4 statements later in this historical record are superseded.
+- **Fixture/floor follow-through (2026-09-13):** the historical 45-source test input retains revision 4
+  provenance and all 33 legacy definitions, with Azora's details URL corrected for chapter opt-in.
+  Its full ordered generic models must equal the pinned revision-6 reference; the test helper now
+  fails on drift instead of substituting models, while retaining its reference revision-6 metadata.
+  Source defaults are floor 6/minimum 100; a custom minimum 6 with no explicit floor now fails the
+  unchanged strict startup bound. Test data and test-only signing vectors are not deployment authority.
 - **Atomic bootstrap amendment (2026-09-12):** initial admission is a durable PENDING → COMPLETE
   transaction, not ordinary import followed by a confirmation-only cutover. The raw ADMIN
   `POST /api/v1/admin/source-catalog-v2/cutover/import-bundled` binds original bytes to an immutable
@@ -170,7 +176,7 @@ kira-backend/
   src/test/kotlin/me/manga/kira/backend/
     ...mirrors main packages; support/ (Testcontainers base class, JWT test helpers, fixture JSON)
     resources/fixtures/       # valid-document.json, invalid-*.json, bundled-sample.json (trimmed),
-                              # bundled-full.json (the COMPLETE real CONFIG_BACKED_SOURCES_JSON — §11 FullBundledParityIT)
+                              # bundled-full.json (historical 45-source migration input — §7 / §11)
 ```
 
 **Stack pins:** Spring Boot **3.5.x line** (do NOT auto-switch to 4.x just because it is newer — any major upgrade is a deliberate separate change with a full test pass), Kotlin **2.1+** (with `kotlin("plugin.spring")` and `kotlin("plugin.jpa")`), Java **21 toolchain**, kotlinx-serialization-json **1.7+** (+ `kotlin("plugin.serialization")`), springdoc-openapi-starter-webmvc-ui **2.x**, Flyway (`flyway-core` + `flyway-database-postgresql`), PostgreSQL driver, Spring Data JPA, spring-boot-starter-security + **spring-security-oauth2-resource-server + oauth2-jose** (Nimbus — JWT without a third-party lib), spring-boot-starter-validation, **spring-boot-starter-actuator** (health/liveness/readiness — §6), Testcontainers (postgresql + junit-jupiter), spring-security-test.
@@ -672,13 +678,15 @@ The backend defines, in `sourceconfig/domain/model/`, **kotlinx-`@Serializable` 
 
 **Outbound canonical** serialization uses the §5 `kcj-1` canonicalization — omitted defaults, recursively sorted keys, compact UTF-8. Because the app ignores unknown keys, the server COULD add fields; the rule is: **don't** — serve exactly this model.
 
-**Historical compatibility-fixture provenance, not bootstrap authority:** the inherited revision-4
-`CONFIG_BACKED_SOURCES_JSON` fixture has schema 1, 12 generic stanzas and 33 legacy stanzas. It contains
-generic drift relative to the approved initial reference. New bootstrap uses the pinned source-data
-projection and reviewed raw 45-source input in [MIGRATION_BUNDLED_TO_REMOTE.md](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap),
-not this historical fixture or a test builder. The accepted App source bundle is revision **6**, also
-used by its catalog-v2 client; the retained backend floor default **5** is a separate configuration
-value. Neither observation attests a released binary; see §12 for deployment-verification limits.
+**Historical compatibility-fixture provenance, not bootstrap authority:** `bundled-full.json` retains
+schema 1/revision 4, 12 generic stanzas and 33 unchanged legacy stanzas. Its corrected Azora details URL
+is `{itemUrl}&includeChapters=true`; every ordered/default-expanded generic model must equal the pinned
+revision-6 reference. `InitialSourceCatalogFixtures` checks that equality without substitution and
+retains reference revision-6 metadata for its generated test payload. Raw operator input is still separately
+reviewed and frozen under [MIGRATION_BUNDLED_TO_REMOTE.md](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap);
+neither the fixture nor a test builder replaces that review. Corrected file bytes cannot replace a
+COMPLETE origin's original exact-byte retry. The accepted App source bundle and backend source floor
+default are both **6**, with minimum 100 unchanged; neither attests installed configuration or a binary.
 
 ---
 
@@ -991,7 +999,14 @@ or socket close is not proof of remote termination: the generic HTTP adapter rem
 29. `PublicConfigSecretsRejectedIT` — *no credential material can be published*: `Cookie` header → rejected; `authorization: "Bearer real-token-xyz"` → rejected; `authorization: "Bearer null"` → ACCEPTED (the bundled placeholder); URL with user-info → rejected; and the FULL real bundled document passes all secret-safety rules (§8 rule 32).
 30. `RetiredSourceVisibilityIT` — *retired is visible-as-removed, and un-retire is engine-gated*: retired stanza stays in the document as `lifecycle:"removed"` and `GET /sources/{api}` → 200 with that stanza; `retired → active` succeeds for a generic source and → 409 `UNRETIRE_UNSUPPORTED_FOR_ENGINE` for a legacy source (§9).
 31. `RemovedCannotReturnIT` — *removed is terminal*: every transition from `removed` → 409; import cannot revive it; its stanza never reappears in any later snapshot.
-32. `FullBundledParityIT` — *the real production document survives the whole pipeline*: parse the FULL `bundled-full.json` (45 sources: 12 generic + 33 legacy, schemaVersion 1, revision 4) → validate whole (zero errors) → canonicalize → re-parse canonical → semantic equality; source count and every `api` identity preserved; import it transactionally; serve it; served bytes re-checksum correctly (§12).
+32. `FullBundledParityIT` — the checked 45-source migration helper retains reference revision-6 metadata,
+    validates/canonicalizes/re-parses every model, then bootstraps through the raw endpoint and serves
+    the 12 generic sources with exact checksum bytes (§12). `InitialSourceCatalogFixturesTest` separately
+    reads the raw revision-4 file and checks its complete ordered generic parity, unchanged legacy
+    roster/order and source defaults; helper output is not a substitute for that raw-data check.
+    `BootstrapSignedCatalogFixtureIT` reproduces a test-only signed 12-member public envelope through
+    real PENDING bootstrap/PG/assembly; only an explicit export method may write a candidate under
+    `build/fixtures`, never expected resources. This is not installed-state or live App activation evidence.
 33. `HistoricalRevisionChecksumIT` — *stored canonical bytes are the reproducible source of truth*: persist a revision, reload `config_canonical_json` cold, recompute SHA-256 → equals the stored checksum byte-for-byte (§5).
 34. `RawBytesChecksumIT` — *what is served is what was checksummed*: fetch the public document, hash the raw response bytes → equals the `ETag`/`X-Config-Checksum` (no message-converter re-serialization drift) (§4.1).
 35. `IfNoneMatchVariantsIT` — *conditional-GET correctness*: `If-None-Match: *` → 304; multiple comma-separated ETags including the current → 304; non-matching list → 200; a **weak validator `W/"<current-hash>"` → 304** (If-None-Match requires weak comparison, §4.1); 304 responses carry no body (§4.1).
@@ -1027,7 +1042,7 @@ signed-delivery proof and external rollout checklist. Summary:
    and PENDING-only policy described above. It completes one atomic 12-generic/33-withheld origin and
    returns its immutable receipt. The old confirmation-only POST cannot bootstrap. Only after
    COMPLETE may `POST /admin/sources/import-bundled` perform ordinary re-import, even for no-op.
-   Backend allocation defaults remain `bundled-revision-floor=5` and `minimum-server-revision=100`.
+   Backend source allocation defaults are `bundled-revision-floor=6` and `minimum-server-revision=100`.
    Accepted App source uses bundled revision 6 as its client floor; actual deployed binary/configuration
    and end-to-end acceptance must be verified separately. These observations neither establish signed
    bootstrap compatibility nor authorize runtime property changes. Ordinary import semantics:

@@ -73,6 +73,10 @@ class StartupConsistencyIT : AbstractAdminSourceIT() {
 
         val invertedFloors = RevisionFloorStartupValidator(KiraConfigProperties(bundledRevisionFloor = 100, minimumServerRevision = 50), publishedDocuments)
         assertThrows(IllegalStateException::class.java) { invertedFloors.validate() }
+
+        // A custom minimum6 with the former default floor5 must now fail against the default floor6.
+        val defaultFloor = RevisionFloorStartupValidator(KiraConfigProperties(minimumServerRevision = 6), publishedDocuments)
+        assertThrows(IllegalStateException::class.java) { defaultFloor.validate() }
     }
 
     @Test

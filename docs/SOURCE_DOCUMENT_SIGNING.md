@@ -30,7 +30,10 @@ unsigned catalog mode. Historical nullable signature metadata is retained; no ol
 
 Use the [local-only generation and four-alias export recipe](LOCAL_DEV.md#local-document-signing).
 Keys stay beneath ignored `.secrets/`, are never generated automatically at startup, and must not be
-shared with production or installed in shipping App trust pins. Tests use in-memory ephemeral pairs.
+shared with production or installed in shipping App trust pins. Shared tests use in-memory ephemeral
+pairs; the isolated [signed bootstrap fixture test](LOCAL_DEV.md#reproducing-the-signed-bootstrap-test-fixture)
+uses an explicit publicly known RFC test vector. Its private bytes stay in Backend test code, never
+App resources, and neither test key is production/release material.
 
 ## Initial key
 

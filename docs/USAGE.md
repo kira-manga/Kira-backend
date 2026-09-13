@@ -64,8 +64,10 @@ endpoint in v1.
 
 On a fresh eligible `PENDING` catalog, **bootstrap before ordinary source authoring**. Review and
 freeze a 45-source raw JSON file against the [approved initial reference](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap);
-do not seed through ordinary import or the historical `bundled-full.json` test fixture. Existing
-populated installations may be `RECONCILIATION_REQUIRED` and need separately reviewed owner rollout,
+do not seed through ordinary import or substitute the historical `bundled-full.json` test fixture for
+owner-reviewed input. That corrected fixture retains revision-4 provenance despite its revision-6-compatible
+generic content; it is not the current App bundle or a replacement for a COMPLETE origin's original bytes.
+Existing populated installations may be `RECONCILIATION_REQUIRED` and need separately reviewed owner rollout,
 not automatic adoption/reset. A null publication pointer alone is not bootstrap eligibility.
 
 ```bash
@@ -208,6 +210,10 @@ environment key is `KIRA_COMPLETION_DEFAULTMODEL` (no underscore between DEFAULT
 
 Source content is immutable revision history. The normal workflow is: fetch a published revision,
 edit its `config`, create a new draft revision, inspect validation, then publish.
+Ordinary publication requires **COMPLETE**; a `RECONCILIATION_REQUIRED` installation needs a separately
+owner-reviewed reconciliation/upgrade path first. For a stale installed Azora, start from its CURRENT
+content and preserve unrelated fields/lifecycle/order; see the
+[phase-qualified correction runbook](MIGRATION_BUNDLED_TO_REMOTE.md#correcting-an-installed-stale-azora-revision).
 
 ```bash
 SOURCE_API='Azora'

@@ -130,7 +130,8 @@ shell-special password values single-quoted inside `.env` and shell tracing off 
 Signing is mandatory at bean initialization in **every running profile**, including `dev`; missing,
 disabled, malformed or mismatched material refuses startup, not a later publication. No development
 keys are supplied or generated automatically. The recipe needs Ed25519-capable OpenSSL (see
-[`Local document signing`](docs/LOCAL_DEV.md#local-document-signing)); tests supply ephemeral in-memory keys.
+[`Local document signing`](docs/LOCAL_DEV.md#local-document-signing)); tests supply only
+[test signing material](docs/LOCAL_DEV.md#running-tests), never production keys.
 
 `ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/`, V1..V13 then
 V13.1 credential versions and V13.2 bootstrap state); Hibernate only validates against it. Swagger UI

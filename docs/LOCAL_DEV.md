@@ -130,8 +130,42 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 Integration tests share one `postgres:17.6-alpine` Testcontainer (started once, wired via
 `@ServiceConnection`) under the `test` profile — no docker-compose or `.env` needed for the test run,
-only a reachable Docker daemon. Their contexts provide ephemeral in-memory signing pairs through
-canonical test properties; no real signing keys or committed test private keys are needed.
+only a reachable Docker daemon. Shared contexts retain ephemeral in-memory signing pairs through
+canonical test properties. One isolated `BootstrapSignedCatalogFixtureIT` context instead uses the
+publicly known **RFC 8032 §7.1 TEST 1** vector (`backend22-bootstrap-test-only-v1`) and a fixed
+publication Clock to reproduce public fixture bytes. Its private vector is Backend test code only;
+the cross-repo fixture contains only the public key. Never use either test key as production/release
+material. JWTs still use real wall-clock issuance and the unchanged decoder/security chain.
+
+### Reproducing the signed bootstrap test fixture
+
+`BootstrapSignedCatalogFixtureIT.bootstrapMatchesCommittedFixture` performs real PENDING bootstrap,
+PG persistence and public reads, verifying all 12 immutable members. It compares the entire outer
+envelope against `src/test/resources/fixtures/bootstrap-v2-v6-signed.json`; a missing or drifted
+fixture fails and is never rewritten by the normal test. Signed payload strings preserve the exact
+UTF-8 response bytes; only the outer envelope uses two-space JSON indentation plus one final LF.
+
+Initial generation is a distinct, explicit **candidate-only export**, not a passing golden comparison:
+
+```bash
+KIRA_BACKEND22_GENERATE_FIXTURE=true ./gradlew test \
+  --tests 'me.manga.kira.backend.sourceconfig.public.BootstrapSignedCatalogFixtureIT.exportCandidateOnly'
+```
+
+The exporter writes only `build/fixtures/bootstrap-v2-v6-signed.json` and refuses an existing output.
+Capture/review an existing candidate before an explicit rerun. After independent source/result review,
+the integration owner transfers the actual candidate byte-for-byte into the Backend fixture above and
+the App's `composeApp/src/desktopTest/resources/fixtures/bootstrap-v2-v6-signed.json`, retaining both
+hashes. There is no sibling-build dependency and no App-side canonicalizer or signing/generation step.
+Then run the real comparison, explicitly leaving generation mode and using its distinct method filter:
+
+```bash
+env -u KIRA_BACKEND22_GENERATE_FIXTURE ./gradlew test \
+  --tests 'me.manga.kira.backend.sourceconfig.public.BootstrapSignedCatalogFixtureIT.bootstrapMatchesCommittedFixture'
+```
+
+These remain serialized shared-PG tests, not separate databases or live deployment checks. Generation,
+golden comparison and App consumption are separate evidence; none attests installed binaries or keys.
 
 ## Seeding data (atomic initial bootstrap)
 
@@ -173,10 +207,12 @@ curl --fail-with-body -sS http://localhost:8080/api/v2/source-config/manifest | 
 Success is a nine-field immutable origin receipt, not the ordinary import summary. Retain it and the
 **exact request file**: same-byte replay after COMPLETE returns that receipt, even after later catalog
 changes; any byte difference conflicts. The `jq` above formats responses only, never request bytes.
-The old confirmation-only POST is nonmutating 409. The historical
-`src/test/resources/fixtures/bundled-full.json` has generic drift and is **not** approved bootstrap
-input; neither a test builder nor the 12-only reference projection replaces the reviewed 45-source
-file. See the [cutover checklist](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist) for separate signed
+The old confirmation-only POST is nonmutating 409. The corrected historical
+`src/test/resources/fixtures/bundled-full.json` has complete revision-6 generic parity but retains
+revision-4 input provenance and 33 legacy definitions. Neither that fixture, a test builder nor the
+12-only reference projection replaces owner review of the actual frozen 45-source raw file. Its new
+bytes cannot replace a prior COMPLETE origin's exact-byte retry. See the
+[cutover checklist](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist) for separate signed
 v2 delivery/activation verification and owner rollout gates.
 For user creation, completions, source edits, publishing, lifecycle changes, ETags, and production
 configuration, continue with [`USAGE.md`](USAGE.md).

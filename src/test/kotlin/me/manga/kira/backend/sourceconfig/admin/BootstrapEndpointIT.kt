@@ -2,9 +2,13 @@ package me.manga.kira.backend.sourceconfig.admin
 
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.node.ObjectNode
+import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import me.manga.kira.backend.sourceconfig.application.GenericV2CutoverService
 import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPhase
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
+import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
+import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
+import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
 import me.manga.kira.backend.user.domain.Role
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
@@ -116,6 +120,44 @@ class BootstrapEndpointIT : AbstractAdminSourceIT() {
         assertPublicStateUnchanged(before)
         assertEquals(mutationsBefore, jdbcTemplate.bootstrapMutationRows())
         assertPublicArtifactAbsent("Azora", 1)
+    }
+
+    @Test
+    fun `valid same roster stale Azora is rejected without bootstrap or public artifacts`() {
+        assertPolicyDriftRejected("Azora") { source ->
+            source.copy(endpoints = source.endpoints + ("details" to source.endpoints.getValue("details").copy(url = "{itemUrl}")))
+        }
+    }
+
+    @Test
+    fun `valid same roster non Azora drift is rejected without bootstrap or public artifacts`() {
+        assertPolicyDriftRejected("Tapas") { it.copy(displayName = "Changed Tapas") }
+    }
+
+    private fun assertPolicyDriftRejected(api: String, change: (SourceConfig) -> SourceConfig) {
+        val raw = SourceConfigParser.parseStrictDocument(SourceConfigFixtures.loadFixture("bundled-full.json"))
+        val original = raw.sources.single { it.api == api }
+        val changed = change(original)
+        assertNotEquals(original, changed, "the negative must change source content, not just serialization")
+        val candidate = raw.copy(sources = raw.sources.map { if (it.api == api) changed else it })
+        assertEquals(raw.sources.map { it.api }, candidate.sources.map { it.api })
+        assertTrue(SourceConfigValidator().validate(candidate).isValid, "valid content drift must reach the initial reference policy")
+        val before = publicState()
+        val mutationsBefore = jdbcTemplate.bootstrapMutationRows()
+        assertEquals(InitialSourceCatalogPhase.PENDING, documents.initialSourceCatalogState().phase)
+        assertNull(documents.initialSourceCatalogState().receipt)
+        assertEquals(0L, sourceRowCount())
+
+        bootstrapRequest(toJson(candidate).toByteArray(Charsets.UTF_8)).andExpect {
+            status { isConflict() }
+            jsonPath("$.errors[0].code") { value(BOOTSTRAP_REJECTED) }
+        }
+
+        assertEquals(InitialSourceCatalogPhase.PENDING, documents.initialSourceCatalogState().phase)
+        assertNull(documents.initialSourceCatalogState().receipt)
+        assertPublicStateUnchanged(before)
+        assertEquals(mutationsBefore, jdbcTemplate.bootstrapMutationRows(), "policy refusal cannot stage source history or audits")
+        initialGenericApis.forEach { assertPublicArtifactAbsent(it, 1) }
     }
 
     private fun paddedPayload(size: Int): ByteArray {
