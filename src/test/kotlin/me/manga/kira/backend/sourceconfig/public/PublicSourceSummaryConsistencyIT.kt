@@ -71,7 +71,7 @@ class PublicSourceSummaryConsistencyIT : AbstractAdminSourceIT() {
         }
         val survivorSummary = expectedSummary(survivor, survivorPublishedAt)
         assertEquals(initialSummaries + listOf(expectedSummary(target, targetPublishedAt, lifecycle = "removed"), survivorSummary), old)
-        assertEquals(initialSummaries + survivorSummary, fresh)
+        assertEquals(initialSummaries + listOf(survivorSummary), fresh)
     }
 
     @Test

@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import org.hamcrest.Matchers.contains
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -120,8 +121,8 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
             header("Authorization", "Bearer $adminToken")
         }.andExpect {
             status { isOk() }
-            jsonPath("$[?(@.api == '$api')].siteState") { value(listOf("WORKING")) }
-            jsonPath("$[?(@.api == '$api')].operationalMode") { value(listOf("enabled")) }
+            jsonPath("$[?(@.api == '$api')].siteState") { value(contains("WORKING")) }
+            jsonPath("$[?(@.api == '$api')].operationalMode") { value(contains("enabled")) }
         }
 
         val modeAudits =
