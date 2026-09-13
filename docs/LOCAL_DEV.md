@@ -105,8 +105,8 @@ SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 ```
 
 The `dev` profile points at the compose DB (`localhost:5433`), ships the insecure JWT default, seeds an
-admin, and enables open registration. Flyway applies `V1..V5` at startup; `ddl-auto=validate` means
-Hibernate only validates the Flyway-owned schema (see gotchas).
+admin, and enables open registration. Flyway applies the forward migrations through V13.2 at startup;
+`ddl-auto=validate` means Hibernate only validates the Flyway-owned schema (see gotchas).
 
 - **Swagger UI** (dev profile only): `http://localhost:8080/swagger-ui/index.html`
 - **OpenAPI document**: `http://localhost:8080/v3/api-docs`
@@ -133,11 +133,15 @@ Integration tests share one `postgres:17.6-alpine` Testcontainer (started once, 
 only a reachable Docker daemon. Their contexts provide ephemeral in-memory signing pairs through
 canonical test properties; no real signing keys or committed test private keys are needed.
 
-## Seeding data (import the bundled document)
+## Seeding data (atomic initial bootstrap)
 
-The backend starts empty. The migration on-ramp is `POST /api/v1/admin/sources/import-bundled` — send
-the app's bundled document JSON (`CONFIG_BACKED_SOURCES_JSON`). It validates the whole document,
-creates/updates per-source revisions, and materializes exactly one snapshot (all-or-nothing).
+On a fresh eligible catalog, **bootstrap while PENDING before ordinary source authoring** using
+`POST /api/v1/admin/source-catalog-v2/cutover/import-bundled`. It admits one owner-reviewed, frozen
+45-source JSON file and atomically creates the approved 12-generic/33-withheld origin with its
+receipt. Ordinary import (even no-op) and normal materialization require COMPLETE afterward.
+An existing populated local volume may instead be RECONCILIATION_REQUIRED; a matching source roster
+does not qualify it for bootstrap. Read the [migration/rollout contract](MIGRATION_BUNDLED_TO_REMOTE.md)
+before changing retained state; this is not an automatic reset/adoption procedure.
 
 ```bash
 # 1. Log in as the seeded admin. This shell must already have sourced .env.
@@ -148,20 +152,32 @@ ADMIN_TOKEN=$(curl --fail-with-body -sS http://localhost:8080/api/v1/auth/login 
   --data "$LOGIN_JSON" | jq -er '.accessToken')
 unset LOGIN_JSON
 
-# 2. Import the bundled document (≤ 5 MiB).
-curl --fail-with-body -sS -X POST http://localhost:8080/api/v1/admin/sources/import-bundled \
+# 2. Inspect the advisory phase. ready is not payload approval or an admission reservation.
+curl --fail-with-body -sS http://localhost:8080/api/v1/admin/source-catalog-v2/cutover \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
+
+# 3. Set this to the already reviewed, frozen raw 45-source JSON file (≤ 5 MiB).
+# Do not regenerate, normalize, or edit it between review, submission and retry.
+BOOTSTRAP_JSON='/absolute/path/to/owner-reviewed-frozen-45-source.json'
+curl --fail-with-body -sS -X POST http://localhost:8080/api/v1/admin/source-catalog-v2/cutover/import-bundled \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data-binary @src/test/resources/fixtures/bundled-full.json | jq
+  -H 'X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES' \
+  --data-binary @"$BOOTSTRAP_JSON" | jq
 
-# 3. Verify the served document + summaries.
+# 4. Inspect served metadata (this is not cryptographic delivery/activation proof).
 curl --fail-with-body -sS http://localhost:8080/api/v1/source-config/document/meta | jq
-curl --fail-with-body -sS http://localhost:8080/api/v1/sources | jq
+curl --fail-with-body -sS http://localhost:8080/api/v2/source-config/manifest | jq
 ```
 
-A test-fixture copy of the full document lives at
-`src/test/resources/fixtures/bundled-full.json` (the real 45-source document). See
-[`MIGRATION_BUNDLED_TO_REMOTE.md`](MIGRATION_BUNDLED_TO_REMOTE.md) for the full import contract.
+Success is a nine-field immutable origin receipt, not the ordinary import summary. Retain it and the
+**exact request file**: same-byte replay after COMPLETE returns that receipt, even after later catalog
+changes; any byte difference conflicts. The `jq` above formats responses only, never request bytes.
+The old confirmation-only POST is nonmutating 409. The historical
+`src/test/resources/fixtures/bundled-full.json` has generic drift and is **not** approved bootstrap
+input; neither a test builder nor the 12-only reference projection replaces the reviewed 45-source
+file. See the [cutover checklist](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist) for separate signed
+v2 delivery/activation verification and owner rollout gates.
 For user creation, completions, source edits, publishing, lifecycle changes, ETags, and production
 configuration, continue with [`USAGE.md`](USAGE.md).
 
@@ -183,5 +199,5 @@ configuration, continue with [`USAGE.md`](USAGE.md).
   Kotlin, not the project's — sources compile with the pinned 2.1.21 plugin.
 - **Don't switch Spring Boot to 4.x** to "get the latest" — the 3.5.x pin is deliberate; a major upgrade
   is a separate, fully-tested change.
-- **Wipe local data** with `docker compose down -v` (drops the `kira_pgdata` volume); a plain
-  `down` keeps it.
+- **Wipe disposable local data only** with `docker compose down -v` (drops the `kira_pgdata` volume);
+  a plain `down` keeps it. This is not a reconciliation/recovery procedure for a retained deployment.

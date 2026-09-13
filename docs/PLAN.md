@@ -31,12 +31,26 @@ remain independent repositories and builds.
 
 - Public artifacts contain **generic sources only**. `WITHHELD` is a sixth, server-only lifecycle:
   admin-visible and publishable for reviewed generic revisions, but absent from all public routes.
-- The catalog-v2 application bundle is revision **5**. The backend's
-  `kira.config.bundled-revision-floor` default is therefore **5**; older revision-4/default-4
-  statements later in this historical record are superseded.
-- The initial reviewed cutover is exactly 12 active generic sources and 33 withheld legacy sources.
-  The dry-run/confirmed admin operation validates the exact inventory and performs one audited,
-  globally locked publication transaction.
+- The accepted public App source at `4b4f9539bce70e7179385ce61ab035282bc5ac75` bundles
+  `SourceConfigDocument` revision **6**, used by its catalog-v2 client as `bundled.revision`.
+  The backend's `kira.config.bundled-revision-floor` retains default **5**; this is not evidence of
+  a separate App floor of 5 or a deployed binary. Actual shipped floors/configuration and bootstrap
+  compatibility need [separate verification](MIGRATION_BUNDLED_TO_REMOTE.md#3-the-two-floor-revision-model).
+  Older revision-4/default-4 statements later in this historical record are superseded.
+- **Atomic bootstrap amendment (2026-09-12):** initial admission is a durable PENDING → COMPLETE
+  transaction, not ordinary import followed by a confirmation-only cutover. The raw ADMIN
+  `POST /api/v1/admin/source-catalog-v2/cutover/import-bundled` binds original bytes to an immutable
+  origin receipt and admits exactly 12 active generic / 33 withheld legacy source definitions.
+  Only PENDING uses the current strict parser/full-model reference policy; COMPLETE identical-byte
+  replay returns the origin receipt before those checks, without undoing later evolution.
+- V13.2 conservatively classifies existing source authoring/publication history as
+  RECONCILIATION_REQUIRED, never inferred COMPLETE. Ordinary import (even no-op) and normal
+  materialization require COMPLETE. Bootstrap before ordinary authoring; conflicting source heads
+  cannot be silently adopted. Later additions, edits, lifecycle changes and empty catalogs remain
+  legal; the initial 12/33 roster is not a permanent inventory constraint or Store-release gate.
+  [Migration/reference/rollout](MIGRATION_BUNDLED_TO_REMOTE.md) and
+  [phase/receipt rules](SOURCE_CONFIG_LIFECYCLE.md#durable-initial-publication-phase) supersede older
+  seeding/recovery instructions below; existing populated installations need owner-reviewed rollout.
 - `GET /api/v2/source-config/manifest` serves exact signed `kcj-1` manifest bytes with strong ETag/304.
   Entries commit to immutable per-source revisions, checksums, order, lifecycle, engine, key id, and
   detached source signature. Removed v2 sources are identity-only tombstones.
@@ -202,6 +216,11 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 
 ### 4.3 Admin — source management (all `ROLE_ADMIN`; every mutation writes `audit_log`)
 
+Ordinary materialization and ordinary import require bootstrap COMPLETE; import checks before
+staging even for a no-op. Draft authoring may remain available in PENDING but is not publication or
+bootstrap authority. See the [raw bootstrap API](API.md#initial-catalog-bootstrap) for exact receipt,
+confirmation, replay and advisory GET semantics.
+
 | Method & path | Purpose | Codes |
 |---|---|---|
 | `POST /api/v1/admin/sources` | Create a source: body = full `SourceConfig` JSON (its `api` is the identity). Parsed with the **STRICT authoring parser** (§7 — unknown keys, duplicate keys, malformed JSON all → 400). Then the **Tier-1 structural gate** (§8 two-tier model) runs BEFORE any row is created — violations → 400, **nothing persisted**: `api` blank/over-length/unsafe (`API_IDENTIFIER_INVALID`), payload `lifecycle` not the neutral default `"active"` (`LIFECYCLE_NOT_AUTHORABLE` — lifecycle is server-managed, §9), identity/denormalized field over DB column limits (`FIELD_TOO_LONG`). Only past that gate: creates the `source_configs` row (status `draft`, `position` = current max+1 → appended to the document order, §5) + revision 1 (`draft`), runs Tier-2 validation immediately, stores the result (invalid drafts ARE stored — inspectable), returns it inline: `{api, status, revisionNumber, validation:{valid, errors[], warnings[]}}`. | 201 (even when Tier-2-invalid — the stored result reports it); 409 api already exists; 400 unparseable/strict-parse-rejected/structural-gate JSON |
@@ -222,8 +241,11 @@ Unicode, not a broader Unicode validator or a promise of JVM/database casing equ
 | `GET /api/v1/admin/documents` | Bounded snapshot metadata window (§4.5): `{documentRevision, schemaVersion, checksum, sourceCount, createdBy, createdAt}`. | 200; 400 |
 | `GET /api/v1/admin/documents/{revision}` | **Body = the raw stored canonical bytes of that snapshot** (same raw-bytes writer as the public endpoint — never re-serialized), metadata in headers only (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`). Deliberately NOT a JSON metadata envelope — the list endpoint above is the metadata view; wrapping would break the serve-stored-bytes/checksum guarantee. | 200; 404 |
 | `POST /api/v1/admin/documents/validate` | Validate the **candidate** document (assembled from current published revisions + lifecycle states) without publishing — whole-document preview. | 200 `{valid, errors[]}` |
-| `POST /api/v1/admin/documents/republish` | Force-materialize a new snapshot from current state (recovery / after canonicalization changes). **Always creates a new snapshot with a new document revision, even when the canonical content is unchanged** — that is its purpose (deliberate recovery tool; the caller decides). | 200 |
-| `POST /api/v1/admin/sources/import-bundled` | Body = the app's bundled document JSON (`CONFIG_BACKED_SOURCES_JSON` contents). **Fully specified semantics in §12.2 (bundled-import contract)** — parses with the COMPATIBILITY parser (§7), validates the whole document, applies per-source create/update/no-op with server-controlled revisions (content stored **lifecycle-neutral**, §9), never replaces/publishes an existing draft-only source (`skippedDraft`), and materializes exactly ONE snapshot when published state changes, all-or-nothing. Response: `{created[], updated[], unchanged[], skippedRemoved[], skippedRetired[], skippedDraft[], lifecycleConflicts[], warnings[], documentRevision?}`. Request-body size limit 5 MiB (the real document is well under 1 MiB today). This is the migration on-ramp (§12). | 200 (incl. the no-op case); 422 with full error list |
+| `POST /api/v1/admin/documents/republish` | After bootstrap COMPLETE, force-materialize a new snapshot from current state (e.g. after canonicalization changes). **Always creates a new snapshot with a new document revision, even when the canonical content is unchanged**. Not a bootstrap/reconciliation bypass. | 200; 409 |
+| `POST /api/v1/admin/sources/import-bundled` | Ordinary re-import **after COMPLETE**, not initial seeding. **Semantics in §12.2** — COMPATIBILITY parser (§7), whole-document validation, per-source create/update/no-op with server-controlled lifecycle-neutral revisions (§9), retained draft-only sources (`skippedDraft`), payload-first reorder, and exactly ONE snapshot when state changes, all-or-nothing. Response: `{created[], updated[], unchanged[], skippedRemoved[], skippedRetired[], skippedDraft[], lifecycleConflicts[], warnings[], documentRevision?}`. Limit 5 MiB. COMPLETE is required before staging even for no-op. | 200 (incl. no-op); 400; 409; 413; 422 |
+| `GET /api/v1/admin/source-catalog-v2/cutover` | Advisory phase/origin receipt, not payload approval or admission reservation. COMPLETE readiness does not require today's inventory to equal the origin. | 200 |
+| `POST /api/v1/admin/source-catalog-v2/cutover` | Retired confirmation-only path; always a controlled nonmutating conflict at controller dispatch, directing callers to the raw route. | 409 |
+| `POST /api/v1/admin/source-catalog-v2/cutover/import-bundled` | Raw JSON initial bootstrap, ≤ 5 MiB actual bytes; exactly one `X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES`. Original-byte replay returns the immutable nine-field receipt. [Full HTTP contract](API.md#initial-catalog-bootstrap). | 200; 400; 409; 413; 415; 422 |
 
 ### 4.4 Admin — user management (all `ROLE_ADMIN`; minimal surface, NOT an IdM platform; every mutation audited)
 
@@ -258,8 +280,11 @@ Prod onboarding mechanism (registration is disabled in prod): admins create user
   Backend-first remains array-wire compatible, not all-history compatible; Admin's companion
   pager is required for older navigation. See [API history examples](API.md#admin-history-windows).
 - **Request-body limits:** a pre-MVC replayable-body filter enforces default max **256 KiB** and
-  `import-bundled` max **5 MiB** for declared or streamed/chunked bodies; completion prompt over its max
-  length → **413** (one consistent status, not sometimes-400).
+  ordinary import max **5 MiB**. The exact POST application path
+  `/api/v1/admin/source-catalog-v2/cutover/import-bundled` also gets **5,242,880 actual bytes**,
+  including servlet-context paths and unknown/understated lengths; near/trailing-slash paths, other
+  methods and old cutover retain 256 KiB. This filter precedes security/MVC, so 413 can precede
+  authentication/confirmation. Completion prompt over its max length → **413**.
 - **Multi-value filters** (`?lifecycle=`): comma-separated within a single query param; unknown enum value → 400.
 - **Responses:** JSON endpoints send `Content-Type: application/json; charset=UTF-8`; the public document endpoints add `Cache-Control: public, max-age=300, no-transform` + `X-Content-Type-Options: nosniff`; error responses use the §2 problem envelope and never echo submitted config/header/password values back verbatim.
 
@@ -292,15 +317,26 @@ V11__source_editor_drafts.sql
 V12__admin_step_up_grants.sql
 V13__source_changesets.sql
 V13_1__user_credential_version.sql
+V13_2__source_catalog_bootstrap_state.sql
 ```
 
-**Migration order matches build order (deliberate):** the phased build (§15) creates audit in Phase 6 and completions in Phase 9 — audit therefore MUST have the lower version number, or a fresh environment migrated mid-campaign would see V5 applied before V4 exists (Flyway out-of-order hazard). `outOfOrder` stays **false** (default); versions advance in Flyway numeric order. `FlywayMigrationIT` asserts the exact current inventory in that order, including normalized version `13.1`.
+**Migration order matches build order (deliberate):** the phased build (§15) creates audit in Phase 6 and completions in Phase 9 — audit therefore MUST have the lower version number, or a fresh environment migrated mid-campaign would see V5 applied before V4 exists (Flyway out-of-order hazard). `outOfOrder` stays **false** (default); versions advance in Flyway numeric order. The inventory includes normalized versions `13.1` and `13.2`.
 
 V13.1 is a new forward migration after 13 and before reserved 14, not a rewrite of V13 or a placeholder
 for 14. Before deployment, prove the actual installed history/checksums and absence of a collision.
 Histories already beyond 13.1 require separate forward reconciliation; never enable out-of-order,
 repair/baseline a history or edit old migration bytes to force acceptance. Production runs migrations
 in a separate job. Source acceptance is not installed migration/cutover evidence (§6, SECURITY.md).
+
+V13.2 follows 13.1 and precedes reserved App29 V14, preserving every prior migration byte. It requires
+exactly one existing publication singleton id 1; missing/multiple state fails, never creates fresh
+state. Only a null pointer plus empty source heads/revisions/validation/editor/changeset state and
+v1/v2 publication/membership/removal history qualifies as PENDING; unrelated users/auth history does
+not count. Populated/history-bearing source state becomes RECONCILIATION_REQUIRED without source,
+artifact, pointer or sequence rewrites or automatic COMPLETE adoption. Actual installed history and
+eligibility, old-writer drain, and reconciliation/adoption remain external owner rollout gates;
+already beyond this insertion point requires a separately reviewed upgrade path, never out-of-order,
+repair/baseline or a pointer/sequence reset to force eligibility.
 
 **Document-vs-per-source decision (justified):** authoring truth is **per-source revisions** (`source_configs` + `source_config_revisions`) because every admin operation (draft, validate, publish, rollback, lifecycle) is per-source and needs per-source history; the served artifact is a **materialized whole-document snapshot** (`published_documents`) because (a) the app consumes one `SourceConfigDocument` with one monotonic `revision` and one checksum → stable strong ETag requires stable bytes, (b) serving stored canonical bytes makes what-the-app-got auditable and reproducible per revision, (c) whole-document anti-rollback (`revision` must only grow — the app's `RemoteSourceConfigManager` rejects any document with `revision <` accepted floor) becomes a single DB sequence. Assembling on the fly from per-source rows would make ETag/checksum recomputed-per-request and history unreproducible.
 
@@ -312,7 +348,11 @@ in a separate job. Source acceptance is not installed migration/cutover evidence
 
 Number determinism is trivial here — the model contains only `Int`/`Long`/`Boolean`/`String` fields (no floating point). Timestamps the server authors (`generatedAt`) are ISO-8601 UTC with fixed seconds precision (`YYYY-MM-DDThh:mm:ssZ`). Checksum = SHA-256 hex over the canonical UTF-8 bytes. **Document identity is canonical semantic content — NOT the authoring text's whitespace/key order**; re-serializing the bundled document is *not* claimed to reproduce its hand-authored bytes (it will not — the bundled constant is pretty-printed); the guarantee is "contract-equivalent, deterministically canonical, byte-stable": parse(canonical(x)) is semantically equal to parse(x), and canonical(x) is stable across processes and releases. The app parses leniently and key-order-insensitively (`ignoreUnknownKeys = true; isLenient = true` in `SourceConfigParser`), so the key sorting is transparent to it.
 
-**Source ordering (normative — key sorting does NOT order arrays):** `SourceConfigDocument.sources` is a JSON **array**; `kcj-1` sorts object keys only and never reorders arrays, so without an explicit rule the assembled document's bytes/checksum/ETag would depend on nondeterministic DB result ordering. **Verified in the app (2026-07-11): source list order carries real behavioral weight.** Home tabs sort by the DB row's `priority` (`SourcesDao.getAllSources()` = `SELECT * FROM sources ORDER BY priority`, no secondary key; `HomeFeedRepositoryImpl.observeSourceTabs` re-sorts with Kotlin's *stable* `sortedBy { it.priority }`), ALL 45 bundled stanzas omit `priority` (default 0), and rows are seeded by `SourceCatalogSyncRepositoryImpl.syncFromConfig` iterating `document.sources` **in list order** — so on a fresh install the de-facto tab order IS the document's stanza order (equal keys fall back to insertion/rowid order). `ConfigMerger.merge` likewise preserves first-seen list order into the merged document. Therefore: (a) `source_configs` carries an explicit **`position`** column — the single normative order; (b) document assembly and `GET /sources` ALWAYS order by **`position ASC, api ASC`** (api, being unique, keeps the comparator total even if positions ever duplicate) and never rely on DB result order; (c) bundled import assigns `position` from **payload order** for created sources (existing sources keep theirs) — so the imported document serves in exactly the bundled order and the app's observable tab order is preserved; (d) admin-created sources append (`max(position)+1`; concurrent creates may duplicate a position — harmless, see (b)); (e) a reorder endpoint is deliberately future work. `DocumentOrderDeterminismIT` proves identical canonical bytes + checksum when the same source set is returned by the repository in shuffled orders.
+**Bootstrap retry identity is different:** `payloadSha256` hashes the exact received request bytes,
+not canonical model bytes. Semantically equivalent JSON with different whitespace/key order is a
+different retry payload after COMPLETE. The receipt separately records origin v1 and v2 checksums.
+
+**Source ordering (normative — key sorting does NOT order arrays):** `SourceConfigDocument.sources` is a JSON **array**; `kcj-1` sorts object keys only and never reorders arrays, so without an explicit rule the assembled document's bytes/checksum/ETag would depend on nondeterministic DB result ordering. **Verified in the app (2026-07-11): source list order carries real behavioral weight.** Home tabs sort by the DB row's `priority` (`SourcesDao.getAllSources()` = `SELECT * FROM sources ORDER BY priority`, no secondary key; `HomeFeedRepositoryImpl.observeSourceTabs` re-sorts with Kotlin's *stable* `sortedBy { it.priority }`), ALL 45 bundled stanzas omit `priority` (default 0), and rows are seeded by `SourceCatalogSyncRepositoryImpl.syncFromConfig` iterating `document.sources` **in list order** — so on a fresh install the de-facto tab order IS the document's stanza order (equal keys fall back to insertion/rowid order). `ConfigMerger.merge` likewise preserves first-seen list order into the merged document. Therefore: (a) `source_configs` carries an explicit **`position`** column — the single normative order; (b) document assembly and `GET /sources` ALWAYS order by **`position ASC, api ASC`** (api, being unique, keeps the comparator total even if positions ever duplicate) and never rely on DB result order; (c) bundled import reorders payload-listed heads first in **payload order**, retaining omitted heads afterward; (d) admin-created sources append (`max(position)+1`) under G, acquired before existence checks, position allocation and insert; (e) a reorder endpoint is deliberately future work. `DocumentOrderDeterminismIT` proves identical canonical bytes + checksum when the same source set is returned by the repository in shuffled orders.
 
 ### Tables
 
@@ -421,15 +461,35 @@ do not automatically revalidate based on the stamp; new publication uses the liv
 
 **Latest lookup is the `document_publication_state` pointer (below) — the single authoritative mechanism.** `MAX(document_revision)` is NOT a read path anywhere; it appears only inside the startup consistency check, where pointer and MAX are compared. Index implied by UNIQUE.
 
-**`document_publication_state`** (V3) — the **global publication serialization lock** (amendment #2; §9 explains the lost-update hazard it prevents)
+**`document_publication_state`** (V3, bootstrap admission added by V13.2) — the **global publication serialization lock** (amendment #2; §9 explains the lost-update hazard it prevents)
 
 | column | type | constraints |
 |---|---|---|
 | id | int | PK, CHECK (`id = 1`) — singleton row, seeded by V3 |
 | latest_document_revision | bigint | NULL until first publish; **FK → `published_documents(document_revision)`** (that column is UNIQUE, so referenceable) — the pointer can never dangle; the snapshot row is inserted (§9 step 8) before the pointer moves (step 9), same transaction |
 | updated_at | timestamptz | NOT NULL |
+| bootstrap_phase | varchar(32) | NOT NULL; `pending`, `complete`, `reconciliation_required` (API phase enum is uppercase). PENDING requires a null pointer. |
+| bootstrap_policy_id | varchar(128) | Nonblank origin policy id in COMPLETE only. |
+| bootstrap_reference_sha256 / bootstrap_payload_sha256 | char(64) | Origin reference and original-request-byte SHA-256, lowercase hex. |
+| bootstrap_document_revision / bootstrap_catalog_revision | bigint | Equal positive origin revisions; restrictive FKs to immutable v1/v2 artifacts. |
+| bootstrap_document_checksum / bootstrap_catalog_checksum | char(64) | Separate origin v1/v2 SHA-256 identities, lowercase hex. |
+| bootstrap_completed_at / bootstrap_actor_id | timestamptz / uuid | Shared origin assembly instant and original actor (restrictive user FK), not replay metadata. |
 
-Every state-visible document mutation begins by locking this row with `SELECT … FOR UPDATE`; it is ALSO **the one authoritative latest-document pointer** (updated in the same transaction that inserts the snapshot) — every "latest" read (public `/document`, `/document/meta`, `/sources`, admin views) resolves through this single-row read; no code path may use `MAX(document_revision)` as a read strategy. **Startup consistency validation** (`PublicationStateStartupValidator`, fail-fast, runs with the §5 floor checks): (a) pointer NULL ⇒ zero snapshot rows exist (fresh install); (b) pointer non-NULL ⇒ it references an existing snapshot (the FK already guarantees this) AND equals `MAX(document_revision)` — no snapshot may sit above the pointer; (c) the sequence's next value `>` the pointer. **Recovery procedure (documented in SOURCE_CONFIG_LIFECYCLE.md — NEVER silently auto-repaired):** on detected inconsistency the app refuses to start (readiness stays red) and the error message names the runbook: a human inspects `published_documents` vs the pointer, decides which snapshot is truly latest, repairs with a single manual audited SQL `UPDATE document_publication_state SET latest_document_revision = <verified>` (and/or `ALTER SEQUENCE … RESTART` when the sequence lags), records the action in `audit_log` — then restarts.
+Receipt fields are all present only in COMPLETE and all null otherwise. COMPLETE requires matching
+immutable origin artifact checksums/time/actor and a latest pointer at or above the origin; completion
+updates exactly one still-PENDING row after both artifacts/audits exist, never sets COMPLETE early.
+Later publications preserve the origin receipt.
+
+Every state-visible document mutation locks exactly this one existing row with `SELECT … FOR UPDATE`;
+inventory creators do so before existence/position/insert. It is also **the authoritative latest
+pointer**, updated in the artifact transaction; no latest read uses `MAX(document_revision)`.
+Startup validates singleton/phase/receipt coherence without today's initial reference, plus:
+(a) null pointer ⇒ zero snapshots (not by itself pristine/bootstrap authority); (b) non-null pointer
+references a snapshot and equals `MAX(document_revision)`; (c) sequence-next `>` the pointer.
+Missing/incoherent state fails closed, never as an empty catalog. Coherent reconciliation state
+retains reads, not publication permission. Follow the owner-reviewed
+[recovery/rollout rules](SOURCE_CONFIG_LIFECYCLE.md#startup-inconsistency-recovery-runbook), not manual
+pointer/sequence resets or fabricated receipt adoption.
 
 **ON DELETE policy (global, explicit):** every FK in the schema is `ON DELETE RESTRICT` (spelled out in the DDL, never left implicit) — historical revisions, snapshots, validation results, completions, and audit rows are evidence; nothing may cascade-delete them. There are no delete endpoints in v1; retention/redaction is a deliberate future admin operation.
 
@@ -608,11 +668,17 @@ The backend defines, in `sourceconfig/domain/model/`, **kotlinx-`@Serializable` 
 **Parsing — two deliberate modes (the app's leniency is right for CONSUMING config, wrong for AUTHORING it):**
 
 - **STRICT authoring parser** — used by `POST /admin/sources`, `POST /admin/sources/{api}/revisions` (and any future authoring input): kotlinx `Json { ignoreUnknownKeys = false; isLenient = false }`, preceded by a **Jackson structural pre-pass** (`StreamReadFeature.STRICT_DUPLICATE_DETECTION` + `DeserializationFeature.FAIL_ON_TRAILING_TOKENS`, parse-and-discard) because kotlinx-serialization has no duplicate-key or trailing-garbage switch — this is the documented, feasible way to reject duplicate object keys and malformed/ambiguous JSON. Net effect: an authoring typo like `usesCaptureHeaders` (for `usesCapturedHeaders`) is a 400 with the offending key named, never a silently-ignored no-op. Rollback does NOT re-parse (it copies an already-stored validated model), so no parser applies there.
-- **COMPATIBILITY import parser** — used ONLY by `import-bundled`: mirrors the app's `SourceConfigParser` settings (`ignoreUnknownKeys = true; isLenient = true`) so the real bundled document imports exactly as the app reads it. The import response includes a `warnings[]` listing unknown keys encountered (detected by diffing the lenient parse against a strict re-parse attempt) so suspicious structures are visible, not silent.
+- **COMPATIBILITY import parser** — used by ordinary `POST /admin/sources/import-bundled` after COMPLETE: mirrors the app's `SourceConfigParser` settings (`ignoreUnknownKeys = true; isLenient = true`). The import response includes a `warnings[]` listing unknown keys encountered (detected by diffing the lenient parse against a strict re-parse attempt) so suspicious structures are visible, not silent. The separate raw initial-bootstrap endpoint uses strict UTF-8 and the **STRICT document parser only in PENDING**; coherent COMPLETE replay precedes current parsing/reference policy.
 
 **Outbound canonical** serialization uses the §5 `kcj-1` canonicalization — omitted defaults, recursively sorted keys, compact UTF-8. Because the app ignores unknown keys, the server COULD add fields; the rule is: **don't** — serve exactly this model.
 
-**Reference values for fixtures:** the current production document is `CONFIG_BACKED_SOURCES_JSON` (`composeApp/src/commonMain/kotlin/me/manga/kira/sources/runtime/BundledSourcesConfig.kt`): `schemaVersion 1`, `revision 4`, 12 `engine:"generic"` stanzas (Azora, Mangamello, Mangamello Plus, SwatManga, Lekmanga, Team X, DilarV2, 3asq, Demonicscans, Mangabuddy, Zazamanga, Tapas) + 33 metadata-only `engine:"legacy"` stanzas. Test fixtures should include a trimmed real stanza (Azora is fully documented in that file's KDoc).
+**Historical compatibility-fixture provenance, not bootstrap authority:** the inherited revision-4
+`CONFIG_BACKED_SOURCES_JSON` fixture has schema 1, 12 generic stanzas and 33 legacy stanzas. It contains
+generic drift relative to the approved initial reference. New bootstrap uses the pinned source-data
+projection and reviewed raw 45-source input in [MIGRATION_BUNDLED_TO_REMOTE.md](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap),
+not this historical fixture or a test builder. The accepted App source bundle is revision **6**, also
+used by its catalog-v2 client; the retained backend floor default **5** is a separate configuration
+value. Neither observation attests a released binary; see §12 for deployment-verification limits.
 
 ---
 
@@ -697,6 +763,15 @@ interface StrategyCatalog { // mirror of the app's StrategyRegistry port
 
 ## 9. Source-config lifecycle
 
+The [durable initial-publication phase](SOURCE_CONFIG_LIFECYCLE.md#durable-initial-publication-phase)
+precedes these ordinary lifecycle/publication rules. Its initial transaction uses one private shared
+assembly body, one instant, one v1/v2 origin and a final still-PENDING receipt/pointer completion.
+Migration-time pristine classification is not a perpetual ban on all PENDING authoring: new
+independent unapplied changesets without source heads may remain, but bootstrap never adopts,
+applies or rewrites them. Conflicting source heads/effective inventory refuse admission. GET
+readiness is advisory, not a pristine-state certificate. Ordinary publication requires COMPLETE;
+the original 12/33 roster is not reimposed on later reviewed evolution.
+
 ### Server state machine (5 states) and app-vocabulary mapping (3 values)
 
 | Server status | In served document? | Stanza `lifecycle` value | Meaning |
@@ -739,24 +814,30 @@ draft    --(new revisions freely)-->   draft
 
 **In-transaction ordering (normative — protects `uq_one_published_per_source`):** inside the single publish transaction, the previous revision is flipped `published → superseded` FIRST, and only then is the candidate flipped `draft → published`. Postgres enforces the partial unique index per statement (it is not deferrable here), so the reverse order would fail with a constraint violation while two rows are momentarily `published`. Concurrent publishes of two drafts for the same source serialize on the §9 lock order (global publication lock → source row lock): the first committer wins; the second then re-reads state under the lock and either succeeds against the new baseline (its draft is still newer) or gets the deterministic 409 above — the partial unique index is never violated and there is exactly one successful publication path per race. `PublishStateRulesIT` + `ConcurrentSameSourcePublishIT` prove all of this (§11 tests 47–48).
 
-**Document snapshot — globally serialized (the per-mutation transaction alone is NOT enough):** without global ordering, two concurrent mutations (publish source A ∥ publish source B) each assemble a candidate from a snapshot that predates the other's commit — the later document revision silently *loses* the earlier source's change from the served snapshot (a classic lost update that read-committed isolation does not prevent). Therefore **ALL state-visible document mutations — publish, operational-mode change, disable, enable, retire, remove, rollback, bundled import, and `republish` — run this exact sequence inside one transaction**:
+**Document snapshot — globally serialized (the per-mutation transaction alone is NOT enough):** without global ordering, two concurrent mutations (publish source A ∥ publish source B) each assemble a candidate from a snapshot that predates the other's commit — the later document revision silently *loses* the earlier source's change from the served snapshot (a classic lost update that read-committed isolation does not prevent). Therefore **ALL ordinary state-visible document mutations — publish, operational-mode change, disable, enable, retire, remove, rollback, bundled import, and `republish` — require COMPLETE for materialization and run this sequence inside one transaction**:
 
-1. Lock the singleton `document_publication_state` row (`SELECT … FOR UPDATE`) — the **global publication lock**; concurrent mutators queue here.
+1. Lock exactly one existing singleton `document_publication_state` row (`SELECT … FOR UPDATE`) — **G**, the global publication lock; concurrent mutators queue here. Ordinary materialization reasserts G and COMPLETE; ordinary import checks COMPLETE before staging, including no-op.
 2. Lock the affected `source_configs` row(s) (`FOR UPDATE`) where the mutation touches per-source state (always lock in a deterministic order: global lock first, then source rows — no deadlock is possible because every writer takes the global lock first).
 3. Apply the mutation (revision insert / status change / import batch).
 4. Read the authoritative current state (all published revisions + statuses) **under the lock** — it cannot be stale, because every other writer is queued behind step 1.
-5. Assemble the full candidate document — all sources in `active|disabled|retired`, **ordered by `(position ASC, api ASC)`** (§5 source ordering; never DB result order), each rendered from its published revision's **lifecycle-neutral** content with the real lifecycle value injected per the mapping above.
+5. Assemble the full candidate document — all **generic** sources in `active|disabled|retired`, **ordered by `(position ASC, api ASC)`** (§5 source ordering; never DB result order), each rendered from its published revision's **lifecycle-neutral** content with the real lifecycle value injected per the mapping above.
 6. Validate it whole (§8 rule 29).
 7. Take **one instant** from the injected Clock, truncated to ISO-8601 UTC seconds (§5 precision); set it as `generatedAt`; serialize canonically (§5, `kcj-1`) and compute SHA-256.
-8. Insert the `published_documents` row with the next `document_revision` from the sequence and `created_at` = **that same instant** (the column has no DB default — application time and DB time cannot diverge; the same instant also goes into the publication audit detail).
-9. Update `document_publication_state.latest_document_revision` (the FK to the just-inserted snapshot holds).
+8. Insert the `published_documents` row and signed v2 catalog/membership with the next shared revision from the sequence and `created_at` = **that same instant** (also used in publication audit detail). The v1/v2 checksums are separate artifact identities.
+9. Update `document_publication_state.latest_document_revision` only after both artifacts exist. Ordinary publication leaves the immutable origin receipt unchanged.
 10. Commit (lock released; the new snapshot becomes the served latest atomically).
 
 Failure anywhere rolls the whole mutation back — the served document can never be invalid, torn, or missing a concurrent change. A Postgres advisory transaction lock (`pg_advisory_xact_lock`) would be an acceptable equivalent for step 1, but the singleton row is preferred: it is visible in the schema, testable, and doubles as the latest-revision pointer. `ConcurrentDifferentSourcePublishIT` proves the invariant: two truly concurrent publications to two different sources → the final latest snapshot contains BOTH changes.
 
 **Checksum & ETag:** ETag = strong quoted document checksum (`ETag: "a1b2…"`); a valid `If-None-Match` field containing a strong or weak tag with that opaque checksum → 304 (weak comparison — §4.1). Checksum also surfaces in `X-Config-Checksum` and `/document/meta`; the app recomputes it before signature and rollback acceptance. `generatedAt` and the snapshot row's `created_at` are **the same application-controlled instant** (steps 7–8 above; injected Clock, ISO-8601 UTC, seconds precision; no DB `now()` default anywhere in the snapshot path) and are included in the signed metadata.
 
-**Empty document — allowed, consequences documented:** publishing a document with ZERO sources (after removing the final published source) is legal — it is the truthful terminal state, and reaching it already requires walking every source through `disabled → retired → removed(confirm)`, so no extra destructive confirmation is invented. Whole-document validation (§8 rule 29) accepts zero sources; under `kcj-1` default-omission the empty `sources` list is simply absent from the canonical bytes (it equals the model default `emptyList()`), and the app parses that back to an empty list. **App-side impact (verified 2026-07-11):** the app can never be blanked by an empty remote document — `RemoteSourceConfigManager.refresh()` ALWAYS folds the bundled document in first (`mutableListOf(bundledDocument)`), `ConfigMerger.merge` unions per-api (an empty higher-precedence document overrides nothing), and the catalog sync's `forceDisableNonConfigRows` is guarded on a non-empty generic set. The only effect is the revision ratchet: the app's accepted floor rises to the empty document's revision. `EmptyDocumentPublishIT` covers it.
+**Empty document — allowed after COMPLETE:** zero-source or zero-active-source catalogs are legal
+results of later explicit lifecycle changes; the initial 12/33 admission is not a permanent inventory
+rule, and zero active sources alone is not a Store-release block. Empty publication cannot bypass
+PENDING. Whole-document validation accepts zero sources; `kcj-1` omits the default empty `sources`
+list. The v2 client selects a whole verified tier and can atomically activate an empty projection;
+it does not union older bundled sources back into a verified remote catalog. Candidate failure
+retains the prior complete tier. See SOURCE_CONFIG_LIFECYCLE.md; older merge-client claims are superseded.
 
 **Signature (implemented in V7):** every new snapshot carries an Ed25519 detached signature over the
 versioned `kira-source-signature-v1` input: revision, predecessor revision/checksum, current checksum,
@@ -937,16 +1018,25 @@ or socket close is not proof of remote termination: the generic HTTP adapter rem
 
 ## 12. Migration plan (bundled JSON → remote) — summary
 
-Full doc to be written as `docs/MIGRATION_BUNDLED_TO_REMOTE.md` in Phase 10 (the docs phase). Summary of the contract it will expand:
+The current [migration contract](MIGRATION_BUNDLED_TO_REMOTE.md) supplies the reference, raw receipt,
+signed-delivery proof and external rollout checklist. Summary:
 
 1. **The app keeps its bundled document forever** as the always-present floor (trusted via the app binary's own signature) — the backend is an *upgrade tier*, never a replacement for the floor.
-2. **Server-side on-ramp — bundled-import contract (complete, normative):** seed the backend via `POST /admin/sources/import-bundled` with the current `CONFIG_BACKED_SOURCES_JSON`; the §5 two-floor model guarantees every published document carries a revision strictly above `kira.config.bundled-revision-floor` (default 4 = today's bundled revision, re-verified against the live binary at cutover) and at/above `kira.config.minimum-server-revision` (default 100 = the sequence seed). Exact semantics:
+2. **Initial bootstrap, then ordinary bundled import:** first submit reviewed frozen raw bytes to
+   `POST /api/v1/admin/source-catalog-v2/cutover/import-bundled`, with the exact confirmation header
+   and PENDING-only policy described above. It completes one atomic 12-generic/33-withheld origin and
+   returns its immutable receipt. The old confirmation-only POST cannot bootstrap. Only after
+   COMPLETE may `POST /admin/sources/import-bundled` perform ordinary re-import, even for no-op.
+   Backend allocation defaults remain `bundled-revision-floor=5` and `minimum-server-revision=100`.
+   Accepted App source uses bundled revision 6 as its client floor; actual deployed binary/configuration
+   and end-to-end acceptance must be verified separately. These observations neither establish signed
+   bootstrap compatibility nor authorize runtime property changes. Ordinary import semantics:
    - Parse the full document with the COMPATIBILITY parser (§7); validate the WHOLE document (§8, incl. server-additional rules AND the Tier-1 structural checks) — any error → 422, nothing persisted.
    - **Ignore the incoming `revision` and `generatedAt`** — the server exclusively controls document-revision allocation; the payload's values are recorded in the response/audit detail for provenance only.
    - **Read each stanza's `lifecycle` separately, then normalize the content to lifecycle-NEUTRAL (§9)** before any canonical comparison, checksum, or revision storage — the incoming lifecycle never enters stored content.
    - Per source, by `api`: **absent** → create, with `position` assigned from **payload order** (§5 source ordering — the served document preserves the bundled stanza order, which the app's tab ordering de-facto follows); initial server status maps from the payload's lifecycle (`"active"` → `active`, `"disabled"` → `disabled`, `"removed"` → not created at all, reported `skippedRemoved` — creating a terminal husk is pointless). **Present with a published revision** → compare **lifecycle-neutral canonical** content (§5/§9) against the currently published revision: identical → `unchanged`, no new revision; different → create + publish exactly ONE new per-source revision — **except**: a source currently `retired` or `removed` never gets content imported (publish on those statuses is 409 by the §9 state machine; silently updating what admin rules forbid is the same defect) — a content difference there is reported under `skippedRetired` / `skippedRemoved` respectively, nothing stored; a `disabled` source's content DOES import (publish-on-disabled is legal and keeps it disabled). **Present with only draft revisions** → `skippedDraft`; import never replaces or publishes that draft and stores nothing. The payload lifecycle **never overrides an existing source's server lifecycle** (lifecycle changes go through the lifecycle endpoints); a differing payload lifecycle is reported under `lifecycleConflicts`, content still imports (subject to the retired/removed/draft exceptions above).
    - A server-side terminally **`removed` source is never revived** by import (reported `skippedRemoved`).
-   - All per-source changes apply **without intermediate whole-document snapshots**; after the batch, materialize **exactly ONE** snapshot via the §9 sequence (global lock, whole-doc validation). If nothing changed at all → no-op: 200 with all-`unchanged` summary and **no new document revision**.
+   - All per-source changes apply **without intermediate whole-document snapshots**; payload-listed heads are reordered first and omitted heads retained afterward. When state changes (including order), materialize **exactly ONE** snapshot via the §9 sequence (global lock, whole-doc validation). If nothing changed at all → no-op: 200 with all-`unchanged` summary and **no new document revision**. COMPLETE is checked before any staging, not waived for no-op.
    - Any failure rolls back the entire import. Response: `{created[], updated[], unchanged[], skippedRemoved[], skippedRetired[], skippedDraft[], lifecycleConflicts[], warnings[], documentRevision?}`.
 3. **App-side acceptance chain (implemented and verified):** fetched remote must (a) have complete,
    bounded metadata from a credential-free HTTPS origin, (b) match its SHA-256 checksum, (c) pass
@@ -967,7 +1057,7 @@ Full doc to be written as `docs/MIGRATION_BUNDLED_TO_REMOTE.md` in Phase 10 (the
 |---|---|---|
 | OpenAPI/Swagger (springdoc) | **Foundation now** | One dependency + one config bean; the admin API's only "UI"; dev-profile exposure |
 | Admin audit log | **Foundation now** | One table + one service call per mutation; retrofitting audit later loses history forever |
-| Import-from-bundled-JSON | **Foundation now** | The migration on-ramp; without it the backend starts empty and untestable against real data |
+| Import-from-bundled-JSON | **Foundation now** | Raw atomic bootstrap establishes the origin; ordinary compatibility import is a post-COMPLETE re-sync path |
 | Export in exact app JSON shape | **Foundation now** | It IS the document endpoint (§4.1) — zero extra cost by design |
 | Validation preview (validate without publish) | **Foundation now** | Already required by responsibility 4; a read-only re-run of the validator |
 | ETag/checksum caching | **Foundation now** | Core of responsibility 5 |

@@ -9,6 +9,8 @@ import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.put
 
 class SourceChangesetIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
+
     @Test
     fun `changesets autosave with etags and apply two sources in one snapshot`() {
         seedPublished("Alpha")

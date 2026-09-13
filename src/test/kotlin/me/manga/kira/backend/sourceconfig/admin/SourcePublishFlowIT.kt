@@ -18,10 +18,11 @@ import org.springframework.test.web.servlet.post
  * appears in the public document, and the public body bytes re-checksum to the ETag/checksum (Phase 7).
  */
 class SourcePublishFlowIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `create validate publish then the stanza is served with a matching checksum`() {
-        val api = "Azora"
+        val api = "PublishedAfterBootstrap"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
 
         mockMvc
@@ -60,7 +61,7 @@ class SourcePublishFlowIT : AbstractAdminSourceIT() {
         val stanza = document.sources.firstOrNull { it.api == api }
         assertNotNull(stanza, "the published stanza must appear in the served document")
         assertEquals("active", stanza!!.lifecycle)
-        assertEquals(1, document.sources.size)
+        assertEquals(initialGenericApis + api, document.sources.map { it.api })
 
         // Phase 7 — the PUBLIC document serves the same stanza, and its raw body bytes re-checksum to
         // the ETag / X-Config-Checksum (SHA-256 of the public body == the published checksum).

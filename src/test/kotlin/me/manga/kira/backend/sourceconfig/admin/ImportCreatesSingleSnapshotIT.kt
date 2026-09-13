@@ -1,6 +1,6 @@
 package me.manga.kira.backend.sourceconfig.admin
 
-import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.InitialSourceCatalogFixtures
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
@@ -11,16 +11,19 @@ import org.junit.jupiter.api.Test
  * materialized after the batch (PLAN §12.2 point 5).
  */
 class ImportCreatesSingleSnapshotIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `importing four sources creates exactly one published document row`() {
-        assertEquals(0L, snapshotCount(), "clean baseline")
+        val snapshotsBefore = snapshotCount()
+        val rowsBefore = sourceRowCount()
+        assertEquals(1L, snapshotsBefore, "real bootstrap baseline")
 
-        importBundled(SourceConfigFixtures.loadFixture("bundled-trimmed.json")).andExpect { status { isOk() } }
+        importBundled(InitialSourceCatalogFixtures.postBootstrapTrimmedDocument()).andExpect { status { isOk() } }
 
-        assertEquals(4L, sourceRowCount(), "all four stanzas created")
+        assertEquals(rowsBefore + 4, sourceRowCount(), "all four additional stanzas created")
         assertEquals(
-            1L,
+            snapshotsBefore + 1,
             snapshotCount(),
             "exactly one snapshot for the whole import (NOT one per source)",
         )

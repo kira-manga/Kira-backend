@@ -53,9 +53,11 @@ in 404/409 details. Typed-exception → status mapping:
 - **Multi-value filters** (`?lifecycle=`, `?engine=`, `?status=`): comma-separated within one query
   param; an unknown token → 400.
 - **Request-body size:** every request body is capped at **256 KiB** before MVC parsing, except
-  `POST /admin/sources/import-bundled` and multipart `POST /admin/tutorial-media`, which are capped at
-  **5 MiB** request size (the media file itself is capped at **4 MiB**). Declared and streamed/chunked
-  bodies use the same 413 `PAYLOAD_TOO_LARGE` response. Completion prompts additionally have a
+  `POST /admin/sources/import-bundled`, the exact
+  `POST /admin/source-catalog-v2/cutover/import-bundled` path, and multipart
+  `POST /admin/tutorial-media`, which are capped at **5 MiB** request size (the media file itself is
+  capped at **4 MiB**). Declared and actual bytes, including unknown or understated lengths, are
+  bounded; oversize returns 413 `PAYLOAD_TOO_LARGE`. Completion prompts additionally have a
   configurable character cap (default 8000).
 - **Responses:** raw source-config routes explicitly send `application/json; charset=UTF-8` and add the
   documented cache/nosniff headers. Jackson-rendered endpoints currently send `application/json`
@@ -298,13 +300,18 @@ Tier-1 checks still run before finalization or publication.
 | `POST /admin/source-changesets/{id}/apply` | Apply every operation atomically and materialize exactly one snapshot. Requires password step-up. | 200 · 400 · 401 · 409 · 422 |
 | `DELETE /admin/source-changesets/{id}` | Discard an open changeset using `If-Match`. | 200 · 409 |
 | `GET /admin/audit?page=0&size=50` | Read identifiers-only audit metadata; maximum page size is 100. | 200 · 400 |
-| `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
-| `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
+| `GET /admin/source-catalog-v2/cutover` | Advisory phase/origin-receipt view; not payload approval or an admission reservation. | 200 |
+| `POST /admin/source-catalog-v2/cutover` | Retired confirmation-only operation: nonmutating conflict directing callers to the raw bootstrap endpoint. | 409 |
+| `POST /admin/source-catalog-v2/cutover/import-bundled` | Raw, payload-bound initial bootstrap; exact confirmation header; returns the immutable nine-field receipt below. | 200 · 400 · 409 · 413 · 415 · 422 |
 | `GET /admin/documents` | Bounded snapshot metadata window; optional `size` / `beforeRevision`. | 200 · 400 |
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |
-| `POST /admin/documents/republish` | Force-materialize a new snapshot from current state (always a new revision). | 200 |
-| `POST /admin/sources/import-bundled` | The migration on-ramp — see [4. Import](#4-import-bundled). | 200 · 400 · 413 · 422 |
+| `POST /admin/documents/republish` | After bootstrap `COMPLETE`, force-materialize a new snapshot from current state (always a new revision). | 200 · 409 |
+| `POST /admin/sources/import-bundled` | Ordinary re-import after bootstrap `COMPLETE` — see [4. Import](#4-import-bundled). | 200 · 400 · 409 · 413 · 422 |
+
+Ordinary materialization requires bootstrap `COMPLETE`; ordinary import checks that phase before
+staging, **even for a no-op**. Bootstrap before ordinary authoring on a fresh catalog: draft authoring
+may remain available in `PENDING`, but conflicting source heads are not silently adopted.
 
 **Selected response shapes** (Jackson-serialized; lifecycle/revision statuses are lowercase wire
 values):
@@ -334,6 +341,75 @@ values):
 - `GET /admin/documents` item → `{ "documentRevision", "schemaVersion", "checksum", "sourceCount", "createdBy", "createdAt" }`.
 - `GET /admin/documents/{revision}` → **body = raw stored canonical bytes**; metadata in headers only
   (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`) — deliberately not a JSON envelope.
+
+### Initial catalog bootstrap
+
+```text
+POST /api/v1/admin/source-catalog-v2/cutover/import-bundled
+Content-Type: application/json
+X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES
+```
+
+The existing ADMIN bearer chain applies. Supply **exactly one** confirmation header with that exact
+value; missing, empty, padded, different or repeated values return **409
+`SOURCE_CATALOG_V2_CUTOVER_REJECTED`**. The JSON body is retained as original bytes, not a Jackson
+DTO, decoded request String, or reserialized JSON; charset metadata does not transcode it. The limit
+is **5,242,880 actual bytes (5 MiB)**, enforced for declared, unknown and understated lengths.
+The pre-MVC filter grants this allowance only to that exact POST application path (including a
+servlet context prefix); near paths, trailing slash, other methods and the old cutover path retain
+256 KiB. That filter precedes security/MVC, so **413 can precede authentication or confirmation**.
+
+Only `PENDING` decodes strict UTF-8 and uses the strict JSON parser and initial policy: schema 1,
+exactly the reviewed 45 unique source APIs, and complete default-expanded models/order for the
+approved 12 generic sources, including raw `lifecycle:"active"` and `priority:0`. The content of the
+33 legacy **source definitions** and the full 45-list order are not reference-pinned; ordinary
+validation and effective-head checks still apply. See the
+[reference and migration contract](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap).
+Invalid UTF-8 returns **400 `BOOTSTRAP_INVALID_UTF8`**; strict JSON failures use the existing 400
+parser errors; input policy/roster/state/different-byte conflicts use the cutover 409 above; ordinary
+validator/Tier-1 failures remain **422**. Unsupported media returns **415 `UNSUPPORTED_MEDIA_TYPE`**.
+
+Success is **200**, with exactly these nine fields:
+
+```json
+{
+  "policyId": "app-bundle-v6-initial-catalog-v1",
+  "referenceSha256": "<approved-reference-sha256>",
+  "payloadSha256": "<original-request-byte-sha256>",
+  "documentRevision": 100,
+  "documentChecksum": "<v1-document-sha256>",
+  "catalogRevision": 100,
+  "catalogChecksum": "<v2-catalog-sha256>",
+  "completedAt": "2026-09-12T00:00:00Z",
+  "actorId": "<original-admin-uuid>"
+}
+```
+
+The origin revisions are equal; the v1/v2 checksums identify **different artifacts**. `completedAt`
+is the shared origin assembly instant and `actorId` is the original admin. After bounding,
+authentication, confirmation and hashing, `COMPLETE` replay of the **same original bytes** returns
+that receipt unchanged **before UTF-8 decoding or current parser/reference policy**. Any byte change
+(even JSON whitespace) conflicts. Replay does not stage input, revalidate evolved inventory,
+allocate a revision, sample a new clock or emit another mutation audit. Retain the exact request
+file for an uncertain-response retry; never normalize or reconstruct it. Later catalog evolution,
+including a valid empty catalog, remains legal and is not undone by replay.
+
+`GET /api/v1/admin/source-catalog-v2/cutover` retains `ready`, `applied`, `approvedActiveSources`,
+`legacySourcesToWithhold`, `alreadyWithheldSources`, `problems`, and `documentRevision`, adding
+`phase` and a nullable origin `receipt`. **Phase JSON is uppercase**, unlike source lifecycle wire
+values; `applied` is always `false`:
+
+| Phase | Advisory `ready` | `documentRevision` |
+|---|---|---|
+| `PENDING`, no source heads | `true` — not payload or all-authoring-state approval | null |
+| `PENDING`, source heads present | `false` | null |
+| `COMPLETE` | `true`, regardless of later inventory changes | Origin receipt revision, not necessarily latest |
+| `RECONCILIATION_REQUIRED` | `false` | Current pointer, possibly null |
+
+GET neither reserves admission nor proves deployment/approval. The old confirmation-only POST
+always returns a nonmutating controlled 409 at controller dispatch, even with its former JSON,
+malformed input or no body; pre-controller security/body limits still apply. It never stages or
+bootstraps anything.
 
 ### Admin history windows
 
@@ -372,11 +448,13 @@ content always goes through `rollback`.
 
 ### 4. import-bundled
 
-`POST /api/v1/admin/sources/import-bundled` — body = the app's bundled document JSON (max **5 MiB**,
-parsed with the **COMPATIBILITY** parser). Validates the whole document (any error → **422**, nothing
-persisted), applies per-source create/update/no-op with server-controlled revisions, and materializes
-**exactly one** snapshot (all-or-nothing). Incoming `revision`/`generatedAt` are ignored (recorded for
-provenance only); each stanza's `lifecycle` is read separately and normalized away before storage.
+`POST /api/v1/admin/sources/import-bundled` is **ordinary re-import after `COMPLETE`**, not initial
+bootstrap. It requires that phase before staging, even on the no-op path (otherwise cutover **409**).
+Body = bundled document JSON (max **5 MiB**, parsed with the **COMPATIBILITY** parser). It validates
+the whole document (any error → **422**, nothing persisted), applies per-source create/update/no-op
+with server-controlled revisions, and materializes **exactly one** snapshot when state changes
+(all-or-nothing). Incoming `revision`/`generatedAt` are ignored (recorded for provenance only); each
+stanza's `lifecycle` is read separately and normalized away before storage.
 
 - **200** `ImportBundledResponse`:
 
@@ -392,8 +470,8 @@ provenance only); each stanza's `lifecycle` is read separately and normalized aw
 semantics: [`MIGRATION_BUNDLED_TO_REMOTE.md`](MIGRATION_BUNDLED_TO_REMOTE.md).
 
 Existing draft-only sources are never replaced or published by import; they are returned in
-`skippedDraft`. Importing into a partly existing catalog can still retain old positions rather than
-reproduce payload order exactly, so review ordering before later re-imports.
+`skippedDraft`. Reordering puts payload-listed heads first in payload order and retains omitted heads
+after them. A reorder is a state change, not a pure no-op.
 
 ---
 

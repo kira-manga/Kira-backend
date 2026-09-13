@@ -2,6 +2,7 @@ package me.manga.kira.backend.sourceconfig.admin
 
 import com.fasterxml.jackson.databind.JsonNode
 import me.manga.kira.backend.sourceconfig.HeaderFilterSafetyFixtures
+import me.manga.kira.backend.sourceconfig.InitialSourceCatalogFixtures
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import me.manga.kira.backend.sourceconfig.application.BundledImportService
 import me.manga.kira.backend.sourceconfig.domain.model.EndpointSpec
@@ -23,11 +24,12 @@ import org.springframework.test.web.servlet.ResultActionsDsl
  * nothing stored. Plus the §4.5 5-MiB body cap → 413.
  */
 class ImportBundledIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Autowired
     private lateinit var bundledImportService: BundledImportService
 
-    private fun trimmed(): String = SourceConfigFixtures.loadFixture("bundled-trimmed.json")
+    private fun trimmed(): String = toJson(InitialSourceCatalogFixtures.postBootstrapTrimmedDocument())
 
     private fun result(actions: ResultActionsDsl): JsonNode = objectMapper.readTree(actions.andReturn().response.contentAsString)
 
@@ -35,30 +37,31 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
     @Test
     fun `import of the trimmed document creates + publishes + serves the sources in payload order`() {
+        val snapshotsBefore = snapshotCount()
         val body = result(importBundled(trimmed()).andExpect { status { isOk() } })
 
         // All four created (2 generic + 2 legacy), nothing else.
-        assertEquals(listOf("Azora", "SwatManga", "Lavatoons", "Manhwatop"), body.apis("created"))
+        assertEquals(listOf("Imported Azora", "Imported SwatManga", "Imported Lavatoons", "Imported Manhwatop"), body.apis("created"))
         assertTrue(body.apis("updated").isEmpty() && body.apis("unchanged").isEmpty())
         assertTrue(body.get("documentRevision").asLong() >= 100L, "server-allocated document revision")
 
         // Public documents preserve the approved generic subset's payload order. The two legacy
         // rows remain admin-visible migration input and are never exposed.
         val served = publicServedDocument()
-        assertEquals(listOf("Azora", "SwatManga"), served.sources.map { it.api })
+        assertEquals(listOf("Imported Azora", "Imported SwatManga") + initialGenericApis, served.sources.map { it.api })
         // Exactly one snapshot for the whole import (test 23 asserts this in isolation).
-        assertEquals(1L, snapshotCount())
+        assertEquals(snapshotsBefore + 1, snapshotCount())
     }
 
     @Test
     fun `re-import of the identical payload is a no-op - zero new revisions and zero new snapshots`() {
         importBundled(trimmed()).andExpect { status { isOk() } }
         val snapshotsAfterFirst = snapshotCount()
-        val revisionsAfterFirst = listOf("Azora", "SwatManga", "Lavatoons", "Manhwatop").associateWith { revisionCount(it) }
+        val revisionsAfterFirst = listOf("Imported Azora", "Imported SwatManga", "Imported Lavatoons", "Imported Manhwatop").associateWith { revisionCount(it) }
 
         val body = result(importBundled(trimmed()).andExpect { status { isOk() } })
 
-        assertEquals(listOf("Azora", "SwatManga", "Lavatoons", "Manhwatop"), body.apis("unchanged"))
+        assertEquals(listOf("Imported Azora", "Imported SwatManga", "Imported Lavatoons", "Imported Manhwatop"), body.apis("unchanged"))
         assertTrue(body.apis("created").isEmpty() && body.apis("updated").isEmpty())
         // documentRevision is absent/null on the no-op (NON_NULL serialization → the key is absent).
         assertTrue(body.get("documentRevision") == null || body.get("documentRevision").isNull, "no-op → no documentRevision")
@@ -79,13 +82,16 @@ class ImportBundledIT : AbstractAdminSourceIT() {
         val body = result(importBundled(SourceConfigFixtures.document(second, first)).andExpect { status { isOk() } })
 
         assertTrue(body.apis("updated").isEmpty())
-        assertEquals(setOf("First", "Second"), body.apis("reordered").toSet())
-        assertEquals(listOf("Second", "First"), publicServedDocument().sources.map { it.api })
+        val initialApis = InitialSourceCatalogFixtures.approvedDocument().sources.map { it.api }
+        assertEquals(initialApis.toSet() + setOf("First", "Second"), body.apis("reordered").toSet())
+        assertEquals(listOf("Second", "First") + initialGenericApis, publicServedDocument().sources.map { it.api })
         assertEquals(before + 1, snapshotCount(), "the order change creates exactly one snapshot")
     }
 
     @Test
     fun `database failure after the first stanza rolls back the complete import`() {
+        val rowsBefore = sourceRowCount()
+        val before = publicState()
         jdbcTemplate.execute(
             """
             CREATE OR REPLACE FUNCTION fail_second_import() RETURNS trigger AS ${'$'}${'$'}
@@ -111,8 +117,8 @@ class ImportBundledIT : AbstractAdminSourceIT() {
                 bundledImportService.import(toJson(document), admin.id)
             }
 
-            assertEquals(0L, sourceRowCount(), "the first stanza must roll back with the second")
-            assertEquals(0L, snapshotCount(), "a failed import must never publish a snapshot")
+            assertEquals(rowsBefore, sourceRowCount(), "the first stanza must roll back with the second")
+            assertPublicStateUnchanged(before)
         } finally {
             jdbcTemplate.execute("DROP TRIGGER IF EXISTS fail_second_import_trigger ON source_configs")
             jdbcTemplate.execute("DROP FUNCTION IF EXISTS fail_second_import()")
@@ -121,6 +127,8 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
     @Test
     fun `one bad stanza fails the whole import with 422 and nothing is persisted`() {
+        val rowsBefore = sourceRowCount()
+        val before = publicState()
         // A generic stanza whose search url uses raw {query} (rule 14) alongside otherwise-valid stanzas.
         val bad =
             SourceConfigFixtures.validGenericSource("Broken").let {
@@ -130,8 +138,8 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
         importBundled(document).andExpect { status { isUnprocessableEntity() } }
 
-        assertEquals(0L, sourceRowCount(), "nothing persisted on a 422")
-        assertEquals(0L, snapshotCount(), "no snapshot on a 422")
+        assertEquals(rowsBefore, sourceRowCount(), "nothing persisted on a 422")
+        assertPublicStateUnchanged(before)
     }
 
     @Test
@@ -191,8 +199,8 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
     @Test
     fun `a terminally removed source is not revived by import`() {
-        // Walk "Azora" (generic) all the way to terminal removed, then import a document that contains it.
-        val api = "Azora"
+        // Walk the post-bootstrap generic all the way to removed, then import a document containing it.
+        val api = "Imported Azora"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
         disable(api).andExpect { status { isOk() } }
@@ -211,8 +219,8 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
     @Test
     fun `changed content for a retired source is skippedRetired and nothing is stored`() {
-        // Retire a generic "Azora" (create → publish → disable → retire); it stays in the doc as removed.
-        val api = "Azora"
+        // Retire a post-bootstrap generic; it stays in the document as removed.
+        val api = "Imported Azora"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
         disable(api).andExpect { status { isOk() } }
@@ -234,12 +242,16 @@ class ImportBundledIT : AbstractAdminSourceIT() {
 
     @Test
     fun `re-import never publishes or replaces a draft-only source`() {
+        val snapshotsBefore = snapshotCount()
         val api = "AdminDraft"
         val draft = SourceConfigFixtures.validGenericSource(api)
         createSource(draft).andExpect { status { isCreated() } }
         val revisionsBefore = revisionCount(api)
 
-        val changedPayload = SourceConfigFixtures.document(draft.copy(displayName = "Imported replacement"))
+        // Keep the entire existing order so this remains a content-only draft skip, not an
+        // intentional partial-catalog reorder (which is separately tested above).
+        val initial = InitialSourceCatalogFixtures.approvedDocument()
+        val changedPayload = initial.copy(sources = initial.sources + draft.copy(displayName = "Imported replacement"))
         val body = result(importBundled(changedPayload).andExpect { status { isOk() } })
 
         assertTrue(body.apis("skippedDraft").contains(api))
@@ -247,14 +259,15 @@ class ImportBundledIT : AbstractAdminSourceIT() {
         assertEquals("draft", sourceStatus(api))
         assertEquals(revisionsBefore, revisionCount(api), "import must not create a revision over admin WIP")
         assertEquals(0L, publishedRevisionCount(api), "import must not publish the draft")
-        assertEquals(0L, snapshotCount(), "skipping only drafts is a document no-op")
+        assertEquals(snapshotsBefore, snapshotCount(), "skipping only drafts is a document no-op")
         assertTrue(body.get("documentRevision") == null || body.get("documentRevision").isNull)
     }
 
     @Test
     fun `a body over the 5 MiB import limit is rejected with 413`() {
+        val rowsBefore = sourceRowCount()
         val oversized = "a".repeat(5 * 1024 * 1024 + 1)
         importBundled(oversized).andExpect { status { isPayloadTooLarge() } }
-        assertEquals(0L, sourceRowCount(), "an over-limit body is rejected before any persistence")
+        assertEquals(rowsBefore, sourceRowCount(), "an over-limit body is rejected before any persistence")
     }
 }

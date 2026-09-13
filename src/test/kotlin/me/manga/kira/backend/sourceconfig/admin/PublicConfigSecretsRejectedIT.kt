@@ -21,6 +21,7 @@ import org.springframework.test.web.servlet.get
  * every secret-safety rule.
  */
 class PublicConfigSecretsRejectedIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Autowired
     private lateinit var validator: SourceConfigValidator

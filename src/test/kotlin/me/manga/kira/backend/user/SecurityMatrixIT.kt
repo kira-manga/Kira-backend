@@ -1,6 +1,8 @@
 package me.manga.kira.backend.user
 
 import me.manga.kira.backend.security.JwtService
+import me.manga.kira.backend.sourceconfig.InitialSourceCatalogFixtures
+import me.manga.kira.backend.sourceconfig.application.GenericV2CutoverService
 import me.manga.kira.backend.support.AbstractIntegrationTest
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
@@ -34,8 +36,12 @@ import java.util.UUID
  */
 class SecurityMatrixIT
 @Autowired
-constructor(private val mockMvc: MockMvc, private val users: UserRepository, private val jwtService: JwtService) :
-    AbstractIntegrationTest() {
+constructor(
+    private val mockMvc: MockMvc,
+    private val users: UserRepository,
+    private val jwtService: JwtService,
+    private val initialCatalog: GenericV2CutoverService,
+) : AbstractIntegrationTest() {
 
     private fun createUser(email: String, role: Role): User = users.create(email, "{bcrypt}\$2a\$10\$notarealhashjustforfilterchaintests..", role)
 
@@ -52,7 +58,9 @@ constructor(private val mockMvc: MockMvc, private val users: UserRepository, pri
 
     @Test
     fun `anonymous gets 200 on the public document and sources once one is published`() {
-        val adminToken = token(createUser("matrix-pub-admin@example.com", Role.ADMIN))
+        val admin = createUser("matrix-pub-admin@example.com", Role.ADMIN)
+        val adminToken = token(admin)
+        initialCatalog.importBundled(InitialSourceCatalogFixtures.approvedPayload(), GenericV2CutoverService.CONFIRMATION, admin.id)
         val sourceJson =
             """
                 {"api":"MatrixSrc","language":"en","baseUrl":"https://example.com",
@@ -140,7 +148,8 @@ constructor(private val mockMvc: MockMvc, private val users: UserRepository, pri
 
     @Test
     fun `ADMIN token is allowed on admin endpoints`() {
-        val adminToken = token(createUser("matrix-admin@example.com", Role.ADMIN))
+        val admin = createUser("matrix-admin@example.com", Role.ADMIN)
+        val adminToken = token(admin)
         // Real Phase-3 admin endpoint → 200.
         mockMvc
             .get("/api/v1/admin/users") { header("Authorization", "Bearer $adminToken") }
@@ -153,6 +162,8 @@ constructor(private val mockMvc: MockMvc, private val users: UserRepository, pri
         mockMvc
             .get("/api/v1/admin/documents") { header("Authorization", "Bearer $adminToken") }
             .andExpect { status { isOk() } }
+        // Ordinary import requires a real initial catalog; the role matrix still expects a 200.
+        initialCatalog.importBundled(InitialSourceCatalogFixtures.approvedPayload(), GenericV2CutoverService.CONFIRMATION, admin.id)
         // Phase-8 bundled-import endpoint is reachable for ADMIN → 200 (a no-op empty-document import).
         mockMvc
             .post("/api/v1/admin/sources/import-bundled") {

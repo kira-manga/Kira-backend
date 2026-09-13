@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test
  * §13.1.2); every 304 carries no body (PLAN §4.1).
  */
 class IfNoneMatchVariantsIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     private val other1 = "\"0000000000000000000000000000000000000000000000000000000000000000\""
     private val other2 = "\"1111111111111111111111111111111111111111111111111111111111111111\""

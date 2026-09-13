@@ -5,7 +5,10 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.security.JwtService
 import me.manga.kira.backend.sourceconfig.HeaderFilterSafetyFixtures
+import me.manga.kira.backend.sourceconfig.InitialSourceCatalogFixtures
+import me.manga.kira.backend.sourceconfig.application.GenericV2CutoverService
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
+import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogReceipt
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
 import me.manga.kira.backend.support.AbstractIntegrationTest
@@ -51,10 +54,19 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected lateinit var sourceAdminService: SourceAdminService
 
     @Autowired
+    private lateinit var initialCatalog: GenericV2CutoverService
+
+    @Autowired
     protected lateinit var passwordEncoder: PasswordEncoder
 
     protected lateinit var admin: User
     protected lateinit var adminToken: String
+
+    /** Ordinary publication tests opt in; bootstrap/authoring-only tests start genuinely PENDING. */
+    protected open val bootstrapCatalogBeforeEach: Boolean = false
+
+    protected final var bootstrapReceipt: InitialSourceCatalogReceipt? = null
+        private set
 
     /** Emits exactly the mirrored model's keys (no unknown keys) — accepted by the STRICT parser (PLAN §7). */
     @OptIn(ExperimentalSerializationApi::class)
@@ -71,17 +83,47 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     @BeforeEach
     fun seedAdmin() {
+        bootstrapReceipt = null
         admin = users.create(
             "admin-${UUID.randomUUID()}@test.local",
             passwordEncoder.encode(ADMIN_PASSWORD),
             Role.ADMIN,
         )
         adminToken = jwtService.issue(admin).value
+        if (bootstrapCatalogBeforeEach) bootstrapInitialCatalog()
+    }
+
+    protected fun approvedBootstrapPayload(): ByteArray = InitialSourceCatalogFixtures.approvedPayload()
+
+    protected val initialGenericApis: List<String>
+        get() = InitialSourceCatalogFixtures.approvedDocument().sources.filter { it.engine == "generic" }.map { it.api }
+
+    /** Establish COMPLETE only through the actual transactional production bootstrap service. */
+    protected fun bootstrapInitialCatalog(): InitialSourceCatalogReceipt = initialCatalog.importBundled(
+        approvedBootstrapPayload(),
+        GenericV2CutoverService.CONFIRMATION,
+        admin.id,
+    ).also { receipt ->
+        bootstrapReceipt = receipt
+        assertEquals(receipt.documentRevision, latestPointer())
+        getPublicDocument().andExpect { status { isOk() } }
+        mockMvc.get("/api/v2/source-config/manifest").andExpect { status { isOk() } }
+        assertEquals(initialGenericApis, publicServedDocument().sources.map { it.api })
+        assertEquals(12L, jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs WHERE status = 'active'", Long::class.java))
+        assertEquals(33L, jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs WHERE status = 'withheld'", Long::class.java))
     }
 
     protected fun toJson(model: SourceConfig): String = modelJson.encodeToString(SourceConfig.serializer(), model)
 
     protected fun toJson(document: SourceConfigDocument): String = modelJson.encodeToString(SourceConfigDocument.serializer(), document)
+
+    protected fun bootstrapRequest(rawBody: ByteArray = approvedBootstrapPayload()): ResultActionsDsl =
+        mockMvc.post("/api/v1/admin/source-catalog-v2/cutover/import-bundled") {
+            header("Authorization", "Bearer $adminToken")
+            header("X-Kira-Bootstrap-Confirmation", GenericV2CutoverService.CONFIRMATION)
+            contentType = MediaType.APPLICATION_JSON
+            content = rawBody
+        }
 
     /** `POST /admin/sources/import-bundled` with a raw document body (PLAN §4.3 / §12.2). */
     protected fun importBundled(json: String): ResultActionsDsl = mockMvc.post("/api/v1/admin/sources/import-bundled") {
@@ -210,28 +252,44 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
 
     protected fun sourceRowCount(): Long = jdbcTemplate.queryForObject("SELECT count(*) FROM source_configs", Long::class.java)!!
 
-    /** Capture both real public protocols after a successful baseline publication (never two 404s). */
-    protected fun publicState(): PublicState = PublicState(
-        document = getPublicDocument().andExpect { status { isOk() } }.andReturn().response.contentAsByteArray,
-        manifest = mockMvc.get("/api/v2/source-config/manifest").andExpect { status { isOk() } }.andReturn().response.contentAsByteArray,
-        pointer = requireNotNull(latestPointer()),
-        snapshots = snapshotCount(),
-        catalogs = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalogs", Long::class.java)!!,
-        entries = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalog_entries", Long::class.java)!!,
-        publishedPointers = jdbcTemplate.query(
-            "SELECT api, current_published_revision_id FROM source_configs WHERE current_published_revision_id IS NOT NULL",
-            { rs, _ -> rs.getString("api") to rs.getObject("current_published_revision_id", UUID::class.java) },
-        ).toMap(),
-    )
+    /** Observe real publication or explicit absence; two 404s are never represented as published bytes. */
+    protected fun publicState(): PublicState {
+        val pointer = latestPointer()
+        val expectedStatus = if (pointer == null) 404 else 200
+        val document = getPublicDocument().andReturn().response
+        val manifest = mockMvc.get("/api/v2/source-config/manifest").andReturn().response
+        assertEquals(expectedStatus, document.status, "v1 availability must agree with the pointer")
+        assertEquals(expectedStatus, manifest.status, "v2 availability must agree with the pointer")
+        return PublicState(
+            document = if (document.status == 200) document.contentAsByteArray else byteArrayOf(),
+            manifest = if (manifest.status == 200) manifest.contentAsByteArray else byteArrayOf(),
+            documentStatus = document.status,
+            manifestStatus = manifest.status,
+            pointer = pointer,
+            snapshots = snapshotCount(),
+            catalogs = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalogs", Long::class.java)!!,
+            entries = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalog_entries", Long::class.java)!!,
+            removed = jdbcTemplate.queryForObject("SELECT count(*) FROM published_source_catalog_removed", Long::class.java)!!,
+            publicationState = jdbcTemplate.queryForMap("SELECT * FROM document_publication_state WHERE id = 1"),
+            publishedPointers = jdbcTemplate.query(
+                "SELECT api, current_published_revision_id FROM source_configs WHERE current_published_revision_id IS NOT NULL",
+                { rs, _ -> rs.getString("api") to rs.getObject("current_published_revision_id", UUID::class.java) },
+            ).toMap(),
+        )
+    }
 
     protected fun assertPublicStateUnchanged(before: PublicState) {
         val after = publicState()
+        assertEquals(before.documentStatus, after.documentStatus, "public v1 availability must not change")
+        assertEquals(before.manifestStatus, after.manifestStatus, "public v2 availability must not change")
         assertArrayEquals(before.document, after.document, "public v1 bytes must not change")
         assertArrayEquals(before.manifest, after.manifest, "public v2 manifest bytes must not change")
         assertEquals(before.pointer, after.pointer, "the shared latest pointer must not move")
         assertEquals(before.snapshots, after.snapshots, "no new v1 snapshot")
         assertEquals(before.catalogs, after.catalogs, "no new v2 catalog")
         assertEquals(before.entries, after.entries, "no new public source entry")
+        assertEquals(before.removed, after.removed, "no new public removal")
+        assertEquals(before.publicationState, after.publicationState, "bootstrap phase and origin receipt must not change")
         assertEquals(before.publishedPointers, after.publishedPointers, "published source revisions must not change")
     }
 
@@ -255,10 +313,14 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     protected class PublicState(
         val document: ByteArray,
         val manifest: ByteArray,
-        val pointer: Long,
+        val documentStatus: Int,
+        val manifestStatus: Int,
+        val pointer: Long?,
         val snapshots: Long,
         val catalogs: Long,
         val entries: Long,
+        val removed: Long,
+        val publicationState: Map<String, Any?>,
         val publishedPointers: Map<String, UUID>,
     )
 

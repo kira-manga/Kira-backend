@@ -60,26 +60,45 @@ curl --fail-with-body -sS "$KIRA_API_URL/auth/me" \
 Tokens expire after 60 minutes by default. Log in again when a token expires. There is no refresh-token
 endpoint in v1.
 
-## 3. Seed the source catalog
+## 3. Bootstrap the source catalog
 
-A new database has no published source document. Import the real bundled test fixture once as the
-initial migration:
+On a fresh eligible `PENDING` catalog, **bootstrap before ordinary source authoring**. Review and
+freeze a 45-source raw JSON file against the [approved initial reference](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap);
+do not seed through ordinary import or the historical `bundled-full.json` test fixture. Existing
+populated installations may be `RECONCILIATION_REQUIRED` and need separately reviewed owner rollout,
+not automatic adoption/reset. A null publication pointer alone is not bootstrap eligibility.
 
 ```bash
-curl --fail-with-body -sS -X POST "$KIRA_API_URL/admin/sources/import-bundled" \
+# Use the already reviewed, frozen file; do not regenerate or normalize it for submission/retry.
+BOOTSTRAP_JSON='/absolute/path/to/owner-reviewed-frozen-45-source.json'
+curl --fail-with-body -sS -X POST "$KIRA_API_URL/admin/source-catalog-v2/cutover/import-bundled" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data-binary @src/test/resources/fixtures/bundled-full.json | jq
+  -H 'X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES' \
+  --data-binary @"$BOOTSTRAP_JSON" | jq
 ```
 
-The import is transactional: validation failure returns 422 and writes nothing; a successful changed
-import creates exactly one whole-document snapshot. Incoming document revision/timestamp values are
-ignored because the backend allocates them.
+The exact single confirmation header and **5 MiB (5,242,880 actual bytes)** cap apply. Only PENDING
+uses strict UTF-8/JSON and the full ordered/default-expanded generic reference policy. One transaction
+stages the reviewed 45 source definitions, withholds the 33 legacy definitions, and publishes one v1
+snapshot plus one signed v2 catalog containing the approved 12 generic sources. Incoming document
+revision/time are provenance, not allocation authority; transactional failure rolls back, but sequence
+gaps are legal. See the [bootstrap API](API.md#initial-catalog-bootstrap) for exact errors and receipt.
 
-Do not use routine re-import as a substitute for normal source editing. Existing draft-only sources are
-reported in `skippedDraft` and are never replaced or published. Import adopts payload order for every
-source in the payload, moves catalog-only sources after that ordered set, reports changed positions in
-`reordered`, and creates at most one signed snapshot for the complete transaction.
+Success is **200 with the immutable nine-field origin receipt**, not an ordinary import summary.
+Check its policy/reference/payload identities; the equal origin document/catalog revisions have
+separate v1/v2 checksums, with the original time and actor. Retain the receipt and exact request file:
+after COMPLETE, identical original bytes return that receipt before current parser/reference policy,
+even after later catalog changes; any byte difference, including whitespace, conflicts. `jq` above
+formats the response only. Receipt/status alone is not [signed delivery or app-activation proof](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist).
+GET cutover is advisory, not payload approval or an admission reservation; the old confirmation-only
+POST is nonmutating 409.
+
+**Later ordinary import** uses `POST /api/v1/admin/sources/import-bundled` only after COMPLETE,
+including no-op calls; normal materialization is also COMPLETE-gated. Do not use routine re-import as
+a substitute for normal source editing. Existing draft-only sources are reported in `skippedDraft`
+and are never replaced or published. Import adopts payload order, retains catalog-only heads afterward,
+reports changed positions in `reordered`, and creates at most one signed snapshot per transaction.
 
 ## 4. Read the public API
 

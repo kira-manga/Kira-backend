@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test
  * re-serialization drift (PLAN §4.1).
  */
 class RawBytesChecksumIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `hashing the raw public document bytes reproduces the etag and checksum header`() {

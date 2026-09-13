@@ -5,6 +5,56 @@ publishable, and how a whole-document snapshot is materialized safely. Derived f
 `sourceconfig/domain` (the state machine), `SourceAdminService`, `DocumentAssemblyService`, and the
 startup validators. Authoritative spec: [`PLAN.md`](PLAN.md) §5, §8 (rule 29), §9, §12.
 
+## Durable initial-publication phase
+
+The `document_publication_state` singleton holds both the latest pointer and bootstrap admission.
+This phase is separate from each source's lifecycle; a matching roster, signature or revision never
+establishes completion:
+
+| Phase | Meaning |
+|---|---|
+| `PENDING` | Eligible for the raw initial-bootstrap transaction; no ordinary publication/import. |
+| `COMPLETE` | Successful bootstrap has an immutable origin receipt; ordinary evolution is permitted. |
+| `RECONCILIATION_REQUIRED` | Retain coherent existing reads, but refuse bootstrap and ordinary publication/import pending separately authorized reconciliation. |
+
+V13.2 requires exactly one existing singleton with id 1; missing/multiple state fails, never seeds a
+replacement. At migration, `PENDING` requires a null pointer and empty source heads, revisions,
+validation results, editor drafts, changesets (including independent changeset-only state), v1
+documents, and v2 catalogs/membership/removal history. Users/auth history does not disqualify it.
+Any populated/history-bearing source state becomes `RECONCILIATION_REQUIRED`, without rewriting
+source content/status, artifacts, pointer or sequence, and without automatic COMPLETE adoption.
+
+**Bootstrap before ordinary authoring.** `PENDING` draft authoring may remain available, but
+conflicting draft/extra source heads are not silently adopted; there is no repair API. The migration
+classification is not a perpetual all-table-emptiness rule: new independent, unapplied changesets
+with no source heads may remain in `PENDING`; bootstrap neither applies, adopts nor rewrites them.
+GET cutover readiness checks phase/source heads, not payload approval or all authoring state.
+
+The only initial publication path is
+`POST /api/v1/admin/source-catalog-v2/cutover/import-bundled`:
+
+1. Bound/authenticate/confirm/hash the **actual request bytes** before acquiring the global lock G.
+   Under G, coherent `COMPLETE` returns the original receipt for identical bytes before UTF-8,
+   parsing or current reference policy; different bytes conflict. Reconciliation state refuses.
+2. Only `PENDING` strictly decodes UTF-8, strictly parses schema 1 and admits the exact reviewed 45
+   unique APIs and full ordered/default-expanded 12 generic models, including active lifecycle and
+   priority 0. Legacy-33 content and the full 45-list order are not reference-pinned; normal
+   validation and effective-head checks still apply.
+3. Stage the existing import/reorder behavior **without publication**, check all effective heads,
+   withhold exactly the 33 reviewed legacy **source definitions**, then recheck 12 ACTIVE generic /
+   33 WITHHELD. These are not complaint/Firestore records.
+4. Use the same private assembly body and **one instant** for one v1 snapshot, one signed v2 catalog,
+   origin receipt and audits. Only after both artifacts exist does an exactly-one still-PENDING
+   completion update store the receipt, move the pointer and set COMPLETE. No early COMPLETE.
+
+All steps after locking are in one transaction. Failure rolls back source rows, artifacts, audits,
+receipt and pointer changes; PostgreSQL sequence gaps remain legal. Receipt revisions are equal,
+but v1/v2 checksums identify separate artifacts. Replays retain the original time and actor, do not
+stage/revalidate/allocate/audit again, and never undo later additions, edits, lifecycle changes or
+empty catalogs. Current reference loading is PENDING-only: a missing/changed reference refuses new
+admission, not a coherent retained origin replay/read. See [API receipt/bytes](API.md#initial-catalog-bootstrap)
+and [reference/rollout](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap).
+
 ## Server states (6), v1 mapping, and v2 mapping
 
 Authoring truth is **per-source** (`source_configs` head + immutable `source_config_revisions`); the
@@ -128,19 +178,29 @@ stays `active`, a `disabled` one stays `disabled`).
 
 Two properties (`kira.config.*`) bound the sequence with **exact** comparisons:
 
-- `bundled-revision-floor` (default **5**) — the exact-12 catalog-v2 bundle revision shipped by the app
-  binary. Every published server revision must be **strictly `>`** it.
+- `bundled-revision-floor` (retained backend default **5**) — the configured publication bound, to be
+  checked against the actually shipped app bundle. Every published server revision must be
+  **strictly `>`** this configured value; the default is not a verified app-binary revision.
 - `minimum-server-revision` (default **100**) — the smallest revision the backend may ever publish (=
   the sequence seed). The sequence's next value must be **`>=`** it (inclusive: the first value IS 100).
+
+The accepted App source bundle is revision **6**, used as `bundled.revision` by its catalog-v2 client.
+This is distinct from the retained backend default, not a separate client floor of 5. Deployed-binary
+floors and signed-bootstrap/activation compatibility require [separate verification](MIGRATION_BUNDLED_TO_REMOTE.md#3-the-two-floor-revision-model).
 
 At boot, fail-fast validators assert (never silently repaired):
 
 1. `minimum-server-revision > bundled-revision-floor`.
 2. sequence-next `>=` `minimum-server-revision`.
 3. when snapshots exist, sequence-next `>` the latest published revision.
-4. the `document_publication_state` pointer is coherent: NULL ⇒ zero snapshots (fresh install);
+4. the `document_publication_state` pointer is coherent: NULL ⇒ zero snapshots (not itself proof of
+   a pristine or bootstrap-approved catalog);
    non-NULL ⇒ references a snapshot AND equals `MAX(document_revision)` (nothing above the pointer);
    sequence-next `>` the pointer.
+5. exactly one coherent phase/receipt singleton exists. COMPLETE requires matching immutable origin
+   artifacts/checksums/time/actor and a latest pointer at or above the origin revision; other phases
+   have no receipt. Missing/incoherent state fails closed, not as an empty catalog. This check does
+   not load today's initial reference policy.
 
 The `document_publication_state.latest_document_revision` singleton pointer is **the** authoritative
 "latest" mechanism — every latest read resolves through it; `MAX(document_revision)` is never a read
@@ -152,14 +212,17 @@ path (it survives only inside the startup comparison).
 
 ## The 10-step publication sequence (globally serialized)
 
-Every state-visible document mutation — publish, operational-mode change, disable, enable, retire, remove, rollback, bundled
-import, and `republish` — runs this exact sequence inside **one** transaction. The per-mutation
-transaction alone is not enough: without global ordering, two concurrent mutations each assemble a
-candidate from a snapshot that predates the other's commit, and the later revision silently loses the
-earlier change (a lost update read-committed does not prevent).
+Every ordinary state-visible document mutation — publish, operational-mode change, disable, enable,
+retire, remove, rollback, bundled import, and `republish` — requires bootstrap **COMPLETE** for
+materialization and runs this sequence inside **one** transaction. Ordinary import checks COMPLETE
+before staging, even for a no-op. Initial bootstrap uses the separate admission/finalization above,
+not a bypass of the ordinary guard. The per-mutation transaction alone is not enough: without global
+ordering, two concurrent mutations each assemble a candidate from a snapshot that predates the
+other's commit, and the later revision silently loses the earlier change (a lost update read-committed
+does not prevent).
 
 1. Lock the singleton `document_publication_state` row `FOR UPDATE` — the **global publication lock**;
-   concurrent mutators queue here.
+   concurrent mutators queue here. Ordinary materialization reasserts this exact-one lock and COMPLETE.
 2. Lock the affected `source_configs` row(s) `FOR UPDATE` (always global lock first, then source rows —
    no deadlock is possible because every writer takes the global lock first).
 3. Apply the mutation (revision insert / status change / import batch).
@@ -183,10 +246,16 @@ concurrent change. Concurrent publishes for the same source serialize on the loc
 exactly one deterministic winner; the loser re-reads state under the lock and either publishes against
 the new baseline or gets the deterministic 409.
 
+Every inventory creator also takes G **before existence checks, position allocation or insertion**,
+including draft creation. Global-before-source-row ordering is preserved; an absent row is not a
+substitute for the singleton lock when serializing creators with bootstrap.
+
 ## Empty document
 
-Publishing a document with **zero** active sources is legal — it is the truthful emergency or terminal
-state reached through explicit lifecycle changes. Whole-document validation accepts zero sources;
+After **COMPLETE**, publishing a document with **zero** active sources is legal — the initial 12/33
+roster is an origin admission rule, not a permanent inventory requirement. Zero active sources alone
+is not a Store-release block, and empty publication is not a way around PENDING bootstrap.
+Whole-document validation accepts zero sources;
 under `kcj-1` default-omission the empty `sources` list is absent from the canonical bytes. The v2 app
 does not union the bundle into a verified remote catalog: it atomically activates the empty active
 projection so an older source cannot survive a kill switch. If that candidate fails authentication,
@@ -194,23 +263,23 @@ validation, download, or persistence, the complete previous tier remains active.
 
 ## `republish`
 
-`POST /admin/documents/republish` force-materializes a new snapshot from current state, **always**
-creating a new `document_revision` even when the canonical content is unchanged. That is its purpose: a
-deliberate recovery tool (e.g. after a `canon_version` algorithm change). `canon_version` (`kcj-1` in
-v1) is stored on every revision and snapshot so a future canonicalization change is explicit and
-`republish` is the documented recovery path.
+After bootstrap **COMPLETE**, `POST /admin/documents/republish` force-materializes a new snapshot from
+current state, **always** creating a new `document_revision` even when the canonical content is
+unchanged. That is its purpose: a deliberate recovery tool (e.g. after a `canon_version` algorithm
+change). `canon_version` (`kcj-1` in v1) is stored on every revision and snapshot so a future
+canonicalization change is explicit and `republish` is the documented recovery path.
 
 ## Startup-inconsistency recovery runbook
 
-The startup validators **never auto-repair**. On a detected inconsistency the app refuses to start
-(readiness stays red) and the error names this runbook. To recover:
+The startup validators **never auto-repair**. Incoherent singleton/pointer/receipt/artifact state
+refuses startup. Coherent `RECONCILIATION_REQUIRED` is instead a publication hold with existing reads
+retained; restarting or matching the initial roster does not qualify it as COMPLETE.
 
-1. Inspect `published_documents` versus `document_publication_state.latest_document_revision` and the
-   `seq_document_revision` state (`SELECT last_value FROM pg_sequences WHERE sequencename =
-   'seq_document_revision'`).
-2. Decide which snapshot is truly the latest.
-3. Repair with a single audited SQL statement — e.g.
-   `UPDATE document_publication_state SET latest_document_revision = <verified>, updated_at = now() WHERE id = 1;`
-   and/or `ALTER SEQUENCE seq_document_revision RESTART WITH <n>;` when the sequence lags.
-4. Record the manual action in `audit_log`.
-5. Restart.
+Inspect the actual installed schema/Flyway history and checksums, source authoring/history, both
+artifact families, origin receipt, pointer and sequence without rewriting them. V13.2 follows 13.1
+and precedes reserved V14; an installation already beyond that insertion point needs a separately
+reviewed upgrade path, not out-of-order/repair/baseline flags or edited old SQL. Drain/stop old writers
+that ignore the gate before rollout. Reconciliation, adoption or corruption recovery requires an
+owner-approved plan and separate verification; no automatic reset/backfill or new repair API is
+provided. **Do not reset pointers/sequences or fabricate a receipt to force bootstrap eligibility.**
+See the [cutover checklist](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist) for the external gates.

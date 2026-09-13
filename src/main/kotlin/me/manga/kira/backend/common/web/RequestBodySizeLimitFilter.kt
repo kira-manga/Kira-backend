@@ -19,9 +19,10 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Enforces the HTTP body-size contract before MVC/Jackson/strict source parsing. The normal cap is
- * 256 KiB; the bundled migration endpoint alone receives 5 MiB. The body is read at most `limit + 1`
- * bytes and replayed from memory, so chunked or falsely-small Content-Length requests cannot bypass
- * the cap. An over-limit response is a bounded RFC-9457 problem and never echoes submitted content.
+ * 256 KiB; bundled import, atomic bootstrap import and tutorial media receive 5 MiB. Nonmultipart
+ * bodies are read at most `limit + 1` bytes and replayed from memory, so chunked or falsely-small
+ * Content-Length requests cannot bypass the cap. An over-limit response is a bounded RFC-9457
+ * problem and never echoes submitted content.
  */
 class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OncePerRequestFilter() {
 
@@ -52,7 +53,12 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
 
     private fun limitFor(request: HttpServletRequest): Int {
         val applicationPath = request.requestURI.removePrefix(request.contextPath)
-        return if (applicationPath == IMPORT_PATH || applicationPath == TUTORIAL_MEDIA_PATH) MAX_IMPORT_BODY_BYTES else DEFAULT_MAX_BODY_BYTES
+        val bootstrapImport = request.method == "POST" && applicationPath == BOOTSTRAP_IMPORT_PATH
+        return if (applicationPath == IMPORT_PATH || applicationPath == TUTORIAL_MEDIA_PATH || bootstrapImport) {
+            MAX_IMPORT_BODY_BYTES
+        } else {
+            DEFAULT_MAX_BODY_BYTES
+        }
     }
 
     private fun writeTooLarge(response: HttpServletResponse, limit: Int) {
@@ -113,6 +119,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         const val DEFAULT_MAX_BODY_BYTES = 256 * 1024
         const val MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024
         const val IMPORT_PATH = "/api/v1/admin/sources/import-bundled"
+        const val BOOTSTRAP_IMPORT_PATH = "/api/v1/admin/source-catalog-v2/cutover/import-bundled"
         const val TUTORIAL_MEDIA_PATH = "/api/v1/admin/tutorial-media"
     }
 }
