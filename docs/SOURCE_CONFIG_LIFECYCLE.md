@@ -178,15 +178,18 @@ stays `active`, a `disabled` one stays `disabled`).
 
 Two properties (`kira.config.*`) bound the sequence with **exact** comparisons:
 
-- `bundled-revision-floor` (retained backend default **5**) — the configured publication bound, to be
+- `bundled-revision-floor` (backend source default **6**) — the configured publication bound, to be
   checked against the actually shipped app bundle. Every published server revision must be
   **strictly `>`** this configured value; the default is not a verified app-binary revision.
 - `minimum-server-revision` (default **100**) — the smallest revision the backend may ever publish (=
   the sequence seed). The sequence's next value must be **`>=`** it (inclusive: the first value IS 100).
 
-The accepted App source bundle is revision **6**, used as `bundled.revision` by its catalog-v2 client.
-This is distinct from the retained backend default, not a separate client floor of 5. Deployed-binary
-floors and signed-bootstrap/activation compatibility require [separate verification](MIGRATION_BUNDLED_TO_REMOTE.md#3-the-two-floor-revision-model).
+The accepted App source bundle is revision **6**, used as `bundled.revision` by its catalog-v2 client,
+which requires `manifest.catalogRevision > bundled.revision` plus its durable accepted-floor checks.
+The backend source default is aligned, but deployed-binary floors, configured overrides and signed
+bootstrap/activation compatibility require [separate verification](MIGRATION_BUNDLED_TO_REMOTE.md#3-the-two-floor-revision-model).
+The change from default 5 to 6 keeps minimum 100 and all comparisons below unchanged; a custom minimum 6
+with no explicit floor now correctly fails the strict minimum-greater-than-floor check.
 
 At boot, fail-fast validators assert (never silently repaired):
 
@@ -208,7 +211,7 @@ path (it survives only inside the startup comparison).
 
 > **Ops:** at production cutover — and at every app release that re-bundles — re-verify
 > `bundled-revision-floor` against the revision actually shipped in the live binary. Never rely forever
-> on "bundled == 4".
+> on a source default as evidence of installed state.
 
 ## The 10-step publication sequence (globally serialized)
 

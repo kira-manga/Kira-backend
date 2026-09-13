@@ -16,7 +16,7 @@
         "home":     { "url": "{baseUrl}/api/query?page={page}&perPage=24&orderBy=lastChapterAddedAt&orderDirection=desc", "format": "json", "root": "posts" },
         "featured": { "url": "{baseUrl}/api/query?page={page}&perPage=24&orderBy=totalViews&orderDirection=desc", "format": "json", "root": "posts" },
         "search":   { "url": "{baseUrl}/api/query?searchTerm={queryEncoded}&perPage=24", "format": "json", "root": "posts" },
-        "details": { "url": "{itemUrl}", "format": "json" },
+        "details": { "url": "{itemUrl}&includeChapters=true", "format": "json" },
         "pages":   { "url": "{chapterUrl}", "format": "json", "root": "chapter.images" }
       },
       "fields": {
