@@ -10,11 +10,13 @@ internal class PersistenceJdbcGuardCall private constructor(
     private val token: PersistenceProducerEpoch.Call,
     private val kind: PersistenceJdbcGuardCallKind,
     private val parent: PersistenceJdbcGuardCall?,
+    internal val budget: PersistenceTimeBudget?,
 ) {
     private val actualCaller = Thread.currentThread()
     private var output: Any? = null
     private var outcome = PersistenceJdbcCallOutcome.RETURNED
     private var ended = false
+    private var finishReturned = false
     private var finishedSuccessfully = false
     private var driver: PersistencePgOwnedCutAccess.Invocation? = null
     private var driverInputs: PhysicalJdbcInputs? = null
@@ -22,6 +24,7 @@ internal class PersistenceJdbcGuardCall private constructor(
     private var driverUncertain = false
     private var driverPreparationFailure = false
     private var driverRetained = false
+    private var creator: PoolLifecycle.LeaseDispatchCreator? = null
     internal var nextFailedOutput: PersistenceJdbcGuardCall? = null
     internal var nextUnresolvedDriver: PersistenceJdbcGuardCall? = null
 
@@ -81,12 +84,53 @@ internal class PersistenceJdbcGuardCall private constructor(
                 finishProducer()
             }
         }
+        finishReturned = true // Includes driver/core finally return, not merely a claimed producer end.
     }
+
+    internal fun admitsCreator(lease: PersistenceJdbcLease, dispatch: PersistenceJdbcDispatch.Frame): Boolean =
+        creator == null && !ended && Thread.currentThread() === actualCaller && context === lease.state.context &&
+            identity === lease.identity && identity.epoch === token.epoch && kind === dispatch.kind &&
+            context.actualFrame(this) && token.actualAdmitted() && dispatch.creatorAvailable(lease)
+
+    internal fun retainCreator(
+        prepared: PoolLifecycle.LeaseDispatchCreator,
+        lease: PersistenceJdbcLease,
+        dispatch: PersistenceJdbcDispatch.Frame,
+    ): PersistenceProducerEpoch.OuterTail {
+        check(admitsCreator(lease, dispatch))
+        creator = prepared
+        dispatch.retainCreator(prepared)
+        return token.prepareOuterTail() ?: PersistenceJdbcGuardContext.refuse()
+    }
+
+    internal fun creatorGuardEnded(prepared: PoolLifecycle.LeaseDispatchCreator): Boolean =
+        !prepared.actualEnded() && (creator === prepared || creator == null) && Thread.currentThread() === actualCaller && ended && finishReturned
+
+    internal fun retainedCreator(prepared: PoolLifecycle.LeaseDispatchCreator): Boolean =
+        creator === prepared && !prepared.actualEnded() && Thread.currentThread() === actualCaller
+
+    /** Tail failure is retained even after core TL restoration; it never authenticates another JDBC call. */
+    internal fun creatorFailed(prepared: PoolLifecycle.LeaseDispatchCreator) {
+        check(retainedCreator(prepared))
+        if (!ended) {
+            outcome = PersistenceJdbcCallOutcome.OWNED_FAILURE
+            token.observeFailure(outcome)
+        }
+        driverUncertain = true
+        context.creatorBookkeepingFailed(this, retain = !driverRetained)
+        driverRetained = true
+    }
+
+    internal fun ownsCreatorOnCaller(expected: PersistenceJdbcGuardContext): Boolean =
+        context === expected && creator?.actualEnded() == false && Thread.currentThread() === actualCaller
 
     @Suppress("TooGenericExceptionCaught")
     private fun finishProducer() {
         try {
             context.endFrame(this, parent)
+            // A creator retained before a failed dispatch/tail preparation still owns this
+            // producer. A missing tail pointer is not successful unadmitted setup cleanup.
+            check(creator == null || creator?.tail != null)
             check(token.finish(outcome))
             ended = true
             finishedSuccessfully = outcome === PersistenceJdbcCallOutcome.RETURNED && !driverUncertain && !driverPreparationFailure
@@ -255,6 +299,7 @@ internal class PersistenceJdbcGuardCall private constructor(
             token: PersistenceProducerEpoch.Call,
             kind: PersistenceJdbcGuardCallKind,
             parent: PersistenceJdbcGuardCall?,
-        ): PersistenceJdbcGuardCall = PersistenceJdbcGuardCall(context, identity, token, kind, parent)
+            budget: PersistenceTimeBudget? = null,
+        ): PersistenceJdbcGuardCall = PersistenceJdbcGuardCall(context, identity, token, kind, parent, budget)
     }
 }

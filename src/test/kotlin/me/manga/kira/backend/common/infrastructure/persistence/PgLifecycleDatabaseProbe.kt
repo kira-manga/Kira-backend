@@ -43,11 +43,17 @@ object PgLifecycleDatabaseProbe {
         println("PG_DATABASE_VERIFIED ${case.label} nonce=$nonce")
     }
 
-    /** The two retained failures have no successful lifecycle cleanup path. Exit is process-only. */
+    /** Closed retained failures have no successful lifecycle cleanup path. Exit is process-only. */
     private fun pendingPool(case: PgLifecycleDatabaseCase, nonce: String, root: Path, port: Int): Nothing {
         check(case.poolPendingFailure && port in 1..65535)
         val handshake = PgLifecycleDatabaseHandshake(root.resolve("phases"), nonce, PgLifecycleDatabaseParty.CHILD, case)
-        val result = runCatching { OwnedPoolPendingProbe.verify(case, port, nonce, handshake) }
+        val result = runCatching {
+            if (case.poolCreatorFailure) {
+                OwnedPoolLeaseCreatorPendingProbe.verify(case, port, nonce, handshake)
+            } else {
+                OwnedPoolPendingProbe.verify(case, port, nonce, handshake)
+            }
+        }
         if (result.isFailure) {
             describeFailure("pool_pending", requireNotNull(result.exceptionOrNull()))
             println("PG_POOL_PENDING_FAILED ${case.label} nonce=$nonce")

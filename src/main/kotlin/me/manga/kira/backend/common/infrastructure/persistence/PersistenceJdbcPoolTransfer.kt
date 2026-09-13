@@ -69,7 +69,7 @@ internal class PersistenceJdbcPoolTransfer private constructor(
         if (!actualCaller() || !ownership.ownsTransfer(this)) return false
         if (!source.epoch.sealForTransfer(cleanup)) return false
         // Reentrant close may have an ancestor on this thread. It cannot wait for itself.
-        if (source.context.hasCurrentFrame()) return false
+        if (source.context.hasCurrentFrame() || PoolCallFrames.retainsLeaseTail(source.epoch)) return false
         while (!source.epoch.sealedAndEnded()) {
             if (!canWaitOutsideLocks()) return false
             LockSupport.parkNanos(minOf(persistenceFactoryRemainingMillis(budget), 1L) * 1_000_000)

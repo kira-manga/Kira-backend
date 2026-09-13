@@ -17,6 +17,7 @@ internal class PersistenceJdbcLease private constructor(
     internal val completion: PersistenceLeaseCompletion,
 ) {
     private val original = Thread.currentThread()
+    private val dispatchIssuance = Any()
     internal val cleanup = state.epoch.preparedCleanup()
     internal val identity = PersistenceJdbcGuardIdentity.prepare(state.context, state.epoch, cleanup)
     private val phase = AtomicReference(Phase.OPEN)
@@ -26,7 +27,17 @@ internal class PersistenceJdbcLease private constructor(
 
     init {
         state.retainLease(this)
+        check(entitlement.bindLease(this)) // Exact captured pre-exposure acquisition, once only.
     }
+
+    internal fun preparedForAcquisition(pool: PoolLifecycle, acquisition: PoolLifecycle.Acquisition): Boolean =
+        Thread.currentThread() === original && owner.ownsLifecycle(pool) && acquisition.captured(handle) && state.leased &&
+            state.epoch.preparedFor(ownership) && state.context.belongsToPool(state.epoch, pool)
+
+    internal fun issuedDispatch(authority: Any): Boolean = dispatchIssuance === authority
+
+    internal fun prepareCreator(dispatch: PersistenceJdbcDispatch.Frame, call: PersistenceJdbcGuardCall): PoolLifecycle.LeaseDispatchCreator? =
+        entitlement.prepareDispatch(this, dispatch, call)
 
     /** Failed acquisition bookkeeping cannot expose this committed but inaccessible borrower. */
     internal fun deliveryFailed() {
@@ -63,7 +74,7 @@ internal class PersistenceJdbcLease private constructor(
 
     internal fun enterDispatch(kind: PersistenceJdbcGuardCallKind = PersistenceJdbcGuardCallKind.BUSINESS): PersistenceJdbcDispatch.Frame {
         requireDispatch(kind)
-        return PersistenceJdbcDispatch.enter(this, returning = false, kind = kind)
+        return PersistenceJdbcDispatch.enter(this, dispatchIssuance, returning = false, kind = kind)
     }
 
     private fun requireDispatch(kind: PersistenceJdbcGuardCallKind) {
@@ -146,7 +157,7 @@ internal class PersistenceJdbcLease private constructor(
                 attempt.reject()
                 PersistenceJdbcGuardContext.refuse()
             }
-            val frame = PersistenceJdbcDispatch.enter(this, returning = true)
+            val frame = PersistenceJdbcDispatch.enter(this, dispatchIssuance, returning = true)
             dispatch = frame
             completion.retainDispatch(frame)
             handle.close() // No epoch foreground ancestor around this complete Hikari/return extent.
@@ -356,25 +367,42 @@ internal object PersistenceJdbcDispatch {
 
     internal fun enter(
         lease: PersistenceJdbcLease,
+        issuance: Any,
         returning: Boolean,
         kind: PersistenceJdbcGuardCallKind = if (returning) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS,
-    ): Frame = Frame(lease, returning, kind, frames.get()).also { frames.set(it) }
+    ): Frame {
+        if (!lease.issuedDispatch(issuance)) PersistenceJdbcGuardContext.refuse()
+        return Frame(lease, issuance, returning, kind, frames.get()).also { frames.set(it) }
+    }
 
     internal class Frame internal constructor(
         internal val lease: PersistenceJdbcLease,
+        private val issuance: Any,
         private val returning: Boolean,
         internal val kind: PersistenceJdbcGuardCallKind,
         private val parent: Frame?,
     ) {
         private val caller = Thread.currentThread()
         private var ended = false
+        private var creator: PoolLifecycle.LeaseDispatchCreator? = null
         internal val identity: PersistenceJdbcGuardIdentity get() = lease.identity
 
         internal fun returning(): Boolean = !ended && returning
 
         internal fun actualEnded(): Boolean = ended
 
+        internal fun actualUpper(expected: PersistenceJdbcLease): Boolean = lease === expected && lease.issuedDispatch(issuance) &&
+            !ended && !returning && caller === Thread.currentThread() && frames.get() === this
+
+        internal fun creatorAvailable(expected: PersistenceJdbcLease): Boolean = actualUpper(expected) && creator == null
+
+        internal fun retainCreator(prepared: PoolLifecycle.LeaseDispatchCreator) {
+            check(creatorAvailable(prepared.lease))
+            creator = prepared
+        }
+
         internal fun select(lower: PhysicalJdbcFacade, ownership: PersistenceOwnership): PersistenceJdbcPoolEpoch {
+            if (!lease.issuedDispatch(issuance)) PersistenceJdbcGuardContext.refuse()
             if (ended || caller !== Thread.currentThread() || frames.get() !== this) PersistenceJdbcGuardContext.refuse()
             return lease.select(lower, ownership, returning, kind)
         }

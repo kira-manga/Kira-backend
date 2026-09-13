@@ -85,7 +85,7 @@ internal class PersistenceLeaseCompletion private constructor(
     internal fun quiescent(): Boolean {
         if (!ingressEnded || !acquisition.completionProven()) return false
         if (!acquisition.hasCaptured()) return lease == null && acquisition.entitlement == null
-        if (checkout?.actualEnded() != true) return false
+        if (checkout?.actualEnded() != true || lease?.state?.epoch?.outerTailsEnded() == false) return false
         if (operation?.completionProven() == false || dispatch?.actualEnded() == false || returning?.actualEnded() == false) return false
         if (acquisition.entitlement?.completionProven() == false) return false
         return returning?.consented() == true || terminal?.reclaimed() == true

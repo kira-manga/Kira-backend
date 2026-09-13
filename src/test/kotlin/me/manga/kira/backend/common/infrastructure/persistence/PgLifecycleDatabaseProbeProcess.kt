@@ -119,6 +119,30 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
             PgLifecycleDatabaseMode.POOL_CORE_LAST_COUNT_TL_FAILURE ->
                 "cut=RETURN_CORE_LAST_COUNT_TL native_actual_end=true core_producer_ended=false future_entries=0 transfer_consented=false"
 
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_ENTRY_BEFORE_TL ->
+                "cut=LEASE_CREATOR_ENTRY_BEFORE_TL core_producer_ended=true active_operations=0 future_entries=1 outer_tails=1 adapter=NONE"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_ENTRY_AFTER_TL ->
+                "cut=LEASE_CREATOR_ENTRY_AFTER_TL core_producer_ended=true active_operations=0 future_entries=1 outer_tails=1 adapter=NONE"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_END_BEFORE_TL ->
+                "cut=LEASE_CREATOR_END_BEFORE_TL core_producer_ended=true active_operations=1 future_entries=1 outer_tails=1 adapter=NONE"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_END_AFTER_TL ->
+                "cut=LEASE_CREATOR_END_AFTER_TL core_producer_ended=true active_operations=1 future_entries=1 outer_tails=1 adapter=NONE"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_CORE_BEFORE_TL ->
+                "cut=LEASE_CREATOR_CORE_BEFORE_TL core_producer_ended=false active_operations=1 future_entries=1 outer_tails=1 adapter=NONE"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_CORE_AFTER_TL ->
+                "cut=LEASE_CREATOR_CORE_AFTER_TL core_producer_ended=false active_operations=1 future_entries=1 outer_tails=1 adapter=NONE"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_CLIENT_INFO_TAIL ->
+                "cut=LEASE_CREATOR_CLIENT_INFO_TAIL core_producer_ended=false active_operations=1 future_entries=1 outer_tails=1 adapter=SQLClientInfoException"
+
+            PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_DECLARED_TAIL ->
+                "cut=LEASE_CREATOR_DECLARED_TAIL core_producer_ended=false active_operations=1 future_entries=1 outer_tails=1 adapter=IOException"
+
             else -> error("Not a closed pending-pool case.")
         }
         return "PG_POOL_PENDING_RETAINED ${case.label} nonce=$nonce $cut caller_terminated=true product_end=false"
@@ -219,7 +243,7 @@ internal class PgLifecycleDatabaseProbeProcess(private val directory: Path, val 
             scram,
         )
         val locations = types.map { Path.of(it.protectionDomain.codeSource.location.toURI()) }
-        // Ordinary controls keep their original closed classpath. These two real-pool cases add
+        // Ordinary controls keep their original closed classpath. These closed real-pool cases add
         // only the already selected stock6.3.3 artifact, not the entire test runtime or a fallback.
         val poolLocation = if (case.poolPendingFailure) {
             val hikari = Class.forName("com.zaxxer.hikari.HikariDataSource", false, loader)

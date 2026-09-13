@@ -76,7 +76,10 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
         return true
     }
 
-    fun sealedAndEnded(): Boolean = state.get().let { it.sealed && it.foreground == null && it.cancellations == 0L }
+    fun sealedAndEnded(): Boolean = state.get().let { it.sealed && it.foreground == null && it.cancellations == 0L && it.outerTails == 0L }
+
+    /** Necessary scalar fact only, not an unsealed-zero completion receipt or a pool/native authority. */
+    internal fun outerTailsEnded(): Boolean = state.get().outerTails == 0L
 
     /** Reusable transfer seal on this departing epoch, never the physical owner's terminal seal. */
     internal fun sealForTransfer(authority: PersistenceJdbcCleanup): Boolean {
@@ -127,7 +130,10 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
             } else {
                 before.copy(cancellations = Math.addExact(before.cancellations, 1L))
             }
-            if (state.compareAndSet(before, after)) return true
+            if (state.compareAndSet(before, after)) {
+                call.admitted(issuance)
+                return true
+            }
         }
     }
 
@@ -160,10 +166,58 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     }
 
     private fun isUnfinishedActualCall(call: Call): Boolean =
-        call.isIssuedBy(issuance) && call.isActualCaller() && call.epoch === this && call.outcome() == null
+        call.isIssuedBy(issuance) && call.wasAdmitted() && call.isActualCaller() && call.epoch === this && call.outcome() == null
+
+    private fun actualAdmittedCall(call: Call): Boolean = isUnfinishedActualCall(call) &&
+        (call.kind === Kind.CANCELLATION || state.get().foreground === call)
+
+    /** Retain on the genuine Call BEFORE any fallible counter publication. No new native admission. */
+    private fun prepareOuterTail(call: Call): OuterTail? {
+        if (ownership.ownershipLockHeld() || !actualAdmittedCall(call)) return null
+        val tail = OuterTail.prepare(this, issuance, call)
+        return tail.takeIf { call.retainOuterTail(issuance, it) }
+    }
+
+    private fun registerOuterTail(tail: OuterTail) {
+        check(!ownership.ownershipLockHeld() && tail.authentic(this, issuance) && actualAdmittedCall(tail.call))
+        check(tail.claimRegistration(issuance))
+        while (true) {
+            val before = state.get()
+            // Sealing may already have won. The admitted producer still owns this tail, and
+            // cannot finish until registration has returned. Both facts share this same CAS.
+            val after = before.copy(outerTails = Math.addExact(before.outerTails, 1L))
+            if (state.compareAndSet(before, after)) {
+                tail.registered(issuance)
+                return
+            }
+        }
+    }
+
+    private fun endOuterTail(tail: OuterTail) {
+        check(!ownership.ownershipLockHeld() && tail.authentic(this, issuance) && tail.call.outcome() != null)
+        check(tail.claimEnd(issuance))
+        while (true) {
+            val before = state.get()
+            check(before.outerTails > 0L)
+            val after = before.copy(outerTails = before.outerTails - 1L)
+            if (state.compareAndSet(before, after)) {
+                tail.ended(issuance) // Non-fallible publication after the final epoch cut.
+                return
+            }
+        }
+    }
+
+    private fun failOuterTail(tail: OuterTail): Boolean {
+        if (!tail.authentic(this, issuance) || tail.actualEnded()) return false
+        tail.failed(issuance)
+        ownership.requestRetirement(this) // Never an old tail's authority over a successor.
+        sealForTerminal()
+        return true // No count is released and no later invocation can repair this obligation.
+    }
 
     private fun finish(call: Call, outcome: PersistenceJdbcCallOutcome): Boolean {
         if (!call.isIssuedBy(issuance) || !call.isActualCaller() || call.epoch !== this) return false
+        if (!call.tailRegistrationSettled()) return false
         val observed = state.get()
         if (call.kind !== Kind.CANCELLATION && observed.foreground !== call) return false
         if (!observeFailure(call, outcome)) return false
@@ -195,6 +249,8 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     ) {
         private val caller = AtomicReference(caller)
         private val actualOutcome = AtomicReference<PersistenceJdbcCallOutcome?>()
+        private val admitted = AtomicBoolean()
+        private val outerTail = AtomicReference<OuterTail?>()
 
         fun finish(outcome: PersistenceJdbcCallOutcome): Boolean = epoch.finish(this, outcome)
 
@@ -205,6 +261,23 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
         internal fun stopBusiness(authority: PersistenceJdbcCleanup): Boolean = epoch.stopForCall(this, authority)
 
         internal fun requestRetirement(): Boolean = epoch.requestForCall(this)
+
+        internal fun actualAdmitted(): Boolean = epoch.actualAdmittedCall(this)
+
+        internal fun prepareOuterTail(): OuterTail? = epoch.prepareOuterTail(this)
+
+        internal fun admitted(authority: Any) {
+            check(isIssuedBy(authority))
+            admitted.set(true)
+        }
+
+        internal fun wasAdmitted(): Boolean = admitted.get()
+
+        internal fun retainOuterTail(authority: Any, tail: OuterTail): Boolean = isIssuedBy(authority) && outerTail.compareAndSet(null, tail)
+
+        internal fun ownsOuterTail(tail: OuterTail): Boolean = outerTail.get() === tail
+
+        internal fun tailRegistrationSettled(): Boolean = outerTail.get()?.registrationSettled() != false
 
         internal fun isActualCaller(): Boolean = Thread.currentThread() === caller.get()
 
@@ -225,6 +298,48 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
         }
     }
 
+    /** One admitted call's retained outer adapter/finalizer tail, not another producer or lease registry. */
+    internal class OuterTail private constructor(private val epoch: PersistenceProducerEpoch, private val issuance: Any, internal val call: Call) {
+        private val phase = AtomicReference(TailPhase.PREPARED)
+        private val failed = AtomicBoolean()
+
+        internal fun register() = epoch.registerOuterTail(this)
+        internal fun end() = epoch.endOuterTail(this)
+        internal fun fail(): Boolean = epoch.failOuterTail(this)
+        internal fun actualEnded(): Boolean = phase.get() === TailPhase.ENDED
+        internal fun registrationSettled(): Boolean = when (phase.get()) {
+            TailPhase.ACTIVE, TailPhase.ENDING, TailPhase.ENDED -> true
+            else -> false
+        }
+
+        internal fun authentic(owner: PersistenceProducerEpoch, authority: Any): Boolean = epoch === owner && issuance === authority &&
+            call.isActualCaller() && call.ownsOuterTail(this)
+
+        internal fun claimRegistration(authority: Any): Boolean = issuance === authority && !failed.get() &&
+            phase.compareAndSet(TailPhase.PREPARED, TailPhase.REGISTERING)
+        internal fun registered(authority: Any) {
+            check(issuance === authority)
+            phase.set(TailPhase.ACTIVE)
+        }
+
+        internal fun claimEnd(authority: Any): Boolean = issuance === authority && !failed.get() && phase.compareAndSet(TailPhase.ACTIVE, TailPhase.ENDING)
+
+        internal fun failed(authority: Any) {
+            check(issuance === authority)
+            failed.set(true)
+        }
+        internal fun ended(authority: Any) {
+            check(issuance === authority)
+            phase.set(TailPhase.ENDED)
+        }
+
+        override fun toString(): String = "PersistenceProducerOuterTail(redacted)"
+
+        companion object {
+            internal fun prepare(epoch: PersistenceProducerEpoch, issuance: Any, call: Call): OuterTail = OuterTail(epoch, issuance, call)
+        }
+    }
+
     internal enum class Kind {
         FOREGROUND,
         CLEANUP,
@@ -236,8 +351,11 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
         val businessStopped: Boolean = false,
         val foreground: Call? = null,
         val cancellations: Long = 0,
+        val outerTails: Long = 0,
         val poison: PersistenceJdbcCallOutcome? = null,
     )
+
+    private enum class TailPhase { PREPARED, REGISTERING, ACTIVE, ENDING, ENDED }
 
     companion object {
         internal fun prepare(ownership: PersistenceOwnership): PersistenceProducerEpoch = PersistenceProducerEpoch(ownership, Thread.currentThread())

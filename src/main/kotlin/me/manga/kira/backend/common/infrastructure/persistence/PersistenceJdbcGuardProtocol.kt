@@ -90,6 +90,8 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun hasPhase(): Boolean = phase != null
 
+    internal fun belongsToPool(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean = epoch === expected && pool.boundTo(lifecycle)
+
     internal fun phaseJdbcFailure() {
         if (phase != null) {
             phase?.jdbcFailure()
@@ -108,7 +110,7 @@ internal class PersistenceJdbcGuardContext private constructor(
             PersistenceJdbcGuardCallKind.CLEANUP -> identity.epoch.enterCleanup(identity.cleanup, budget)
             PersistenceJdbcGuardCallKind.CANCELLATION -> identity.epoch.enterCancellation(budget)
         } ?: refuse()
-        return wrapToken(identity, token, kind)
+        return wrapToken(identity, token, kind, budget)
     }
 
     fun requireCurrent(identity: PersistenceJdbcGuardIdentity) {
@@ -400,6 +402,19 @@ internal class PersistenceJdbcGuardContext private constructor(
         if (retain) driverCustody?.retainInvocation(call)
     }
 
+    /** Same retained invocation custody, but no repeated failure/interrupt adapter after the core producer ended. */
+    internal fun creatorBookkeepingFailed(call: PersistenceJdbcGuardCall, retain: Boolean) {
+        check(call.ownsCreatorOnCaller(this))
+        driverFailed.set(true)
+        unresolvedDriver.set(true)
+        ownership.requestRetirement(epoch)
+        // Preparation may have retained a PREPARED tail on the Call before the ticket
+        // received its pointer. Seal this exact epoch too; no reentrant RETURN can wait
+        // for its own unresolved producer after partial core/TL restoration.
+        epoch.sealForTerminal()
+        if (retain) driverCustody?.retainInvocation(call)
+    }
+
     private fun copyDriverSummary(selected: PersistencePgOwnedCutAccess.Root) {
         val custody = requireNotNull(driverCustody)
         custody.observeRoot(selected)
@@ -414,10 +429,11 @@ internal class PersistenceJdbcGuardContext private constructor(
         identity: PersistenceJdbcGuardIdentity,
         token: PersistenceProducerEpoch.Call,
         kind: PersistenceJdbcGuardCallKind,
+        budget: PersistenceTimeBudget? = null,
     ): PersistenceJdbcGuardCall {
         var wrapped = false
         try {
-            val call = PersistenceJdbcGuardCall.prepare(this, identity, token, kind, frames.get())
+            val call = PersistenceJdbcGuardCall.prepare(this, identity, token, kind, frames.get(), budget)
             frames.set(call)
             wrapped = true
             return call

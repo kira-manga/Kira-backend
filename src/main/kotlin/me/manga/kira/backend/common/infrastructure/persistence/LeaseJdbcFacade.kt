@@ -40,20 +40,32 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
 
     fun matches(candidate: PersistenceJdbcLease): Boolean = lease === candidate
 
-    override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? = try {
-        invokeConnection(proxy, method, args)
-    } catch (failure: SQLClientInfoException) {
-        throw failure
-    } catch (failure: SQLException) {
-        // Admission (including stale/foreign credentials), adaptation AND finally failures all
-        // obey this narrower checked declaration; the JDK proxy must not wrap them in UTE.
-        if (method.name == "setClientInfo") throw lease.state.context.clientInfo(failure)
-        throw failure
+    @Suppress("TooGenericExceptionCaught")
+    override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
+        val invocation = PersistenceJdbcLeaseInvocation(lease)
+        try {
+            return try {
+                invokeConnection(proxy, method, args, invocation)
+            } catch (failure: SQLClientInfoException) {
+                throw failure
+            } catch (failure: SQLException) {
+                // Includes an adapter reached from invokeConnection's failing finally.
+                if (method.name == "setClientInfo") throw lease.state.context.clientInfo(failure)
+                throw failure
+            }
+        } catch (failure: Throwable) {
+            invocation.failed(failure)
+            throw failure
+        } finally {
+            invocation.finish { failure ->
+                if (method.name == "setClientInfo") lease.state.context.clientInfo(failure) else failure
+            }
+        }
     }
 
     // The checked-failure adapter and dispatch finally must enclose the same single connection invocation.
     @Suppress("CyclomaticComplexMethod")
-    private fun invokeConnection(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
+    private fun invokeConnection(proxy: Any, method: Method, args: Array<out Any?>?, invocation: PersistenceJdbcLeaseInvocation): Any? {
         if (method.declaringClass === Any::class.java) {
             return when (method.name) {
                 "toString" -> "LeaseJdbcConnection(redacted)"
@@ -86,6 +98,7 @@ private class LeaseConnectionCalls(private val lease: PersistenceJdbcLease, priv
         var wrapping = false
         var completed = false
         try {
+            invocation.enter(call, dispatch)
             return runCatching {
                 try {
                     val arguments = args?.let { source -> Array<Any?>(source.size) { source[it] } } ?: emptyArray()

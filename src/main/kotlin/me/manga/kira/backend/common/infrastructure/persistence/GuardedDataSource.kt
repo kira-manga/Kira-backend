@@ -112,6 +112,8 @@ internal class GuardedDataSource(
 
     internal fun ownsPool(identity: PersistenceJdbcPoolIdentity): Boolean = identity.boundTo(lifecycle)
 
+    internal fun ownsLifecycle(candidate: PoolLifecycle): Boolean = lifecycle === candidate
+
     internal fun businessReady(): Boolean = launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY && lifecycle.businessReady()
 
     internal fun evictOwned(lease: PersistenceJdbcLease, handle: Connection, budget: PersistenceTimeBudget): PersistenceLeaseRetirementClaim {

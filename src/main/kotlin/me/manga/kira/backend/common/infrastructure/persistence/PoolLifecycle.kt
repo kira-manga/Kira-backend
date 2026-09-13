@@ -85,7 +85,17 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     /** Positive provenance only. Core MUST reject a nonnull stale lease credential before considering this separate pool authority. */
     fun isAuthenticPoolCaller(): Boolean {
         if (owner.ownershipLockHeld()) return false
-        return synchronized(gate) { installation === Installation.INSTALLED && creatorCompletionLocked() != null }
+        return synchronized(gate) {
+            if (installation !== Installation.INSTALLED) return@synchronized false
+            val frame = PoolCallFrames.current()
+            if (frame != null) {
+                // Creator-only upper dispatch never gains lower/native fallback. A present
+                // wrong/stale frame also cannot fall back to an enclosing Worker or ticket.
+                frame.kind !== PoolCallKind.LEASE_DISPATCH && frame.authentic(this, issuance) && frame.active()
+            } else {
+                actors.actualCreatorLocked() != null
+            }
+        }
     }
 
     /** Caller retains the ticket BEFORE enter/Hikari. This original budget is never replaced or restarted. */
@@ -404,7 +414,7 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
 
     private fun prepareLeaseEntitlement(ticket: Acquisition): LeaseEntitlement? {
         if (!ticket.frame.authentic(this, issuance) || owner.ownershipLockHeld()) return null
-        val entitlement = LeaseEntitlement.prepare(this, issuance, Thread.currentThread())
+        val entitlement = LeaseEntitlement.prepare(this, issuance, Thread.currentThread(), ticket)
         return synchronized(gate) {
             if (businessSealed || !ticket.frame.active() || PoolCallFrames.current() !== ticket.frame) return null
             if (!ticket.hasCaptured() || ticket.entitlement != null) return null
@@ -530,6 +540,8 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
 
         internal fun hasCaptured(): Boolean = handle != null
 
+        internal fun captured(candidate: Connection): Boolean = handle === candidate
+
         internal fun accept(authority: Any, receipt: ShutdownReceipt) {
             check(frame.authentic(pool, authority) && frame.hasEntered())
             shared = receipt
@@ -544,9 +556,15 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     }
 
     /** One pre-exposure future return OR eviction right, not a native/epoch credential. No historical lease registry is retained. */
-    internal class LeaseEntitlement private constructor(private val pool: PoolLifecycle, private val issuance: Any, private val caller: Thread) {
+    internal class LeaseEntitlement private constructor(
+        private val pool: PoolLifecycle,
+        private val issuance: Any,
+        private val caller: Thread,
+        internal val acquisition: Acquisition?,
+    ) {
         private var phase = EntitlementPhase.AVAILABLE
         private var prepared: Operation? = null
+        private var lease: PersistenceJdbcLease? = null
 
         fun prepareReturn(budget: PersistenceTimeBudget): Operation? = pool.prepareOperation(this, PoolCallKind.RETURN, budget)
 
@@ -554,6 +572,42 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
 
         /** Outside F/G/T. Consuming a real operation already revokes future ingress; its current outer tail remains counted. */
         fun revoke(): Boolean = pool.revoke(this)
+
+        internal fun bindLease(candidate: PersistenceJdbcLease): Boolean {
+            if (!authentic(pool, pool.issuance) || pool.owner.ownershipLockHeld()) return false
+            val acquisition = this.acquisition ?: return false
+            if (!candidate.preparedForAcquisition(pool, acquisition)) return false
+            return synchronized(pool.gate) {
+                val frame = acquisition.frame
+                if (acquisition.entitlement !== this || !frame.authentic(pool, pool.issuance)) return@synchronized false
+                if (!frame.active() || PoolCallFrames.current() !== frame) return@synchronized false
+                bindLeaseLocked(pool.issuance, candidate)
+            }
+        }
+
+        internal fun prepareDispatch(
+            lease: PersistenceJdbcLease,
+            dispatch: PersistenceJdbcDispatch.Frame,
+            call: PersistenceJdbcGuardCall,
+        ): LeaseDispatchCreator? {
+            if (pool.owner.ownershipLockHeld() || !call.admitsCreator(lease, dispatch)) return null
+            if (!synchronized(pool.gate) { canDispatchLocked(pool, pool.issuance, lease) }) return null
+            val frame = PoolCallFrame.prepareLeaseDispatch(pool, pool.issuance, Thread.currentThread(), call.budget, lease.state.epoch)
+            val creator = LeaseDispatchCreator.prepare(pool, frame, this, lease, dispatch, call)
+            frame.retainCreator(pool.issuance, creator)
+            return creator
+        }
+
+        internal fun bindLeaseLocked(authority: Any, candidate: PersistenceJdbcLease): Boolean {
+            if (issuance !== authority || phase !== EntitlementPhase.AVAILABLE) return false
+            if (prepared != null || lease != null) return false
+            lease = candidate
+            return true
+        }
+
+        /** Caller identity comes from the admitted guard, not the terminal entitlement's original Thread. */
+        internal fun canDispatchLocked(owner: PoolLifecycle, authority: Any, candidate: PersistenceJdbcLease): Boolean =
+            pool === owner && issuance === authority && phase === EntitlementPhase.AVAILABLE && lease === candidate
 
         internal fun completionProven(): Boolean = synchronized(pool.gate) {
             phase === EntitlementPhase.REVOKED || (phase === EntitlementPhase.CONSUMED && prepared?.completionProven() == true)
@@ -590,7 +644,141 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         override fun toString(): String = "PoolLeaseEntitlement(redacted)"
 
         companion object {
-            internal fun prepare(pool: PoolLifecycle, issuance: Any, caller: Thread): LeaseEntitlement = LeaseEntitlement(pool, issuance, caller)
+            internal fun prepare(pool: PoolLifecycle, issuance: Any, caller: Thread, acquisition: Acquisition? = null): LeaseEntitlement =
+                LeaseEntitlement(pool, issuance, caller, acquisition)
+        }
+    }
+
+    /** One upper invocation, independent of the sole future RETURN/EVICTION preparation and consumption. */
+    internal class LeaseDispatchCreator private constructor(
+        private val pool: PoolLifecycle,
+        internal val frame: PoolCallFrame,
+        internal val entitlement: LeaseEntitlement,
+        internal val lease: PersistenceJdbcLease,
+        internal val dispatch: PersistenceJdbcDispatch.Frame,
+        internal val call: PersistenceJdbcGuardCall,
+    ) {
+        internal var tail: PersistenceProducerEpoch.OuterTail? = null
+        internal var setupStarted = false
+        internal var counted = false
+        internal var refusedBeforeEntry = false
+        internal var failed = false
+        private val endClaimed = AtomicBoolean()
+
+        internal fun enter(): Boolean {
+            val frame = this.frame
+            if (pool.owner.ownershipLockHeld() ||
+                !frame.authenticCreator(pool, pool.issuance, this) ||
+                !call.admitsCreator(lease, dispatch)
+            ) {
+                return false
+            }
+            if (!synchronized(pool.gate) { entitlement.canDispatchLocked(pool, pool.issuance, lease) }) {
+                refusedBeforeEntry = true // Exact caller/guard, but its unadmitted terminal association was revoked.
+                return false
+            }
+            if (!frame.claimEntry(pool.issuance, PoolCallFrames.current())) return false
+            setupStarted = true
+            var setupReturned = false
+            try {
+                val tail = call.retainCreator(this, lease, dispatch)
+                this.tail = tail // Both the genuine Call and this retained ticket precede registration.
+                tail.register()
+                PoolCallFrames.install(frame)
+                val admitted = synchronized(pool.gate) {
+                    if (!entitlement.canDispatchLocked(pool, pool.issuance, lease)) return@synchronized false
+                    val count = Math.addExact(pool.operations, 1L)
+                    pool.operations = count
+                    counted = true
+                    frame.activate(pool.issuance)
+                    true
+                }
+                // The guard already admitted the exact kind/caller/budget. Do not mint another
+                // allowance or rerun BUSINESS readiness after that epoch has retired/sealed.
+                setupReturned = true
+                return admitted
+            } finally {
+                try {
+                    if (!setupReturned) failBeforeEnd()
+                } finally {
+                    if (!counted) restoreRefusedEntry(frame, setupReturned)
+                }
+            }
+        }
+
+        private fun restoreRefusedEntry(frame: PoolCallFrame, setupReturned: Boolean) {
+            var restored = false
+            try {
+                pool.refuseEntry(frame)
+                restored = true
+            } finally {
+                if (!restored) failBeforeEnd()
+                refusedBeforeEntry = setupReturned && restored
+            }
+        }
+
+        internal fun end(): Boolean {
+            val frame = this.frame
+            if (pool.owner.ownershipLockHeld() || !frame.authenticCreator(pool, pool.issuance, this) || failed) return false
+            if (!dispatch.actualEnded() || !call.creatorGuardEnded(this)) return false
+            if (!counted) {
+                if (!refusedBeforeEntry || !claimEnd()) return false
+                var ended = false
+                try {
+                    tail?.end()
+                    frame.finish(pool.issuance)
+                    ended = true
+                    return true
+                } finally {
+                    if (!ended) failBeforeEnd()
+                }
+            }
+            if (PoolCallFrames.current() !== frame || !frame.claimEnd(pool.issuance) || !claimEnd()) return false
+            var ended = false
+            try {
+                PoolCallFrames.restore(frame)
+                synchronized(pool.gate) {
+                    check(pool.operations > 0L)
+                    requireNotNull(tail).end()
+                    // No allocation, profile/adaptation callback or TL operation follows this
+                    // final epoch cut. These prevalidated scalar publications complete the ticket.
+                    pool.operations--
+                    frame.finish(pool.issuance)
+                    ended = true
+                }
+                return true
+            } finally {
+                if (!ended) failBeforeEnd()
+            }
+        }
+
+        internal fun failBeforeEnd(): Boolean {
+            if (pool.owner.ownershipLockHeld() || !frame.authenticCreator(pool, pool.issuance, this)) return false
+            if (!setupStarted || frame.ended()) return false
+            failed = true
+            pool.recordBookkeepingFailure()
+            try {
+                tail?.fail()
+            } finally {
+                if (call.retainedCreator(this)) call.creatorFailed(this)
+            }
+            return true
+        }
+
+        internal fun claimEnd(): Boolean = endClaimed.compareAndSet(false, true)
+        internal fun actualEnded(): Boolean = frame.ended()
+
+        override fun toString(): String = "PoolLeaseDispatchCreator(redacted)"
+
+        companion object {
+            internal fun prepare(
+                pool: PoolLifecycle,
+                frame: PoolCallFrame,
+                entitlement: LeaseEntitlement,
+                lease: PersistenceJdbcLease,
+                dispatch: PersistenceJdbcDispatch.Frame,
+                call: PersistenceJdbcGuardCall,
+            ): LeaseDispatchCreator = LeaseDispatchCreator(pool, frame, entitlement, lease, dispatch, call)
         }
     }
 

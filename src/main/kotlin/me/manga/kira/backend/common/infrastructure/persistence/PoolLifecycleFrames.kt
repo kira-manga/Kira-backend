@@ -25,11 +25,15 @@ internal class PoolCallFrame private constructor(
     private val issuance: Any,
     internal val kind: PoolCallKind,
     private val caller: Thread,
-    internal val budget: PersistenceTimeBudget,
+    internal val admittedBudget: PersistenceTimeBudget?,
+    private val leaseEpoch: PersistenceProducerEpoch? = null,
 ) {
+    /** Terminal/acquisition callers always have their original allowance; unbudgeted JDBC stays unbudgeted. */
+    internal val budget: PersistenceTimeBudget get() = requireNotNull(admittedBudget)
     internal val completion = PoolCreatorCompletion.prepare(issuance)
     private val phase = AtomicReference(PoolCallPhase.PREPARED)
     private var parent: PoolCallFrame? = null
+    private var leaseCreator: PoolLifecycle.LeaseDispatchCreator? = null
 
     internal fun authentic(owner: PoolLifecycle, authority: Any): Boolean = pool === owner && issuance === authority && actualCaller()
 
@@ -65,9 +69,20 @@ internal class PoolCallFrame private constructor(
 
     internal fun previous(): PoolCallFrame? = parent
 
+    internal fun retainCreator(authority: Any, creator: PoolLifecycle.LeaseDispatchCreator) {
+        check(issuance === authority && kind === PoolCallKind.LEASE_DISPATCH && leaseCreator == null)
+        leaseCreator = creator // Before this frame can be published or counted.
+    }
+
+    internal fun authenticCreator(owner: PoolLifecycle, authority: Any, creator: PoolLifecycle.LeaseDispatchCreator): Boolean =
+        authentic(owner, authority) && kind === PoolCallKind.LEASE_DISPATCH && leaseCreator === creator
+
+    internal fun retainsLeaseTail(epoch: PersistenceProducerEpoch): Boolean = leaseEpoch === epoch && actualCaller() && !ended()
+
     internal fun finish(authority: Any) {
         check(issuance === authority)
         completion.finish(authority)
+        leaseCreator = null
         parent = null // The authentic caller already restored the enclosing frame; retain no ended lineage.
         phase.set(PoolCallPhase.ENDED) // Publish only after all frame bookkeeping, including the creator fact.
     }
@@ -77,6 +92,14 @@ internal class PoolCallFrame private constructor(
     companion object {
         internal fun prepare(pool: PoolLifecycle, issuance: Any, kind: PoolCallKind, caller: Thread, budget: PersistenceTimeBudget): PoolCallFrame =
             PoolCallFrame(pool, issuance, kind, caller, budget)
+
+        internal fun prepareLeaseDispatch(
+            pool: PoolLifecycle,
+            issuance: Any,
+            caller: Thread,
+            budget: PersistenceTimeBudget?,
+            epoch: PersistenceProducerEpoch,
+        ): PoolCallFrame = PoolCallFrame(pool, issuance, PoolCallKind.LEASE_DISPATCH, caller, budget, epoch)
     }
 }
 
@@ -89,6 +112,16 @@ internal object PoolCallFrames {
     private val storage = Storage()
 
     internal fun current(): PoolCallFrame? = storage.current.get()
+
+    /** Outside F/G/T only. Current caller lineage, never a historical ticket or physical-record scan. */
+    internal fun retainsLeaseTail(epoch: PersistenceProducerEpoch): Boolean {
+        var frame = current()
+        while (frame != null) {
+            if (frame.retainsLeaseTail(epoch)) return true
+            frame = frame.previous()
+        }
+        return false
+    }
 
     internal fun install(frame: PoolCallFrame) {
         check(frame.actualCaller() && storage.current.get() === frame.previous())
@@ -114,6 +147,7 @@ internal enum class PoolCallKind {
     RETURN,
     EVICTION,
     SHUTDOWN,
+    LEASE_DISPATCH,
 }
 
 private enum class PoolCallPhase {

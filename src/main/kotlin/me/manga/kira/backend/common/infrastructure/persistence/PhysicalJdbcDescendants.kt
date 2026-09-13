@@ -453,17 +453,27 @@ internal class PhysicalJdbcNode(
 
     internal fun invokeApi(api: Class<*>, name: String, types: Array<Class<*>>, args: Array<Any?>): Any? = invokeClosed(api.getMethod(name, *types), args)
 
-    private fun invokeClosed(method: Method, arguments: Array<Any?>): Any? = try {
-        invokeGuarded(method, arguments)
-    } catch (failure: SQLException) {
-        // A failed dispatch/frame tail is still inside the public method's checked boundary.
-        // In particular a stream/XML facade must not leak a finally SQLException as UTE.
-        throw declaredFailure(method, failure)
+    @Suppress("TooGenericExceptionCaught")
+    private fun invokeClosed(method: Method, arguments: Array<Any?>): Any? {
+        val invocation = graph.lease?.let(::PersistenceJdbcLeaseInvocation)
+        try {
+            return try {
+                invokeGuarded(method, arguments, invocation)
+            } catch (failure: SQLException) {
+                // A finally failure's declared stream/XML adapter is also an owned outer tail.
+                throw declaredFailure(method, failure)
+            }
+        } catch (failure: Throwable) {
+            invocation?.failed(failure)
+            throw failure
+        } finally {
+            invocation?.finish { failure -> declaredFailure(method, failure) }
+        }
     }
 
     // One child invocation retains logical close, driver/output custody and final dispatch accounting in the same extent.
     @Suppress("TooGenericExceptionCaught", "LongMethod")
-    private fun invokeGuarded(method: Method, arguments: Array<Any?>): Any? {
+    private fun invokeGuarded(method: Method, arguments: Array<Any?>, invocation: PersistenceJdbcLeaseInvocation?): Any? {
         if (method.declaringClass === Any::class.java) return invokeObject(method, arguments)
         if (!surface.accepts(method)) PersistenceJdbcGuardContext.refuse()
         val cleanup = isCleanup(method)
@@ -483,6 +493,7 @@ internal class PhysicalJdbcNode(
         var completed = false
         var closing = false
         try {
+            invocation?.enter(call, requireNotNull(dispatch))
             return runCatching {
                 try {
                     if (cleanup) {
