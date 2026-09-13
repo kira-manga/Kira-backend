@@ -561,7 +561,13 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
                                             diagnostics.reached(CreatorTailStage.CLOCK_ENTERED)
                                             val frame = requireNotNull(PoolCallFrames.current())
                                             val ticket = ownedCutField(frame, "leaseCreator") as PoolLifecycle.LeaseDispatchCreator
-                                            assertTrue(Thread.currentThread().stackTrace.any { it.methodName == "afterJdbcCall" })
+                                            // The normal kira-backend JVM build mangles this internal method with its module name.
+                                            assertTrue(
+                                                Thread.currentThread().stackTrace.any {
+                                                    it.className == PersistencePhaseContext::class.java.name &&
+                                                        it.methodName == "afterJdbcCall\$kira_backend"
+                                                },
+                                            )
                                             assertSame(lease, ticket.lease)
                                             assertSame(originalBudget, ticket.call.budget)
                                             assertSame(originalBudget, frame.admittedBudget)
