@@ -1367,7 +1367,7 @@ internal fun withOwnedCutConnection(database: PgLifecycleDatabaseFixture, origin
 }
 
 /** Same retained driver/physical fixture, now through the actual private lower -> stock Hikari -> lease path. */
-internal fun withOwnedCutPool(database: PgLifecycleDatabaseFixture, test: (OwnedCutPool) -> Unit) {
+internal fun withOwnedCutPool(database: PgLifecycleDatabaseFixture, companion: OwnedCutPool? = null, test: (OwnedCutPool) -> Unit) {
     val case = PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.DEFAULT, 0, PgLifecycleDatabaseLane.ORDINARY, PgLifecycleDatabaseMode.MATRIX)
     val base = PgLifecycleDatabaseSettings.endpoint(case, database.port, "w03c_${UUID.randomUUID()}")
     val properties = base.driverProperties().stringPropertyNames().associateWith { base.driverProperties().getProperty(it) } +
@@ -1375,15 +1375,45 @@ internal fun withOwnedCutPool(database: PgLifecycleDatabaseFixture, test: (Owned
     val endpoint = ResolvedPersistenceEndpoint(properties, base.loginPolicy)
     // One Hikari slot, with a second physical custody cell for retirement/replacement overlap.
     PgLifecycleTestScope(endpoint, capacity = 2).use { scope ->
-        val pool = GuardedDataSource(scope.owner, endpoint, 1, PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY)
-        OwnedCutPool(scope, pool).use { fixture ->
+        var fixture: OwnedCutPool? = null
+        // Register the companion before construction/start/readiness can fail, not only after entering the test body.
+        AutoCloseable { closeOwnedCutPool(fixture, companion) }.use {
+            val pool = GuardedDataSource(scope.owner, endpoint, 1, PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY)
+            val owned = OwnedCutPool(scope, pool)
+            fixture = owned
             assertEquals(PersistenceLifecycleActivation.STARTED, pool.start())
             awaitLifecycleFact { scope.owner.snapshot().ordinaryReady && scope.owner.snapshot().timerReady }
             assertEquals(PersistenceLifecycleObservation.READY, pool.observePreparation())
             awaitLifecycleFact { scope.binding().isOwnedReceiverReady() }
-            test(fixture)
+            test(owned)
         }
     }
+}
+
+/** Both actual shutdowns are attempted before either root can wait for their shared pgjdbc Timer to end. */
+private fun closeOwnedCutPool(fixture: OwnedCutPool?, companion: OwnedCutPool?) {
+    if (companion == null) {
+        fixture?.close() // Preserve the one-pool request/invocation/observation path.
+        return
+    }
+    var firstFailure: Throwable? = null
+    fun attempt(action: () -> Unit) {
+        try {
+            action()
+        } catch (failure: Throwable) {
+            val first = firstFailure
+            if (first == null) {
+                firstFailure = failure
+            } else if (first !== failure) {
+                first.addSuppressed(failure)
+            }
+        }
+    }
+    var shutdown: OwnedCutPool.Shutdown? = null
+    attempt { shutdown = fixture?.initiateShutdown() }
+    attempt { companion.initiateShutdown() }
+    shutdown?.let { actual -> attempt { requireNotNull(fixture).awaitShutdown(actual) } }
+    firstFailure?.let { throw it }
 }
 
 internal enum class OwnedCutShutdownDiagnosticCase { RETURN_SAMPLE, FAILED_POST_CONSENT_TAIL }
@@ -1399,7 +1429,11 @@ internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDa
         return scope.entries().single { it.jdbc.currentPoolState(state) }
     }
 
-    override fun close() {
+    override fun close() = awaitShutdown(initiateShutdown())
+
+    internal class Shutdown(val receipt: PoolLifecycle.ShutdownReceipt, val invocation: PoolShutdownInvocation?)
+
+    internal fun initiateShutdown(): Shutdown {
         val receipt = requireNotNull(pool.requestShutdown())
         var invocation: PoolShutdownInvocation? = null
         shutdownDiagnostic("BEFORE_SHUTDOWN", invocation)
@@ -1409,6 +1443,12 @@ internal class OwnedCutPool(val scope: PgLifecycleTestScope, val pool: GuardedDa
             shutdownDiagnostic("AFTER_SHUTDOWN", invocation)
         }
         assertTrue(invocation in setOf(PoolShutdownInvocation.RETURNED, PoolShutdownInvocation.ALREADY_CLAIMED))
+        return Shutdown(receipt, invocation)
+    }
+
+    internal fun awaitShutdown(shutdown: Shutdown) {
+        val receipt = shutdown.receipt
+        val invocation = shutdown.invocation
         var observation = PoolShutdownObservation.PENDING
         var observed = false
         try {

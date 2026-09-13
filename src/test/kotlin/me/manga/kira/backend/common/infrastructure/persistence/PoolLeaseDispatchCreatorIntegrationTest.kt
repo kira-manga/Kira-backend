@@ -324,7 +324,7 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
 
     @Test
     fun `mixed pool creator nesting refuses wrong top fallback and unrelated lease use`() = withOwnedCutPool(database.value) { first ->
-        withOwnedCutPool(database.value) { second ->
+        withOwnedCutPool(database.value, companion = first) { second ->
             first.pool.connection.use { firstConnection ->
                 second.pool.connection.use { secondConnection ->
                     val firstLease = ownedPoolLease(firstConnection)
@@ -529,91 +529,117 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
     @Test
     fun `MODEL work expiry inside actual afterJdbcCall cannot erase its admitted creator after epoch retirement`() {
         val clock = CreatorTailClock()
-        withOrdinarySourceGrantCleanup(database.value, clock) { f ->
-            var selected: PersistenceJdbcLease? = null
-            var witnessed = false
-            val actorRan = AtomicBoolean()
-            val actorFailure = AtomicReference<Throwable?>()
-            val store = object : SourceGrantCleanup {
-                override fun deleteEligibleSourceGrants(cutoff: Instant): Int {
-                    val connection = (TransactionSynchronizationManager.getResource(f.pool) as ConnectionHolder).connection
-                    val lease = ownedPoolLease(connection)
-                    selected = lease
-                    val phase = requireNotNull(PersistencePhaseOwnership.current())
-                    val originalBudget = ownedCutField(phase, "work") as PersistenceTimeBudget
-                    val handle = ownedCutField(lease, "handle") as Connection
-                    val field = creatorField(handle, "delegate")
-                    val lower = field.get(handle) as Connection
-                    val entry = f.ownedPool.entry(connection)
-                    val hikari = ownedCutField(f.pool, "pool") as HikariDataSource
-                    val shim = object : Connection by lower {
-                        override fun getClientInfo(name: String): String? {
-                            val result = lower.getClientInfo(name)
-                            clock.nextSample = {
-                                val frame = requireNotNull(PoolCallFrames.current())
-                                val ticket = ownedCutField(frame, "leaseCreator") as PoolLifecycle.LeaseDispatchCreator
-                                assertTrue(Thread.currentThread().stackTrace.any { it.methodName == "afterJdbcCall" })
-                                assertSame(lease, ticket.lease)
-                                assertSame(originalBudget, ticket.call.budget)
-                                assertSame(originalBudget, frame.admittedBudget)
-                                assertTrue(ticket.call.creatorGuardEnded(ticket))
-                                assertNull(PersistenceJdbcDispatch.current())
-                                assertFalse(lease.state.context.hasCurrentFrame())
-                                assertEquals(1L, creatorTailCount(lease))
-                                clock.advance(2_000) // MODEL elapsed-clock seam, never a replacement/extended allowance.
-                                assertEquals(0L, persistenceFactoryRemainingMillis(originalBudget))
-                                entry.jdbc.requestRetirement(lease.state.epoch)
-                                awaitLifecycleFact { !entry.jdbc.permitsCleanup(lease.state.epoch) && entry.terminalWork != null }
-                                assertThrows<SQLException> { lease.enterDispatch() }
-                                assertFalse(f.ownedPool.lifecycle.isAuthenticPoolCaller())
-                                assertFalse(lease.completion.quiescent())
-                                assertEquals(1, f.admission.activeOwners())
-                                // This is a rights test, not the first-close-worker route oracle above.
-                                // Creation must use the admitted tail, not recheck failed BUSINESS admission.
-                                val actor = requireNotNull(
-                                    hikari.threadFactory.newThread {
-                                        try {
-                                            assertTrue(PoolActorCustody.currentThreadOwnsActorFrame())
-                                            assertTrue(f.ownedPool.lifecycle.isAuthenticPoolCaller())
-                                            actorRan.set(true)
-                                        } catch (failure: Throwable) {
-                                            actorFailure.set(failure)
-                                            throw failure
+        val actorRan = AtomicBoolean()
+        val diagnostics = CreatorTailDiagnostics(actorRan)
+        diagnostics.withFixture {
+            withOrdinarySourceGrantCleanup(database.value, clock) { f ->
+                diagnostics.capture {
+                    var selected: PersistenceJdbcLease? = null
+                    var witnessed = false
+                    val actorFailure = AtomicReference<Throwable?>()
+                    val store = object : SourceGrantCleanup {
+                        override fun deleteEligibleSourceGrants(cutoff: Instant): Int = diagnostics.capture {
+                            diagnostics.reached(CreatorTailStage.STORE_ENTERED)
+                            val connection = (TransactionSynchronizationManager.getResource(f.pool) as ConnectionHolder).connection
+                            val lease = ownedPoolLease(connection)
+                            selected = lease
+                            diagnostics.reached(CreatorTailStage.LEASE_OBTAINED)
+                            val phase = requireNotNull(PersistencePhaseOwnership.current())
+                            val originalBudget = ownedCutField(phase, "work") as PersistenceTimeBudget
+                            val handle = ownedCutField(lease, "handle") as Connection
+                            val field = creatorField(handle, "delegate")
+                            val lower = field.get(handle) as Connection
+                            val entry = f.ownedPool.entry(connection)
+                            val hikari = ownedCutField(f.pool, "pool") as HikariDataSource
+                            diagnostics.reached(CreatorTailStage.SETUP_OBTAINED)
+                            val shim = object : Connection by lower {
+                                override fun getClientInfo(name: String): String? = diagnostics.capture {
+                                    val result = lower.getClientInfo(name)
+                                    diagnostics.reached(CreatorTailStage.LOWER_RETURNED)
+                                    clock.nextSample = {
+                                        diagnostics.capture {
+                                            diagnostics.reached(CreatorTailStage.CLOCK_ENTERED)
+                                            val frame = requireNotNull(PoolCallFrames.current())
+                                            val ticket = ownedCutField(frame, "leaseCreator") as PoolLifecycle.LeaseDispatchCreator
+                                            assertTrue(Thread.currentThread().stackTrace.any { it.methodName == "afterJdbcCall" })
+                                            assertSame(lease, ticket.lease)
+                                            assertSame(originalBudget, ticket.call.budget)
+                                            assertSame(originalBudget, frame.admittedBudget)
+                                            assertTrue(ticket.call.creatorGuardEnded(ticket))
+                                            assertNull(PersistenceJdbcDispatch.current())
+                                            assertFalse(lease.state.context.hasCurrentFrame())
+                                            assertEquals(1L, creatorTailCount(lease))
+                                            diagnostics.reached(CreatorTailStage.TAIL_WITNESSED)
+                                            clock.advance(2_000) // MODEL clock only; never replace/extend the original allowance.
+                                            assertEquals(0L, persistenceFactoryRemainingMillis(originalBudget))
+                                            diagnostics.reached(CreatorTailStage.MODEL_EXPIRED)
+                                            entry.jdbc.requestRetirement(lease.state.epoch)
+                                            awaitLifecycleFact { !entry.jdbc.permitsCleanup(lease.state.epoch) && entry.terminalWork != null }
+                                            diagnostics.reached(CreatorTailStage.RETIREMENT_OBSERVED)
+                                            assertThrows<SQLException> { lease.enterDispatch() }
+                                            assertFalse(f.ownedPool.lifecycle.isAuthenticPoolCaller())
+                                            assertFalse(lease.completion.quiescent())
+                                            assertEquals(1, f.admission.activeOwners())
+                                            // Rights only, not the first-close-worker oracle: retain the admitted tail's authority.
+                                            val actor = requireNotNull(
+                                                hikari.threadFactory.newThread {
+                                                    try {
+                                                        assertTrue(PoolActorCustody.currentThreadOwnsActorFrame())
+                                                        assertTrue(f.ownedPool.lifecycle.isAuthenticPoolCaller())
+                                                        actorRan.set(true)
+                                                    } catch (failure: Throwable) {
+                                                        actorFailure.set(failure)
+                                                        diagnostics.retain(failure)
+                                                        throw failure
+                                                    }
+                                                },
+                                            )
+                                            diagnostics.reached(CreatorTailStage.ACTOR_CONSTRUCTED)
+                                            actor.start()
+                                            diagnostics.reached(CreatorTailStage.ACTOR_STARTED)
+                                            awaitLifecycleFact { actor.state === Thread.State.TERMINATED && !actor.isAlive }
+                                            diagnostics.reached(CreatorTailStage.ACTOR_TERMINATED)
+                                            actorFailure.get()?.let { throw it }
+                                            assertTrue(actorRan.get())
+                                            assertNull(f.ownedPool.lifecycle.actorSnapshot().firstFailure)
+                                            assertFalse(requireNotNull(entry.terminalWork).producerDrainProven())
+                                            witnessed = true
+                                            diagnostics.reached(CreatorTailStage.WITNESS_COMPLETED)
                                         }
-                                    },
-                                )
-                                actor.start()
-                                awaitLifecycleFact { actor.state === Thread.State.TERMINATED && !actor.isAlive }
-                                actorFailure.get()?.let { throw it }
-                                assertTrue(actorRan.get())
-                                assertNull(f.ownedPool.lifecycle.actorSnapshot().firstFailure)
-                                assertFalse(requireNotNull(entry.terminalWork).producerDrainProven())
-                                witnessed = true
+                                    }
+                                    diagnostics.reached(CreatorTailStage.CLOCK_ARMED)
+                                    result
+                                }
                             }
-                            return result
+                            try {
+                                diagnostics.capture { field.set(handle, shim) }
+                                diagnostics.expectExpiry { connection.getClientInfo("ApplicationName") }
+                            } finally {
+                                diagnostics.restore {
+                                    clock.nextSample = null
+                                    if (field.get(handle) === shim) field.set(handle, lower)
+                                }
+                            }
                         }
                     }
-                    field.set(handle, shim)
-                    try {
-                        connection.getClientInfo("ApplicationName")
-                        error("Expired actual afterJdbcCall must refuse.")
-                    } finally {
-                        clock.nextSample = null
-                        if (field.get(handle) === shim) field.set(handle, lower)
+                    val failure = assertThrows<PersistencePhaseException> { f.newExecutor(store).cleanupSourceGrants() }
+                    diagnostics.phaseFailed(failure)
+                    awaitLifecycleFact {
+                        runCatching {
+                            requireConnectionFree()
+                            true
+                        }.getOrDefault(false)
                     }
+                    diagnostics.throwUnexpected()
+                    assertTrue(witnessed, "MODEL callback witness missing: ${diagnostics.describe()}")
+                    assertTrue(actorRan.get(), "MODEL authentic actor did not run: ${diagnostics.describe()}")
+                    assertTrue(requireNotNull(selected).state.epoch.outerTailsEnded())
+                    assertTrue(requireNotNull(selected).completion.quiescent())
+                    assertEquals(0, f.admission.activeOwners())
+                    assertTrue(diagnostics.expectedExpiryObserved(), diagnostics.describe())
+                    assertEquals(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED, failure.code, diagnostics.describe())
                 }
             }
-            assertThrows<PersistencePhaseException> { f.newExecutor(store).cleanupSourceGrants() }
-            awaitLifecycleFact {
-                runCatching {
-                    requireConnectionFree()
-                    true
-                }.getOrDefault(false)
-            }
-            assertTrue(witnessed && actorRan.get())
-            assertTrue(requireNotNull(selected).state.epoch.outerTailsEnded())
-            assertTrue(requireNotNull(selected).completion.quiescent())
-            assertEquals(0, f.admission.activeOwners())
         }
     }
 
@@ -646,6 +672,122 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
         check(cleanup.contains("alive=false forced=false reader_joined=true streams_closed=true"))
         check(cleanup.contains("output_overflow=false output_read_failed=false output_eof=true reader_alive=false reader_state=TERMINATED"))
         println("PG_POOL_PENDING_PROCESS_OBSERVED ${case.label} nonce=${child.nonce} cleanup=PROCESS_ONLY product_end=false")
+    }
+}
+
+private enum class CreatorTailStage {
+    STORE_ENTERED,
+    LEASE_OBTAINED,
+    SETUP_OBTAINED,
+    LOWER_RETURNED,
+    CLOCK_ARMED,
+    CLOCK_ENTERED,
+    TAIL_WITNESSED,
+    MODEL_EXPIRED,
+    RETIREMENT_OBSERVED,
+    ACTOR_CONSTRUCTED,
+    ACTOR_STARTED,
+    ACTOR_TERMINATED,
+    WITNESS_COMPLETED,
+}
+
+/** Facts and original failures only: never admission authority, a budget adjustment or a synthetic completion. */
+private class CreatorTailDiagnostics(private val actorRan: AtomicBoolean) {
+    private val stages = linkedSetOf<CreatorTailStage>() // Caller-only; the actor publishes only its existing atomic facts/failure.
+    private val unexpected = AtomicReference<Throwable?>()
+    private var callFailure: Throwable? = null
+    private var expectedExpiry: Throwable? = null
+    private var callReturned = false
+    private var phaseFailure: PersistencePhaseException? = null
+
+    fun reached(stage: CreatorTailStage) {
+        stages.add(stage)
+    }
+
+    fun retain(failure: Throwable) {
+        unexpected.compareAndSet(null, failure)
+        preserveLater(requireNotNull(unexpected.get()), failure)
+    }
+
+    fun <T> capture(action: () -> T): T = try {
+        action()
+    } catch (failure: Throwable) {
+        if (failure !== expectedExpiry) retain(failure)
+        throw failure
+    }
+
+    fun expectExpiry(call: () -> Unit): Nothing {
+        try {
+            call()
+        } catch (failure: Throwable) {
+            callFailure = failure
+            // The real afterJdbcCall -> requireWork path throws this bounded phase exception directly.
+            // An early refusal or a shim/callback assertion is not the intended post-witness expiry.
+            if (
+                CreatorTailStage.WITNESS_COMPLETED in stages && failure is PersistencePhaseException &&
+                failure.code === PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED
+            ) {
+                expectedExpiry = failure
+            } else {
+                retain(failure)
+            }
+            throw failure
+        }
+        callReturned = true
+        val failure = IllegalStateException("Expired actual afterJdbcCall must refuse.")
+        retain(failure)
+        throw failure
+    }
+
+    fun restore(action: () -> Unit) {
+        try {
+            action()
+        } catch (failure: Throwable) {
+            retain(failure)
+            throw failure
+        }
+    }
+
+    fun phaseFailed(failure: PersistencePhaseException) {
+        phaseFailure = failure
+    }
+
+    fun expectedExpiryObserved(): Boolean = expectedExpiry != null
+
+    fun throwUnexpected() {
+        unexpected.get()?.let { throw it }
+    }
+
+    fun withFixture(action: () -> Unit) {
+        var escaped: Throwable? = null
+        try {
+            action()
+        } catch (failure: Throwable) {
+            escaped = failure
+        }
+        // Kept outside withOrdinarySourceGrantCleanup: its emf.destroy finally cannot replace the retained first failure.
+        val first = unexpected.get() ?: escaped
+        if (first != null && escaped != null) preserveLater(first, escaped)
+        try {
+            println(describe())
+        } catch (failure: Throwable) {
+            if (first == null) throw failure
+            preserveLater(first, failure)
+        }
+        if (first != null) throw first
+    }
+
+    fun describe(): String {
+        val callPhase = callFailure as? PersistencePhaseException
+        return "PG_POOL_CREATOR_MODEL stages=${stages.joinToString(",")} actor_ran=${actorRan.get()} " +
+            "call_returned=$callReturned call_failure=${callFailure?.javaClass?.simpleName} expected_expiry=${expectedExpiry != null} " +
+            "call_code=${callPhase?.code} call_database=${callPhase?.databaseOutcome} call_cleanup=${callPhase?.cleanupProven} " +
+            "phase_code=${phaseFailure?.code} phase_database=${phaseFailure?.databaseOutcome} phase_cleanup=${phaseFailure?.cleanupProven} " +
+            "unexpected=${unexpected.get()?.javaClass?.simpleName}"
+    }
+
+    private fun preserveLater(first: Throwable, later: Throwable) {
+        if (first !== later && first.suppressed.none { it === later }) first.addSuppressed(later)
     }
 }
 
