@@ -65,7 +65,7 @@ abstract class AbstractAdminSourceIT : AbstractIntegrationTest() {
     /** Ordinary publication tests opt in; bootstrap/authoring-only tests start genuinely PENDING. */
     protected open val bootstrapCatalogBeforeEach: Boolean = false
 
-    protected var bootstrapReceipt: InitialSourceCatalogReceipt? = null
+    protected final var bootstrapReceipt: InitialSourceCatalogReceipt? = null
         private set
 
     /** Emits exactly the mirrored model's keys (no unknown keys) — accepted by the STRICT parser (PLAN §7). */

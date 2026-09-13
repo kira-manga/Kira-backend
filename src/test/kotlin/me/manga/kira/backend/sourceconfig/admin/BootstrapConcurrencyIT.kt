@@ -408,10 +408,7 @@ class BootstrapRaceDocuments(
     }
 }
 
-class BootstrapRaceSources(
-    private val delegate: SourceConfigRepository,
-    private val hooks: BootstrapRaceHooks,
-) : SourceConfigRepository by delegate {
+class BootstrapRaceSources(private val delegate: SourceConfigRepository, private val hooks: BootstrapRaceHooks) : SourceConfigRepository by delegate {
     override fun existsByApi(api: String): Boolean {
         requireObservedG()
         return delegate.existsByApi(api)

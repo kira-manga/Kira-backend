@@ -11,8 +11,7 @@ enum class InitialSourceCatalogPhase(val wire: String) {
     ;
 
     companion object {
-        fun fromWire(value: String): InitialSourceCatalogPhase =
-            entries.firstOrNull { it.wire == value } ?: error("source-catalog bootstrap phase is invalid")
+        fun fromWire(value: String): InitialSourceCatalogPhase = entries.firstOrNull { it.wire == value } ?: error("source-catalog bootstrap phase is invalid")
     }
 }
 
@@ -43,11 +42,7 @@ data class InitialSourceCatalogReceipt(
     }
 }
 
-data class InitialSourceCatalogState(
-    val phase: InitialSourceCatalogPhase,
-    val latestDocumentRevision: Long?,
-    val receipt: InitialSourceCatalogReceipt?,
-) {
+data class InitialSourceCatalogState(val phase: InitialSourceCatalogPhase, val latestDocumentRevision: Long?, val receipt: InitialSourceCatalogReceipt?) {
     init {
         when (phase) {
             InitialSourceCatalogPhase.PENDING ->

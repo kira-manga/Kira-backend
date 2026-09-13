@@ -62,11 +62,7 @@ class ClasspathInitialSourceCatalogPolicy internal constructor(private val readR
         requireInventory(heads, assemblySources, setOf(SourceLifecycleStatus.WITHHELD))
     }
 
-    private fun requireInventory(
-        heads: List<SourceConfigHead>,
-        assemblySources: List<AssemblySource>,
-        legacyStatuses: Set<SourceLifecycleStatus>,
-    ) {
+    private fun requireInventory(heads: List<SourceConfigHead>, assemblySources: List<AssemblySource>, legacyStatuses: Set<SourceLifecycleStatus>) {
         val expected = reference
         requireInventoryApis(heads.map { it.api })
         heads.forEach { head ->

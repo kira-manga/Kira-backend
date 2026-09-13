@@ -91,7 +91,7 @@ class DocumentAssemblyService(
         try {
             initialCatalogPolicy.requirePublicationInventory(sources.findAll(null), assemblySources)
         } catch (ex: InitialSourceCatalogPolicyRejected) {
-            throw GenericV2CutoverRejected(ex.message ?: "initial publication inventory was rejected")
+            throw GenericV2CutoverRejected(ex.message ?: "initial publication inventory was rejected", ex)
         }
         check(instant.nano == 0) { "initial publication instant must use whole UTC seconds" }
         return materializeLocked(assemblySources, actorId, instant)

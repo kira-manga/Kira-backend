@@ -244,22 +244,20 @@ class GenericV2CutoverControllerTest {
         verifyNoInteractions(cutover)
     }
 
-    private fun unreadableRequest(confirmation: String, declaredLength: Long) =
-        object : MockHttpServletRequest("POST", BOOTSTRAP_PATH) {
-            override fun getContentLengthLong(): Long = declaredLength
+    private fun unreadableRequest(confirmation: String, declaredLength: Long) = object : MockHttpServletRequest("POST", BOOTSTRAP_PATH) {
+        override fun getContentLengthLong(): Long = declaredLength
 
-            override fun getInputStream(): ServletInputStream = error("body must not be read")
-        }.apply { addHeader(CONFIRMATION_HEADER, confirmation) }
+        override fun getInputStream(): ServletInputStream = error("body must not be read")
+    }.apply { addHeader(CONFIRMATION_HEADER, confirmation) }
 
-    private fun bodyRequest(body: ByteArray, declaredLength: Long) =
-        object : MockHttpServletRequest("POST", BOOTSTRAP_PATH) {
-            override fun getContentLength(): Int = declaredLength.toInt()
+    private fun bodyRequest(body: ByteArray, declaredLength: Long) = object : MockHttpServletRequest("POST", BOOTSTRAP_PATH) {
+        override fun getContentLength(): Int = declaredLength.toInt()
 
-            override fun getContentLengthLong(): Long = declaredLength
-        }.apply {
-            addHeader(CONFIRMATION_HEADER, CONFIRMATION)
-            setContent(body)
-        }
+        override fun getContentLengthLong(): Long = declaredLength
+    }.apply {
+        addHeader(CONFIRMATION_HEADER, CONFIRMATION)
+        setContent(body)
+    }
 
     private companion object {
         const val CUTOVER_PATH = "/api/v1/admin/source-catalog-v2/cutover"

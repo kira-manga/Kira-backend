@@ -75,11 +75,7 @@ interface InitialSourceCatalogPolicy {
     }
 }
 
-data class InitialSourceCatalogAdmission(
-    val document: SourceConfigDocument,
-    val policyId: String,
-    val referenceSha256: String,
-)
+data class InitialSourceCatalogAdmission(val document: SourceConfigDocument, val policyId: String, val referenceSha256: String)
 
 /** Implementations supply fixed, bounded details, never source bodies or submitted values. */
 class InitialSourceCatalogPolicyRejected(detail: String, cause: Throwable? = null) : RuntimeException(detail, cause)

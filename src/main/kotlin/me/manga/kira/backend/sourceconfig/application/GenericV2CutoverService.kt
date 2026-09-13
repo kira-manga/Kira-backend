@@ -44,9 +44,7 @@ class GenericV2CutoverService(
         val problems =
             when (state.phase) {
                 InitialSourceCatalogPhase.PENDING -> if (heads.isEmpty()) emptyList() else listOf("pending catalog contains source heads")
-
                 InitialSourceCatalogPhase.COMPLETE -> emptyList()
-
                 InitialSourceCatalogPhase.RECONCILIATION_REQUIRED -> listOf("existing catalog requires separately authorized reconciliation")
             }
         val withheld = heads.filter { it.status == SourceLifecycleStatus.WITHHELD }.mapTo(hashSetOf()) { it.api }
@@ -122,7 +120,7 @@ class GenericV2CutoverService(
             documents.completeInitialSourceCatalog(receipt)
             return receipt
         } catch (ex: InitialSourceCatalogPolicyRejected) {
-            throw GenericV2CutoverRejected(ex.message ?: "initial catalog policy rejected the candidate")
+            throw GenericV2CutoverRejected(ex.message ?: "initial catalog policy rejected the candidate", ex)
         }
     }
 
@@ -169,7 +167,11 @@ class GenericV2CutoverService(
 }
 
 class GenericV2CutoverRejected(detail: String) :
-    ConflictException("source-catalog v2 cutover rejected: $detail.", code = "SOURCE_CATALOG_V2_CUTOVER_REJECTED")
+    ConflictException("source-catalog v2 cutover rejected: $detail.", code = "SOURCE_CATALOG_V2_CUTOVER_REJECTED") {
+    constructor(detail: String, cause: Throwable) : this(detail) {
+        initCause(cause)
+    }
+}
 
 data class GenericV2CutoverResult(
     val ready: Boolean,

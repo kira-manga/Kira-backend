@@ -23,8 +23,7 @@ class GenericV2CutoverController(private val cutover: GenericV2CutoverService) {
 
     /** The former two-request protocol cannot publish, even with its old confirmation body. */
     @PostMapping
-    fun apply(): GenericV2CutoverResult =
-        throw GenericV2CutoverRejected("use POST /api/v1/admin/source-catalog-v2/cutover/import-bundled")
+    fun apply(): GenericV2CutoverResult = throw GenericV2CutoverRejected("use POST /api/v1/admin/source-catalog-v2/cutover/import-bundled")
 
     /**
      * ADMIN is enforced by the existing security matrix. Preserve received bytes for origin replay:

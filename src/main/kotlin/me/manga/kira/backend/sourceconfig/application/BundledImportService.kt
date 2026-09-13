@@ -128,12 +128,7 @@ class BundledImportService(
 
     /** Record the initial import after assembly and before finalization, in that same transaction. */
     @Transactional(propagation = Propagation.MANDATORY)
-    fun recordInitialBootstrapAudit(
-        document: SourceConfigDocument,
-        staged: BundledImportResult,
-        snapshot: PublishedDocument,
-        actorId: UUID,
-    ) {
+    fun recordInitialBootstrapAudit(document: SourceConfigDocument, staged: BundledImportResult, snapshot: PublishedDocument, actorId: UUID) {
         recordImportAudit(document, staged, snapshot.documentRevision, snapshot.createdAt, actorId)
     }
 

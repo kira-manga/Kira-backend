@@ -88,12 +88,16 @@ class InitialSourceCatalogPolicyTest {
             reads++
             when (defect) {
                 ReferenceDefect.MISSING -> null
+
                 ReferenceDefect.TRUNCATED -> approvedBytes.copyOf(approvedBytes.size - 1)
+
                 ReferenceDefect.CHANGED -> approvedBytes.toString(Charsets.UTF_8).replace("\"revision\":6", "\"revision\":7").toByteArray()
+
                 ReferenceDefect.UNSUPPORTED_SCHEMA ->
                     approvedBytes.toString(Charsets.UTF_8).replace("\"schemaVersion\":1", "\"schemaVersion\":2").toByteArray()
 
                 ReferenceDefect.INVALID_UTF8 -> approvedBytes.copyOf().apply { this[0] = 0xc3.toByte() }
+
                 ReferenceDefect.READ_FAILURE -> throw IOException("reference read failed")
             }
         }
@@ -271,6 +275,7 @@ class InitialSourceCatalogPolicyTest {
     @Test
     fun `effective order comes from position then api not repository return order or raw priority`() {
         val state = inventory()
+
         // Azora and Mangamello tie; the API tiebreak keeps their approved order. Absolute position
         // gaps do not rewrite the raw priority=0 values pinned in all twelve immutable models.
         fun position(old: Int): Int = if (old <= 1) 10 else old * 10
@@ -453,29 +458,49 @@ class InitialSourceCatalogPolicyTest {
 
         fun change(source: SourceConfig): SourceConfig = when (this) {
             API -> source.copy(api = "${source.api} changed")
+
             LANGUAGE -> source.copy(language = "fr")
+
             DISPLAY_NAME -> source.copy(displayName = "${source.displayName} changed")
+
             BASE_URL -> source.copy(baseUrl = "https://changed.example")
+
             IMAGE_BASE -> source.copy(imageBase = "https://changed.example")
+
             ENABLED -> source.copy(enabled = !source.enabled)
+
             PRIORITY -> source.copy(priority = source.priority + 1)
+
             ENGINE -> source.copy(engine = "legacy")
+
             MIN_APP_VERSION -> source.copy(minAppVersion = "9.9.9")
+
             HEADERS -> source.copy(headers = source.headers + ("X-Policy-Test" to "changed"))
+
             USES_CAPTURED_HEADERS -> source.copy(usesCapturedHeaders = !source.usesCapturedHeaders)
+
             PAGINATION -> source.copy(pagination = source.pagination.copy(start = source.pagination.start + 1))
+
             ENDPOINTS -> source.copy(
                 endpoints = source.endpoints + ("details" to source.endpoints.getValue("details").copy(url = "{itemUrl}?changed=1")),
             )
 
             FIELDS -> source.copy(fields = source.fields + ("chapter.date" to source.fields.getValue("chapter.date").copy(dateStrategy = "changed")))
+
             BLACKLIST_GENRES -> source.copy(blacklistGenres = source.blacklistGenres + "changed")
+
             SITE_STATE -> source.copy(siteState = "UNDER_MAINTENANCE")
+
             LIFECYCLE -> source.copy(lifecycle = "disabled")
+
             PREVIOUS_HOSTS -> source.copy(previousHosts = source.previousHosts + "changed.example")
+
             PREVIOUS_IMAGE_HOSTS -> source.copy(previousImageHosts = source.previousImageHosts + "changed.example")
+
             TRUSTED_HOSTS -> source.copy(trustedHosts = source.trustedHosts + "changed.example")
+
             ICON -> source.copy(icon = IconSpec(resourceKey = "changed"))
+
             FILTERS -> source.copy(filters = source.filters + SourceConfigFixtures.validFilter("policy_drift"))
         }
     }
@@ -495,7 +520,9 @@ class InitialSourceCatalogPolicyTest {
                 )
 
                 FILTER_ORDER -> source.copy(filters = source.filters.reversed())
+
                 OPTION_ORDER -> source.copy(filters = listOf(firstFilter.copy(options = firstFilter.options.reversed())) + source.filters.drop(1))
+
                 TRANSFORM_ORDER -> {
                     val field = source.fields.getValue("chapter.number")
                     source.copy(fields = source.fields + ("chapter.number" to field.copy(transform = field.transform.reversed())))
