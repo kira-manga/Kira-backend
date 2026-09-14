@@ -1,0 +1,283 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import java.util.zip.ZipFile
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.tasks.testing.Test
+
+// Observation/identity checks only: no repository, dependency, source or classpath replacement.
+def run = new File(System.getenv('BACKEND5_RUN')).canonicalFile
+def expectedPair = [
+    [group: 'me.manga.kira.source', module: 'source-contract-jvm', version: '0.1.0',
+     file: 'source-contract-jvm-0.1.0.jar', whole_jar_sha256: '817555990e1822c2ff33c45ea66af5af92b406a239d53bc120b211b5be83017d'],
+    [group: 'me.manga.kira.source', module: 'source-engine-jvm', version: '0.1.0',
+     file: 'source-engine-jvm-0.1.0.jar', whole_jar_sha256: '764233f4a177970d6473559445221b02ff8a93f7d10ab3a42a2a20eceedb6460']
+]
+def expected = expectedPair.collectEntries { [(it.file): it.whole_jar_sha256] }
+def identityPolicy = 'EXACT_PUBLISHED_RAW_AND_COMPLETE_ENTRY_PAYLOADS'
+def payloadSha = '9099cef61561eda449d0d4c9f9d32d782f18e2a1bc53d9a75ca29b8e1ac8fbc6'
+def writeReceipt = { String name, value ->
+    new File(run, "reports/${name}.json").setText(JsonOutput.prettyPrint(JsonOutput.toJson(value)) + '\n', 'UTF-8')
+}
+def sha = { File file, long byteLimit = Long.MAX_VALUE ->
+    def digest = MessageDigest.getInstance('SHA-256')
+    file.withInputStream { input ->
+        byte[] buffer = new byte[65536]
+        long total = 0L
+        while (true) {
+            int allowance = (int) (Math.min(byteLimit - total, (long) buffer.length - 1L) + 1L)
+            int size = input.read(buffer, 0, allowance)
+            if (size == -1) break
+            total += size
+            if (total > byteLimit) throw new IOException('Bounded digest byte limit exceeded')
+            digest.update(buffer, 0, size)
+        }
+    }
+    digest.digest().encodeHex().toString()
+}
+
+// The inventory is public-safe metadata, not a replacement JAR. Pin it before using its caps.
+def payloadFile = new File(System.getenv('BACKEND5_ENGINE_PAYLOADS') ?: '')
+def payloads = null
+def binding = [schema_version: 2, identity_policy: identityPolicy, expected_published_pair: expectedPair,
+               expected_sha256: payloadSha, file: payloadFile.name,
+               file_bytes: payloadFile.length(), sha256: null, error_type: null]
+try {
+    if (payloadFile.isFile() && binding.file_bytes <= 2 * 27946) {
+        binding.sha256 = sha(payloadFile, 2L * 27946L)
+        if (binding.sha256 == payloadSha) payloads = new JsonSlurper().parse(payloadFile, 'UTF-8')
+    }
+} catch (Exception failure) {
+    binding.error_type = failure.class.name
+}
+binding.predicates = [
+    regular_file: payloadFile.isFile(), bounded_bytes: binding.file_bytes <= 2 * 27946,
+    pinned_inventory_sha256: binding.sha256 == payloadSha,
+    exact_published_coordinate_filename_raw_pair: payloads != null && payloads.schema_version == 2 &&
+        payloads.identity_policy == identityPolicy && payloads.artifacts.size() == 2 &&
+        payloads.artifacts.collect { [group: it.group, module: it.module, version: it.version,
+                                     file: it.file, whole_jar_sha256: it.whole_jar_sha256] } == expectedPair
+]
+binding.expected_payload_inventory = payloads
+binding.status = binding.predicates.values().every { it == true } ? 'PASS' : 'FAIL'
+writeReceipt('engine-payload-expectations', binding)
+if (binding.status != 'PASS') throw new GradleException('Engine inventory binding failed; see engine-payload-expectations.json')
+
+def byName = payloads.artifacts.collectEntries { [(it.file): it] }
+def maximumCaps = byName.values().first().caps.collectEntries { key, ignored ->
+    [(key): byName.values().collect { it.caps[key] as long }.max()]
+}
+def candidateCap = 2 * expected.size()
+def coordinates = { records ->
+    records.collect { [group: it.group, module: it.module, version: it.version, file: it.file] }
+        .sort { a, b -> "${a.group}:${a.module}:${a.version}:${a.file}" <=> "${b.group}:${b.module}:${b.version}:${b.file}" }
+}
+
+// Enumerate every central-directory entry, including manifest/directories, without extracting files.
+// A bounded/incomplete scan is evidence of refusal, NEVER a prefix accepted as an equal inventory.
+def inventory = { File file, caps ->
+    def result = [file: file.name, file_bytes: file.length(), sha256: null, sha256_after: null, stable_file: false,
+                  inventory: [entries: [], declared_entry_count: null, total_uncompressed_bytes: 0L,
+                              total_name_utf8_bytes: 0L, complete: false, duplicate_names: [], violations: [], error_type: null]]
+    def observed = result.inventory
+    def names = [:]
+    if (!file.isFile() || result.file_bytes > caps.jar_bytes) {
+        observed.violations << (!file.isFile() ? 'not_regular_file' : 'jar_byte_cap')
+        return result
+    }
+    try {
+        result.sha256 = sha(file, (long) caps.jar_bytes)
+        new ZipFile(file).withCloseable { zip ->
+            observed.declared_entry_count = zip.size()
+            if (zip.size() > caps.entry_count) {
+                observed.violations << 'entry_count_cap'
+            } else {
+                def entries = zip.entries()
+                while (entries.hasMoreElements()) {
+                    def entry = entries.nextElement()
+                    def row = [name: entry.name, size: null, sha256: null, declared_size: entry.size, observed_size: 0L]
+                    observed.entries << row
+                    names[entry.name] = (names[entry.name] ?: 0) + 1
+                    long nameBytes = entry.name.getBytes('UTF-8').length
+                    observed.total_name_utf8_bytes += nameBytes
+                    if (nameBytes > caps.entry_name_utf8_bytes || observed.total_name_utf8_bytes > caps.total_name_utf8_bytes ||
+                        entry.size < 0 || entry.size > caps.entry_uncompressed_bytes) {
+                        observed.violations << 'entry_name_or_declared_size_cap'
+                        break
+                    }
+                    def digest = MessageDigest.getInstance('SHA-256')
+                    boolean exceeded = false
+                    zip.getInputStream(entry).withCloseable { input ->
+                        byte[] buffer = new byte[65536]
+                        while (true) {
+                            // Read at most one byte beyond a payload cap to detect/refuse overflow.
+                            long remaining = Math.min((long) caps.entry_uncompressed_bytes - row.observed_size,
+                                                      (long) caps.total_uncompressed_bytes - observed.total_uncompressed_bytes)
+                            int count = input.read(buffer, 0, (int) Math.min((long) buffer.length, remaining + 1L))
+                            if (count == -1) break
+                            row.observed_size += count
+                            observed.total_uncompressed_bytes += count
+                            if (row.observed_size > caps.entry_uncompressed_bytes ||
+                                observed.total_uncompressed_bytes > caps.total_uncompressed_bytes) {
+                                exceeded = true
+                                break
+                            }
+                            digest.update(buffer, 0, count)
+                        }
+                    }
+                    if (exceeded) {
+                        observed.violations << 'uncompressed_payload_cap'
+                        break
+                    }
+                    row.size = row.observed_size
+                    row.sha256 = digest.digest().encodeHex().toString()
+                    if (row.size != row.declared_size) {
+                        observed.violations << 'declared_and_read_size_differ'
+                        break
+                    }
+                }
+                observed.complete = !entries.hasMoreElements() && observed.entries.size() == zip.size() &&
+                    observed.entries.every { it.sha256 != null } && observed.violations.isEmpty()
+            }
+        }
+        if (file.isFile() && file.length() <= caps.jar_bytes) result.sha256_after = sha(file, (long) caps.jar_bytes)
+        else observed.violations << 'file_changed_or_exceeded_cap_after_scan'
+    } catch (Exception failure) {
+        observed.error_type = failure.class.name
+        observed.complete = false
+    }
+    observed.duplicate_names = names.findAll { key, count -> count > 1 }.keySet().sort()
+    observed.entries.sort { a, b -> a.name <=> b.name }
+    result.stable_file = result.sha256 != null && result.sha256_after == result.sha256 && result.file_bytes == file.length()
+    result
+}
+
+def compareJar = { File file ->
+    def wanted = byName[file.name]
+    def actual = inventory(file, wanted == null ? maximumCaps : wanted.caps)
+    def rows = actual.inventory.entries.collect { [name: it.name, size: it.size, sha256: it.sha256] }
+    def wantedRows = wanted == null ? null : wanted.entries.collect { [name: it.name, size: it.size as long, sha256: it.sha256] }
+    actual.expected_whole_jar_sha256 = wanted?.whole_jar_sha256
+    actual.expected_whole_jar_bytes = wanted?.whole_jar_bytes
+    actual.expected_entry_count = wanted?.entry_count
+    actual.comparisons = [
+        whole_jar_sha256: wanted != null && actual.sha256 == wanted.whole_jar_sha256,
+        complete_entry_payload_inventory: wanted != null && actual.inventory.complete && rows == wantedRows
+    ]
+    actual.predicates = [
+        expected_filename: wanted != null,
+        exact_published_jar_bytes: wanted != null && actual.file_bytes == wanted.whole_jar_bytes,
+        inventory_complete: actual.inventory.complete,
+        bounds_and_reads_ok: actual.inventory.violations.isEmpty() && actual.inventory.error_type == null,
+        no_duplicate_entry_names: actual.inventory.duplicate_names.isEmpty(),
+        file_stable_during_observation: actual.stable_file,
+        whole_jar_and_complete_payload_match: actual.comparisons.values().every { it == true }
+    ]
+    actual.accepted = actual.predicates.values().every { it == true }
+    actual.acceptance = actual.accepted ? identityPolicy : 'REFUSED'
+    actual
+}
+
+def observe = { project, String configuration ->
+    def receipt = [schema_version: 3, identity_policy: identityPolicy, expected_engine_pair: expectedPair,
+                   configuration: configuration, expected_payloads_sha256: payloadSha,
+                   expected_engine_coordinates: coordinates(payloads.artifacts), artifacts: [], resolution_error_type: null]
+    int candidates = 0
+    try {
+        project.configurations.getByName(configuration).incoming.artifacts.artifacts.each { artifact ->
+            def id = artifact.id.componentIdentifier
+            def record = [component_type: id.class.name, is_module: id instanceof ModuleComponentIdentifier,
+                          file: artifact.file.name, file_bytes: artifact.file.length(), sha256: null]
+            receipt.artifacts << record
+            if (record.is_module) record.putAll([group: id.group, module: id.module, version: id.version])
+            if (record.group == 'me.manga.kira.source' || expected.containsKey(record.file)) {
+                candidates++
+                if (candidates <= candidateCap) record.putAll(compareJar(artifact.file))
+                else record.inventory_not_scanned = 'candidate_count_cap'
+            } else {
+                try { record.sha256 = sha(artifact.file) }
+                catch (Exception failure) { record.hash_error_type = failure.class.name }
+            }
+        }
+    } catch (Exception failure) {
+        receipt.resolution_error_type = failure.class.name
+    }
+    receipt.artifacts.sort { a, b -> "${a.group}:${a.module}:${a.version}:${a.file}" <=> "${b.group}:${b.module}:${b.version}:${b.file}" }
+    def engine = receipt.artifacts.findAll { it.group == 'me.manga.kira.source' }
+    receipt.observed_engine_coordinates = coordinates(engine)
+    receipt.observed_engine_count = engine.size()
+    receipt.predicates = [
+        resolution_completed: receipt.resolution_error_type == null,
+        every_artifact_is_module: receipt.artifacts.every { it.is_module == true },
+        every_artifact_hash_observed: receipt.artifacts.every { it.sha256 != null },
+        bounded_inventory_candidates: candidates <= candidateCap,
+        exactly_two_engine_artifacts: engine.size() == 2,
+        exact_group_module_version_filename_multiset: coordinates(engine) == coordinates(payloads.artifacts),
+        engine_identity_accepted: engine.every { it.accepted == true }
+    ]
+    receipt.status = receipt.predicates.values().every { it == true } ? 'PASS' : 'FAIL'
+    // Persist coordinates, whole hashes, every observed entry and predicate BEFORE any identity throw.
+    writeReceipt("dependencies-${configuration}", receipt)
+    if (receipt.status != 'PASS') throw new GradleException("Published Engine identity refused; see dependencies-${configuration}.json; no fallback")
+    logger.lifecycle("BACKEND5_ORDINARY_CLASSPATH ${configuration}: ${receipt.artifacts.size()} artifacts; exact published Engine raw pair AND complete payloads accepted")
+}
+
+def observeWorker = { workerClasspath ->
+    def receipt = [schema_version: 3, identity_policy: identityPolicy, expected_engine_pair: expectedPair,
+                   configuration: 'testWorkerClasspath', expected_payloads_sha256: payloadSha,
+                   classpath: [], artifacts: [], observation_error_type: null]
+    def jars = []
+    try {
+        def files = workerClasspath.files
+        receipt.classpath = files.collect { [file: it.name, directory: it.isDirectory(), file_bytes: it.length()] }
+        jars = files.findAll { expected.containsKey(it.name) }
+        receipt.artifacts = jars.take(candidateCap).collect { compareJar(it) }
+    } catch (Exception failure) {
+        receipt.observation_error_type = failure.class.name
+    }
+    receipt.observed_engine_count = jars.size()
+    receipt.predicates = [
+        observation_completed: receipt.observation_error_type == null,
+        exactly_two_engine_artifacts: jars.size() == 2,
+        exact_filename_multiset: jars.collect { it.name }.sort() == expected.keySet().sort(),
+        bounded_inventory_candidates: jars.size() <= candidateCap,
+        engine_identity_accepted: receipt.artifacts.every { it.accepted == true }
+    ]
+    receipt.status = receipt.predicates.values().every { it == true } ? 'PASS' : 'FAIL'
+    writeReceipt('dependencies-testWorkerClasspath', receipt)
+    if (receipt.status != 'PASS') throw new GradleException('Actual test worker Engine identity refused; see dependencies-testWorkerClasspath.json')
+}
+
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(new File(run, 'build'))
+    project.tasks.matching { it.name in ['compileKotlin', 'compileTestKotlin'] }.configureEach { task ->
+        task.doFirst {
+            observe(project, task.name == 'compileKotlin' ? 'compileClasspath' : 'testCompileClasspath')
+        }
+    }
+    project.tasks.withType(Test).configureEach { task ->
+        maxParallelForks = 1
+        forkEvery = 0
+        maxHeapSize = '1g'
+        filter.failOnNoMatchingTests = true
+        ignoreFailures = false
+        systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+        systemProperty('java.io.tmpdir', new File(run, 'tmp').absolutePath)
+        systemProperty('user.home', new File(run, 'home').absolutePath)
+        ['KIRA_PACKAGES_READ_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'ACTIONS_RUNTIME_TOKEN'].each { environment.remove(it) }
+        outputs.upToDateWhen { false }
+        doFirst {
+            observe(project, 'testRuntimeClasspath')
+            observeWorker(classpath)
+        }
+    }
+}
+gradle.taskGraph.whenReady { graph ->
+    // Preserve the observed graph even when its existing no-publish/single-test guard refuses it.
+    writeReceipt('task-graph', graph.allTasks.collect { it.path })
+    if (graph.allTasks.any { it.name.toLowerCase(Locale.ROOT) =~ /publish|deploy|release/ } ||
+        graph.allTasks.findAll { it instanceof Test }.collect { it.path } != [':test']) {
+        throw new GradleException('Only the single ordinary targeted test task may run; no publishing/deployment')
+    }
+}

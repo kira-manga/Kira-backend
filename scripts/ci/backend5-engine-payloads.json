@@ -1,0 +1,675 @@
+{
+  "schema_version": 2,
+  "identity_policy": "EXACT_PUBLISHED_RAW_AND_COMPLETE_ENTRY_PAYLOADS",
+  "provenance": "Exact published JVM pair observed in hosted run 34876466249 attempt 1; primary admitted the exhaustive header-only characterization as bounded input provenance, not consumer PASS or producer attestation",
+  "observed_inventory_sha256": "aede057880cd1b591e144b4f60ed636e9bdfbde5709a6133a8bc3cfdcda62bf6",
+  "comparison": "Require BOTH the exact authorized whole-JAR SHA-256 pair per full coordinate and filename AND every ZIP entry name, uncompressed size and SHA-256; include directories and manifests; no local fallback, normalization, filtering or pair/class mixing",
+  "caps_derivation": "Safety caps retained verbatim from preparation02 accepted-local envelope; published whole-JAR sizes and all 125 payload entries are pinned to the complete hosted02 observation",
+  "artifacts": [
+    {
+      "group": "me.manga.kira.source",
+      "module": "source-contract-jvm",
+      "version": "0.1.0",
+      "file": "source-contract-jvm-0.1.0.jar",
+      "whole_jar_sha256": "817555990e1822c2ff33c45ea66af5af92b406a239d53bc120b211b5be83017d",
+      "whole_jar_bytes": 139562,
+      "entry_count": 79,
+      "total_uncompressed_bytes": 322380,
+      "caps": {
+        "jar_bytes": 923870,
+        "entry_count": 158,
+        "entry_uncompressed_bytes": 51118,
+        "total_uncompressed_bytes": 644760,
+        "entry_name_utf8_bytes": 150,
+        "total_name_utf8_bytes": 8852
+      },
+      "entries": [
+        {
+          "name": "META-INF/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "META-INF/MANIFEST.MF",
+          "size": 25,
+          "sha256": "566ad1a80220026d05099562645ce968ff0e7c36cde22634332605bb34cc3eff"
+        },
+        {
+          "name": "META-INF/source-contract.kotlin_module",
+          "size": 75,
+          "sha256": "18ac7c6fbc57c85edb0aac9794b7da8e5938b49600853e6232a4366a5051fe43"
+        },
+        {
+          "name": "me/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceBaseUrlKt.class",
+          "size": 5792,
+          "sha256": "2ad7715aef1f4417b859c19607cc0e70204436fd652502af194669bddb945aa6"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceBaseUrlProvider.class",
+          "size": 842,
+          "sha256": "3ea28906903d3fc0689e662462008f5a665b62409720d670b805dd8f273a7a5a"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceChallengeListener.class",
+          "size": 635,
+          "sha256": "fc629ab61b36bf5bde191f33344210736d162a87e1a63d073cecb0aa35aa2272"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceChapter.class",
+          "size": 3998,
+          "sha256": "2d6ea30c743f8be477883e52aa0726f80a84ac205c3d5e6285d95571184bda79"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceChapterRef.class",
+          "size": 2939,
+          "sha256": "dbe41db2cecbd9a855759930ed055dea3ba24fb3cffc3e5d92fe4a29eebab0f4"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceConfigParser.class",
+          "size": 6011,
+          "sha256": "fa6e2aa314c5a92d7b57197ccd738a098bd32ebd00db9ceb04e9b5408973a554"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceConfigValidator.class",
+          "size": 833,
+          "sha256": "44184136c2c9cc1167f29548c269e88a3e8d7eacc53bb5c8a4f48e0004d4c59b"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceDetails.class",
+          "size": 8036,
+          "sha256": "3b81c8032d2a7f6a34ec80eae2001e57dcefbbd993cba2b3235bf8760634bb92"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngine$DefaultImpls.class",
+          "size": 1343,
+          "sha256": "192115ae5c1cf9cf4bdf20c405247a749629d60d449b61ceadeec0d07bcd2ab9"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngine.class",
+          "size": 3356,
+          "sha256": "9b1c70fad5e258aae7efa910af4f87e92c2e519419ac5f51b57c410cec184760"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError$Http.class",
+          "size": 2313,
+          "sha256": "58e46d341dcd0b09cc01366a2208454024c4ac5a791641da12efbe213fc33618"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError$InvalidResponse.class",
+          "size": 1422,
+          "sha256": "6b3bec7402fcdc4ac0806835cbf9b7d492a11df2adb91f68c4ea56051b365fd4"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError$NoConnectivity.class",
+          "size": 1419,
+          "sha256": "dadbed7dd596068818ace1163ff3bc4006340c034ff4c675bab4d1ba071234e6"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError$Required.class",
+          "size": 2670,
+          "sha256": "80522b5f12a2127a6d4d94692979b15d6c987da3c79ad2082f45894af81a19c9"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError$Timeout.class",
+          "size": 1398,
+          "sha256": "aff372438d10be3baab87632919927037bb347aa4cc1b81eff2b0c5f70dd0997"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError$Unexpected.class",
+          "size": 2693,
+          "sha256": "dddf64a6a2d78cffae7d22dee4e36f21471f5a6c97b24c3fdfb2c1f7266bfa79"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineError.class",
+          "size": 1432,
+          "sha256": "ad82678c33832b101dcc5c6f85006634176feb7886b7ef83f2294281d4f49fb2"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineResult$Failure.class",
+          "size": 2885,
+          "sha256": "83282eabd874c0615dc12619a872f3dd2af1566ffe8dcfd161f7a9d9c2b737c4"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineResult$Success.class",
+          "size": 2819,
+          "sha256": "4ca58588b3521d95a833a1a3b5108cce2d0de878724e5444e784e01566b8f30d"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceEngineResult.class",
+          "size": 852,
+          "sha256": "47d6f07e2777cf9cc99ec5e43f015cbe4df7f72888e7ae8ea6332bb3f3863c00"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceFeaturedItem.class",
+          "size": 4302,
+          "sha256": "5ffbc92ebd6d89ab7f5bbe4070e8f1a36099dadb2ce730ba92fb398f7232af2d"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceFilterSelections$Companion.class",
+          "size": 1219,
+          "sha256": "ede7d9d38b0b329d5514a37ccab9da015964a4d12fc0dfd97524a1a5ad757577"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceFilterSelections.class",
+          "size": 3764,
+          "sha256": "a7c9883a9f9d90aac6f4a2c741a241a0f09e97d9bbe31ff444e8e1c3a25d0c17"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceHeaderProvider.class",
+          "size": 892,
+          "sha256": "7b8c59ca68e5de2f3512ba2de9bdcb31797e51c5aec46440dda9d70682a30830"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceHttpMethod.class",
+          "size": 1945,
+          "sha256": "e9dbc82f4926f9fe4adc930a218da13573db8db90c87b552d2e5d6afa24bc85c"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceListItem.class",
+          "size": 7045,
+          "sha256": "8d0b25dd649bfe4a33dabb7c50e78b068a6b8e0f3e0d2416d6062a2510b18d49"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceMangaRef.class",
+          "size": 4278,
+          "sha256": "3c9758176dcc82cd606c59341814756304ea12869a95974b0ba426186f184d9f"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourcePage.class",
+          "size": 3576,
+          "sha256": "f1daa1610268e3a215451a2e20ef47f0462f0ec8f5a404e78e38c70bdda0bb35"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceRequest.class",
+          "size": 6063,
+          "sha256": "64fc141322ebefcff4f1bc56db6f3beace4c62af0c278a691d0553c51546c1b9"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceResponse.class",
+          "size": 4542,
+          "sha256": "3d60a09a775f758e36a0cb4198968ddd0ea350e9e70de3e89f980aa6f48ff572"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/SourceTransport.class",
+          "size": 1023,
+          "sha256": "a4acd97a32c69a9cd1fb747b56c75fbc645efc940d01b462a8118ec556abf756"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/StrategyRegistry.class",
+          "size": 758,
+          "sha256": "d6de3d10e3e2bce8afdeb60de71c46ca06b8a147e45d03d8cacfb0ba2f93b8ab"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/ValidationResult$Companion.class",
+          "size": 1737,
+          "sha256": "8f7de7aa2ce27972c83f79b4d421ddf51ef2d8d43637c74661b38b9013868eb4"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/ValidationResult.class",
+          "size": 3854,
+          "sha256": "23b339155c8231f727b11a1880393d44522ae71fa7b2e62ed8947159a6213fa4"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/EndpointSpec$$serializer.class",
+          "size": 6842,
+          "sha256": "f9973aacc2e77a5fcd4e05e48e7592a7c785704e4a7faf840da3c5c2478984a0"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/EndpointSpec$Companion.class",
+          "size": 1511,
+          "sha256": "79f16237c1fab96c7e0ff249470f5350cfeddd254c11d0966b41d29a135524a7"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/EndpointSpec.class",
+          "size": 15492,
+          "sha256": "b1af623c0bc41a7dd2c602b8e74f1e923109bbb97726bacc689b396d703cc8e7"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FieldSpec$$serializer.class",
+          "size": 6975,
+          "sha256": "c38345dd682e8c885f2bb9a0954efa8c19dae833121576d9b605056652246cdd"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FieldSpec$Companion.class",
+          "size": 1490,
+          "sha256": "25461e96055352d3674d95f82fcf2df67520458cca5f8845de5e6608bde6b6fb"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FieldSpec.class",
+          "size": 16605,
+          "sha256": "4620a62b8388c49ecd9d140a81d3fb3844e3a956019ae0d3d271907ede8ab7ca"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterConditionSpec$$serializer.class",
+          "size": 5749,
+          "sha256": "1ebb2ed6ee8fbdd30c642a2300662e576e216bde474e9f4505d4aedba4f59b88"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterConditionSpec$Companion.class",
+          "size": 1560,
+          "sha256": "18ecb1c6e968c0883d332a42ed6bfcc2f5b98b26fd0c124303715c6cc247a641"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterConditionSpec.class",
+          "size": 6891,
+          "sha256": "9ee8fc0d5bfac590fb78e2052a1ea957c2db2bd1a4ba105feeaeff4bcb7b24cf"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterDefinition$$serializer.class",
+          "size": 7250,
+          "sha256": "3cd9e846d26cb1cbba74a16ac0b5762a87599971466d953e93bbeec9fbf50408"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterDefinition$Companion.class",
+          "size": 1539,
+          "sha256": "36db142e2a5f06b4ec833ea09c0b9546faeb4425848466b1d100b43dedd4123d"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterDefinition.class",
+          "size": 15565,
+          "sha256": "2c42e83e320de9ba00739b16934d8596774054a2a099cc3790336466d39f4e94"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterOptionSpec$$serializer.class",
+          "size": 5261,
+          "sha256": "faf48fc6f5815611676e2f99ccafed2084cd5658a5acd8a84c99ae6c880dfc40"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterOptionSpec$Companion.class",
+          "size": 1539,
+          "sha256": "069ea92274b8ff6ae75bf546b152d58b5a9ab9c8a197f1d8d96014dfa14a9024"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterOptionSpec.class",
+          "size": 5354,
+          "sha256": "93620121f6d75230257548aa101cf8f26fb78632929e50860178e28126ac2957"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterRequestSpec$$serializer.class",
+          "size": 5991,
+          "sha256": "6f0636329cbef1b711bb249c7cf5350674b3dd15195a19a1c4e17d6cfd520d49"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterRequestSpec$Companion.class",
+          "size": 1546,
+          "sha256": "b480868e04b9f441d225dcd4deada8d9f4ac66029c30f2b74e16d4a9a3afb8fc"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterRequestSpec.class",
+          "size": 8452,
+          "sha256": "43efdc6793ff0e207b80573c8487e8e9f139b4e137893e59c9ff52713da1dfd8"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterSpec$$serializer.class",
+          "size": 5393,
+          "sha256": "e70b652d2f3ac018e7685ac00c006f6db1af917792d1c5ab8381557d682fd168"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterSpec$Companion.class",
+          "size": 1497,
+          "sha256": "af9a709001f472ba287fcb635dd14be55eb23b724d24e099d8314ee520f5b81d"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/FilterSpec.class",
+          "size": 6434,
+          "sha256": "098cb5508f174ec59b935c031d2e1c73897e597519549f06f28577db4a52a1e6"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/IconSpec$$serializer.class",
+          "size": 5202,
+          "sha256": "1820ce8eccfc916c1175887e00479d82323930aad6ca120735ebbbe70f89d7ef"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/IconSpec$Companion.class",
+          "size": 1483,
+          "sha256": "e5c91ecd0f4e42bbbc79a87aecbef6429fd252e02305657fcec2c78770ee5600"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/IconSpec.class",
+          "size": 5451,
+          "sha256": "d5d53e52d078c7c7b3a1887216a3289d064b396c45794fb4dba97ea487a2fd95"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/PaginationSpec$$serializer.class",
+          "size": 5523,
+          "sha256": "b4dbee015abcd49c186f3c3fbf7ac108112365f9ab670c9d56f655189147dbda"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/PaginationSpec$Companion.class",
+          "size": 1525,
+          "sha256": "2d79f41ad83b8bae5a824671a045b7dc1a3261cf0c4d8fe42aa20f856d035d74"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/PaginationSpec.class",
+          "size": 6087,
+          "sha256": "f6dfed3661ba97053e1bc48f055362b8e15d0d048510740e8a8ef826f1b24a96"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/SourceConfig$$serializer.class",
+          "size": 9264,
+          "sha256": "6756a7bc70680353b6624c8859ad40c48276ac9e4afea13317e069bbb8c55baa"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/SourceConfig$Companion.class",
+          "size": 1511,
+          "sha256": "6fc1d905c2e93a2e5c7ebf3c58692ca519d768c4552522705f129c69a80d6ccd"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/SourceConfig.class",
+          "size": 25559,
+          "sha256": "bdc13338097d35ea449554cf307d33dcaed5dd52c3995caefdda8888cd29936e"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/SourceConfigDocument$$serializer.class",
+          "size": 6448,
+          "sha256": "7768665d1555ae8a690bceeaf56da61f65e87f809076fd84ef12c866698e8be2"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/SourceConfigDocument$Companion.class",
+          "size": 1567,
+          "sha256": "f22d76a74a26b3255271f16d46e854b921f25a5c811c114ce3f1cc0358ba881c"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/SourceConfigDocument.class",
+          "size": 9037,
+          "sha256": "959571f6997de3e44e50d92d87f764623cf46161f26f30c413f459888e44ede3"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/TransformSpec$$serializer.class",
+          "size": 5839,
+          "sha256": "39315c26478f24f475044ffe45b254691bd2f87f60ec53e3dfb6973cbf693178"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/TransformSpec$Companion.class",
+          "size": 1518,
+          "sha256": "3bc6bf1430a5a31206859b28dcaf490bc2b5c9f36b8abe3d8e5389384c04233c"
+        },
+        {
+          "name": "me/manga/kira/source/contracts/model/TransformSpec.class",
+          "size": 8644,
+          "sha256": "a0a98df0ba438f9b887b131bfc33a012d806edd9ffebb09af450bb211e3e2143"
+        }
+      ]
+    },
+    {
+      "group": "me.manga.kira.source",
+      "module": "source-engine-jvm",
+      "version": "0.1.0",
+      "file": "source-engine-jvm-0.1.0.jar",
+      "whole_jar_sha256": "764233f4a177970d6473559445221b02ff8a93f7d10ab3a42a2a20eceedb6460",
+      "whole_jar_bytes": 109366,
+      "entry_count": 46,
+      "total_uncompressed_bytes": 246775,
+      "caps": {
+        "jar_bytes": 712268,
+        "entry_count": 92,
+        "entry_uncompressed_bytes": 134976,
+        "total_uncompressed_bytes": 493550,
+        "entry_name_utf8_bytes": 206,
+        "total_name_utf8_bytes": 5034
+      },
+      "entries": [
+        {
+          "name": "META-INF/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "META-INF/MANIFEST.MF",
+          "size": 25,
+          "sha256": "566ad1a80220026d05099562645ce968ff0e7c36cde22634332605bb34cc3eff"
+        },
+        {
+          "name": "META-INF/source-engine.kotlin_module",
+          "size": 76,
+          "sha256": "1720d30d7ce2f29e620e2699d7c7030eec3c5c42e959b7257c68e238b08a31ca"
+        },
+        {
+          "name": "me/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/engine/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/engine/DefaultSourceConfigValidator$Companion.class",
+          "size": 1969,
+          "sha256": "d5d773b528a0be02884468c20301fab9c85beb24084b0c44da5cc6fe312160b9"
+        },
+        {
+          "name": "me/manga/kira/source/engine/DefaultSourceConfigValidator.class",
+          "size": 41094,
+          "sha256": "8c7690f8a6c5a6474889d3707e5cc115a2f5f5d9eeb8deff03582196c2d03775"
+        },
+        {
+          "name": "me/manga/kira/source/engine/DefaultStrategyRegistry.class",
+          "size": 2248,
+          "sha256": "9b02dda1e9355fea963f4f5ad7d70c6eb67a650cabc6ad10be98a9d5cbc8834c"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$PageState.class",
+          "size": 2997,
+          "sha256": "31c9e77f057c4bb63d51053b48bef90ae9bf44a94fa0ba73aa27c1b14dc63a1a"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$UnresolvedTemplateVarException.class",
+          "size": 1912,
+          "sha256": "8a7ca19efa6b62342ed37becd2892cbe07b5ff9cfca3b3d0c783d727a171b5f8"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$chaptersPaginated$1.class",
+          "size": 2244,
+          "sha256": "81cad444ceefd2e8911e848dcd7c691094723946de42295f3d4892f590a03556"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$details$1.class",
+          "size": 1885,
+          "sha256": "d48d5e02675a414c6f7de36205f7510e19313ecc2bcfe1c3c40d73ba8a761a10"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$featured$2.class",
+          "size": 2118,
+          "sha256": "5f7d4ed9addd1bc5ef3ddf71368f6573c807f2a544899944961da87159fc59f6"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$fetchList$1.class",
+          "size": 2400,
+          "sha256": "8daf99ab3c4c3ffa0c31d99585dab82f0beef379df936dd3cf33df040c25bd75"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$home$2.class",
+          "size": 2102,
+          "sha256": "c782edb65887989410b728b6274e4d64422ec15e2524d780bb2d8836646b5203"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$pages$1.class",
+          "size": 1959,
+          "sha256": "46adcbc3c902370a8f1a91fba4f64b89462089a774650a7b2ed75959b0a0dd69"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$pages$lambda$0$$inlined$sortedBy$1.class",
+          "size": 2815,
+          "sha256": "6a833ccd081e388faa84d51f1934bece63cd523d72694dab183b67371de3d7c1"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$requestHeaders$1.class",
+          "size": 1906,
+          "sha256": "f19028c6cdf96ae1a6e386a25e72009ce526049eecf21d65da6ce9d0eb418398"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$resolveEffectiveBaseUrl$1.class",
+          "size": 1937,
+          "sha256": "c7b462e75e776d30a6123bc92c21290b11b0e05616b55ec2b7b2bc21185e4573"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$runRequest$1.class",
+          "size": 2479,
+          "sha256": "a37d8c54e737d32cb0397f490c64a857766621b968ab25caeee683ee89b62f5a"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine$search$2.class",
+          "size": 2181,
+          "sha256": "20cd67c28c0e446263a0ebb8d2934af9ba13277a6098c2000bee8fc3a6d882e7"
+        },
+        {
+          "name": "me/manga/kira/source/engine/GenericSourceEngine.class",
+          "size": 67488,
+          "sha256": "d8909b1c96204d653ee30383ba797258ed5548a0e7a5a7c798bc755c8cc2428d"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/",
+          "size": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/ComposedFilters$Companion.class",
+          "size": 1224,
+          "sha256": "dd9573ef6096b9498ba5ee115bde782895be398085bcffe429c6566dd4962a98"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/ComposedFilters.class",
+          "size": 6122,
+          "sha256": "e7eae22d311289bf917bd74d47a414c32cb40da4a91e4970490a575a8abe30cf"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/DateStrategies.class",
+          "size": 5070,
+          "sha256": "4e552e2f58aaee5d4f4b48c9c6e6283d83b1565299a1190e72f917f9805fa387"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/Extractor$ParsedBody.class",
+          "size": 8763,
+          "sha256": "cf7b17697868559e97ccf35ce63591fb2270dde2eb856536f451f1ca5c2aae92"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/Extractor.class",
+          "size": 14564,
+          "sha256": "df2887f4f321f337105e7ceeede89c62e22f4f734bb30b3dfc4a742fba81c2a0"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/FilterRequestComposer$orderedKnownValues$$inlined$sortedBy$1.class",
+          "size": 2382,
+          "sha256": "aa10df2f7ec5d901d12172147a246eba574320e265842e95d51521e6bea40b3c"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/FilterRequestComposer.class",
+          "size": 19635,
+          "sha256": "fad51f0a306603753c54a351bc6e03d4c44eea801ff0b30c3762661c31fd2203"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/HtmlItemScope.class",
+          "size": 7897,
+          "sha256": "4d6c52bd2865b68b54ca5f478b80fc3951908bfc517d068b31217dcd46524424"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/ItemScope.class",
+          "size": 1323,
+          "sha256": "71a0299230480a0b06e8b81424b4ea1a00ae215178dc283269286d209cdd0014"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonEscape.class",
+          "size": 2138,
+          "sha256": "5f04d541ecbe3aa50b55026cfb3eb440ff0e4aba905146e3630911b74bd4b9e7"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonItemScope.class",
+          "size": 6101,
+          "sha256": "9d6e571e03258a408b4e3bc04c604cc13a682c11a190a305931dff14bf6c8f3a"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonPath$Accessor$All.class",
+          "size": 1477,
+          "sha256": "2caf79964ccdcc129f8829526e0500b430f198d184193d0c7943c2085a2564f4"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonPath$Accessor$Index.class",
+          "size": 2426,
+          "sha256": "90c69ba69a01774e309e8f4673edd8b269beafa15568bfe1817a8f7ffe85c9fb"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonPath$Accessor$None.class",
+          "size": 1480,
+          "sha256": "3bcc0faaca513b313607ee80e05dbc2b96fb989f85c50d9f31afd036767c138a"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonPath$Accessor.class",
+          "size": 1007,
+          "sha256": "cca58eef781d5cca4783157be16938a18fc3f605a9080407647baf9886b7f26c"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonPath.class",
+          "size": 8175,
+          "sha256": "8e7582a640cf3486e52cfd71599a1af4c181032c2441b15cf4fbce13aacbc68c"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/JsonPathKt.class",
+          "size": 1179,
+          "sha256": "f0fcc3ca510d09cf0b9533fba2d234e95ab1efee67ffb5e8546fb9dacdeb3ffc"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/Templates.class",
+          "size": 2647,
+          "sha256": "f35b4ac64130477797316d23b32befe8657eda645dccb2f409e56b1f7fe6f270"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/Transforms.class",
+          "size": 9189,
+          "sha256": "ea9ce64f280614ea1882e25abfb86d8af9599ec0629b189044891a717ea883ba"
+        },
+        {
+          "name": "me/manga/kira/source/engine/internal/UrlEncode.class",
+          "size": 2141,
+          "sha256": "2e4be7ae97dc6ef99b5f3de03eceeb376e3aae874f48edcac7c0ea83a12dcedf"
+        }
+      ]
+    }
+  ]
+}
