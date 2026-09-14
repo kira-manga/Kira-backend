@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Linux/Python 3.11 selected-byte backup tools. No production restore authority.
 
-Public ABI: create, verify, publish-directory. Underscore commands are plumbing
+Public ABI: create, verify, publish-directory, verify-restored-pair. Underscore commands are plumbing
 for the three reviewed shell wrappers, with the same guards enforced here.
 Filesystem ownership checks assume exclusive operator custody, not hostile root.
 """
@@ -42,6 +42,16 @@ HEX = re.compile(r'[0-9a-f]{64}\Z')
 STEM = re.compile(r'[A-Za-z0-9][A-Za-z0-9_-]{0,95}\Z')
 VERSION = re.compile(r'[0-9]+(?:[._][0-9]+)*\Z')
 NOFOLLOW = os.O_NOFOLLOW | os.O_CLOEXEC
+TUTORIAL_FILE_LIMIT = 4 * 1024 * 1024
+TUTORIAL_ROW_LIMIT = 10_000
+TUTORIAL_ENTRY_LIMIT = 10_000
+TUTORIAL_RESPONSE_LIMIT = 8 * 1024 * 1024
+UUID_TEXT = r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+FINAL_NAME = re.compile(UUID_TEXT + r'\.(?:jpg|png)\Z')
+STAGING_TEXT = r'\.upload-[A-Za-z0-9-]{1,80}\.(?:jpg|png)'
+STAGING_NAME = re.compile(STAGING_TEXT + r'\Z')
+QUARANTINE_NAME = re.compile(
+    '(' + UUID_TEXT + ')--(' + UUID_TEXT + r'\.(?:jpg|png)|' + STAGING_TEXT + r')--([0-9a-f]{64})\Z')
 
 
 class Refused(Exception):
@@ -764,7 +774,10 @@ HISTORY_SQL = """SELECT pg_catalog.json_build_object(
 def database_state(environment, expected_version):
     raw = captured(['psql', '--no-psqlrc', '--set=ON_ERROR_STOP=1', '--tuples-only', '--no-align', '--quiet',
                     *pg_arguments(environment), '--command=' + HISTORY_SQL], environment, HISTORY_LIMIT)
-    state = parse_json(raw, HISTORY_LIMIT)
+    return checked_database_state(parse_json(raw, HISTORY_LIMIT), environment, expected_version)
+
+
+def checked_database_state(state, environment, expected_version):
     keys(state, ('database', 'user', 'oid', 'address', 'port', 'history'))
     require(state['database'] == environment['PGDATABASE'] and state['user'] == environment['PGUSER'],
             'actual database identity differs from requested endpoint')
@@ -794,8 +807,9 @@ def database_state(environment, expected_version):
 
 
 @contextlib.contextmanager
-def attempt_lock(parent, new=False):
-    flags = os.O_RDWR | NOFOLLOW | (os.O_CREAT | os.O_EXCL if new else 0)
+def attempt_lock(parent, new=False, read_only=False):
+    require(not (new and read_only), 'read-only inspection cannot create an attempt lock')
+    flags = (os.O_RDONLY if read_only else os.O_RDWR) | NOFOLLOW | (os.O_CREAT | os.O_EXCL if new else 0)
     fd = os.open('.lock', flags, 0o600, dir_fd=parent)
     try:
         if new:
@@ -854,6 +868,24 @@ def frozen(attempt, parent, selection):
             pass
 
 
+def restored_database_records(parent, environment):
+    """Shared, read-only correspondence checks; no failure handler may write STOP here."""
+    request, request_hash = load_record(parent, 'request.json')
+    request_record(request, environment)
+    started, _ = load_record(parent, 'db-started.json')
+    require(started == {'schema': 'kira.restore-db-started.v1', 'id': request['id'],
+                        'request_sha256': request_hash}, 'database stage correspondence failed')
+    receipt, receipt_hash = load_record(parent, 'db.json')
+    keys(receipt, ('schema', 'id', 'request_sha256', 'selection', 'endpoint',
+                   'identity', 'source_version', 'history_sha256'))
+    require(receipt['schema'] == 'kira.restore-db.v1' and receipt['id'] == request['id']
+            and receipt['request_sha256'] == request_hash
+            and canonical(receipt['selection']) == canonical(request['selection'])
+            and canonical(receipt['endpoint']) == canonical(request['endpoint']),
+            'database receipt correspondence failed')
+    return request, request_hash, receipt, receipt_hash
+
+
 def restore_database(bundle, expected, dump, media, version, attempt, target, legacy=False):
     supported_runtime()
     environment = pg_environment(restore=True)
@@ -909,19 +941,7 @@ def restore_media(attempt):
         publication_attempted = False
         published = False
         try:
-            request, request_hash = load_record(parent, 'request.json')
-            request_record(request, environment)
-            started, _ = load_record(parent, 'db-started.json')
-            require(started == {'schema': 'kira.restore-db-started.v1', 'id': request['id'],
-                                'request_sha256': request_hash}, 'database stage correspondence failed')
-            receipt, receipt_hash = load_record(parent, 'db.json')
-            keys(receipt, ('schema', 'id', 'request_sha256', 'selection', 'endpoint',
-                           'identity', 'source_version', 'history_sha256'))
-            require(receipt['schema'] == 'kira.restore-db.v1' and receipt['id'] == request['id']
-                    and receipt['request_sha256'] == request_hash
-                    and canonical(receipt['selection']) == canonical(request['selection'])
-                    and canonical(receipt['endpoint']) == canonical(request['endpoint']),
-                    'database receipt correspondence failed')
+            request, request_hash, receipt, receipt_hash = restored_database_records(parent, environment)
             frozen(attempt, parent, request['selection'])
             state = database_state(environment, request['source_version'])
             require(canonical({key: receipt[key] for key in state}) == canonical(state),
@@ -967,6 +987,216 @@ def restore_media(attempt):
             raise Refused('STOP: media stage incomplete; retain attempt; no same-attempt retry')
 
 
+def restored_media_rows(environment, version, expected_state):
+    # A bounded, fixed SELECT, including the identity/history of THIS connection.
+    # The limit is internal, never a SQL fragment supplied by an operator/receipt.
+    sql = """SELECT pg_catalog.json_build_object('state', (""" + HISTORY_SQL + """),
+ 'rows', COALESCE((SELECT pg_catalog.json_agg(pg_catalog.row_to_json(media) ORDER BY media.id)
+ FROM (SELECT id, storage_filename, content_type, byte_size, width, height, sha256, published
+       FROM public.tutorial_media ORDER BY id LIMIT """ + str(TUTORIAL_ROW_LIMIT + 1) + """
+ ) AS media), '[]'::json))"""
+    raw = captured(['psql', '--no-psqlrc', '--set=ON_ERROR_STOP=1', '--tuples-only', '--no-align', '--quiet',
+                    *pg_arguments(environment), '--command=' + sql], environment, TUTORIAL_RESPONSE_LIMIT)
+    value = parse_json(raw, TUTORIAL_RESPONSE_LIMIT)
+    keys(value, ('state', 'rows'))
+    state = checked_database_state(value['state'], environment, version)
+    require(canonical(state) == canonical(expected_state), 'media query database identity/history changed')
+    require(type(value['rows']) is list and len(value['rows']) <= TUTORIAL_ROW_LIMIT,
+            'tutorial row inventory incomplete or over limit')
+    return value['rows']
+
+
+def tutorial_row(row):
+    keys(row, ('id', 'storage_filename', 'content_type', 'byte_size', 'width', 'height', 'sha256', 'published'))
+    require(type(row['id']) is str and re.fullmatch(UUID_TEXT, row['id']) is not None,
+            'noncanonical tutorial media UUID')
+    extension = {'image/jpeg': '.jpg', 'image/png': '.png'}.get(row['content_type'])
+    require(extension is not None and row['storage_filename'] == row['id'] + extension,
+            'tutorial filename must equal its UUID and content type')
+    integer(row['byte_size'], 1, TUTORIAL_FILE_LIMIT)
+    integer(row['width'], 1, 4096)
+    integer(row['height'], 1, 4096)
+    require(row['width'] * row['height'] <= 16_000_000 and type(row['published']) is bool,
+            'invalid tutorial dimensions/publication flag')
+    hex_value(row['sha256'])
+
+
+def tutorial_entries(parent, budget):
+    before = os.fstat(parent)
+    found = {}
+    with os.scandir(parent) as entries:
+        for entry in entries:
+            budget['entries'] += 1
+            require(budget['entries'] <= TUTORIAL_ENTRY_LIMIT,
+                    'tutorial filesystem inventory incomplete: entry limit')
+            require(entry.name not in found, 'tutorial filesystem inventory changed')
+            found[entry.name] = os.stat(entry.name, dir_fd=parent, follow_symlinks=False)
+    require(same_stat(before, os.fstat(parent)), 'tutorial directory changed during inventory')
+    return found
+
+
+@contextlib.contextmanager
+def tutorial_child(parent, name, observed):
+    fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | NOFOLLOW, dir_fd=parent)
+    try:
+        owned(os.fstat(fd), directory=True, private=True)
+        require(same_stat(observed, os.fstat(fd)), 'tutorial directory identity changed')
+        yield fd
+        require(same_stat(observed, os.fstat(fd))
+                and same_stat(observed, os.stat(name, dir_fd=parent, follow_symlinks=False)),
+                'tutorial directory changed during inspection')
+    finally:
+        os.close(fd)
+
+
+def tutorial_file_issue(parent, name, observed, size, checksum, budget):
+    if observed is None:
+        return 'missing'
+    if not stat.S_ISREG(observed.st_mode) or observed.st_nlink != 1:
+        return 'unsafe_file'
+    if observed.st_size != size:
+        return 'size_mismatch'
+    require(0 <= size <= TUTORIAL_FILE_LIMIT, 'tutorial file read exceeds supported bound')
+    budget['bytes'] += size
+    require(budget['bytes'] <= TOTAL_LIMIT, 'tutorial inspection incomplete: aggregate byte limit')
+    try:
+        with regular(parent, name, private=True) as (stream, info):
+            if not same_stat(observed, info) or info.st_nlink != 1:
+                return 'identity_changed'
+            raw = stream.read(size + 1)
+            if (not same_stat(info, os.fstat(stream.fileno()))
+                    or not same_stat(info, os.stat(name, dir_fd=parent, follow_symlinks=False))):
+                return 'identity_changed'
+            if len(raw) != size:
+                return 'size_mismatch'
+            return None if digest(raw) == checksum else 'checksum_mismatch'
+    except FileNotFoundError:
+        return 'missing'
+    except Refused:
+        return 'unsafe_file'
+    except OSError:
+        return 'io_failure'
+
+
+def tutorial_quarantine(parent, observed, budget, report):
+    with tutorial_child(parent, 'quarantine', observed) as quarantine:
+        entries = tutorial_entries(quarantine, budget)
+        for name, info in sorted(entries.items()):
+            match = QUARANTINE_NAME.fullmatch(name)
+            if match is None:
+                report['issues'].append({'scope': 'quarantine', 'kind': 'unknown_entry'})
+                continue
+            if not stat.S_ISDIR(info.st_mode):
+                report['issues'].append({'scope': 'quarantine', 'kind': 'unsafe_entry'})
+                continue
+            with tutorial_child(quarantine, name, info) as retained:
+                contents = tutorial_entries(retained, budget)
+                if set(contents) != {'content'}:
+                    report['issues'].append({'scope': 'quarantine', 'kind': 'incomplete_quarantine'})
+                    continue
+                content = contents['content']
+                if not 0 <= content.st_size <= TUTORIAL_FILE_LIMIT:
+                    issue = 'size_mismatch'
+                else:
+                    issue = tutorial_file_issue(retained, 'content', content, content.st_size, match[3], budget)
+                if issue is None:
+                    report['quarantine_files'] += 1
+                else:
+                    report['issues'].append({'scope': 'quarantine', 'kind': issue})
+
+
+def inspect_restored_media(parent, rows):
+    """Observe only this private restored root. Unknown trees are reported, never followed."""
+    budget = {'entries': 0, 'bytes': 0}
+    report = {'schema': 'kira.restored-pair-media-verification.v1', 'rows': len(rows),
+              'draft_verified': 0, 'published_verified': 0, 'quarantine_files': 0, 'issues': []}
+    entries = tutorial_entries(parent, budget)
+    claimed, seen_ids = set(), set()
+    for row in rows:
+        scope = ('published' if row.get('published') is True else
+                 'draft' if row.get('published') is False else 'metadata') if type(row) is dict else 'metadata'
+        name = row.get('storage_filename') if type(row) is dict else None
+        # Invalid recorded metadata does not turn its file into a rowless object.
+        if type(name) is str and FINAL_NAME.fullmatch(name):
+            claimed.add(name)
+        try:
+            tutorial_row(row)
+            require(row['id'] not in seen_ids, 'duplicate tutorial media UUID')
+            seen_ids.add(row['id'])
+        except (Refused, TypeError):
+            report['issues'].append({'scope': scope, 'kind': 'invalid_metadata'})
+            continue
+        issue = tutorial_file_issue(parent, name, entries.get(name), row['byte_size'], row['sha256'], budget)
+        if issue is None:
+            report[scope + '_verified'] += 1
+        else:
+            report['issues'].append({'scope': scope, 'kind': issue, 'media_id': row['id']})
+    for name, info in sorted(entries.items()):
+        if name in claimed:
+            continue
+        if name == 'quarantine' and stat.S_ISDIR(info.st_mode):
+            tutorial_quarantine(parent, info, budget, report)
+        else:
+            kind = ('unsafe_entry' if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 else
+                    'rowless_final' if FINAL_NAME.fullmatch(name) else
+                    'staging' if STAGING_NAME.fullmatch(name) else 'unknown_entry')
+            report['issues'].append({'scope': 'root', 'kind': kind})
+    report['entries_checked'] = budget['entries']
+    report['verified'] = not report['issues']
+    return report
+
+
+def verify_restored_pair(attempt):
+    """Verify one completed selected pair. No restore, receipt, STOP, DB or media writes."""
+    supported_runtime()
+    environment = pg_environment(restore=True)
+    clients17(environment, ('psql',))
+    attempt = absolute(attempt)
+    with directory(attempt.parent, owner=True), directory(attempt, private=True) as parent, \
+            attempt_lock(parent, read_only=True):
+        absent(parent, 'STOP.json')
+        request, request_hash, receipt, receipt_hash = restored_database_records(parent, environment)
+        media_started, media_started_hash = load_record(parent, 'media-started.json')
+        require(media_started == {'schema': 'kira.restore-media-started.v1', 'id': request['id'],
+                                  'request_sha256': request_hash, 'target': request['media_target']},
+                'media stage correspondence failed')
+        pair, pair_hash = load_record(parent, 'pair.json')
+        keys(pair, ('schema', 'id', 'request_sha256', 'database_receipt_sha256', 'target'))
+        require(pair['schema'] == 'kira.restore-pair.v1' and pair['id'] == request['id']
+                and pair['request_sha256'] == request_hash and pair['database_receipt_sha256'] == receipt_hash,
+                'pair receipt correspondence failed')
+        keys(pair['target'], ('path', 'device', 'inode'))
+        integer(pair['target']['device'], 0, 2**64 - 1)
+        integer(pair['target']['inode'], 1, 2**64 - 1)
+        require(pair['target']['path'] == request['media_target'], 'pair target differs from request')
+        frozen(attempt, parent, request['selection'])
+        state = database_state(environment, request['source_version'])
+        require(canonical({key: receipt[key] for key in state}) == canonical(state),
+                'database identity/OID/full history changed; STOP')
+        target = absolute(request['media_target'])
+        with directory(target.parent, owner=True) as target_parent, locked(target_parent), \
+                directory(target, private=True) as media:
+            info = os.fstat(media)
+            require(canonical(pair['target']) == canonical(
+                {'path': str(target), 'device': info.st_dev, 'inode': info.st_ino}),
+                'restored target identity differs from pair receipt')
+            rows = restored_media_rows(environment, request['source_version'], state)
+            report = inspect_restored_media(media, rows)
+            require(canonical(database_state(environment, request['source_version'])) == canonical(state),
+                    'database identity/history changed during verification')
+            require(same_stat(info, os.fstat(media))
+                    and same_stat(info, os.stat(target.name, dir_fd=target_parent, follow_symlinks=False)),
+                    'restored target changed during verification')
+        # Read-only observations cannot certify custody after independent writers resume.
+        absent(parent, 'STOP.json')
+        require(restored_database_records(parent, environment) == (request, request_hash, receipt, receipt_hash)
+                and load_record(parent, 'media-started.json')[1] == media_started_hash
+                and load_record(parent, 'pair.json')[1] == pair_hash,
+                'attempt records changed during verification')
+        return {**report, 'attempt_id': request['id'], 'request_sha256': request_hash,
+                'database_receipt_sha256': receipt_hash}
+
+
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         raise Refused('invalid arguments; consult the reviewed recovery runbook')
@@ -988,6 +1218,8 @@ def main(argv=None):
         item = sub.add_parser('publish-directory', allow_abbrev=False)
         item.add_argument('--stage', required=True)
         item.add_argument('--target', required=True)
+        item = sub.add_parser('verify-restored-pair', allow_abbrev=False)
+        item.add_argument('--attempt', required=True)
         item = sub.add_parser('_backup', allow_abbrev=False)
         item.add_argument('output')
         item.add_argument('media_directory')
@@ -1005,6 +1237,10 @@ def main(argv=None):
             print(args.expected_sha256)
         elif args.operation == 'publish-directory':
             publish_directory(args.stage, args.target)
+        elif args.operation == 'verify-restored-pair':
+            report = verify_restored_pair(args.attempt)
+            print(canonical(report).decode('ascii'), end='')
+            return 0 if report['verified'] else 1
         elif args.operation == '_backup':
             print('backup bundle created; inventory SHA-256: ' + portable_backup(args.output, args.media_directory))
         elif args.operation == '_restore-db':
