@@ -32,6 +32,7 @@ import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
+import org.springframework.dao.InvalidDataAccessApiUsageException
 import org.springframework.mock.web.MockMultipartFile
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.nio.file.Files
@@ -165,6 +166,18 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
         val acquisitions = AtomicInteger()
         val rowReads = AtomicInteger()
         val permittedMutations = AtomicInteger()
+        val failedOperations = AtomicInteger()
+        val originalFailure = AtomicReference<DelegateFailure>()
+
+        fun <T> observeDelegate(operation: String, call: () -> T): T = try {
+            call()
+        } catch (failure: Throwable) {
+            // Rollback can replace the terminal exception; retain the actual delegate failure unchanged.
+            failedOperations.incrementAndGet()
+            originalFailure.compareAndSet(null, DelegateFailure(operation, failure))
+            throw failure
+        }
+
         val repository = object : TutorialRepository by app.repository {
             override fun acquireMediaLock(): MediaTransaction {
                 acquisitions.incrementAndGet()
@@ -174,9 +187,13 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
             override fun listMedia(limit: Int): List<StoredMedia> {
                 rowReads.incrementAndGet()
                 if (boundary == LockLossBoundary.BEFORE_FRESH_READ) pauseScanner(paused, resume)
-                val rows = app.repository.listMedia(limit)
+                val rows = observeDelegate("listMedia") { app.repository.listMedia(limit) }
                 if (boundary == LockLossBoundary.AFTER_FRESH_READ) pauseScanner(paused, resume)
                 return rows
+            }
+
+            override fun verifyMediaLock(transaction: MediaTransaction) {
+                observeDelegate("verifyMediaLock") { app.repository.verifyMediaLock(transaction) }
             }
         }
         val storage = object : TutorialMediaStorage by app.storage {
@@ -198,12 +215,21 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
             resume.countDown()
 
             val failure = sweep.get(WAIT_SECONDS, TimeUnit.SECONDS).exceptionOrNull()
-            assertNotNull(failure, "loss of the original lock/connection must abort, never reconnect and continue")
+            val observed = originalFailure.get()
+            val diagnostics = "original=${failureTypesAndSqlStates(observed?.failure)}; terminal=${failureTypesAndSqlStates(failure)}"
+            assertNotNull(failure, "loss of the original lock/connection must abort, never reconnect and continue; $diagnostics")
+            assertEquals(1, failedOperations.get(), "require exactly one failed repository operation; $diagnostics")
+            val delegate = requireNotNull(observed)
+            val expectedOperation = when (boundary) {
+                LockLossBoundary.BEFORE_FRESH_READ -> "listMedia"
+                LockLossBoundary.AFTER_FRESH_READ -> "verifyMediaLock"
+            }
+            assertEquals(expectedOperation, delegate.operation, diagnostics)
             assertTrue(
-                generateSequence(requireNotNull(failure)) { it.cause }.take(20).any {
+                generateSequence(delegate.failure) { it.cause }.take(20).any {
                     it is SQLException && (it.sqlState?.startsWith("08") == true || it.sqlState == "57P01")
                 },
-                "require a real PostgreSQL/driver disconnection failure, not a synthetic gate exception",
+                "require a real PostgreSQL/driver disconnection failure, not a synthetic gate exception; $diagnostics",
             )
             assertEquals(1, acquisitions.get())
             assertEquals(1, rowReads.get())
@@ -277,7 +303,7 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
         }
 
         assertTrue(observation.databaseCommitReturned)
-        assertThrows(IllegalStateException::class.java) { app.repository.verifyMediaLock(token) }
+        assertProxiedMediaGuard("tutorial media requires an active physical transaction") { app.repository.verifyMediaLock(token) }
         assertEquals(
             false,
             app.jdbc.queryForObject("SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = ?)", Boolean::class.java, token.backendPid),
@@ -285,7 +311,7 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
         app.transaction().executeWithoutResult { status ->
             val replacement = app.repository.acquireMediaLock()
             assertNotEquals(token.transactionId, replacement.transactionId)
-            assertThrows(IllegalStateException::class.java) { app.repository.verifyMediaLock(token) }
+            assertProxiedMediaGuard("tutorial media transaction identity changed") { app.repository.verifyMediaLock(token) }
             status.setRollbackOnly()
         }
     }
@@ -324,7 +350,7 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
                 }
             }
             assertFalse(TransactionSynchronizationManager.isCurrentTransactionReadOnly(), "the hint deliberately differs from server state")
-            assertThrows(IllegalStateException::class.java) { seed.seedIfEmpty() }
+            assertProxiedMediaGuard("tutorial media requires effective writable READ_COMMITTED isolation") { seed.seedIfEmpty() }
             status.setRollbackOnly()
         }
 
@@ -493,6 +519,18 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
         await(resume, "scanner was not released after its connection-loss fixture")
     }
 
+    private fun assertProxiedMediaGuard(expectedMessage: String, block: () -> Unit) {
+        val failure = assertThrows(InvalidDataAccessApiUsageException::class.java) { block() }
+        val guard = assertInstanceOf(IllegalStateException::class.java, failure.cause)
+        assertEquals(expectedMessage, guard.message)
+    }
+
+    private fun failureTypesAndSqlStates(failure: Throwable?): String = generateSequence(failure) { it.cause }.take(20).joinToString(" -> ") {
+        val type = it.javaClass.name.take(160)
+        val sqlState = (it as? SQLException)?.sqlState?.take(5)
+        if (sqlState == null) type else "$type[SQLSTATE=$sqlState]"
+    }.ifEmpty { "none" }
+
     private fun <T> ExecutorService.participant(block: () -> T): Future<T> = submit(
         Callable {
             assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
@@ -542,6 +580,8 @@ class TutorialMediaReconciliationIT : TutorialMediaIntegrationSupport() {
 
     enum class LockLossBoundary { BEFORE_FRESH_READ, AFTER_FRESH_READ }
     enum class OuterTransactionMode { READ_ONLY, REPEATABLE_READ }
+
+    private data class DelegateFailure(val operation: String, val failure: Throwable)
 
     private companion object {
         const val WAIT_SECONDS = 15L
