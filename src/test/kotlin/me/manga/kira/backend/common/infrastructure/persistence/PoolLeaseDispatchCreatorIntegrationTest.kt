@@ -640,7 +640,11 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
                                                 assertFalse(entry.jdbc.postOpeningCallsEnded())
                                                 assertEquals(1L, transfer.budget.remainingMillis(1))
                                                 tail.release()
-                                                assertEquals(1L, transfer.budget.remainingMillis(1), "The tail release must remain inside the original RETURN allowance.")
+                                                assertEquals(
+                                                    1L,
+                                                    transfer.budget.remainingMillis(1),
+                                                    "The tail release must remain inside the original RETURN allowance.",
+                                                )
                                             }
                                         } finally {
                                             tail.release() // Failure-safe release too; no replacement RETURN budget.
@@ -1124,8 +1128,7 @@ private class CreatorOuterEndBarrier(
     private val kind: PersistenceJdbcGuardCallKind,
     private val beforeIdleAssertions: (() -> Unit)? = null,
     private val held: () -> Unit,
-) :
-    ThreadLocal<PoolCallFrame?>(),
+) : ThreadLocal<PoolCallFrame?>(),
     AutoCloseable {
     private val caller = Thread.currentThread()
     private val storage = requireNotNull(ownedCutField(PoolCallFrames, "storage"))
