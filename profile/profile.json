@@ -1,0 +1,303 @@
+{
+  "schema_version": 1,
+  "profile_id": "app-29-active-wire-cancel-profile-01",
+  "test_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.PoolLeaseDispatchCreatorIntegrationTest"
+  ],
+  "task_args": [
+    "ktlintTestSourceSetCheck",
+    "detekt",
+    "test",
+    "--tests",
+    "me.manga.kira.backend.common.infrastructure.persistence.PoolLeaseDispatchCreatorIntegrationTest.real active query cancellation preserves native user request failure and RETURN waits for the foreign outer tail"
+  ],
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.PoolLeaseDispatchCreatorIntegrationTest.real active query cancellation preserves native user request failure and RETURN waits for the foreign outer tail"
+  ],
+  "expected_test_count": 1,
+  "expected_tests": [
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PoolLeaseDispatchCreatorIntegrationTest",
+      "method": "real active query cancellation preserves native user request failure and RETURN waits for the foreign outer tail",
+      "display_name": "real active query cancellation preserves native user request failure and RETURN waits for the foreign outer tail()"
+    }
+  ],
+  "report_directory": "reports/active-wire-cancel-01",
+  "witness_property_file": "worker-runtime.txt",
+  "expected_witnesses": [],
+  "original_provider_gate": "app-29-gate-b-hosted-01",
+  "original_provider_gate_note": "Retained compatibility property only. Its original-provider method and both positive-witness methods are unselected; no worker witness or consumer acceptance is expected.",
+  "removed_stock": {
+    "group": "org.postgresql",
+    "module": "postgresql",
+    "version": "42.7.12",
+    "sha256": "31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c"
+  },
+  "jdk": {
+    "feature": 21,
+    "distribution": "temurin",
+    "implementor": "Eclipse Adoptium",
+    "home": "Bound hosted JAVA_HOME; actual Gradle/Test context and JDK binary/modules hashes remain controller obligations, not positive consumer-loader proof."
+  },
+  "shutdown_diagnostics": {
+    "status": "NOT_APPLICABLE",
+    "expected_record_count": 0
+  },
+  "container_population": {
+    "total": 2,
+    "postgres": 1,
+    "ryuk": 1,
+    "images": [
+      "postgres:17.6-alpine",
+      "testcontainers/ryuk:0.12.0"
+    ],
+    "basis": "The sole literal active wire-cancel method is in one PER_CLASS/SAME_THREAD class; its database.value starts the one lazy PgLifecycleDatabaseFixture, closed in AfterAll. The ordinary cleanup fixture and EMF reuse that database. No MODEL, mixed-pool, enum, Core47, Native73 or negative child JVM is selected. One Test worker/forkEvery=0 still requires one PostgreSQL17.6-alpine and one Ryuk0.12.0 in one session. These are required topology, not observed active wire-cancel outcomes."
+  },
+  "expected_xml_files": [
+    "TEST-me.manga.kira.backend.common.infrastructure.persistence.PoolLeaseDispatchCreatorIntegrationTest.xml"
+  ],
+  "scope": "UNBOUND public-source preparation for configured exact-two-file Ktlint/Detekt plus one literal active wire-cancel testcase in one normal Gradle invocation with normal compilation and the existing owned PostgreSQL/Ryuk lifecycle; no driver, consumer, W03 or production qualification.",
+  "final_jar": {
+    "sha256": "50f7dc4a6314cc5105f4990be26ba8be65ae242e1f7e62652cc60d6a2c0e03df",
+    "bytes": 1200036,
+    "qualification": "UNQUALIFIED",
+    "path": "inputs/postgresql-42.7.12-kira.1-osgi.jar"
+  },
+  "checker": {
+    "sha256": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288",
+    "bytes": 241885,
+    "path": "inputs/checker-qual-3.55.1.jar"
+  },
+  "original_init": {
+    "path": "profile/w01-local-dependencies.init.gradle",
+    "sha256": "429961b98254b89f7ce1d7ba1efa61b8cba28a3bae35353bf3a8ba85f4a1c839"
+  },
+  "local_repository": {
+    "path": "inputs/repository",
+    "manifest": "inputs/local-inputs.sha256",
+    "manifest_sha256": "c67fcc5fe64a9a795373c4683c7c1edd6407146e3cd07609fa7018a8a98db79a",
+    "file_count": 18,
+    "bytes": 403610
+  },
+  "runtime_inputs": {
+    "inputs/checker-qual-3.55.1.jar": {
+      "bytes": 241885,
+      "sha256": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288"
+    },
+    "inputs/postgresql-42.7.12-kira.1-osgi.jar": {
+      "bytes": 1200036,
+      "sha256": "50f7dc4a6314cc5105f4990be26ba8be65ae242e1f7e62652cc60d6a2c0e03df"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract-jvm/0.1.0/source-contract-jvm-0.1.0-sources.jar": {
+      "bytes": 12555,
+      "sha256": "ff2332dbd8addbbc69b2c8c3e9c7e6d5e7d1f94e676d532be593a92cd9fafa5b"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract-jvm/0.1.0/source-contract-jvm-0.1.0.jar": {
+      "bytes": 139555,
+      "sha256": "9eeb54df5d09f14ebe612b1255721fa536c2517502b05cbd815e8b98370e0b7d"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract-jvm/0.1.0/source-contract-jvm-0.1.0.module": {
+      "bytes": 4146,
+      "sha256": "d9a8995bc42cd2aab74c7909baf0570ec948afa58365d96e785269a3c963c749"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract-jvm/0.1.0/source-contract-jvm-0.1.0.pom": {
+      "bytes": 1386,
+      "sha256": "00ce4dabc53c33736b7527fd541fe7cdc1d80243bbf67244d28a114a84c58a1c"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract/0.1.0/source-contract-0.1.0-kotlin-tooling-metadata.json": {
+      "bytes": 1480,
+      "sha256": "c62d1b05a013e5f1b0e0b72f56b17bee28a4955b1111ab5a52e5e3e57e273817"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract/0.1.0/source-contract-0.1.0-sources.jar": {
+      "bytes": 12555,
+      "sha256": "ff2332dbd8addbbc69b2c8c3e9c7e6d5e7d1f94e676d532be593a92cd9fafa5b"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract/0.1.0/source-contract-0.1.0.jar": {
+      "bytes": 10929,
+      "sha256": "94d4c352233c4677b8e8ff9c691f63e89bcb272c690df7ab5af3904329154f2d"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract/0.1.0/source-contract-0.1.0.module": {
+      "bytes": 10171,
+      "sha256": "7ef1411f69e4e10b5e3f824c6ca7f4fce075215d1a746c0c60c1c69df07090be"
+    },
+    "inputs/repository/me/manga/kira/source/source-contract/0.1.0/source-contract-0.1.0.pom": {
+      "bytes": 1378,
+      "sha256": "846fdfb2d251e513128a6bad62d70f21ac728d28eec699b1ec7bba6ca9604b70"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine-jvm/0.1.0/source-engine-jvm-0.1.0-sources.jar": {
+      "bytes": 33681,
+      "sha256": "84b4b25e9dd952a99c32618bd217571177feabe80801a6a5466e2afbe71e448d"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine-jvm/0.1.0/source-engine-jvm-0.1.0.jar": {
+      "bytes": 109359,
+      "sha256": "e2a20c63ab115dabfc75fc6a0ea33a36fd6c272c6ee22ed17ef2aa9cab840a2d"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine-jvm/0.1.0/source-engine-jvm-0.1.0.module": {
+      "bytes": 4453,
+      "sha256": "322aebab1cd9bcd6dbae3d83dd3e6635f9e65cf6a23b428cad44e62b4e4036c7"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine-jvm/0.1.0/source-engine-jvm-0.1.0.pom": {
+      "bytes": 1959,
+      "sha256": "97c9eba44ff26ae6a72441c6748a590bd9f3c85fc6ac1d6b4fbe44f3fc7c4dd9"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine/0.1.0/source-engine-0.1.0-kotlin-tooling-metadata.json": {
+      "bytes": 1480,
+      "sha256": "c62d1b05a013e5f1b0e0b72f56b17bee28a4955b1111ab5a52e5e3e57e273817"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine/0.1.0/source-engine-0.1.0-sources.jar": {
+      "bytes": 33681,
+      "sha256": "84b4b25e9dd952a99c32618bd217571177feabe80801a6a5466e2afbe71e448d"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine/0.1.0/source-engine-0.1.0.jar": {
+      "bytes": 12305,
+      "sha256": "3a2fd051891c305bdc01537fec623070b83426c39cfd8ffac872eb8026ca4a03"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine/0.1.0/source-engine-0.1.0.module": {
+      "bytes": 10598,
+      "sha256": "4a11051300075778a2a6a95275c33a826886a50f111d0a6dbc046e5ab118e8ae"
+    },
+    "inputs/repository/me/manga/kira/source/source-engine/0.1.0/source-engine-0.1.0.pom": {
+      "bytes": 1939,
+      "sha256": "d8daeded7727ee0e349e9edf4a1f206e0a722f499610840e247d40eacda59e9d"
+    }
+  },
+  "source_inventory": {
+    "kind": "public-source-tree-and-content-pins",
+    "source_sha": "a6f34a278a506ce5f33a6dc460a45d3ff93e5af8",
+    "source_tree": "2f50c373d37927f46638899db7a856fd77481823",
+    "source_parent": "40cd36b81c387a73f68f2eba77374c8cd909aee8",
+    "pinned_file_count": 83,
+    "pins_sha256": "b9c805aa1b3472a6e677a9d87714d17a306e30a2075d5f825987f1dfa95440b5",
+    "expected_test_count": 1
+  },
+  "source_pins": {
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/GuardedDataSource.kt": "7395aa04bfbb6702043dddf1a6393cf94b2abd67128bf669ee81ff39df2ca448",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/GuardedJdbcTransactionManager.kt": "ac6e2039f7dae66768981947798b177b7387bc5d9d48767f2cf298a53247bce7",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/GuardedJpaTransactionManager.kt": "5fd30b1120b4beb6e006264209833935b883bdb3d604b9b855c5eeedf1899b53",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/LeaseJdbcFacade.kt": "28e63d187150a4768661ee7fb257cf4d5e29d99b7a0e642619abfb2661705afd",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcCancellation.kt": "bf6c9960be7b8c6a6bcc4cbef364945a8bf2d68e868f81f89591574c842f220a",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcChild.kt": "b91978550626f48b7e3df636441a901481d399aca9f16f0117ef78c19f76acdf",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcGuardCall.kt": "8f01ed4e07207701fe9a7ed999e8cbe854633902fe1153e5e0fe376918f44457",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcGuardProtocol.kt": "f0209738f66ed56298799a1b58d1f8e67e518d8a5d3f5bc591f944224cd43063",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcLease.kt": "e22262871a9ad7e35f12b99d8c17615827e8e31294b7d2f7bb272b6bcc524693",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcLeaseInvocation.kt": "467ce125c4732f785ef0924a3474c64909f267a3922de446326bb0c43b05a1e6",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcLifecycleOwner.kt": "7c20e32a16f0818b80f3dacf29232d3ad08b7a2088e26815e8ee64cccc1a263f",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcParticipant.kt": "2769b92239a1d444b34ae1bef2223104669f7561c1436822d6a56fba4884630b",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcPoolTransfer.kt": "d77f0b6c32d970e6bc121dd3c87d5b81fbf2cc43632fe02bc8160833155ca8bf",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcTransaction.kt": "1ab3cb9a72c856a46c34c2dd16aa77d0f80ae04064f06f6829c2453ee3b56e5d",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceLeaseCompletion.kt": "87ed0ed516ec98b8c9e86ceef1b264997cf127c4d084c4386ad1851019f1fb66",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceManagedObserver.kt": "e582e0ad2f7df1cf615b7da07a28588e1d35997b5f52f39fdd4fae14a8bb89ee",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceOwnedFactoryRequest.kt": "d0c2a18ae260bdfaf03e530bc338c992ec2922e333720c069c509531c16915d8",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceOwnership.kt": "617e630de2d5b8351f9046769eaa8bf3b58f1d7f1ba88b00497efe9280ae6f34",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePgDriverOpening.kt": "0cb7ad51aa617317158fa3f086f3650b81fa6ae97d825ce04a993cc21fe51b68",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePgOwnedCutAccess.kt": "6b11275185862051541d5fe1ba0c2d3b7bfa4b2a95a531161c381e01e3dc35c9",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePhaseContext.kt": "2ce0328657f28541b93ba6b568f477070d09d9070ffdf902e29ac42da63b6237",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePhaseOwnership.kt": "b751fc526efdbee8c5c3b2fad6ec3896753270d86b28669f7a51ce63993ffdf2",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePhysicalCompletion.kt": "1ffc209d1d160fb5089acb07a045788e84b4eb2401d26b3ebc6c4ab959b5a1ec",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePhysicalEntry.kt": "bf5ab87198f7b400d029242cdc52e2ca10856366edf71b8ee1ecb9976203a6b8",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePhysicalFactoryBinding.kt": "0e5c95d3d1c28356f19e7ac518d45e78156ebfcedb7ff151996f46eb5a0e1b25",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePhysicalTransportBinding.kt": "3c72035bccc336af6cc69c23941c880787d8ce927cbc33ae5b767a5320b579ce",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceProducerEpoch.kt": "db0cea829ce45998d824eab1acbd67154217acac5bee532f8aa3261cbee73959",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceRetainedPgDriver.kt": "08238dfd49eacaf50a0cf9558e81e7abcd27b5248246e0b8339a10e839d7e151",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceTerminalWork.kt": "0cd54e32884e707c25e8e9c548adac4d2bfdc8b3b050ae1f4a867d07e10998d4",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceTransportOwner.kt": "0885246c2a49b81eb6adf4d7e33b363c5f5518af19ff9caf7a229938797e77b9",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcCallbacks.kt": "42e025266608f9ddb88d0ed1ebc1cd447e18a6dd9fed026b403ab43aa41f17c3",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcDescendants.kt": "70aa9d92b96ad0595b321ed30dcc05cd73cc370c921fd05dfc87f370a1868220",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcFacade.kt": "740572baed8baea8dd998b69ec3aa115a19862eee610b108e00f97d6820c3b19",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcIdentityIndex.kt": "a99edc236ca2aedbbf8ef633f80374cda6fab14659ad3c4befcccf9e361fb2f5",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcInputs.kt": "524429e335ab6b3d22db6233f8db019b107df7390e71e4baf6bd7df09c61cf3e",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcStreams.kt": "6e7413235d1b276786a94775c780a1c21fd8e714c3215efc76520c402daeccdd",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcXml.kt": "b421e84407b64822c558935c05a3e10f1b2bdcc9bf327216c3523428e4ceb543",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolActorCustody.kt": "c658703d6fe07c23fd67bd2db98c568cc589bc096d3dda89ea2dcdcec597a503",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolLifecycle.kt": "ca8ea5d15b8935d62564c9257abb6cd32340f995c535d5f40e4c4fea85c07ecf",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolLifecycleFrames.kt": "9230a12733c13823366adb833b28e4783f19d8426da774fffaea7b53646bc12f",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PreparedPoolConnection.kt": "1f184fdd95401e528b4fc9900fc532448f8ceae7d07bd77b1b824b2cf47a9a79",
+    "src/main/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PrivateJdbcDataSource.kt": "57d702ce9988b0bdd650387dd604d47edd0a4d3640f4f0071f6ad6311467a691",
+    "src/main/kotlin/me/manga/kira/backend/complaint/infrastructure/transaction/OrdinaryPersistencePhaseExecutor.kt": "43ef1e1ab32603ac03a5d5ec64ccf04f73bd1e6776763a830292efd151576cbc",
+    "src/main/kotlin/me/manga/kira/backend/security/JdbcSourceGrantCleanupStore.kt": "3521657245fd5922718c21e703120bae9bac9664bdab331564170f53714ce689",
+    "src/main/kotlin/me/manga/kira/backend/security/SourceGrantCleanup.kt": "020a40ee44d38611bdaed358519472ebbb7e29a18eb58be411c184fa0086eaa0",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OrdinarySourceGrantCleanupFixture.kt": "ce0110d46c15fefe5e152d6aa4be30d1c0539247f468c54d4cb15969db52418b",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OrdinarySourceGrantCleanupIT.kt": "d95a4a06510dc7b8b63d9064c643d8e8c91b783f52203d7328f4f141d24c1167",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OrdinarySourceGrantCleanupOwnershipIT.kt": "a1ab8749ca4bf90d03bc8716e478c5f122f3f3917b17756f02e1175868fef557",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnedPoolLeaseCreatorPendingProbe.kt": "8b27c8c4a33da10b9675eb07b3634ca8a6e0ada8a7bef599c9024bef2b227764",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcGuardProtocolTest.kt": "a025ee6e9e12facaa0fd14ffac6da1e5ed863a84661b012f1e4d56146a98f36a",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceJdbcTransactionTest.kt": "d850de351b5c7b7b27e9d7c21ae8089174b50fe49b7a20ba60efeeba4ddbb377",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceOwnedFactoryClaimTest.kt": "2c9a889a0c9050501db6c1cfa3e27c88f719b5c58718feb227a75cc8341b5445",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceOwnedRequestPublicationTest.kt": "56d5541a755a2ed86efaa98a15b34fe2ae563513b0f99912906538e5675d2f95",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePgOwnedCutIntegrationTest.kt": "1660f8dbb5d71033d7fb0606f1a5d20248dd4c6204a7773aca75a6a0663e77cb",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistencePoolDeliveryTest.kt": "bb056b116c337473bd0dfc945f67d4fa6dadfd7998543233a5ae2f958d37d415",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceTransportPublicationTest.kt": "0f289bef275724296c368c5bc16605bb28ac27048397ea2336d697b70484e175",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseAssertions.kt": "39947e5ca8b363ce3ca117f164cda8e4af1cc76edf0f90ab2965dfb44ac8eaeb",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseCases.kt": "8d88d79d4abfca56431b3a22a8bbb2aae455d00d81f7bed058da531ba4b55a07",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseObserver.kt": "320eff85f3dad1c62544ed361e09fa7f52951f82fde7188a5533a70b9f784c72",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseProbe.kt": "93b43e3bb48c0c7f1ea4f2e5588b7b81009592cf2546f074ab2b152eb6ba423f",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseProbeProcess.kt": "f8dd59a17d0334a5d8cc9c9b577b26e5ecead537a7f30180c975d0a25b88264a",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseRecipe.kt": "e405d48f71463bd8512a9433311509e92b387807f1b4c6682843dc9708ac128e",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseRetention.kt": "0d49e62878473fa1fdfdb28fb78306164d0a3764ca76bae8ac02c79269320e60",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseRetentionTest.kt": "bd1780f6be864ee34cabea4f1f9031b4814a9db2cadf108139651ac0f773bde6",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcDescendantsTest.kt": "a2e3ce055fcb98c350c49fff7522b959f223369568220312d5b1761c9369f2a9",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcFacadeTest.kt": "93d3ea648e86e24d3a32f3dedaa861d8b904dc90585a398699eacce46fcb4c9f",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcGraphFixture.kt": "e9a1c32e467cdce95dcaf1370a4ea1ca2527331a1995782f4fea73bd58d893c1",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcXmlAndStreamsTest.kt": "5e4c60a54da82ebfc16d33bea034fb6f470f99bc18967e2422145d5b4f853e46",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PhysicalJdbcXmlFixture.kt": "fb75e22471892d895ebeb55d4eec2f96297eb2a3e605423930e13cfe76853bff",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolActorCustodyTest.kt": "44a4712a49c7ea1f5b04081421b34296a8798b76d580c96b5db7bcdace00f1d1",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolLeaseDispatchCreatorIntegrationTest.kt": "0e2d5e3cb1ae1fd6e5ce47056f5852e8858b68802f8690157f59cf91b571b391",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolLifecycleTest.kt": "953d018327fc7b40c53ab291bed061cae48751f8f20e0c5c0c3a369e03a2513e",
+    "vendor/pgjdbc-owned-cut/0001-native-owned-cut.patch": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b",
+    "vendor/pgjdbc-owned-cut/0002-native-lifetime-correction.patch": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9",
+    "vendor/pgjdbc-owned-cut/0003-native-owned-cut-regressions.patch": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
+    "vendor/pgjdbc-owned-cut/0004-native-annotation-correction.patch": "c40a13d18f0598e10ce44b964aba932430c416861e9f5ec8dc5b209abae1d231",
+    "vendor/pgjdbc-owned-cut/ABI.md": "3179fac9a31893e84f7a767f516e77c6c14c69ad0a470db7240bd1afc92b5d6f",
+    "vendor/pgjdbc-owned-cut/LICENSE.pgjdbc": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53",
+    "vendor/pgjdbc-owned-cut/README.md": "4330c2fbf611056fe690faf73d4d505a76fadbd6eb0b9550f27b8ca0bdad41af",
+    "vendor/pgjdbc-owned-cut/series": "9d5c1d038dc867124c1a72318fca1c2e325ec48c08a3659fb8da5fb46a0180ee",
+    "vendor/pgjdbc-owned-cut/source-manifest.json": "8b2bda22f7562c22508c5b2b09756824e202db15ba2e1ef47a817c331c6afd8b",
+    "vendor/pgjdbc-owned-cut/test-source-manifest.json": "31286dd82c852edfd7d3f0304319de8b2d4e098f7f38a045e559841606b803ef",
+    "vendor/pgjdbc-owned-cut/upstream.lock.json": "c5a611a2f2b2cf2f600f8131754ee8f84da457b8eae53bc424ee4277890ca86a"
+  },
+  "shutdown_diagnostics_note": "The selected active wire-cancel method has no shutdownDiagnosticCase. Require explicit NOT_APPLICABLE and zero fixed shutdown-diagnostic rows; retain actual cancellation/assertion lines and original stacks only as raw current-run evidence, not a new scalar witness.",
+  "static_checks": {
+    "requested_tasks": [
+      "ktlintTestSourceSetCheck",
+      "detekt"
+    ],
+    "source_paths": [
+      "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PgLifecycleDatabaseObserver.kt",
+      "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PoolLeaseDispatchCreatorIntegrationTest.kt"
+    ],
+    "source_tasks": {
+      ":runKtlintCheckOverTestSourceSet": ":runKtlintCheckOverTestSourceSet",
+      ":ktlintTestSourceSetCheck": ":runKtlintCheckOverTestSourceSet",
+      ":detekt": ":detekt"
+    },
+    "task_type_prefixes": {
+      ":runKtlintCheckOverTestSourceSet": "org.jlleitschuh.gradle.ktlint.tasks.KtLintCheckTask",
+      ":ktlintTestSourceSetCheck": "org.jlleitschuh.gradle.ktlint.tasks.GenerateReportsTask",
+      ":detekt": "io.gitlab.arturbosch.detekt.Detekt"
+    },
+    "policy": {
+      "ktlint_engine": "1.8.0",
+      "ktlint_ignore_failures": false,
+      "ktlint_baseline_present": false,
+      "ktlint_output_to_console": true,
+      "detekt_version": "1.23.8",
+      "detekt_ignore_failures": false,
+      "detekt_auto_correct": false,
+      "detekt_baseline_present": false,
+      "detekt_dry_run_property_present": false,
+      "detekt_build_upon_default_config": true,
+      "detekt_all_rules": false,
+      "ktlint_additional_editorconfig_empty": true,
+      "detekt_disable_default_rule_sets": false
+    },
+    "configuration_sha256": {
+      ".editorconfig": "ecc589d2ee57adaacd3e951b625a6f4ad31f6ebc41f354e332cf0b9b39f2c6cd",
+      "build.gradle.kts": "8b6116173f5a5fd76de7c9654685754631e2df1a480a692082995b3122fb7aa0",
+      "config/detekt/detekt.yml": "509eb13c3915934d49a3de84dcb5332ff372deee0326c6aaceeed4c2a0b38760",
+      "gradle/libs.versions.toml": "041f4429eef81414ad3ede5825d570d1e1f8790fd8014332c9355a3a2177a120"
+    },
+    "detekt_kotlin_version": "2.0.21",
+    "log_marker": "APP29_ACTIVE_WIRE_CANCEL_STATIC ",
+    "log_schema": "app29.active-wire-cancel.static.v1"
+  }
+}

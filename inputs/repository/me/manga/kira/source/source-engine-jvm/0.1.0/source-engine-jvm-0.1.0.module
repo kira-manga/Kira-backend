@@ -1,0 +1,144 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "url": "../../source-engine/0.1.0/source-engine-0.1.0.module",
+    "group": "me.manga.kira.source",
+    "module": "source-engine",
+    "version": "0.1.0",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "9.6.1"
+    }
+  },
+  "variants": [
+    {
+      "name": "jvmApiElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "me.manga.kira.source",
+          "module": "source-contract",
+          "version": {
+            "requires": "0.1.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.21"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "source-engine-jvm-0.1.0.jar",
+          "url": "source-engine-jvm-0.1.0.jar",
+          "size": 109359,
+          "sha512": "81fb8f2786449b5f86885f802670c0505e485d564c93f0205c6f483d8c5bb40d6744ed5594594cfc3ca1815225f19ff79273f5ab6df74d91d542ad0f0f0249f5",
+          "sha256": "e2a20c63ab115dabfc75fc6a0ea33a36fd6c272c6ee22ed17ef2aa9cab840a2d",
+          "sha1": "85f6ed472ffc32721e83adfb884b11121cb41291",
+          "md5": "f0c76ef4e4a8d6f8f20f25e6e9f5eedb"
+        }
+      ]
+    },
+    {
+      "name": "jvmRuntimeElements-published",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "dependencies": [
+        {
+          "group": "me.manga.kira.source",
+          "module": "source-contract",
+          "version": {
+            "requires": "0.1.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlin",
+          "module": "kotlin-stdlib",
+          "version": {
+            "requires": "2.2.21"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-serialization-json",
+          "version": {
+            "requires": "1.9.0"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-coroutines-core",
+          "version": {
+            "requires": "1.10.2"
+          }
+        },
+        {
+          "group": "org.jetbrains.kotlinx",
+          "module": "kotlinx-datetime",
+          "version": {
+            "requires": "0.7.1"
+          }
+        },
+        {
+          "group": "com.fleeksoft.ksoup",
+          "module": "ksoup",
+          "version": {
+            "requires": "0.2.5"
+          }
+        }
+      ],
+      "files": [
+        {
+          "name": "source-engine-jvm-0.1.0.jar",
+          "url": "source-engine-jvm-0.1.0.jar",
+          "size": 109359,
+          "sha512": "81fb8f2786449b5f86885f802670c0505e485d564c93f0205c6f483d8c5bb40d6744ed5594594cfc3ca1815225f19ff79273f5ab6df74d91d542ad0f0f0249f5",
+          "sha256": "e2a20c63ab115dabfc75fc6a0ea33a36fd6c272c6ee22ed17ef2aa9cab840a2d",
+          "sha1": "85f6ed472ffc32721e83adfb884b11121cb41291",
+          "md5": "f0c76ef4e4a8d6f8f20f25e6e9f5eedb"
+        }
+      ]
+    },
+    {
+      "name": "jvmSourcesElements-published",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.jvm.environment": "standard-jvm",
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime",
+        "org.jetbrains.kotlin.platform.type": "jvm"
+      },
+      "files": [
+        {
+          "name": "source-engine-jvm-0.1.0-sources.jar",
+          "url": "source-engine-jvm-0.1.0-sources.jar",
+          "size": 33681,
+          "sha512": "fe5572679cf8205d50949956ebb39158693713be9aec46c4fb58d411b0b480f2496482aa6f282f8b8dc520b243a8cb8586ea1390dd1ac6a70ccd653f26265ff8",
+          "sha256": "84b4b25e9dd952a99c32618bd217571177feabe80801a6a5466e2afbe71e448d",
+          "sha1": "0b5f47f1b89f3eb7fb1cfd16fd99ae90d1d89554",
+          "md5": "5288d57e3c7e505ab5db335803a46fd1"
+        }
+      ]
+    }
+  ]
+}

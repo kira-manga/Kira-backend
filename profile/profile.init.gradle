@@ -1,0 +1,326 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import java.util.jar.Manifest
+import java.util.zip.ZipFile
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.tasks.testing.Test
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+
+// Public active-wire-cancel1 derivative; prior evidence remains private and unchanged.
+// Reuses the existing owned hosted context; no controller, process, fixture or dependency replacement.
+def profileSha256 = '034734eb4aea6d5a76c5542a106c63a552e3d577650557f48a62da8d17f7a659' // Candidate pin only; request/branch remain UNBOUND pending review.
+if (!(profileSha256 instanceof String) || !(profileSha256 ==~ /[0-9a-f]{64}/) || profileSha256 == '0' * 64) {
+    throw new GradleException('Inert active-wire-cancel derivative: final profile hash is UNBOUND')
+}
+def runPath = System.getenv('W01_RUN')
+if (!runPath) throw new GradleException('W01_RUN is required')
+def run = new File(runPath).canonicalFile
+def root = new File(System.getenv('GATE_B_ADMIN')).canonicalFile
+def backend = new File(System.getenv('GATE_B_BACKEND')).canonicalFile
+def javaHome = new File(System.getenv('JAVA_HOME')).canonicalPath
+if (run != new File(System.getenv('GATE_B_RUN'), 'w01').canonicalFile) throw new GradleException('Wrong owned hosted lane')
+def sha256 = { File file ->
+    def digest = MessageDigest.getInstance('SHA-256')
+    file.withInputStream { input ->
+        byte[] buffer = new byte[65536]
+        int count
+        while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count)
+    }
+    digest.digest().encodeHex().toString()
+}
+def profileFile = new File(root, 'profile/profile.json')
+if (sha256(profileFile) != profileSha256) {
+    throw new GradleException('Changed exact1 active-wire-cancel profile')
+}
+def profile = new JsonSlurper().parse(profileFile)
+if (!(profile.source_inventory.source_sha ==~ /[0-9a-f]{40}/) || profile.source_inventory.source_sha == '0' * 40) {
+    throw new GradleException('Inert active-wire-cancel derivative: source SHA is UNBOUND')
+}
+def exactMethods = profile.test_selectors
+if (profile.profile_id != 'app-29-active-wire-cancel-profile-01' || profile.expected_test_count != 1 ||
+        exactMethods.size() != 1 || exactMethods.toSet().size() != 1 || profile.expected_witnesses != [] ||
+        profile.expected_tests.size() != 1 ||
+        profile.expected_tests.collect { it['class'] + '.' + it.display_name }.toSet().size() != 1 ||
+        profile.expected_tests.collect { it['class'] + '.' + it.method }.unique() != exactMethods ||
+        profile.task_args != (['ktlintTestSourceSetCheck', 'detekt', 'test'] + exactMethods.collectMany { ['--tests', it] })) {
+    throw new GradleException('Require two-file statics, exactly1 literal active-wire filter/5 argv and1 invocation; no prior-test replay')
+}
+def originalInit = new File(run, 'original.init.gradle')
+if (sha256(originalInit) != profile.original_init.sha256) throw new GradleException('Changed historical source init')
+apply from: originalInit
+
+def finalJar = new File(root, profile.final_jar.path).canonicalFile
+def checker = new File(root, profile.checker.path).canonicalFile
+def verifyInputs = {
+    [[file: finalJar, pin: profile.final_jar], [file: checker, pin: profile.checker]].each { item ->
+        if (!item.file.isFile() || item.file.length() != item.pin.bytes || sha256(item.file) != item.pin.sha256) {
+            throw new GradleException('Changed explicit consumer input: ' + item.file)
+        }
+    }
+}
+verifyInputs()
+
+gradle.projectsEvaluated {
+    def p = gradle.rootProject
+    if (p.name != 'kira-backend' || p.projectDir.canonicalFile != backend) {
+        throw new GradleException('Diagnostic profile requires the bound backend checkout')
+    }
+    // Exact changed-file checker seam only; no source-set, dependency, rule or task-action replacement.
+    def staticSpec = profile.static_checks
+    def lint = p.tasks.named('runKtlintCheckOverTestSourceSet').get()
+    def lintReport = p.tasks.named('ktlintTestSourceSetCheck').get()
+    def detekt = p.tasks.named('detekt').get()
+    def ktlintExtension = p.extensions.getByName('ktlint')
+    def detektExtension = p.extensions.getByName('detekt')
+    def expectedFiles = staticSpec.source_paths.collectEntries { [(it): profile.source_pins[it]] }
+    def only = staticSpec.source_paths.collect { p.file(it).canonicalFile }.sort { it.path }
+    if (only.size() != 2 || only.toSet().size() != 2 ||
+            staticSpec.requested_tasks != ['ktlintTestSourceSetCheck', 'detekt']) {
+        throw new GradleException('Require only the two-file static tasks and sole test in one normal invocation')
+    }
+    lint.setSource(p.files(only))
+    detekt.setSource(p.files(only))
+    def staticTasks = [(lint.path): lint, (lintReport.path): lintReport, (detekt.path): detekt]
+    def started = [] as Set
+    def actionCompleted = [] as Set
+    def completed = [] as Set
+    detekt.mustRunAfter(lintReport)
+    p.tasks.named('test').configure { mustRunAfter(detekt) }
+
+    def inventory = { task ->
+        def actual = task.source.files.collect { it.canonicalFile }.sort { it.path }
+        if (actual != only || actual.any { !it.isFile() }) {
+            throw new GradleException('Active-wire static effective source is not exactly both changed files: ' + task.path)
+        }
+        def files = actual.collectEntries { [(p.relativePath(it)): sha256(it)] }
+        if (files != expectedFiles) throw new GradleException('Active-wire static source hash/path changed: ' + task.path)
+        files
+    }
+    def policy = {
+        [
+            ktlint_engine: ktlintExtension.version.get(),
+            ktlint_ignore_failures: ktlintExtension.ignoreFailures.get(),
+            ktlint_baseline_present: (ktlintExtension.baseline.asFile.orNull?.exists() ?: false),
+            ktlint_output_to_console: ktlintExtension.outputToConsole.get(),
+            detekt_version: detektExtension.toolVersion,
+            detekt_ignore_failures: detekt.ignoreFailures,
+            detekt_auto_correct: detekt.autoCorrect,
+            detekt_baseline_present: detekt.baseline.isPresent(),
+            detekt_dry_run_property_present: p.providers.gradleProperty('detekt-dry-run').isPresent(),
+            detekt_build_upon_default_config: detekt.buildUponDefaultConfig,
+            detekt_all_rules: detekt.allRules,
+            ktlint_additional_editorconfig_empty: ktlintExtension.additionalEditorconfig.get().isEmpty(),
+            detekt_disable_default_rule_sets: detekt.disableDefaultRuleSets
+        ]
+    }
+    def toolRuntime = {
+        def detektConfiguration = p.configurations.getByName('detekt')
+        def detektIds = detektConfiguration.incoming.resolutionResult.allComponents.collect { it.id }.findAll {
+            it instanceof ModuleComponentIdentifier
+        }
+        def cli = detektIds.findAll { it.group == 'io.gitlab.arturbosch.detekt' && it.module == 'detekt-cli' }
+        def kotlin = detektIds.findAll { it.group == 'org.jetbrains.kotlin' }
+        def engines = p.configurations.getByName('ktlint').incoming.resolutionResult.allComponents.collect { it.id }.findAll {
+            it instanceof ModuleComponentIdentifier && it.group == 'com.pinterest.ktlint' && it.module == 'ktlint-rule-engine'
+        }
+        def isolated = detekt.detektClasspath.files.collect { it.canonicalFile }.toSet() ==
+                detektConfiguration.files.collect { it.canonicalFile }.toSet()
+        if (cli.size() != 1 || cli[0].version != '1.23.8' || engines.size() != 1 || engines[0].version != '1.8.0' ||
+                kotlin.isEmpty() || kotlin.size() > 32 || kotlin.any { it.version != staticSpec.detekt_kotlin_version } ||
+                kotlin.count { it.module == 'kotlin-compiler-embeddable' } != 1 ||
+                !isolated || !detekt.pluginClasspath.files.isEmpty()) {
+            throw new GradleException('Active-wire static tool/runtime differs from configured Ktlint1.8.0 and isolated Detekt1.23.8')
+        }
+        [
+            ktlint_engine: engines[0].group + ':' + engines[0].module + ':' + engines[0].version,
+            detekt_cli: cli[0].group + ':' + cli[0].module + ':' + cli[0].version,
+            detekt_kotlin_components: kotlin.collect { it.group + ':' + it.module + ':' + it.version }.sort(),
+            detekt_classpath_matches_configuration: isolated,
+            detekt_plugin_classpath_empty: detekt.pluginClasspath.files.isEmpty()
+        ]
+    }
+    def observation = { task ->
+        def prefix = staticSpec.task_type_prefixes[task.path]
+        if (!task.enabled || !(task.class.name in [prefix, prefix + '_Decorated'])) {
+            throw new GradleException('Active-wire static task identity/enabled state changed: ' + task.path)
+        }
+        def configs = staticSpec.configuration_sha256.collectEntries { relative, expected ->
+            [(relative): sha256(p.file(relative))]
+        }
+        def actualPolicy = policy()
+        if (configs != staticSpec.configuration_sha256 || actualPolicy != staticSpec.policy ||
+                detekt.config.files.collect { it.canonicalFile } != [p.file('config/detekt/detekt.yml').canonicalFile]) {
+            throw new GradleException('Active-wire static rules/configuration/fail-on-findings policy changed')
+        }
+        [
+            schema: staticSpec.log_schema, phase: 'before-task-action',
+            task: task.path, task_type: task.class.name, source_task: staticSpec.source_tasks[task.path],
+            source_sha256: inventory(staticTasks[staticSpec.source_tasks[task.path]]),
+            configuration_sha256: configs, policy: actualPolicy, tool_runtime: toolRuntime()
+        ]
+    }
+    gradle.taskGraph.whenReady { graph ->
+        def checkerPaths = graph.allTasks.findAll {
+            it.name.toLowerCase().contains('ktlint') || it.name.toLowerCase().startsWith('detekt')
+        }.collect { it.path }.sort()
+        if (checkerPaths != [':detekt', ':ktlintTestSourceSetCheck', ':loadKtlintReporters', ':runKtlintCheckOverTestSourceSet'] ||
+                graph.allTasks.findAll { it instanceof Test }.collect { it.path } != [':test'] ||
+                graph.allTasks.any { it.name in ['check', 'build', 'clean'] } ||
+                staticTasks.keySet() != staticSpec.source_tasks.keySet()) {
+            throw new GradleException('Active-wire static/test graph is outside the finite requested scope')
+        }
+        staticTasks.each { path, task ->
+            observation(task) // Positive nonempty effective inputs/configuration at graph readiness.
+            def originalActions = new ArrayList(task.actions)
+            if (originalActions.isEmpty()) throw new GradleException('Active-wire checker has no genuine actions: ' + path)
+            task.outputs.upToDateWhen { false }
+            task.doFirst {
+                if (task.actions.size() != originalActions.size() + 2 || !task.actions.containsAll(originalActions) ||
+                        !started.add(path)) throw new GradleException('Active-wire checker action sequence changed: ' + path)
+                println(staticSpec.log_marker + JsonOutput.toJson(observation(task)))
+            }
+            task.doLast { actionCompleted.add(path) }
+        }
+    }
+    gradle.taskGraph.afterTask { task, state ->
+        if (staticTasks.containsKey(task.path)) {
+            def row = [
+                schema: staticSpec.log_schema, phase: 'after-task',
+                task: task.path, started: started.contains(task.path), action_completed: actionCompleted.contains(task.path),
+                executed: state.executed, did_work: state.didWork, skipped: state.skipped,
+                no_source: state.noSource, up_to_date: state.upToDate, failed: state.failure != null,
+                skip_message: state.skipMessage
+            ]
+            println(staticSpec.log_marker + JsonOutput.toJson(row))
+            def success = row.started && row.action_completed && row.executed && row.did_work &&
+                    !row.skipped && !row.no_source && !row.up_to_date && !row.failed && row.skip_message == null
+            if (success) completed.add(task.path)
+            else if (state.failure == null) {
+                // Never replace an original checker/worker failure with a listener exception.
+                throw new GradleException('Active-wire checker lacks genuine successful completion: ' + task.path)
+            }
+        }
+    }
+    p.tasks.named('jacocoTestReport').configure { enabled = false }
+    p.tasks.named('test', Test).configure { test ->
+        def resolved = p.configurations.getByName('testRuntimeClasspath').incoming.artifacts.artifacts
+        def moduleArtifacts = { String group, String module ->
+            resolved.findAll { artifact ->
+                def id = artifact.id.componentIdentifier
+                id instanceof ModuleComponentIdentifier && id.group == group && id.module == module
+            }
+        }
+        def stock = moduleArtifacts(profile.removed_stock.group, profile.removed_stock.module)
+        if (stock.size() != 1 || stock[0].id.componentIdentifier.version != profile.removed_stock.version ||
+                sha256(stock[0].file) != profile.removed_stock.sha256 || !test.classpath.contains(stock[0].file)) {
+            throw new GradleException('Expected exactly the recorded stock runtime artifact before removal')
+        }
+        def checkers = moduleArtifacts('org.checkerframework', 'checker-qual')
+        if (checkers.size() > 1 || checkers.any {
+            it.id.componentIdentifier.version != '3.55.1' || sha256(it.file) != profile.checker.sha256
+        }) throw new GradleException('Refusing an unreviewed Checker version/byte replacement')
+        def removed = [stock[0].file] + checkers.collect { it.file }
+        def beforeClasspath = test.classpath
+        test.classpath = beforeClasspath.minus(p.files(removed)).plus(p.files(finalJar, checker))
+        // Exact space-containing JVM method names; CLI and programmatic include sets intersect.
+        test.filter.setIncludePatterns(exactMethods as String[])
+        test.filter.failOnNoMatchingTests = true
+        test.maxParallelForks = 1
+        test.forkEvery = 0
+        test.systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+        test.outputs.upToDateWhen { false }
+        test.extensions.getByType(JacocoTaskExtension).enabled = false
+
+        def report = p.layout.buildDirectory.dir(profile.report_directory).get().asFile
+        test.systemProperty('kira.finalJarConsumer.profile', profile.profile_id)
+        // Retained compatibility properties; the two positive-witness methods are unselected.
+        test.systemProperty('kira.finalJarConsumer.gate', profile.original_provider_gate)
+        test.systemProperty('java.io.tmpdir', System.getenv('TMPDIR'))
+        test.systemProperty('user.home', System.getenv('HOME'))
+        test.systemProperty('kira.finalJarConsumer.jar', finalJar.path)
+        test.systemProperty('kira.finalJarConsumer.checker', checker.path)
+        test.systemProperty('kira.finalJarConsumer.javaHome', javaHome)
+        test.systemProperty('kira.finalJarConsumer.report', new File(report, profile.witness_property_file).path)
+        test.jvmArgs('-XX:+DisableAttachMechanism', '-XX:-EnableDynamicAgentLoading',
+                '-Xlog:class+load=info:file=' + new File(report, 'class-load-%p.txt').path + ':uptime,level,tags')
+
+        test.doFirst {
+            if (completed != staticTasks.keySet()) {
+                throw new GradleException('All three static action/report completions are required before the sole test')
+            }
+            verifyInputs()
+            def launcher = test.javaLauncher.get().metadata
+            if (launcher.installationPath.asFile.canonicalPath != javaHome ||
+                    launcher.languageVersion.asInt() != 21 || test.extensions.getByType(JacocoTaskExtension).enabled) {
+                throw new GradleException('Require the trusted uninstrumented JDK21 worker')
+            }
+            def forbidden = ['-javaagent:', '-agentlib:', '-agentpath:', '-Xbootclasspath', '--patch-module',
+                    '--upgrade-module-path', '--module-path', '-Djava.system.class.loader', '-Djava.class.path=',
+                    '-Djdk.util.jar.', '-XX:SharedArchiveFile=', '-XX:ArchiveClassesAtExit=']
+            if (test.allJvmArgs.any { arg -> forbidden.any { arg.startsWith(it) } } ||
+                    ['JAVA_TOOL_OPTIONS', 'JDK_JAVA_OPTIONS', '_JAVA_OPTIONS'].any { test.environment.containsKey(it) }) {
+                throw new GradleException('Refusing loader/MR/agent override')
+            }
+            def allowedDirectories = ['classes/java/main', 'classes/java/test', 'classes/kotlin/main',
+                    'classes/kotlin/test', 'resources/main', 'resources/test'].collect {
+                new File(p.layout.buildDirectory.get().asFile, it).canonicalFile
+            }
+            def entries = test.classpath.files.collect { raw ->
+                def file = raw.canonicalFile
+                def entry = [path: file.path, sha256: null, postgres_classes: 0, checker_classes: 0, postgres_services: 0]
+                def inspectName = { String name ->
+                    def base = name.replaceFirst('^META-INF/versions/[0-9]+/', '')
+                    if (base.endsWith('.class') && base.startsWith('org/postgresql/')) entry.postgres_classes++
+                    if (base.endsWith('.class') && base.startsWith('org/checkerframework/')) entry.checker_classes++
+                }
+                if (file.isFile() && file.name.endsWith('.jar')) {
+                    entry.sha256 = sha256(file)
+                    new ZipFile(file).withCloseable { zip ->
+                        zip.entries().each { member ->
+                            inspectName(member.name)
+                            if (member.name == 'META-INF/services/java.sql.Driver') {
+                                zip.getInputStream(member).withCloseable { input ->
+                                    entry.postgres_services += input.getText('UTF-8').readLines().count {
+                                        it.split('#', 2)[0].trim().startsWith('org.postgresql.')
+                                    }
+                                }
+                            }
+                        }
+                        def manifest = zip.getEntry('META-INF/MANIFEST.MF')
+                        if (manifest != null) zip.getInputStream(manifest).withCloseable { input ->
+                            if (new Manifest(input).mainAttributes.getValue('Class-Path')?.trim()) {
+                                throw new GradleException('Implicit manifest Class-Path is outside the reviewed overlay: ' + file)
+                            }
+                        }
+                    }
+                } else if (allowedDirectories.contains(file) && (!file.exists() || file.isDirectory())) {
+                    if (file.isDirectory()) file.eachFileRecurse(groovy.io.FileType.FILES) { child ->
+                        inspectName(file.toPath().relativize(child.toPath()).toString())
+                    }
+                } else {
+                    throw new GradleException('Unexpected/native classpath output: ' + file)
+                }
+                if ((entry.postgres_classes > 0 || entry.postgres_services > 0) && file != finalJar ||
+                        entry.checker_classes > 0 && file != checker || removed.any { it.canonicalFile == file }) {
+                    throw new GradleException('Foreign/duplicate consumer class supplier: ' + file)
+                }
+                entry
+            }
+            if (entries.count { it.postgres_classes > 0 } != 1 || entries.count { it.checker_classes > 0 } != 1 ||
+                    entries.sum { it.postgres_services } != 1) throw new GradleException('Incomplete one-provider overlay')
+            report.mkdirs()
+            new File(report, 'effective-classpath.txt').text = JsonOutput.prettyPrint(JsonOutput.toJson([
+                    profile: profile.profile_id, source_inventory: profile.source_inventory,
+                    expected_test_count: profile.expected_test_count, expected_witnesses: profile.expected_witnesses,
+                    scope: 'Exact1 active-wire-cancel validation with two-file statics; classpath context, not consumer/JAR/W03 qualification',
+                    removed_stock: [component: stock[0].id.componentIdentifier.displayName,
+                                    path: stock[0].file.canonicalPath, sha256: sha256(stock[0].file)],
+                    deduplicated_checker: checkers.collect { [path: it.file.canonicalPath, sha256: sha256(it.file)] },
+                    java_home: launcher.installationPath.asFile.canonicalPath,
+                    java_runtime_version: launcher.javaRuntimeVersion,
+                    planned_jvm_args: test.allJvmArgs, entries: entries])) + '\n'
+        }
+    }
+}
