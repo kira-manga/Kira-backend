@@ -26,6 +26,9 @@ internal class PersistencePhysicalTransportBinding(private val physical: Persist
 
     fun snapshot(): PersistenceTransportSnapshot = owner.snapshot()
 
+    /** No F/G/T acquisition or raw access; this identity certifies only the current PRIMARY's settled raw return. */
+    fun currentReturnedPrimary(): PersistenceTransportRecord? = owner.currentReturnedPrimary()
+
     fun liveFailureLocked(): PersistenceFactoryFailure? {
         check(physical.ledger.lock.isHeldByCurrentThread)
         if (physical.ledger.current(entry.record) !== entry || entry.transports !== this) return PersistenceFactoryFailure.COORDINATION_FAILED

@@ -1,0 +1,107 @@
+{
+  "schema": 1,
+  "candidate": "app29-native-owned-cut-tests-01",
+  "date_utc": "2026-09-10",
+  "status": "UNCOMPILED / UNRUN / NOT ACCEPTED",
+  "authority_relative_to_vendor": "../../../review/remediation/app-29-driver-cut-correction-authorization.md",
+  "upstream_commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+  "source_tree_relative_to_vendor": "../../../.kira-validation/pgjdbc-owned-cut/upstream",
+  "preserved_test_freeze_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-tests-01",
+  "source_file_count": 4,
+  "production_source_changes_in_this_patch": 0,
+  "patch": {
+    "path": "0003-native-owned-cut-regressions.patch",
+    "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
+    "bytes": 75780
+  },
+  "production_prerequisites": [
+    {
+      "path": "0001-native-owned-cut.patch",
+      "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b",
+      "bytes": 105172
+    },
+    {
+      "path": "0002-native-lifetime-correction.patch",
+      "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9",
+      "bytes": 4616
+    }
+  ],
+  "production_helper_sha256": "8286adcdae88579f4b0f18ead50928c8b34d13a2ee570ebe667a57c6c6f54342",
+  "control_abi": {
+    "path": "ABI.md",
+    "sha256": "6c2eefa3504df96d23f4ed07d6a8f9564ec34dde27b61710354f04fadc532112"
+  },
+  "files": [
+    {
+      "path": "pgjdbc/src/test/java/org/postgresql/core/v3/KiraOwnedParameterBridgeTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "79d25dbee07e20d785d8d54be2a0bf6a79f5b66e87fba82427304eb36d59fe55",
+        "bytes": 6337
+      },
+      "module": ":postgresql",
+      "fqcn_selector": "org.postgresql.core.v3.KiraOwnedParameterBridgeTest"
+    },
+    {
+      "path": "pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutBatchTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "bb30acf058ae10f88e8f20bb753a202a288e31c33a6df619f31269a41064491e",
+        "bytes": 18053
+      },
+      "module": ":postgresql",
+      "fqcn_selector": "org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest"
+    },
+    {
+      "path": "pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "c5778415a9b02a16811f16da1f4dcef655e74d977abb9b12ff7ab47d652fd299",
+        "bytes": 16410
+      },
+      "module": ":postgresql",
+      "fqcn_selector": "org.postgresql.jdbc.KiraOwnedJdbcCutRowsAndCloseTest"
+    },
+    {
+      "path": "pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "0b60985b3637a56cba6bb2789e124d53fd86a619e20fbdf9e722f1fc180997ce",
+        "bytes": 32140
+      },
+      "module": ":pgjdbc-mockito-test",
+      "fqcn_selector": "org.postgresql.jdbc.KiraOwnedJdbcCutFaultTest"
+    }
+  ],
+  "frameworks": [
+    "existing JUnit Jupiter 5.14.3",
+    "existing Mockito 5.23.0 / Byte Buddy 1.18.8 agent in pgjdbc-mockito-test",
+    "existing TestUtil / DB properties"
+  ],
+  "constraints": {
+    "real_native_jdbc_receivers": true,
+    "native_receiver_mocks_or_spies": false,
+    "shipping_test_callbacks_added": false,
+    "backend_guard_call_or_entry_proof_claimed": false,
+    "all_torn_publication_windows_claimed": false,
+    "dependencies_changed": false,
+    "production_sources_changed": false
+  },
+  "validation": {
+    "performed": [
+      "source inspection",
+      "unified diff generation",
+      "source and delivery SHA-256"
+    ],
+    "compilation": "NOT RUN",
+    "static_checks": "NOT RUN",
+    "tests": "NOT RUN",
+    "artifact_build": "NOT RUN",
+    "independent_test_review": "PENDING",
+    "acceptance": "NOT ACCEPTED"
+  }
+}

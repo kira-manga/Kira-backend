@@ -12,6 +12,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
     internal val legacyRegistry = PersistencePhysicalRegistry(ledger)
     internal val admissionOpen = AtomicBoolean()
     internal val completion = PersistencePhysicalCompletion(this)
+    internal val poolIdentity = PersistenceJdbcPoolIdentity.prepare(this)
     private val stopRequested = AtomicBoolean()
     private var worker: PersistenceRetainedPlatformThread? = null
 
@@ -22,6 +23,12 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
 
     internal fun request(opening: PersistencePgDriverOpening): PersistenceFactoryResult<PersistenceJdbcCandidate> =
         PersistenceOwnedFactoryRequest(this, opening).execute()
+
+    internal fun requestPoolConnection(allowanceMillis: Long): PersistenceFactoryResult<PhysicalJdbcFacade> =
+        PersistenceOwnedFactoryRequest(this, allowanceMillis).executePoolConnection()
+
+    internal fun requestPoolConnection(opening: PersistencePgDriverOpening): PersistenceFactoryResult<PhysicalJdbcFacade> =
+        PersistenceOwnedFactoryRequest(this, opening).executePoolConnection()
 
     internal fun isClosed(): Boolean = shutdown.get() || stopRequested.get()
 
@@ -206,6 +213,33 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         }
     }
 
+    /** Separate first delivery, sharing the original F1 association/claim rather than upgrading an opaque result. */
+    internal fun takePoolConnection(entry: PersistencePhysicalEntry, prepared: PreparedPoolConnection): Boolean {
+        if (!rendezvous.lock.tryLock()) return false
+        return try {
+            if (!ledger.lock.tryLock()) return false
+            try {
+                val control = requireNotNull(entry.control)
+                val attempt = requireNotNull(entry.attempt)
+                val reason = poolClaimFailure(entry, prepared) ?: finalCallerFailure(control)
+                if (reason != null) {
+                    control.fail(reason)
+                    return false
+                }
+                rendezvous.changed.signalAll()
+                if (!control.take()) return false
+                // No packaging, probes, native work or fallible installation after the logical take.
+                entry.jdbc.deliveredPoolLocked(prepared)
+                attempt.commitOwnedTransfer()
+                true
+            } finally {
+                ledger.lock.unlock()
+            }
+        } finally {
+            rendezvous.lock.unlock()
+        }
+    }
+
     /** Caller-side unused release is one nonblocking attempt. Failure leaves the exact Entry to the scanner. */
     internal fun releaseRefused(entry: PersistencePhysicalEntry): Boolean {
         if (!ledger.lock.tryLock()) return false
@@ -357,6 +391,36 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
 
     private fun finalCallerFailure(control: PersistenceOwnedCallerControl): PersistenceFactoryFailure? =
         control.caller.sampleActualFlag() ?: if (persistenceFactoryRemainingMillis(control.budget) == 0L) PersistenceFactoryFailure.TIMEOUT else null
+
+    private fun poolClaimFailure(entry: PersistencePhysicalEntry, prepared: PreparedPoolConnection): PersistenceFactoryFailure? {
+        val attempt = requireNotNull(entry.attempt)
+        val control = requireNotNull(entry.control)
+        if (!poolClaimIdentityMatches(entry, prepared, attempt, control)) {
+            return PersistenceFactoryFailure.COORDINATION_FAILED
+        }
+        return when {
+            isClosed() || ledger.sealed || entry.retiring || entry.retirementRequested.get() -> PersistenceFactoryFailure.CLOSED
+            !entry.jdbc.canDeliverPoolLocked(prepared) -> PersistenceFactoryFailure.COORDINATION_FAILED
+            managed?.permits(entry) == false -> PersistenceFactoryFailure.NOT_READY
+            rendezvous.closedFailure() != null -> rendezvous.closedFailure()
+            attempt.failure != null -> attempt.failure
+            control.state() != PersistenceOwnedCallerDisposition.ATTACHED -> PersistenceFactoryFailure.COORDINATION_FAILED
+            attempt.phase != PersistenceFactoryAttemptPhase.OFFERED || !prepared.matchesOffer(attempt.result) -> PersistenceFactoryFailure.COORDINATION_FAILED
+            attempt.callerDetached || attempt.workerSettled || attempt.unresolved -> PersistenceFactoryFailure.BROKEN
+            !entry.dispatched || entry.opening != PersistencePhysicalOpeningPhase.SETTLED || !entry.scopeEnded -> PersistenceFactoryFailure.NOT_READY
+            entry.raw.get() == null || entry.unknown -> PersistenceFactoryFailure.CREATE_FAILED
+            managed != null -> entry.transports?.liveFailureLocked()
+            else -> null
+        }
+    }
+
+    private fun poolClaimIdentityMatches(
+        entry: PersistencePhysicalEntry,
+        prepared: PreparedPoolConnection,
+        attempt: PersistenceFactoryAttempt<PersistencePhysicalRecord, PersistenceJdbcCandidate>,
+        control: PersistenceOwnedCallerControl,
+    ): Boolean = ledger.current(entry.record) === entry && rendezvous.current === attempt && control.matchesRecord(entry.record) &&
+        attempt.ownedControl === control && attempt.budget === control.budget && prepared.matches(entry, this)
 
     override fun toString(): String = "PersistencePhysicalFactoryBinding(redacted)"
 }

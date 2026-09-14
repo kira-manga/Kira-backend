@@ -46,7 +46,8 @@ internal class PersistenceTerminalWork(private val binding: PersistencePhysicalF
 
     fun hasFatalFailure(): Boolean = fatalFailure.get()
 
-    fun hasCleanupFailure(): Boolean = abort.get() === PersistenceTerminalCall.THREW || close.get() === PersistenceTerminalCall.THREW || fatalFailure.get()
+    fun hasCleanupFailure(): Boolean = abort.get() === PersistenceTerminalCall.THREW || close.get() === PersistenceTerminalCall.THREW ||
+        fatalFailure.get() || entry.driverCut.hasCleanupFailure()
 
     /** Get the detached final cell before running the body, not after clearing the old-record payload. */
     fun exitPublication(): BodyExit {
@@ -75,6 +76,10 @@ internal class PersistenceTerminalWork(private val binding: PersistencePhysicalF
             park()
         }
         producerDrain.set(true)
+        // Constructor records that never returned are not Entry.raw and cannot use partial Connection.close.
+        // This phase-specific driver cleanup can precede, but never follow, the final timer boundary.
+        entry.driverCut.cleanupAfterProducers()
+        rememberInterruption()
         if (entry.openingFacts.driverEntered.get() && entry.policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) {
             runCatching {
                 val prepared = entry.driverOpening?.timer?.newBoundary(requireNotNull(runner.get()))
@@ -84,6 +89,7 @@ internal class PersistenceTerminalWork(private val binding: PersistencePhysicalF
         }
         // A failed abort never skips the first final close. No timer-producing/finally scope can follow it.
         if (raw != null) call(close) { raw.close() }
+        entry.driverCut.observeAfterFinalClose()
         var result = PersistenceTerminalDisposition.PENDING
         while (result === PersistenceTerminalDisposition.PENDING) {
             closeTransports()

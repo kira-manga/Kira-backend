@@ -21,7 +21,7 @@ internal object PgLifecycleDatabaseCases {
                     PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.START_CALLER)
                     request.start()
                     PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.WAIT_RETAIN)
-                    val witness = PgLifecycleDatabaseAssertions.retain(scope, case, application, request.original)
+                    val witness = PgLifecycleDatabaseAssertions.retain(scope, case, application, request)
                     PgLifecycleDatabaseDiagnostics.childStage(case, ordinal, application, PgLifecycleDatabaseChildStage.RETAINED)
                     if (previous != null) reuseIdentity(requireNotNull(previous), witness)
                     val result = openingResult(scope, case, application, witness, request, handshake, ordinal)

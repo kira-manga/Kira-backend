@@ -25,6 +25,7 @@ object PgLifecycleDatabaseProbe {
         check(System.getProperty("user.name") == "pg-database-synthetic" && System.getProperty("user.timezone") == "UTC")
         check(Files.getPosixFilePermissions(root) == PosixFilePermissions.fromString("rwx------"))
         check(BootstrapProbeEnvironment.matches(root, args[6], System.getenv()))
+        if (case.poolPendingFailure) pendingPool(case, nonce, root, args[7].toInt())
         if (negative(case, nonce)) return
         val port = args[7].toInt()
         check(port in 1..65535)
@@ -40,6 +41,28 @@ object PgLifecycleDatabaseProbe {
         }
         println("PG_DATABASE_SCENARIO_CLEANUP ${case.label} all_terminated=true")
         println("PG_DATABASE_VERIFIED ${case.label} nonce=$nonce")
+    }
+
+    /** Closed retained failures have no successful lifecycle cleanup path. Exit is process-only. */
+    private fun pendingPool(case: PgLifecycleDatabaseCase, nonce: String, root: Path, port: Int): Nothing {
+        check(case.poolPendingFailure && port in 1..65535)
+        val handshake = PgLifecycleDatabaseHandshake(root.resolve("phases"), nonce, PgLifecycleDatabaseParty.CHILD, case)
+        val result = runCatching {
+            if (case.poolCreatorFailure) {
+                OwnedPoolLeaseCreatorPendingProbe.verify(case, port, nonce, handshake)
+            } else {
+                OwnedPoolPendingProbe.verify(case, port, nonce, handshake)
+            }
+        }
+        if (result.isFailure) {
+            describeFailure("pool_pending", requireNotNull(result.exceptionOrNull()))
+            println("PG_POOL_PENDING_FAILED ${case.label} nonce=$nonce")
+            exitProcess(1)
+        }
+        // verify returned only after exact EXIT acknowledgement and rechecking the unhealed state.
+        println("PG_POOL_PENDING_EXIT_REQUESTED ${case.label} nonce=$nonce cleanup=PROCESS_ONLY product_end=false")
+        System.out.flush()
+        exitProcess(23)
     }
 
     private fun describeFailure(phase: String, failure: Throwable) {

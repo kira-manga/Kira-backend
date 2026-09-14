@@ -6,6 +6,10 @@ import java.util.concurrent.locks.LockSupport
 internal object PersistenceManagedObserver {
     fun observe(root: PersistenceJdbcDriverRoot, target: PersistenceManagedObservation): PersistenceLifecycleObservation {
         val budget = PersistenceTimeBudget.start(10_000) // Before any caller classification/metadata lookup.
+        return observe(root, target, budget)
+    }
+
+    fun observe(root: PersistenceJdbcDriverRoot, target: PersistenceManagedObservation, budget: PersistenceTimeBudget): PersistenceLifecycleObservation {
         val caller = Thread.currentThread()
         if (!trusted(caller)) return PersistenceLifecycleObservation.UNSUPPORTED_OBSERVER
         var interrupted = false

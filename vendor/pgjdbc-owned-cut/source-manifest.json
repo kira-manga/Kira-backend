@@ -1,0 +1,157 @@
+{
+  "schema": 1,
+  "candidate": "app29-native-owned-cut-correction-01-tests-01",
+  "date_utc": "2026-09-10",
+  "status": "UNCOMPILED / UNRUN / NOT ACCEPTED",
+  "upstream_commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+  "source_tree_relative_to_vendor": "../../../.kira-validation/pgjdbc-owned-cut/upstream",
+  "retained_before_images_relative_to_vendor": "../../../review/working/app-29-driver-cut-native/source-before",
+  "retained_before_reference": {
+    "path_relative_to_vendor": "../../../review/working/app-29-w03-driver-bootstrap-advisory/pgjdbc-42.7.12-sources.jar",
+    "sha256": "f3688b6cff20a77fb3fe1a2b2dcd853fbaa5620c5d23a0fb87f49c5919946866",
+    "six_modified_before_images_match": true
+  },
+  "patch_series": [
+    {
+      "path": "0001-native-owned-cut.patch",
+      "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b",
+      "bytes": 105172
+    },
+    {
+      "path": "0002-native-lifetime-correction.patch",
+      "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9",
+      "bytes": 4616
+    },
+    {
+      "path": "0003-native-owned-cut-regressions.patch",
+      "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
+      "bytes": 75780,
+      "scope": "test-only"
+    }
+  ],
+  "abi": {
+    "path": "ABI.md",
+    "sha256": "6c2eefa3504df96d23f4ed07d6a8f9564ec34dde27b61710354f04fadc532112"
+  },
+  "license": {
+    "path": "LICENSE.pgjdbc",
+    "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53"
+  },
+  "files": [
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "8286adcdae88579f4b0f18ead50928c8b34d13a2ee570ebe667a57c6c6f54342",
+        "bytes": 52002
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/core/v3/KiraOwnedParameterBridge.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "1dcfebd88907b3a1d546f45f93993025d53e3f2ecdcafa9f9df5a6b43e041cf0",
+        "bytes": 8589
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java",
+      "change": "modified",
+      "before": {
+        "sha256": "f9833deda7c6794aa923a481f51a7d6a99c42eda6b244570af7664cc347c87ef",
+        "bytes": 63628
+      },
+      "after": {
+        "sha256": "05b4b69fd8f607b6a9f5310df3d136f8fbc82b231c5d1574d016886eb1440da5",
+        "bytes": 66391
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java",
+      "change": "modified",
+      "before": {
+        "sha256": "7ea46367149590d871b9f29737cb2e10001a05cb10244f18ec2973d1279138e0",
+        "bytes": 44345
+      },
+      "after": {
+        "sha256": "37ad8d413200d6e1b95c40a53c766bbbbecbfabc36c0a560434bc7668318d80d",
+        "bytes": 47110
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java",
+      "change": "modified",
+      "before": {
+        "sha256": "bbd7a43bb6b4c96a8a80e3f5f44b955fceab31110826ede5e6beddebd95454c1",
+        "bytes": 63522
+      },
+      "after": {
+        "sha256": "f11e047549389f54f7841fbe5370545eac88cae169be8d332737085dd8ba9cb8",
+        "bytes": 65038
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java",
+      "change": "modified",
+      "before": {
+        "sha256": "03860b33b08fc6b9471ece35e9fef34f2db552d738c4324c9a0ffd7df11c3fb9",
+        "bytes": 143586
+      },
+      "after": {
+        "sha256": "7d073f7455fa6e855f22b97d219d2fed8ff5abd66c028ce70c3ab2e8fc18fca2",
+        "bytes": 146386
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/core/v3/SimpleParameterList.java",
+      "change": "modified",
+      "before": {
+        "sha256": "a126d5d408d8d6aaaaf54dccf782a88a177d5987f13e77bf0d4fcec68030ac55",
+        "bytes": 18895
+      },
+      "after": {
+        "sha256": "27cfb57d5c15b88bdf8651a72afeb00c40cdd2e23dd430904bf4f15b3d53076d",
+        "bytes": 20698
+      }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/core/v3/CompositeParameterList.java",
+      "change": "modified",
+      "before": {
+        "sha256": "579539803d551e858df8b985976287ac0e50a39b656cecc7e67a3aaa22c4577d",
+        "bytes": 6451
+      },
+      "after": {
+        "sha256": "c079613468dcbc2a42014a7ffe48e06a5c6fad7b7d0555f0c9727202b8bf67a6",
+        "bytes": 6671
+      }
+    }
+  ],
+  "validation": {
+    "performed": [
+      "source inspection",
+      "unified diff generation",
+      "source and delivery SHA-256"
+    ],
+    "compilation": "NOT RUN",
+    "static_checks": "NOT RUN",
+    "tests": "NOT RUN",
+    "artifact_build": "NOT RUN",
+    "independent_review": "PRODUCTION CORRECTION SOURCE REVIEW RETURNED; TEST-ONLY REVIEW PENDING",
+    "acceptance": "NOT ACCEPTED"
+  },
+  "preserved_prior_freeze_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-correction-01",
+  "test_sources": {
+    "path": "test-source-manifest.json",
+    "sha256": "31286dd82c852edfd7d3f0304319de8b2d4e098f7f38a045e559841606b803ef",
+    "bytes": 3826,
+    "file_count": 4
+  },
+  "production_correction_review": {
+    "path_relative_to_vendor": "../../../review/remediation/app-29-driver-cut-native-independent-correction-review.md",
+    "sha256": "e61441206cc78197e2ef96a86c26ee3a9e332b5a58c3da04f97917ad2f64742a",
+    "verdict": "R1/R2 addressed at source level; no runtime acceptance"
+  }
+}

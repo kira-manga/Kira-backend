@@ -10,9 +10,14 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
     val cleanupFailure = AtomicBoolean()
 
     fun retirementAt(slot: Int): PersistenceTerminalWork? {
+        // Sample the injected monotonic clock outside F/G/T, then recheck the exact old epoch
+        // in the existing G cut. A stale sample cannot request retirement of a returned successor.
+        val phaseEpoch = phaseEpochAt(slot)
+        val phaseExpired = phaseEpoch?.phaseDeadlineExpired() == true
         if (!ledger.lock.tryLock()) return null
         return try {
             val entry = ledger.entries[slot] ?: return null
+            if (phaseExpired) entry.jdbc.retireExpiredPhaseLocked(requireNotNull(phaseEpoch))
             val control = entry.control ?: return null
             if (control.state() === PersistenceOwnedCallerDisposition.ATTACHED && persistenceFactoryRemainingMillis(control.budget) == 0L) {
                 entry.retirementRequested.set(true)
@@ -25,6 +30,15 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
             if (!entry.retiring || entry.transports?.fenceTerminalLocked(work) == false) return null
             if (entry.terminal == null) entry.terminal = work.claim
             if (entry.terminal === work.claim) work else null
+        } finally {
+            ledger.lock.unlock()
+        }
+    }
+
+    private fun phaseEpochAt(slot: Int): PersistenceProducerEpoch? {
+        if (!ledger.lock.tryLock()) return null
+        return try {
+            ledger.entries[slot]?.jdbc?.phaseEpoch()
         } finally {
             ledger.lock.unlock()
         }
@@ -98,6 +112,7 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
                 } else {
                     if (canReclaimLocked(entry, work, factoryEnded) && transport === PersistenceTerminalTransportState.DISPOSED) {
                         recordEvidence(entry, work)
+                        entry.jdbc.reclaimedLocked()
                         ledger.entries[slot] = null
                     }
                     true
@@ -125,7 +140,7 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
             attempt.budget === control.budget && control.matchesRecord(entry.record) && attempt.receipt === control.receipt
         val noOldWork = work.bodyExited() && openingCallsEnded(entry, factoryEnded) && entry.jdbc.postOpeningCallsEnded() &&
             binding.rendezvous.current !== attempt && control.state().phase in TERMINAL_CALLERS
-        return successful && processing && identity && noOldWork
+        return successful && processing && identity && noOldWork && entry.driverCut.canReclaim()
     }
 
     fun allBodiesEnded(): Boolean {
@@ -178,11 +193,12 @@ internal class PersistencePhysicalCompletion(private val binding: PersistencePhy
         val failedScope = entry.opening !== PersistencePhysicalOpeningPhase.UNCLAIMED && !entry.scopeEnded
         val missingBoundary = strong && !beforeDriver && work.acknowledgedBoundary() == null
         val failed = missingBoundary || entry.openingFacts.fatal.get() || work.hasFatalFailure() ||
-            failedScope || transport === PersistenceTerminalTransportState.FAILED_ENDED
+            failedScope || transport === PersistenceTerminalTransportState.FAILED_ENDED || !entry.driverCut.canReclaim()
         val raw = entry.raw.get() != null
         val jdbcEnded = work.closeState() === PersistenceTerminalCall.RETURNED || work.closeState() === PersistenceTerminalCall.THREW
         return when {
             raw && !jdbcEnded -> PersistenceTerminalDisposition.PENDING
+            !entry.driverCut.terminalObservationEnded() -> PersistenceTerminalDisposition.PENDING
             failed -> PersistenceTerminalDisposition.UNKNOWN_ENDED
             beforeDriver -> PersistenceTerminalDisposition.BEFORE_DRIVER
             strong -> PersistenceTerminalDisposition.TRACKED_DISPOSED

@@ -1,0 +1,2969 @@
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java b/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
+new file mode 100644
+--- /dev/null
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
+@@ -0,0 +1,1575 @@
++/*
++ * Copyright (c) 2026, Kira contributors
++ * Portions of this work integrate with pgjdbc, distributed under the BSD-2-Clause license.
++ */
++package org.postgresql.jdbc;
++
++import org.postgresql.core.CachedQuery;
++import org.postgresql.core.ParameterList;
++import org.postgresql.core.Query;
++import org.postgresql.core.QueryExecutor;
++import org.postgresql.core.ResultCursor;
++import org.postgresql.core.v3.KiraOwnedParameterBridge;
++import org.postgresql.util.LazyCleaner;
++
++import org.checkerframework.checker.initialization.qual.UnknownInitialization;
++import org.checkerframework.checker.nullness.qual.Nullable;
++
++import java.io.IOException;
++import java.lang.ref.ReferenceQueue;
++import java.lang.ref.WeakReference;
++import java.lang.reflect.Method;
++import java.sql.Connection;
++import java.sql.Driver;
++import java.sql.SQLException;
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.Map;
++import java.util.concurrent.atomic.AtomicBoolean;
++import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
++import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
++
++/** Closed private-artifact ABI: no raw getter or generic JDBC invocation service. */
++@SuppressWarnings({"nullness", "initialization"})
++public final class KiraOwnedJdbcCut {
++  private KiraOwnedJdbcCut() { }
++
++  private static final ThreadLocal<Opening> OPENING = new ThreadLocal<>();
++  private static final EngineKey ENGINE = new EngineKey();
++  private static final Binding[] NO_BINDINGS = new Binding[0];
++  private static final Life[] NO_LIVES = new Life[0];
++  private static final Image EMPTY_IMAGE = new Image(NO_BINDINGS, true);
++  private static final Image UNKNOWN_IMAGE = new Image(NO_BINDINGS, false);
++  private static final AtomicIntegerFieldUpdater<Life> FIRST =
++      AtomicIntegerFieldUpdater.newUpdater(Life.class, "first");
++  private static final AtomicReferenceFieldUpdater<NativeConnection, Invocation> RETAINED =
++      AtomicReferenceFieldUpdater.newUpdater(NativeConnection.class, Invocation.class, "retained");
++
++  public static void prepareRuntime() {
++    KiraOwnedParameterBridge.install(ENGINE);
++    // Resolve the updater and closed empty representations before any native acquisition.
++    FIRST.get(new Life(null, null, 0, null));
++  }
++
++  public static final class EngineKey {
++    private EngineKey() { }
++  }
++
++  public static final class Opening {
++    private final Driver driver;
++    private final Object entry;
++    private final Thread thread = Thread.currentThread();
++    private Opening parent;
++    private NativeConnection connections;
++    private Connection returned;
++    private boolean armed;
++    private volatile boolean ended;
++    private volatile boolean cleanupEnded;
++    private volatile boolean cleanupFailed;
++    private volatile boolean correspondenceFailed;
++    private final AtomicBoolean cleanupClaim = new AtomicBoolean();
++
++    private Opening(Driver driver, Object entry) {
++      this.driver = driver;
++      this.entry = entry;
++    }
++  }
++
++  public static Opening prepareOpening(Driver driver, Object entryKey) throws SQLException {
++    if (driver == null || entryKey == null || driver.getClass() != org.postgresql.Driver.class) {
++      throw refused();
++    }
++    prepareRuntime();
++    return new Opening(driver, entryKey);
++  }
++
++  public static void armOpening(Opening opening) throws SQLException {
++    if (opening.thread != Thread.currentThread() || opening.armed || opening.ended) {
++      throw refused();
++    }
++    opening.parent = OPENING.get();
++    OPENING.set(opening);
++    opening.armed = true;
++  }
++
++  public static void recordReturned(Opening opening, @Nullable Connection returned) throws SQLException {
++    requireOpening(opening);
++    if (opening.returned != null && opening.returned != returned) {
++      opening.correspondenceFailed = true;
++      throw refused();
++    }
++    // The exact raw exclusion is custody, not a constructor/admission receipt. Publish
++    // it before any later correspondence refusal; Entry.raw was already retained by core.
++    opening.correspondenceFailed = true;
++    opening.returned = returned;
++    if (returned != null) {
++      NativeConnection found = findConnection(opening, returned);
++      if (found == null || !found.constructorEnded || !found.constructorReturned) {
++        throw refused();
++      }
++    }
++    opening.correspondenceFailed = false;
++  }
++
++  public static void endOpening(Opening opening) throws SQLException {
++    requireOpening(opening);
++    OPENING.set(opening.parent);
++    opening.parent = null;
++    opening.ended = true;
++  }
++
++  private static void requireOpening(Opening opening) throws SQLException {
++    if (opening.thread != Thread.currentThread() || !opening.armed || opening.ended
++        || OPENING.get() != opening) {
++      throw refused();
++    }
++  }
++
++  public static int openingState(Opening opening) {
++    int flags = opening.ended ? 1 : 0;
++    if (opening.correspondenceFailed) {
++      flags |= 2;
++    }
++    if (opening.cleanupFailed) {
++      flags |= 4;
++    }
++    if (opening.cleanupEnded) {
++      flags |= 8;
++    }
++    for (NativeConnection c = opening.connections; c != null; c = c.next) {
++      if (c.constructorEnded && !c.constructorReturned) {
++        flags |= 16;
++      }
++      if (!c.constructorEnded || (c.connection != opening.returned && !c.cleaned)
++          || c.failedConstructions != 0 || c.uncertain
++          || (opening.cleanupEnded && c.nativeChildren != 0)) {
++        flags |= 2;
++      }
++      if (c.cleanupFailed) {
++        flags |= 4;
++      }
++    }
++    return flags;
++  }
++
++  /** Terminal-only physical cleanup. Never calls close() on a partially constructed connection. */
++  public static void cleanupOpening(Opening opening) {
++    if (!opening.ended || !opening.cleanupClaim.compareAndSet(false, true)) {
++      return;
++    }
++    try {
++      for (NativeConnection c = opening.connections; c != null; c = c.next) {
++        if (!c.constructorEnded) {
++          c.uncertain = true;
++          continue;
++        }
++        c.terminalCleanup = true;
++        try {
++          cleanupConstructions(c);
++          compact(c);
++        } finally {
++          c.terminalCleanup = false;
++        }
++        if (c.connection == opening.returned || c.cleaned) {
++          continue;
++        }
++        boolean completed = false;
++        try {
++          if (c.cleanable != null) {
++            c.cleanable.clean();
++          } else if (c.action != null) {
++            c.action.onClean(false);
++          } else if (c.executor != null) {
++            c.executor.getCloseAction().close();
++          }
++          completed = true;
++        } catch (Throwable failure) {
++          if (failure instanceof InterruptedException) {
++            Thread.currentThread().interrupt();
++          }
++          c.cleanupFailed = true;
++          opening.cleanupFailed = true;
++        } finally {
++          c.cleaned = completed;
++        }
++      }
++    } finally {
++      opening.cleanupEnded = true;
++    }
++  }
++
++  public static final class Root {
++    private final NativeConnection nativeConnection;
++    private final Object context;
++    private final Object epoch;
++
++    private Root(NativeConnection nativeConnection, Object context, Object epoch) {
++      this.nativeConnection = nativeConnection;
++      this.context = context;
++      this.epoch = epoch;
++    }
++  }
++
++  private static final class RootRef extends WeakReference<Root> {
++    RootRef next;
++
++    RootRef(Root root, RootRef next) {
++      super(root);
++      this.next = next;
++    }
++  }
++
++  public static Root attach(Opening opening, Connection connection, Object contextKey,
++      Object epochKey) throws SQLException {
++    NativeConnection c = findConnection(opening, connection);
++    if (!opening.ended || opening.correspondenceFailed || opening.returned != connection || c == null
++        || !c.constructorReturned || !c.constructorEnded || contextKey == null || epochKey == null) {
++      throw refused();
++    }
++    RootRef previous = null;
++    RootRef next = c.roots;
++    while (next != null) {
++      Root candidate = next.get();
++      if (candidate == null) {
++        if (previous == null) {
++          c.roots = next.next;
++        } else {
++          previous.next = next.next;
++        }
++      } else {
++        if (candidate.context == contextKey && candidate.epoch == epochKey) {
++          return candidate;
++        }
++        previous = next;
++      }
++      next = next.next;
++    }
++    Root r = new Root(c, contextKey, epochKey);
++    c.roots = new RootRef(r, c.roots);
++    return r;
++  }
++
++  private static NativeConnection findConnection(Opening opening, Connection connection) {
++    for (NativeConnection c = opening.connections; c != null; c = c.next) {
++      if (c.connection == connection) {
++        return c;
++      }
++    }
++    return null;
++  }
++
++  public static final class Owner {
++    private final Root root;
++    private final Thread original = Thread.currentThread();
++
++    private Owner(Root root) {
++      this.root = root;
++    }
++  }
++
++  public static Owner owner(Root root) {
++    return new Owner(root);
++  }
++
++  public static final class Life {
++    private final NativeConnection connection;
++    private final Life parent;
++    private final int kind;
++    private final Native nativeState;
++    private volatile boolean revoked;
++    // Package access is required by Java8's AtomicIntegerFieldUpdater access rules.
++    volatile int first;
++    private Thread firstThread;
++    private Invocation firstCause;
++    private int firstScope;
++
++    private Life(NativeConnection connection, Life parent, int kind, Native nativeState) {
++      this.connection = connection;
++      this.parent = parent;
++      this.kind = kind;
++      this.nativeState = nativeState;
++    }
++  }
++
++  public static Life life(Owner owner, Object nativeIdentity, @Nullable Life lifetimeParent,
++      boolean disposable) throws SQLException {
++    requireOwner(owner);
++    NativeConnection c = owner.root.nativeConnection;
++    if (nativeIdentity == null || (lifetimeParent != null && lifetimeParent.connection != c)) {
++      throw refused();
++    }
++    Native n = nativeState(nativeIdentity);
++    if (n != null) {
++      if (n.connection != c) {
++        throw refused();
++      }
++      return n.life;
++    }
++    c.drainWeakLives();
++    WeakKey key = new WeakKey(nativeIdentity, null);
++    Life old = c.otherLives.get(key);
++    if (old != null) {
++      return old;
++    }
++    Life created = new Life(c, lifetimeParent, disposable ? 3 : 0, null);
++    c.otherLives.put(new WeakKey(nativeIdentity, c.deadLives), created);
++    return created;
++  }
++
++  public static boolean isLive(Owner owner, Life life) {
++    return owner.original == Thread.currentThread() && liveFor(owner, life);
++  }
++
++  private static boolean liveFor(Owner owner, Life life) {
++    if (life == null || life.connection != owner.root.nativeConnection) {
++      return false;
++    }
++    for (Life next = life; next != null; next = next.parent) {
++      if (next.revoked || (next.nativeState != null && !next.nativeState.available)) {
++        return false;
++      }
++    }
++    return true;
++  }
++
++  public static boolean revoke(Owner owner, Life life) throws SQLException {
++    requireOwner(owner);
++    if (life.connection != owner.root.nativeConnection) {
++      throw refused();
++    }
++    boolean first = !life.revoked;
++    life.revoked = true;
++    return first;
++  }
++
++  public static int lifeKind(Life life) {
++    return life.kind;
++  }
++
++  public static int firstCloseState(Life life) {
++    return life.first;
++  }
++
++  public static long liveNativeChildren(Root root) {
++    return root.nativeConnection.nativeChildren;
++  }
++
++  public static int rootState(Root root) {
++    NativeConnection c = root.nativeConnection;
++    return (c.cleanupFailed ? 1 : 0) | (c.uncertain || c.failedConstructions != 0 ? 2 : 0);
++  }
++
++  public static final class Invocation {
++    private final Owner owner;
++    private Object receiver;
++    private Object callKey;
++    private final String operation;
++    private Object[] arguments;
++    private Object[] knownValues;
++    private Life[] knownLives;
++    private int[] positions;
++    private final Thread actual = Thread.currentThread();
++    private final boolean cancellation;
++    private Invocation parent;
++    private Invocation retainedNext;
++    private Pin pins;
++    private Batch batch;
++    private boolean armed;
++    private boolean disarmed;
++    private boolean retained;
++    private volatile boolean ended;
++    private volatile boolean cleanupFailed;
++    private volatile boolean uncertain;
++
++    private Invocation(Owner owner, Object receiver, Object callKey, Method operation,
++        Object[] arguments, Object[] knownValues, Life[] knownLives, int[] positions) {
++      this.owner = owner;
++      this.receiver = receiver;
++      this.callKey = callKey;
++      this.operation = operation.getName();
++      this.arguments = arguments.clone();
++      this.knownValues = knownValues.clone();
++      this.knownLives = knownLives.clone();
++      this.positions = positions.clone();
++      this.cancellation = this.operation.equals("cancel") && receiver instanceof PgStatement;
++    }
++  }
++
++  public static Invocation prepareInvocation(Owner owner, Object nativeReceiver,
++      Object guardCallKey, Method operation, Object[] arguments, Object[] knownValues,
++      Life[] knownLives, int[] argumentPositions) throws SQLException {
++    if (owner == null || nativeReceiver == null || guardCallKey == null || operation == null
++        || arguments == null || knownValues == null || knownLives == null || argumentPositions == null
++        || !operation.getDeclaringClass().isInstance(nativeReceiver)
++        || operation.getParameterTypes().length != arguments.length
++        || knownValues.length != knownLives.length || knownValues.length != argumentPositions.length) {
++      throw refused();
++    }
++    boolean cancel = operation.getName().equals("cancel") && nativeReceiver instanceof PgStatement;
++    if (!cancel) {
++      requireOwner(owner);
++    }
++    NativeConnection c = owner.root.nativeConnection;
++    Native n = nativeState(nativeReceiver);
++    if (n != null && n.connection != c) {
++      throw refused();
++    }
++    if (nativeReceiver instanceof Connection && nativeReceiver != c.connection) {
++      throw refused();
++    }
++    for (int i = 0; i < knownLives.length; i++) {
++      if (knownLives[i] == null || knownLives[i].connection != c
++          || argumentPositions[i] < 0 || argumentPositions[i] >= arguments.length) {
++        throw refused();
++      }
++    }
++    return new Invocation(owner, nativeReceiver, guardCallKey, operation, arguments,
++        knownValues, knownLives, argumentPositions);
++  }
++
++  public static void arm(Invocation invocation) throws SQLException {
++    NativeConnection c = invocation.owner.root.nativeConnection;
++    if (invocation.actual != Thread.currentThread() || invocation.armed || invocation.ended) {
++      uncertain(invocation);
++      retainUncertain(invocation);
++      throw refused();
++    }
++    if (!invocation.cancellation) {
++      if (c.current != null && c.current.actual != Thread.currentThread()) {
++        uncertain(invocation);
++        retainUncertain(invocation);
++        throw refused();
++      }
++      invocation.parent = c.current;
++      c.current = invocation;
++    }
++    invocation.armed = true;
++  }
++
++  public static int invocationState(Invocation invocation) {
++    return (invocation.cleanupFailed ? 1 : 0) | (invocation.uncertain ? 2 : 0);
++  }
++
++  public static int drainState(Invocation invocation) {
++    Batch batch = invocation.batch;
++    if (batch == null) {
++      return isBatch(invocation.operation) ? 7 : 0;
++    }
++    if (invocation.uncertain) {
++      return 7;
++    }
++    if (batch.phase == 1 && batch.ended) {
++      return 6;
++    }
++    return batch.phase;
++  }
++
++  public static void disarm(Invocation invocation) throws SQLException {
++    NativeConnection c = invocation.owner.root.nativeConnection;
++    if (invocation.actual != Thread.currentThread() || !invocation.armed
++        || invocation.disarmed || invocation.ended
++        || (!invocation.cancellation && c.current != invocation)) {
++      uncertain(invocation);
++      retainUncertain(invocation);
++      throw refused();
++    }
++    if (!invocation.cancellation) {
++      c.current = invocation.parent;
++    }
++    invocation.parent = null;
++    invocation.disarmed = true;
++  }
++
++  public static void actualEnd(Invocation invocation) throws SQLException {
++    if (invocation.actual != Thread.currentThread() || invocation.ended) {
++      uncertain(invocation);
++      retainUncertain(invocation);
++      throw refused();
++    }
++    if (!invocation.disarmed) {
++      uncertain(invocation);
++      retainUncertain(invocation);
++      // A failed arm never installed this frame. Do not unwind an authentic other frame.
++      if (invocation.armed) {
++        throw refused();
++      }
++    }
++    if (isBatch(invocation.operation)
++        && (invocation.batch == null || !invocation.batch.ended
++            || (invocation.batch.phase > 1 && invocation.batch.phase < 5))) {
++      uncertain(invocation);
++    }
++    if (invocation.uncertain) {
++      retainUncertain(invocation);
++    } else {
++      invocation.pins = null;
++      if (invocation.batch != null) {
++        invocation.batch.releaseArrays();
++      }
++      invocation.arguments = null;
++      invocation.knownValues = null;
++      invocation.knownLives = null;
++      invocation.positions = null;
++      invocation.receiver = null;
++      invocation.callKey = null;
++    }
++    invocation.ended = true;
++    NativeConnection c = invocation.owner.root.nativeConnection;
++    // A foreign cancellation never mutates the original lineage's graph. Nor may an
++    // ended inner call retire data still needed by its admitted native ancestor.
++    if (!invocation.cancellation && c.current == null) {
++      compact(c);
++    }
++  }
++
++  private static boolean isBatch(String operation) {
++    return operation.equals("executeBatch") || operation.equals("executeLargeBatch");
++  }
++
++  private static void requireOwner(Owner owner) throws SQLException {
++    if (owner.original != Thread.currentThread()) {
++      throw refused();
++    }
++  }
++
++  private static SQLException refused() {
++    return new SQLException("Persistence JDBC operation refused.");
++  }
++
++  private static void uncertain(Invocation invocation) {
++    invocation.uncertain = true;
++    invocation.owner.root.nativeConnection.uncertain = true;
++  }
++
++  private static void retainUncertain(Invocation invocation) {
++    if (!invocation.retained) {
++      NativeConnection c = invocation.owner.root.nativeConnection;
++      Invocation previous;
++      do {
++        previous = c.retained;
++        invocation.retainedNext = previous;
++      } while (!RETAINED.compareAndSet(c, previous, invocation));
++      invocation.retained = true;
++    }
++  }
++
++  private static void cleanupFailure(NativeConnection c, Invocation invocation) {
++    c.cleanupFailed = true;
++    if (invocation != null) {
++      invocation.cleanupFailed = true;
++    }
++  }
++
++  private static Invocation current(NativeConnection c) {
++    Invocation invocation = c.current;
++    return invocation != null && !invocation.ended
++        && invocation.actual == Thread.currentThread() ? invocation : null;
++  }
++
++  private static final class WeakKey extends WeakReference<Object> {
++    private final int hash;
++
++    WeakKey(Object value, ReferenceQueue<Object> queue) {
++      super(value, queue);
++      hash = System.identityHashCode(value);
++    }
++
++    @Override public int hashCode() {
++      return hash;
++    }
++
++    @Override public boolean equals(Object other) {
++      if (this == other) {
++        return true;
++      }
++      Object value = get();
++      return value != null && other instanceof WeakKey && value == ((WeakKey) other).get();
++    }
++  }
++
++  static final class NativeConnection {
++    final PgConnection connection;
++    NativeConnection next;
++    RootRef roots;
++    Opening opening;
++    Invocation current;
++    volatile Invocation retained;
++    Construction construction;
++    Construction constructions;
++    Native children;
++    Transfer transfer;
++    final ReferenceQueue<Object> deadLives = new ReferenceQueue<>();
++    final HashMap<WeakKey, Life> otherLives = new HashMap<>();
++    volatile long nativeChildren;
++    volatile long failedConstructions;
++    volatile boolean cleanupFailed;
++    volatile boolean uncertain;
++    volatile boolean constructorEnded;
++    boolean constructorReturned;
++    boolean cleaned;
++    boolean terminalCleanup;
++    QueryExecutor executor;
++    PgConnectionCleaningAction action;
++    LazyCleaner.Cleanable<IOException> cleanable;
++
++    NativeConnection(PgConnection connection) {
++      this.connection = connection;
++    }
++
++    void drainWeakLives() {
++      WeakKey key;
++      while ((key = (WeakKey) deadLives.poll()) != null) {
++        otherLives.remove(key);
++      }
++    }
++  }
++
++  static NativeConnection connectionStarted(@UnknownInitialization PgConnection connection) {
++    prepareRuntime();
++    NativeConnection c = new NativeConnection(connection);
++    Opening opening = OPENING.get();
++    if (opening != null && !opening.ended && opening.thread == Thread.currentThread()) {
++      c.opening = opening;
++      c.next = opening.connections;
++      opening.connections = c;
++    }
++    return c;
++  }
++
++  static void connectionEnded(NativeConnection c, boolean returned) {
++    c.constructorReturned = returned;
++    c.constructorEnded = true;
++  }
++
++  static final class Construction {
++    final NativeConnection connection;
++    final Thread thread = Thread.currentThread();
++    final int kind;
++    final Invocation cause;
++    Construction parent;
++    Construction next;
++    Object receiver;
++    Native nativeState;
++    Borrow borrows;
++    ResultCursor cursor;
++    boolean receiverComplete;
++    boolean returned;
++    volatile boolean ended;
++    boolean cleaned;
++    boolean cleanupFailed;
++
++    Construction(NativeConnection connection, int kind, ResultCursor cursor) {
++      this.connection = connection;
++      this.kind = kind;
++      this.cursor = cursor;
++      this.cause = current(connection);
++    }
++  }
++
++  static Construction reserve(NativeConnection c, int kind, @Nullable ResultCursor cursor) {
++    Construction record = new Construction(c, kind, cursor);
++    long count = Math.addExact(c.nativeChildren, 1L);
++    record.parent = c.construction;
++    record.next = c.constructions;
++    c.constructions = record;
++    c.construction = record;
++    c.nativeChildren = count;
++    return record;
++  }
++
++  static void constructionReceiver(Construction record, Object receiver) {
++    record.receiver = receiver;
++    record.receiverComplete = true;
++  }
++
++  static void constructionEnded(Construction record, boolean returned) {
++    NativeConnection c = record.connection;
++    c.construction = record.parent;
++    record.parent = null;
++    record.returned = returned;
++    if (returned) {
++      if (record.nativeState != null) {
++        record.nativeState.available = true;
++      }
++      record.borrows = null;
++      record.cursor = null;
++    } else {
++      c.failedConstructions++;
++      c.nativeChildren--;
++      if (record.nativeState != null) {
++        record.nativeState.counted = false;
++      }
++    }
++    record.ended = true;
++  }
++
++  static final class Borrow {
++    CachedQuery query;
++    Borrow next;
++  }
++
++  static @Nullable Borrow reserveBorrow(NativeConnection c, int kind) {
++    Construction record = c.construction;
++    if (record == null || record.thread != Thread.currentThread() || record.ended
++        || record.kind != kind) {
++      return null;
++    }
++    Borrow borrow = new Borrow();
++    borrow.next = record.borrows;
++    record.borrows = borrow;
++    return borrow;
++  }
++
++  static final class Native {
++    final NativeConnection connection;
++    final Life life;
++    Object receiver;
++    Native next;
++    boolean available;
++    boolean counted = true;
++    boolean partialDisposed;
++    @Nullable Node queries;
++    @Nullable Node queryTail;
++    @Nullable Node parameters;
++    @Nullable Node parameterTail;
++    Object queryList;
++    Object parameterList;
++    HashMap<String, Row> rows = new HashMap<>();
++    Object rowMap;
++    @Nullable Batch activeBatch;
++
++    Native(NativeConnection connection, Object receiver, int kind, Life parent) {
++      this.connection = connection;
++      this.receiver = receiver;
++      this.life = new Life(connection, parent, kind, this);
++    }
++  }
++
++  static Native nativeStarted(NativeConnection c, @UnknownInitialization Object receiver, int kind) {
++    return nativeStarted(c, receiver, kind, null);
++  }
++
++  private static Native nativeStarted(NativeConnection c, Object receiver, int kind, Life parent) {
++    Construction record = c.construction;
++    if (record != null && record.thread == Thread.currentThread() && !record.ended) {
++      record.receiver = receiver; // Retain this before allocating any child bookkeeping.
++    } else {
++      record = null;
++    }
++    Native n = new Native(c, receiver, kind, parent);
++    if (record != null) {
++      record.nativeState = n;
++    } else {
++      c.nativeChildren = Math.addExact(c.nativeChildren, 1L);
++      n.available = true; // Unreserved native/test construction has no facade publication receipt.
++    }
++    n.next = c.children;
++    c.children = n;
++    return n;
++  }
++
++  static @Nullable Native resultStarted(Object statement, @UnknownInitialization Object receiver) {
++    if (!(statement instanceof PgStatement)) {
++      return null;
++    }
++    Native parent = ((PgStatement) statement).kira;
++    return nativeStarted(parent.connection, receiver, 2, parent.life);
++  }
++
++  private static Native nativeState(Object receiver) {
++    if (receiver instanceof PgStatement) {
++      return ((PgStatement) receiver).kira;
++    }
++    if (receiver instanceof PgResultSet) {
++      return ((PgResultSet) receiver).kira;
++    }
++    return null;
++  }
++
++  static void prepared(Native n, ParameterList parameters) {
++    KiraOwnedParameterBridge.attach(ENGINE, parameters, n.receiver);
++  }
++
++  private static void cleanupConstructions(NativeConnection c) {
++    for (Construction record = c.constructions; record != null; record = record.next) {
++      if (!record.ended || record.returned || record.cleaned) {
++        continue;
++      }
++      boolean completed = false;
++      try {
++        if (record.receiverComplete && record.receiver instanceof PgStatement) {
++          ((PgStatement) record.receiver).close();
++        } else if (record.receiverComplete && record.receiver instanceof PgResultSet) {
++          ((PgResultSet) record.receiver).close();
++        } else {
++          for (Borrow borrow = record.borrows; borrow != null; borrow = borrow.next) {
++            if (borrow.query != null) {
++              borrow.query.query.close();
++              borrow.query = null;
++            }
++          }
++          if (record.cursor != null) {
++            record.cursor.close();
++            record.cursor = null;
++          }
++        }
++        if (record.receiverComplete && record.nativeState != null) {
++          // A repeated/no-op close cannot upgrade an earlier failed first close.
++          completed = record.nativeState.life.first == 2;
++        } else {
++          completed = true;
++        }
++      } catch (Throwable failure) {
++        if (failure instanceof InterruptedException) {
++          Thread.currentThread().interrupt();
++        }
++        record.cleanupFailed = true;
++        cleanupFailure(c, null);
++      } finally {
++        if (completed) {
++          record.cleaned = true;
++          c.failedConstructions--;
++          record.receiver = null;
++          record.borrows = null;
++          record.cursor = null;
++          if (record.nativeState != null && !record.receiverComplete) {
++            record.nativeState.partialDisposed = true;
++          }
++        }
++      }
++    }
++  }
++
++  private static void compact(NativeConnection c) {
++    Construction previous = null;
++    Construction record = c.constructions;
++    while (record != null) {
++      Construction next = record.next;
++      if (record.ended && (record.returned || record.cleaned)) {
++        if (previous == null) {
++          c.constructions = next;
++        } else {
++          previous.next = next;
++        }
++        record.next = null;
++        record.receiver = null;
++        record.nativeState = null;
++      } else {
++        previous = record;
++      }
++      record = next;
++    }
++    Native before = null;
++    Native n = c.children;
++    while (n != null) {
++      Native next = n.next;
++      if (n.life.first == 2 || n.partialDisposed) {
++        if (before == null) {
++          c.children = next;
++        } else {
++          before.next = next;
++        }
++        n.next = null;
++        n.receiver = null;
++        n.life.firstCause = null;
++        // Retire future-use authority of an irreversibly closed receiver, not its actual
++        // Java fields or the separate arrays/pins owned by any still-active Invocation.
++        n.queries = null;
++        n.queryTail = null;
++        n.parameters = null;
++        n.parameterTail = null;
++        n.queryList = null;
++        n.parameterList = null;
++        n.rowMap = null;
++        n.rows = null;
++      } else {
++        before = n;
++      }
++      n = next;
++    }
++    c.drainWeakLives();
++  }
++
++  static @Nullable Invocation closeCause(@Nullable Native n) {
++    if (n == null) {
++      return null;
++    }
++    n.life.revoked = true;
++    Invocation cause = current(n.connection);
++    if (cause == null && !custodyOnlyPhase(n.connection)) {
++      markUnknown(n);
++    }
++    return cause;
++  }
++
++  private static boolean custodyOnlyPhase(NativeConnection c) {
++    return c.opening == null || c.terminalCleanup || !c.constructorEnded
++        || (!c.opening.ended && OPENING.get() == c.opening);
++  }
++
++  static void statementCloseWon(Native n, @Nullable Invocation cause) {
++    n.life.firstThread = Thread.currentThread();
++    n.life.firstCause = cause;
++    n.life.firstScope = 1;
++    n.life.first = 1;
++  }
++
++  static boolean resultCloseClaim(@Nullable Native n, @Nullable Invocation cause, int scope) {
++    if (n == null || !FIRST.compareAndSet(n.life, 0, 1)) {
++      return false;
++    }
++    n.life.firstThread = Thread.currentThread();
++    n.life.firstCause = cause;
++    n.life.firstScope = scope;
++    return true;
++  }
++
++  static void closeEnded(@Nullable Native n, @Nullable Invocation cause, boolean first, boolean returned) {
++    if (n == null) {
++      return;
++    }
++    if (!returned) {
++      cleanupFailure(n.connection, cause);
++    }
++    if (first) {
++      if (n.counted) {
++        n.counted = false;
++        n.connection.nativeChildren--;
++      }
++      n.life.first = returned ? 2 : 3;
++      n.life.firstCause = null;
++      n.life.firstThread = null;
++    }
++  }
++
++  static @Nullable Life savepointLife(NativeConnection c, Object savepoint) {
++    return c.otherLives.get(new WeakKey(savepoint, null));
++  }
++
++  static void savepointReleased(@Nullable Life life) {
++    if (life != null) {
++      life.revoked = true;
++    }
++  }
++
++  /** Opaque stored-representation image. None of its raw contents are publicly readable. */
++  public static final class Binding {
++    private final Object stored;
++    private final Owner owner;
++    private final Life[] dependencies;
++    private final boolean complete;
++
++    private Binding(Object stored, Owner owner, Life[] dependencies, boolean complete) {
++      this.stored = stored;
++      this.owner = owner;
++      this.dependencies = dependencies;
++      this.complete = complete;
++    }
++  }
++
++  public static final class Image {
++    private final Binding[] bindings;
++    private final boolean complete;
++
++    private Image(Binding[] bindings, boolean complete) {
++      this.bindings = bindings;
++      this.complete = complete;
++    }
++  }
++
++  public static final class Pin {
++    private final Invocation cause;
++    private final Object left;
++    private final Object right;
++    private Pin next;
++
++    private Pin(Invocation cause, Object left, Object right) {
++      this.cause = cause;
++      this.left = left;
++      this.right = right;
++    }
++  }
++
++  public static void requireEngine(EngineKey key) {
++    if (key != ENGINE) {
++      throw new IllegalArgumentException("Not the owned parameter engine.");
++    }
++  }
++
++  /** Bridge-only: a candidate is used only for this exact receiver and stored source identity. */
++  public static Binding binding(EngineKey key, Object receiver, ParameterList list, int position,
++      Object stored, Object retainedSource) {
++    requireEngine(key);
++    Native n = nativeState(receiver);
++    if (n == null) {
++      return new Binding(stored, null, NO_LIVES, true);
++    }
++    Object source = retainedSource == null ? stored : retainedSource;
++    Invocation invocation = current(n.connection);
++    Transfer transfer = n.connection.transfer;
++    if (transfer != null && transfer.thread == Thread.currentThread()
++        && transfer.cause == invocation
++        && transfer.destination == receiver && transfer.parameters == list
++        && transfer.position == position && transfer.value == source) {
++      Binding row = transfer.row == null ? null : transfer.row.binding;
++      return row == null ? new Binding(stored, null, NO_LIVES, false)
++          : new Binding(stored, row.owner, row.dependencies, row.complete);
++    }
++    if (invocation == null) {
++      if (!custodyOnlyPhase(n.connection)) {
++        markUnknown(n);
++      }
++      return new Binding(stored, null, NO_LIVES, true);
++    }
++    int count = 0;
++    for (int i = 0; i < invocation.knownValues.length; i++) {
++      if (source != null && invocation.knownValues[i] == source) {
++        count++;
++      }
++    }
++    if (count == 0) {
++      return new Binding(stored, null, NO_LIVES, true);
++    }
++    Life[] lives = new Life[count];
++    int at = 0;
++    for (int i = 0; i < invocation.knownValues.length; i++) {
++      if (invocation.knownValues[i] == source) {
++        lives[at++] = invocation.knownLives[i];
++      }
++    }
++    boolean exact = invocation.receiver == receiver;
++    if (!exact) {
++      uncertain(invocation);
++    }
++    return new Binding(stored, invocation.owner, lives, exact);
++  }
++
++  public static Image image(EngineKey key, Binding[] bindings, Object[] actualValues,
++      boolean complete) {
++    requireEngine(key);
++    Binding[] copied = bindings.clone();
++    complete &= copied.length == actualValues.length;
++    for (int i = 0; i < copied.length && i < actualValues.length; i++) {
++      Binding binding = copied[i];
++      complete &= binding == null ? actualValues[i] == null
++          : binding.complete && binding.stored == actualValues[i];
++    }
++    return copied.length == 0 && complete ? EMPTY_IMAGE : new Image(copied, complete);
++  }
++
++  public static Image mergeImages(EngineKey key, Image[] images) {
++    requireEngine(key);
++    int count = 0;
++    boolean complete = true;
++    for (Image image : images) {
++      count = Math.addExact(count, image.bindings.length);
++      complete &= image.complete;
++    }
++    Binding[] bindings = new Binding[count];
++    int at = 0;
++    for (Image image : images) {
++      System.arraycopy(image.bindings, 0, bindings, at, image.bindings.length);
++      at += image.bindings.length;
++    }
++    return count == 0 && complete ? EMPTY_IMAGE : new Image(bindings, complete);
++  }
++
++  public static Image unknownImage(EngineKey key) {
++    requireEngine(key);
++    return UNKNOWN_IMAGE;
++  }
++
++  public static Pin retain(EngineKey key, Object receiver, Object left, Object right) {
++    requireEngine(key);
++    return pin(nativeState(receiver), left, right);
++  }
++
++  private static Pin pin(Native n, Object left, Object right) {
++    if (n == null) {
++      return null;
++    }
++    Invocation cause = current(n.connection);
++    if (cause == null) {
++      // Opening has no guarded values. For ordinary, unowned pgjdbc use, C/Q and
++      // the native stack remain the owners; do not retain an unbounded call history.
++      return null;
++    }
++    Pin pin = new Pin(cause, left, right);
++    pin.next = cause.pins;
++    cause.pins = pin;
++    return pin;
++  }
++
++  public static void incomplete(EngineKey key, Object receiver, Pin pin) {
++    requireEngine(key);
++    Native n = nativeState(receiver);
++    if (n != null) {
++      markUnknown(n);
++    }
++    if (pin != null && pin.cause != null) {
++      uncertain(pin.cause);
++    }
++  }
++
++  private static void markUnknown(Native n) {
++    n.connection.uncertain = true;
++    Invocation invocation = current(n.connection);
++    if (invocation != null) {
++      uncertain(invocation);
++    }
++  }
++
++  private static boolean sameOwner(Owner left, Owner right) {
++    return left != null && right != null && left.root == right.root
++        && left.original == right.original;
++  }
++
++  private static boolean bindingLive(Binding binding, Invocation invocation) {
++    if (binding == null || binding.dependencies.length == 0) {
++      return true;
++    }
++    if (invocation == null || !sameOwner(binding.owner, invocation.owner)
++        || binding.owner.original != Thread.currentThread()) {
++      return false;
++    }
++    for (Life life : binding.dependencies) {
++      if (!liveFor(binding.owner, life)) {
++        return false;
++      }
++    }
++    return true;
++  }
++
++  /** Validate actual current content before a native copy or ordinary prepared execution. */
++  static void useParameters(Native n, ParameterList parameters) throws SQLException {
++    Image image = KiraOwnedParameterBridge.snapshot(ENGINE, parameters, n.receiver);
++    pin(n, parameters, image);
++    if (!image.complete) {
++      markUnknown(n);
++    }
++    Invocation invocation = current(n.connection);
++    for (Binding binding : image.bindings) {
++      if (!bindingLive(binding, invocation)) {
++        throw refused();
++      }
++    }
++  }
++
++  // Independent per-append occurrences. No one-query/one-parameter cardinality assumption.
++  static final class Node {
++    final Object value;
++    final Image image;
++    Node next;
++
++    Node(Object value, Image image) {
++      this.value = value;
++      this.image = image;
++    }
++  }
++
++  static final class Append {
++    final Native nativeState;
++    final Node node;
++    final boolean parameter;
++    final Pin pin;
++    boolean stored;
++
++    Append(Native n, Object value, boolean parameter) {
++      this.nativeState = n;
++      this.parameter = parameter;
++      this.node = new Node(value, parameter && value != null
++          ? KiraOwnedParameterBridge.snapshot(ENGINE, (ParameterList) value, n.receiver)
++          : EMPTY_IMAGE);
++      this.pin = pin(n, node, null);
++    }
++  }
++
++  static Append append(Native n, @Nullable Object value, boolean parameter) {
++    return new Append(n, value, parameter);
++  }
++
++  static void appended(Append append) {
++    Native n = append.nativeState;
++    if (append.parameter) {
++      if (n.parameterTail == null) {
++        n.parameters = append.node;
++      } else {
++        n.parameterTail.next = append.node;
++      }
++      n.parameterTail = append.node;
++    } else {
++      if (n.queryTail == null) {
++        n.queries = append.node;
++      } else {
++        n.queryTail.next = append.node;
++      }
++      n.queryTail = append.node;
++    }
++    append.stored = true;
++  }
++
++  static void appendEnded(Append append) {
++    if (!append.stored) {
++      // Neither a thrown native add nor absent publication is an append/rollback receipt.
++      markUnknown(append.nativeState);
++    }
++  }
++
++  static @Nullable Pin beforeQueueClear(Native n, boolean parameter) {
++    return pin(n, parameter ? n.parameters : n.queries,
++        parameter ? n.parameterList : n.queryList);
++  }
++
++  static void queueCleared(Native n, boolean parameter, @Nullable Pin pin) {
++    if (parameter) {
++      n.parameters = null;
++      n.parameterTail = null;
++    } else {
++      n.queries = null;
++      n.queryTail = null;
++    }
++  }
++
++  static void queueClearEnded(Native n, boolean completed) {
++    if (!completed) {
++      markUnknown(n);
++    }
++  }
++
++  static final class Rewrite {
++    final @Nullable Node queries;
++    final @Nullable Node queryTail;
++    final @Nullable Node parameters;
++    final @Nullable Node parameterTail;
++    boolean queryInstalled;
++    boolean parametersInstalled;
++
++    Rewrite(Node queries, Node queryTail, Node parameters, Node parameterTail) {
++      this.queries = queries;
++      this.queryTail = queryTail;
++      this.parameters = parameters;
++      this.parameterTail = parameterTail;
++    }
++  }
++
++  static Rewrite rewrite(Native n, ArrayList<Query> queries,
++      ArrayList<? extends @Nullable ParameterList> parameters) {
++    Node queryHead = null;
++    Node queryTail = null;
++    Node parameterHead = null;
++    Node parameterTail = null;
++    for (Query query : queries) {
++      Node node = new Node(query, EMPTY_IMAGE);
++      if (queryTail == null) {
++        queryHead = node;
++      } else {
++        queryTail.next = node;
++      }
++      queryTail = node;
++    }
++    for (ParameterList parametersForQuery : parameters) {
++      Node node = new Node(parametersForQuery, parametersForQuery == null ? EMPTY_IMAGE
++          : KiraOwnedParameterBridge.snapshot(ENGINE, parametersForQuery, n.receiver));
++      if (parameterTail == null) {
++        parameterHead = node;
++      } else {
++        parameterTail.next = node;
++      }
++      parameterTail = node;
++    }
++    Rewrite rewrite = new Rewrite(queryHead, queryTail, parameterHead, parameterTail);
++    pin(n, n.queries, n.parameters);
++    pin(n, queries, parameters);
++    pin(n, rewrite, null);
++    return rewrite;
++  }
++
++  static void rewriteEnded(Native n, Rewrite rewrite) {
++    if (!rewrite.queryInstalled || !rewrite.parametersInstalled) {
++      markUnknown(n);
++    }
++  }
++
++  static void rewritingParameters(Native n, ParameterList parameters) {
++    KiraOwnedParameterBridge.attach(ENGINE, parameters, n.receiver);
++    pin(n, parameters, null);
++  }
++
++  static final class Batch {
++    final Native nativeState;
++    final Invocation cause;
++    Batch parent;
++    int depth = 1;
++    volatile int phase = 1;
++    volatile boolean ended;
++    Query[] queries;
++    @Nullable ParameterList[] parameters;
++    Node queryImage;
++    Node parameterImage;
++    Image[] actualImages;
++
++    Batch(Native n, Invocation cause) {
++      this.nativeState = n;
++      this.cause = cause;
++    }
++
++    void releaseArrays() {
++      queries = null;
++      parameters = null;
++      queryImage = null;
++      parameterImage = null;
++      actualImages = null;
++      parent = null;
++    }
++  }
++
++  static Batch batchEnter(Native n) {
++    Invocation cause = current(n.connection);
++    Batch existing = n.activeBatch;
++    if (existing != null && existing.cause == cause && !existing.ended) {
++      // PgPreparedStatement.executeBatch -> the native base implementation, not reentry.
++      existing.depth++;
++      return existing;
++    }
++    Batch batch = new Batch(n, cause);
++    batch.parent = existing;
++    n.activeBatch = batch;
++    if (cause != null) {
++      if (cause.receiver != n.receiver || !isBatch(cause.operation) || cause.batch != null) {
++        uncertain(cause);
++        pin(n, batch, null);
++      } else {
++        cause.batch = batch;
++      }
++    }
++    return batch;
++  }
++
++  static void batchEnded(Batch batch) {
++    if (--batch.depth != 0) {
++      return;
++    }
++    if (batch.nativeState.activeBatch != batch) {
++      markUnknown(batch.nativeState);
++    } else {
++      batch.nativeState.activeBatch = batch.parent;
++    }
++    if (batch.phase > 1 && batch.phase < 5) {
++      markUnknown(batch.nativeState);
++      if (batch.cause != null) {
++        uncertain(batch.cause);
++      }
++    }
++    batch.ended = true;
++    if (batch.cause == null && (batch.phase == 1 || batch.phase == 5)) {
++      batch.releaseArrays();
++    }
++  }
++
++  /** Preparation and the last closed walk. The source caller then performs direct stores/clears. */
++  static void prepareDrain(Batch batch, ArrayList<Query> queries,
++      ArrayList<? extends @Nullable ParameterList> parameters) throws SQLException {
++    Native n = batch.nativeState;
++    batch.queryImage = n.queries;
++    batch.parameterImage = n.parameters;
++    Image[] images = new Image[batch.parameters.length];
++    batch.actualImages = images;
++    for (int i = 0; i < images.length; i++) {
++      ParameterList list = batch.parameters[i];
++      images[i] = list == null ? EMPTY_IMAGE
++          : KiraOwnedParameterBridge.snapshot(ENGINE, list, n.receiver);
++    }
++
++    // From here to the two native clears: no callbacks, new allocations, class
++    // initialization, engine calls, locks or producer/admission checks on success.
++    boolean exact = queries.getClass() == ArrayList.class && parameters.getClass() == ArrayList.class
++        && n.receiver instanceof PgStatement
++        && ((PgStatement) n.receiver).batchStatements == queries
++        && ((PgStatement) n.receiver).batchParameters == parameters
++        && n.queryList == queries && n.parameterList == parameters
++        && batch.queries.length == queries.size() && batch.parameters.length == parameters.size()
++        && (batch.cause == null || (current(n.connection) == batch.cause
++            && batch.cause.receiver == n.receiver && !batch.cause.ended));
++    Node query = batch.queryImage;
++    for (int i = 0; i < batch.queries.length; i++) {
++      exact &= query != null && query.value == batch.queries[i];
++      if (queries.getClass() == ArrayList.class) {
++        exact &= i < queries.size() && queries.get(i) == batch.queries[i];
++      }
++      query = query == null ? null : query.next;
++    }
++    exact &= query == null;
++    Node parameter = batch.parameterImage;
++    boolean lives = true;
++    for (int i = 0; i < batch.parameters.length; i++) {
++      Image actual = images[i];
++      exact &= parameter != null && parameter.value == batch.parameters[i] && actual.complete;
++      if (parameters.getClass() == ArrayList.class) {
++        exact &= i < parameters.size() && parameters.get(i) == batch.parameters[i];
++      }
++      if (parameter != null) {
++        exact &= sameImage(parameter.image, actual);
++      }
++      for (Binding binding : actual.bindings) {
++        lives &= bindingLive(binding, batch.cause);
++      }
++      parameter = parameter == null ? null : parameter.next;
++    }
++    exact &= parameter == null;
++    if (!exact) {
++      markUnknown(n);
++    }
++    if (!lives) {
++      throw refused();
++    }
++  }
++
++  private static boolean sameImage(Image expected, Image actual) {
++    if (!expected.complete || !actual.complete
++        || expected.bindings.length != actual.bindings.length) {
++      return false;
++    }
++    for (int i = 0; i < expected.bindings.length; i++) {
++      if (expected.bindings[i] != actual.bindings[i]) {
++        return false;
++      }
++    }
++    return true;
++  }
++
++  static final class Row {
++    final String key;
++    final Object value;
++    final Binding binding;
++
++    Row(String key, Object value, Binding binding) {
++      this.key = key;
++      this.value = value;
++      this.binding = binding;
++    }
++  }
++
++  static final class RowMutation {
++    final Native nativeState;
++    final Object map;
++    final HashMap<String, Row> rows;
++    final Pin pin;
++    boolean stored;
++
++    RowMutation(Native n, Object map, HashMap<String, Row> rows) {
++      this.nativeState = n;
++      this.map = map;
++      this.rows = rows;
++      this.pin = pin(n, n.rows, rows);
++    }
++  }
++
++  static @Nullable RowMutation rowStore(@Nullable Native n, HashMap<String, Object> map,
++      String key, Object value) {
++    if (n == null) {
++      return null;
++    }
++    if (n.rowMap != map && !(n.rowMap == null && map.isEmpty())) {
++      markUnknown(n);
++    }
++    HashMap<String, Row> rows = new HashMap<>(n.rows);
++    rows.put(key, new Row(key, value, binding(ENGINE, n.receiver, null, 0, value, null)));
++    return new RowMutation(n, map, rows);
++  }
++
++  static @Nullable RowMutation rowClear(@Nullable Native n, HashMap<String, Object> map) {
++    return n == null ? null : new RowMutation(n, map, new HashMap<String, Row>());
++  }
++
++  static void rowStored(@Nullable RowMutation mutation) {
++    if (mutation != null) {
++      mutation.nativeState.rows = mutation.rows;
++      mutation.nativeState.rowMap = mutation.map;
++      mutation.stored = true;
++    }
++  }
++
++  static void rowEnded(@Nullable RowMutation mutation) {
++    if (mutation != null && !mutation.stored) {
++      markUnknown(mutation.nativeState);
++    }
++  }
++
++  static @Nullable Row rowUse(@Nullable Native n, Map<String, Object> map, String key, Object value)
++      throws SQLException {
++    if (n == null) {
++      return null;
++    }
++    Row row = n.rows.get(key);
++    if (n.rowMap != map || row == null || row.value != value) {
++      markUnknown(n);
++      pin(n, map, value);
++      return null;
++    }
++    pin(n, row, value);
++    if (!bindingLive(row.binding, current(n.connection))) {
++      throw refused();
++    }
++    return row;
++  }
++
++  static final class Transfer {
++    final NativeConnection connection;
++    final Thread thread = Thread.currentThread();
++    final Invocation cause;
++    final Object destination;
++    final ParameterList parameters;
++    final int position;
++    final Object value;
++    final Row row;
++    final Transfer parent;
++
++    Transfer(NativeConnection c, Object destination, ParameterList parameters, int position,
++        Object value, Row row) {
++      this.connection = c;
++      this.cause = current(c);
++      this.destination = destination;
++      this.parameters = parameters;
++      this.position = position;
++      this.value = value;
++      this.row = row;
++      this.parent = c.transfer;
++    }
++  }
++
++  static @Nullable Transfer transfer(@Nullable Native source, Map<String, Object> map, String key, Object value,
++      Object destination, int position) throws SQLException {
++    if (source == null || !(destination instanceof PgPreparedStatement)) {
++      if (source != null) {
++        markUnknown(source);
++      }
++      return null;
++    }
++    PgPreparedStatement target = (PgPreparedStatement) destination;
++    Row row = rowUse(source, map, key, value);
++    if (target.kira.connection != source.connection) {
++      markUnknown(source);
++      return null;
++    }
++    Transfer transfer = new Transfer(source.connection, destination, target.preparedParameters,
++        position, value, row);
++    source.connection.transfer = transfer;
++    return transfer;
++  }
++
++  static void transferEnded(@Nullable Transfer transfer) {
++    if (transfer == null) {
++      return;
++    }
++    NativeConnection c = transfer.connection;
++    if (transfer.thread != Thread.currentThread() || c.transfer != transfer) {
++      c.uncertain = true;
++      Invocation invocation = current(c);
++      if (invocation != null) {
++        uncertain(invocation);
++      }
++    } else {
++      c.transfer = transfer.parent;
++    }
++  }
++}
+diff --git a/pgjdbc/src/main/java/org/postgresql/core/v3/KiraOwnedParameterBridge.java b/pgjdbc/src/main/java/org/postgresql/core/v3/KiraOwnedParameterBridge.java
+new file mode 100644
+--- /dev/null
++++ b/pgjdbc/src/main/java/org/postgresql/core/v3/KiraOwnedParameterBridge.java
+@@ -0,0 +1,267 @@
++/*
++ * Copyright (c) 2026, Kira contributors
++ * Portions of this work integrate with pgjdbc, distributed under the BSD-2-Clause license.
++ */
++package org.postgresql.core.v3;
++
++import org.postgresql.core.ParameterList;
++import org.postgresql.jdbc.KiraOwnedJdbcCut;
++import org.postgresql.jdbc.KiraOwnedJdbcCut.Binding;
++import org.postgresql.jdbc.KiraOwnedJdbcCut.EngineKey;
++import org.postgresql.jdbc.KiraOwnedJdbcCut.Image;
++import org.postgresql.jdbc.KiraOwnedJdbcCut.Pin;
++
++import org.checkerframework.checker.initialization.qual.UnknownInitialization;
++import org.checkerframework.checker.nullness.qual.Nullable;
++
++/** Closed concrete-list metadata bridge; not a ParameterList API or a raw-value getter. */
++@SuppressWarnings({"nullness", "initialization"})
++public final class KiraOwnedParameterBridge {
++  private KiraOwnedParameterBridge() { }
++
++  private static volatile EngineKey engine;
++
++  public static void install(EngineKey key) {
++    KiraOwnedJdbcCut.requireEngine(key);
++    engine = key;
++  }
++
++  private static void require(EngineKey key) {
++    if (key == null || key != engine) {
++      throw new IllegalArgumentException("Not the owned parameter engine.");
++    }
++  }
++
++  // These references are the actual arrays supplied at native construction, not getter results.
++  static final class State {
++    final Object[] values;
++    Binding[] bindings;
++    Object owner;
++    ParameterList root;
++    int offset;
++    int changing;
++    boolean unknown;
++
++    State(@UnknownInitialization SimpleParameterList list, @Nullable Object[] values) {
++      this.values = values;
++      this.bindings = new Binding[values.length];
++      this.root = list;
++    }
++  }
++
++  static final class Composite {
++    final SimpleParameterList[] children;
++    final int[] offsets;
++
++    Composite(SimpleParameterList[] children, int[] offsets) {
++      this.children = children;
++      this.offsets = offsets;
++    }
++  }
++
++  public static void attach(EngineKey key, ParameterList list, Object receiver) {
++    require(key);
++    if (list.getClass() == SimpleParameterList.class) {
++      attachState(key, ((SimpleParameterList) list).kira, receiver, list, 0);
++    } else if (list.getClass() == CompositeParameterList.class) {
++      Composite state = ((CompositeParameterList) list).kira;
++      for (int i = 0; i < state.children.length; i++) {
++        SimpleParameterList child = state.children[i];
++        if (child.getClass() != SimpleParameterList.class) {
++          KiraOwnedJdbcCut.incomplete(key, receiver, null);
++        } else {
++          attachState(key, child.kira, receiver, list, state.offsets[i]);
++        }
++      }
++    } else {
++      KiraOwnedJdbcCut.incomplete(key, receiver, null);
++    }
++  }
++
++  private static void attachState(EngineKey key, State state, Object receiver,
++      ParameterList root, int offset) {
++    if (state.values.length == 0) {
++      // SimpleQuery.NO_PARAMETERS is a shared, permanently ownerless empty value.
++      return;
++    }
++    if (state.owner != null && state.owner != receiver) {
++      state.unknown = true;
++      KiraOwnedJdbcCut.incomplete(key, receiver, null);
++      return;
++    }
++    state.owner = receiver;
++    state.root = root;
++    state.offset = offset;
++  }
++
++  public static Image snapshot(EngineKey key, ParameterList list, Object receiver) {
++    require(key);
++    if (list.getClass() == SimpleParameterList.class) {
++      return snapshotState(key, ((SimpleParameterList) list).kira, receiver);
++    }
++    if (list.getClass() == CompositeParameterList.class) {
++      Composite state = ((CompositeParameterList) list).kira;
++      Image[] images = new Image[state.children.length];
++      for (int i = 0; i < images.length; i++) {
++        SimpleParameterList child = state.children[i];
++        images[i] = child.getClass() == SimpleParameterList.class
++            ? snapshotState(key, child.kira, receiver) : KiraOwnedJdbcCut.unknownImage(key);
++      }
++      return KiraOwnedJdbcCut.mergeImages(key, images);
++    }
++    return KiraOwnedJdbcCut.unknownImage(key);
++  }
++
++  private static Image snapshotState(EngineKey key, State state, Object receiver) {
++    if (state.values.length == 0) {
++      return KiraOwnedJdbcCut.image(key, state.bindings, state.values, true);
++    }
++    boolean owned = state.values.length == 0 || state.owner == receiver;
++    return KiraOwnedJdbcCut.image(key, state.bindings, state.values,
++        owned && state.changing == 0 && !state.unknown);
++  }
++
++  static final class Slot {
++    final EngineKey key;
++    final State state;
++    final int index;
++    final Binding binding;
++    final Pin pin;
++    boolean stored;
++
++    Slot(State state, int index, Object value, Object source) {
++      this.key = engine;
++      this.state = state;
++      this.index = index;
++      this.binding = key == null ? null : KiraOwnedJdbcCut.binding(key, state.owner, state.root,
++          state.offset + index + 1, value, source);
++      this.pin = key == null ? null
++          : KiraOwnedJdbcCut.retain(key, state.owner, state.bindings[index], binding);
++    }
++  }
++
++  static Slot bind(SimpleParameterList list, int index, Object value, @Nullable Object source) {
++    Slot slot = new Slot(list.kira, index, value, source);
++    list.kira.changing++;
++    return slot;
++  }
++
++  static void stored(Slot slot) {
++    slot.state.bindings[slot.index] = slot.binding;
++    slot.stored = true;
++    slot.state.changing--;
++    // The exact Invocation keeps its old/new pins through core output guarding and actualEnd.
++  }
++
++  static void ended(Slot slot) {
++    if (!slot.stored) {
++      slot.state.unknown = true;
++      slot.state.changing--;
++      if (slot.key != null) {
++        KiraOwnedJdbcCut.incomplete(slot.key, slot.state.owner, slot.pin);
++      }
++    }
++  }
++
++  static final class Bulk {
++    final EngineKey key;
++    final State state;
++    final Binding[] after;
++    final Pin pin;
++    boolean valuesStored;
++    final boolean empty;
++
++    Bulk(State state, Binding[] after, Object nativeCopy) {
++      this.key = engine;
++      this.state = state;
++      this.empty = state.values.length == 0;
++      this.after = after;
++      this.pin = key == null ? null
++          : KiraOwnedJdbcCut.retain(key, state.owner, nativeCopy, state.bindings);
++    }
++  }
++
++  static Bulk copy(SimpleParameterList source, SimpleParameterList destination) {
++    State from = source.kira;
++    State to = destination.kira;
++    if (to.values.length != 0) {
++      to.owner = from.owner;
++    }
++    if (to.values.length != 0) {
++      to.unknown |= from.unknown || from.changing != 0
++          || source.getClass() != SimpleParameterList.class
++          || destination.getClass() != SimpleParameterList.class;
++    }
++    Bulk bulk = new Bulk(to, from.bindings.clone(), destination);
++    if (!bulk.empty) {
++      to.changing++;
++    }
++    return bulk;
++  }
++
++  static Bulk append(SimpleParameterList source, SimpleParameterList destination,
++      int position, int count) {
++    State from = source.kira;
++    State to = destination.kira;
++    Binding[] after = to.bindings.clone();
++    System.arraycopy(from.bindings, 0, after, position, count);
++    if (to.values.length != 0) {
++      to.unknown |= from.unknown || from.changing != 0
++          || source.getClass() != SimpleParameterList.class
++          || destination.getClass() != SimpleParameterList.class
++          || (from.owner != null && from.owner != to.owner);
++    }
++    Bulk bulk = new Bulk(to, after, destination);
++    if (!bulk.empty) {
++      to.changing++;
++    }
++    return bulk;
++  }
++
++  static Bulk clear(SimpleParameterList list) {
++    State state = list.kira;
++    Bulk bulk = new Bulk(state, new Binding[state.bindings.length], list);
++    if (!bulk.empty) {
++      state.changing++;
++    }
++    return bulk;
++  }
++
++  static void valuesStored(Bulk bulk) {
++    if (!bulk.empty) {
++      bulk.state.bindings = bulk.after;
++    }
++    bulk.valuesStored = true;
++  }
++
++  static void ended(Bulk bulk, boolean returned) {
++    if (bulk.empty) {
++      return;
++    }
++    bulk.state.changing--;
++    if (!returned || !bulk.valuesStored) {
++      bulk.state.unknown = true;
++      if (bulk.key != null) {
++        KiraOwnedJdbcCut.incomplete(bulk.key, bulk.state.owner, bulk.pin);
++      }
++    }
++  }
++
++  static void copied(CompositeParameterList source, CompositeParameterList destination) {
++    EngineKey key = engine;
++    if (key == null) {
++      return;
++    }
++    Object receiver = null;
++    for (SimpleParameterList child : source.kira.children) {
++      if (child.kira.owner != null) {
++        receiver = child.kira.owner;
++        break;
++      }
++    }
++    if (receiver != null) {
++      attach(key, destination, receiver);
++      KiraOwnedJdbcCut.retain(key, receiver, destination, null);
++    }
++  }
++}
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java
+@@ -230,20 +230,36 @@
+   private final @Nullable String xmlFactoryFactoryClass;
+   private @Nullable PGXmlFactoryFactory xmlFactoryFactory;
+   private final LazyCleaner.Cleanable<IOException> cleanable;
++  final KiraOwnedJdbcCut.NativeConnection kira;
+   /* this is actually the database we are connected to */
+   private @Nullable String catalog;
+ 
+   final CachedQuery borrowQuery(String sql) throws SQLException {
+-    return queryExecutor.borrowQuery(sql);
++    KiraOwnedJdbcCut.Borrow kiraBorrow = KiraOwnedJdbcCut.reserveBorrow(kira, 2);
++    CachedQuery borrowed = queryExecutor.borrowQuery(sql);
++    if (kiraBorrow != null) {
++      kiraBorrow.query = borrowed;
++    }
++    return borrowed;
+   }
+ 
+   final CachedQuery borrowCallableQuery(String sql) throws SQLException {
+-    return queryExecutor.borrowCallableQuery(sql);
++    KiraOwnedJdbcCut.Borrow kiraBorrow = KiraOwnedJdbcCut.reserveBorrow(kira, 3);
++    CachedQuery borrowed = queryExecutor.borrowCallableQuery(sql);
++    if (kiraBorrow != null) {
++      kiraBorrow.query = borrowed;
++    }
++    return borrowed;
+   }
+ 
+   private CachedQuery borrowReturningQuery(String sql, String @Nullable [] columnNames)
+       throws SQLException {
+-    return queryExecutor.borrowReturningQuery(sql, columnNames);
++    KiraOwnedJdbcCut.Borrow kiraBorrow = KiraOwnedJdbcCut.reserveBorrow(kira, 4);
++    CachedQuery borrowed = queryExecutor.borrowReturningQuery(sql, columnNames);
++    if (kiraBorrow != null) {
++      kiraBorrow.query = borrowed;
++    }
++    return borrowed;
+   }
+ 
+   @Override
+@@ -270,137 +286,147 @@
+   public PgConnection(HostSpec[] hostSpecs,
+                       Properties info,
+                       String url) throws SQLException {
+-    // Print out the driver version number
+-    LOGGER.log(Level.FINE, DriverInfo.DRIVER_FULL_NAME);
+-
+-    this.creatingURL = url;
+-
+-    this.readOnlyBehavior = getReadOnlyBehavior(PGProperty.READ_ONLY_MODE.getOrDefault(info));
+-
+-    setDefaultFetchSize(PGProperty.DEFAULT_ROW_FETCH_SIZE.getInt(info));
+-
+-    setQueryTimeout(PGProperty.QUERY_TIMEOUT.getInt(info));
+-
+-    setPrepareThreshold(PGProperty.PREPARE_THRESHOLD.getInt(info));
+-    if (prepareThreshold == -1) {
+-      setForceBinary(true);
+-    }
+-
+-    // Now make the initial connection and set up local state
+-    this.queryExecutor = ConnectionFactory.openConnection(hostSpecs, info);
+-
+-    // WARNING for unsupported servers (9.0 and lower are not supported)
+-    if (LOGGER.isLoggable(Level.WARNING) && !haveMinimumServerVersion(ServerVersion.v9_1)) {
+-      LOGGER.log(Level.WARNING, "Unsupported Server Version: {0}", queryExecutor.getServerVersion());
+-    }
+-
+-    setSessionReadOnly = createQuery("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY", false, true);
+-    setSessionNotReadOnly = createQuery("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", false, true);
+-
+-    // Set read-only early if requested
+-    if (PGProperty.READ_ONLY.getBoolean(info)) {
+-      setReadOnly(true);
+-    }
+-
+-    this.hideUnprivilegedObjects = PGProperty.HIDE_UNPRIVILEGED_OBJECTS.getBoolean(info);
+-
+-    // get oids that support binary transfer
+-    Set<Integer> binaryOids = getBinaryEnabledOids(info);
+-    // get oids that should be disabled from transfer
+-    binaryDisabledOids = getBinaryDisabledOids(info);
+-    // if there are any, remove them from the enabled ones
+-    if (!binaryDisabledOids.isEmpty()) {
+-      binaryOids.removeAll(binaryDisabledOids);
+-    }
+-
+-    // split for receive and send for better control
+-    Set<Integer> useBinarySendForOids = new HashSet<>(binaryOids);
+-
+-    Set<Integer> useBinaryReceiveForOids = new HashSet<>(binaryOids);
+-
+-    /*
+-     * Does not pass unit tests because unit tests expect setDate to have millisecond accuracy
+-     * whereas the binary transfer only supports date accuracy.
+-     */
+-    useBinarySendForOids.remove(Oid.DATE);
+-
+-    queryExecutor.setBinaryReceiveOids(useBinaryReceiveForOids);
+-    queryExecutor.setBinarySendOids(useBinarySendForOids);
+-
+-    if (LOGGER.isLoggable(Level.FINEST)) {
+-      LOGGER.log(Level.FINEST, "    types using binary send = {0}", oidsToString(useBinarySendForOids));
+-      LOGGER.log(Level.FINEST, "    types using binary receive = {0}", oidsToString(useBinaryReceiveForOids));
+-      LOGGER.log(Level.FINEST, "    integer date/time = {0}", queryExecutor.getIntegerDateTimes());
+-    }
+-
+-    //
+-    // String -> text or unknown?
+-    //
+-
+-    String stringType = PGProperty.STRING_TYPE.getOrDefault(info);
+-    if (stringType != null) {
+-      if ("unspecified".equalsIgnoreCase(stringType)) {
+-        bindStringAsVarchar = false;
+-      } else if ("varchar".equalsIgnoreCase(stringType)) {
++    kira = KiraOwnedJdbcCut.connectionStarted(this);
++    boolean kiraReturned = false;
++    try {
++      // Print out the driver version number
++      LOGGER.log(Level.FINE, DriverInfo.DRIVER_FULL_NAME);
++
++      this.creatingURL = url;
++
++      this.readOnlyBehavior = getReadOnlyBehavior(PGProperty.READ_ONLY_MODE.getOrDefault(info));
++
++      setDefaultFetchSize(PGProperty.DEFAULT_ROW_FETCH_SIZE.getInt(info));
++
++      setQueryTimeout(PGProperty.QUERY_TIMEOUT.getInt(info));
++
++      setPrepareThreshold(PGProperty.PREPARE_THRESHOLD.getInt(info));
++      if (prepareThreshold == -1) {
++        setForceBinary(true);
++      }
++
++      // Now make the initial connection and set up local state
++      this.queryExecutor = ConnectionFactory.openConnection(hostSpecs, info);
++      kira.executor = queryExecutor;
++
++      // WARNING for unsupported servers (9.0 and lower are not supported)
++      if (LOGGER.isLoggable(Level.WARNING) && !haveMinimumServerVersion(ServerVersion.v9_1)) {
++        LOGGER.log(Level.WARNING, "Unsupported Server Version: {0}", queryExecutor.getServerVersion());
++      }
++
++      setSessionReadOnly = createQuery("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY", false, true);
++      setSessionNotReadOnly = createQuery("SET SESSION CHARACTERISTICS AS TRANSACTION READ WRITE", false, true);
++
++      // Set read-only early if requested
++      if (PGProperty.READ_ONLY.getBoolean(info)) {
++        setReadOnly(true);
++      }
++
++      this.hideUnprivilegedObjects = PGProperty.HIDE_UNPRIVILEGED_OBJECTS.getBoolean(info);
++
++      // get oids that support binary transfer
++      Set<Integer> binaryOids = getBinaryEnabledOids(info);
++      // get oids that should be disabled from transfer
++      binaryDisabledOids = getBinaryDisabledOids(info);
++      // if there are any, remove them from the enabled ones
++      if (!binaryDisabledOids.isEmpty()) {
++        binaryOids.removeAll(binaryDisabledOids);
++      }
++
++      // split for receive and send for better control
++      Set<Integer> useBinarySendForOids = new HashSet<>(binaryOids);
++
++      Set<Integer> useBinaryReceiveForOids = new HashSet<>(binaryOids);
++
++      /*
++       * Does not pass unit tests because unit tests expect setDate to have millisecond accuracy
++       * whereas the binary transfer only supports date accuracy.
++       */
++      useBinarySendForOids.remove(Oid.DATE);
++
++      queryExecutor.setBinaryReceiveOids(useBinaryReceiveForOids);
++      queryExecutor.setBinarySendOids(useBinarySendForOids);
++
++      if (LOGGER.isLoggable(Level.FINEST)) {
++        LOGGER.log(Level.FINEST, "    types using binary send = {0}", oidsToString(useBinarySendForOids));
++        LOGGER.log(Level.FINEST, "    types using binary receive = {0}", oidsToString(useBinaryReceiveForOids));
++        LOGGER.log(Level.FINEST, "    integer date/time = {0}", queryExecutor.getIntegerDateTimes());
++      }
++
++      //
++      // String -> text or unknown?
++      //
++
++      String stringType = PGProperty.STRING_TYPE.getOrDefault(info);
++      if (stringType != null) {
++        if ("unspecified".equalsIgnoreCase(stringType)) {
++          bindStringAsVarchar = false;
++        } else if ("varchar".equalsIgnoreCase(stringType)) {
++          bindStringAsVarchar = true;
++        } else {
++          throw new PSQLException(
++              GT.tr("Unsupported value for stringtype parameter: {0}", stringType),
++              PSQLState.INVALID_PARAMETER_VALUE);
++        }
++      } else {
+         bindStringAsVarchar = true;
+-      } else {
+-        throw new PSQLException(
+-            GT.tr("Unsupported value for stringtype parameter: {0}", stringType),
+-            PSQLState.INVALID_PARAMETER_VALUE);
+-      }
+-    } else {
+-      bindStringAsVarchar = true;
+-    }
+-
+-    // Initialize timestamp stuff
+-    timestampUtils = new TimestampUtils(!queryExecutor.getIntegerDateTimes(),
+-        new QueryExecutorTimeZoneProvider(queryExecutor));
+-
+-    // Initialize common queries.
+-    // isParameterized==true so full parse is performed and the engine knows the query
+-    // is not a compound query with ; inside, so it could use parse/bind/exec messages
+-    commitQuery = createQuery("COMMIT", false, true).query;
+-    rollbackQuery = createQuery("ROLLBACK", false, true).query;
+-
+-    int unknownLength = PGProperty.UNKNOWN_LENGTH.getInt(info);
+-
+-    // Initialize object handling
+-    @SuppressWarnings("argument")
+-    TypeInfo typeCache = createTypeInfo(this, unknownLength);
+-    this.typeCache = typeCache;
+-    initObjectTypes(info);
+-
+-    if (PGProperty.LOG_UNCLOSED_CONNECTIONS.getBoolean(info)) {
+-      openStackTrace = new Throwable("Connection was created at this point:");
+-    }
+-    finalizeAction = new PgConnectionCleaningAction(lock, openStackTrace, queryExecutor.getCloseAction());
+-    this.logServerErrorDetail = PGProperty.LOG_SERVER_ERROR_DETAIL.getBoolean(info);
+-    this.disableColumnSanitiser = PGProperty.DISABLE_COLUMN_SANITISER.getBoolean(info);
+-    this.convertBooleanToNumeric = PGProperty.CONVERT_BOOLEAN_TO_NUMERIC.getBoolean(info);
+-
+-    if (haveMinimumServerVersion(ServerVersion.v8_3)) {
+-      typeCache.addCoreType("uuid", Oid.UUID, Types.OTHER, "java.util.UUID", Oid.UUID_ARRAY);
+-      typeCache.addCoreType("xml", Oid.XML, Types.SQLXML, "java.sql.SQLXML", Oid.XML_ARRAY);
+-    }
+-
+-    this.clientInfo = new Properties();
+-    if (haveMinimumServerVersion(ServerVersion.v9_0)) {
+-      String appName = PGProperty.APPLICATION_NAME.getOrDefault(info);
+-      if (appName == null) {
+-        appName = "";
+-      }
+-      this.clientInfo.put("ApplicationName", appName);
+-    }
+-
+-    fieldMetadataCache = new LruCache<>(
+-        Math.max(0, PGProperty.DATABASE_METADATA_CACHE_FIELDS.getInt(info)),
+-        Math.max(0, PGProperty.DATABASE_METADATA_CACHE_FIELDS_MIB.getInt(info) * 1024L * 1024L),
+-        false);
+-
+-    replicationConnection = PGProperty.REPLICATION.getOrDefault(info) != null;
+-
+-    xmlFactoryFactoryClass = PGProperty.XML_FACTORY_FACTORY.getOrDefault(info);
+-    cleanable = LazyCleanerImpl.getInstance().register(leakHandle, finalizeAction);
++      }
++
++      // Initialize timestamp stuff
++      timestampUtils = new TimestampUtils(!queryExecutor.getIntegerDateTimes(),
++          new QueryExecutorTimeZoneProvider(queryExecutor));
++
++      // Initialize common queries.
++      // isParameterized==true so full parse is performed and the engine knows the query
++      // is not a compound query with ; inside, so it could use parse/bind/exec messages
++      commitQuery = createQuery("COMMIT", false, true).query;
++      rollbackQuery = createQuery("ROLLBACK", false, true).query;
++
++      int unknownLength = PGProperty.UNKNOWN_LENGTH.getInt(info);
++
++      // Initialize object handling
++      @SuppressWarnings("argument")
++      TypeInfo typeCache = createTypeInfo(this, unknownLength);
++      this.typeCache = typeCache;
++      initObjectTypes(info);
++
++      if (PGProperty.LOG_UNCLOSED_CONNECTIONS.getBoolean(info)) {
++        openStackTrace = new Throwable("Connection was created at this point:");
++      }
++      finalizeAction = new PgConnectionCleaningAction(lock, openStackTrace, queryExecutor.getCloseAction());
++      kira.action = finalizeAction;
++      this.logServerErrorDetail = PGProperty.LOG_SERVER_ERROR_DETAIL.getBoolean(info);
++      this.disableColumnSanitiser = PGProperty.DISABLE_COLUMN_SANITISER.getBoolean(info);
++      this.convertBooleanToNumeric = PGProperty.CONVERT_BOOLEAN_TO_NUMERIC.getBoolean(info);
++
++      if (haveMinimumServerVersion(ServerVersion.v8_3)) {
++        typeCache.addCoreType("uuid", Oid.UUID, Types.OTHER, "java.util.UUID", Oid.UUID_ARRAY);
++        typeCache.addCoreType("xml", Oid.XML, Types.SQLXML, "java.sql.SQLXML", Oid.XML_ARRAY);
++      }
++
++      this.clientInfo = new Properties();
++      if (haveMinimumServerVersion(ServerVersion.v9_0)) {
++        String appName = PGProperty.APPLICATION_NAME.getOrDefault(info);
++        if (appName == null) {
++          appName = "";
++        }
++        this.clientInfo.put("ApplicationName", appName);
++      }
++
++      fieldMetadataCache = new LruCache<>(
++          Math.max(0, PGProperty.DATABASE_METADATA_CACHE_FIELDS.getInt(info)),
++          Math.max(0, PGProperty.DATABASE_METADATA_CACHE_FIELDS_MIB.getInt(info) * 1024L * 1024L),
++          false);
++
++      replicationConnection = PGProperty.REPLICATION.getOrDefault(info) != null;
++
++      xmlFactoryFactoryClass = PGProperty.XML_FACTORY_FACTORY.getOrDefault(info);
++      cleanable = LazyCleanerImpl.getInstance().register(leakHandle, finalizeAction);
++      kira.cleanable = cleanable;
++      kiraReturned = true;
++    } finally {
++      KiraOwnedJdbcCut.connectionEnded(kira, kiraReturned);
++    }
+   }
+ 
+   private static ReadOnlyBehavior getReadOnlyBehavior(@Nullable String property) {
+@@ -1443,21 +1469,48 @@
+   public Statement createStatement(int resultSetType, int resultSetConcurrency,
+       int resultSetHoldability) throws SQLException {
+     checkClosed();
+-    return new PgStatement(this, resultSetType, resultSetConcurrency, resultSetHoldability);
++    KiraOwnedJdbcCut.Construction kiraConstruction = KiraOwnedJdbcCut.reserve(kira, 1, null);
++    boolean kiraReturned = false;
++    try {
++      PgStatement created = new PgStatement(this, resultSetType, resultSetConcurrency, resultSetHoldability);
++      KiraOwnedJdbcCut.constructionReceiver(kiraConstruction, created);
++      kiraReturned = true;
++      return created;
++    } finally {
++      KiraOwnedJdbcCut.constructionEnded(kiraConstruction, kiraReturned);
++    }
+   }
+ 
+   @Override
+   public PreparedStatement prepareStatement(String sql, int resultSetType, int resultSetConcurrency,
+       int resultSetHoldability) throws SQLException {
+     checkClosed();
+-    return new PgPreparedStatement(this, sql, resultSetType, resultSetConcurrency, resultSetHoldability);
++    KiraOwnedJdbcCut.Construction kiraConstruction = KiraOwnedJdbcCut.reserve(kira, 2, null);
++    boolean kiraReturned = false;
++    try {
++      PgPreparedStatement created = new PgPreparedStatement(this, sql, resultSetType, resultSetConcurrency, resultSetHoldability);
++      KiraOwnedJdbcCut.constructionReceiver(kiraConstruction, created);
++      kiraReturned = true;
++      return created;
++    } finally {
++      KiraOwnedJdbcCut.constructionEnded(kiraConstruction, kiraReturned);
++    }
+   }
+ 
+   @Override
+   public CallableStatement prepareCall(String sql, int resultSetType, int resultSetConcurrency,
+       int resultSetHoldability) throws SQLException {
+     checkClosed();
+-    return new PgCallableStatement(this, sql, resultSetType, resultSetConcurrency, resultSetHoldability);
++    KiraOwnedJdbcCut.Construction kiraConstruction = KiraOwnedJdbcCut.reserve(kira, 3, null);
++    boolean kiraReturned = false;
++    try {
++      PgCallableStatement created = new PgCallableStatement(this, sql, resultSetType, resultSetConcurrency, resultSetHoldability);
++      KiraOwnedJdbcCut.constructionReceiver(kiraConstruction, created);
++      kiraReturned = true;
++      return created;
++    } finally {
++      KiraOwnedJdbcCut.constructionEnded(kiraConstruction, kiraReturned);
++    }
+   }
+ 
+   @Override
+@@ -1887,8 +1940,10 @@
+     checkClosed();
+ 
+     PSQLSavepoint pgSavepoint = (PSQLSavepoint) savepoint;
++    KiraOwnedJdbcCut.Life kiraLife = KiraOwnedJdbcCut.savepointLife(kira, pgSavepoint);
+     execSQLUpdate("RELEASE SAVEPOINT " + pgSavepoint.getPGName());
+     pgSavepoint.invalidate();
++    KiraOwnedJdbcCut.savepointReleased(kiraLife);
+   }
+ 
+   @Override
+@@ -1938,20 +1993,28 @@
+       return prepareStatement(sql);
+     }
+ 
+-    CachedQuery cachedQuery = borrowReturningQuery(sql, columnNames);
+-    PgPreparedStatement ps =
+-        new PgPreparedStatement(this, cachedQuery,
+-            ResultSet.TYPE_FORWARD_ONLY,
+-            ResultSet.CONCUR_READ_ONLY,
+-            getHoldability());
+-    Query query = cachedQuery.query;
+-    SqlCommand sqlCommand = query.getSqlCommand();
+-    if (sqlCommand != null) {
+-      ps.wantsGeneratedKeysAlways = sqlCommand.isReturningKeywordPresent();
+-    } else {
+-      // If composite query is given, just ignore "generated keys" arguments
+-    }
+-    return ps;
++    KiraOwnedJdbcCut.Construction kiraConstruction = KiraOwnedJdbcCut.reserve(kira, 4, null);
++    boolean kiraReturned = false;
++    try {
++      CachedQuery cachedQuery = borrowReturningQuery(sql, columnNames);
++      PgPreparedStatement ps =
++          new PgPreparedStatement(this, cachedQuery,
++              ResultSet.TYPE_FORWARD_ONLY,
++              ResultSet.CONCUR_READ_ONLY,
++              getHoldability());
++      KiraOwnedJdbcCut.constructionReceiver(kiraConstruction, ps);
++      Query query = cachedQuery.query;
++      SqlCommand sqlCommand = query.getSqlCommand();
++      if (sqlCommand != null) {
++        ps.wantsGeneratedKeysAlways = sqlCommand.isReturningKeywordPresent();
++      } else {
++        // If composite query is given, just ignore "generated keys" arguments
++      }
++      kiraReturned = true;
++      return ps;
++    } finally {
++      KiraOwnedJdbcCut.constructionEnded(kiraConstruction, kiraReturned);
++    }
+   }
+ 
+   @Override
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java
+@@ -45,6 +45,7 @@
+ import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
+ 
+ public class PgStatement implements Statement, BaseStatement {
++  final KiraOwnedJdbcCut.Native kira;
+   private static final String[] NO_RETURNING_COLUMNS = new String[0];
+ 
+   /**
+@@ -162,6 +163,7 @@
+   @SuppressWarnings("method.invocation")
+   PgStatement(PgConnection c, int rsType, int rsConcurrency, int rsHoldability)
+       throws SQLException {
++    kira = KiraOwnedJdbcCut.nativeStarted(c.kira, this, 1);
+     this.connection = c;
+     forceBinaryTransfers |= c.getForceBinary();
+     // validation check for allowed values of resultset type
+@@ -192,12 +194,21 @@
+   @SuppressWarnings("method.invocation")
+   public ResultSet createResultSet(@Nullable Query originalQuery, Field[] fields, List<Tuple> tuples,
+       @Nullable ResultCursor cursor) throws SQLException {
+-    PgResultSet newResult = new PgResultSet(originalQuery, this, fields, tuples, cursor,
+-        getMaxRows(), getMaxFieldSize(), getResultSetType(), getResultSetConcurrency(),
+-        getResultSetHoldability(), getAdaptiveFetch());
+-    newResult.setFetchSize(getFetchSize());
+-    newResult.setFetchDirection(getFetchDirection());
+-    return newResult;
++    KiraOwnedJdbcCut.Construction kiraConstruction =
++        KiraOwnedJdbcCut.reserve(kira.connection, 5, cursor);
++    boolean kiraReturned = false;
++    try {
++      PgResultSet newResult = new PgResultSet(originalQuery, this, fields, tuples, cursor,
++          getMaxRows(), getMaxFieldSize(), getResultSetType(), getResultSetConcurrency(),
++          getResultSetHoldability(), getAdaptiveFetch());
++      KiraOwnedJdbcCut.constructionReceiver(kiraConstruction, newResult);
++      newResult.setFetchSize(getFetchSize());
++      newResult.setFetchDirection(getFetchDirection());
++      kiraReturned = true;
++      return newResult;
++    } finally {
++      KiraOwnedJdbcCut.constructionEnded(kiraConstruction, kiraReturned);
++    }
+   }
+ 
+   public BaseConnection getPGConnection() {
+@@ -723,16 +734,23 @@
+    */
+   @Override
+   public final void close() throws SQLException {
+-    // closing an already closed Statement is a no-op.
++    KiraOwnedJdbcCut.Invocation kiraCause = KiraOwnedJdbcCut.closeCause(kira);
++    // Only the original native CAS winner owns the first-close scope.
+     if (!IS_CLOSED_UPDATER.compareAndSet(this, 0, 1)) {
+       return;
+     }
+-
+-    cancel();
+-
+-    closeForNextExecution();
+-
+-    closeImpl();
++    KiraOwnedJdbcCut.statementCloseWon(kira, kiraCause);
++    boolean kiraReturned = false;
++    try {
++      cancel();
++
++      closeForNextExecution();
++
++      closeImpl();
++      kiraReturned = true;
++    } finally {
++      KiraOwnedJdbcCut.closeEnded(kira, kiraCause, true, kiraReturned);
++    }
+   }
+ 
+   /**
+@@ -803,26 +821,53 @@
+     ArrayList<Query> batchStatements = this.batchStatements;
+     if (batchStatements == null) {
+       this.batchStatements = batchStatements = new ArrayList<>();
++      kira.queryList = batchStatements;
+     }
+     ArrayList<@Nullable ParameterList> batchParameters = this.batchParameters;
+     if (batchParameters == null) {
+       this.batchParameters = batchParameters = new ArrayList<@Nullable ParameterList>();
++      kira.parameterList = batchParameters;
+     }
+ 
+     // Simple statements should not replace ?, ? with $1, $2
+     boolean shouldUseParameterized = false;
+     CachedQuery cachedQuery = connection.createQuery(sql, replaceProcessingEnabled, shouldUseParameterized);
+-    batchStatements.add(cachedQuery.query);
+-    batchParameters.add(null);
++    KiraOwnedJdbcCut.Append kiraQuery = KiraOwnedJdbcCut.append(kira, cachedQuery.query, false);
++    KiraOwnedJdbcCut.Append kiraParameters = KiraOwnedJdbcCut.append(kira, null, true);
++    try {
++      batchStatements.add(cachedQuery.query);
++      KiraOwnedJdbcCut.appended(kiraQuery);
++      batchParameters.add(null);
++      KiraOwnedJdbcCut.appended(kiraParameters);
++    } finally {
++      KiraOwnedJdbcCut.appendEnded(kiraQuery);
++      KiraOwnedJdbcCut.appendEnded(kiraParameters);
++    }
+   }
+ 
+   @Override
+   public void clearBatch() throws SQLException {
+     if (batchStatements != null) {
+-      batchStatements.clear();
++      KiraOwnedJdbcCut.Pin kiraPin = KiraOwnedJdbcCut.beforeQueueClear(kira, false);
++      boolean kiraCleared = false;
++      try {
++        batchStatements.clear();
++        KiraOwnedJdbcCut.queueCleared(kira, false, kiraPin);
++        kiraCleared = true;
++      } finally {
++        KiraOwnedJdbcCut.queueClearEnded(kira, kiraCleared);
++      }
+     }
+     if (batchParameters != null) {
+-      batchParameters.clear();
++      KiraOwnedJdbcCut.Pin kiraPin = KiraOwnedJdbcCut.beforeQueueClear(kira, true);
++      boolean kiraCleared = false;
++      try {
++        batchParameters.clear();
++        KiraOwnedJdbcCut.queueCleared(kira, true, kiraPin);
++        kiraCleared = true;
++      } finally {
++        KiraOwnedJdbcCut.queueClearEnded(kira, kiraCleared);
++      }
+     }
+   }
+ 
+@@ -840,10 +885,23 @@
+     ArrayList<@Nullable ParameterList> batchParameters = castNonNull(this.batchParameters);
+     // Empty arrays should be passed to toArray
+     // see http://shipilev.net/blog/2016/arrays-wisdom-ancients/
++    KiraOwnedJdbcCut.Batch kiraBatch = castNonNull(kira.activeBatch);
+     Query[] queries = batchStatements.toArray(new Query[0]);
++    kiraBatch.queries = queries;
+     @Nullable ParameterList[] parameterLists = batchParameters.toArray(new ParameterList[0]);
++    kiraBatch.parameters = parameterLists;
++    KiraOwnedJdbcCut.prepareDrain(kiraBatch, batchStatements, batchParameters);
++    // Closed drain: only prepared direct stores and the two original concrete ArrayList clears.
++    kiraBatch.phase = 2;
+     batchStatements.clear();
++    kiraBatch.phase = 3;
+     batchParameters.clear();
++    kiraBatch.phase = 4;
++    kira.queries = null;
++    kira.queryTail = null;
++    kira.parameters = null;
++    kira.parameterTail = null;
++    kiraBatch.phase = 5;
+ 
+     int flags;
+ 
+@@ -914,14 +972,19 @@
+ 
+   @Override
+   public int[] executeBatch() throws SQLException {
+-    checkClosed();
+-    closeForNextExecution();
+-
+-    if (batchStatements == null || batchStatements.isEmpty() || batchParameters == null) {
+-      return new int[0];
+-    }
+-
+-    return internalExecuteBatch().getUpdateCount();
++    KiraOwnedJdbcCut.Batch kiraBatch = KiraOwnedJdbcCut.batchEnter(kira);
++    try {
++      checkClosed();
++      closeForNextExecution();
++
++      if (batchStatements == null || batchStatements.isEmpty() || batchParameters == null) {
++        return new int[0];
++      }
++
++      return internalExecuteBatch().getUpdateCount();
++    } finally {
++      KiraOwnedJdbcCut.batchEnded(kiraBatch);
++    }
+   }
+ 
+   @Override
+@@ -1102,14 +1165,19 @@
+ 
+   @Override
+   public long[] executeLargeBatch() throws SQLException {
+-    checkClosed();
+-    closeForNextExecution();
+-
+-    if (batchStatements == null || batchStatements.isEmpty() || batchParameters == null) {
+-      return new long[0];
+-    }
+-
+-    return internalExecuteBatch().getLargeUpdateCount();
++    KiraOwnedJdbcCut.Batch kiraBatch = KiraOwnedJdbcCut.batchEnter(kira);
++    try {
++      checkClosed();
++      closeForNextExecution();
++
++      if (batchStatements == null || batchStatements.isEmpty() || batchParameters == null) {
++        return new long[0];
++      }
++
++      return internalExecuteBatch().getLargeUpdateCount();
++    } finally {
++      KiraOwnedJdbcCut.batchEnded(kiraBatch);
++    }
+   }
+ 
+   @Override
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java
+@@ -100,6 +100,7 @@
+ 
+     this.preparedQuery = query;
+     this.preparedParameters = this.preparedQuery.query.createParameterList();
++    KiraOwnedJdbcCut.prepared(kira, preparedParameters);
+     int parameterCount = preparedParameters.getParameterCount();
+     int maxSupportedParameters = maximumNumberOfParameters();
+     if (parameterCount > maxSupportedParameters) {
+@@ -188,6 +189,7 @@
+     try {
+       try (ResourceLock ignore = lock.obtain()) {
+         checkClosed();
++        KiraOwnedJdbcCut.useParameters(kira, preparedParameters);
+ 
+         if (connection.getPreferQueryMode() == PreferQueryMode.SIMPLE) {
+           flags |= QueryExecutor.QUERY_EXECUTE_AS_SIMPLE;
+@@ -1174,19 +1176,35 @@
+   @Override
+   public void addBatch() throws SQLException {
+     checkClosed();
++    KiraOwnedJdbcCut.useParameters(kira, preparedParameters);
+     ArrayList<Query> batchStatements = this.batchStatements;
+     if (batchStatements == null) {
+       this.batchStatements = batchStatements = new ArrayList<>();
++      kira.queryList = batchStatements;
+     }
+     ArrayList<@Nullable ParameterList> batchParameters = this.batchParameters;
+     if (batchParameters == null) {
+       this.batchParameters = batchParameters = new ArrayList<@Nullable ParameterList>();
++      kira.parameterList = batchParameters;
+     }
+     // we need to create copies of our parameters, otherwise the values can be changed
+-    batchParameters.add(preparedParameters.copy());
++    ParameterList kiraCopy = preparedParameters.copy();
++    KiraOwnedJdbcCut.Append kiraParameters = KiraOwnedJdbcCut.append(kira, kiraCopy, true);
++    try {
++      batchParameters.add(kiraCopy);
++      KiraOwnedJdbcCut.appended(kiraParameters);
++    } finally {
++      KiraOwnedJdbcCut.appendEnded(kiraParameters);
++    }
+     Query query = preparedQuery.query;
+     if (!(query instanceof BatchedQuery) || batchStatements.isEmpty()) {
+-      batchStatements.add(query);
++      KiraOwnedJdbcCut.Append kiraQuery = KiraOwnedJdbcCut.append(kira, query, false);
++      try {
++        batchStatements.add(query);
++        KiraOwnedJdbcCut.appended(kiraQuery);
++      } finally {
++        KiraOwnedJdbcCut.appendEnded(kiraQuery);
++      }
+     }
+   }
+ 
+@@ -1764,6 +1782,7 @@
+ 
+   @Override
+   public int[] executeBatch() throws SQLException {
++    KiraOwnedJdbcCut.Batch kiraBatch = KiraOwnedJdbcCut.batchEnter(kira);
+     try {
+       // Note: in batch prepared statements batchStatements == 1, and batchParameters is equal
+       // to the number of addBatch calls
+@@ -1778,6 +1797,7 @@
+       return super.executeBatch();
+     } finally {
+       defaultTimeZone = null;
++      KiraOwnedJdbcCut.batchEnded(kiraBatch);
+     }
+   }
+ 
+@@ -1840,6 +1860,7 @@
+       // Find appropriate batch for block count.
+       BatchedQuery bq = originalQuery.deriveForMultiBatch(valueBlock);
+       ParameterList newPl = bq.createParameterList();
++      KiraOwnedJdbcCut.rewritingParameters(kira, newPl);
+       for (int j = 0; j < valueBlock; j++) {
+         ParameterList pl = batchParameters.get(offset++);
+         if (pl != null) {
+@@ -1850,7 +1871,21 @@
+       newBatchParameters.add(newPl);
+       unprocessedBatchCount -= valueBlock;
+     }
+-    this.batchStatements = newBatchStatements;
+-    this.batchParameters = newBatchParameters;
++    KiraOwnedJdbcCut.Rewrite kiraRewrite =
++        KiraOwnedJdbcCut.rewrite(kira, newBatchStatements, newBatchParameters);
++    try {
++      this.batchStatements = newBatchStatements;
++      kira.queryList = newBatchStatements;
++      kira.queries = kiraRewrite.queries;
++      kira.queryTail = kiraRewrite.queryTail;
++      kiraRewrite.queryInstalled = true;
++      this.batchParameters = newBatchParameters;
++      kira.parameterList = newBatchParameters;
++      kira.parameters = kiraRewrite.parameters;
++      kira.parameterTail = kiraRewrite.parameterTail;
++      kiraRewrite.parametersInstalled = true;
++    } finally {
++      KiraOwnedJdbcCut.rewriteEnded(kira, kiraRewrite);
++    }
+   }
+ }
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
+@@ -97,6 +97,7 @@
+ import java.util.logging.Level;
+ 
+ public class PgResultSet implements ResultSet, PGRefCursorResultSet {
++  final @Nullable KiraOwnedJdbcCut.Native kira;
+ 
+   // needed for updateable result set support
+   private boolean updateable;
+@@ -164,6 +165,7 @@
+       Field[] fields, List<Tuple> tuples,
+       @Nullable ResultCursor cursor, int maxRows, int maxFieldSize, int rsType, int rsConcurrency,
+       int rsHoldability, boolean adaptiveFetch) throws SQLException {
++    kira = KiraOwnedJdbcCut.resultStarted(statement, this);
+     // Fail-fast on invalid null inputs
+     if (tuples == null) {
+       throw new NullPointerException("tuples must be non-null");
+@@ -1193,10 +1195,18 @@
+       try {
+         insertStatement = connection.prepareStatement(insertSQL.toString(), Statement.RETURN_GENERATED_KEYS);
+ 
+-        Iterator<Object> values = updateValues.values().iterator();
++        Iterator<Map.Entry<String, Object>> values = updateValues.entrySet().iterator();
+ 
+         for (int i = 1; values.hasNext(); i++) {
+-          insertStatement.setObject(i, values.next());
++          Map.Entry<String, Object> entry = values.next();
++          Object value = entry.getValue();
++          KiraOwnedJdbcCut.Transfer kiraTransfer =
++              KiraOwnedJdbcCut.transfer(kira, updateValues, entry.getKey(), value, insertStatement, i);
++          try {
++            insertStatement.setObject(i, value);
++          } finally {
++            KiraOwnedJdbcCut.transferEnded(kiraTransfer);
++          }
+         }
+ 
+         insertStatement.executeUpdate();
+@@ -1206,7 +1216,15 @@
+ 
+           long insertedOID = ((PgStatement) insertStatement).getLastOID();
+ 
+-          updateValues.put("oid", insertedOID);
++          Long kiraOid = insertedOID;
++          KiraOwnedJdbcCut.RowMutation kiraMutation =
++              KiraOwnedJdbcCut.rowStore(kira, updateValues, "oid", kiraOid);
++          try {
++            updateValues.put("oid", kiraOid);
++            KiraOwnedJdbcCut.rowStored(kiraMutation);
++          } finally {
++            KiraOwnedJdbcCut.rowEnded(kiraMutation);
++          }
+ 
+         }
+ 
+@@ -1271,7 +1289,13 @@
+       // clear the updateValues hash map for the next set of updates
+       HashMap<String, Object> updateValues = this.updateValues;
+       if (updateValues != null) {
+-        updateValues.clear();
++        KiraOwnedJdbcCut.RowMutation kiraMutation = KiraOwnedJdbcCut.rowClear(kira, updateValues);
++        try {
++          updateValues.clear();
++          KiraOwnedJdbcCut.rowStored(kiraMutation);
++        } finally {
++          KiraOwnedJdbcCut.rowEnded(kiraMutation);
++        }
+       }
+     }
+   }
+@@ -1626,10 +1650,17 @@
+         updateStatement = connection.prepareStatement(sqlText);
+ 
+         int i = 0;
+-        Iterator<Object> iterator = updateValues.values().iterator();
++        Iterator<Map.Entry<String, Object>> iterator = updateValues.entrySet().iterator();
+         for (; iterator.hasNext(); i++) {
+-          Object o = iterator.next();
+-          updateStatement.setObject(i + 1, o);
++          Map.Entry<String, Object> entry = iterator.next();
++          Object o = entry.getValue();
++          KiraOwnedJdbcCut.Transfer kiraTransfer =
++              KiraOwnedJdbcCut.transfer(kira, updateValues, entry.getKey(), o, updateStatement, i + 1);
++          try {
++            updateStatement.setObject(i + 1, o);
++          } finally {
++            KiraOwnedJdbcCut.transferEnded(kiraTransfer);
++          }
+         }
+ 
+         for (int j = 0; j < numKeys; j++, i++) {
+@@ -1649,7 +1680,13 @@
+       rows.set(currentRow, rowBuffer);
+ 
+       connection.getLogger().log(Level.FINE, "done updates");
+-      updateValues.clear();
++      KiraOwnedJdbcCut.RowMutation kiraMutation = KiraOwnedJdbcCut.rowClear(kira, updateValues);
++      try {
++        updateValues.clear();
++        KiraOwnedJdbcCut.rowStored(kiraMutation);
++      } finally {
++        KiraOwnedJdbcCut.rowEnded(kiraMutation);
++      }
+       doingUpdates = false;
+     }
+   }
+@@ -2166,6 +2203,7 @@
+     for (Map.Entry<String, Object> entry : updateValues.entrySet()) {
+       int columnIndex = findColumn(entry.getKey()) - 1;
+       Object valueObject = entry.getValue();
++      KiraOwnedJdbcCut.rowUse(kira, updateValues, entry.getKey(), valueObject);
+       setRowBufferColumn(rowBuffer, columnIndex, valueObject);
+     }
+ 
+@@ -2337,10 +2375,18 @@
+ 
+   @Override
+   public void close() throws SQLException {
++    KiraOwnedJdbcCut.Invocation kiraCause = KiraOwnedJdbcCut.closeCause(kira);
++    boolean kiraFirst = KiraOwnedJdbcCut.resultCloseClaim(kira, kiraCause, 2);
++    boolean kiraReturned = false;
+     try {
+-      closeInternally();
++      try {
++        closeInternally();
++      } finally {
++        ((PgStatement) statement).checkCompletion();
++      }
++      kiraReturned = true;
+     } finally {
+-      ((PgStatement) statement).checkCompletion();
++      KiraOwnedJdbcCut.closeEnded(kira, kiraCause, kiraFirst, kiraReturned);
+     }
+   }
+ 
+@@ -2351,17 +2397,25 @@
+   fixes issue #684
+    */
+   protected void closeInternally() throws SQLException {
+-    // release resources held (memory for tuples)
+-    rows = null;
+-    thisRow = null;
+-    rowBuffer = null;
+-    JdbcBlackHole.close(deleteStatement);
+-    deleteStatement = null;
+-    if (cursor != null) {
+-      cursor.close();
+-      cursor = null;
+-    }
+-    closeRefCursor();
++    KiraOwnedJdbcCut.Invocation kiraCause = KiraOwnedJdbcCut.closeCause(kira);
++    boolean kiraFirst = KiraOwnedJdbcCut.resultCloseClaim(kira, kiraCause, 3);
++    boolean kiraReturned = false;
++    try {
++      // Keep the real body on every entry, even if another scope already claimed first close.
++      rows = null;
++      thisRow = null;
++      rowBuffer = null;
++      JdbcBlackHole.close(deleteStatement);
++      deleteStatement = null;
++      if (cursor != null) {
++        cursor.close();
++        cursor = null;
++      }
++      closeRefCursor();
++      kiraReturned = true;
++    } finally {
++      KiraOwnedJdbcCut.closeEnded(kira, kiraCause, kiraFirst, kiraReturned);
++    }
+   }
+ 
+   /**
+@@ -3750,8 +3804,16 @@
+       updateNull(columnIndex);
+     } else {
+       PGResultSetMetaData md = (PGResultSetMetaData) getMetaData();
+-      castNonNull(updateValues, "updateValues")
+-          .put(md.getBaseColumnName(columnIndex), value);
++      String kiraColumn = md.getBaseColumnName(columnIndex);
++      HashMap<String, Object> kiraValues = castNonNull(updateValues, "updateValues");
++      KiraOwnedJdbcCut.RowMutation kiraMutation =
++          KiraOwnedJdbcCut.rowStore(kira, kiraValues, kiraColumn, value);
++      try {
++        kiraValues.put(kiraColumn, value);
++        KiraOwnedJdbcCut.rowStored(kiraMutation);
++      } finally {
++        KiraOwnedJdbcCut.rowEnded(kiraMutation);
++      }
+     }
+   }
+ 
+diff --git a/pgjdbc/src/main/java/org/postgresql/core/v3/SimpleParameterList.java b/pgjdbc/src/main/java/org/postgresql/core/v3/SimpleParameterList.java
+--- a/pgjdbc/src/main/java/org/postgresql/core/v3/SimpleParameterList.java
++++ b/pgjdbc/src/main/java/org/postgresql/core/v3/SimpleParameterList.java
+@@ -37,6 +37,7 @@
+  * @author Oliver Jowett (oliver@opencloud.com)
+  */
+ class SimpleParameterList implements V3ParameterList {
++  final KiraOwnedParameterBridge.State kira;
+ 
+   private static final byte IN = 1;
+   private static final byte OUT = 2;
+@@ -51,6 +52,7 @@
+     this.encoded = new byte[paramCount][];
+     this.flags = new byte[paramCount];
+     this.transferModeRegistry = transferModeRegistry;
++    this.kira = new KiraOwnedParameterBridge.State(this, paramValues);
+   }
+ 
+   @Override
+@@ -66,6 +68,11 @@
+   }
+ 
+   private void bind(int index, Object value, int oid, byte binary) throws SQLException {
++    bind(index, value, oid, binary, null);
++  }
++
++  private void bind(int index, Object value, int oid, byte binary, @Nullable Object retainedSource)
++      throws SQLException {
+     if (index < 1 || index > paramValues.length) {
+       throw new PSQLException(
+           GT.tr("The column index is out of range: {0}, number of columns: {1}.",
+@@ -75,8 +82,15 @@
+ 
+     --index;
+ 
+-    encoded[index] = null;
+-    paramValues[index] = value;
++    KiraOwnedParameterBridge.Slot kiraSlot =
++        KiraOwnedParameterBridge.bind(this, index, value, retainedSource);
++    try {
++      encoded[index] = null;
++      paramValues[index] = value;
++      KiraOwnedParameterBridge.stored(kiraSlot);
++    } finally {
++      KiraOwnedParameterBridge.ended(kiraSlot);
++    }
+     flags[index] = (byte) (direction(index) | IN | binary);
+ 
+     // If we are setting something to an UNSPECIFIED NULL, don't overwrite
+@@ -152,7 +166,7 @@
+ 
+   @Override
+   public void setBytea(@Positive int index, InputStream stream, @NonNegative int length) throws SQLException {
+-    bind(index, new StreamWrapper(stream, length), Oid.BYTEA, BINARY);
++    bind(index, new StreamWrapper(stream, length), Oid.BYTEA, BINARY, stream);
+   }
+ 
+   @Override
+@@ -414,8 +428,15 @@
+   public void convertFunctionOutParameters() {
+     for (int i = 0; i < paramTypes.length; i++) {
+       if (direction(i) == OUT) {
+-        paramTypes[i] = Oid.VOID;
+-        paramValues[i] = NULL_OBJECT;
++        KiraOwnedParameterBridge.Slot kiraSlot =
++            KiraOwnedParameterBridge.bind(this, i, NULL_OBJECT, null);
++        try {
++          paramTypes[i] = Oid.VOID;
++          paramValues[i] = NULL_OBJECT;
++          KiraOwnedParameterBridge.stored(kiraSlot);
++        } finally {
++          KiraOwnedParameterBridge.ended(kiraSlot);
++        }
+       }
+     }
+   }
+@@ -559,20 +580,36 @@
+   @Override
+   public ParameterList copy() {
+     SimpleParameterList newCopy = new SimpleParameterList(paramValues.length, transferModeRegistry);
+-    System.arraycopy(paramValues, 0, newCopy.paramValues, 0, paramValues.length);
+-    System.arraycopy(paramTypes, 0, newCopy.paramTypes, 0, paramTypes.length);
+-    System.arraycopy(flags, 0, newCopy.flags, 0, flags.length);
+-    newCopy.pos = pos;
+-    return newCopy;
++    KiraOwnedParameterBridge.Bulk kiraCopy = KiraOwnedParameterBridge.copy(this, newCopy);
++    boolean kiraReturned = false;
++    try {
++      System.arraycopy(paramValues, 0, newCopy.paramValues, 0, paramValues.length);
++      KiraOwnedParameterBridge.valuesStored(kiraCopy);
++      System.arraycopy(paramTypes, 0, newCopy.paramTypes, 0, paramTypes.length);
++      System.arraycopy(flags, 0, newCopy.flags, 0, flags.length);
++      newCopy.pos = pos;
++      kiraReturned = true;
++      return newCopy;
++    } finally {
++      KiraOwnedParameterBridge.ended(kiraCopy, kiraReturned);
++    }
+   }
+ 
+   @Override
+   public void clear() {
+-    Arrays.fill(paramValues, null);
+-    Arrays.fill(paramTypes, 0);
+-    Arrays.fill(encoded, null);
+-    Arrays.fill(flags, (byte) 0);
+-    pos = 0;
++    KiraOwnedParameterBridge.Bulk kiraClear = KiraOwnedParameterBridge.clear(this);
++    boolean kiraReturned = false;
++    try {
++      Arrays.fill(paramValues, null);
++      KiraOwnedParameterBridge.valuesStored(kiraClear);
++      Arrays.fill(paramTypes, 0);
++      Arrays.fill(encoded, null);
++      Arrays.fill(flags, (byte) 0);
++      pos = 0;
++      kiraReturned = true;
++    } finally {
++      KiraOwnedParameterBridge.ended(kiraClear, kiraReturned);
++    }
+   }
+ 
+   @Override
+@@ -613,11 +650,20 @@
+               (pos + inParamCount), paramValues.length),
+               PSQLState.INVALID_PARAMETER_VALUE);
+       }
+-      System.arraycopy(spl.getValues(), 0, this.paramValues, pos, inParamCount);
+-      System.arraycopy(spl.getParamTypes(), 0, this.paramTypes, pos, inParamCount);
+-      System.arraycopy(spl.getFlags(), 0, this.flags, pos, inParamCount);
+-      System.arraycopy(spl.getEncoding(), 0, this.encoded, pos, inParamCount);
+-      pos += inParamCount;
++      KiraOwnedParameterBridge.Bulk kiraAppend =
++          KiraOwnedParameterBridge.append(spl, this, pos, inParamCount);
++      boolean kiraReturned = false;
++      try {
++        System.arraycopy(spl.getValues(), 0, this.paramValues, pos, inParamCount);
++        KiraOwnedParameterBridge.valuesStored(kiraAppend);
++        System.arraycopy(spl.getParamTypes(), 0, this.paramTypes, pos, inParamCount);
++        System.arraycopy(spl.getFlags(), 0, this.flags, pos, inParamCount);
++        System.arraycopy(spl.getEncoding(), 0, this.encoded, pos, inParamCount);
++        pos += inParamCount;
++        kiraReturned = true;
++      } finally {
++        KiraOwnedParameterBridge.ended(kiraAppend, kiraReturned);
++      }
+     }
+   }
+ 
+diff --git a/pgjdbc/src/main/java/org/postgresql/core/v3/CompositeParameterList.java b/pgjdbc/src/main/java/org/postgresql/core/v3/CompositeParameterList.java
+--- a/pgjdbc/src/main/java/org/postgresql/core/v3/CompositeParameterList.java
++++ b/pgjdbc/src/main/java/org/postgresql/core/v3/CompositeParameterList.java
+@@ -26,10 +26,12 @@
+  * @author Oliver Jowett (oliver@opencloud.com)
+  */
+ class CompositeParameterList implements V3ParameterList {
++  final KiraOwnedParameterBridge.Composite kira;
+   CompositeParameterList(SimpleParameterList[] subparams, int[] offsets) {
+     this.subparams = subparams;
+     this.offsets = offsets;
+     this.total = offsets[offsets.length - 1] + subparams[offsets.length - 1].getInParameterCount();
++    this.kira = new KiraOwnedParameterBridge.Composite(subparams, offsets);
+   }
+ 
+   private int findSubParam(@Positive int index) throws SQLException {
+@@ -164,7 +166,9 @@
+       copySub[sub] = (SimpleParameterList) subparams[sub].copy();
+     }
+ 
+-    return new CompositeParameterList(copySub, offsets);
++    CompositeParameterList copied = new CompositeParameterList(copySub, offsets);
++    KiraOwnedParameterBridge.copied(this, copied);
++    return copied;
+   }
+ 
+   @Override

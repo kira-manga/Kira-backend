@@ -1,0 +1,1622 @@
+diff --git a/pgjdbc/src/test/java/org/postgresql/core/v3/KiraOwnedParameterBridgeTest.java b/pgjdbc/src/test/java/org/postgresql/core/v3/KiraOwnedParameterBridgeTest.java
+new file mode 100644
+--- /dev/null
++++ b/pgjdbc/src/test/java/org/postgresql/core/v3/KiraOwnedParameterBridgeTest.java
+@@ -0,0 +1,153 @@
++/*
++ * Copyright (c) 2026, Kira contributors
++ * See the LICENSE file in the project root for more information.
++ */
++
++package org.postgresql.core.v3;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNotSame;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++
++import org.postgresql.core.Oid;
++import org.postgresql.jdbc.KiraOwnedJdbcCut;
++import org.postgresql.util.StreamWrapper;
++
++import org.junit.jupiter.api.BeforeEach;
++import org.junit.jupiter.api.Test;
++
++import java.io.ByteArrayInputStream;
++import java.lang.reflect.Field;
++import java.sql.SQLException;
++import java.sql.Types;
++
++/** Actual concrete-list stores; known-Life/SQL execution is covered by the JDBC tests. */
++class KiraOwnedParameterBridgeTest {
++  private static final TypeTransferModeRegistry TEXT = new TypeTransferModeRegistry() {
++    @Override
++    public boolean useBinaryForSend(int oid) {
++      return false;
++    }
++
++    @Override
++    public boolean useBinaryForReceive(int oid) {
++      return false;
++    }
++  };
++
++  @BeforeEach
++  void initializeClosedBridge() {
++    KiraOwnedJdbcCut.prepareRuntime();
++  }
++
++  @Test
++  void nullAndPureOutPublishTheActualStoredRepresentation() throws Exception {
++    SimpleParameterList list = new SimpleParameterList(1, TEXT);
++    list.setBytea(1, new ByteArrayInputStream(new byte[]{1}), 1);
++    KiraOwnedJdbcCut.Binding retained = list.kira.bindings[0];
++    list.setNull(1, Oid.UNSPECIFIED); // The native early return must not miss this store.
++    assertNotSame(retained, list.kira.bindings[0]);
++    assertSame(list.getValues()[0], stored(list.kira.bindings[0]));
++    assertEquals(Oid.BYTEA, list.getParamTypes()[0]);
++
++    SimpleParameterList out = new SimpleParameterList(1, TEXT);
++    out.registerOutParameter(1, Types.BINARY);
++    out.convertFunctionOutParameters();
++    assertEquals(Oid.VOID, out.getParamTypes()[0]);
++    assertNotNull(out.getValues()[0]);
++    assertSame(out.getValues()[0], stored(out.kira.bindings[0]));
++    assertEquals(0, out.kira.changing);
++    assertFalse(out.kira.unknown);
++  }
++
++  @Test
++  void explicitLengthKeepsTheSourceAndUnknownLengthReallyCopiesIt() throws Exception {
++    SimpleParameterList list = new SimpleParameterList(2, TEXT);
++    ByteArrayInputStream deferred = new ByteArrayInputStream(new byte[]{1, 2});
++    ByteArrayInputStream eager = new ByteArrayInputStream(new byte[]{3, 4});
++    list.setBytea(1, deferred, 2);
++    list.setBytea(2, eager);
++    StreamWrapper retaining = (StreamWrapper) list.getValues()[0];
++    StreamWrapper copied = (StreamWrapper) list.getValues()[1];
++    assertSame(deferred, retaining.getStream());
++    assertNull(retaining.getBytes());
++    assertEquals(2, deferred.available());
++    assertEquals(0, eager.available());
++    assertArrayEquals(new byte[]{3, 4}, copied.getBytes());
++    assertNotSame(eager, copied.getStream());
++    assertSame(retaining, stored(list.kira.bindings[0]));
++    assertSame(copied, stored(list.kira.bindings[1]));
++  }
++
++  @Test
++  void copyClearAndAppendTrackOnlyTheRealCopiedRange() throws Exception {
++    SimpleParameterList source = new SimpleParameterList(2, TEXT);
++    source.setIntParameter(1, 7);
++    source.setIntParameter(2, 8);
++    SimpleParameterList copy = (SimpleParameterList) source.copy();
++    assertNotSame(source.getValues(), copy.getValues());
++    assertSame(source.kira.bindings[0], copy.kira.bindings[0]);
++    Object saved = copy.getValues()[0];
++    source.clear();
++    assertNull(source.getValues()[0]);
++    assertNull(source.kira.bindings[0]);
++    assertSame(saved, copy.getValues()[0]);
++
++    SimpleParameterList destination = new SimpleParameterList(3, TEXT);
++    destination.setIntParameter(1, 6);
++    KiraOwnedJdbcCut.Binding first = destination.kira.bindings[0];
++    destination.appendAll(copy);
++    assertSame(first, destination.kira.bindings[0]);
++    assertSame(copy.getValues()[0], destination.getValues()[1]);
++    assertSame(copy.kira.bindings[0], destination.kira.bindings[1]);
++    assertSame(copy.kira.bindings[1], destination.kira.bindings[2]);
++    assertThrows(SQLException.class, () -> destination.appendAll(copy));
++    assertSame(copy.kira.bindings[1], destination.kira.bindings[2]);
++    assertEquals(0, destination.kira.changing);
++  }
++
++  @Test
++  void compositeTranslationCopyAndNoOpAppendKeepNativeSemantics() throws Exception {
++    SimpleParameterList left = new SimpleParameterList(1, TEXT);
++    SimpleParameterList right = new SimpleParameterList(2, TEXT);
++    CompositeParameterList composite = new CompositeParameterList(
++        new SimpleParameterList[]{left, right}, new int[]{0, 1});
++    composite.setIntParameter(2, 11);
++    assertNull(left.kira.bindings[0]);
++    assertSame(right.getValues()[0], stored(right.kira.bindings[0]));
++    CompositeParameterList copy = (CompositeParameterList) composite.copy();
++    KiraOwnedJdbcCut.Binding saved = right.kira.bindings[0];
++    composite.appendAll(copy); // Stock CompositeParameterList deliberately does nothing.
++    assertSame(saved, right.kira.bindings[0]);
++    composite.clear();
++    assertNull(right.kira.bindings[0]);
++    assertSame(saved, copy.kira.children[1].kira.bindings[0]);
++    assertSame(copy.kira.children[1].getValues()[0], stored(saved));
++  }
++
++  @Test
++  void sharedEmptyContentNeverAcquiresAnOwnerOrChangingHistory() {
++    SimpleParameterList empty = SimpleQuery.NO_PARAMETERS;
++    for (int i = 0; i < 20; i++) {
++      empty.clear();
++      SimpleParameterList copy = (SimpleParameterList) empty.copy();
++      assertNull(copy.kira.owner);
++      assertEquals(0, copy.kira.bindings.length);
++    }
++    assertNull(empty.kira.owner);
++    assertEquals(0, empty.kira.changing);
++    assertFalse(empty.kira.unknown);
++    assertEquals(0, empty.kira.bindings.length);
++  }
++
++  private static Object stored(KiraOwnedJdbcCut.Binding binding) throws Exception {
++    Field field = KiraOwnedJdbcCut.Binding.class.getDeclaredField("stored");
++    field.setAccessible(true);
++    return field.get(binding); // Test-only read of the actual native publication, not a raw API.
++  }
++}
+diff --git a/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutBatchTest.java b/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutBatchTest.java
+new file mode 100644
+--- /dev/null
++++ b/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutBatchTest.java
+@@ -0,0 +1,424 @@
++/*
++ * Copyright (c) 2026, Kira contributors
++ * See the LICENSE file in the project root for more information.
++ */
++
++package org.postgresql.jdbc;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++
++import org.postgresql.PGProperty;
++import org.postgresql.core.ParameterList;
++import org.postgresql.test.TestUtil;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.io.ByteArrayInputStream;
++import java.io.InputStream;
++import java.lang.reflect.Field;
++import java.lang.reflect.InvocationTargetException;
++import java.lang.reflect.Method;
++import java.sql.BatchUpdateException;
++import java.sql.Connection;
++import java.sql.PreparedStatement;
++import java.sql.ResultSet;
++import java.sql.SQLException;
++import java.sql.Statement;
++import java.util.Objects;
++import java.util.Properties;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Native ABI tests, not a substitute for authentic backend producer/admission tests. */
++class KiraOwnedJdbcCutBatchTest {
++  static final Class<?>[] NONE = new Class<?>[0];
++  static final Object[] NO_ARGUMENTS = new Object[0];
++
++  @Test
++  void unarmedClosedChildrenDoNotBecomeConnectionHistory() throws Exception {
++    try (Connection raw = TestUtil.openDB()) {
++      PgConnection connection = (PgConnection) raw;
++      assertNull(connection.kira.opening);
++      for (int i = 0; i < 24; i++) {
++        byte[] payload = new byte[65536];
++        payload[0] = (byte) i;
++        PgPreparedStatement statement = (PgPreparedStatement) connection.prepareStatement("select ?::bytea");
++        PgResultSet result;
++        try (PreparedStatement closeStatement = statement) {
++          statement.setBytes(1, payload);
++          result = (PgResultSet) statement.executeQuery();
++          try (ResultSet closeResult = result) {
++            assertTrue(result.next());
++            assertArrayEquals(payload, result.getBytes(1));
++          }
++        }
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++        // This is the actual newly introduced reachability structure, not a GC timeout.
++        assertNull(connection.kira.construction);
++        assertNull(connection.kira.constructions);
++        assertNull(connection.kira.children);
++        assertEquals(0, connection.kira.nativeChildren);
++      }
++    }
++  }
++
++  @Test
++  void staleCurrentRefusesBeforeCopyAndScalarCurrentDoesNotValidateOldQueue() throws Exception {
++    try (Owned f = new Owned(false)) {
++      f.sql("create temporary table kira_cut_batch (payload bytea)");
++      PgPreparedStatement p = f.prepare("insert into kira_cut_batch values (?)");
++      ByteArrayInputStream first = new ByteArrayInputStream(new byte[]{1});
++      KiraOwnedJdbcCut.Life firstLife = f.life(first);
++      f.bindStream(p, first, firstLife, true);
++      KiraOwnedJdbcCut.revoke(f.owner, firstLife);
++      assertThrows(SQLException.class, () -> f.call(p, PreparedStatement.class, "addBatch", NONE));
++      assertNull(p.batchParameters, "Rejected C must not even create/copy a queued group.");
++
++      ByteArrayInputStream queued = new ByteArrayInputStream(new byte[]{2});
++      KiraOwnedJdbcCut.Life queuedLife = f.life(queued);
++      f.bindStream(p, queued, queuedLife, true);
++      f.call(p, PreparedStatement.class, "addBatch", NONE);
++      ParameterList copied = p.batchParameters.get(0);
++      KiraOwnedJdbcCut.Node queuedImage = p.kira.parameters;
++      f.call(p, PreparedStatement.class, "setBytes", new Class<?>[]{int.class, byte[].class}, 1, new byte[]{3});
++      KiraOwnedJdbcCut.revoke(f.owner, queuedLife);
++      assertEquals(1, f.call(p, PreparedStatement.class, "executeUpdate", NONE));
++      for (int i = 0; i < 2; i++) {
++        assertThrows(SQLException.class, () -> f.call(p, Statement.class, "executeBatch", NONE));
++        assertEquals(6, KiraOwnedJdbcCut.drainState(f.last));
++        assertSame(copied, p.batchParameters.get(0));
++        assertSame(queuedImage, p.kira.parameters);
++      }
++      f.call(p, Statement.class, "clearBatch", NONE);
++      assertTrue(p.batchParameters.isEmpty());
++      assertNull(p.kira.parameters);
++      assertEquals(0, ((int[]) f.call(p, Statement.class, "executeBatch", NONE)).length);
++      assertEquals(6, KiraOwnedJdbcCut.drainState(f.last));
++    }
++  }
++
++  @Test
++  void committedArraysStayOwnedAcrossNestedCallsAndNextQueueSurvivesActualEnd() throws Exception {
++    try (Owned f = new Owned(false)) {
++      f.sql("create temporary table kira_cut_batch (payload bytea)");
++      PgPreparedStatement p = f.prepare("insert into kira_cut_batch values (?)");
++      ByteArrayInputStream input = new ByteArrayInputStream(new byte[]{1});
++      KiraOwnedJdbcCut.Life life = f.life(input);
++      f.bindStream(p, input, life, true);
++      f.call(p, PreparedStatement.class, "addBatch", NONE);
++      ParameterList current = p.preparedParameters;
++      Method operation = Statement.class.getMethod("executeBatch");
++      KiraOwnedJdbcCut.Invocation outer = f.begin(p, operation, NO_ARGUMENTS);
++      KiraOwnedJdbcCut.Batch batch;
++      ParameterList next;
++      try {
++        assertArrayEquals(new int[]{1}, p.executeBatch());
++        assertEquals(5, KiraOwnedJdbcCut.drainState(outer));
++        batch = (KiraOwnedJdbcCut.Batch) field(outer, "batch");
++        assertNotNull(batch.parameters);
++        assertNotNull(batch.queries);
++        assertSame(current, p.preparedParameters);
++        KiraOwnedJdbcCut.revoke(f.owner, life);
++        assertThrows(SQLException.class, () -> f.call(p, PreparedStatement.class, "executeUpdate", NONE));
++        assertNotNull(batch.parameters, "Nested actualEnd must not release the admitted ancestor's A.");
++        f.call(p, PreparedStatement.class, "setBytes", new Class<?>[]{int.class, byte[].class}, 1, new byte[]{2});
++        f.call(p, PreparedStatement.class, "addBatch", NONE);
++        next = p.batchParameters.get(0);
++        assertNotNull(batch.parameters);
++      } finally {
++        f.end(outer);
++      }
++      assertEquals(5, KiraOwnedJdbcCut.drainState(outer));
++      assertNull(batch.parameters);
++      assertNull(batch.queries);
++      assertSame(next, p.batchParameters.get(0));
++      assertArrayEquals(new int[]{1}, (int[]) f.call(p, Statement.class, "executeBatch", NONE));
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(booleans = {false, true})
++  void rewrittenAndLargeBatchesUseTheActualNativeShapes(boolean rewrite) throws Exception {
++    try (Owned f = new Owned(rewrite)) {
++      f.sql("create temporary table kira_cut_batch (id integer)");
++      PgPreparedStatement p = f.prepare("insert into kira_cut_batch values (?)");
++      for (int i = 1; i <= 3; i++) {
++        f.call(p, PreparedStatement.class, "setInt", new Class<?>[]{int.class, int.class}, 1, i);
++        f.call(p, PreparedStatement.class, "addBatch", NONE);
++      }
++      assertEquals(rewrite ? 1 : 3, p.batchStatements.size());
++      assertEquals(3, p.batchParameters.size());
++      assertEquals(3, ((long[]) f.call(p, Statement.class, "executeLargeBatch", NONE)).length);
++      assertEquals(5, KiraOwnedJdbcCut.drainState(f.last));
++      assertTrue(p.batchStatements.isEmpty());
++      assertTrue(p.batchParameters.isEmpty());
++      assertNull(p.kira.queries);
++      assertNull(p.kira.parameters);
++      assertEquals(3, f.scalar("select count(*) from kira_cut_batch"));
++    }
++  }
++
++  @Test
++  void eagerUnknownLengthContentAndSharedEmptyListsStayIndependent() throws Exception {
++    try (Owned f = new Owned(false)) {
++      f.sql("create temporary table kira_cut_batch (payload bytea)");
++      PgPreparedStatement p = f.prepare("insert into kira_cut_batch values (?)");
++      ByteArrayInputStream input = new ByteArrayInputStream(new byte[]{4, 5});
++      KiraOwnedJdbcCut.Life life = f.life(input);
++      f.bindStream(p, input, life, false);
++      assertEquals(0, input.available());
++      KiraOwnedJdbcCut.revoke(f.owner, life);
++      assertEquals(1, f.call(p, PreparedStatement.class, "executeUpdate", NONE));
++      PgPreparedStatement empty1 = f.prepare("select 1");
++      PgPreparedStatement empty2 = f.prepare("select 2");
++      assertSame(empty1.preparedParameters, empty2.preparedParameters);
++      assertNull(field(field(empty1.preparedParameters, "kira"), "owner"));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void nativeSqlFailureAfterDrainDoesNotTurnCommittedBackIntoPre() throws Exception {
++    try (Owned f = new Owned(false)) {
++      f.sql("create temporary table kira_cut_batch (id integer primary key)");
++      PgPreparedStatement p = f.prepare("insert into kira_cut_batch values (?)");
++      f.call(p, PreparedStatement.class, "setInt", new Class<?>[]{int.class, int.class}, 1, 7);
++      f.call(p, PreparedStatement.class, "addBatch", NONE);
++      f.call(p, PreparedStatement.class, "addBatch", NONE);
++      ParameterList current = p.preparedParameters;
++      assertThrows(BatchUpdateException.class, () -> f.call(p, Statement.class, "executeBatch", NONE));
++      assertEquals(5, KiraOwnedJdbcCut.drainState(f.last));
++      assertTrue(p.batchStatements.isEmpty());
++      assertTrue(p.batchParameters.isEmpty());
++      assertSame(current, p.preparedParameters);
++      KiraOwnedJdbcCut.Batch batch = (KiraOwnedJdbcCut.Batch) field(f.last, "batch");
++      assertNull(batch.queries);
++      assertNull(batch.parameters);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void foreignCancellationDoesNotBorrowOrCompactTheOrdinaryInvocation() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement p = f.prepare("select 1");
++      KiraOwnedJdbcCut.Invocation outer = f.begin(p, Statement.class.getMethod("executeBatch"), NO_ARGUMENTS);
++      AtomicReference<Throwable> failure = new AtomicReference<>();
++      Thread cancel = new Thread(() -> {
++        try {
++          Method operation = Statement.class.getMethod("cancel");
++          KiraOwnedJdbcCut.Invocation invocation = KiraOwnedJdbcCut.prepareInvocation(f.owner, p,
++              new Object(), operation, NO_ARGUMENTS, NO_ARGUMENTS, new KiraOwnedJdbcCut.Life[0], new int[0]);
++          KiraOwnedJdbcCut.arm(invocation);
++          try {
++            p.cancel(); // Idle cancellation proves stack separation, not wire-cancel success.
++          } finally {
++            try {
++              KiraOwnedJdbcCut.disarm(invocation);
++            } finally {
++              KiraOwnedJdbcCut.actualEnd(invocation);
++            }
++          }
++        } catch (Throwable error) {
++          failure.set(error);
++        }
++      }, "kira-native-test-cancel");
++      try {
++        cancel.start();
++        cancel.join(5000);
++        assertFalse(cancel.isAlive());
++        assertNull(failure.get());
++        assertSame(outer, f.connection.kira.current);
++        assertEquals(0, p.executeBatch().length);
++      } finally {
++        if (cancel.isAlive()) {
++          cancel.interrupt();
++          cancel.join(5000);
++        }
++        f.end(outer);
++      }
++      assertEquals(6, KiraOwnedJdbcCut.drainState(outer));
++    }
++  }
++
++  static Object field(Object receiver, String name) throws Exception {
++    for (Class<?> type = receiver.getClass(); type != null; type = type.getSuperclass()) {
++      try {
++        Field field = type.getDeclaredField(name);
++        field.setAccessible(true);
++        return field.get(receiver);
++      } catch (NoSuchFieldException ignored) {
++        // Read the original declaring class, never replace the native receiver.
++      }
++    }
++    throw new NoSuchFieldException(name);
++  }
++
++  static Properties properties(boolean rewrite) throws Exception {
++    TestUtil.initDriver();
++    Properties requested = new Properties();
++    PGProperty.LOGIN_TIMEOUT.set(requested, 0);
++    PGProperty.PREFER_QUERY_MODE.set(requested, "extended");
++    PGProperty.REWRITE_BATCHED_INSERTS.set(requested, rewrite);
++    return TestUtil.mergeDefaultProperties(requested);
++  }
++
++  /** This fixture issues native cells only. Backend tests separately authenticate real GuardCalls. */
++  static final class Owned implements AutoCloseable {
++    final KiraOwnedJdbcCut.Opening opening;
++    final PgConnection connection;
++    final KiraOwnedJdbcCut.Root root;
++    final KiraOwnedJdbcCut.Owner owner;
++    KiraOwnedJdbcCut.Invocation last;
++    boolean retired;
++
++    Owned(boolean rewrite) throws Exception {
++      Properties properties = properties(rewrite);
++      org.postgresql.Driver driver = new org.postgresql.Driver();
++      opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++      KiraOwnedJdbcCut.armOpening(opening);
++      PgConnection connected = null;
++      try {
++        try {
++          connected = (PgConnection) Objects.requireNonNull(driver.connect(TestUtil.getURL(properties), properties));
++          KiraOwnedJdbcCut.recordReturned(opening, connected);
++        } finally {
++          KiraOwnedJdbcCut.endOpening(opening);
++        }
++        connection = connected;
++        root = KiraOwnedJdbcCut.attach(opening, connection, new Object(), new Object());
++        owner = KiraOwnedJdbcCut.owner(root);
++      } catch (Exception | Error failure) {
++        try {
++          if (connected != null) {
++            connected.abort(Runnable::run);
++          }
++        } catch (Throwable cleanup) {
++          failure.addSuppressed(cleanup);
++        }
++        KiraOwnedJdbcCut.cleanupOpening(opening);
++        try {
++          if (connected != null) {
++            connected.close();
++          }
++        } catch (Throwable cleanup) {
++          failure.addSuppressed(cleanup);
++        }
++        throw failure;
++      }
++    }
++
++    KiraOwnedJdbcCut.Life life(Object identity) throws SQLException {
++      return KiraOwnedJdbcCut.life(owner, identity, null, true);
++    }
++
++    KiraOwnedJdbcCut.Invocation begin(Object receiver, Method operation, Object[] arguments) throws SQLException {
++      return begin(receiver, operation, arguments, NO_ARGUMENTS, new KiraOwnedJdbcCut.Life[0], new int[0]);
++    }
++
++    KiraOwnedJdbcCut.Invocation begin(Object receiver, Method operation, Object[] arguments,
++        Object[] known, KiraOwnedJdbcCut.Life[] lives, int[] positions) throws SQLException {
++      KiraOwnedJdbcCut.Invocation invocation = KiraOwnedJdbcCut.prepareInvocation(owner, receiver,
++          new Object(), operation, arguments, known, lives, positions);
++      KiraOwnedJdbcCut.arm(invocation);
++      last = invocation;
++      return invocation;
++    }
++
++    void end(KiraOwnedJdbcCut.Invocation invocation) throws SQLException {
++      try {
++        KiraOwnedJdbcCut.disarm(invocation);
++      } finally {
++        KiraOwnedJdbcCut.actualEnd(invocation);
++        last = invocation;
++      }
++    }
++
++    Object call(Object receiver, Class<?> api, String name, Class<?>[] types, Object... arguments) throws Exception {
++      return knownCall(receiver, api.getMethod(name, types), arguments, NO_ARGUMENTS,
++          new KiraOwnedJdbcCut.Life[0], new int[0]);
++    }
++
++    Object knownCall(Object receiver, Method operation, Object[] arguments, Object[] known,
++        KiraOwnedJdbcCut.Life[] lives, int[] positions) throws Exception {
++      KiraOwnedJdbcCut.Invocation invocation = begin(receiver, operation, arguments, known, lives, positions);
++      try {
++        return operation.invoke(receiver, arguments);
++      } catch (InvocationTargetException failure) {
++        Throwable cause = failure.getCause();
++        if (cause instanceof Exception) {
++          throw (Exception) cause;
++        }
++        throw (Error) cause;
++      } finally {
++        end(invocation);
++      }
++    }
++
++    void bindStream(PgPreparedStatement statement, InputStream input, KiraOwnedJdbcCut.Life life,
++        boolean lengthKnown) throws Exception {
++      Method method = lengthKnown
++          ? PreparedStatement.class.getMethod("setBinaryStream", int.class, InputStream.class, int.class)
++          : PreparedStatement.class.getMethod("setBinaryStream", int.class, InputStream.class);
++      Object[] args = lengthKnown ? new Object[]{1, input, 1} : new Object[]{1, input};
++      knownCall(statement, method, args, new Object[]{input}, new KiraOwnedJdbcCut.Life[]{life}, new int[]{1});
++    }
++
++    PgPreparedStatement prepare(String sql) throws Exception {
++      return (PgPreparedStatement) call(connection, Connection.class, "prepareStatement", new Class<?>[]{String.class}, sql);
++    }
++
++    PgStatement statement() throws Exception {
++      return (PgStatement) call(connection, Connection.class, "createStatement", NONE);
++    }
++
++    void sql(String sql) throws Exception {
++      PgStatement statement = statement();
++      try {
++        call(statement, Statement.class, "executeUpdate", new Class<?>[]{String.class}, sql);
++      } finally {
++        call(statement, Statement.class, "close", NONE);
++      }
++    }
++
++    int scalar(String sql) throws Exception {
++      PgStatement statement = statement();
++      try {
++        ResultSet result = (ResultSet) call(statement, Statement.class, "executeQuery", new Class<?>[]{String.class}, sql);
++        call(result, ResultSet.class, "next", NONE);
++        return (Integer) call(result, ResultSet.class, "getInt", new Class<?>[]{int.class}, 1);
++      } finally {
++        call(statement, Statement.class, "close", NONE);
++      }
++    }
++
++    void retire() throws SQLException {
++      if (!retired) {
++        retired = true;
++        try {
++          connection.abort(Runnable::run);
++        } finally {
++          try {
++            KiraOwnedJdbcCut.cleanupOpening(opening);
++          } finally {
++            connection.close();
++          }
++        }
++      }
++    }
++
++    @Override
++    public void close() throws SQLException {
++      retire();
++    }
++  }
++}
+diff --git a/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java b/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java
+new file mode 100644
+--- /dev/null
++++ b/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java
+@@ -0,0 +1,328 @@
++/*
++ * Copyright (c) 2026, Kira contributors
++ * See the LICENSE file in the project root for more information.
++ */
++
++package org.postgresql.jdbc;
++
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.NONE;
++import static org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.field;
++import static org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.properties;
++
++import org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.Owned;
++import org.postgresql.test.TestUtil;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.ValueSource;
++
++import java.lang.reflect.Method;
++import java.lang.reflect.Proxy;
++import java.sql.Array;
++import java.sql.Connection;
++import java.sql.DatabaseMetaData;
++import java.sql.PreparedStatement;
++import java.sql.ResultSet;
++import java.sql.SQLException;
++import java.sql.Statement;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Properties;
++import java.util.concurrent.atomic.AtomicInteger;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Real row/hidden-child receipts. Backend tests separately prove terminal Entry reclamation. */
++class KiraOwnedJdbcCutRowsAndCloseTest {
++  @ParameterizedTest
++  @ValueSource(strings = {"types", "describe", "parameters"})
++  void terminalDisposesHealthyChildrenWhichNoPublicHandleCloses(String metadata) throws Exception {
++    try (Owned f = new Owned(false)) {
++      if (metadata.equals("types")) {
++        DatabaseMetaData md = (DatabaseMetaData) f.call(f.connection, Connection.class, "getMetaData", NONE);
++        PgResultSet visible = (PgResultSet) f.call(md, DatabaseMetaData.class, "getTypeInfo", NONE);
++        f.call(visible, ResultSet.class, "close", NONE);
++      } else {
++        PgPreparedStatement visible = f.prepare("select ?::int as value");
++        Object description = f.call(visible, PreparedStatement.class,
++            metadata.equals("describe") ? "getMetaData" : "getParameterMetaData", NONE);
++        assertNotNull(description);
++        f.call(visible, Statement.class, "close", NONE);
++      }
++
++      List<KiraOwnedJdbcCut.Native> hidden = openChildren(f.connection);
++      assertFalse(hidden.isEmpty(), "The regression must actually leave a native hidden child.");
++      assertTrue(hidden.stream().anyMatch(n -> metadata.equals("types")
++          ? n.receiver instanceof PgPreparedStatement : n.receiver instanceof PgResultSet));
++      assertEquals((long) hidden.size(), KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      for (KiraOwnedJdbcCut.Native child : hidden) {
++        assertTrue(child.factoryReturned, "Cleanup authority is an actual successful factory receipt.");
++        assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
++      }
++
++      // Every native call has actually ended before abort -> child cleanup -> final raw close.
++      f.retire();
++      for (KiraOwnedJdbcCut.Native child : hidden) {
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(child.life));
++        assertNull(child.receiver);
++      }
++      assertNull(f.connection.kira.children);
++      assertEquals(0, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(9, KiraOwnedJdbcCut.openingState(f.opening));
++    }
++  }
++
++  @Test
++  void ownedPreRootConstructionIsNotMistakenForAnUnarmedConnection() throws Exception {
++    Properties properties = properties(false);
++    org.postgresql.Driver driver = new org.postgresql.Driver();
++    KiraOwnedJdbcCut.Opening opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++    PgConnection connection = null;
++    List<KiraOwnedJdbcCut.Native> hidden = new ArrayList<>();
++    try {
++      KiraOwnedJdbcCut.armOpening(opening);
++      try {
++        connection = (PgConnection) Objects.requireNonNull(driver.connect(TestUtil.getURL(properties), properties));
++        KiraOwnedJdbcCut.recordReturned(opening, connection);
++        try (ResultSet result = connection.getMetaData().getTypeInfo()) {
++          assertTrue(result.next());
++        }
++        hidden.addAll(openChildren(connection));
++        assertFalse(hidden.isEmpty());
++        assertSame(opening, connection.kira.opening);
++        assertTrue(connection.kira.nativeChildren > 0);
++        assertNotNull(connection.kira.constructions);
++        // No attach(), Root or Owner has been used in this opening-custody branch.
++      } finally {
++        KiraOwnedJdbcCut.endOpening(opening);
++      }
++      connection.abort(Runnable::run);
++      KiraOwnedJdbcCut.cleanupOpening(opening);
++      for (KiraOwnedJdbcCut.Native child : hidden) {
++        assertTrue(child.factoryReturned);
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(child.life));
++      }
++      assertEquals(0, connection.kira.nativeChildren);
++      assertNull(connection.kira.children);
++      assertEquals(9, KiraOwnedJdbcCut.openingState(opening));
++    } finally {
++      try {
++        if (connection != null) {
++          connection.abort(Runnable::run);
++        }
++      } finally {
++        try {
++          KiraOwnedJdbcCut.cleanupOpening(opening);
++        } finally {
++          if (connection != null) {
++            connection.close();
++          }
++        }
++      }
++    }
++  }
++
++  @Test
++  void aliasOverwriteUsesTheActualBaseKeyAndTheHiddenTransferChecksTheCurrentValue() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgResultSet row = rows(f);
++      Array old = array(f, 2);
++      KiraOwnedJdbcCut.Life oldLife = f.life(old);
++      storeArray(f, row, "payload", old, oldLife);
++      Map<?, ?> actual = (Map<?, ?>) field(row, "updateValues");
++      assertEquals(1, actual.size());
++      assertSame(old, actual.get("payload"));
++      assertSame(old, row.kira.rows.get("payload").value);
++      KiraOwnedJdbcCut.revoke(f.owner, oldLife);
++      assertThrows(SQLException.class, () -> f.call(row, ResultSet.class, "updateRow", NONE));
++      assertSame(old, actual.get("payload"));
++
++      Array replacement = array(f, 3);
++      storeArray(f, row, "payload_alias", replacement, f.life(replacement));
++      assertEquals(1, actual.size(), "Both labels overwrite one native base-column key.");
++      assertEquals(1, row.kira.rows.size());
++      assertSame(replacement, row.kira.rows.get("payload").value);
++      f.call(row, ResultSet.class, "updateRow", NONE);
++      assertTrue(actual.isEmpty());
++      assertTrue(row.kira.rows.isEmpty());
++      assertEquals(3, f.scalar("select payload[1] from kira_cut_rows where id = 1"));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void anIndependentInnerStringDoesNotEraseTheLaterRowValueDependency() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgResultSet row = rows(f);
++      AtomicReference<KiraOwnedJdbcCut.Life> life = new AtomicReference<>();
++      AtomicInteger conversions = new AtomicInteger();
++      // Caller input only, never a native receiver substitute or a shipping test callback.
++      Array input = (Array) Proxy.newProxyInstance(Array.class.getClassLoader(), new Class<?>[]{Array.class},
++          (proxy, method, arguments) -> {
++            switch (method.getName()) {
++              case "getBaseTypeName":
++                return "int4";
++              case "toString":
++                conversions.incrementAndGet();
++                KiraOwnedJdbcCut.revoke(f.owner, Objects.requireNonNull(life.get()));
++                return "{9}";
++              case "hashCode":
++                return System.identityHashCode(proxy);
++              case "equals":
++                return proxy == arguments[0];
++              default:
++                throw new AssertionError("Unexpected caller Array method: " + method.getName());
++            }
++          });
++      life.set(f.life(input));
++      storeArray(f, row, "payload", input, life.get());
++      SQLException refused = assertThrows(SQLException.class,
++          () -> f.call(row, ResultSet.class, "updateRow", NONE));
++      assertEquals("Persistence JDBC operation refused.", refused.getMessage());
++      assertEquals(1, conversions.get());
++      assertEquals(0, KiraOwnedJdbcCut.invocationState(f.last));
++      assertSame(input, ((Map<?, ?>) field(row, "updateValues")).get("payload"));
++      assertSame(input, row.kira.rows.get("payload").value);
++      // The hidden setArray really copied a String and SQL really ran before later rowUse refused.
++      assertEquals(9, f.scalar("select payload[1] from kira_cut_rows where id = 1"));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(ints = {Statement.KEEP_CURRENT_RESULT, Statement.CLOSE_CURRENT_RESULT, Statement.CLOSE_ALL_RESULTS})
++  void moreResultsRecordsTheActualImplicitCloseExtents(int disposition) throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgStatement statement = f.statement();
++      assertEquals(true, f.call(statement, Statement.class, "execute", new Class<?>[]{String.class},
++          "select 1; select 2; select 3"));
++      PgResultSet first = (PgResultSet) f.call(statement, Statement.class, "getResultSet", NONE);
++      assertEquals(true, f.call(statement, Statement.class, "getMoreResults", new Class<?>[]{int.class},
++          Statement.KEEP_CURRENT_RESULT));
++      PgResultSet second = (PgResultSet) f.call(statement, Statement.class, "getResultSet", NONE);
++      assertEquals(true, f.call(statement, Statement.class, "getMoreResults", new Class<?>[]{int.class}, disposition));
++      PgResultSet third = (PgResultSet) f.call(statement, Statement.class, "getResultSet", NONE);
++      assertEquals(disposition == Statement.CLOSE_ALL_RESULTS ? 2 : 0,
++          KiraOwnedJdbcCut.firstCloseState(first.kira.life));
++      assertEquals(disposition == Statement.KEEP_CURRENT_RESULT ? 0 : 2,
++          KiraOwnedJdbcCut.firstCloseState(second.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(third.kira.life));
++
++      f.call(statement, Statement.class, "close", NONE);
++      f.call(statement, Statement.class, "close", NONE); // The actual native CAS loser.
++      f.call(first, ResultSet.class, "close", NONE); // Real repeated result-close body, not a new receipt.
++      for (PgResultSet result : new PgResultSet[]{first, second, third}) {
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++      }
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void canonicalNativeAliasesNeverAcquireAnotherConnectionsLife() throws Exception {
++    try (Owned f = new Owned(false); Owned other = new Owned(false)) {
++      PgStatement statement = f.statement();
++      KiraOwnedJdbcCut.Life life = f.life(statement);
++      assertSame(statement.kira.life, life);
++      assertSame(life, KiraOwnedJdbcCut.life(f.owner, statement, null, false));
++      assertSame(f.connection, f.call(statement, Statement.class, "getConnection", NONE));
++      assertThrows(SQLException.class, () -> KiraOwnedJdbcCut.life(other.owner, statement, null, true));
++      assertThrows(SQLException.class, () -> other.call(statement, Statement.class, "close", NONE));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(life));
++      f.call(statement, Statement.class, "close", NONE);
++      assertFalse(KiraOwnedJdbcCut.isLive(f.owner, life));
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(life));
++    }
++  }
++
++  @Test
++  void generatedKeysAliasesHaveTheirOwnNativeFirstCloseReceipt() throws Exception {
++    try (Owned f = new Owned(false)) {
++      f.sql("create temporary table kira_cut_keys (id integer)");
++      PgPreparedStatement statement = (PgPreparedStatement) f.call(f.connection, Connection.class,
++          "prepareStatement", new Class<?>[]{String.class, int.class},
++          "insert into kira_cut_keys values (7)", Statement.RETURN_GENERATED_KEYS);
++      assertEquals(1, f.call(statement, PreparedStatement.class, "executeUpdate", NONE));
++      PgResultSet keys = (PgResultSet) f.call(statement, Statement.class, "getGeneratedKeys", NONE);
++      assertSame(keys, f.call(statement, Statement.class, "getGeneratedKeys", NONE));
++      assertSame(keys.kira.life, f.life(keys));
++      assertEquals(true, f.call(keys, ResultSet.class, "next", NONE));
++      assertEquals(7, f.call(keys, ResultSet.class, "getInt", new Class<?>[]{int.class}, 1));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(keys.kira.life));
++      f.call(statement, Statement.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(keys.kira.life));
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void refcursorFetchConstructsIndependentChildrenWhichTerminalMustReallyClose() throws Exception {
++    try (Owned f = new Owned(false)) {
++      f.call(f.connection, Connection.class, "setAutoCommit", new Class<?>[]{boolean.class}, false);
++      f.sql("declare kira_native_cursor cursor for select 7");
++      PgStatement source = f.statement();
++      PgResultSet holder = (PgResultSet) f.call(source, Statement.class, "executeQuery", new Class<?>[]{String.class},
++          "select 'kira_native_cursor'::refcursor");
++      assertEquals(true, f.call(holder, ResultSet.class, "next", NONE));
++      PgResultSet fetched = (PgResultSet) f.call(holder, ResultSet.class, "getObject", new Class<?>[]{int.class}, 1);
++      PgStatement hidden = (PgStatement) f.call(fetched, ResultSet.class, "getStatement", NONE);
++      assertFalse(source == hidden);
++      assertTrue(fetched.kira.factoryReturned);
++      assertTrue(hidden.kira.factoryReturned);
++      assertEquals(true, f.call(fetched, ResultSet.class, "next", NONE));
++      assertEquals(7, f.call(fetched, ResultSet.class, "getInt", new Class<?>[]{int.class}, 1));
++      f.call(source, Statement.class, "close", NONE);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(fetched.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      f.retire();
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(fetched.kira.life));
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  private static List<KiraOwnedJdbcCut.Native> openChildren(PgConnection connection) {
++    List<KiraOwnedJdbcCut.Native> result = new ArrayList<>();
++    for (KiraOwnedJdbcCut.Native child = connection.kira.children; child != null; child = child.next) {
++      if (KiraOwnedJdbcCut.firstCloseState(child.life) == 0) {
++        result.add(child);
++      }
++    }
++    return result;
++  }
++
++  private static PgResultSet rows(Owned f) throws Exception {
++    f.sql("create temporary table kira_cut_rows (id integer primary key, payload int[])");
++    f.sql("insert into kira_cut_rows values (1, '{1}')");
++    PgStatement statement = (PgStatement) f.call(f.connection, Connection.class, "createStatement",
++        new Class<?>[]{int.class, int.class}, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
++    PgResultSet row = (PgResultSet) f.call(statement, Statement.class, "executeQuery", new Class<?>[]{String.class},
++        "select id, payload, payload as payload_alias from kira_cut_rows");
++    assertEquals(true, f.call(row, ResultSet.class, "next", NONE));
++    return row;
++  }
++
++  private static Array array(Owned f, int value) throws Exception {
++    return (Array) f.call(f.connection, Connection.class, "createArrayOf", new Class<?>[]{String.class, Object[].class},
++        "int4", new Object[]{value});
++  }
++
++  private static void storeArray(Owned f, PgResultSet row, String column, Array value,
++      KiraOwnedJdbcCut.Life life) throws Exception {
++    Method operation = ResultSet.class.getMethod("updateArray", String.class, Array.class);
++    f.knownCall(row, operation, new Object[]{column, value}, new Object[]{value},
++        new KiraOwnedJdbcCut.Life[]{life}, new int[]{1});
++  }
++}
+diff --git a/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java b/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java
+new file mode 100644
+--- /dev/null
++++ b/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java
+@@ -0,0 +1,697 @@
++/*
++ * Copyright (c) 2026, Kira contributors
++ * See the LICENSE file in the project root for more information.
++ */
++
++package org.postgresql.jdbc;
++
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
++import static org.junit.jupiter.api.Assertions.assertEquals;
++import static org.junit.jupiter.api.Assertions.assertFalse;
++import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNull;
++import static org.junit.jupiter.api.Assertions.assertSame;
++import static org.junit.jupiter.api.Assertions.assertThrows;
++import static org.junit.jupiter.api.Assertions.assertTrue;
++import static org.mockito.Mockito.mock;
++import static org.mockito.Mockito.mockStatic;
++import static org.mockito.Mockito.never;
++import static org.mockito.Mockito.times;
++import static org.mockito.Mockito.verify;
++
++import org.postgresql.PGProperty;
++import org.postgresql.core.BaseStatement;
++import org.postgresql.core.CachedQuery;
++import org.postgresql.core.Oid;
++import org.postgresql.core.Query;
++import org.postgresql.core.QueryExecutor;
++import org.postgresql.core.ResultCursor;
++import org.postgresql.core.Tuple;
++import org.postgresql.test.TestUtil;
++
++import org.junit.jupiter.api.Test;
++import org.junit.jupiter.params.ParameterizedTest;
++import org.junit.jupiter.params.provider.CsvSource;
++import org.junit.jupiter.params.provider.ValueSource;
++import org.mockito.MockedStatic;
++import org.mockito.invocation.InvocationOnMock;
++import org.mockito.stubbing.Answer;
++
++import java.lang.reflect.Field;
++import java.lang.reflect.InvocationTargetException;
++import java.lang.reflect.Method;
++import java.sql.Connection;
++import java.sql.DatabaseMetaData;
++import java.sql.PreparedStatement;
++import java.sql.ResultSet;
++import java.sql.SQLException;
++import java.sql.Statement;
++import java.util.ArrayList;
++import java.util.Arrays;
++import java.util.List;
++import java.util.Locale;
++import java.util.Map;
++import java.util.Objects;
++import java.util.Properties;
++import java.util.concurrent.atomic.AtomicReference;
++
++/** Faults at real native extents. No PgConnection/PgStatement/PgResultSet is mocked or spied. */
++class KiraOwnedJdbcCutFaultTest {
++  private static final Class<?>[] NONE = new Class<?>[0];
++  private static final Object[] NO_ARGUMENTS = new Object[0];
++
++  @ParameterizedTest
++  @ValueSource(booleans = {false, true})
++  void hiddenFirstCloseFailureIsStickyEvenWhenARepeatWouldBeANoOp(boolean terminalFirst) throws Exception {
++    try (Owned f = new Owned()) {
++      DatabaseMetaData md = (DatabaseMetaData) f.call(f.connection, Connection.class, "getMetaData", NONE);
++      PgResultSet visible = (PgResultSet) f.call(md, DatabaseMetaData.class, "getTypeInfo", NONE);
++      f.call(visible, ResultSet.class, "close", NONE);
++      PgPreparedStatement hidden = hiddenPrepared(f.connection, null);
++      assertTrue(hidden.kira.factoryReturned);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      SQLException marker = new SQLException("test hidden first-close failure");
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("releaseQuery")
++            && invocation.getArgument(0) == hidden.preparedQuery) {
++          // Answer can throw checked SQL failure at the real closeImpl extent even though
++          // this lower dependency method has no checked throws declaration.
++          throw marker;
++        }
++        return delegate(original, invocation);
++      })) {
++        if (!terminalFirst) {
++          assertSame(marker, assertThrows(SQLException.class, () -> f.call(hidden, Statement.class, "close", NONE)));
++          assertEquals(1, KiraOwnedJdbcCut.invocationState(f.last));
++          f.call(hidden, Statement.class, "close", NONE); // Native CAS loser, still inside a real invocation.
++          assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++        }
++        // terminalFirst locates the first failing close in authentic post-producer cleanup.
++        f.retire();
++      }
++      assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      assertSame(hidden, hidden.kira.receiver, "A failed first-close is not compacted as success.");
++      assertEquals(0, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertEquals(1, KiraOwnedJdbcCut.rootState(f.root) & 1);
++      assertEquals(4, KiraOwnedJdbcCut.openingState(f.opening) & 4);
++      KiraOwnedJdbcCut.cleanupOpening(f.opening); // The one-shot capsule cannot upgrade the failure either.
++      assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"update", "insert", "delete"})
++  void swallowedHiddenDisposalFailureMarksTheActualOuterInvocation(String operation) throws Exception {
++    try (Owned f = new Owned()) {
++      PgResultSet row = rows(f);
++      if (operation.equals("insert")) {
++        f.call(row, ResultSet.class, "moveToInsertRow", NONE);
++        f.call(row, ResultSet.class, "updateInt", new Class<?>[]{String.class, int.class}, "id", 2);
++      }
++      if (operation.equals("delete")) {
++        f.call(row, ResultSet.class, "deleteRow", NONE); // Its hidden statement is cached until result close.
++      } else {
++        f.call(row, ResultSet.class, "updateString", new Class<?>[]{String.class, String.class}, "payload", "after");
++      }
++      SQLException marker = new SQLException("test swallowed " + operation + " cleanup");
++      AtomicReference<PgPreparedStatement> failed = new AtomicReference<>();
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("releaseQuery")) {
++          CachedQuery query = invocation.getArgument(0);
++          if (startsWith(query.query, operation)) {
++            failed.set(hiddenPrepared(f.connection, query));
++            throw marker;
++          }
++        }
++        return delegate(original, invocation);
++      })) {
++        f.call(row, ResultSet.class,
++            operation.equals("delete") ? "close" : operation.equals("insert") ? "insertRow" : "updateRow", NONE);
++        assertEquals(1, KiraOwnedJdbcCut.invocationState(f.last), "JdbcBlackHole must not hide the native child receipt.");
++      }
++      PgPreparedStatement hidden = Objects.requireNonNull(failed.get());
++      assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      assertEquals(1, KiraOwnedJdbcCut.rootState(f.root) & 1);
++      if (operation.equals("delete")) {
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(row.kira.life),
++            "The returning parent extent is not a successful child receipt.");
++        assertEquals(0, f.scalar("select count(*) from kira_cut_fault_rows"));
++      } else {
++        assertEquals(1, f.scalar("select count(*) from kira_cut_fault_rows where payload = 'after'"));
++        assertTrue(((Map<?, ?>) field(row, "updateValues")).isEmpty());
++      }
++      f.call(hidden, Statement.class, "close", NONE);
++      assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      f.retire();
++      assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      assertEquals(1, KiraOwnedJdbcCut.rootState(f.root) & 1);
++    }
++  }
++
++  @Test
++  void hiddenCloseDoesNotReplaceThePrimarySqlException() throws Exception {
++    try (Owned f = new Owned()) {
++      PgResultSet row = rows(f);
++      f.call(row, ResultSet.class, "updateString", new Class<?>[]{String.class, String.class}, "payload", "after");
++      SQLException primary = new SQLException("test primary execution failure", "XX000");
++      SQLException cleanup = new SQLException("test secondary hidden-close failure");
++      AtomicReference<PgPreparedStatement> failed = new AtomicReference<>();
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        String name = invocation.getMethod().getName();
++        if (name.equals("execute") && invocation.getArgument(0) instanceof Query
++            && startsWith(invocation.getArgument(0), "update")) {
++          throw primary;
++        }
++        if (name.equals("releaseQuery")) {
++          CachedQuery query = invocation.getArgument(0);
++          if (startsWith(query.query, "update")) {
++            failed.set(hiddenPrepared(f.connection, query));
++            throw cleanup;
++          }
++        }
++        return delegate(original, invocation);
++      })) {
++        assertSame(primary, assertThrows(SQLException.class, () -> f.call(row, ResultSet.class, "updateRow", NONE)));
++        assertEquals(1, KiraOwnedJdbcCut.invocationState(f.last));
++      }
++      assertEquals(3, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(failed.get()).kira.life));
++      assertEquals("after", ((Map<?, ?>) field(row, "updateValues")).get("payload"));
++      assertEquals(1, f.scalar("select count(*) from kira_cut_fault_rows where payload = 'before'"));
++    }
++  }
++
++  @Test
++  void resultPublicFinallyFailureIsNotUpgradedByTheReturningInternalBody() throws Exception {
++    try (Owned f = new Owned()) {
++      PgPreparedStatement statement = f.prepare("select 1");
++      PgResultSet result = (PgResultSet) f.call(statement, PreparedStatement.class, "executeQuery", NONE);
++      f.call(statement, Statement.class, "closeOnCompletion", NONE);
++      SQLException marker = new SQLException("test closeOnCompletion failure");
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("releaseQuery")
++            && invocation.getArgument(0) == statement.preparedQuery) {
++          throw marker;
++        }
++        return delegate(original, invocation);
++      })) {
++        assertSame(marker, assertThrows(SQLException.class, () -> f.call(result, ResultSet.class, "close", NONE)));
++        assertEquals(1, KiraOwnedJdbcCut.invocationState(f.last));
++        assertEquals(3, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++        assertEquals(3, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++        f.call(result, ResultSet.class, "close", NONE);
++        f.call(statement, Statement.class, "close", NONE);
++        assertEquals(3, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++        assertEquals(3, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++      }
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(booleans = {false, true})
++  void partialConnectionCleanupUsesTheAcquiredExecutorOrActionNotPublicClose(boolean afterAction) throws Exception {
++    Properties properties = properties();
++    if (afterAction) {
++      PGProperty.DATABASE_METADATA_CACHE_FIELDS.set(properties, "not-an-integer");
++    } else {
++      PGProperty.STRING_TYPE.set(properties, "not-a-string-type");
++    }
++    org.postgresql.Driver driver = new org.postgresql.Driver();
++    KiraOwnedJdbcCut.Opening opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++    KiraOwnedJdbcCut.armOpening(opening);
++    try {
++      assertThrows(SQLException.class, () -> driver.connect(TestUtil.getURL(properties), properties));
++    } finally {
++      KiraOwnedJdbcCut.endOpening(opening);
++    }
++    try {
++      KiraOwnedJdbcCut.NativeConnection nativeConnection = (KiraOwnedJdbcCut.NativeConnection) field(opening, "connections");
++      assertNotNull(nativeConnection);
++      assertTrue(nativeConnection.constructorEnded);
++      assertFalse(nativeConnection.constructorReturned);
++      assertNotNull(nativeConnection.executor);
++      assertEquals(afterAction, nativeConnection.action != null);
++      assertNull(nativeConnection.cleanable);
++      assertNull(field(opening, "returned"));
++      KiraOwnedJdbcCut.cleanupOpening(opening);
++      assertTrue(nativeConnection.cleaned);
++      assertTrue(nativeConnection.executor.isClosed());
++      assertEquals(25, KiraOwnedJdbcCut.openingState(opening));
++      // The incomplete PgConnection is intentionally never sent public abort()/close().
++    } finally {
++      KiraOwnedJdbcCut.cleanupOpening(opening);
++    }
++  }
++
++  @Test
++  void completeButUnreturnedConnectionUsesItsActualCleanable() throws Exception {
++    Properties properties = properties();
++    org.postgresql.Driver driver = new org.postgresql.Driver();
++    KiraOwnedJdbcCut.Opening opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++    PgConnection connection = null;
++    try {
++      KiraOwnedJdbcCut.armOpening(opening);
++      try {
++        connection = (PgConnection) Objects.requireNonNull(driver.connect(TestUtil.getURL(properties), properties));
++        // Deliberately no returned correspondence: complete constructor, not a failed one.
++      } finally {
++        KiraOwnedJdbcCut.endOpening(opening);
++      }
++      assertTrue(connection.kira.constructorReturned);
++      assertNotNull(connection.kira.cleanable);
++      assertFalse(connection.kira.cleaned);
++      assertNull(field(opening, "returned"));
++      KiraOwnedJdbcCut.cleanupOpening(opening);
++      assertTrue(connection.kira.cleaned);
++      assertTrue(connection.isClosed());
++      assertEquals(9, KiraOwnedJdbcCut.openingState(opening));
++    } finally {
++      KiraOwnedJdbcCut.cleanupOpening(opening);
++      if (connection != null) {
++        connection.close(); // This fallback is safe only because the constructor really returned.
++      }
++    }
++  }
++
++  @Test
++  void realReturnedCorrespondenceFailureKeepsExactRawExclusionSeparateFromCustody() throws Exception {
++    Properties properties = properties();
++    try (Connection foreignRaw = TestUtil.openDB(properties)) {
++      org.postgresql.Driver driver = new org.postgresql.Driver();
++      KiraOwnedJdbcCut.Opening opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++      PgConnection constructed = null;
++      try {
++        KiraOwnedJdbcCut.armOpening(opening);
++        try {
++          constructed = (PgConnection) Objects.requireNonNull(driver.connect(TestUtil.getURL(properties), properties));
++          // Both are actual driver connections. The raw is deliberately not one constructed
++          // under this opening; no private correspondence/receipt field is manufactured.
++          assertThrows(SQLException.class, () -> KiraOwnedJdbcCut.recordReturned(opening, foreignRaw));
++        } finally {
++          KiraOwnedJdbcCut.endOpening(opening);
++        }
++        assertSame(foreignRaw, field(opening, "returned"));
++        PgConnection unreturned = constructed;
++        assertThrows(SQLException.class, () -> KiraOwnedJdbcCut.attach(opening, unreturned, new Object(), new Object()));
++        KiraOwnedJdbcCut.cleanupOpening(opening);
++        assertTrue(constructed.kira.cleaned);
++        assertTrue(constructed.isClosed());
++        assertFalse(foreignRaw.isClosed(), "The capsule must not close the exact separately retained raw.");
++        assertEquals(11, KiraOwnedJdbcCut.openingState(opening));
++      } finally {
++        KiraOwnedJdbcCut.cleanupOpening(opening);
++        if (constructed != null) {
++          constructed.close();
++        }
++      }
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(ints = {1, 2, 3})
++  void failedChildConstructionRetainsPreSuperBorrowsWithoutCallingPartialClose(int kind) throws Exception {
++    try (Owned f = new Owned()) {
++      Class<?>[] options = new Class<?>[]{int.class, int.class, int.class};
++      if (kind == 1) {
++        assertThrows(SQLException.class, () -> f.call(f.connection, Connection.class, "createStatement", options,
++            -1, ResultSet.CONCUR_READ_ONLY, ResultSet.CLOSE_CURSORS_AT_COMMIT));
++      } else {
++        assertThrows(SQLException.class, () -> f.call(f.connection, Connection.class,
++            kind == 2 ? "prepareStatement" : "prepareCall", new Class<?>[]{String.class, int.class, int.class, int.class},
++            kind == 2 ? "select ?" : "{call kira_never_executed(?)}", -1,
++            ResultSet.CONCUR_READ_ONLY, ResultSet.CLOSE_CURSORS_AT_COMMIT));
++      }
++      KiraOwnedJdbcCut.Construction construction = f.connection.kira.constructions;
++      assertNotNull(construction);
++      assertEquals(kind, construction.kind);
++      assertTrue(construction.ended);
++      assertFalse(construction.returned);
++      assertFalse(construction.receiverComplete);
++      KiraOwnedJdbcCut.Native partial = construction.nativeState;
++      assertNotNull(partial);
++      assertSame(construction.receiver, partial.receiver);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(partial.life));
++      if (kind != 1) {
++        assertNotNull(construction.borrows);
++        assertNotNull(construction.borrows.query, "The actual pre-super borrow must already be in custody.");
++      }
++      assertEquals(1, f.connection.kira.failedConstructions);
++      assertEquals(0, f.connection.kira.nativeChildren);
++      f.retire();
++      assertTrue(construction.cleaned);
++      assertTrue(partial.partialDisposed);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(partial.life), "Phase disposal is not a partial public-close receipt.");
++      assertEquals(0, f.connection.kira.failedConstructions);
++      assertNull(f.connection.kira.children);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void generatedKeyPostConstructorFailureClosesTheCompleteUnpublishedReceiver() throws Exception {
++    try (Owned f = new Owned()) {
++      f.sql("create temporary table kira_cut_generated (id integer)");
++      RuntimeException marker = new RuntimeException("test generated-key post-constructor failure");
++      AtomicReference<CachedQuery> borrowed = new AtomicReference<>();
++      AtomicReference<Query> originalQuery = new AtomicReference<>();
++      Field queryField = CachedQuery.class.getDeclaredField("query");
++      queryField.setAccessible(true);
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("borrowReturningQuery")) {
++          CachedQuery actual = (CachedQuery) delegate(original, invocation);
++          borrowed.set(actual);
++          originalQuery.set(actual.query);
++          Query fault = mock(Query.class, queryInvocation -> {
++            if (queryInvocation.getMethod().getName().equals("getSqlCommand")) {
++              throw marker;
++            }
++            return delegate(Objects.requireNonNull(originalQuery.get()), queryInvocation);
++          });
++          // Keep the real borrowed CachedQuery and native statement; only this dependency
++          // is temporarily faulted, and is restored before any disposal.
++          queryField.set(actual, fault);
++          return actual;
++        }
++        return delegate(original, invocation);
++      })) {
++        assertSame(marker, assertThrows(RuntimeException.class, () -> f.call(f.connection, Connection.class,
++            "prepareStatement", new Class<?>[]{String.class, int.class},
++            "insert into kira_cut_generated values (?)", Statement.RETURN_GENERATED_KEYS)));
++      } finally {
++        if (borrowed.get() != null) {
++          queryField.set(borrowed.get(), originalQuery.get());
++        }
++      }
++      KiraOwnedJdbcCut.Construction construction = f.connection.kira.constructions;
++      assertNotNull(construction);
++      assertEquals(4, construction.kind);
++      assertTrue(construction.receiverComplete);
++      assertFalse(construction.returned);
++      assertSame(borrowed.get(), construction.borrows.query);
++      KiraOwnedJdbcCut.Native child = construction.nativeState;
++      assertFalse(child.factoryReturned);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
++      f.retire();
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(child.life));
++      assertTrue(construction.cleaned);
++      assertEquals(0, f.connection.kira.failedConstructions);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @Test
++  void resultFactoryPostSetupFailureClosesTheCompleteReceiverAndItsCursor() throws Exception {
++    try (Owned f = new Owned()) {
++      PgStatement statement = f.statement();
++      Field fetchSize = PgStatement.class.getDeclaredField("fetchSize");
++      fetchSize.setAccessible(true);
++      int previous = fetchSize.getInt(statement);
++      ResultCursor cursor = mock(ResultCursor.class);
++      try {
++        fetchSize.setInt(statement, -1); // Actual native post-constructor setFetchSize will refuse it.
++        assertThrows(SQLException.class, () -> f.call(statement, BaseStatement.class, "createResultSet",
++            new Class<?>[]{Query.class, org.postgresql.core.Field[].class, List.class, ResultCursor.class},
++            null, new org.postgresql.core.Field[]{new org.postgresql.core.Field("value", Oid.INT4)},
++            new ArrayList<Tuple>(), cursor));
++      } finally {
++        fetchSize.setInt(statement, previous);
++      }
++      KiraOwnedJdbcCut.Construction construction = f.connection.kira.constructions;
++      assertNotNull(construction);
++      assertEquals(5, construction.kind);
++      assertTrue(construction.receiverComplete);
++      assertFalse(construction.returned);
++      KiraOwnedJdbcCut.Native child = construction.nativeState;
++      assertTrue(child.receiver instanceof PgResultSet);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
++      verify(cursor, never()).close();
++      f.retire();
++      verify(cursor, times(1)).close();
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(child.life));
++      assertTrue(construction.cleaned);
++      assertEquals(0, f.connection.kira.failedConstructions);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++    }
++  }
++
++  @ParameterizedTest
++  @CsvSource({"false,false", "true,false", "false,true", "true,true"})
++  void missingAppendPublicationRetainsUncertaintyAndTheActualOrphanShape(boolean prepared,
++      boolean throwAfterAdd) throws Exception {
++    try (Owned f = new Owned()) {
++      f.sql("create temporary table kira_cut_append (id integer)");
++      PgStatement statement = prepared ? f.prepare("insert into kira_cut_append values (?)") : f.statement();
++      if (prepared) {
++        f.call(statement, PreparedStatement.class, "setInt", new Class<?>[]{int.class, int.class}, 1, 7);
++      }
++      List<Boolean> order = new ArrayList<>();
++      RuntimeException marker = new RuntimeException("test failure immediately after actual native add");
++      try (MockedStatic<KiraOwnedJdbcCut> ignored = mockStatic(KiraOwnedJdbcCut.class, invocation -> {
++        if (invocation.getMethod().getName().equals("appended")) {
++          KiraOwnedJdbcCut.Append append = invocation.getArgument(0);
++          order.add(append.parameter);
++          if (order.size() == 1) {
++            if (throwAfterAdd) {
++              throw marker;
++            }
++            return null; // Suppress only the receipt; the real concrete ArrayList.add already happened.
++          }
++        }
++        return invocation.callRealMethod();
++      })) {
++        if (throwAfterAdd) {
++          assertSame(marker, assertThrows(RuntimeException.class, () -> add(f, statement, prepared)));
++        } else {
++          add(f, statement, prepared);
++        }
++      }
++      assertEquals(2, KiraOwnedJdbcCut.invocationState(f.last));
++      assertNotNull(field(f.last, "pins"));
++      assertSame(f.last, f.connection.kira.retained);
++      if (throwAfterAdd) {
++        assertEquals(Arrays.asList(prepared), order);
++        assertEquals(prepared ? 0 : 1, statement.batchStatements.size());
++        assertEquals(prepared ? 1 : 0, statement.batchParameters.size());
++        f.call(statement, Statement.class, "clearBatch", NONE);
++      } else {
++        assertEquals(Arrays.asList(prepared, !prepared), order);
++        assertEquals(1, statement.batchStatements.size());
++        assertEquals(1, statement.batchParameters.size());
++        assertArrayEquals(new int[]{1}, (int[]) f.call(statement, Statement.class, "executeBatch", NONE));
++        assertEquals(7, KiraOwnedJdbcCut.drainState(f.last));
++        KiraOwnedJdbcCut.Batch batch = (KiraOwnedJdbcCut.Batch) field(f.last, "batch");
++        assertNotNull(batch.queries, "UNKNOWN does not release real A merely because the Java method returned.");
++        assertNotNull(batch.parameters);
++      }
++      assertTrue(statement.batchStatements.isEmpty());
++      assertTrue(statement.batchParameters.isEmpty());
++      assertEquals(2, KiraOwnedJdbcCut.rootState(f.root) & 2);
++    }
++  }
++
++  private static void add(Owned f, PgStatement statement, boolean prepared) throws Exception {
++    if (prepared) {
++      f.call(statement, PreparedStatement.class, "addBatch", NONE);
++    } else {
++      f.call(statement, Statement.class, "addBatch", new Class<?>[]{String.class}, "insert into kira_cut_append values (7)");
++    }
++  }
++
++  private static PgResultSet rows(Owned f) throws Exception {
++    f.sql("create temporary table kira_cut_fault_rows (id integer primary key, payload text)");
++    f.sql("insert into kira_cut_fault_rows values (1, 'before')");
++    PgStatement statement = (PgStatement) f.call(f.connection, Connection.class, "createStatement",
++        new Class<?>[]{int.class, int.class}, ResultSet.TYPE_SCROLL_INSENSITIVE, ResultSet.CONCUR_UPDATABLE);
++    PgResultSet row = (PgResultSet) f.call(statement, Statement.class, "executeQuery", new Class<?>[]{String.class},
++        "select id, payload from kira_cut_fault_rows");
++    assertEquals(true, f.call(row, ResultSet.class, "next", NONE));
++    return row;
++  }
++
++  private static boolean startsWith(Query query, String operation) {
++    return query.getNativeSql().trim().toUpperCase(Locale.ROOT).startsWith(operation.toUpperCase(Locale.ROOT));
++  }
++
++  private static PgPreparedStatement hiddenPrepared(PgConnection connection, CachedQuery query) {
++    for (KiraOwnedJdbcCut.Native child = connection.kira.children; child != null; child = child.next) {
++      if (child.receiver instanceof PgPreparedStatement) {
++        PgPreparedStatement statement = (PgPreparedStatement) child.receiver;
++        if (query == null ? KiraOwnedJdbcCut.firstCloseState(child.life) == 0 : statement.preparedQuery == query) {
++          return statement;
++        }
++      }
++    }
++    throw new AssertionError("The requested real native hidden PreparedStatement was not constructed.");
++  }
++
++  private static Object delegate(Object original, InvocationOnMock invocation) throws Throwable {
++    try {
++      return invocation.getMethod().invoke(original, invocation.getArguments());
++    } catch (InvocationTargetException failure) {
++      throw failure.getCause();
++    }
++  }
++
++  /** Replace only a lower dependency for one lexical test scope, restoring exact identity. */
++  private static final class ExecutorFault implements AutoCloseable {
++    private final PgConnection connection;
++    private final QueryExecutor original;
++    private final Field slot;
++
++    ExecutorFault(PgConnection connection, Answer<Object> answer) throws Exception {
++      this.connection = connection;
++      original = connection.getQueryExecutor();
++      slot = PgConnection.class.getDeclaredField("queryExecutor");
++      slot.setAccessible(true);
++      slot.set(connection, mock(QueryExecutor.class, answer));
++    }
++
++    @Override
++    public void close() throws Exception {
++      slot.set(connection, original);
++    }
++  }
++
++  private static Object field(Object receiver, String name) throws Exception {
++    for (Class<?> type = receiver.getClass(); type != null; type = type.getSuperclass()) {
++      try {
++        Field field = type.getDeclaredField(name);
++        field.setAccessible(true);
++        return field.get(receiver);
++      } catch (NoSuchFieldException ignored) {
++        // Read the authentic declaring class, not a replacement receiver.
++      }
++    }
++    throw new NoSuchFieldException(name);
++  }
++
++  private static Properties properties() throws Exception {
++    TestUtil.initDriver();
++    Properties requested = new Properties();
++    PGProperty.LOGIN_TIMEOUT.set(requested, 0);
++    PGProperty.PREFER_QUERY_MODE.set(requested, "extended");
++    PGProperty.REWRITE_BATCHED_INSERTS.set(requested, false);
++    return TestUtil.mergeDefaultProperties(requested);
++  }
++
++  /** Small local duplicate because the Mockito module cannot depend on another module's tests. */
++  private static final class Owned implements AutoCloseable {
++    final KiraOwnedJdbcCut.Opening opening;
++    final PgConnection connection;
++    final KiraOwnedJdbcCut.Root root;
++    final KiraOwnedJdbcCut.Owner owner;
++    KiraOwnedJdbcCut.Invocation last;
++    boolean retired;
++
++    Owned() throws Exception {
++      Properties properties = properties();
++      org.postgresql.Driver driver = new org.postgresql.Driver();
++      opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++      KiraOwnedJdbcCut.armOpening(opening);
++      PgConnection connected = null;
++      try {
++        try {
++          connected = (PgConnection) Objects.requireNonNull(driver.connect(TestUtil.getURL(properties), properties));
++          KiraOwnedJdbcCut.recordReturned(opening, connected);
++        } finally {
++          KiraOwnedJdbcCut.endOpening(opening);
++        }
++        connection = connected;
++        root = KiraOwnedJdbcCut.attach(opening, connection, new Object(), new Object());
++        owner = KiraOwnedJdbcCut.owner(root);
++      } catch (Exception | Error failure) {
++        try {
++          if (connected != null) {
++            connected.abort(Runnable::run);
++          }
++        } catch (Throwable cleanup) {
++          failure.addSuppressed(cleanup);
++        }
++        KiraOwnedJdbcCut.cleanupOpening(opening);
++        try {
++          if (connected != null) {
++            connected.close();
++          }
++        } catch (Throwable cleanup) {
++          failure.addSuppressed(cleanup);
++        }
++        throw failure;
++      }
++    }
++
++    Object call(Object receiver, Class<?> api, String name, Class<?>[] types, Object... arguments) throws Exception {
++      Method operation = api.getMethod(name, types);
++      KiraOwnedJdbcCut.Invocation invocation = KiraOwnedJdbcCut.prepareInvocation(owner, receiver, new Object(),
++          operation, arguments, NO_ARGUMENTS, new KiraOwnedJdbcCut.Life[0], new int[0]);
++      KiraOwnedJdbcCut.arm(invocation);
++      last = invocation;
++      try {
++        return operation.invoke(receiver, arguments);
++      } catch (InvocationTargetException failure) {
++        Throwable cause = failure.getCause();
++        if (cause instanceof Exception) {
++          throw (Exception) cause;
++        }
++        throw (Error) cause;
++      } finally {
++        try {
++          KiraOwnedJdbcCut.disarm(invocation);
++        } finally {
++          KiraOwnedJdbcCut.actualEnd(invocation);
++        }
++      }
++    }
++
++    PgPreparedStatement prepare(String sql) throws Exception {
++      return (PgPreparedStatement) call(connection, Connection.class, "prepareStatement", new Class<?>[]{String.class}, sql);
++    }
++
++    PgStatement statement() throws Exception {
++      return (PgStatement) call(connection, Connection.class, "createStatement", NONE);
++    }
++
++    void sql(String sql) throws Exception {
++      PgStatement statement = statement();
++      try {
++        call(statement, Statement.class, "executeUpdate", new Class<?>[]{String.class}, sql);
++      } finally {
++        call(statement, Statement.class, "close", NONE);
++      }
++    }
++
++    int scalar(String sql) throws Exception {
++      PgStatement statement = statement();
++      try {
++        ResultSet result = (ResultSet) call(statement, Statement.class, "executeQuery", new Class<?>[]{String.class}, sql);
++        call(result, ResultSet.class, "next", NONE);
++        return (Integer) call(result, ResultSet.class, "getInt", new Class<?>[]{int.class}, 1);
++      } finally {
++        call(statement, Statement.class, "close", NONE);
++      }
++    }
++
++    void retire() throws SQLException {
++      if (!retired) {
++        retired = true;
++        try {
++          connection.abort(Runnable::run);
++        } finally {
++          try {
++            KiraOwnedJdbcCut.cleanupOpening(opening);
++          } finally {
++            connection.close();
++          }
++        }
++      }
++    }
++
++    @Override
++    public void close() throws SQLException {
++      retire();
++    }
++  }
++}

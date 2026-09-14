@@ -8,9 +8,17 @@ internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoi
 
     fun prepareDeletion(): PersistenceLifecycleActivation = root.prepareDeletion()
 
+    internal fun prepareOrdinaryRequest(): PersistenceOwnedFactoryRequest = root.ordinary.prepareRequest()
+
+    internal fun prepareDeletionRequest(): PersistenceOwnedFactoryRequest = root.deletion.prepareRequest()
+
     fun requestOrdinary(): PersistenceFactoryResult<PersistenceJdbcCandidate> = root.ordinary.request()
 
     fun requestDeletion(): PersistenceFactoryResult<PersistenceJdbcCandidate> = root.deletion.request()
+
+    fun requestOrdinaryPoolConnection(): PersistenceFactoryResult<PhysicalJdbcFacade> = root.ordinary.requestPoolConnection()
+
+    fun requestDeletionPoolConnection(): PersistenceFactoryResult<PhysicalJdbcFacade> = root.deletion.requestPoolConnection()
 
     fun requestShutdown(): Boolean = root.requestShutdown()
 
@@ -19,6 +27,9 @@ internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoi
     fun observeDeletionPreparation(): PersistenceLifecycleObservation = PersistenceManagedObserver.observe(root, PersistenceManagedObservation.DELETION)
 
     fun observeShutdown(): PersistenceLifecycleObservation = PersistenceManagedObserver.observe(root, PersistenceManagedObservation.SHUTDOWN)
+
+    internal fun observeShutdown(budget: PersistenceTimeBudget): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.SHUTDOWN, budget)
 
     fun snapshot(): PersistenceLifecycleSnapshot = root.snapshot()
 

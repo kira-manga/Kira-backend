@@ -42,6 +42,16 @@ internal enum class PgLifecycleDatabaseMode {
     MISSING_RECEIPT,
     WRONG_RECEIPT,
     DUPLICATE_RECEIPT,
+    POOL_ACQUISITION_END_TL_FAILURE,
+    POOL_CORE_LAST_COUNT_TL_FAILURE,
+    POOL_LEASE_CREATOR_ENTRY_BEFORE_TL,
+    POOL_LEASE_CREATOR_ENTRY_AFTER_TL,
+    POOL_LEASE_CREATOR_END_BEFORE_TL,
+    POOL_LEASE_CREATOR_END_AFTER_TL,
+    POOL_LEASE_CREATOR_CORE_BEFORE_TL,
+    POOL_LEASE_CREATOR_CORE_AFTER_TL,
+    POOL_LEASE_CREATOR_CLIENT_INFO_TAIL,
+    POOL_LEASE_CREATOR_DECLARED_TAIL,
 }
 
 internal data class PgLifecycleDatabaseCase(
@@ -57,8 +67,21 @@ internal data class PgLifecycleDatabaseCase(
                 (recipe === PgLifecycleDatabaseRecipe.DEFAULT && queryTimeout == 0),
         )
         require(!originalProvider || lane === PgLifecycleDatabaseLane.ORDINARY)
+        require(!poolPendingFailure || lane === PgLifecycleDatabaseLane.ORDINARY)
     }
 
+    val poolPendingFailure: Boolean get() = mode === PgLifecycleDatabaseMode.POOL_ACQUISITION_END_TL_FAILURE ||
+        mode === PgLifecycleDatabaseMode.POOL_CORE_LAST_COUNT_TL_FAILURE || poolCreatorFailure
+    val poolCreatorFailure: Boolean get() = mode in setOf(
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_ENTRY_BEFORE_TL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_ENTRY_AFTER_TL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_END_BEFORE_TL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_END_AFTER_TL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_CORE_BEFORE_TL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_CORE_AFTER_TL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_CLIENT_INFO_TAIL,
+        PgLifecycleDatabaseMode.POOL_LEASE_CREATOR_DECLARED_TAIL,
+    )
     val originalProvider: Boolean get() = mode in setOf(PgLifecycleDatabaseMode.ORIGINAL_MATRIX, PgLifecycleDatabaseMode.ORIGINAL_LATE_RETURN)
     val lateReturn: Boolean get() = mode in setOf(PgLifecycleDatabaseMode.LATE_RETURN, PgLifecycleDatabaseMode.ORIGINAL_LATE_RETURN)
     val deadlineFailure: Boolean get() = lateReturn || mode === PgLifecycleDatabaseMode.PROGRESS_DEADLINE
@@ -66,7 +89,7 @@ internal data class PgLifecycleDatabaseCase(
     val supplemental: Boolean get() = mode in ESTABLISHMENT || originalProvider
     val attempts: Int get() = if (mode === PgLifecycleDatabaseMode.REUSE || supplemental) 2 else 1
     val returnsRaw: Boolean get() = mode !in NO_RAW && !(queryTimeout == 1 && recipe.positiveTimeoutFails)
-    val succeeds: Boolean get() = returnsRaw && !deadlineFailure
+    val succeeds: Boolean get() = !poolPendingFailure && returnsRaw && !deadlineFailure
     val socketTimeout: Int
         get() = if (mode === PgLifecycleDatabaseMode.SOCKET_TIMEOUT) {
             1
