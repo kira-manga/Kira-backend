@@ -162,8 +162,9 @@ class TutorialService(
         AdminTutorialView(tutorial, tutorial.publishedRevisionId?.let { publishedTutorial(tutorial) })
     }
 
-    @Transactional
+    @Transactional(rollbackFor = [Exception::class])
     fun createTutorialRevision(tutorialId: UUID, categoryId: UUID, content: TutorialContent): TutorialRevisionView {
+        repository.acquireMediaLock()
         requireTutorial(tutorialId, lock = true)
         requireCategory(categoryId)
         val referenced = content.mediaReferences().values.toSet()
@@ -193,8 +194,9 @@ class TutorialService(
         return repository.listTutorialRevisions(tutorialId).map(::tutorialRevision)
     }
 
-    @Transactional
+    @Transactional(rollbackFor = [Exception::class])
     fun publishTutorial(tutorialId: UUID, revisionNumber: Int): AdminTutorialView {
+        repository.acquireMediaLock()
         val tutorial = requireTutorial(tutorialId, lock = true)
         val revision = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
         ensureNewerTutorialRevision(tutorial, revision)
@@ -214,8 +216,9 @@ class TutorialService(
         return AdminTutorialView(requireTutorial(tutorialId), TutorialRevisionView(revision, content))
     }
 
-    @Transactional
+    @Transactional(rollbackFor = [Exception::class])
     fun rollbackTutorial(tutorialId: UUID, revisionNumber: Int): AdminTutorialView {
+        repository.acquireMediaLock()
         requireTutorial(tutorialId, lock = true)
         val historical = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
         val category = requireCategory(requireNotNull(historical.categoryId), lock = true)

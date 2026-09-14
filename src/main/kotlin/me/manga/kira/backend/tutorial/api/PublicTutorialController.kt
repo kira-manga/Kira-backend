@@ -2,18 +2,20 @@ package me.manga.kira.backend.tutorial.api
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.servlet.http.HttpServletRequest
+import me.manga.kira.backend.common.ApiError
+import me.manga.kira.backend.common.ApiFieldError
+import me.manga.kira.backend.tutorial.application.TutorialMediaNotFoundException
 import me.manga.kira.backend.tutorial.application.TutorialMediaService
 import me.manga.kira.backend.tutorial.application.TutorialService
-import org.springframework.core.io.InputStreamResource
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -39,7 +41,9 @@ class PublicTutorialController(private val tutorials: TutorialService, private v
 
     @GetMapping("/tutorial-media/{id}")
     fun media(@PathVariable id: UUID, request: HttpServletRequest): ResponseEntity<*> {
-        val (metadata, path) = media.loadForDelivery(id)
+        // Authorization and integrity verification have already produced these exact bounded
+        // bytes, even for a matching validator. Do not reopen a path after checking its hash.
+        val (metadata, bytes) = media.loadForDelivery(id)
         val cacheControl = if (metadata.published) IMMUTABLE_CACHE else "private, no-store"
         val etag = "\"${metadata.sha256}\""
         if (matches(request, etag)) {
@@ -50,8 +54,21 @@ class PublicTutorialController(private val tutorials: TutorialService, private v
             .header(HttpHeaders.CACHE_CONTROL, cacheControl)
             .contentType(MediaType.parseMediaType(metadata.contentType))
             .contentLength(metadata.byteSize)
-            .body(InputStreamResource(Files.newInputStream(path)))
+            .body(bytes)
     }
+
+    @ExceptionHandler(TutorialMediaNotFoundException::class)
+    fun mediaUnavailable(ex: TutorialMediaNotFoundException): ResponseEntity<ApiError> = ResponseEntity.status(ex.status)
+        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+        .header(HttpHeaders.CACHE_CONTROL, "no-store")
+        .body(
+            ApiError(
+                title = ex.status.reasonPhrase,
+                status = ex.status.value(),
+                detail = ex.detail,
+                errors = listOf(ApiFieldError(code = ex.code, message = ex.detail)),
+            ),
+        )
 
     private fun cached(body: Any, request: HttpServletRequest): ResponseEntity<*> {
         val hash = MessageDigest.getInstance("SHA-256").digest(objectMapper.writeValueAsBytes(body)).joinToString("") { "%02x".format(it) }

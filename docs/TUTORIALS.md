@@ -75,10 +75,11 @@ permanently public.
 ## Seed and storage
 
 When enabled, the bundled seed imports six screenshot assets **before checking whether both tutorial
-identity tables are empty**. Those imports can rewrite missing/mismatched seed files even if the
-identity-table guard subsequently prevents creation of the four pre-migration guides, categories,
-order and featured positions. It is not a safe concurrent bootstrap protocol or a repair operation
-for an existing installation. Do not rerun it to reconcile unexpected data.
+identity tables are empty**. The identity guard still controls creation of the four pre-migration
+guides, categories, order and featured positions; it does not prevent those earlier media imports.
+Existing seed objects can be repaired only with authentic bundled bytes matching **all** recorded
+content metadata. This remains an explicitly authorized, isolated seed/recovery action, not ordinary
+startup repair or permission to rerun seed against unexpected installation data.
 
 The ordinary two-replica Kubernetes Deployment explicitly sets `KIRA_TUTORIAL_SEED_ENABLED="false"`
 and `KIRA_TUTORIAL_MEDIA_DIRECTORY=/var/lib/kira/tutorial-media`, backed by the same stable
@@ -87,6 +88,62 @@ ephemeral scratch and is not the media store. PostgreSQL stores metadata/referen
 See [DEPLOYMENT.md](DEPLOYMENT.md#shared-tutorial-media-storage-and-fresh-bootstrap) for the unresolved
 class/capacity template, ownership, retention and installed multi-node acceptance gates. No provider,
 permissions or durability are established just by the RWX/fsGroup declarations.
+
+### Media transactions and reconciliation
+
+The database row authorizes an immutable filename: its lowercase canonical UUID plus `.jpg` for
+JPEG or `.png` for PNG. New server UUIDs are never adopted from orphan files or deliberately reused.
+The file is exclusively created, bounded, completed and forced before inserting its row; there is
+**no atomic transaction across PostgreSQL and the filesystem**. A rollback, crash or UNKNOWN commit
+outcome may leave a recognizable rowless file. An exception is not permission to delete an upload
+whose commit outcome is unknown. A known committed delete attempts physical cleanup only after the
+outer transaction completes; failed/missed cleanup leaves a rowless file, not a database rollback.
+
+Delivery authorizes first, then verifies the size and lowercase SHA-256 of the **exact bounded bytes
+returned**, before either 200 or matching-ETag 304. Missing/corrupt media is unavailable, with a
+noncacheable error rather than corrupt content or an integrity-bypassing 304. Published immutable
+and ADMIN-only draft private/no-store caching remain distinct.
+
+The cooperative PostgreSQL media lock covers writable READ_COMMITTED transactions, decision reads
+and effects through the actual outer transaction. Reference creation/publication takes media before
+tutorial/category locks. Reconciliation captures a fixed bounded file inventory before its fresh
+database read; it does not discover new deletion candidates later or continue after losing its DB
+identity/lock. This protocol does not fence old binaries or independent filesystem writers.
+
+| `kira.tutorial` property | Default | Meaning |
+|---|---:|---|
+| `media-reconciliation-enabled` | `false` | Mutating worker is opt-in; ordinary inspection is report-only. |
+| `media-reconciliation-interval-millis` | `300000` | Worker interval, supported range 1000–3600000. |
+| `media-inspection-limit` | `10000` | Bounded inventory/row inspection, supported range 1–100000. |
+| `media-lock-timeout-millis` | `5000` | Bounded media-lock acquisition, supported range 1–30000. |
+
+Before enabling mutation, the owners must positively exclude and drain **all old/noncooperating
+application, seed, maintenance and restore writers**, including rolling/terminating processes and
+post-commit cleanup tails. Establish the same intended database and shared filesystem authority for
+every cooperating worker. A configuration flag, advisory lock or successful unit test does not prove
+that installed exclusion, permissions, RWX capacity, crash durability or failover fencing exists.
+Do not reintroduce old filenames through restore while any writer or cleanup tail can still act.
+
+Only known rowless UUID finals and recognized `.upload-[A-Za-z0-9-]{1,80}\.(jpg|png)` staging artifacts
+are quarantine candidates. Preservation uses a fresh no-clobber directory:
+
+```text
+quarantine/<canonical-random-uuid>--<original-basename>--<lowercase-sha256>/content
+```
+
+The sole regular nonsymlink `content` leaf contains the completely preserved original bytes,
+0–4 MiB, matching the SHA-256 in the directory name. A partial copy/unknown entry is retained and
+reported, not accepted as completed preservation. Existing complete matching evidence can be reused;
+there is no automatic quarantine expiry or recursive cleanup of unknown trees. Repeated inspection
+does not erase evidence. Unknown files, directories, links and unsafe/oversized originals require
+operator review, not age-based deletion.
+
+Missing/wrong-size/wrong-hash **row-present** draft and published files remain authoritative failures;
+reconciliation never deletes their rows, rewrites checksums or treats them as orphans. Recover only
+authentic exact bytes. Explicit seed repair stages and verifies those bytes, preserves a bounded
+corrupt regular original completely before intentional atomic replacement, and refuses unsafe or
+unpreservable originals. An interrupted/unsupported repair is not success; retain its evidence for
+owner recovery instead of weakening bounds or fabricating metadata.
 
 ### Separately authorized first seed
 
@@ -105,16 +162,23 @@ writer and retain seed=false for ordinary replicas. Verify both normal replicas 
 media before releasing traffic. No bootstrap Job/controller or concurrency safety guarantee is
 provided by this repository slice; the installed procedure and completion remain external gates.
 
-The existing startup validator still fails if a published media row has no regular file or if a
-published pointer/category/media relation is inconsistent. **Empty tutorial tables can pass it and
-readiness without any initial guides.** It is not a file-hash, writeability, continuous media-health
-or bootstrap-completion test. Do not weaken it or use a green readiness result as first-seed evidence.
+Startup retains the published pointer/category/media relational checks and inspects media size and
+SHA-256. Published missing/corrupt bytes fail readiness; an incomplete/overflow/error inspection
+that leaves any published subset unverified cannot pass as clean. Draft failures and orphan/unknown
+artifacts are explicit reports, not automatic repair. This is an observational bounded inspection,
+not a continuous or atomic online health snapshot; delivery still checks exact bytes on each request.
+**Empty tutorial tables can pass readiness without any initial guides.** Readiness does not prove
+writeability, installed storage durability or bootstrap completion.
 
 Back up and restore the database and media as a matched encrypted pair under the writer exclusion
-**and positive drain** protocol in [DISASTER_RECOVERY.md](DISASTER_RECOVERY.md). The filesystem/DB
-transaction gap (Backend #5) is not solved by persistence alone. That helper refuses an existing
-restore target, even if empty; a mounted PVC root requires a separately approved isolated restore/
-custody mapping, not a direct in-place invocation or deletion of the stable claim.
+**and positive drain**, including completion callbacks, protocol in
+[DISASTER_RECOVERY.md](DISASTER_RECOVERY.md#read-only-restored-pair-media-verification). After both
+selected restore stages, use its read-only semantic checker for **every draft and published row**
+before migration, application access handoff or traffic. Manifest hashes alone cannot establish
+row/file consistency. The restore helper refuses an existing target, even if empty; a mounted PVC
+root requires a separately approved isolated restore/custody mapping, not a direct in-place invocation
+or deletion of the stable claim. Reconciliation is eventual recovery of recognizable debris, not
+cross-store atomicity or a substitute for authentic backup/restore.
 
 An older binary with the pre-fix startup validator rejects an archived category that retains a
 PUBLISHED child. This correction does not make rollback to that binary safe; retain a compatible

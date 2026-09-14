@@ -43,9 +43,14 @@ interface TutorialRepository {
     fun reorderTutorials(items: List<Triple<UUID, Int, Int?>>, now: Instant)
 
     fun createMedia(media: StoredMedia): StoredMedia
+    fun acquireMediaLock(): MediaTransaction
+    fun verifyMediaLock(transaction: MediaTransaction)
     fun findMedia(id: UUID): StoredMedia?
     fun findMedia(ids: Set<UUID>): List<StoredMedia>
+    fun findMediaByChecksum(checksum: String): StoredMedia?
     fun listMedia(): List<StoredMedia>
+    fun listMedia(limit: Int): List<StoredMedia>
     fun mediaReferenceCount(id: UUID): Int
     fun deleteMedia(id: UUID): Boolean
+    fun countInvalidPublishedTutorialReferences(): Int
 }
