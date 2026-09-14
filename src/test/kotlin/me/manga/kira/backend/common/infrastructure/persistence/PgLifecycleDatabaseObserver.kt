@@ -79,11 +79,78 @@ internal class PgLifecycleDatabaseObserver(private val connection: Connection, p
         }
     }
 
+    /** Exact synthetic execution only. Neither a missing session nor an unhealthy observer is a positive witness. */
+    fun awaitActiveSleep(
+        application: String,
+        witnessed: PgLifecycleDatabaseSession,
+        nonce: String,
+        deadline: PgLifecycleDatabaseDeadline,
+        progress: () -> Unit,
+    ): Long {
+        check(application.matches(Regex("w03c_[0-9a-f-]{36}")) && nonce.matches(Regex("[0-9a-f-]{36}")))
+        while (true) {
+            deadline.checkRemaining()
+            progress()
+            val active = activeSleep(application, witnessed, nonce)
+            progress()
+            deadline.checkRemaining()
+            if (active) return System.nanoTime()
+            deadline.pause()
+        }
+    }
+
+    private fun activeSleep(application: String, witnessed: PgLifecycleDatabaseSession, nonce: String): Boolean =
+        connection.prepareStatement(ACTIVE_SLEEP_QUERY).use { statement ->
+            statement.queryTimeout = 1
+            statement.maxRows = 4
+            statement.setString(1, "SELECT pg_sleep(10) /* w03_wire_cancel_$nonce */")
+            statement.setString(2, PgLifecycleDatabaseSettings.DATABASE)
+            statement.setString(3, PgLifecycleDatabaseSettings.CANDIDATE)
+            statement.setString(4, application)
+            statement.executeQuery().use { result ->
+                var rows = 0
+                var seen = false
+                var active = false
+                while (result.next()) {
+                    check(++rows <= 2) { "Synthetic activity witness exceeded its fixed bound." }
+                    check(result.getTimestamp(1).toInstant() == generation) { "Observer server generation changed." }
+                    check(result.getString(2) == PgLifecycleDatabaseSettings.DATABASE && result.getString(3) == PgLifecycleDatabaseSettings.OBSERVER)
+                    val observer = result.getInt(4)
+                    check(observer > 0 && result.getInt(5) == 1)
+                    if (observerPid == null) observerPid = observer
+                    check(observer == observerPid) { "Observer connection identity changed." }
+                    check(!result.getBoolean(6) && !result.wasNull()) { "Observer did not witness the unchanged server as primary." }
+                    val pid = result.getInt(7)
+                    if (result.wasNull()) {
+                        check(result.getTimestamp(8) == null)
+                    } else {
+                        check(!seen && pid > 0 && PgLifecycleDatabaseSession(pid, result.getTimestamp(8).toInstant()) == witnessed) {
+                            "Unexpected synthetic session or successor during active-query observation."
+                        }
+                        seen = true
+                    }
+                    active = result.getBoolean(9)
+                    check(!result.wasNull() && (!active || seen))
+                }
+                check(rows > 0) { "Observer health row was absent." }
+                seen && active
+            }
+        }
+
     override fun close() = connection.close()
 
     companion object {
         private val QUERY = """
             SELECT pg_postmaster_start_time(), current_database(), current_user, pg_backend_pid(), 1, pg_is_in_recovery(), a.pid, a.backend_start
+            FROM (SELECT 1) AS health
+            LEFT JOIN pg_stat_activity AS a
+              ON a.datname = ? AND a.usename = ? AND a.application_name = ? AND a.backend_type = 'client backend'
+        """.trimIndent()
+
+        // Return a bounded boolean, never the observed SQL text or an arbitrary server diagnostic.
+        private val ACTIVE_SLEEP_QUERY = """
+            SELECT pg_postmaster_start_time(), current_database(), current_user, pg_backend_pid(), 1, pg_is_in_recovery(), a.pid, a.backend_start,
+                   COALESCE(a.state = 'active' AND a.wait_event_type = 'Timeout' AND a.wait_event = 'PgSleep' AND a.query = ?, FALSE)
             FROM (SELECT 1) AS health
             LEFT JOIN pg_stat_activity AS a
               ON a.datname = ? AND a.usename = ? AND a.application_name = ? AND a.backend_type = 'client backend'

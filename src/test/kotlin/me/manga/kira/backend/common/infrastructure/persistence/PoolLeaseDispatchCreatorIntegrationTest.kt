@@ -482,6 +482,217 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
     }
 
     @Test
+    @Suppress("TooGenericExceptionCaught")
+    fun `real active query cancellation preserves native user request failure and RETURN waits for the foreign outer tail`() {
+        val firstFailure = AtomicReference<Throwable?>()
+        fun retain(failure: Throwable) {
+            if (firstFailure.compareAndSet(null, failure)) return
+            val first = requireNotNull(firstFailure.get())
+            if (first !== failure && first.suppressed.none { it === failure }) first.addSuppressed(failure)
+        }
+        fun <T> capture(action: () -> T): T = try {
+            action()
+        } catch (failure: Throwable) {
+            retain(failure)
+            throw failure
+        }
+        fun cleanup(action: () -> Unit) {
+            try {
+                action()
+            } catch (failure: Throwable) {
+                retain(failure)
+            }
+        }
+
+        try {
+            withOwnedCutPool(database.value) { f ->
+                capture {
+                    val connection = f.pool.connection
+                    var retainedStatement: Statement? = null
+                    try {
+                        val lease = ownedPoolLease(connection)
+                        val entry = f.entry(connection)
+                        val entitlement = ownedCutField(lease, "entitlement") as PoolLifecycle.LeaseEntitlement
+                        val original = Thread.currentThread()
+                        assertSame(original, ownedCutField(lease, "original"))
+                        assertSame(lease.state.epoch, lease.identity.epoch)
+                        assertTrue(entry.jdbc.currentPoolState(lease.state))
+                        val statement = connection.createStatement().also { retainedStatement = it }
+                        assertTrue(ownedCutNative(statement).javaClass.name.startsWith("com.zaxxer.hikari.pool.HikariProxy"))
+                        val identity = activeWireCancelIdentity(connection, statement)
+                        val nonce = UUID.randomUUID().toString()
+                        // Prepare the independent SQL connection and its identity before any query/cancel timing.
+                        database.value.observer(nonce).use { databaseObserver ->
+                            assertEquals(setOf(identity.session), databaseObserver.sample(identity.application))
+                            OwnedCallerTestScope().use { callers ->
+                                val ready = callers.gate()
+                                val tail = callers.gate()
+                                val executeReturned = AtomicBoolean()
+                                val queryDeadline = AtomicReference<PgLifecycleDatabaseDeadline?>()
+                                val witnessNanos = AtomicLong()
+                                val cancelNanos = AtomicLong()
+                                val cancelCalls = AtomicInteger()
+                                var cancellation: OwnedCallerTestCall<Boolean>? = null
+                                var returnObserver: OwnedCallerTestCall<Boolean>? = null
+                                try {
+                                    cancellation = callers.launch {
+                                        capture {
+                                            assertNotSame(original, Thread.currentThread())
+                                            assertThrows<SQLException> { connection.autoCommit }
+                                            assertThrows<SQLException> { lease.state.context.enter(lease.identity, PersistenceJdbcGuardCallKind.BUSINESS) }
+                                            assertNull(entitlement.prepareReturn(PersistenceTimeBudget.start(1_000)))
+                                            assertNull(entitlement.prepareEviction(PersistenceTimeBudget.start(1_000)))
+                                            CreatorOuterEndBarrier(
+                                                lease,
+                                                PersistenceJdbcGuardCallKind.CANCELLATION,
+                                                beforeIdleAssertions = {
+                                                    val deadline = requireNotNull(queryDeadline.get())
+                                                    while (!executeReturned.get()) deadline.pause()
+                                                    deadline.checkRemaining()
+                                                },
+                                            ) {
+                                                assertEquals(0L, lease.state.epoch.activeCancellations())
+                                                assertFalse(f.lifecycle.isAuthenticPoolCaller())
+                                                assertEquals(PoolShutdownInvocation.ACTIVE_POOL_FRAME, f.pool.shutdownInvocation())
+                                                assertTrue(PoolCallFrames.retainsLeaseTail(lease.state.epoch))
+                                                assertNull(entitlement.prepareReturn(PersistenceTimeBudget.start(1_000)))
+                                                tail.hold()
+                                            }.use { barrier ->
+                                                capture {
+                                                    ready.hold() // Interception is installed before the original caller starts SQL.
+                                                    witnessNanos.set(
+                                                        databaseObserver.awaitActiveSleep(
+                                                            identity.application,
+                                                            identity.session,
+                                                            nonce,
+                                                            requireNotNull(queryDeadline.get()),
+                                                        ) {
+                                                            firstFailure.get()?.let { throw it }
+                                                            assertFalse(executeReturned.get(), "The original query ended before the active PgSleep witness.")
+                                                        },
+                                                    )
+                                                    assertTrue(lease.state.epoch.foregroundActive())
+                                                    assertEquals(0L, lease.state.epoch.activeCancellations())
+                                                    assertEquals(1, cancelCalls.incrementAndGet())
+                                                    cancelNanos.set(System.nanoTime())
+                                                    statement.cancel() // One genuine upper -> stock Hikari -> lower/native foreign cancel.
+                                                    assertEquals(1, barrier.holds)
+                                                }
+                                            }
+                                            true
+                                        }
+                                    }
+                                    ready.awaitEntered()
+                                    queryDeadline.set(PgLifecycleDatabaseDeadline(identity.readMillis.toLong()))
+                                    val started = System.nanoTime()
+                                    ready.release()
+                                    try {
+                                        capture {
+                                            val failure = assertThrows<SQLException> {
+                                                statement.executeQuery("SELECT pg_sleep(10) /* w03_wire_cancel_$nonce */").use {
+                                                    error("The original pg_sleep returned normally instead of throwing the native cancellation failure.")
+                                                }
+                                            }
+                                            val observed = System.nanoTime()
+                                            assertActiveWireCancelFailure(failure)
+                                            assertEquals(1, cancelCalls.get())
+                                            val witnessed = witnessNanos.get()
+                                            val cancelled = cancelNanos.get()
+                                            assertTrue(witnessed - started > 0 && cancelled - witnessed > 0 && observed - cancelled > 0)
+                                            assertTrue(observed - started < TimeUnit.MILLISECONDS.toNanos(identity.readMillis.toLong()))
+                                        }
+                                    } finally {
+                                        executeReturned.set(true) // Actual upper execute/guard returned; never a native/core receipt write.
+                                    }
+                                    tail.awaitEntered()
+                                    assertFalse(lease.state.context.hasCurrentFrame())
+                                    assertFalse(lease.state.epoch.foregroundActive())
+                                    assertEquals(0L, lease.state.epoch.activeCancellations())
+                                    assertEquals(1L, creatorTailCount(lease))
+                                    assertEquals(1L, f.lifecycle.actorSnapshot().activeOperations)
+                                    assertEquals(1L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+                                    statement.close() // Original borrower cleanup, only after the native cancellation exception was checked.
+                                    returnObserver = callers.launch {
+                                        try {
+                                            capture {
+                                                awaitLifecycleFact {
+                                                    firstFailure.get()?.let { throw it }
+                                                    val state = creatorEpochState(lease) // Seal publishes the preceding exact transfer association.
+                                                    val transfer = ownedCutField(lease, "transfer") as? PersistenceJdbcPoolTransfer
+                                                    transfer != null && !lease.state.epoch.foregroundActive() && ownedCutField(state, "sealed") == true
+                                                }
+                                                val transfer = ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer
+                                                val operation = ownedCutField(entitlement, "prepared") as PoolLifecycle.Operation
+                                                assertSame(original, ownedCutField(operation.frame, "caller"))
+                                                assertEquals(PoolCallKind.RETURN, operation.frame.kind)
+                                                assertTrue(operation.frame.active())
+                                                assertSame(lease.state, transfer.source)
+                                                assertEquals(PersistenceJdbcPoolTransfer.Kind.RETURN, transfer.kind)
+                                                assertSame(operation.frame.budget, transfer.budget)
+                                                assertEquals(TimeUnit.SECONDS.toNanos(1), ownedCutField(transfer.budget, "allowanceNanos"))
+                                                assertFalse(transfer.consented())
+                                                assertFalse(transfer.actualEnded())
+                                                assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+                                                assertEquals(2L, f.lifecycle.actorSnapshot().activeOperations)
+                                                assertEquals(1L, creatorTailCount(lease))
+                                                assertFalse(lease.state.epoch.sealedAndEnded())
+                                                assertFalse(lease.completion.quiescent())
+                                                assertFalse(entry.jdbc.postOpeningCallsEnded())
+                                                assertEquals(1L, transfer.budget.remainingMillis(1))
+                                                tail.release()
+                                                assertEquals(1L, transfer.budget.remainingMillis(1), "The tail release must remain inside the original RETURN allowance.")
+                                            }
+                                        } finally {
+                                            tail.release() // Failure-safe release too; no replacement RETURN budget.
+                                        }
+                                        true
+                                    }
+                                    connection.close()
+                                    assertTrue(requireNotNull(cancellation).value())
+                                    assertTrue(requireNotNull(returnObserver).value())
+                                    val transfer = ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer
+                                    assertTrue(transfer.consented())
+                                    assertTrue(transfer.actualEnded())
+                                    assertTrue(lease.state.epoch.sealedAndEnded())
+                                    assertTrue(lease.completion.quiescent())
+                                    assertEquals(0L, creatorTailCount(lease))
+                                    assertEquals(0L, f.lifecycle.actorSnapshot().activeOperations)
+                                    assertEquals(0L, f.lifecycle.actorSnapshot().futureLeaseEntries)
+                                    assertFalse(entry.retirementRequested.get())
+                                    f.pool.connection.use { successor ->
+                                        assertSame(entry, f.entry(successor))
+                                        assertNotSame(lease.state.epoch, ownedPoolLease(successor).state.epoch)
+                                        successor.createStatement().use { next -> assertEquals(identity, activeWireCancelIdentity(successor, next)) }
+                                        assertEquals(1, ownedPoolScalar(successor, "SELECT 1"))
+                                    }
+                                } catch (failure: Throwable) {
+                                    retain(failure)
+                                } finally {
+                                    ready.release()
+                                    tail.release()
+                                    // Scope.close joins, but does not retrieve action failures. Surface both on every path.
+                                    cancellation?.let { call -> cleanup { assertTrue(call.value()) } }
+                                    returnObserver?.let { call -> cleanup { assertTrue(call.value()) } }
+                                }
+                                firstFailure.get()?.let { throw it }
+                            }
+                        }
+                    } catch (failure: Throwable) {
+                        retain(failure)
+                    } finally {
+                        cleanup { retainedStatement?.close() }
+                        cleanup { connection.close() }
+                    }
+                    firstFailure.get()?.let { throw it }
+                }
+            }
+        } catch (failure: Throwable) {
+            retain(failure)
+        }
+        firstFailure.get()?.let { throw it }
+    }
+
+    @Test
     fun `real post core outer tail refuses reentrant self wait and remains in exact terminal and loan proofs`() = withOwnedCutPool(database.value) { f ->
         val connection = f.pool.connection
         val lease = ownedPoolLease(connection)
@@ -683,6 +894,48 @@ internal class PoolLeaseDispatchCreatorIntegrationTest {
     }
 }
 
+private data class ActiveWireCancelIdentity(val session: PgLifecycleDatabaseSession, val application: String, val readMillis: Int)
+
+/** Fixed synthetic identity/settings projection; no raw/delegate SQL or endpoint diagnostics. */
+private fun activeWireCancelIdentity(connection: Connection, statement: Statement): ActiveWireCancelIdentity {
+    assertTrue(connection.autoCommit)
+    assertEquals(0, statement.queryTimeout)
+    val readMillis = connection.networkTimeout
+    assertEquals(3_000, readMillis, "Keep the existing owned-pool physical read cap.")
+    return statement.executeQuery(
+        """
+        SELECT a.pid, a.backend_start, current_setting('application_name'), current_database(), current_user,
+               current_setting('statement_timeout'), current_setting('transaction_timeout'),
+               current_setting('idle_in_transaction_session_timeout'), current_setting('idle_session_timeout'), current_setting('lock_timeout')
+        FROM pg_stat_activity AS a WHERE a.pid = pg_backend_pid()
+        """.trimIndent(),
+    ).use { result ->
+        assertTrue(result.next())
+        val pid = result.getInt(1)
+        assertTrue(pid > 0 && !result.wasNull())
+        val session = PgLifecycleDatabaseSession(pid, requireNotNull(result.getTimestamp(2)).toInstant())
+        val application = result.getString(3)
+        assertTrue(application.matches(Regex("w03c_[0-9a-f-]{36}")))
+        assertEquals(PgLifecycleDatabaseSettings.DATABASE, result.getString(4))
+        assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, result.getString(5))
+        for (column in 6..10) assertTrue(result.getString(column) == "0", "An applicable synthetic-session timer was enabled.")
+        assertFalse(result.next())
+        ActiveWireCancelIdentity(session, application, readMillis)
+    }
+}
+
+/** The unwrapped server exception/reason, not a matching SQLState from a JDBC timer or injected exception. */
+private fun assertActiveWireCancelFailure(failure: SQLException) {
+    assertEquals("org.postgresql.util.PSQLException", failure.javaClass.name)
+    assertEquals("57014", failure.sqlState)
+    val server = requireNotNull(failure.javaClass.getMethod("getServerErrorMessage").invoke(failure))
+    assertEquals("org.postgresql.util.ServerErrorMessage", server.javaClass.name)
+    assertTrue(
+        server.javaClass.getMethod("getMessage").invoke(server) == "canceling statement due to user request",
+        "Expected the native server user-request cancellation reason, not a timeout or transport substitute.",
+    )
+}
+
 private enum class CreatorTailStage {
     STORE_ENTERED,
     LEASE_OBTAINED,
@@ -866,7 +1119,12 @@ private class ActualCreatorCall(private val lease: PersistenceJdbcLease, val dis
 }
 
 /** Intercept only one exact pool-TL removal. All real values stay in the original ThreadLocal. */
-private class CreatorOuterEndBarrier(private val lease: PersistenceJdbcLease, private val kind: PersistenceJdbcGuardCallKind, private val held: () -> Unit) :
+private class CreatorOuterEndBarrier(
+    private val lease: PersistenceJdbcLease,
+    private val kind: PersistenceJdbcGuardCallKind,
+    private val beforeIdleAssertions: (() -> Unit)? = null,
+    private val held: () -> Unit,
+) :
     ThreadLocal<PoolCallFrame?>(),
     AutoCloseable {
     private val caller = Thread.currentThread()
@@ -895,6 +1153,7 @@ private class CreatorOuterEndBarrier(private val lease: PersistenceJdbcLease, pr
                 check(ownedCutField(frame, "phase").toString() == "ENDING")
                 check(ticket.dispatch.actualEnded() && ticket.call.creatorGuardEnded(ticket))
                 check(PersistenceJdbcDispatch.current() == null && !lease.state.context.hasCurrentFrame())
+                beforeIdleAssertions?.invoke() // Only the active-wire case must first rendezvous with the original execute's actual guard return.
                 check(!lease.state.epoch.foregroundActive() && lease.state.epoch.activeCancellations() == 0L)
                 check(!lease.state.epoch.outerTailsEnded() && !ticket.actualEnded())
                 val stack = Thread.currentThread().stackTrace
