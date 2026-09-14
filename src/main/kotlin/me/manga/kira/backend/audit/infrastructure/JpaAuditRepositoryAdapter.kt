@@ -17,6 +17,11 @@ import org.springframework.stereotype.Repository
 class JpaAuditRepositoryAdapter(private val jpa: SpringDataAuditLogRepository) : AuditRepository {
 
     override fun record(entry: NewAuditEntry) {
+        // Fail closed for the entire raw namespace, including unknown and W06-excluded identities.
+        // This ordinary route has neither complaint metadata nor a phase-bound capacity allocation.
+        require(!entry.action.startsWith("COMPLAINT_")) {
+            "Complaint audit writes are not available through the ordinary route."
+        }
         jpa.save(
             AuditLogEntity(
                 actorUserId = entry.actorUserId,

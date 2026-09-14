@@ -5,10 +5,12 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import me.manga.kira.backend.audit.domain.AuditAction
 import me.manga.kira.backend.audit.domain.AuditRepository
+import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
 import me.manga.kira.backend.audit.domain.NewAuditEntry
 import me.manga.kira.backend.security.CurrentUser
 import org.springframework.stereotype.Service
 import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -40,6 +42,9 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
         detail: Map<String, Any?> = emptyMap(),
         actorUserId: UUID? = currentActor(),
     ) {
+        require(!action.wire.startsWith("COMPLAINT_")) {
+            "Complaint audit writes are not available through the ordinary route."
+        }
         audit.record(
             NewAuditEntry(
                 actorUserId = actorUserId,
@@ -50,6 +55,40 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
                 createdAt = at,
             ),
         )
+    }
+
+    /** Dormant, I/O-free preparation with explicit time; it cannot write or allocate audit capacity. */
+    internal fun prepareComplaintMutation(mutation: ComplaintAuditMutation, at: Instant): PreparedComplaintAudit {
+        val detail: Map<String, Any?> = when (mutation) {
+            is ComplaintAuditMutation.Created,
+            is ComplaintAuditMutation.Replied,
+            is ComplaintAuditMutation.ContentEdited,
+            -> mapOf("version" to mutation.version)
+
+            is ComplaintAuditMutation.StatusChanged -> mapOf(
+                "version" to mutation.version,
+                "fromStatus" to mutation.fromStatus.name,
+                "toStatus" to mutation.toStatus.name,
+            )
+
+            is ComplaintAuditMutation.Closed -> mapOf(
+                "version" to mutation.version,
+                "fromStatus" to mutation.fromStatus.name,
+                "toStatus" to mutation.toStatus.name,
+            )
+        }
+        val detailJson = encode(detail)
+        requireComplaintAuditPayloadSize(detailJson)
+        return PreparedMutationAudit(mutation, detailJson, at)
+    }
+
+    private class PreparedMutationAudit(mutation: ComplaintAuditMutation, override val detailJson: String, override val createdAt: Instant) :
+        PreparedComplaintAudit {
+        override val action = mutation.action
+        override val subject = mutation.subject
+        override val actor = mutation.actor
+
+        override fun toString(): String = "PreparedComplaintAudit(action=${action.wire}, redacted)"
     }
 
     private fun currentActor(): UUID? = currentUser.getOrNull()?.id
