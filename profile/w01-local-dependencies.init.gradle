@@ -1,0 +1,77 @@
+import java.security.MessageDigest
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.tasks.testing.Test
+
+def runPath = System.getenv('W01_RUN')
+if (!runPath) throw new GradleException('W01_RUN is required')
+def run = new File(runPath).canonicalFile
+def repo = new File(run, 'repository').canonicalFile
+def sha256 = { File f ->
+    MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString()
+}
+new File(run, 'local-inputs.sha256').eachLine { line ->
+    def fields = line.split(/\s+/, 2)
+    def file = new File(repo, fields[1])
+    if (!file.isFile() || sha256(file) != fields[0]) {
+        throw new GradleException('W01 snapshot digest mismatch: ' + fields[1])
+    }
+}
+def expectedJvm = [
+    'source-contract-jvm-0.1.0.jar':
+        '9eeb54df5d09f14ebe612b1255721fa536c2517502b05cbd815e8b98370e0b7d',
+    'source-engine-jvm-0.1.0.jar':
+        'e2a20c63ab115dabfc75fc6a0ea33a36fd6c272c6ee22ed17ef2aa9cab840a2d'
+]
+
+gradle.beforeProject { p ->
+    if (p.path != ':' || p.rootProject.name != 'kira-backend') {
+        throw new GradleException('This init script is backend-only')
+    }
+    if (p.providers.gradleProperty('kiraUseMavenLocal').orNull == 'true') {
+        throw new GradleException('Use the frozen snapshot, not broad mavenLocal()')
+    }
+    p.layout.buildDirectory.set(new File(run, 'backend-build'))
+    p.repositories {
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = 'W01FrozenLocalSourceInputs'
+                    url = repo.toURI()
+                    // Require the verified KMP variant model; no artifact-only/POM fallback.
+                    metadataSources { gradleMetadata() }
+                }
+            }
+            // Excludes this group from every other current/future project repository.
+            // Unexpected source coordinates therefore fail locally, not via fallback.
+            filter { includeGroup('me.manga.kira.source') }
+        }
+    }
+    def evidence = p.tasks.register('w01SourceClasspathEvidence') {
+        doLast {
+            ['compileClasspath', 'testCompileClasspath', 'testRuntimeClasspath'].each { name ->
+                def found = [:]
+                p.configurations.getByName(name).incoming.artifacts.artifacts.each { artifact ->
+                    def id = artifact.id.componentIdentifier
+                    if (id instanceof ModuleComponentIdentifier &&
+                            id.group == 'me.manga.kira.source') {
+                        def digest = sha256(artifact.file)
+                        if (id.version != '0.1.0' || expectedJvm[artifact.file.name] != digest) {
+                            throw new GradleException('Unexpected W01 source artifact: ' + id)
+                        }
+                        found[artifact.file.name] = digest
+                        println("W01_LOCAL_INPUT ${name} ${id} ${digest} ${artifact.file}")
+                    }
+                }
+                if (found != expectedJvm) {
+                    throw new GradleException('Incomplete W01 source classpath: ' + name)
+                }
+            }
+        }
+    }
+    p.tasks.withType(Test).configureEach {
+        maxParallelForks = 1
+        maxHeapSize = '512m'
+        dependsOn(evidence)
+    }
+}

@@ -1,0 +1,24 @@
+{
+  "schema": "app29-active-wire-cancel-public-v1",
+  "authorized": true,
+  "acquisition_authorization": "PUBLIC_ACTIVE_WIRE_CANCEL1_STATIC2_TEST1_GRADLE_NATIVE05_W01_DOCKER_ONLY",
+  "attempts": 1,
+  "backend_sha": "a6dbcb2bc096343e593d00a6da12d2512354e41c",
+  "backend_tree": "8cc1ca6dfbd648fd12498ce874516ba6ee44d72c",
+  "budgets": {
+    "job_minutes": 25,
+    "controller_seconds": 1200,
+    "preflight_seconds": 120,
+    "validation_seconds": 900,
+    "cleanup_seconds": 180
+  },
+  "tool_sha256": {
+    "ci/app29-gate-b.py": "a6946dfc571f6930722bfbb47286a26cf67142960915231268a5565058661df5",
+    ".github/workflows/app29-gate-b.yml": "60dcc934d83926cddb89be0bdf41e79c69bcba2c81d24f1d97af2a647bccc50e",
+    "profile/profile.json": "0475c8625228f371c81e4bc183aed927f66bdcd224306fb647d7544d901d88eb",
+    "profile/profile.init.gradle": "a63113517d8a52d542a2662f36f835c0430787ba5faea6a78c0800653e97a449",
+    "ci/app29_owned_children.py": "56b66cfe8799123c719eaf048f81c542e5e4129d71c490cae99a38396c2a3385",
+    "profile/w01-local-dependencies.init.gradle": "429961b98254b89f7ce1d7ba1efa61b8cba28a3bae35353bf3a8ba85f4a1c839",
+    "inputs/local-inputs.sha256": "c67fcc5fe64a9a795373c4683c7c1edd6407146e3cd07609fa7018a8a98db79a"
+  }
+}
