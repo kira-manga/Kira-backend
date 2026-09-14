@@ -1,0 +1,106 @@
+name: App29 Active Wire Cancel1 (public, unqualified)
+on:
+  push:
+    branches: [remediation/app-29-active-wire-cancel-validation-01]
+    paths:
+      - .github/workflows/app29-gate-b.yml
+      - ci/app29-gate-b.py
+      - profile/profile.json
+      - profile/profile.init.gradle
+      - ci/app29-gate-b.request.json
+permissions:
+  contents: read
+concurrency:
+  # Stable App29 serialization key; its legacy label is not a privacy assertion.
+  group: app29-gate-b-private-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  diagnostics:
+    if: github.event.repository.private == false && github.repository == 'kira-manga/Kira-backend' && github.ref == 'refs/heads/remediation/app-29-active-wire-cancel-validation-01' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out the exact public control/input carrier
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+          fetch-depth: 2
+          fetch-tags: false
+          submodules: false
+      - name: Require separately authorized one-run source and exact20 inputs
+        id: target
+        run: python3 -B control/ci/app29-gate-b.py --emit-target
+      - name: Check out only the exact public Backend source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: kira-manga/Kira-backend
+          ref: ${{ steps.target.outputs.backend_sha }}
+          path: backend
+          persist-credentials: false
+          fetch-depth: 1
+          fetch-tags: false
+          submodules: false
+      - name: Select hosted Temurin21
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Check only two Kotlin files and run the literal active wire-cancel method
+        id: validation
+        shell: bash
+        run: |
+          umask 077
+          python3 -B control/ci/app29-gate-b.py
+      - name: Retain only bounded current-run files after positive owned-writer absence
+        if: always() && steps.validation.outputs.retention_ready == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/result.json
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/request.json
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/jdk.json
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/before-source-hashes.json
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/after-source-hashes.json
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/owned-containers.json
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/test-results/test/TEST-me.manga.kira.backend.common.infrastructure.persistence.PoolLeaseDispatchCreatorIntegrationTest.xml
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/reports/active-wire-cancel-01/effective-classpath.txt
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/reports/active-wire-cancel-01/class-load.txt
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/reports/active-wire-cancel-01/worker-runtime.txt
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/gradle-test.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/gradle-stop-immediate.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/gradle-stop-final.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/container-events.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/image-0.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/image-1.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/jdk-version.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/docker-version.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-before.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-after-cleanup.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-final.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/remove-owned-containers.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-0.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-1.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-2.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-3.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-4.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-5.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-6.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-7.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-8.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-9.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-10.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-11.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-12.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-13.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-14.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-15.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-16.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-17.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-18.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-19.log
+            ${{ runner.temp }}/app29-active-wire-cancel-01-${{ github.run_id }}-${{ github.run_attempt }}/reports/containers-normal-20.log
+          retention-days: 3
+          if-no-files-found: error
