@@ -5,6 +5,7 @@ resources:
   - namespace.yaml
   - service-account.yaml
   - config-map.yaml
+  - tutorial-media-pvc.yaml
   - deployment.yaml
   - service.yaml
   - migration-job.yaml

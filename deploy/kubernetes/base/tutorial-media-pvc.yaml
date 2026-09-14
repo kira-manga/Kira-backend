@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kira-tutorial-media
+  annotations:
+    # Both selections require an owner-approved overlay; these are NOT reclaim-policy settings.
+    kira.manga/storage-class-state: UNRESOLVED
+    kira.manga/storage-capacity-state: UNRESOLVED
+spec:
+  volumeMode: Filesystem
+  accessModes: [ReadWriteMany]
+  # Schema-valid sentinels, NOT an installed class or usable capacity. Never apply the base.
+  storageClassName: replace-with-installed-rwx-class
+  resources:
+    requests:
+      storage: "1" # One-byte TEMPLATE ONLY sentinel; the overlay must select real capacity.

@@ -8,11 +8,13 @@ import me.manga.kira.backend.sourceconfig.api.dto.PublishResponse
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
 import org.springframework.http.HttpHeaders
 import org.springframework.security.core.annotation.AuthenticationPrincipal
+import org.springframework.util.MultiValueMap
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 /**
@@ -28,7 +30,12 @@ import org.springframework.web.bind.annotation.RestController
 class AdminDocumentsController(private val sourceAdminService: SourceAdminService, private val documentResponseWriter: DocumentResponseWriter) {
 
     @GetMapping
-    fun list(): List<DocumentSummaryResponse> = sourceAdminService.listDocuments().map { DocumentSummaryResponse.of(it) }
+    fun list(@RequestParam parameters: MultiValueMap<String, String>, response: HttpServletResponse): List<DocumentSummaryResponse> {
+        val page = AdminHistoryParameters.parse(parameters, Long.MAX_VALUE)
+        val window = sourceAdminService.listDocuments(page.size, page.beforeRevision)
+        window.nextBeforeRevision?.let { response.setHeader(AdminHistoryParameters.NEXT_BEFORE_HEADER, it.toString()) }
+        return window.items.map { DocumentSummaryResponse.of(it) }
+    }
 
     @GetMapping("/{revision}")
     fun getRaw(

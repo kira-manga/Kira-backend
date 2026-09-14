@@ -1,0 +1,14 @@
+# Enabled only by the reviewed server3 topology (prod,server3). Values must be provisioned/observed;
+# no broad Docker CIDR or guessed host address is trusted. Environment overrides are validated after binding.
+server:
+  forward-headers-strategy: none
+
+kira:
+  server3:
+    host-peer: ${KIRA_SERVER3_HOST_PEER}
+    admin-address: ${KIRA_SERVER3_ADMIN_ADDRESS}
+  security:
+    trust-forwarded-headers: true
+    trusted-proxies:
+      - ${KIRA_SERVER3_HOST_PEER}
+      - ${KIRA_SERVER3_ADMIN_ADDRESS}

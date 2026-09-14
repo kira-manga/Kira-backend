@@ -18,6 +18,8 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
         api: String,
         mutate: (me.manga.kira.backend.sourceconfig.domain.model.SourceConfig) -> me.manga.kira.backend.sourceconfig.domain.model.SourceConfig = { it },
     ) {
+        // These tests also cover PENDING/404 reads, so only publication scenarios opt into COMPLETE.
+        if (bootstrapReceipt == null) bootstrapInitialCatalog()
         val base = SourceConfigFixtures.validGenericSource(api)
         createSource(mutate(base)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
@@ -27,6 +29,7 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
 
     @Test
     fun `a single source summary exposes every field`() {
+        val position = initialGenericApis.size
         publishNew("Fields") {
             it.copy(
                 displayName = "Fields Display",
@@ -37,32 +40,32 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
         }
         getPublicSources().andExpect {
             status { isOk() }
-            jsonPath("$.length()") { value(1) }
-            jsonPath("$[0].api") { value("Fields") }
-            jsonPath("$[0].displayName") { value("Fields Display") }
-            jsonPath("$[0].language") { value("ar") }
-            jsonPath("$[0].engine") { value("generic") }
-            jsonPath("$[0].lifecycle") { value("active") }
-            jsonPath("$[0].siteState") { value("ADULT_18_PLUS") }
-            jsonPath("$[0].adult") { value(true) }
-            jsonPath("$[0].baseUrl") { value("https://example.com") }
-            jsonPath("$[0].iconRemoteUrl") { value("https://cdn.example.com/fields.png") }
-            jsonPath("$[0].revisionNumber") { value(1) }
-            jsonPath("$[0].publishedAt") { exists() }
+            jsonPath("$.length()") { value(position + 1) }
+            jsonPath("$[$position].api") { value("Fields") }
+            jsonPath("$[$position].displayName") { value("Fields Display") }
+            jsonPath("$[$position].language") { value("ar") }
+            jsonPath("$[$position].engine") { value("generic") }
+            jsonPath("$[$position].lifecycle") { value("active") }
+            jsonPath("$[$position].siteState") { value("ADULT_18_PLUS") }
+            jsonPath("$[$position].adult") { value(true) }
+            jsonPath("$[$position].baseUrl") { value("https://example.com") }
+            jsonPath("$[$position].iconRemoteUrl") { value("https://cdn.example.com/fields.png") }
+            jsonPath("$[$position].revisionNumber") { value(1) }
+            jsonPath("$[$position].publishedAt") { exists() }
         }
     }
 
     @Test
     fun `the list is ordered by document position not by api`() {
-        // Created Zeta first (position 0) then Alpha (position 1) — document order is by position, so
-        // the alphabetically-later "Zeta" must come FIRST.
+        // Both append after the initial catalog. The alphabetically-later Zeta must precede Alpha.
+        val position = initialGenericApis.size
         publishNew("Zeta")
         publishNew("Alpha")
         getPublicSources().andExpect {
             status { isOk() }
-            jsonPath("$.length()") { value(2) }
-            jsonPath("$[0].api") { value("Zeta") }
-            jsonPath("$[1].api") { value("Alpha") }
+            jsonPath("$.length()") { value(position + 2) }
+            jsonPath("$[$position].api") { value("Zeta") }
+            jsonPath("$[${position + 1}].api") { value("Alpha") }
         }
     }
 
@@ -76,8 +79,8 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
         }
 
         getPublicSources("lifecycle" to "active").andExpect {
-            jsonPath("$.length()") { value(1) }
-            jsonPath("$[0].api") { value("Act") }
+            jsonPath("$.length()") { value(initialGenericApis.size + 1) }
+            jsonPath("$[${initialGenericApis.size}].api") { value("Act") }
         }
         getPublicSources("lifecycle" to "disabled").andExpect {
             jsonPath("$.length()") { value(1) }
@@ -90,7 +93,7 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
         getPublicSources("lifecycle" to "disabled,removed").andExpect {
             jsonPath("$.length()") { value(2) }
         }
-        getPublicSources().andExpect { jsonPath("$.length()") { value(3) } }
+        getPublicSources().andExpect { jsonPath("$.length()") { value(initialGenericApis.size + 3) } }
     }
 
     @Test
@@ -103,8 +106,8 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
             ),
         ).andExpect { status { isOk() } }
         getPublicSources("engine" to "generic").andExpect {
-            jsonPath("$.length()") { value(1) }
-            jsonPath("$[0].api") { value("Gen") }
+            jsonPath("$.length()") { value(initialGenericApis.size + 1) }
+            jsonPath("$[${initialGenericApis.size}].api") { value("Gen") }
         }
         getPublicSources("engine" to "legacy").andExpect {
             jsonPath("$.length()") { value(0) }
@@ -127,13 +130,14 @@ class PublicSourcesIT : AbstractAdminSourceIT() {
 
     @Test
     fun `a draft-only source never appears in the list`() {
-        // A draft (never published) plus a published source: only the published one is listed.
+        bootstrapInitialCatalog()
+        // A draft plus a later published source: only the latter is added to the initial catalog.
         createSource(SourceConfigFixtures.validGenericSource("Draft")).andExpect { status { isCreated() } }
         publishNew("Pub")
         getPublicSources().andExpect {
             status { isOk() }
-            jsonPath("$.length()") { value(1) }
-            jsonPath("$[0].api") { value("Pub") }
+            jsonPath("$.length()") { value(initialGenericApis.size + 1) }
+            jsonPath("$[${initialGenericApis.size}].api") { value("Pub") }
         }
     }
 

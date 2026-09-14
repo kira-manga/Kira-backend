@@ -26,6 +26,6 @@ class SourceConfigValidationConfig {
 
     companion object {
         /** Lets a stored "valid" be recognized as stale after a rule change (PLAN §5 `rules_version`). */
-        const val RULES_VERSION = "schema1/rules-2026.07"
+        const val RULES_VERSION = "schema1/rules-2026.09-hdr"
     }
 }

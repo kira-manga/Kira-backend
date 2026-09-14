@@ -60,26 +60,47 @@ curl --fail-with-body -sS "$KIRA_API_URL/auth/me" \
 Tokens expire after 60 minutes by default. Log in again when a token expires. There is no refresh-token
 endpoint in v1.
 
-## 3. Seed the source catalog
+## 3. Bootstrap the source catalog
 
-A new database has no published source document. Import the real bundled test fixture once as the
-initial migration:
+On a fresh eligible `PENDING` catalog, **bootstrap before ordinary source authoring**. Review and
+freeze a 45-source raw JSON file against the [approved initial reference](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap);
+do not seed through ordinary import or substitute the historical `bundled-full.json` test fixture for
+owner-reviewed input. That corrected fixture retains revision-4 provenance despite its revision-6-compatible
+generic content; it is not the current App bundle or a replacement for a COMPLETE origin's original bytes.
+Existing populated installations may be `RECONCILIATION_REQUIRED` and need separately reviewed owner rollout,
+not automatic adoption/reset. A null publication pointer alone is not bootstrap eligibility.
 
 ```bash
-curl --fail-with-body -sS -X POST "$KIRA_API_URL/admin/sources/import-bundled" \
+# Use the already reviewed, frozen file; do not regenerate or normalize it for submission/retry.
+BOOTSTRAP_JSON='/absolute/path/to/owner-reviewed-frozen-45-source.json'
+curl --fail-with-body -sS -X POST "$KIRA_API_URL/admin/source-catalog-v2/cutover/import-bundled" \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data-binary @src/test/resources/fixtures/bundled-full.json | jq
+  -H 'X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES' \
+  --data-binary @"$BOOTSTRAP_JSON" | jq
 ```
 
-The import is transactional: validation failure returns 422 and writes nothing; a successful changed
-import creates exactly one whole-document snapshot. Incoming document revision/timestamp values are
-ignored because the backend allocates them.
+The exact single confirmation header and **5 MiB (5,242,880 actual bytes)** cap apply. Only PENDING
+uses strict UTF-8/JSON and the full ordered/default-expanded generic reference policy. One transaction
+stages the reviewed 45 source definitions, withholds the 33 legacy definitions, and publishes one v1
+snapshot plus one signed v2 catalog containing the approved 12 generic sources. Incoming document
+revision/time are provenance, not allocation authority; transactional failure rolls back, but sequence
+gaps are legal. See the [bootstrap API](API.md#initial-catalog-bootstrap) for exact errors and receipt.
 
-Do not use routine re-import as a substitute for normal source editing. Existing draft-only sources are
-reported in `skippedDraft` and are never replaced or published. Import adopts payload order for every
-source in the payload, moves catalog-only sources after that ordered set, reports changed positions in
-`reordered`, and creates at most one signed snapshot for the complete transaction.
+Success is **200 with the immutable nine-field origin receipt**, not an ordinary import summary.
+Check its policy/reference/payload identities; the equal origin document/catalog revisions have
+separate v1/v2 checksums, with the original time and actor. Retain the receipt and exact request file:
+after COMPLETE, identical original bytes return that receipt before current parser/reference policy,
+even after later catalog changes; any byte difference, including whitespace, conflicts. `jq` above
+formats the response only. Receipt/status alone is not [signed delivery or app-activation proof](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist).
+GET cutover is advisory, not payload approval or an admission reservation; the old confirmation-only
+POST is nonmutating 409.
+
+**Later ordinary import** uses `POST /api/v1/admin/sources/import-bundled` only after COMPLETE,
+including no-op calls; normal materialization is also COMPLETE-gated. Do not use routine re-import as
+a substitute for normal source editing. Existing draft-only sources are reported in `skippedDraft`
+and are never replaced or published. Import adopts payload order, retains catalog-only heads afterward,
+reports changed positions in `reordered`, and creates at most one signed snapshot per transaction.
 
 ## 4. Read the public API
 
@@ -162,8 +183,9 @@ last enabled admin.
 
 ## 6. Use the development completion API
 
-The dev profile enables the explicit echo provider. Production must configure the HTTPS provider and
-all admission/retention controls described in [`SECURITY.md`](SECURITY.md):
+The dev profile enables the explicit echo provider and configures `echo-1` as its default model.
+Production must configure the HTTPS provider, an explicit `KIRA_COMPLETION_DEFAULTMODEL`, and all
+admission/retention controls described in [`SECURITY.md`](SECURITY.md):
 
 ```bash
 COMPLETION_JSON=$(curl --fail-with-body -sS -X POST "$KIRA_API_URL/completions" \
@@ -179,13 +201,19 @@ curl --fail-with-body -sS "$KIRA_API_URL/completions?page=0&size=20" \
   -H "Authorization: Bearer $USER_TOKEN" | jq
 ```
 
-A supplied `model` must be 128 characters or fewer; longer input returns 400 `MODEL_TOO_LONG` before
-anything is persisted.
+A supplied `model` must be 128 JVM UTF-16 units or fewer; longer input, including all-whitespace
+input, returns 400 `MODEL_TOO_LONG` before anything is persisted. Omitted/null/empty/whitespace-only
+models use the configured default; nonblank overrides and defaults are preserved exactly. The native
+environment key is `KIRA_COMPLETION_DEFAULTMODEL` (no underscore between DEFAULT and MODEL).
 
 ## 7. Edit and publish a source
 
 Source content is immutable revision history. The normal workflow is: fetch a published revision,
 edit its `config`, create a new draft revision, inspect validation, then publish.
+Ordinary publication requires **COMPLETE**; a `RECONCILIATION_REQUIRED` installation needs a separately
+owner-reviewed reconciliation/upgrade path first. For a stale installed Azora, start from its CURRENT
+content and preserve unrelated fields/lifecycle/order; see the
+[phase-qualified correction runbook](MIGRATION_BUNDLED_TO_REMOTE.md#correcting-an-installed-stale-azora-revision).
 
 ```bash
 SOURCE_API='Azora'
@@ -265,6 +293,9 @@ published engine is `generic`. Read the grace-window rules before using terminal
   for bundled import, and a separate completion prompt character cap.
 - Use Redis coordination for authentication and completion admission whenever replica count exceeds
   one. Production startup rejects an unsafe multi-instance memory configuration.
+- Leave completion disabled or supply its HTTPS provider settings and a nonblank
+  `KIRA_COMPLETION_DEFAULTMODEL` of at most 128 UTF-16 units. There is no implicit production model;
+  verify the chosen model's availability and authorization with the provider separately.
 - Enable Ed25519 document signing and supply the active PKCS#8 private key, matching X.509 public key,
   and key id from the deployment secret store. See `SOURCE_DOCUMENT_SIGNING.md`.
 - Verify `kira.config.bundled-revision-floor` against the revision in the shipping app before cutover.

@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test
  * and the public per-api route (Phase-7 extension).
  */
 class RetiredSourceVisibilityIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     private fun toRetired(api: String, legacy: Boolean) {
         val model =

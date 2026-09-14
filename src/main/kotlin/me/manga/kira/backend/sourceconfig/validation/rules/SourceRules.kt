@@ -13,15 +13,6 @@ import me.manga.kira.backend.sourceconfig.validation.sourcePath
  */
 object SourceRules {
 
-    /** Hard-denied header names, case-insensitive (PLAN §8 rule 32a). */
-    private val FORBIDDEN_HEADER_NAMES = setOf("cookie", "set-cookie", "proxy-authorization")
-
-    /** Exact sensitive header names (PLAN §8 rule 32b). */
-    private val SENSITIVE_HEADER_NAMES = setOf("authorization", "x-api-key", "api-key", "x-auth-token")
-
-    /** Substrings that make ANY header name sensitive (PLAN §8 rule 32b). */
-    private val SENSITIVE_HEADER_SUBSTRINGS = listOf("token", "secret", "password")
-
     fun check(source: SourceConfig, ctx: RuleContext, findings: Findings) {
         val base = sourcePath(source.api)
 
@@ -70,46 +61,33 @@ object SourceRules {
 
     private fun checkHeaders(source: SourceConfig, ctx: RuleContext, findings: Findings, base: String) {
         for ((name, value) in source.headers) {
-            val normalized = name.trim()
-            if (name != normalized || !isHttpFieldName(normalized)) {
-                findings.error(
-                    ValidationCodes.HEADER_NAME_INVALID,
-                    "$base.headers",
-                    "header names must be non-blank RFC HTTP field-name tokens without surrounding whitespace.",
-                )
-                continue
-            }
+            when (HeaderNamePolicy.classify(name)) {
+                HeaderNamePolicy.Kind.INVALID ->
+                    findings.error(
+                        ValidationCodes.HEADER_NAME_INVALID,
+                        "$base.headers",
+                        "header names must be non-blank RFC HTTP field-name tokens without surrounding whitespace.",
+                    )
 
-            val lower = normalized.lowercase()
-            if (lower in FORBIDDEN_HEADER_NAMES) {
-                findings.error(
-                    ValidationCodes.FORBIDDEN_HEADER,
-                    "$base.headers[$normalized]",
-                    "header '$normalized' is never allowed in a published config.",
-                )
-                continue
-            }
-            if (isSensitiveName(lower) && value !in ctx.publicHeaderPlaceholderValues) {
-                // Never echo the value — only the (structural) header name (PLAN §6 log-hygiene).
-                findings.error(
-                    ValidationCodes.SECRET_LIKE_HEADER,
-                    "$base.headers[$normalized]",
-                    "header '$normalized' looks credential-like; its value is not on the public-placeholder allowlist.",
-                )
+                HeaderNamePolicy.Kind.FORBIDDEN ->
+                    findings.error(
+                        ValidationCodes.FORBIDDEN_HEADER,
+                        "$base.headers[$name]",
+                        "header '$name' is never allowed in a published config.",
+                    )
+
+                HeaderNamePolicy.Kind.SENSITIVE ->
+                    if (value !in ctx.publicHeaderPlaceholderValues) {
+                        // Static placeholders only; never echo the value (PLAN §6 log-hygiene).
+                        findings.error(
+                            ValidationCodes.SECRET_LIKE_HEADER,
+                            "$base.headers[$name]",
+                            "header '$name' looks credential-like; its value is not on the public-placeholder allowlist.",
+                        )
+                    }
+
+                HeaderNamePolicy.Kind.PUBLIC -> Unit
             }
         }
     }
-
-    /** RFC 9110 field-name = `token`; tokens are non-empty and ASCII-only. */
-    private fun isHttpFieldName(name: String): Boolean = name.isNotEmpty() &&
-        name.all { char ->
-            char in 'a'..'z' ||
-                char in 'A'..'Z' ||
-                char in '0'..'9' ||
-                char in HTTP_TOKEN_PUNCTUATION
-        }
-
-    private fun isSensitiveName(lowerName: String): Boolean = lowerName in SENSITIVE_HEADER_NAMES || SENSITIVE_HEADER_SUBSTRINGS.any { it in lowerName }
-
-    private const val HTTP_TOKEN_PUNCTUATION = "!#\$%&'*+-.^_`|~"
 }

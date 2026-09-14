@@ -31,7 +31,9 @@ class JpaCompletionRequestRepositoryAdapter(private val jpa: SpringDataCompletio
         return requireNotNull(jpa.save(entity).id) { "persisted CompletionRequestEntity must have an id" }
     }
 
-    override fun updateStatus(id: UUID, status: CompletionStatus, now: Instant) = jpa.updateStatus(id, status.name, now)
+    override fun tryMarkRunning(id: UUID, now: Instant): Boolean = jpa.tryMarkRunning(id, now) == 1
+
+    override fun tryFinish(id: UUID, status: CompletionStatus, now: Instant): Boolean = jpa.tryFinish(id, status.name, now) == 1
 
     override fun findById(id: UUID): CompletionRequestRecord? = jpa.findById(id).map { it.toDomain() }.orElse(null)
 

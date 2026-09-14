@@ -7,7 +7,7 @@ envelope in [Error model](#error-model). Auth and token semantics are in [`SECUR
 lifecycle semantics in [`SOURCE_CONFIG_LIFECYCLE.md`](SOURCE_CONFIG_LIFECYCLE.md).
 Tutorial publishing and its public/ADMIN route inventory are in [`TUTORIALS.md`](TUTORIALS.md).
 
-Auth levels: **anon** (no token), **USER** (bearer, any enabled user), **ADMIN** (bearer, `ADMIN`
+Auth levels: **anon** (no token), **USER** (current, non-revoked bearer for an enabled user), **ADMIN** (bearer, `ADMIN`
 role). Authorization is enforced in the security filter chain before dispatch; authorities are
 derived from the **DB role**, not the token claim.
 
@@ -34,12 +34,13 @@ in 404/409 details. Typed-exception → status mapping:
 | 404 | `NotFoundException` (+ subclasses); unmatched route | `NOT_FOUND`, `*_NOT_FOUND`, `NO_PUBLISHED_DOCUMENT` |
 | 405 | unsupported method | `METHOD_NOT_ALLOWED` |
 | 406 | unsupported response media type | `NOT_ACCEPTABLE` |
-| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, last-admin guard |
+| 409 | `ConflictException`; lifecycle/data-integrity conflict | `CONFLICT`, `DATA_INTEGRITY_CONFLICT`, `INVALID_LIFECYCLE_TRANSITION`, `REVISION_SUPERSEDED`, `CREDENTIAL_VERSION_EXHAUSTED`, last-admin guard |
 | 410 | `GoneException` | `GONE` (removed source) |
 | 413 | body/prompt limit | `PAYLOAD_TOO_LARGE`, `PROMPT_TOO_LARGE` |
 | 415 | unsupported request media type | `UNSUPPORTED_MEDIA_TYPE` |
 | 422 | `ValidationFailedException` | `VALIDATION_FAILED` (+ `errors[]`) |
 | 429 | `TooManyRequestsException` | `TOO_MANY_REQUESTS` |
+| 503 | `ServiceUnavailableException` | `SERVICE_UNAVAILABLE` |
 | 500 | unexpected (stack trace logged server-side only) | — |
 
 ## Cross-cutting HTTP contract
@@ -47,12 +48,16 @@ in 404/409 details. Typed-exception → status mapping:
 - **Pagination:** `?page=0&size=20`; `size` max **100** (`GET /admin/users`, `GET /completions`).
   `page < 0` or `size < 1`/`size > 100` → 400. Response envelope: `{items, page, size, total}`.
   `GET /sources` is deliberately **not** paginated — it returns the bounded document as a plain array.
+  The two admin source/document history lists are an array-compatible **keyset exception**;
+  see [Admin history windows](#admin-history-windows). Other pagination contracts are unchanged.
 - **Multi-value filters** (`?lifecycle=`, `?engine=`, `?status=`): comma-separated within one query
   param; an unknown token → 400.
 - **Request-body size:** every request body is capped at **256 KiB** before MVC parsing, except
-  `POST /admin/sources/import-bundled` and multipart `POST /admin/tutorial-media`, which are capped at
-  **5 MiB** request size (the media file itself is capped at **4 MiB**). Declared and streamed/chunked
-  bodies use the same 413 `PAYLOAD_TOO_LARGE` response. Completion prompts additionally have a
+  `POST /admin/sources/import-bundled`, the exact
+  `POST /admin/source-catalog-v2/cutover/import-bundled` path, and multipart
+  `POST /admin/tutorial-media`, which are capped at **5 MiB** request size (the media file itself is
+  capped at **4 MiB**). Declared and actual bytes, including unknown or understated lengths, are
+  bounded; oversize returns 413 `PAYLOAD_TOO_LARGE`. Completion prompts additionally have a
   configurable character cap (default 8000).
 - **Responses:** raw source-config routes explicitly send `application/json; charset=UTF-8` and add the
   documented cache/nosniff headers. Jackson-rendered endpoints currently send `application/json`
@@ -135,6 +140,8 @@ Summaries of the sources in the current document, ordered by the normative docum
 
 `iconRemoteUrl` is omitted when the stanza has none. `lifecycle` is the **app vocabulary** — a
 server-`retired` source appears as `"removed"`. Draft-only and server-`removed` sources never appear.
+Each response uses one catalog generation for stanza fields and source revision/publication metadata;
+a concurrent publication may yield the old or new generation, never a mixture.
 
 ### `GET /api/v1/sources/{api}`
 The single published `SourceConfig` stanza, served as raw canonical bytes, **consistent with the
@@ -150,11 +157,19 @@ document**:
 
 ### ETag semantics (normative)
 
-Strong quoted ETags (`ETag: "a1b2…"`). `If-None-Match: *` matches whenever any document exists → 304.
-A comma-separated `If-None-Match` list is parsed and each valid quoted entity-tag compared with
-**strong comparison**; a match → **304 with no body**. Malformed/unquoted tags never match. **Weak validators never match**: `W/"<hash>"` fails
-strong comparison even when the opaque hash is identical → **200** with the full body. The checksum is
-computed over the exact UTF-8 bytes sent. `X-Config-Checksum` is a **corruption check, not
+These semantics apply to v1 public/latest and admin/history documents, and v2 manifests/immutable
+sources. Emitted ETags stay strong and quoted (`ETag: "a1b2…"`). `If-None-Match` uses **weak comparison**
+(RFC 9110 §13.1.2): valid `"<hash>"` and uppercase `W/"<hash>"` tags match the same case-sensitive
+opaque value → **304 with no body**, retaining the route's ETag/cache/metadata headers. A standalone
+`*` matches an existing selected representation; it never bypasses a missing-artifact 404.
+
+Lists are quote-aware: commas inside opaque tags are not separators, and backslash is literal (not
+a quote escape). Only SP/HTAB count as outside optional whitespace; empty list elements are accepted.
+The **entire field** must be valid: unquoted/malformed tags, mixed wildcard/list forms, or junk before
+or after an otherwise matching entry do not match. Such values reaching the writer return **200**
+with the full body. This does not change the strong `If-Match` contract for admin optimistic locking.
+
+The checksum is computed over the exact UTF-8 bytes sent. `X-Config-Checksum` is a **corruption check, not
 authenticity** — a hash beside the same payload cannot authenticate it. Authenticity comes from the
 `kira-source-signature-v1` Ed25519 metadata returned in `X-Config-Signature-*`, `X-Config-Signing-Key-Id`,
 `X-Config-Previous-*`, and `X-Config-Created-At`; `/document/meta` carries the same fields.
@@ -163,27 +178,54 @@ authenticity** — a hash beside the same payload cannot authenticate it. Authen
 
 ## 2. Auth
 
+Email identifiers use `trim().lowercase()` and allow at most **320 Unicode code points after
+normalization**, not 320 UTF-16 units or UTF-8 bytes. Supplementary characters count once; lowercase
+expansion counts in the result. Oversize yields a value-free **400 `EMAIL_TOO_LONG`**. This shared
+bound applies to login, registration, admin creation and seeding; it adds no RFC-shape rule or
+raw-input size constraint. Existing structural request validation and security gates retain precedence.
+
 ### `POST /api/v1/auth/register`  — anon
 Gated by `kira.auth.registration-enabled` (default `true` dev / `false` prod). Body `{email, password}`.
 Password policy: **min 15 chars, max 72 UTF-8 bytes**, no composition rules, no trimming/normalization
 of the password (email is trim + lowercased).
 
 - **201** `{ "id": "<uuid>", "email": "…", "role": "USER" }`
-- **409** duplicate email (case-insensitive) · **400** policy violation · **403** `REGISTRATION_DISABLED`
+- **409** duplicate email (case-insensitive) · **400** password policy / `EMAIL_TOO_LONG` · **403** `REGISTRATION_DISABLED`
   · **429** per-IP registration throttle.
+
+The registration-enabled gate and per-IP throttle still run before the shared creation check.
+Within creation, the email bound precedes password policy, duplicate lookup, hashing and insertion.
 
 ### `POST /api/v1/auth/login`  — anon
 Body `{email, password}`.
 
 - **200** `{ "accessToken": "<jwt>", "tokenType": "Bearer", "expiresInSeconds": 3600, "role": "USER" }`
+- **400** `EMAIL_TOO_LONG` — checked before login throttle, lookup, credential verification, token or audit work.
 - **401** `INVALID_CREDENTIALS` — the same generic response body for unknown-user / wrong-password /
   disabled account. All three paths perform one password-hash verification (a decoy hash for an
   unknown/disabled account).
-- **429** when either the normalized-email/client-IP identity bucket or the aggregate client-IP spray
-  bucket is temporarily blocked.
+- **429** when either the normalized-email/client-IP identity bucket or aggregate IP bucket is blocked,
+  its completed failures plus live attempts fill the threshold, or safe shared-store capacity is unavailable.
+  Admission reserves both dimensions before lookup/hash work. Only acknowledged, unexpired successful
+  completion permits a JWT. The default 30s attempt lease is not a BCrypt execution timeout; late success
+  also returns generic 429. See [SECURITY.md](SECURITY.md#auth-throttling--trusted-client-ip-resolution).
+- Shared throttle errors/null/malformed replies on admission **or completion** return **429
+  `AUTH_THROTTLE_UNAVAILABLE`**, `Retry-After: 5`, with no local fallback. Ordinary bad-credential
+  completion precedes its audit/401, so this dependency error retains precedence over that 401.
 
 ### `GET /api/v1/auth/me`  — USER or ADMIN
-- **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon.
+- **200** `{ "id": "<uuid>", "email": "…", "role": "USER|ADMIN", "createdAt": "<instant>" }` · **401** anon/invalid/revoked bearer.
+
+New JWTs carry a private `credential_version` claim as a canonical decimal **string**, paired with
+the exact password snapshot verified at login. Every bearer request checks equality with the current
+database version, in addition to enabled/current-role enforcement. Password reset invalidates the
+target's older tokens at authentication checks after commit, including admin step-up requests even
+with the correct new password. Already-authenticated work is not retroactively cancelled, and this
+does not add revocation of previously issued step-up grants. Login racing reset can return an already
+stale token, never a refreshed version for an old verified password. Missing pre-upgrade claims and
+malformed/wrong-typed/mismatched versions receive the existing generic **401**; users must sign in again
+once at cutover. User/login response DTO shapes are unchanged. See the coordinated rollout and
+old-image rollback limits in [SECURITY.md](SECURITY.md#password-reset-semantics-and-coordinated-cutover).
 
 ### `POST /api/v1/auth/refresh`  — not registered
 No handler in v1 (refresh tokens are future work). Anonymous → **401** (the `anyRequest authenticated`
@@ -202,9 +244,22 @@ neutral `"active"`), `API_IDENTIFIER_INVALID` (blank / > 128 chars / control cha
 edge whitespace), `FIELD_TOO_LONG` (identity/denormalized value over a DB column limit). Semantic
 (Tier-2) validation is stored on the draft and returned inline even when invalid.
 
-Header names must be valid RFC HTTP field-name tokens. Blank, non-token, or leading/trailing-whitespace
-names fail validation with `HEADER_NAME_INVALID`, so padded sensitive names cannot bypass the public-
-credential rules. Published configuration is public; never place a real credential in any header.
+Static header names and header-target filters' `request.param` must be exact nonempty ASCII RFC HTTP
+field-name tokens. Blank, non-token, or whitespace-padded names fail `HEADER_NAME_INVALID`; names are
+never trimmed or repaired. `genre[]` remains legal for query/form parameters, not header names.
+Both contexts reject `cookie`, `set-cookie` and `proxy-authorization` case-insensitively with
+`FORBIDDEN_HEADER`. Header-target filters also reject all sensitive names (`authorization`, `x-api-key`,
+`api-key`, `x-auth-token`, or any name containing `token`/`secret`/`password`) with `SECRET_LIKE_HEADER`
+at `sources[api].filters[id].request.param`, irrespective of values, defaults, options, visibility,
+encoding or toggle mappings. Dynamic credential filters are unsupported, even with `Bearer null`;
+the configured exact-value placeholder allowlist applies to **static headers only**.
+These remain Tier-2 findings: invalid admin drafts retain their authored content and validation,
+but new publication, editor quick-publish and whole-document import reject invalid candidates.
+Published configuration is public; never place a real credential in any field.
+
+Filter option/default/condition-value findings and new header-filter findings use fixed explanatory
+messages without submitted values. Structural source/filter identifiers remain in paths; this is not
+a universal arbitrary-field redaction guarantee. Historical stored diagnostics are not rewritten.
 
 The Source Admin Studio uses a mutable editor workspace that is separate from immutable source
 revisions. Autosaves require the current strong editor ETag in `If-Match`; stale writes return
@@ -220,7 +275,7 @@ Tier-1 checks still run before finalization or publication.
 | `GET /admin/sources` | All sources incl. drafts/retired/removed. Query `?status=`. | 200 |
 | `GET /admin/sources/{api}` | Full admin head view. | 200 · 404 |
 | `POST /admin/sources/{api}/revisions` | New draft revision (`body.api` must equal `{api}`). | 201 · 404 · 400 |
-| `GET /admin/sources/{api}/revisions` | Revision list. | 200 · 404 |
+| `GET /admin/sources/{api}/revisions` | Bounded revision metadata window; optional `size` / `beforeRevision`. | 200 · 400 · 404 |
 | `GET /admin/sources/{api}/revisions/{n}` | Full stored config JSON + metadata. | 200 · 404 |
 | `POST /admin/sources/{api}/revisions/{n}/validate` | Re-run validation (preview; stores result). | 200 (even when invalid) · 404 |
 | `GET /admin/sources/{api}/revisions/{n}/validation` | Latest stored validation result. | 200 · 404 |
@@ -245,13 +300,18 @@ Tier-1 checks still run before finalization or publication.
 | `POST /admin/source-changesets/{id}/apply` | Apply every operation atomically and materialize exactly one snapshot. Requires password step-up. | 200 · 400 · 401 · 409 · 422 |
 | `DELETE /admin/source-changesets/{id}` | Discard an open changeset using `If-Match`. | 200 · 409 |
 | `GET /admin/audit?page=0&size=50` | Read identifiers-only audit metadata; maximum page size is 100. | 200 · 400 |
-| `GET /admin/source-catalog-v2/cutover` | Read-only exact-12/33 preflight. | 200 |
-| `POST /admin/source-catalog-v2/cutover` | Atomic audited cutover. Body `{"confirmation":"WITHHOLD_33_LEGACY_SOURCES"}`. Idempotent after success. | 200 · 409 |
-| `GET /admin/documents` | Published snapshots (metadata list). | 200 |
+| `GET /admin/source-catalog-v2/cutover` | Advisory phase/origin-receipt view; not payload approval or an admission reservation. | 200 |
+| `POST /admin/source-catalog-v2/cutover` | Retired confirmation-only operation: nonmutating conflict directing callers to the raw bootstrap endpoint. | 409 |
+| `POST /admin/source-catalog-v2/cutover/import-bundled` | Raw, payload-bound initial bootstrap; exact confirmation header; returns the immutable nine-field receipt below. | 200 · 400 · 409 · 413 · 415 · 422 |
+| `GET /admin/documents` | Bounded snapshot metadata window; optional `size` / `beforeRevision`. | 200 · 400 |
 | `GET /admin/documents/{revision}` | Raw stored canonical bytes of that snapshot (metadata in headers). | 200 · 404 |
 | `POST /admin/documents/validate` | Validate the candidate document without publishing. | 200 `{valid, errors[]}` |
-| `POST /admin/documents/republish` | Force-materialize a new snapshot from current state (always a new revision). | 200 |
-| `POST /admin/sources/import-bundled` | The migration on-ramp — see [4. Import](#4-import-bundled). | 200 · 400 · 413 · 422 |
+| `POST /admin/documents/republish` | After bootstrap `COMPLETE`, force-materialize a new snapshot from current state (always a new revision). | 200 · 409 |
+| `POST /admin/sources/import-bundled` | Ordinary re-import after bootstrap `COMPLETE` — see [4. Import](#4-import-bundled). | 200 · 400 · 409 · 413 · 422 |
+
+Ordinary materialization requires bootstrap `COMPLETE`; ordinary import checks that phase before
+staging, **even for a no-op**. Bootstrap before ordinary authoring on a fresh catalog: draft authoring
+may remain available in `PENDING`, but conflicting source heads are not silently adopted.
 
 **Selected response shapes** (Jackson-serialized; lifecycle/revision statuses are lowercase wire
 values):
@@ -275,9 +335,111 @@ values):
   "createdAt", "updatedAt" }` plus `ETag: "draft-N"`.
 - Step-up → `{ "token", "expiresAt", "scope": "source-admin-mutation" }`. The token is secret and
   must remain in server-side/HttpOnly session state; it is never logged or persisted in plaintext.
+  Password verification uses the same atomic two-dimension attempt admission as login; successful
+  completion must be acknowledged before a proof/grant is created. Throttle/lease denial is 429, and
+  shared-store unavailability is 429 `AUTH_THROTTLE_UNAVAILABLE` with `Retry-After: 5`.
 - `GET /admin/documents` item → `{ "documentRevision", "schemaVersion", "checksum", "sourceCount", "createdBy", "createdAt" }`.
 - `GET /admin/documents/{revision}` → **body = raw stored canonical bytes**; metadata in headers only
   (`ETag: "<checksum>"`, `X-Config-Revision`, `X-Config-Checksum`) — deliberately not a JSON envelope.
+
+### Initial catalog bootstrap
+
+```text
+POST /api/v1/admin/source-catalog-v2/cutover/import-bundled
+Content-Type: application/json
+X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES
+```
+
+The existing ADMIN bearer chain applies. Supply **exactly one** confirmation header with that exact
+value; missing, empty, padded, different or repeated values return **409
+`SOURCE_CATALOG_V2_CUTOVER_REJECTED`**. The JSON body is retained as original bytes, not a Jackson
+DTO, decoded request String, or reserialized JSON; charset metadata does not transcode it. The limit
+is **5,242,880 actual bytes (5 MiB)**, enforced for declared, unknown and understated lengths.
+The pre-MVC filter grants this allowance only to that exact POST application path (including a
+servlet context prefix); near paths, trailing slash, other methods and the old cutover path retain
+256 KiB. That filter precedes security/MVC, so **413 can precede authentication or confirmation**.
+
+Only `PENDING` decodes strict UTF-8 and uses the strict JSON parser and initial policy: schema 1,
+exactly the reviewed 45 unique source APIs, and complete default-expanded models/order for the
+approved 12 generic sources, including raw `lifecycle:"active"` and `priority:0`. The content of the
+33 legacy **source definitions** and the full 45-list order are not reference-pinned; ordinary
+validation and effective-head checks still apply. See the
+[reference and migration contract](MIGRATION_BUNDLED_TO_REMOTE.md#exact-initial-bootstrap).
+Invalid UTF-8 returns **400 `BOOTSTRAP_INVALID_UTF8`**; strict JSON failures use the existing 400
+parser errors; input policy/roster/state/different-byte conflicts use the cutover 409 above; ordinary
+validator/Tier-1 failures remain **422**. Unsupported media returns **415 `UNSUPPORTED_MEDIA_TYPE`**.
+
+Success is **200**, with exactly these nine fields:
+
+```json
+{
+  "policyId": "app-bundle-v6-initial-catalog-v1",
+  "referenceSha256": "<approved-reference-sha256>",
+  "payloadSha256": "<original-request-byte-sha256>",
+  "documentRevision": 100,
+  "documentChecksum": "<v1-document-sha256>",
+  "catalogRevision": 100,
+  "catalogChecksum": "<v2-catalog-sha256>",
+  "completedAt": "2026-09-12T00:00:00Z",
+  "actorId": "<original-admin-uuid>"
+}
+```
+
+The origin revisions are equal; the v1/v2 checksums identify **different artifacts**. `completedAt`
+is the shared origin assembly instant and `actorId` is the original admin. After bounding,
+authentication, confirmation and hashing, `COMPLETE` replay of the **same original bytes** returns
+that receipt unchanged **before UTF-8 decoding or current parser/reference policy**. Any byte change
+(even JSON whitespace) conflicts. Replay does not stage input, revalidate evolved inventory,
+allocate a revision, sample a new clock or emit another mutation audit. Retain the exact request
+file for an uncertain-response retry; never normalize or reconstruct it. Later catalog evolution,
+including a valid empty catalog, remains legal and is not undone by replay.
+
+`GET /api/v1/admin/source-catalog-v2/cutover` retains `ready`, `applied`, `approvedActiveSources`,
+`legacySourcesToWithhold`, `alreadyWithheldSources`, `problems`, and `documentRevision`, adding
+`phase` and a nullable origin `receipt`. **Phase JSON is uppercase**, unlike source lifecycle wire
+values; `applied` is always `false`:
+
+| Phase | Advisory `ready` | `documentRevision` |
+|---|---|---|
+| `PENDING`, no source heads | `true` — not payload or all-authoring-state approval | null |
+| `PENDING`, source heads present | `false` | null |
+| `COMPLETE` | `true`, regardless of later inventory changes | Origin receipt revision, not necessarily latest |
+| `RECONCILIATION_REQUIRED` | `false` | Current pointer, possibly null |
+
+GET neither reserves admission nor proves deployment/approval. The old confirmation-only POST
+always returns a nonmutating controlled 409 at controller dispatch, even with its former JSON,
+malformed input or no body; pre-controller security/body limits still apply. It never stages or
+bootstraps anything.
+
+### Admin history windows
+
+`GET /admin/sources/{api}/revisions` and `GET /admin/documents` retain their **raw array** bodies and
+existing item fields. Both accept `size` (default **20**, range **1..100**) and optional exclusive
+`beforeRevision`. The latter is a positive decimal source revision (at most **2147483647**) or
+document revision (at most **9223372036854775807**). Only ASCII digits are accepted; leading zeros
+are accepted numerically (`size=020`). Empty, repeated (even identical), signed, whitespace-padded,
+nondecimal, zero or overflowing recognized values return value-free **400 `INVALID_HISTORY_PAGE`**
+before the history service. There is no unlimited mode, total count, or offset/page-number parameter.
+
+Without a cursor, the window contains the newest `size` revisions, returned in **ascending revision
+order**. With a cursor, only revisions strictly below it are eligible. Gaps are legal; a cursor
+need not identify an existing row. If older rows remain, `X-Kira-History-Next-Before` is the smallest
+returned revision in canonical positive decimal. Pass it unchanged as the next `beforeRevision`.
+Exactly `size` remaining rows is terminal: no header. Empty histories/windows return `200 []`
+without a header; an unknown source still returns 404.
+
+For revisions `[2,5,9,14,20]` and `size=2`, windows are `[14,20]` (cursor `14`), `[5,9]` (cursor `5`),
+then `[2]` (no cursor). Refresh without a cursor to see new revisions. Newer inserts do not displace
+older seeks, but status/validity may change between requests; this is not a multi-request snapshot.
+Missing validity remains omitted, not false. Latest validity retains the existing
+`validated_at DESC` semantics, with no promised winner for equal timestamps.
+
+Each data query projects at most `size+1` metadata rows; canonical payloads, notes, signatures and
+validation finding arrays are not loaded. Source history uses one head lookup plus one summary
+query with bounded latest-validity probes; document history uses one summary query. Stored history,
+detail/validation routes, raw bytes/ETags and publication pointers are unchanged. These lists no
+longer mean “all history”: older Admin clients still parse the array but need the companion pager
+to reach older windows. Do not emulate the old response by automatically fetching every window.
 
 **Publishable-revision rules** (409 codes): re-publish the current published revision → 200 no-op;
 a `superseded` revision → `REVISION_SUPERSEDED`; a draft older than the published revision →
@@ -286,11 +448,13 @@ content always goes through `rollback`.
 
 ### 4. import-bundled
 
-`POST /api/v1/admin/sources/import-bundled` — body = the app's bundled document JSON (max **5 MiB**,
-parsed with the **COMPATIBILITY** parser). Validates the whole document (any error → **422**, nothing
-persisted), applies per-source create/update/no-op with server-controlled revisions, and materializes
-**exactly one** snapshot (all-or-nothing). Incoming `revision`/`generatedAt` are ignored (recorded for
-provenance only); each stanza's `lifecycle` is read separately and normalized away before storage.
+`POST /api/v1/admin/sources/import-bundled` is **ordinary re-import after `COMPLETE`**, not initial
+bootstrap. It requires that phase before staging, even on the no-op path (otherwise cutover **409**).
+Body = bundled document JSON (max **5 MiB**, parsed with the **COMPATIBILITY** parser). It validates
+the whole document (any error → **422**, nothing persisted), applies per-source create/update/no-op
+with server-controlled revisions, and materializes **exactly one** snapshot when state changes
+(all-or-nothing). Incoming `revision`/`generatedAt` are ignored (recorded for provenance only); each
+stanza's `lifecycle` is read separately and normalized away before storage.
 
 - **200** `ImportBundledResponse`:
 
@@ -306,8 +470,8 @@ provenance only); each stanza's `lifecycle` is read separately and normalized aw
 semantics: [`MIGRATION_BUNDLED_TO_REMOTE.md`](MIGRATION_BUNDLED_TO_REMOTE.md).
 
 Existing draft-only sources are never replaced or published by import; they are returned in
-`skippedDraft`. Importing into a partly existing catalog can still retain old positions rather than
-reproduce payload order exactly, so review ordering before later re-imports.
+`skippedDraft`. Reordering puts payload-listed heads first in payload order and retains omitted heads
+after them. A reorder is a state change, not a pure no-op.
 
 ---
 
@@ -317,14 +481,17 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /admin/users` | `{email, password, role}` → create. Password policy of §2; email case-insensitively unique. | 201 · 409 duplicate · 400 |
+| `POST /admin/users` | `{email, password, role}` → create. Password policy and normalized email bound of §2; email case-insensitively unique. Admin authentication/authorization precedes creation. | 201 · 409 duplicate · 400 (including `EMAIL_TOO_LONG`) |
 | `GET /admin/users` | Paginated (`?page&size`, size ≤ 100). | 200 |
 | `POST /admin/users/{id}/enable` | Re-enable a disabled user. | 200 · 404 |
-| `POST /admin/users/{id}/disable` | Disable (in-flight tokens die at the next request). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
-| `POST /admin/users/{id}/reset-password` | `{newPassword}` (policy-checked); audited, never logs the password. | 200 · 404 · 400 |
+| `POST /admin/users/{id}/disable` | Disable (bearer rejected at the next authentication check). Refuses to disable the **last enabled ADMIN**. | 200 · 404 · 409 last-admin |
+| `POST /admin/users/{id}/reset-password` | `{newPassword}` (policy-checked); atomically changes hash and advances credential version, revoking older tokens. Audit records actor/target only. | 200 · 404 · 400 · 409 `CREDENTIAL_VERSION_EXHAUSTED` |
 
 - Create → **201** `{ "id", "email", "role" }` (from `AdminUserResponse`; `POST` returns the created id).
 - List item → `{ "id", "email", "role", "enabled", "createdAt" }` — no password material, ever.
+- Reset, even to the same password, advances once; failure or rollback does not partially change
+  credentials or create a success audit. Counter exhaustion is a value-free **409** (`Password reset is
+  unavailable.`), not wraparound or a hash-only reset. Other users' tokens are unaffected.
 
 ---
 
@@ -332,13 +499,36 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 | Method & path | Purpose | Codes |
 |---|---|---|
-| `POST /api/v1/completions` | `{prompt, model?}` → run the configured provider (echo in v1) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large |
+| `POST /api/v1/completions` | `{prompt, model?}` → run the configured supported provider (echo only in dev/test) and persist. | 201 · 401 anon · 400 blank prompt or model over 128 chars · 413 prompt too large · 429 rate/quota · 503 admission unavailable |
 | `GET /api/v1/completions/{id}` | Fetch one — **owner or ADMIN only** (others → 404, never 403). | 200 · 404 |
 | `GET /api/v1/completions` | List the caller's own requests, newest first, paginated. ADMIN may pass `?userId=`. | 200 |
 
 - Request `{ "prompt": "…", "model"?: "…" }`. Blank prompt → **400** `BLANK_PROMPT`; prompt over
   `kira.completion.prompt-max-length` (default 8000) → **413** `PROMPT_TOO_LARGE`. A supplied `model`
-  over **128 characters** is rejected before persistence with **400** `MODEL_TOO_LONG`.
+  over **128 JVM UTF-16 units** is rejected before persistence with **400** `MODEL_TOO_LONG`, even
+  when it consists entirely of whitespace. This is the existing API bound, not PostgreSQL's
+  Unicode-character counting rule.
+- Completion remains disabled by default. Enabled construction requires an audited synchronous
+  provider whose every exit ends all work. Generic HTTP has UNKNOWN lifetime and is rejected; production
+  completion remains unavailable until a supported provider contract exists. No silent echo fallback.
+- Omitted, null, empty or whitespace-only `model` uses `kira.completion.default-model` (native
+  environment key **`KIRA_COMPLETION_DEFAULTMODEL`**). The configured default must be nonblank and
+  at most 128 UTF-16 units; it is validated before the completion executor is created. Only the
+  explicit dev/test profiles supply `echo-1`; production has no implicit model fallback. A supplied
+  nonblank model remains an optional override. Both the effective default and explicit override
+  are persisted and forwarded exactly, without trimming, case folding or other normalization.
+- Admission rejects per-user/global minute limits with **429** `COMPLETION_USER_RATE_LIMIT` /
+  `COMPLETION_GLOBAL_RATE_LIMIT` (`Retry-After: 60`), and daily quota with **429**
+  `COMPLETION_DAILY_QUOTA` (`Retry-After: 86400`). Global concurrency exhaustion is **503**
+  `COMPLETION_CONCURRENCY_LIMIT` (`Retry-After: 1`); unavailable or indeterminate Redis
+  acquisition is **503** `COMPLETION_COORDINATION_UNAVAILABLE` (`Retry-After: 5`). Retry delays
+  are guidance, not recovery guarantees or a promise that arbitrary POST retries are safe.
+- After `PENDING`/`RUNNING`, failed activation proposes sanitized `FAILED/PROVIDER_UNAVAILABLE`:
+  absent/expired reservation uses the same capacity503/1 and indeterminate coordination uses503/5.
+  That503 is returned only when the failure wins conditional publication; an earlier winner is preserved.
+- Expected Redis coordination/decoding failure (or an invalid/null reply) during permit release does not replace the
+  normal **201** committed view or an existing primary error. Release diagnostics are server-side
+  only; no client retry signal is added, and this does not make POST idempotent.
 - Response `CompletionResponse`:
 
 ```json
@@ -348,8 +538,8 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
 
 On success `result` is set and `errorCode`/`error` are null; on failure `errorCode` (a stable §10
 catalog value, e.g. `PROVIDER_TIMEOUT`) and `error` (a sanitized, bounded, generic message) are set
-and `result` is null. The prompt is never echoed back. The default model when `model` is omitted is
-`echo-1`. Error-code catalog: `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`,
+and `result` is null. The prompt is never echoed back. The example above uses the dev/test echo
+configuration. Error-code catalog: `PROVIDER_TIMEOUT`, `PROVIDER_UNAVAILABLE`, `PROVIDER_REJECTED`,
 `INVALID_PROVIDER_RESPONSE`, `RESULT_TOO_LARGE` (reserved, unused in v1), `INTERNAL_COMPLETION_ERROR`
 (every unexpected exception maps here). Raw provider exceptions are never returned or stored — secured
 server logs only.
@@ -357,3 +547,13 @@ server logs only.
 Provider work runs on `kira.completion.executor-threads` workers (default 8) with a bounded
 `kira.completion.queue-capacity` (default 64). Saturation fails the request outcome as
 `PROVIDER_UNAVAILABLE` instead of growing an unbounded in-memory queue.
+
+`kira.completion.queue-timeout` (default2s) includes queue wait and RUNNING persistence through
+provider-start authorization. Startup at or after that deadline is rejected. Startup expiry or
+saturation returns503 `COMPLETION_OVERLOADED` (`Retry-After: 1`) only if that failure won terminal
+publication. The separate provider timed wait (`kira.completion.timeout`, default30s) starts at
+authorization; an already observable completed result may win at its wait boundary. Neither timeout
+acknowledges termination of an already authorized worker/remote call. Database outcome persistence
+is outside these budgets. Terminal outcomes cannot be replaced, and canceled pre-start work cannot
+later claim provider entry. GET/list combine request and outcome data from one read-only snapshot
+as of the first SELECT; a later independent read may observe a newer terminal outcome.

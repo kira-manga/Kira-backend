@@ -3,6 +3,7 @@ package me.manga.kira.backend.sourceconfig.signing
 import me.manga.kira.backend.config.KiraSigningProperties
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.security.KeyFactory
@@ -13,6 +14,23 @@ import java.time.Instant
 import java.util.Base64
 
 class DocumentSignerTest {
+    @Test
+    fun `standalone disabled helper retains nullable signing without constructor validation`() {
+        val signer = DocumentSigner(KiraSigningProperties())
+        val input = DocumentSigningInput(
+            revision = 1,
+            checksum = "0".repeat(64),
+            createdAt = Instant.EPOCH,
+            previousRevision = null,
+            previousChecksum = null,
+            documentJson = "{}",
+        )
+
+        assertNull(signer.sign(input))
+        assertNull(signer.signDetached(byteArrayOf()))
+        assertTrue(signer.publicKeys().isEmpty())
+    }
+
     @Test
     fun `signature authenticates exact bytes and metadata and rejects tampering or wrong key`() {
         val pair = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()

@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.completion.domain.CompletionErrorCode
 import me.manga.kira.backend.completion.domain.CompletionOutcome
 import me.manga.kira.backend.completion.domain.CompletionProvider
+import me.manga.kira.backend.completion.domain.CompletionProviderLifetime
 import me.manga.kira.backend.completion.domain.CompletionStatus
 import me.manga.kira.backend.completion.domain.CompletionView
 import me.manga.kira.backend.completion.domain.InvalidProviderResponseException
@@ -17,11 +18,9 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty
 import org.springframework.stereotype.Service
 import java.util.UUID
 import java.util.concurrent.Callable
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -35,10 +34,12 @@ import java.util.concurrent.atomic.AtomicInteger
  * methods — insert `PENDING` (commit), mark `RUNNING` (commit), then, AFTER the provider call, store the
  * sanitized outcome (commit). The provider runs on a bounded executor with a `Future.get(timeout)` so a
  * slow/hung provider cannot pin a connection-pool slot or a row lock. A crash between `RUNNING` and the
- * final store leaves a harmless, visible `RUNNING` row (PLAN §10).
+ * final store leaves a visible `RUNNING` row for bounded retention recovery (PLAN §10). Failed startup
+ * may move directly from `PENDING` to `FAILED`; terminal publication is conditional and insert-once.
  *
  * **Provider selection:** `kira.completion.provider` picks the bean by name from the injected
- * `List<CompletionProvider>`; an unknown name throws here at construction → fail-fast startup (PLAN §10).
+ * `List<CompletionProvider>`; unknown names or lifetime capabilities fail before this service allocates
+ * its executor. Only audited synchronous providers whose every exit ends all work may execute (PLAN §10).
  *
  * **Error mapping (§10 catalog):** timeout → `PROVIDER_TIMEOUT`; [CompletionOutcome.Failure] →
  * `PROVIDER_REJECTED`; [ProviderUnavailableException] → `PROVIDER_UNAVAILABLE`;
@@ -55,13 +56,11 @@ class CompletionService(
     private val admission: CompletionAdmission,
     private val metrics: KiraMetrics,
 ) {
-    /** The selected provider, resolved once at construction — an unknown name fails startup (PLAN §10). */
-    private val provider: CompletionProvider =
-        providers.firstOrNull { it.name == properties.provider }
-            ?: throw IllegalStateException(
-                "No CompletionProvider named '${properties.provider}' is registered " +
-                    "(available: ${providers.map { it.name }}). Check kira.completion.provider (PLAN §10).",
-            )
+    /** Validate before allocating the executor, including direct or non-production construction. */
+    private val defaultModel = properties.requireDefaultModel()
+
+    /** Resolve and check the lifetime contract before allocating this service's executor (PLAN §10). */
+    private val provider: CompletionProvider = selectProvider(providers)
 
     /** Fixed workers plus a bounded queue; saturation fails fast instead of accumulating unbounded work. */
     private val executor =
@@ -75,22 +74,35 @@ class CompletionService(
         metrics.bindCompletionExecutor(executor)
     }
 
+    private fun selectProvider(providers: List<CompletionProvider>): CompletionProvider {
+        val selected =
+            providers.firstOrNull { it.name == properties.provider }
+                ?: throw IllegalStateException(
+                    "No CompletionProvider named '${properties.provider}' is registered " +
+                        "(available: ${providers.map { it.name }}). Check kira.completion.provider (PLAN §10).",
+                )
+        check(selected.lifetime == CompletionProviderLifetime.SYNCHRONOUS) {
+            "Selected CompletionProvider must end all work on every synchronous method exit"
+        }
+        return selected
+    }
+
     /**
-     * Submit a completion (PLAN §4.6/§10): insert `PENDING`, mark `RUNNING`, invoke the provider with a
-     * timeout OUTSIDE any transaction, then store the sanitized outcome. Returns the composed view.
+     * Submit a completion (PLAN §4.6/§10): insert `PENDING`, mark `RUNNING`, pin admission, authorize and
+     * invoke OUTSIDE any transaction, then store the outcome. Caller wait is not worker termination.
      * [prompt] is assumed already validated (non-blank, within max length) by the controller boundary.
      */
     fun create(userId: UUID, prompt: String, model: String?): CompletionView {
-        admission.acquire(userId).use {
-            val effectiveModel = model?.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL
+        CompletionExecutionOwnership(admission.acquire(userId)).use { execution ->
+            val effectiveModel = model?.takeIf { it.isNotBlank() } ?: defaultModel
 
             val id = persistence.createPending(userId, provider.name, effectiveModel, prompt)
             // `model` is client-supplied — sanitize control chars before it reaches the log line (§6 log-hygiene).
             log.info("Completion {} PENDING provider={} model={}", id, provider.name, sanitizeForLog(effectiveModel))
 
-            val resolved = invokeProvider(id, prompt, effectiveModel)
+            val resolved = invokeProvider(id, prompt, effectiveModel, execution)
             try {
-                val view =
+                val publication =
                     when (resolved) {
                         is Resolved.Success -> {
                             val (stored, truncated) = truncate(resolved.result)
@@ -114,7 +126,6 @@ class CompletionService(
                         }
 
                         is Resolved.Failure -> {
-                            logFailure(id, resolved)
                             persistence.storeOutcome(
                                 id = id,
                                 status = CompletionStatus.FAILED,
@@ -126,16 +137,14 @@ class CompletionService(
                         }
                     }
 
-                val latencyMs = if (resolved is Resolved.Success) resolved.latencyMs else (resolved as Resolved.Failure).latencyMs
-                log.info("Completion {} {} errorCode={} latencyMs={}", id, view.status, view.errorCode, latencyMs)
-                metrics.completionFinished(view.status.name, view.errorCode?.name ?: "none")
-                if (resolved is Resolved.Failure && resolved.overloaded) {
-                    throw ServiceUnavailableException(
-                        "Completion capacity is currently exhausted. Try again later.",
-                        code = "COMPLETION_OVERLOADED",
-                        retryAfterSeconds = 1,
-                    )
+                val view = publication.view
+                if (publication.won) {
+                    if (resolved is Resolved.Failure) logFailure(id, resolved)
+                    val latencyMs = if (resolved is Resolved.Success) resolved.latencyMs else (resolved as Resolved.Failure).latencyMs
+                    log.info("Completion {} {} errorCode={} latencyMs={}", id, view.status, view.errorCode, latencyMs)
+                    metrics.completionFinished(view.status.name, view.errorCode?.name ?: "none")
                 }
+                if (publication.won && resolved is Resolved.Failure) rejectIfUnavailable(resolved)
                 return view
             } finally {
                 if (resolved is Resolved.Failure && resolved.interrupted) Thread.currentThread().interrupt()
@@ -159,20 +168,13 @@ class CompletionService(
         return persistence.listViews(targetUserId, page, size)
     }
 
-    /** Run the provider on the bounded executor with the configured timeout, mapping every failure mode. */
-    private fun invokeProvider(id: UUID, prompt: String, model: String): Resolved {
+    /** Bounded queue + committed startup, followed by a separate timed provider wait. */
+    private fun invokeProvider(id: UUID, prompt: String, model: String, execution: CompletionExecutionOwnership): Resolved {
         val startNanos = System.nanoTime()
-        val started = CountDownLatch(1)
+        val startup = CompletionStartup(properties.queueTimeout)
         val future =
             try {
-                executor.submit(
-                    Callable {
-                        started.countDown()
-                        persistence.markRunning(id)
-                        log.info("Completion {} RUNNING", id)
-                        provider.complete(prompt, model)
-                    },
-                )
+                executor.submit(Callable { invokeOwnedProvider(id, prompt, model, startup, execution) })
             } catch (ex: RejectedExecutionException) {
                 return Resolved.Failure(
                     CompletionErrorCode.PROVIDER_UNAVAILABLE,
@@ -182,30 +184,40 @@ class CompletionService(
                     overloaded = true,
                 )
             }
-        try {
-            if (!started.await(properties.queueTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
-                future.cancel(true)
-                return Resolved.Failure(
+        return try {
+            val started = when (val decision = startup.await()) {
+                is CompletionStartup.Decision.Authorized -> decision
+
+                is CompletionStartup.Decision.Failed -> return executionFailure(decision.cause, startNanos)
+
+                is CompletionStartup.Decision.AdmissionDenied -> return Resolved.Failure(
                     CompletionErrorCode.PROVIDER_UNAVAILABLE,
-                    "provider queue timeout",
+                    "provider admission activation denied",
                     null,
                     elapsedMs(startNanos),
-                    overloaded = true,
+                    activation = decision.activation,
+                )
+
+                CompletionStartup.Decision.Expired -> {
+                    startup.cancel()
+                    future.cancel(true)
+                    return Resolved.Failure(
+                        CompletionErrorCode.PROVIDER_UNAVAILABLE,
+                        "provider startup timeout",
+                        null,
+                        elapsedMs(startNanos),
+                        overloaded = true,
+                    )
+                }
+
+                CompletionStartup.Decision.Rejected, CompletionStartup.Decision.Cancelled -> return Resolved.Failure(
+                    CompletionErrorCode.INTERNAL_COMPLETION_ERROR,
+                    "provider startup was not authorized",
+                    null,
+                    elapsedMs(startNanos),
                 )
             }
-        } catch (ex: InterruptedException) {
-            future.cancel(true)
-            Thread.interrupted() // clear while the sanitized outcome is persisted; restored by create()
-            return Resolved.Failure(
-                CompletionErrorCode.INTERNAL_COMPLETION_ERROR,
-                "interrupted in provider queue",
-                ex,
-                elapsedMs(startNanos),
-                interrupted = true,
-            )
-        }
-        return try {
-            when (val outcome = future.get(properties.timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            when (val outcome = checkNotNull(startup.awaitProvider(future, started, properties.timeout))) {
                 is CompletionOutcome.Success -> Resolved.Success(outcome.result, outcome.latencyMs)
 
                 // A deliberate refusal — the provider's own reason is logged server-side, never returned.
@@ -213,22 +225,75 @@ class CompletionService(
                     Resolved.Failure(CompletionErrorCode.PROVIDER_REJECTED, outcome.error, null, elapsedMs(startNanos))
             }
         } catch (ex: TimeoutException) {
-            future.cancel(true) // interrupt the worker so it does not linger past the timeout
+            startup.cancel()
+            future.cancel(true) // Requests interruption, not acknowledged worker/remote termination.
             Resolved.Failure(CompletionErrorCode.PROVIDER_TIMEOUT, "provider call timed out", ex, elapsedMs(startNanos))
         } catch (ex: ExecutionException) {
-            val cause = ex.cause
-            val code =
-                when (cause) {
-                    is ProviderUnavailableException -> CompletionErrorCode.PROVIDER_UNAVAILABLE
-                    is InvalidProviderResponseException -> CompletionErrorCode.INVALID_PROVIDER_RESPONSE
-                    else -> CompletionErrorCode.INTERNAL_COMPLETION_ERROR
-                }
-            Resolved.Failure(code, cause?.message, cause ?: ex, elapsedMs(startNanos))
+            executionFailure(ex.cause ?: ex, startNanos)
         } catch (ex: InterruptedException) {
+            startup.cancel()
             future.cancel(true)
             Thread.interrupted() // clear while the sanitized outcome is persisted; restored by create()
             Resolved.Failure(CompletionErrorCode.INTERNAL_COMPLETION_ERROR, "interrupted", ex, elapsedMs(startNanos), interrupted = true)
         }
+    }
+
+    private fun invokeOwnedProvider(
+        id: UUID,
+        prompt: String,
+        model: String,
+        startup: CompletionStartup,
+        execution: CompletionExecutionOwnership,
+    ): CompletionOutcome? {
+        if (!execution.tryEnter()) {
+            startup.rejected()
+            return null
+        }
+        try {
+            return runCatching {
+                if (!startup.canClaim()) return@runCatching null
+                if (!persistence.markRunning(id)) {
+                    startup.rejected()
+                    return@runCatching null
+                }
+                val activation = execution.activate()
+                if (activation != CompletionActivation.ACTIVATED) {
+                    startup.admissionDenied(activation)
+                    return@runCatching null
+                }
+                // RUNNING is committed and the exact reservation pinned; cancellation/deadline still get a vote.
+                if (!startup.authorize()) return@runCatching null
+                log.info("Completion {} RUNNING", id)
+                provider.complete(prompt, model)
+            }.onFailure(startup::failed).getOrThrow()
+        } finally {
+            // Exit-first only records the fact: release I/O must not delay normal Future completion.
+            execution.workerExited()
+        }
+    }
+
+    private fun rejectIfUnavailable(failure: Resolved.Failure) {
+        val (code, retry) = when {
+            failure.activation == CompletionActivation.EXPIRED -> "COMPLETION_CONCURRENCY_LIMIT" to 1L
+            failure.activation == CompletionActivation.UNAVAILABLE -> "COMPLETION_COORDINATION_UNAVAILABLE" to 5L
+            failure.overloaded -> "COMPLETION_OVERLOADED" to 1L
+            else -> return
+        }
+        val detail = if (failure.activation == CompletionActivation.UNAVAILABLE) {
+            "Completion service is temporarily unavailable. Try again later."
+        } else {
+            "Completion capacity is currently exhausted. Try again later."
+        }
+        throw ServiceUnavailableException(detail, code, retry)
+    }
+
+    private fun executionFailure(cause: Throwable, startNanos: Long): Resolved.Failure {
+        val code = when (cause) {
+            is ProviderUnavailableException -> CompletionErrorCode.PROVIDER_UNAVAILABLE
+            is InvalidProviderResponseException -> CompletionErrorCode.INVALID_PROVIDER_RESPONSE
+            else -> CompletionErrorCode.INTERNAL_COMPLETION_ERROR
+        }
+        return Resolved.Failure(code, cause.message, cause, elapsedMs(startNanos))
     }
 
     private fun logFailure(id: UUID, failure: Resolved.Failure) {
@@ -270,14 +335,12 @@ class CompletionService(
             val latencyMs: Int?,
             val overloaded: Boolean = false,
             val interrupted: Boolean = false,
+            val activation: CompletionActivation? = null,
         ) : Resolved
     }
 
     private companion object {
         val log = LoggerFactory.getLogger(CompletionService::class.java)
-
-        /** The v1 default model recorded when a request omits `model` (PLAN §4.6). */
-        const val DEFAULT_MODEL = "echo-1"
 
         /** The single sanitized, bounded, generic client-visible failure message (PLAN §10). */
         const val SANITIZED_FAILURE_MESSAGE = "The completion request could not be completed."

@@ -11,26 +11,29 @@ import java.time.Duration
 /**
  * `kira.completion.*` — completion-foundation configuration (PLAN §3 config/, §4.6, §10). Phase 2
  * defines and validates the typed binding; `CompletionService` and provider selection wire it in
- * Phase 9. All fields have safe non-secret defaults, so the context loads with zero external
- * config. A real provider's API key stays server-side in its own env var — never a property echoed
- * anywhere client-visible (PLAN §10).
+ * Phase 9. Completion is disabled without external config; enabling it requires a configured
+ * default model and a code-audited synchronous provider. HTTP has no supported lifetime contract.
+ * A real provider's API key stays server-side in its own env var — never
+ * a property echoed anywhere client-visible (PLAN §10).
  */
 @Validated
 @ConfigurationProperties(prefix = "kira.completion")
 data class KiraCompletionProperties(
-    /** Disabled by default; enabling requires a valid provider configuration. */
+    /** Disabled by default; enabling requires valid configuration and an audited provider lifetime. */
     val enabled: Boolean = false,
     /** Selects the `CompletionProvider` bean by name. Echo exists only in dev/test. */
     @field:NotBlank
     val provider: String = "http",
+    /** Required when the service is enabled; dev/test profiles explicitly select their echo model. */
+    val defaultModel: String? = null,
     /** HTTPS endpoint for the production HTTP provider. */
     val endpoint: String? = null,
     /** Bearer credential for the production HTTP provider; environment/secret manager only. */
     val apiKey: String? = null,
-    /** Provider-call timeout; the call runs outside any DB transaction (PLAN §10). */
+    /** Caller wait after startup authorization, not a physical termination deadline; no transaction spans the call. */
     @field:NotNull
     val timeout: Duration = Duration.ofSeconds(30),
-    /** Maximum time work may wait for a provider worker before overload rejection. */
+    /** Original queue + RUNNING commit + admission activation/authorization budget, before overload rejection. */
     @field:NotNull
     val queueTimeout: Duration = Duration.ofSeconds(2),
     /** Max stored result length before truncation (truncation is recorded) (PLAN §10). */
@@ -49,16 +52,21 @@ data class KiraCompletionProperties(
     val coordinationBackend: String = "memory",
     @field:Positive
     val instanceCount: Int = 1,
-    /** Per-user rolling-minute request cap. Zero disables this specific cap. */
+    /** Per-user minute cap (memory rolling; Redis fixed window). Zero disables this specific cap. */
     @field:PositiveOrZero
     val perUserPerMinute: Int = 10,
-    /** Service-wide rolling-minute request cap. Zero disables this specific cap. */
+    /** Service-wide minute cap (memory rolling; Redis fixed window). Zero disables this specific cap. */
     @field:PositiveOrZero
     val globalPerMinute: Int = 100,
     /** Per-user daily request cap. Zero disables this specific cap. */
     @field:PositiveOrZero
     val perUserDailyQuota: Int = 100,
-    /** Global provider calls allowed concurrently across the configured topology. */
+    /**
+     * Pending reservations plus owned execution pins. Redis requires 1..4096 to bound inspection;
+     * activated pins do not expire and need actual body exit/caller relinquishment before release.
+     * Unconfirmed cleanup/crash may retain capacity until verified stopped/drained recovery.
+     * Physical ownership additionally requires the audited provider and retained shared authority.
+     */
     @field:Positive
     val globalConcurrency: Int = 8,
     /** Prompt/result retention. Expired rows are deleted by the scheduled cleanup. */
@@ -79,5 +87,10 @@ data class KiraCompletionProperties(
         }
         require(!retention.isZero && !retention.isNegative) { "kira.completion.retention must be positive" }
         require(!cleanupInterval.isZero && !cleanupInterval.isNegative) { "kira.completion.cleanup-interval must be positive" }
+    }
+
+    /** Shared startup guard; preserve the exact string and the API's existing JVM UTF-16 length bound. */
+    fun requireDefaultModel(): String = requireNotNull(defaultModel?.takeIf { it.isNotBlank() && it.length <= 128 }) {
+        "kira.completion.default-model must be nonblank and at most 128 UTF-16 units"
     }
 }

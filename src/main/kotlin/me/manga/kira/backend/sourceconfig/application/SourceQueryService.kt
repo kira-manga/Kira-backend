@@ -11,6 +11,7 @@ import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Isolation
 import org.springframework.transaction.annotation.Transactional
 import java.time.Instant
 
@@ -19,13 +20,11 @@ import java.time.Instant
  * thin. Every "latest" read resolves through the single authoritative
  * [PublishedDocumentRepository.latestPointer] (PLAN §5 — never `MAX(document_revision)`).
  *
- * Consistency with the served bytes is achieved by reading the **latest snapshot's stored canonical
- * bytes** as the source of truth: the summary list parses that document (its stanzas are already in the
- * normative `(position ASC, api ASC)` order with the served lifecycle injected), and the single by-api
- * view extracts the stanza JsonObject verbatim from those same bytes (kotlinx preserves member order),
- * so what `/sources` and `/sources/{api}` report can never drift from what `/source-config/document`
- * serves. `revisionNumber`/`publishedAt` (which the document does not carry) come from each source's
- * currently-published revision row.
+ * Each read selects stored canonical snapshot bytes: the summary list parses the stanzas in their
+ * normative `(position ASC, api ASC)` order with the served lifecycle injected, and the by-api view
+ * extracts its stanza JsonObject verbatim (kotlinx preserves member order). Summary metadata not
+ * carried in those bytes (`revisionNumber`/`publishedAt`) comes from the same database snapshot.
+ * Separate public requests may select different generations when a publication commits between them.
  */
 @Service
 class SourceQueryService(private val publishedDocuments: PublishedDocumentRepository, private val sources: SourceConfigRepository) {
@@ -38,12 +37,16 @@ class SourceQueryService(private val publishedDocuments: PublishedDocumentReposi
     }
 
     /**
-     * Summaries of the sources in the CURRENT document (PLAN §4.1), in document order, filtered by the
+     * Summaries of the sources in the selected document (PLAN §4.1), in document order, filtered by the
      * optional app-vocabulary [lifecycles] ({active, disabled, removed}) and [engines] ({generic,
      * legacy}) sets (null = no filter). Draft-only and removed sources never appear (they are not in the
      * document). No document ever published → empty list.
+     *
+     * The nontransactional controller enters this proxy to read document + metadata in one snapshot,
+     * which may precede a concurrent commit. REQUIRED cannot upgrade an existing weaker transaction;
+     * annotating the self-call to [latestDocument] alone would not establish this boundary.
      */
-    @Transactional(readOnly = true)
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     fun listSummaries(lifecycles: Set<String>?, engines: Set<String>?): List<SourceSummary> {
         val document = latestDocument() ?: return emptyList()
         val parsed = SourceConfigParser.parseCompatibleDocument(document.documentJson)
@@ -52,7 +55,7 @@ class SourceQueryService(private val publishedDocuments: PublishedDocumentReposi
             .filter { lifecycles == null || it.lifecycle in lifecycles }
             .filter { engines == null || it.engine in engines }
             .map { stanza ->
-                // Invariant: every source in the served document has a currently-published revision.
+                // Invariant: every selected stanza has published-revision metadata in the same snapshot.
                 val meta =
                     checkNotNull(metadata[stanza.api]) {
                         "served source '${stanza.api}' has no published-revision metadata (inconsistent state)"
@@ -113,8 +116,8 @@ class SourceQueryService(private val publishedDocuments: PublishedDocumentReposi
 /**
  * One `GET /sources` summary row (PLAN §4.1). [lifecycle] is the app-vocabulary value already present in
  * the served stanza (`active`/`disabled`/retired-as-`removed`); [iconRemoteUrl] is null when the stanza
- * carries no `icon.remoteUrl`; [revisionNumber]/[publishedAt] are the source's currently-published
- * revision and its publish time.
+ * carries no `icon.remoteUrl`; [revisionNumber]/[publishedAt] identify the source revision and its
+ * publish time in the selected generation.
  */
 data class SourceSummary(
     val api: String,

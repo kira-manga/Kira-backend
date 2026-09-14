@@ -10,10 +10,10 @@ import org.springframework.validation.annotation.Validated
  * pointer at boot, fail-fast (PLAN §5 `StartupConsistencyIT`).
  *
  * **Two floors, exact comparisons (no ambiguous "exceeds"):**
- * - [bundledRevisionFloor] (default **5**) = the highest document revision shipped in the catalog-v2 app
- *   binary. Every *published* server revision must be **strictly `>`** it (equal would let two
- *   different documents share a revision number). The app's own acceptance rule is the *inclusive*
- *   `revision >= bundledDocument.revision`, so strictly-greater composes safely with it.
+ * - [bundledRevisionFloor] (default **6**) is the configured publication bound, aligned with the
+ *   approved catalog-v2 App source bundle. Every *published* server revision must be **strictly `>`**
+ *   it. The client requires `manifest.catalogRevision > bundled.revision` and enforces its durable
+ *   accepted floor separately. The source default does not attest a shipped binary or installed config.
  * - [minimumServerRevision] (default **100**) = the smallest revision the backend may ever publish =
  *   the sequence seed. The sequence's next value must be **`>=`** it (inclusive — the very first
  *   generated value IS 100 and is legal).
@@ -23,14 +23,14 @@ import org.springframework.validation.annotation.Validated
  *
  * **Ops note (PLAN §5):** at production cutover — and at every app release that re-bundles — ops
  * re-verifies [bundledRevisionFloor] against the revision actually shipped in the live binary; never
- * relies forever on "bundled == 4".
+ * treats the source default as installed-state evidence.
  */
 @Validated
 @ConfigurationProperties(prefix = "kira.config")
 data class KiraConfigProperties(
-    /** Highest document revision shipped in a released app binary; published revisions must be `>` it. */
+    /** Configured bundled publication bound; verify against shipped app binaries. Server revisions must be `>` it. */
     @field:Positive
-    val bundledRevisionFloor: Long = 5,
+    val bundledRevisionFloor: Long = 6,
     /** Smallest revision the backend may publish (= the sequence seed); sequence-next must be `>=` it. */
     @field:Positive
     val minimumServerRevision: Long = 100,

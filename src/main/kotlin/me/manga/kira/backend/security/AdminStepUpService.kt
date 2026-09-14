@@ -33,35 +33,36 @@ class AdminStepUpService(
     fun issue(userId: UUID, rawPassword: String, clientIp: String): IssuedAdminStepUp {
         val user = users.findById(userId)
         val identity = user?.email ?: userId.toString()
-        throttle.checkLoginAllowed(identity, clientIp)
-        val accepted =
-            user != null &&
-                user.enabled &&
-                user.role == Role.ADMIN &&
-                passwords.matches(rawPassword, user.passwordHash)
-        if (!accepted) {
-            throttle.recordLoginFailure(identity, clientIp)
-            throw UnauthorizedException(
-                "Password verification failed.",
-                code = "INVALID_STEP_UP_CREDENTIALS",
+        return throttle.beginLoginAttempt(identity, clientIp).use { attempt ->
+            val accepted =
+                user != null &&
+                    user.enabled &&
+                    user.role == Role.ADMIN &&
+                    passwords.matches(rawPassword, user.passwordHash)
+            if (!accepted) {
+                attempt.complete(false)
+                throw UnauthorizedException(
+                    "Password verification failed.",
+                    code = "INVALID_STEP_UP_CREDENTIALS",
+                )
+            }
+            attempt.complete(true)
+            val now = clock.instant()
+            val expiresAt = now.plus(properties.stepUpTtl)
+            val token = ByteArray(TOKEN_BYTES).also(random::nextBytes).let(encoder::encodeToString)
+            grants.deleteExpiredOrUsed(now)
+            grants.create(
+                NewAdminStepUpGrant(
+                    id = UUID.randomUUID(),
+                    userId = userId,
+                    tokenHash = Sha256.hexUtf8(token),
+                    scope = SOURCE_ADMIN_MUTATION_SCOPE,
+                    createdAt = now,
+                    expiresAt = expiresAt,
+                ),
             )
+            IssuedAdminStepUp(token, expiresAt)
         }
-        throttle.recordLoginSuccess(identity, clientIp)
-        val now = clock.instant()
-        val expiresAt = now.plus(properties.stepUpTtl)
-        val token = ByteArray(TOKEN_BYTES).also(random::nextBytes).let(encoder::encodeToString)
-        grants.deleteExpiredOrUsed(now)
-        grants.create(
-            NewAdminStepUpGrant(
-                id = UUID.randomUUID(),
-                userId = userId,
-                tokenHash = Sha256.hexUtf8(token),
-                scope = SOURCE_ADMIN_MUTATION_SCOPE,
-                createdAt = now,
-                expiresAt = expiresAt,
-            ),
-        )
-        return IssuedAdminStepUp(token, expiresAt)
     }
 
     @Transactional

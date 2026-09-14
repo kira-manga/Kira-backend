@@ -1,6 +1,8 @@
 package me.manga.kira.backend.completion
 
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
+import me.manga.kira.backend.completion.application.CompletionActivation
 import me.manga.kira.backend.completion.application.InMemoryCompletionAdmission
 import me.manga.kira.backend.config.KiraCompletionProperties
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
@@ -33,11 +35,23 @@ class InMemoryCompletionAdmissionTest {
         val permit = admission.acquire(UUID.randomUUID())
         assertEquals(
             "COMPLETION_CONCURRENCY_LIMIT",
-            assertThrows<TooManyRequestsException> { admission.acquire(UUID.randomUUID()) }.code,
+            assertThrows<ServiceUnavailableException> { admission.acquire(UUID.randomUUID()) }.code,
         )
         permit.close()
         permit.close()
         assertDoesNotThrow { admission.acquire(UUID.randomUUID()).close() }
+    }
+
+    @Test
+    fun `activation is explicit single-use and cannot revive a closed reservation`() {
+        val admission = InMemoryCompletionAdmission(properties(globalConcurrency = 1), clock)
+        val permit = admission.acquire(UUID.randomUUID())
+        assertEquals(CompletionActivation.ACTIVATED, permit.activate())
+        assertEquals(CompletionActivation.UNAVAILABLE, permit.activate())
+        assertThrows<ServiceUnavailableException> { admission.acquire(UUID.randomUUID()) }
+        permit.close()
+        assertEquals(CompletionActivation.EXPIRED, permit.activate())
+        admission.acquire(UUID.randomUUID()).use { assertEquals(CompletionActivation.ACTIVATED, it.activate()) }
     }
 
     private fun properties(perUserPerMinute: Int = 0, perUserDailyQuota: Int = 0, globalConcurrency: Int = 8) = KiraCompletionProperties(

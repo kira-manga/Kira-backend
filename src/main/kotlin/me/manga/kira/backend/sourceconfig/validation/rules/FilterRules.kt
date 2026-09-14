@@ -110,7 +110,7 @@ object FilterRules {
                 findings.error(
                     ValidationCodes.FILTER_OPTION_VALUE_DUPLICATE,
                     "$path.options[$i].value",
-                    "duplicate option value '${opt.value}'.",
+                    "option values must be unique.",
                 )
             }
         }
@@ -125,7 +125,7 @@ object FilterRules {
             }
             f.defaults.forEach { d ->
                 if (d !in optionValues) {
-                    findings.error(ValidationCodes.FILTER_DEFAULT_NOT_OPTION, "$path.defaults", "default '$d' is not a declared option value.")
+                    findings.error(ValidationCodes.FILTER_DEFAULT_NOT_OPTION, "$path.defaults", "default must be a declared option value.")
                 }
             }
         } else {
@@ -135,7 +135,7 @@ object FilterRules {
             when (f.type) {
                 "select" ->
                     if (f.default.isNotEmpty() && f.default !in optionValues) {
-                        findings.error(ValidationCodes.FILTER_DEFAULT_NOT_OPTION, "$path.default", "default '${f.default}' is not a declared option value.")
+                        findings.error(ValidationCodes.FILTER_DEFAULT_NOT_OPTION, "$path.default", "default must be a declared option value.")
                     }
 
                 "toggle" ->
@@ -169,6 +169,9 @@ object FilterRules {
         if (r.param.isBlank()) {
             findings.error(ValidationCodes.FILTER_REQUEST_PARAM_BLANK, "$rp.param", "request param must be non-blank.")
         }
+        if (r.target == "header") {
+            checkHeaderParam(r.param, findings, "$rp.param")
+        }
         if (r.encode !in ENCODES) {
             findings.error(ValidationCodes.FILTER_REQUEST_UNKNOWN_ENCODE, "$rp.encode", "unknown encode '${r.encode}'.")
         }
@@ -196,6 +199,34 @@ object FilterRules {
             if (r.target == "path" && !hasUsableDefault(f)) {
                 findings.error(ValidationCodes.FILTER_PATH_REQUIRES_DEFAULT, "$rp.param", "a path-target filter requires a guaranteed non-empty default.")
             }
+        }
+    }
+
+    // Dynamic credentials are unsupported, even when hidden, optional, empty, or a static placeholder.
+    private fun checkHeaderParam(name: String, findings: Findings, path: String) {
+        when (HeaderNamePolicy.classify(name)) {
+            HeaderNamePolicy.Kind.INVALID ->
+                findings.error(
+                    ValidationCodes.HEADER_NAME_INVALID,
+                    path,
+                    "header-target filter param must be a non-empty ASCII HTTP field-name token without whitespace.",
+                )
+
+            HeaderNamePolicy.Kind.FORBIDDEN ->
+                findings.error(
+                    ValidationCodes.FORBIDDEN_HEADER,
+                    path,
+                    "this header name is never allowed in a published config.",
+                )
+
+            HeaderNamePolicy.Kind.SENSITIVE ->
+                findings.error(
+                    ValidationCodes.SECRET_LIKE_HEADER,
+                    path,
+                    "credential-sensitive header-target filters are not supported; public placeholders are static-header-only.",
+                )
+
+            HeaderNamePolicy.Kind.PUBLIC -> Unit
         }
     }
 
@@ -297,7 +328,7 @@ object FilterRules {
                             findings.error(
                                 ValidationCodes.FILTER_VISIBLEWHEN_OUT_OF_VOCABULARY,
                                 "$cp.anyOf",
-                                "value '$v' is not in filter '${cond.filter}'s value vocabulary.",
+                                "anyOf values must belong to the referenced filter's value vocabulary.",
                             )
                         }
                     }

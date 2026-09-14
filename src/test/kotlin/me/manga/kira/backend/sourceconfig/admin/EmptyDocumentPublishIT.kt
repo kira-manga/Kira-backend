@@ -14,9 +14,17 @@ import org.junit.jupiter.api.Test
  * here through the admin raw-bytes endpoint AND, in Phase 7, through the public routes.)
  */
 class EmptyDocumentPublishIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `removing the last source publishes a valid empty document`() {
+        // Evolve the real COMPLETE baseline through the public lifecycle, retaining its immutable
+        // origin history/receipt. No direct SQL deletion or fabricated COMPLETE shortcut.
+        initialGenericApis.forEach { initialApi ->
+            disable(initialApi).andExpect { status { isOk() } }
+            retire(initialApi).andExpect { status { isOk() } }
+            remove(initialApi).andExpect { status { isOk() } }
+        }
         val api = "Only"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }

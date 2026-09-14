@@ -9,6 +9,8 @@ macOS. Authoritative spec: [`PLAN.md`](PLAN.md); versions: [`README.md`](README.
 - **Docker running** — required both for local dev (`docker compose`) and for the Testcontainers
   integration tests (`./gradlew build`). Docker Desktop, Colima, or Rancher all work.
 - **curl + jq** — used by the API walkthroughs below and in [`USAGE.md`](USAGE.md).
+- **Ed25519-capable OpenSSL** — use OpenSSL 3 with the existing Linux/macOS signing generator;
+  set `OPENSSL_BIN` to its executable if it is not found automatically.
 
 ### Colima / non-default Docker socket
 
@@ -43,6 +45,7 @@ single-quote values containing spaces, `#`, `$`, or other shell-special characte
 ```bash
 cp .env.example .env      # .env is gitignored — never commit it or any real secret
 # edit KIRA_ADMIN_EMAIL and KIRA_ADMIN_PASSWORD, then export every assignment into this shell
+set +x
 set -a; source .env; set +a
 ```
 
@@ -54,22 +57,56 @@ because the `dev` profile already has the matching local Docker coordinates.
 |---|---|---|
 | `KIRA_ADMIN_EMAIL`, `KIRA_ADMIN_PASSWORD` | admin seeding (on by default, incl. dev) | Startup fails fast if seeding is enabled but these are absent. Password must satisfy the policy (≥ 15 chars, ≤ 72 UTF-8 bytes); it is BCrypt-hashed and never logged. To run without seeding, set `KIRA_ADMIN_SEED_ENABLED=false`. |
 | `KIRA_JWT_SECRET` | outside the `dev` profile | Base64 that decodes to ≥ 256 bits, e.g. `openssl rand -base64 32`. The `dev` profile ships a clearly-insecure default so you don't need this locally. |
+| The four `KIRA_SIGNING_*` aliases below | every running profile, including `dev` | A valid active id and matching local Ed25519 pair are required at bean initialization. Missing, disabled, malformed or mismatched material refuses startup. |
 | `SPRING_DATASOURCE_URL/USERNAME/PASSWORD` | outside the `dev` profile | The `dev` profile reads the compose coordinates from `application-dev.yml` directly, so a plain local run needs none of these. |
 
-A minimal local `dev` run only needs `KIRA_ADMIN_EMAIL` + `KIRA_ADMIN_PASSWORD`.
+A minimal local `dev` run needs local document-signing material plus `KIRA_ADMIN_EMAIL` +
+`KIRA_ADMIN_PASSWORD` (unless admin seeding is explicitly disabled).
+
+### Local document signing
+
+Generate a **local-only** key pair once, from the repository root, using the existing Linux/macOS
+recipe. The directory is gitignored; the generator sets restrictive permissions and refuses to
+overwrite existing files. It prints the public key only. Do not enable shell tracing for secrets.
+
+```bash
+scripts/signing/generate-key.sh local-dev-01 .secrets/signing-dev
+```
+
+Export these four aliases in **each new shell**, reading the existing files; do not regenerate the
+pair merely to restart the app. The private file is PKCS#8 DER in standard Base64; the public file
+is X.509 SubjectPublicKeyInfo DER in standard Base64.
+
+```bash
+set +x
+export KIRA_SIGNING_ACTIVE_KEY_ID=local-dev-01
+export KIRA_SIGNING_PRIVATE_KEY="$(cat .secrets/signing-dev/local-dev-01.private.b64)"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID="$KIRA_SIGNING_ACTIVE_KEY_ID"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY="$(cat .secrets/signing-dev/local-dev-01.public.b64)"
+```
+
+Common `application.yml` explicitly maps these underscored aliases in every profile. There is no
+generated/default key or unsigned running mode: `KIRA_SIGNING_ENABLED=false` refuses initialization,
+even when global lazy initialization is enabled. Error messages identify `kira.signing.*` properties
+and this recipe without printing configured ids or key material. Never commit the local files, share
+them with production, install them as GitHub production secrets, or add them to shipping App trust
+pins. The separate production ceremony and complete-list rotation configuration are in
+[`SOURCE_DOCUMENT_SIGNING.md`](SOURCE_DOCUMENT_SIGNING.md).
 
 ## Running the app
 
 ```bash
 export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 docker compose up -d
+set +x
 set -a; source .env; set +a
+# Repeat the four signing exports from "Local document signing" above in this shell.
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 ```
 
 The `dev` profile points at the compose DB (`localhost:5433`), ships the insecure JWT default, seeds an
-admin, and enables open registration. Flyway applies `V1..V5` at startup; `ddl-auto=validate` means
-Hibernate only validates the Flyway-owned schema (see gotchas).
+admin, and enables open registration. Flyway applies the forward migrations through V13.2 at startup;
+`ddl-auto=validate` means Hibernate only validates the Flyway-owned schema (see gotchas).
 
 - **Swagger UI** (dev profile only): `http://localhost:8080/swagger-ui/index.html`
 - **OpenAPI document**: `http://localhost:8080/v3/api-docs`
@@ -93,13 +130,52 @@ export JAVA_HOME=$(/usr/libexec/java_home -v 21)
 
 Integration tests share one `postgres:17.6-alpine` Testcontainer (started once, wired via
 `@ServiceConnection`) under the `test` profile — no docker-compose or `.env` needed for the test run,
-only a reachable Docker daemon.
+only a reachable Docker daemon. Shared contexts retain ephemeral in-memory signing pairs through
+canonical test properties. One isolated `BootstrapSignedCatalogFixtureIT` context instead uses the
+publicly known **RFC 8032 §7.1 TEST 1** vector (`backend22-bootstrap-test-only-v1`) and a fixed
+publication Clock to reproduce public fixture bytes. Its private vector is Backend test code only;
+the cross-repo fixture contains only the public key. Never use either test key as production/release
+material. JWTs still use real wall-clock issuance and the unchanged decoder/security chain.
 
-## Seeding data (import the bundled document)
+### Reproducing the signed bootstrap test fixture
 
-The backend starts empty. The migration on-ramp is `POST /api/v1/admin/sources/import-bundled` — send
-the app's bundled document JSON (`CONFIG_BACKED_SOURCES_JSON`). It validates the whole document,
-creates/updates per-source revisions, and materializes exactly one snapshot (all-or-nothing).
+`BootstrapSignedCatalogFixtureIT.bootstrapMatchesCommittedFixture` performs real PENDING bootstrap,
+PG persistence and public reads, verifying all 12 immutable members. It compares the entire outer
+envelope against `src/test/resources/fixtures/bootstrap-v2-v6-signed.json`; a missing or drifted
+fixture fails and is never rewritten by the normal test. Signed payload strings preserve the exact
+UTF-8 response bytes; only the outer envelope uses two-space JSON indentation plus one final LF.
+
+Initial generation is a distinct, explicit **candidate-only export**, not a passing golden comparison:
+
+```bash
+KIRA_BACKEND22_GENERATE_FIXTURE=true ./gradlew test \
+  --tests 'me.manga.kira.backend.sourceconfig.public.BootstrapSignedCatalogFixtureIT.exportCandidateOnly'
+```
+
+The exporter writes only `build/fixtures/bootstrap-v2-v6-signed.json` and refuses an existing output.
+Capture/review an existing candidate before an explicit rerun. After independent source/result review,
+the integration owner transfers the actual candidate byte-for-byte into the Backend fixture above and
+the App's `composeApp/src/desktopTest/resources/fixtures/bootstrap-v2-v6-signed.json`, retaining both
+hashes. There is no sibling-build dependency and no App-side canonicalizer or signing/generation step.
+Then run the real comparison, explicitly leaving generation mode and using its distinct method filter:
+
+```bash
+env -u KIRA_BACKEND22_GENERATE_FIXTURE ./gradlew test \
+  --tests 'me.manga.kira.backend.sourceconfig.public.BootstrapSignedCatalogFixtureIT.bootstrapMatchesCommittedFixture'
+```
+
+These remain serialized shared-PG tests, not separate databases or live deployment checks. Generation,
+golden comparison and App consumption are separate evidence; none attests installed binaries or keys.
+
+## Seeding data (atomic initial bootstrap)
+
+On a fresh eligible catalog, **bootstrap while PENDING before ordinary source authoring** using
+`POST /api/v1/admin/source-catalog-v2/cutover/import-bundled`. It admits one owner-reviewed, frozen
+45-source JSON file and atomically creates the approved 12-generic/33-withheld origin with its
+receipt. Ordinary import (even no-op) and normal materialization require COMPLETE afterward.
+An existing populated local volume may instead be RECONCILIATION_REQUIRED; a matching source roster
+does not qualify it for bootstrap. Read the [migration/rollout contract](MIGRATION_BUNDLED_TO_REMOTE.md)
+before changing retained state; this is not an automatic reset/adoption procedure.
 
 ```bash
 # 1. Log in as the seeded admin. This shell must already have sourced .env.
@@ -110,20 +186,34 @@ ADMIN_TOKEN=$(curl --fail-with-body -sS http://localhost:8080/api/v1/auth/login 
   --data "$LOGIN_JSON" | jq -er '.accessToken')
 unset LOGIN_JSON
 
-# 2. Import the bundled document (≤ 5 MiB).
-curl --fail-with-body -sS -X POST http://localhost:8080/api/v1/admin/sources/import-bundled \
+# 2. Inspect the advisory phase. ready is not payload approval or an admission reservation.
+curl --fail-with-body -sS http://localhost:8080/api/v1/admin/source-catalog-v2/cutover \
+  -H "Authorization: Bearer $ADMIN_TOKEN" | jq
+
+# 3. Set this to the already reviewed, frozen raw 45-source JSON file (≤ 5 MiB).
+# Do not regenerate, normalize, or edit it between review, submission and retry.
+BOOTSTRAP_JSON='/absolute/path/to/owner-reviewed-frozen-45-source.json'
+curl --fail-with-body -sS -X POST http://localhost:8080/api/v1/admin/source-catalog-v2/cutover/import-bundled \
   -H "Authorization: Bearer $ADMIN_TOKEN" \
   -H 'Content-Type: application/json' \
-  --data-binary @src/test/resources/fixtures/bundled-full.json | jq
+  -H 'X-Kira-Bootstrap-Confirmation: WITHHOLD_33_LEGACY_SOURCES' \
+  --data-binary @"$BOOTSTRAP_JSON" | jq
 
-# 3. Verify the served document + summaries.
+# 4. Inspect served metadata (this is not cryptographic delivery/activation proof).
 curl --fail-with-body -sS http://localhost:8080/api/v1/source-config/document/meta | jq
-curl --fail-with-body -sS http://localhost:8080/api/v1/sources | jq
+curl --fail-with-body -sS http://localhost:8080/api/v2/source-config/manifest | jq
 ```
 
-A test-fixture copy of the full document lives at
-`src/test/resources/fixtures/bundled-full.json` (the real 45-source document). See
-[`MIGRATION_BUNDLED_TO_REMOTE.md`](MIGRATION_BUNDLED_TO_REMOTE.md) for the full import contract.
+Success is a nine-field immutable origin receipt, not the ordinary import summary. Retain it and the
+**exact request file**: same-byte replay after COMPLETE returns that receipt, even after later catalog
+changes; any byte difference conflicts. The `jq` above formats responses only, never request bytes.
+The old confirmation-only POST is nonmutating 409. The corrected historical
+`src/test/resources/fixtures/bundled-full.json` has complete revision-6 generic parity but retains
+revision-4 input provenance and 33 legacy definitions. Neither that fixture, a test builder nor the
+12-only reference projection replaces owner review of the actual frozen 45-source raw file. Its new
+bytes cannot replace a prior COMPLETE origin's exact-byte retry. See the
+[cutover checklist](MIGRATION_BUNDLED_TO_REMOTE.md#6-cutover-checklist) for separate signed
+v2 delivery/activation verification and owner rollout gates.
 For user creation, completions, source edits, publishing, lifecycle changes, ETags, and production
 configuration, continue with [`USAGE.md`](USAGE.md).
 
@@ -138,9 +228,12 @@ configuration, continue with [`USAGE.md`](USAGE.md).
 - **Admin seeding fail-fast.** If seeding is enabled (default) without `KIRA_ADMIN_EMAIL` /
   `KIRA_ADMIN_PASSWORD`, startup fails with a clear message. Source `.env` first, set both directly, or
   export `KIRA_ADMIN_SEED_ENABLED=false`.
+- **Document signing fail-fast.** Every running profile needs the four signing aliases above (or
+  equivalent complete canonical properties). Re-export the local pair in a new shell; disabling
+  signing is not a development workaround. Do not substitute production keys.
 - **`./gradlew --version` shows "Kotlin: 2.0.21".** That is Gradle 8.14.5's embedded script-compiler
   Kotlin, not the project's — sources compile with the pinned 2.1.21 plugin.
 - **Don't switch Spring Boot to 4.x** to "get the latest" — the 3.5.x pin is deliberate; a major upgrade
   is a separate, fully-tested change.
-- **Wipe local data** with `docker compose down -v` (drops the `kira_pgdata` volume); a plain
-  `down` keeps it.
+- **Wipe disposable local data only** with `docker compose down -v` (drops the `kira_pgdata` volume);
+  a plain `down` keeps it. This is not a reconciliation/recovery procedure for a retained deployment.

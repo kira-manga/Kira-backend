@@ -10,7 +10,8 @@ import org.springframework.stereotype.Component
  * auto-repaired — the message names the recovery runbook).
  *
  * Checks (PLAN §5):
- *  - (a) pointer NULL ⇒ zero snapshot rows exist (fresh install).
+ *  - phase/receipt ⇒ exactly one coherent singleton and matching immutable origin artifacts.
+ *  - (a) pointer NULL ⇒ zero snapshot rows exist (not by itself bootstrap approval).
  *  - (b) pointer non-NULL ⇒ a snapshot exists AND the pointer equals `MAX(document_revision)` — no
  *        snapshot may sit above the pointer (the FK already guarantees the referenced row exists).
  *  - (c) the sequence's next value `>` the pointer (a future publish must not collide or rewind).
@@ -19,19 +20,23 @@ import org.springframework.stereotype.Component
 class PublicationStateStartupValidator(private val publishedDocuments: PublishedDocumentRepository) {
     /** Throws [IllegalStateException] with the recovery-runbook message on any inconsistency (PLAN §5). */
     fun validate() {
-        val pointer = publishedDocuments.latestPointer()
+        // Also proves singleton existence and receipt/artifact coherence without consulting today's
+        // bootstrap policy. Completed-origin replay and retained reads survive policy evolution.
+        val state = publishedDocuments.initialSourceCatalogState()
+        val pointer = state.latestDocumentRevision
         val count = publishedDocuments.snapshotCount()
         val max = publishedDocuments.maxDocumentRevision()
 
         if (pointer == null) {
-            // (a) A NULL pointer is only consistent with a fresh install (no snapshots).
+            // (a) Unpublished state may include pending authoring or require reconciliation, but it
+            // cannot hide publication history behind a null pointer.
             check(count == 0L) {
                 runbook(
                     "the latest-document pointer is NULL but $count published snapshot(s) exist " +
                         "(max revision $max).",
                 )
             }
-            log.info("Publication-state startup check OK: fresh install (pointer NULL, no snapshots).")
+            log.info("Publication-state startup check OK: phase={} pointer=NULL snapshots=0.", state.phase)
             return
         }
 
@@ -53,7 +58,8 @@ class PublicationStateStartupValidator(private val publishedDocuments: Published
         }
 
         log.info(
-            "Publication-state startup check OK: pointer={} snapshots={} sequenceNext={}",
+            "Publication-state startup check OK: phase={} pointer={} snapshots={} sequenceNext={}",
+            state.phase,
             pointer,
             count,
             sequenceNext,
@@ -62,8 +68,8 @@ class PublicationStateStartupValidator(private val publishedDocuments: Published
 
     private fun runbook(problem: String): String = "Publication-state consistency check FAILED: $problem " +
         "The backend refuses to start; this is never auto-repaired. See the recovery runbook in " +
-        "docs/SOURCE_CONFIG_LIFECYCLE.md (inspect published_documents vs document_publication_state, " +
-        "decide the true latest, repair with a single audited SQL UPDATE, record it in audit_log, restart)."
+        "docs/SOURCE_CONFIG_LIFECYCLE.md (inspect publication/receipt history and actual schema eligibility; " +
+        "reconciliation or recovery requires a separately reviewed owner decision)."
 
     private companion object {
         val log = LoggerFactory.getLogger(PublicationStateStartupValidator::class.java)

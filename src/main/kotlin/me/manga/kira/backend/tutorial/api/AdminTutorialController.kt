@@ -22,7 +22,7 @@ import java.util.UUID
 class AdminTutorialController(private val tutorials: TutorialService, private val media: TutorialMediaService) {
     @PostMapping("/tutorial-categories")
     @ResponseStatus(HttpStatus.CREATED)
-    fun createCategory(@Valid @RequestBody request: CreateIdentityRequest) = AdminCategoryResponse.of(tutorials.createCategory(request.slug, request.position))
+    fun createCategory(@Valid @RequestBody request: CreateCategoryRequest) = AdminCategoryResponse.of(tutorials.createCategory(request.slug, request.position))
 
     @GetMapping("/tutorial-categories")
     fun categories() = tutorials.listAdminCategories().map(AdminCategoryResponse::of)

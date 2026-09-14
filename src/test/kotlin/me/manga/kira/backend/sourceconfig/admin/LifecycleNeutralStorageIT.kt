@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test
  * it is a no-op (the §9 neutral normalization is what makes that idempotency hold — §12.2).
  */
 class LifecycleNeutralStorageIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     private fun publishedRevisionJson(api: String): String = jdbcTemplate.queryForObject(
         "SELECT r.config_canonical_json FROM source_config_revisions r " +

@@ -22,13 +22,15 @@ class CompletionControllerTest {
         val controller = CompletionController(service, KiraCompletionProperties())
         val user = AuthenticatedUser(UUID.randomUUID(), "reader@example.com", Role.USER, Instant.EPOCH)
 
-        val error =
-            assertThrows(BadRequestException::class.java) {
-                controller.create(CompletionRequestDto(prompt = "hello", model = "m".repeat(129)), user)
-            }
+        listOf("m".repeat(129), " ".repeat(129)).forEach { model ->
+            val error =
+                assertThrows(BadRequestException::class.java) {
+                    controller.create(CompletionRequestDto(prompt = "hello", model = model), user)
+                }
 
-        assertEquals("MODEL_TOO_LONG", error.code)
-        assertEquals(400, error.status.value())
+            assertEquals("MODEL_TOO_LONG", error.code)
+            assertEquals(400, error.status.value())
+        }
         verifyNoInteractions(service)
     }
 }

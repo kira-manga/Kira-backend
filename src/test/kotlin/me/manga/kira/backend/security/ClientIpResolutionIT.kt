@@ -6,7 +6,6 @@ import me.manga.kira.backend.support.MutableClock
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
 import java.time.Duration
@@ -94,25 +93,25 @@ class ClientIpResolutionIT {
         val clock = MutableClock()
         val throttle = AuthThrottleService(throttleProps(threshold = 3, initialBlock = Duration.ofMinutes(1)), clock)
 
-        repeat(3) { throttle.recordLoginFailure("victim@example.com", "203.0.113.9") }
+        repeat(3) { throttle.fail("victim@example.com", "203.0.113.9") }
         assertThrows(TooManyRequestsException::class.java) {
-            throttle.checkLoginAllowed("victim@example.com", "203.0.113.9")
+            throttle.succeed("victim@example.com", "203.0.113.9")
         }
 
         clock.advance(Duration.ofMinutes(2)) // past the 1-minute block
-        assertDoesNotThrow { throttle.checkLoginAllowed("victim@example.com", "203.0.113.9") }
+        assertDoesNotThrow { throttle.succeed("victim@example.com", "203.0.113.9") }
     }
 
     @Test
     fun `success resets the failure counter`() {
         val throttle = AuthThrottleService(throttleProps(threshold = 3), MutableClock())
 
-        repeat(2) { throttle.recordLoginFailure("a@example.com", "1.1.1.1") }
-        throttle.recordLoginSuccess("a@example.com", "1.1.1.1")
+        repeat(2) { throttle.fail("a@example.com", "1.1.1.1") }
+        throttle.succeed("a@example.com", "1.1.1.1")
         // Two more failures must NOT trip the threshold (counter restarted at zero).
-        repeat(2) { throttle.recordLoginFailure("a@example.com", "1.1.1.1") }
+        repeat(2) { throttle.fail("a@example.com", "1.1.1.1") }
 
-        assertDoesNotThrow { throttle.checkLoginAllowed("a@example.com", "1.1.1.1") }
+        assertDoesNotThrow { throttle.succeed("a@example.com", "1.1.1.1") }
     }
 
     @Test
@@ -120,37 +119,45 @@ class ClientIpResolutionIT {
         val clock = MutableClock()
         val throttle = AuthThrottleService(throttleProps(threshold = 3, window = Duration.ofMinutes(15)), clock)
 
-        repeat(2) { throttle.recordLoginFailure("b@example.com", "2.2.2.2") }
+        repeat(2) { throttle.fail("b@example.com", "2.2.2.2") }
         clock.advance(Duration.ofMinutes(16)) // window elapsed → counter is stale
-        throttle.recordLoginFailure("b@example.com", "2.2.2.2") // resets, then counts as 1
+        throttle.fail("b@example.com", "2.2.2.2") // resets, then counts as 1
 
-        assertDoesNotThrow { throttle.checkLoginAllowed("b@example.com", "2.2.2.2") }
+        assertDoesNotThrow { throttle.succeed("b@example.com", "2.2.2.2") }
     }
 
     @Test
     fun `store enforces max-entries with deterministic eviction`() {
         val clock = MutableClock()
-        val throttle = AuthThrottleService(throttleProps(maxEntries = 2, threshold = 10), clock)
+        val throttle = AuthThrottleService(throttleProps(maxEntries = 4, threshold = 2), clock)
 
-        throttle.recordLoginFailure("k1@example.com", "9.0.0.1")
+        throttle.fail("k1@example.com", "9.0.0.1")
         clock.advance(Duration.ofSeconds(1))
-        throttle.recordLoginFailure("k2@example.com", "9.0.0.2")
+        throttle.fail("k2@example.com", "9.0.0.2")
         clock.advance(Duration.ofSeconds(1))
-        throttle.recordLoginFailure("k3@example.com", "9.0.0.3") // triggers eviction of the oldest (k1)
+        throttle.fail("k3@example.com", "9.0.0.3") // Evicts the oldest identity/IP pair, not k2's history.
 
-        assertEquals(2, throttle.size())
+        assertEquals(4, throttle.size())
+        throttle.fail("k2@example.com", "9.0.0.2")
+        assertThrows(TooManyRequestsException::class.java) { throttle.beginLoginAttempt("k2@example.com", "9.0.0.2") }
     }
 
     @Test
-    fun `eviction removes dead entries first`() {
+    fun `dead entries are reclaimed without evicting the replacement live pair`() {
         val clock = MutableClock()
-        val throttle =
-            AuthThrottleService(throttleProps(maxEntries = 1, threshold = 10, window = Duration.ofMinutes(15)), clock)
+        val throttle = AuthThrottleService(throttleProps(maxEntries = 2, threshold = 10, window = Duration.ofMinutes(15)), clock)
 
-        throttle.recordLoginFailure("dead@example.com", "9.0.0.1")
-        clock.advance(Duration.ofMinutes(16)) // first entry is now dead (past window, never blocked)
-        throttle.recordLoginFailure("fresh@example.com", "9.0.0.2")
-
-        assertTrue(throttle.size() == 1, "the dead entry was evicted, the fresh one kept")
+        throttle.fail("dead@example.com", "9.0.0.1")
+        clock.advance(Duration.ofMinutes(16))
+        throttle.beginLoginAttempt("fresh@example.com", "9.0.0.2").use { fresh ->
+            assertEquals(2, throttle.size()) // Both expired dimensions made room for the new pair.
+            assertThrows(TooManyRequestsException::class.java) { throttle.checkRegistrationAllowed("9.0.0.3") }
+            assertThrows(TooManyRequestsException::class.java) { throttle.beginLoginAttempt("dead@example.com", "9.0.0.1") }
+            fresh.complete(true) // Rejected capacity requests did not evict either live dimension.
+        }
     }
+
+    private fun AuthThrottle.fail(email: String, ip: String) = beginLoginAttempt(email, ip).complete(false)
+
+    private fun AuthThrottle.succeed(email: String, ip: String) = beginLoginAttempt(email, ip).complete(true)
 }

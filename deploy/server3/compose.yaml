@@ -67,13 +67,16 @@ services:
     env_file:
       - backend.env
     environment:
+      SPRING_PROFILES_ACTIVE: "prod,server3"
+      KIRA_SERVER3_HOST_PEER: ${KIRA_SERVER3_HOST_PEER:?KIRA_SERVER3_HOST_PEER is required}
+      KIRA_SERVER3_ADMIN_ADDRESS: ${KIRA_SERVER3_ADMIN_ADDRESS:?KIRA_SERVER3_ADMIN_ADDRESS is required}
       KIRA_TUTORIAL_MEDIA_DIRECTORY: /var/lib/kira/tutorial-media
     ports:
       - "127.0.0.1:18080:8080"
     volumes:
       - ./tls/ca.crt:/run/kira-db-ca/ca.crt:ro
       - tutorial-media:/var/lib/kira/tutorial-media
-    networks: [database, proxy]
+    networks: [database, proxy, admin-ingress]
     depends_on:
       postgres:
         condition: service_healthy
@@ -127,9 +130,14 @@ services:
     restart: unless-stopped
     env_file:
       - admin.env
+    environment:
+      KIRA_BACKEND_URL: http://backend:8080
+      KIRA_ADMIN_TRUSTED_INGRESS: "true"
     ports:
       - "127.0.0.1:18082:8080"
-    networks: [proxy]
+    networks:
+      admin-ingress:
+        ipv4_address: ${KIRA_SERVER3_ADMIN_ADDRESS:?KIRA_SERVER3_ADMIN_ADDRESS is required}
     depends_on:
       backend:
         condition: service_healthy
@@ -162,6 +170,18 @@ networks:
     ipam:
       config:
         - subnet: 172.29.11.0/24
+  admin-ingress:
+    name: kira-admin-ingress
+    driver: bridge
+    # Internal-only bridges do not provide the host port publication used by Nginx.
+    internal: false
+    enable_ipv6: false
+    driver_opts:
+      com.docker.network.bridge.gateway_mode_ipv4: "nat"
+    ipam:
+      config:
+        - subnet: ${KIRA_SERVER3_ADMIN_SUBNET:?KIRA_SERVER3_ADMIN_SUBNET is required}
+          gateway: ${KIRA_SERVER3_ADMIN_GATEWAY:?KIRA_SERVER3_ADMIN_GATEWAY is required}
 
 volumes:
   postgres-data:

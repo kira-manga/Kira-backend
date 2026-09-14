@@ -36,7 +36,7 @@ class TutorialService(
 
     @Transactional
     fun createCategory(slug: String, position: Int? = null): AdminCategoryView {
-        validator.slug(slug)
+        validator.categorySlug(slug)
         if (position != null && position < 0) throw BadRequestException("position must be non-negative.")
         val id = UUID.randomUUID()
         val created = repository.createCategory(id, slug, position ?: repository.nextCategoryPosition(), clock.instant())
@@ -148,7 +148,7 @@ class TutorialService(
 
     @Transactional
     fun createTutorial(slug: String, position: Int? = null, featuredPosition: Int? = null): AdminTutorialView {
-        validator.slug(slug)
+        validator.tutorialSlug(slug)
         if (position != null && position < 0) throw BadRequestException("position must be non-negative.")
         if (featuredPosition != null && featuredPosition < 0) throw BadRequestException("featuredPosition must be non-negative.")
         val id = UUID.randomUUID()
@@ -198,7 +198,8 @@ class TutorialService(
         val tutorial = requireTutorial(tutorialId, lock = true)
         val revision = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
         ensureNewerTutorialRevision(tutorial, revision)
-        val category = requireCategory(requireNotNull(revision.categoryId))
+        // Serialize the lifecycle check with category archive/restore through transaction commit.
+        val category = requireCategory(requireNotNull(revision.categoryId), lock = true)
         if (category.status != TutorialLifecycle.PUBLISHED || category.publishedRevisionId == null) {
             throw TutorialConflictException("the referenced category must be published before the tutorial.", "TUTORIAL_CATEGORY_NOT_PUBLISHED")
         }
@@ -217,8 +218,8 @@ class TutorialService(
     fun rollbackTutorial(tutorialId: UUID, revisionNumber: Int): AdminTutorialView {
         requireTutorial(tutorialId, lock = true)
         val historical = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
-        val category = requireCategory(requireNotNull(historical.categoryId))
-        if (category.status != TutorialLifecycle.PUBLISHED) {
+        val category = requireCategory(requireNotNull(historical.categoryId), lock = true)
+        if (category.status != TutorialLifecycle.PUBLISHED || category.publishedRevisionId == null) {
             throw TutorialConflictException("the historical revision's category is not published.", "TUTORIAL_CATEGORY_NOT_PUBLISHED")
         }
         val content = tutorialRevision(historical).content

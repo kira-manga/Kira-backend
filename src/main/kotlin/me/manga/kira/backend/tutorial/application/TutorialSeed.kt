@@ -144,7 +144,8 @@ class TutorialStartupValidator(private val repository: TutorialRepository, priva
                 "(SELECT count(*) FROM tutorial_categories WHERE status = 'PUBLISHED' AND published_revision_id IS NULL) + " +
                 "(SELECT count(*) FROM tutorials WHERE status = 'PUBLISHED' AND published_revision_id IS NULL) + " +
                 "(SELECT count(*) FROM tutorials t JOIN tutorial_revisions r ON r.id = t.published_revision_id " +
-                " JOIN tutorial_categories c ON c.id = r.category_id WHERE t.status = 'PUBLISHED' AND c.status <> 'PUBLISHED') + " +
+                " JOIN tutorial_categories c ON c.id = r.category_id WHERE t.status = 'PUBLISHED' " +
+                " AND (c.status NOT IN ('PUBLISHED', 'ARCHIVED') OR c.published_revision_id IS NULL)) + " +
                 "(SELECT count(*) FROM tutorials t JOIN tutorial_revision_media rm ON rm.revision_id = t.published_revision_id " +
                 " JOIN tutorial_media m ON m.id = rm.media_id WHERE t.status = 'PUBLISHED' AND NOT m.published)",
             Int::class.java,

@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
  * migration input but cannot be published into the public catalog.
  */
 class EndpointCompletenessIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     private fun generic(api: String, drop: String): SourceConfig {
         val full = SourceConfigFixtures.validGenericSource(api)

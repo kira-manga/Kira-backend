@@ -34,13 +34,18 @@ interface UserRepository {
      */
     fun create(normalizedEmail: String, passwordHash: String, role: Role): User
 
-    /** Set the enabled flag. Idempotent. */
+    /** Set only the enabled flag and update timestamp; never overwrite credentials or role. Idempotent. */
     fun setEnabled(id: UUID, enabled: Boolean)
 
-    /** Replace the password hash (explicit admin reset — PLAN §4.4). */
+    /**
+     * Atomically replace the hash and increment the stored credential version (admin reset — PLAN
+     * §4.4). Preserve enabled/role; join the caller's transaction so audit and reset roll back together.
+     * Missing id throws [UserNotFoundException]; exhausted version throws [CredentialVersionExhaustedException]
+     * without changing either credential field. Never compute the increment from a prior snapshot.
+     */
     fun updatePasswordHash(id: UUID, passwordHash: String)
 
-    /** Replace the role (used by tests and any future role-mutation surface). */
+    /** Replace only role and update timestamp (tests/future role surface); never overwrite credentials or enabled. */
     fun updateRole(id: UUID, role: Role)
 
     /** One page of users ordered by `created_at` ascending, plus the total count (PLAN §4.4). */

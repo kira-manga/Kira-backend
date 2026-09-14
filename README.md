@@ -10,6 +10,11 @@ roles, admin source/user management with a full audit trail, Ed25519-signed docu
 optional authenticated completion service behind a production HTTPS provider abstraction. Echo is
 restricted to explicit development/test profiles.
 
+Bearer authentication rechecks enabled/current DB role and a per-user credential version. Password
+reset atomically advances that version and revokes older tokens on the next authentication check.
+Legacy tokens require one-time reauthentication; mixed-version traffic and old-image rollback are
+not revocation-safe. See [`Password-reset cutover`](docs/SECURITY.md#password-reset-semantics-and-coordinated-cutover).
+
 The service also owns bilingual website tutorials, immutable revisions, categories,
 ordering/featured state, and sanitized media; see [`docs/TUTORIALS.md`](docs/TUTORIALS.md).
 
@@ -98,22 +103,47 @@ docker compose up -d
 
 # 2. Provide local secrets. Uncomment/edit the two KIRA_ADMIN_* lines, then export the file.
 cp .env.example .env
+set +x
 set -a; source .env; set +a
 
-# 3. Run against it with the `dev` profile (reads compose coordinates from application-dev.yml).
+# 3. Generate a LOCAL signing pair once (the generator refuses overwrites); export it in each shell.
+# Never use this pair for production or shipping App trust pins. Do not trace secret exports.
+scripts/signing/generate-key.sh local-dev-01 .secrets/signing-dev
+set +x
+export KIRA_SIGNING_ACTIVE_KEY_ID=local-dev-01
+export KIRA_SIGNING_PRIVATE_KEY="$(cat .secrets/signing-dev/local-dev-01.private.b64)"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID="$KIRA_SIGNING_ACTIVE_KEY_ID"
+export KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY="$(cat .secrets/signing-dev/local-dev-01.public.b64)"
+
+# 4. Run against it with the `dev` profile (reads compose coordinates from application-dev.yml).
 SPRING_PROFILES_ACTIVE=dev ./gradlew bootRun
 
-# 4. The full green gate: compile + all unit + Testcontainers integration tests (Docker required).
+# 5. The full green gate: compile + all unit + Testcontainers integration tests (Docker required).
 ./gradlew clean build
 ```
 
 Spring Boot does **not** load `.env` automatically in this project. Run the `source` command in every
-new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Keep
-shell-special password values single-quoted inside `.env`.
+new shell before `bootRun`, or export `KIRA_ADMIN_EMAIL` and `KIRA_ADMIN_PASSWORD` directly. Repeat
+the four signing exports too, using the existing local files rather than regenerating keys. Keep
+shell-special password values single-quoted inside `.env` and shell tracing off for secrets.
 
-`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/V1..V13`); Hibernate
-only validates against it. Swagger UI (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI
-document is at `/v3/api-docs`.
+Signing is mandatory at bean initialization in **every running profile**, including `dev`; missing,
+disabled, malformed or mismatched material refuses startup, not a later publication. No development
+keys are supplied or generated automatically. The recipe needs Ed25519-capable OpenSSL (see
+[`Local document signing`](docs/LOCAL_DEV.md#local-document-signing)); tests supply only
+[test signing material](docs/LOCAL_DEV.md#running-tests), never production keys.
+
+`ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/`, V1..V13 then
+V13.1 credential versions and V13.2 bootstrap state); Hibernate only validates against it. Swagger UI
+(dev profile only) is at `/swagger-ui/index.html`; the OpenAPI document is at `/v3/api-docs`.
+
+Bootstrap a fresh eligible source catalog **before ordinary authoring**, using the raw
+`POST /api/v1/admin/source-catalog-v2/cutover/import-bundled` and a reviewed frozen payload.
+Ordinary import/publication requires durable COMPLETE; the old confirmation-only POST no longer
+mutates. Populated installations require separately reviewed reconciliation, actual migration-history
+eligibility and old-writer drain, not automatic adoption/reset. See
+[`Migration and cutover`](docs/MIGRATION_BUNDLED_TO_REMOTE.md) and
+[`Local bootstrap`](docs/LOCAL_DEV.md#seeding-data-atomic-initial-bootstrap).
 
 See **[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md)** for the full local workflow, seeding data, and gotchas.
 
@@ -156,7 +186,7 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1 through V13 (catalog v2, editor drafts, step-up, changesets)
+  db/migration/    # forward-only V1..V13, V13_1 credential versions, V13_2 bootstrap state
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```

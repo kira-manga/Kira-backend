@@ -1,0 +1,235 @@
+# Real promtool 3.14.0 fixtures. Positive epoch keeps the 31-day boundary positive;
+# all samples/evaluations are one minute apart, not a simulated month of scrapes.
+rule_files:
+  - alerts.yaml
+evaluation_interval: 1m
+
+tests:
+  - name: positive_current_timestamps_are_valid
+    start_timestamp: &epoch 10000000
+    input_series:
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: &current_times '10000000+60x61'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: *current_times
+    promql_expr_test:
+      - expr: &recovery_alerts 'ALERTS{alertname=~"Kira(Backup|RestoreVerification).*"}'
+        eval_time: 0m
+        exp_samples: []
+      - expr: *recovery_alerts
+        eval_time: 61m
+        exp_samples: []
+
+  - name: exact_age_boundaries_then_unchanged_pending_and_firing_holds
+    start_timestamp: *epoch
+    input_series:
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: '9999100x61' # Exactly 900s old at t=0; first stale evaluation at t=1m.
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: '7321600x61' # Exactly 2678400s old at t=0.
+    promql_expr_test:
+      - expr: *recovery_alerts
+        eval_time: 0m
+        exp_samples: []
+      - expr: &stale_pending_expr 'ALERTS{alertname=~"Kira(Backup|RestoreVerification)Stale",alertstate="pending"}'
+        eval_time: 1m
+        exp_samples: &stale_pending
+          - labels: 'ALERTS{alertname="KiraBackupStale",alertstate="pending",environment="production",job="kira-backup",service="kira-backend",severity="critical"}'
+            value: 1
+          - labels: 'ALERTS{alertname="KiraRestoreVerificationStale",alertstate="pending",environment="production",job="kira-restore-verification",service="kira-backend",severity="warning"}'
+            value: 1
+      - expr: *stale_pending_expr
+        eval_time: 5m
+        exp_samples: *stale_pending
+      - expr: *stale_pending_expr
+        eval_time: 60m
+        exp_samples: &restore_pending
+          - labels: 'ALERTS{alertname="KiraRestoreVerificationStale",alertstate="pending",environment="production",job="kira-restore-verification",service="kira-backend",severity="warning"}'
+            value: 1
+      - expr: &unavailable_alerts 'ALERTS{alertname=~"Kira(Backup|RestoreVerification)TelemetryUnavailable"}'
+        eval_time: 61m
+        exp_samples: []
+    alert_rule_test:
+      - {eval_time: 5m, alertname: KiraBackupStale, exp_alerts: []}
+      - {eval_time: 60m, alertname: KiraRestoreVerificationStale, exp_alerts: []}
+      - eval_time: 6m
+        alertname: KiraBackupStale
+        exp_alerts: &backup_stale
+          - exp_labels: {job: kira-backup, service: kira-backend, environment: production, severity: critical}
+            exp_annotations: {summary: "No verified Kira backup has completed within the 15-minute RPO"}
+      - eval_time: 61m
+        alertname: KiraRestoreVerificationStale
+        exp_alerts: &restore_stale
+          - exp_labels: {job: kira-restore-verification, service: kira-backend, environment: production, severity: warning}
+            exp_annotations: {summary: "Kira disposable restore verification is older than 31 days"}
+
+  - name: never_present_scopes_are_not_masked_by_foreign_labels_or_up
+    start_timestamp: *epoch
+    input_series:
+      # A wrong job, service or environment cannot satisfy either expected scope.
+      - series: 'kira_backup_last_success_timestamp_seconds{job="another-job",service="kira-backend",environment="production"}'
+        values: &short_current_times '10000000+60x6'
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="another-service",environment="production"}'
+        values: *short_current_times
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="staging"}'
+        values: *short_current_times
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="another-job",service="kira-backend",environment="production"}'
+        values: *short_current_times
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="another-service",environment="production"}'
+        values: *short_current_times
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="staging"}'
+        values: *short_current_times
+      # No up at 0-1m, down at 2-3m, healthy at 4-5m: absence remains continuous.
+      - series: 'up{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: &up_changes '_ _ 0 0 1 1'
+      - series: 'up{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: *up_changes
+    promql_expr_test:
+      - expr: &unavailable_pending_expr 'ALERTS{alertname=~"Kira(Backup|RestoreVerification)TelemetryUnavailable",alertstate="pending"}'
+        eval_time: 0m
+        exp_samples: &unavailable_pending
+          - labels: 'ALERTS{alertname="KiraBackupTelemetryUnavailable",alertstate="pending",environment="production",job="kira-backup",service="kira-backend",severity="critical"}'
+            value: 1
+          - labels: 'ALERTS{alertname="KiraRestoreVerificationTelemetryUnavailable",alertstate="pending",environment="production",job="kira-restore-verification",service="kira-backend",severity="warning"}'
+            value: 1
+      - expr: *unavailable_pending_expr
+        eval_time: 4m
+        exp_samples: *unavailable_pending
+    alert_rule_test:
+      - {eval_time: 4m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: []}
+      - {eval_time: 4m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: []}
+      - eval_time: 5m
+        alertname: KiraBackupTelemetryUnavailable
+        exp_alerts: &backup_unavailable
+          - exp_labels: {job: kira-backup, service: kira-backend, environment: production, severity: critical}
+            exp_annotations: {summary: "Verified Kira backup telemetry is absent or invalid"}
+      - eval_time: 5m
+        alertname: KiraRestoreVerificationTelemetryUnavailable
+        exp_alerts: &restore_unavailable
+          - exp_labels: {job: kira-restore-verification, service: kira-backend, environment: production, severity: warning}
+            exp_annotations: {summary: "Kira restore verification telemetry is absent or invalid"}
+
+  - name: invalid_value_families_are_unavailable_without_stale_overlap
+    start_timestamp: *epoch
+    input_series:
+      # Six minutes each: zero, negative, future throughout, ordinary NaN, +Inf, -Inf.
+      # NaN is an ordinary present sample, NOT the special `stale` marker.
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: &invalid_values >-
+          0x5 -1x5 20000000x5 NaN NaN NaN NaN NaN NaN
+          +Inf +Inf +Inf +Inf +Inf +Inf -Inf -Inf -Inf -Inf -Inf -Inf
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: *invalid_values
+    alert_rule_test:
+      - {eval_time: 5m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 5m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+      - {eval_time: 11m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 11m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+      - {eval_time: 17m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 17m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+      - {eval_time: 23m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 23m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+      - {eval_time: 29m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 29m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+      - {eval_time: 35m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 35m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+    promql_expr_test:
+      - expr: &stale_alerts 'ALERTS{alertname=~"Kira(Backup|RestoreVerification)Stale"}'
+        eval_time: 5m
+        exp_samples: []
+      - {expr: *stale_alerts, eval_time: 11m, exp_samples: []}
+      - {expr: *stale_alerts, eval_time: 17m, exp_samples: []}
+      - {expr: *stale_alerts, eval_time: 23m, exp_samples: []}
+      - {expr: *stale_alerts, eval_time: 29m, exp_samples: []}
+      - {expr: *stale_alerts, eval_time: 35m, exp_samples: []}
+
+  - name: stale_marker_loss_short_recovery_resets_grace_then_target_removal_fires
+    start_timestamp: *epoch
+    input_series:
+      # Absent at 2m, recovers before grace at 5m, absent again at 6m; fires at 11m.
+      # At 12m telemetry returns OLD: unavailable clears but stale-success is pending.
+      # Only the truthful current success at 13m clears all recovery conditions.
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: '10000000 10000060 stale _ _ 10000300 stale _ _ _ _ _ 9998000 10000780'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: '10000000 10000060 stale _ _ 10000300 stale _ _ _ _ _ 7321000 10000780'
+      - series: 'up{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: &removed_target '1 1 0 0 0 1 stale _ _ _ _ _ _ _'
+      - series: 'up{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: *removed_target
+    promql_expr_test:
+      - {expr: *unavailable_pending_expr, eval_time: 2m, exp_samples: *unavailable_pending}
+      - {expr: *recovery_alerts, eval_time: 5m, exp_samples: []}
+      - {expr: *unavailable_pending_expr, eval_time: 10m, exp_samples: *unavailable_pending}
+      - {expr: *unavailable_alerts, eval_time: 12m, exp_samples: []}
+      - {expr: *stale_pending_expr, eval_time: 12m, exp_samples: *stale_pending}
+      - {expr: *recovery_alerts, eval_time: 13m, exp_samples: []}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: []}
+      - {eval_time: 10m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: []}
+      - {eval_time: 11m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 11m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+
+  - name: missing_samples_allow_lookback_before_unavailable_grace
+    start_timestamp: *epoch
+    input_series:
+      # No stale marker. Last sample remains visible inside the default 5m lookback.
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: '10000000 _x11'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: '10000000 _x11'
+      - series: 'up{job="kira-backup",service="kira-backend",environment="production",instance="backup-a"}'
+        values: '1x11'
+      - series: 'up{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-a"}'
+        values: '1x11'
+    promql_expr_test:
+      - {expr: *recovery_alerts, eval_time: 4m, exp_samples: []}
+      - {expr: *unavailable_pending_expr, eval_time: 6m, exp_samples: *unavailable_pending}
+    alert_rule_test:
+      - {eval_time: 11m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 11m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+
+  - name: invalid_to_absent_to_new_instance_preserves_logical_scope_pending_time
+    start_timestamp: *epoch
+    input_series:
+      # Invalid from 0m; absent at 2m; new-instance future sample at 3m. No recovery gap.
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-old",producer="old"}'
+        values: '0 0 stale'
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-new",producer="new"}'
+        values: '_ _ _ 20000000 20000000 20000000 10000360'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-old",producer="old"}'
+        values: '0 0 stale'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-new",producer="new"}'
+        values: '_ _ _ 20000000 20000000 20000000 10000360'
+    promql_expr_test:
+      - {expr: *unavailable_pending_expr, eval_time: 1m, exp_samples: *unavailable_pending}
+      - {expr: *unavailable_pending_expr, eval_time: 2m, exp_samples: *unavailable_pending}
+      - {expr: *unavailable_pending_expr, eval_time: 4m, exp_samples: *unavailable_pending}
+      - {expr: *recovery_alerts, eval_time: 6m, exp_samples: []}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: []}
+      - {eval_time: 4m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: []}
+      - {eval_time: 5m, alertname: KiraBackupTelemetryUnavailable, exp_alerts: *backup_unavailable}
+      - {eval_time: 5m, alertname: KiraRestoreVerificationTelemetryUnavailable, exp_alerts: *restore_unavailable}
+
+  - name: stale_instance_churn_preserves_both_existing_holds
+    start_timestamp: *epoch
+    input_series:
+      # Same verified old success across an instance/producer handover at 2m.
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-old",producer="old"}'
+        values: '9998000 9998000 stale'
+      - series: 'kira_backup_last_success_timestamp_seconds{job="kira-backup",service="kira-backend",environment="production",instance="backup-new",producer="new"}'
+        values: '_ _ 9998000x58'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-old",producer="old"}'
+        values: '7321000 7321000 stale'
+      - series: 'kira_restore_test_last_success_timestamp_seconds{job="kira-restore-verification",service="kira-backend",environment="production",instance="restore-new",producer="new"}'
+        values: '_ _ 7321000x58'
+    promql_expr_test:
+      - {expr: *stale_pending_expr, eval_time: 4m, exp_samples: *stale_pending}
+      - {expr: *stale_pending_expr, eval_time: 59m, exp_samples: *restore_pending}
+      - {expr: *unavailable_alerts, eval_time: 60m, exp_samples: []}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: KiraBackupStale, exp_alerts: []}
+      - {eval_time: 5m, alertname: KiraBackupStale, exp_alerts: *backup_stale}
+      - {eval_time: 59m, alertname: KiraRestoreVerificationStale, exp_alerts: []}
+      - {eval_time: 60m, alertname: KiraRestoreVerificationStale, exp_alerts: *restore_stale}

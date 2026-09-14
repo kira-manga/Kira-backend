@@ -83,6 +83,7 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
         const val ENTITY_SOURCE_DRAFT = "source_draft"
         const val ENTITY_SOURCE_CHANGESET = "source_changeset"
         const val ENTITY_USER = "user"
+        const val ENTITY_LOGIN_IDENTIFIER = "login_identifier"
         const val ENTITY_TUTORIAL = "tutorial"
         const val ENTITY_TUTORIAL_CATEGORY = "tutorial_category"
         const val ENTITY_TUTORIAL_MEDIA = "tutorial_media"

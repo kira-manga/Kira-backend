@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.get
  * public endpoint has NO `revision` parameter (PLAN §4.1).
  */
 class ETagIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     private fun etagOf(actions: ResultActionsDsl): String = actions.andReturn().response.getHeader("ETag") ?: error("missing ETag header")
 

@@ -31,12 +31,14 @@ import java.util.Base64
  *
  * Because the container is shared across test classes, [resetState] clears every mutable table between
  * test methods. Since Phase 5 the source-config + published-document tables are cleared too, in
- * **FK-safe order** (all FKs are `ON DELETE RESTRICT`, PLAN §5): the two self/pointer references
+ * **FK-safe order** (all FKs are `ON DELETE RESTRICT`, PLAN §5): the self/pointer references
  * (`source_configs.current_published_revision_id`, `document_publication_state.latest_document_revision`)
- * are nulled first, then children are deleted before parents, and `users` last (revisions/snapshots
- * reference it). The `seq_document_revision` sequence is restarted so every test sees the fresh seed
+ * and the bootstrap origin receipt are cleared first, then children are deleted before
+ * parents, and `users` last (revisions/snapshots/receipt reference it). The `seq_document_revision`
+ * sequence is restarted so every test sees the fresh seed
  * state (`StartupConsistencyIT` manipulates it). The seeded singletons (`security_state`,
- * `document_publication_state`) are kept — only their mutable pointer is reset.
+ * `document_publication_state`) are kept, with the catalog reset to genuinely PENDING, never a
+ * fabricated COMPLETE fixture.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -52,7 +54,18 @@ abstract class AbstractIntegrationTest {
     @BeforeEach
     fun resetState() {
         // 1) Break the pointer/self references that would block RESTRICT deletes.
-        jdbcTemplate.update("UPDATE document_publication_state SET latest_document_revision = NULL WHERE id = 1")
+        jdbcTemplate.update(
+            """
+            UPDATE document_publication_state
+            SET latest_document_revision = NULL, bootstrap_phase = 'pending',
+                bootstrap_policy_id = NULL, bootstrap_reference_sha256 = NULL,
+                bootstrap_payload_sha256 = NULL, bootstrap_document_revision = NULL,
+                bootstrap_document_checksum = NULL, bootstrap_catalog_revision = NULL,
+                bootstrap_catalog_checksum = NULL, bootstrap_completed_at = NULL,
+                bootstrap_actor_id = NULL
+            WHERE id = 1
+            """.trimIndent(),
+        )
         jdbcTemplate.update("UPDATE source_configs SET current_published_revision_id = NULL")
         jdbcTemplate.update("UPDATE tutorials SET published_revision_id = NULL")
         jdbcTemplate.update("UPDATE tutorial_categories SET published_revision_id = NULL")

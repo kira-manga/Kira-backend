@@ -15,6 +15,4 @@ interface SpringDataPublishedDocumentRepository : JpaRepository<PublishedDocumen
     fun maxDocumentRevision(): Long?
 
     fun findByDocumentRevision(documentRevision: Long): PublishedDocumentEntity?
-
-    fun findAllByOrderByDocumentRevisionAsc(): List<PublishedDocumentEntity>
 }

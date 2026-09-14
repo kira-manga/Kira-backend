@@ -7,10 +7,12 @@ import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.ValidationFailedException
 import me.manga.kira.backend.observability.KiraMetrics
+import me.manga.kira.backend.sourceconfig.domain.InitialSourceCatalogPhase
 import me.manga.kira.backend.sourceconfig.domain.LifecycleStateMachine
 import me.manga.kira.backend.sourceconfig.domain.NewRevision
 import me.manga.kira.backend.sourceconfig.domain.NewSourceConfig
 import me.manga.kira.backend.sourceconfig.domain.NewValidationResult
+import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
 import me.manga.kira.backend.sourceconfig.domain.RevisionRepository
 import me.manga.kira.backend.sourceconfig.domain.RevisionStatus
@@ -22,8 +24,10 @@ import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfigDocument
 import me.manga.kira.backend.sourceconfig.parsing.SourceConfigParser
 import me.manga.kira.backend.sourceconfig.validation.SourceConfigValidator
+import me.manga.kira.backend.sourceconfig.validation.ValidationResult
 import me.manga.kira.backend.sourceconfig.validation.ValidationWarning
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Propagation
 import org.springframework.transaction.annotation.Transactional
 import java.time.Clock
 import java.time.Instant
@@ -31,9 +35,8 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * The bundled-import on-ramp (PLAN §4.3 `import-bundled` row / §12.2). Seeds (and later re-syncs) the
- * backend from the app's bundled document JSON (`CONFIG_BACKED_SOURCES_JSON`) — the migration on-ramp
- * that makes the backend testable against the real production data (PLAN §12).
+ * Post-bootstrap bundled re-sync (PLAN §4.3 / §12.2). Initial publication uses the separately admitted
+ * [GenericV2CutoverService] transaction and the non-materializing [stageInitialBootstrap] seam.
  *
  * The whole import is a SINGLE all-or-nothing transaction (PLAN §12.2 point 6). Exact normative flow:
  *
@@ -81,48 +84,72 @@ class BundledImportService(
         val document = SourceConfigParser.parseCompatibleDocument(rawJson)
 
         // 2) Whole-document validation (§8) + per-stanza Tier-1 import structural checks. Any error → 422.
-        val validation = validator.validate(document)
-        val structuralErrors =
-            document.sources.flatMapIndexed { index, stanza ->
-                StructuralAuthoringGate.importStructuralErrors(stanza, path = "sources[$index]")
-            }
-        val errors =
-            validation.errors.map { ApiFieldError(code = it.code, path = it.path, message = it.message) } +
-                structuralErrors
-        if (errors.isNotEmpty()) throw ValidationFailedException(errors)
+        val validation = validateImport(document)
 
         // 3) Warnings surfaced to the caller: validator warnings + a non-schema/duplicate-key diff (§7).
         val warnings = collectWarnings(rawJson, validation.warnings)
 
         // §9 step 1 — global publication lock FIRST (serialize with publishes; no deadlock, PLAN §9).
         publishedDocuments.lockPublicationState()
-
-        val now = clock.instant().truncatedTo(ChronoUnit.SECONDS)
-        val acc = Accumulator()
-        // 4/5) Per-source, in payload order (created positions follow it — PLAN §5 source ordering).
-        document.sources.forEachIndexed { index, stanza ->
-            importStanza(stanza, index, actorId, now, acc)
+        if (publishedDocuments.initialSourceCatalogState().phase != InitialSourceCatalogPhase.COMPLETE) {
+            throw GenericV2CutoverRejected("initial catalog bootstrap must be complete before ordinary import")
         }
 
-        // Payload order is authoritative for every source present in the import. Sources absent from
-        // the payload retain their relative order and are placed after it. This also repairs ordering
-        // when importing into a partially populated catalog.
-        reorderToPayload(document, now, acc)
+        val now = clock.instant().truncatedTo(ChronoUnit.SECONDS)
+        val acc = stage(document, actorId, now)
+        val staged = acc.toResult(warnings, documentRevision = null)
 
         // 6) Exactly ONE snapshot when anything changed; otherwise a no-op with no new revision (PLAN §12.2).
         val changed = acc.created.isNotEmpty() || acc.updated.isNotEmpty() || acc.reordered.isNotEmpty()
         val documentRevision =
             if (changed) {
                 val snapshot = assembly.materialize(actorId)
-                recordImportAudit(document, acc, snapshot.documentRevision, snapshot.createdAt, actorId)
+                recordImportAudit(document, staged, snapshot.documentRevision, snapshot.createdAt, actorId)
                 snapshot.documentRevision
             } else {
-                recordImportAudit(document, acc, documentRevision = null, at = now, actorId = actorId)
+                recordImportAudit(document, staged, documentRevision = null, at = now, actorId = actorId)
                 null
             }
 
         metrics.bundledImport(if (changed) "changed" else "noop")
-        return acc.toResult(warnings, documentRevision)
+        return staged.copy(documentRevision = documentRevision)
+    }
+
+    /** Internal initial transaction seam: validate and stage, but never publish or record completion. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun stageInitialBootstrap(document: SourceConfigDocument, actorId: UUID, at: Instant): BundledImportResult {
+        publishedDocuments.lockPublicationState()
+        if (publishedDocuments.initialSourceCatalogState().phase != InitialSourceCatalogPhase.PENDING) {
+            throw GenericV2CutoverRejected("initial catalog staging requires pending bootstrap state")
+        }
+        val validation = validateImport(document)
+        return stage(document, actorId, at).toResult(validation.warnings, documentRevision = null)
+    }
+
+    /** Record the initial import after assembly and before finalization, in that same transaction. */
+    @Transactional(propagation = Propagation.MANDATORY)
+    fun recordInitialBootstrapAudit(document: SourceConfigDocument, staged: BundledImportResult, snapshot: PublishedDocument, actorId: UUID) {
+        recordImportAudit(document, staged, snapshot.documentRevision, snapshot.createdAt, actorId)
+    }
+
+    private fun validateImport(document: SourceConfigDocument): ValidationResult {
+        val validation = validator.validate(document)
+        val structuralErrors =
+            document.sources.flatMapIndexed { index, stanza ->
+                StructuralAuthoringGate.importStructuralErrors(stanza, path = "sources[$index]")
+            }
+        val errors = validation.errors.map { ApiFieldError(code = it.code, path = it.path, message = it.message) } + structuralErrors
+        if (errors.isNotEmpty()) throw ValidationFailedException(errors)
+        return validation
+    }
+
+    private fun stage(document: SourceConfigDocument, actorId: UUID, at: Instant): Accumulator {
+        val acc = Accumulator()
+        document.sources.forEachIndexed { index, stanza -> importStanza(stanza, index, actorId, at, acc) }
+        // Preserve the existing payload-first ordering and retained-head behavior. Initial admission
+        // subsequently checks the effective complete inventory, including any retained/skipped heads.
+        reorderToPayload(document, at, acc)
+        return acc
     }
 
     private fun reorderToPayload(document: SourceConfigDocument, now: Instant, acc: Accumulator) {
@@ -336,7 +363,7 @@ class BundledImportService(
         return warnings
     }
 
-    private fun recordImportAudit(document: SourceConfigDocument, acc: Accumulator, documentRevision: Long?, at: Instant, actorId: UUID) {
+    private fun recordImportAudit(document: SourceConfigDocument, staged: BundledImportResult, documentRevision: Long?, at: Instant, actorId: UUID) {
         // Detail carries COUNTS + payload provenance only — never config bodies, apis, or header values (§6).
         audit.recordAt(
             AuditAction.BUNDLED_IMPORTED,
@@ -344,14 +371,14 @@ class BundledImportService(
             documentRevision?.toString() ?: "none",
             at,
             mapOf(
-                "created" to acc.created.size,
-                "updated" to acc.updated.size,
-                "reordered" to acc.reordered.size,
-                "unchanged" to acc.unchanged.size,
-                "skippedRemoved" to acc.skippedRemoved.size,
-                "skippedRetired" to acc.skippedRetired.size,
-                "skippedDraft" to acc.skippedDraft.size,
-                "lifecycleConflicts" to acc.lifecycleConflicts.size,
+                "created" to staged.created.size,
+                "updated" to staged.updated.size,
+                "reordered" to staged.reordered.size,
+                "unchanged" to staged.unchanged.size,
+                "skippedRemoved" to staged.skippedRemoved.size,
+                "skippedRetired" to staged.skippedRetired.size,
+                "skippedDraft" to staged.skippedDraft.size,
+                "lifecycleConflicts" to staged.lifecycleConflicts.size,
                 "sourceCount" to document.sources.size,
                 "payloadRevision" to document.revision,
                 "payloadGeneratedAt" to document.generatedAt,

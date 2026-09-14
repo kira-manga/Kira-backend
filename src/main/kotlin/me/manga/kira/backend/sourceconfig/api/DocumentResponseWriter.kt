@@ -17,10 +17,9 @@ import java.nio.charset.StandardCharsets
  * raw-bytes + ETag + conditional-GET contract lives in ONE place (PLAN §4.1 handoff).
  *
  * It writes DIRECTLY to the [HttpServletResponse] (the caller declares it and returns no body) rather
- * than returning a `ResponseEntity`: Spring's built-in `ResponseEntity` conditional handling applies
- * **weak** `If-None-Match` comparison (RFC 9110 §13.1.2), which would 304 a `W/"…"` validator — but
- * PLAN §4.1 mandates **strong** comparison (weak validators never match → full body). Owning the write
- * keeps that guarantee intact.
+ * than returning a `ResponseEntity`, preserving the stored-byte output path and explicit metadata.
+ * `If-None-Match` uses RFC 9110 §13.1.2 **weak** comparison after strict whole-field validation;
+ * emitted ETags remain strong. Malformed fields do not match.
  *
  * [cacheable] gates the public-only cross-cutting headers (PLAN §4.5): `Cache-Control` + nosniff and the
  * `charset=UTF-8` content-type. The admin historical-snapshot route passes `false` (metadata in headers
@@ -31,7 +30,7 @@ class DocumentResponseWriter {
 
     /**
      * Write [document] to [response]: a bodiless **304** (same ETag + headers) when [ifNoneMatch]
-     * strongly matches the checksum, otherwise **200** with the verbatim stored bytes.
+     * weakly matches the checksum, otherwise **200** with the verbatim stored bytes.
      */
     fun write(document: PublishedDocument, ifNoneMatch: String?, cacheable: Boolean, response: HttpServletResponse) {
         response.setHeader(HttpHeaders.ETAG, "\"${document.checksum}\"")
@@ -49,7 +48,7 @@ class DocumentResponseWriter {
             response.setHeader(NOSNIFF_HEADER, NOSNIFF_VALUE)
         }
         // A 304 carries the same ETag/Cache-Control headers but NO body and no content-type (PLAN §4.1).
-        if (matchesIfNoneMatch(ifNoneMatch, document.checksum)) {
+        if (IfNoneMatchMatcher.matches(ifNoneMatch, document.checksum)) {
             response.status = HttpStatus.NOT_MODIFIED.value()
             return
         }
@@ -59,19 +58,6 @@ class DocumentResponseWriter {
         response.setContentLength(bytes.size)
         response.outputStream.write(bytes)
         response.outputStream.flush()
-    }
-
-    /**
-     * RFC 9110 §8.8.3.2 strong comparison (PLAN §4.1): `*` matches any existing document; a
-     * comma-separated list is parsed and each valid quoted entry compared exactly; a **weak validator
-     * `W/"…"` never strongly matches** even with an identical opaque hash → full 200 body.
-     */
-    private fun matchesIfNoneMatch(ifNoneMatch: String?, checksum: String): Boolean {
-        val header = ifNoneMatch?.trim() ?: return false
-        if (header.isEmpty()) return false
-        if (header == "*") return true
-        val expected = "\"$checksum\""
-        return header.split(",").any { raw -> raw.trim() == expected }
     }
 
     companion object {

@@ -1,5 +1,6 @@
 package me.manga.kira.backend.sourceconfig.admin
 
+import me.manga.kira.backend.sourceconfig.HeaderFilterSafetyFixtures
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -10,6 +11,60 @@ import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.put
 
 class SourceEditorDraftIT : AbstractAdminSourceIT() {
+    @Test
+    fun `unsafe header quick publish rolls back its new revision and preserves editor and public state`() {
+        bootstrapInitialCatalog()
+        val original = SourceConfigFixtures.validGenericSource("HeaderEditor")
+        createSource(original).andExpect { status { isCreated() } }
+        publish(original.api, 1).andExpect { status { isOk() } }
+        val before = publicState()
+        val validationsBefore = jdbcTemplate.queryForObject("SELECT count(*) FROM source_validation_results", Long::class.java)
+        val path = "/api/v1/admin/sources/${original.api}/editor-draft"
+        mockMvc.post(path) {
+            header("Authorization", "Bearer $adminToken")
+            contentType = MediaType.APPLICATION_JSON
+            content = "{}"
+        }.andExpect { status { isOk() } }
+        val unsafeJson = toJson(HeaderFilterSafetyFixtures.unsafeSource(original.api))
+        mockMvc.put(path) {
+            header("Authorization", "Bearer $adminToken")
+            header("If-Match", "\"draft-1\"")
+            contentType = MediaType.APPLICATION_JSON
+            content = objectMapper.writeValueAsString(mapOf("content" to unsafeJson))
+        }.andExpect {
+            status { isOk() }
+            header { string("ETag", "\"draft-2\"") }
+        }
+        val draftBefore = mockMvc.get(path) {
+            header("Authorization", "Bearer $adminToken")
+        }.andExpect { status { isOk() } }.andReturn().response.contentAsString
+
+        val proof = issueStepUp()
+        val rejected = mockMvc.post("$path/publish") {
+            header("Authorization", "Bearer $adminToken")
+            header("If-Match", "\"draft-2\"")
+            header("X-Kira-Admin-Step-Up", proof)
+        }.andExpect {
+            status { isUnprocessableEntity() }
+            jsonPath("$.errors.length()") { value(1) }
+            jsonPath("$.errors[0].code") { value("SECRET_LIKE_HEADER") }
+        }.andReturn().response.contentAsString
+        assertNoDiagnosticSentinels(rejected)
+        assertEquals(1L, revisionCount(original.api), "quick publish must roll back its tentative immutable revision")
+        assertEquals(validationsBefore, jdbcTemplate.queryForObject("SELECT count(*) FROM source_validation_results", Long::class.java))
+        val draftAfter = mockMvc.get(path) {
+            header("Authorization", "Bearer $adminToken")
+        }.andExpect {
+            status { isOk() }
+            header { string("ETag", "\"draft-2\"") }
+            jsonPath("$.basedOnRevisionNumber") { value(1) }
+            jsonPath("$.content") { value(unsafeJson) }
+        }.andReturn().response.contentAsString
+        assertEquals(draftBefore, draftAfter, "invalid autosave remains inspectable without advancing the editor baseline")
+        assertPublicStateUnchanged(before)
+        assertPublicArtifactAbsent(original.api, 2)
+    }
+
     @Test
     fun `autosave uses optimistic etags and keeps invalid JSON outside immutable history`() {
         createSource(SourceConfigFixtures.validGenericSource("Drafted")).andExpect { status { isCreated() } }
@@ -172,6 +227,8 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
 
     @Test
     fun `quick publish is atomic and requires one-time password step-up`() {
+        bootstrapInitialCatalog()
+        val snapshotsBefore = snapshotCount()
         val original = SourceConfigFixtures.validGenericSource("QuickPublish")
         createSource(original).andExpect { status { isCreated() } }
         mockMvc.post("/api/v1/admin/sources/QuickPublish/editor-draft") {
@@ -197,7 +254,7 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
             jsonPath("$.errors[0].code") { value("ADMIN_STEP_UP_REQUIRED") }
         }
         assertEquals(1, revisionCount("QuickPublish"))
-        assertEquals(0, snapshotCount())
+        assertEquals(snapshotsBefore, snapshotCount())
 
         val proof = issueStepUp()
         mockMvc.post("/api/v1/admin/sources/QuickPublish/editor-draft/publish") {
@@ -212,7 +269,7 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
             jsonPath("$.publication.documentRevision") { isNumber() }
         }
         assertEquals(2, revisionCount("QuickPublish"))
-        assertEquals(1, snapshotCount())
+        assertEquals(snapshotsBefore + 1, snapshotCount())
         assertEquals("active", sourceStatus("QuickPublish"))
 
         mockMvc.post("/api/v1/admin/sources/QuickPublish/editor-draft/publish") {
@@ -224,6 +281,6 @@ class SourceEditorDraftIT : AbstractAdminSourceIT() {
             jsonPath("$.errors[0].code") { value("ADMIN_STEP_UP_REQUIRED") }
         }
         assertEquals(2, revisionCount("QuickPublish"), "used proof cannot create another revision")
-        assertEquals(1, snapshotCount(), "used proof cannot publish another snapshot")
+        assertEquals(snapshotsBefore + 1, snapshotCount(), "used proof cannot publish another snapshot")
     }
 }

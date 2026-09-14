@@ -14,6 +14,7 @@ import java.time.format.DateTimeFormatter
  * has no DB default (PLAN §9 steps 7–8).
  */
 class SnapshotTimestampConsistencyIT : AbstractAdminSourceIT() {
+    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `generatedAt equals the snapshot created_at and the audit detail instant`() {

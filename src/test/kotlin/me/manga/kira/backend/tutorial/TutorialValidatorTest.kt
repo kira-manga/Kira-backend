@@ -8,8 +8,10 @@ import me.manga.kira.backend.tutorial.domain.TutorialContent
 import me.manga.kira.backend.tutorial.domain.TutorialStep
 import me.manga.kira.backend.tutorial.domain.TutorialValidator
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
+import org.springframework.http.HttpStatus
 import java.util.UUID
 
 class TutorialValidatorTest {
@@ -44,7 +46,12 @@ class TutorialValidatorTest {
 
     @Test
     fun `rejects invalid slugs and excessive steps`() {
-        assertThrows(ValidationFailedException::class.java) { validator.slug("Not Valid") }
+        listOf(validator::categorySlug, validator::tutorialSlug).forEach { validate ->
+            val failure = assertThrows(ValidationFailedException::class.java) { validate("Not Valid") }
+            assertEquals(HttpStatus.UNPROCESSABLE_ENTITY, failure.status)
+            assertEquals("INVALID_SLUG", failure.errors.single().code)
+            assertEquals("slug", failure.errors.single().path)
+        }
         val content = TutorialContent(
             text,
             text,

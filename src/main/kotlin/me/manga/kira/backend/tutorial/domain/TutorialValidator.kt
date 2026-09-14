@@ -1,13 +1,24 @@
 package me.manga.kira.backend.tutorial.domain
 
 import me.manga.kira.backend.common.ApiFieldError
+import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.ValidationFailedException
 import java.util.UUID
 
 class TutorialValidator(private val maximumSteps: Int) {
-    fun slug(value: String, path: String = "slug") {
+    fun categorySlug(value: String) = slug(value, CATEGORY_SLUG_MAX_LENGTH)
+
+    fun tutorialSlug(value: String) = slug(value, TUTORIAL_SLUG_MAX_LENGTH)
+
+    private fun slug(value: String, maximumLength: Int) {
+        if (value.length > maximumLength) {
+            throw BadRequestException(
+                "slug must be at most $maximumLength characters.",
+                errors = listOf(error("slug", "TOO_LONG", "must be at most $maximumLength characters")),
+            )
+        }
         val errors = mutableListOf<ApiFieldError>()
-        if (!SLUG.matches(value) || value.length > 96) errors += error(path, "INVALID_SLUG", "must be a lowercase kebab-case slug")
+        if (!SLUG.matches(value)) errors += error("slug", "INVALID_SLUG", "must be a lowercase kebab-case slug")
         fail(errors)
     }
 
@@ -70,6 +81,9 @@ class TutorialValidator(private val maximumSteps: Int) {
     private fun error(path: String, code: String, message: String) = ApiFieldError(code = code, path = path, message = message)
 
     companion object {
+        const val CATEGORY_SLUG_MAX_LENGTH = 64
+        const val TUTORIAL_SLUG_MAX_LENGTH = 96
+
         private val SLUG = Regex("[a-z0-9]+(?:-[a-z0-9]+)*")
         private val STEP_ID = Regex("[a-z0-9]+(?:-[a-z0-9]+)*")
         private val PLAIN_TEXT_FORBIDDEN = Regex("<[^>]*>|\\*\\*|__|```|\\[[^]]+]\\(|(?m)^\\s{0,3}#{1,6}\\s")
