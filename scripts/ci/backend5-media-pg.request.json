@@ -1,0 +1,100 @@
+{
+  "authorization": "BACKEND5_ONE_PUBLIC_PG_BATCH_AUTHORIZED",
+  "backend_sha": "8c5621a2949773c910a42abdd6adc2e0a5720945",
+  "backend_tree": "3da8b8d604010a7417c7954c23e55b92468188b1",
+  "classes": {
+    "me.manga.kira.backend.tutorial.TutorialMediaTransactionIT": 10,
+    "me.manga.kira.backend.tutorial.TutorialMediaReconciliationIT": 10,
+    "me.manga.kira.backend.tutorial.TutorialMediaIntegrityIT": 8
+  },
+  "case_names": {
+    "me.manga.kira.backend.tutorial.TutorialMediaTransactionIT": [
+      "upload deferred database rejection happens after target return without destructive file compensation()",
+      "delete deferred database rejection retains original row audit history and bytes()",
+      "real seed imports join the outer transaction and deferred rejection rolls back all database state()",
+      "lost acknowledgement inside doCommit reports UNKNOWN and retains committed upload bytes()",
+      "lost delete acknowledgement reports UNKNOWN and does not run committed-only unlink()",
+      "checked I O after media insert rolls back the real transaction without deleting the installed file()",
+      "checked failure in outer seed after joined imports rolls back those successful inner calls()",
+      "committed delete cleanup I O failure does not change successful database outcome()",
+      "normal delete unlinks only after the known successful outer commit()",
+      "seed checksum reuse requires every recorded content field and canonical filename to agree()"
+    ],
+    "me.manga.kira.backend.tutorial.TutorialMediaReconciliationIT": [
+      "scanner waits for installed upload and its outer commit before inventory and fresh metadata()",
+      "a filename introduced after fixed inventory is retained until the next pass()",
+      "overlapping scanners serialize and second pass only reports preserved quarantine()",
+      "lock token stays in outer transaction and prior local timeout is restored immediately()",
+      "committed retained reference wins before a waiting delete decision and refusal audit commits()",
+      "delete commit wins before a waiting revision reads media and no stale reference is created()",
+      "[1] boundary=BEFORE_FRESH_READ",
+      "[2] boundary=AFTER_FRESH_READ",
+      "[1] mode=READ_ONLY",
+      "[2] mode=REPEATABLE_READ"
+    ],
+    "me.manga.kira.backend.tutorial.TutorialMediaIntegrityIT": [
+      "actual chain serves exact published bytes and only healthy matching validators return immutable 304()",
+      "real DB role keeps healthy drafts concealed while ADMIN 200 and 304 stay private no-store()",
+      "report-only inspection classifies every draft and published failure without changing rows or files()",
+      "disabled mutation and enabled inspection both retain draft warnings and unknown extras at startup()",
+      "startup refuses an incomplete published row scan and no prefix can authorize orphan cleanup()",
+      "[1] fault=MISSING",
+      "[2] fault=TRUNCATED",
+      "[3] fault=SAME_SIZE"
+    ]
+  },
+  "source_pins": {
+    "src/main/kotlin/me/manga/kira/backend/config/KiraTutorialProperties.kt": "76ea3c01d728ca8eb2597c23f933053d8a6e092dfbed9afc6ad7e07b07254e8f",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/api/PublicTutorialController.kt": "9e4db6168ddcb58b9647b6976be531f8d41fcf2e441c4991a3c33bafb49b12d5",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialMediaService.kt": "dfcfc60c038cbdf79478d40dee91a81cd9e0dd264a0506f1d9eaba4ebc41e515",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialSeed.kt": "bf54d776f0e1823a81c3d821fe94625cc6374ba6f175894e5d499d92c9ec0f7c",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialService.kt": "e2ce6a1708e65d362278e77dd54dbdaef1c666d3f5439972580b6e0794d6f6ce",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialRepository.kt": "a27c064a33f1a8a7df6d0d40f6781cc27c7ac6d920a493c849ace7514cb4f024",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/infrastructure/JdbcTutorialRepository.kt": "2714bd8c7e33e98ab6e9d12274d96276e22d3805bf99991fa4e69e815ef5a3a3",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialMediaReconciliationScheduler.kt": "47a3d5e1a6a7d3fd321dbe318fdd36b05de76912e83341bdbcaa20dc0c129d39",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialMediaReconciliationService.kt": "a03def210b57617c8676a51963ec5b8ada3db4979c2ef923827de52fcb522797",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialMediaReconciliation.kt": "ab1d203242458bbeec0fa609bc2e9bd0755674e8c6b992ab28f319cc4910d8bb",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialMediaStorage.kt": "4238339ba120ed6e1f1362e1fe3391b42c82ae20b1b84ead558b73639dab8b8e",
+    "src/main/kotlin/me/manga/kira/backend/tutorial/infrastructure/FilesystemTutorialMediaStorage.kt": "47260be08a47f8ffbfc2219a95400830fd79b2cee1dd59609c877024ee7743b7",
+    "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaCacheControlTest.kt": "700d6418f5b11174242cc9d1eb36975d044a6dbed45c76d41edaef34f5f3c0c9",
+    "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaIntegrationSupport.kt": "3084715e10e4cb0b7f374074eb68e3f5f085d8987313f5d4895e7745abc19a27",
+    "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaTransactionIT.kt": "ec8919a59a522adce05424fa98b520c8ceb4a9e48b349a334ab2683362255807",
+    "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaStorageTest.kt": "87ad1eb5df3f7a3f879a5843f1eee6804669935321f0f01df8aa0dab9e3a915c",
+    "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaReconciliationIT.kt": "2322f6c5472af69551b59e0dd8f03020dd19d4d72c96c60b664401575c1ed60b",
+    "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaIntegrityIT.kt": "1f23d8e424b19037095ead527292a7fc972da9b2155c96a9e6cfbd41f4704af3",
+    "scripts/db/backup_bundle.py": "a5a85576b144e3b57cf98e25f24ecbe6a195d47ccfa793c638c3023b30e553fa",
+    "scripts/ci/test_restored_pair.py": "3b0b84acffc759ba42817380eef374decbe461454fc3f77260d95ee3e181fd11",
+    "docs/TUTORIALS.md": "de3803123e22c5eb5486f158e4dc90af6496cb92d50ba3eb529c0f4161f15807",
+    "docs/DISASTER_RECOVERY.md": "0f4230164c674eb6c7119803c662eae36ee2cc92bf6e348688c341ea25d2d96e"
+  },
+  "compatibility_pins": {
+    "build.gradle.kts": "8b6116173f5a5fd76de7c9654685754631e2df1a480a692082995b3122fb7aa0",
+    "settings.gradle.kts": "f2ffbdad8a2e99edd1b87d7b03d66e669ea2e1965bde5abab10d630d50841044",
+    "gradle.lockfile": "5e4078d2b0dff054871f67fc58b2349ab28b2c79d703ce541a5c9a9b2b50605f",
+    "gradle/libs.versions.toml": "041f4429eef81414ad3ede5825d570d1e1f8790fd8014332c9355a3a2177a120",
+    "gradle/wrapper/gradle-wrapper.properties": "89032df14851e71a09ea7eaaffde8c85d3e806cb5365bd747ae9ec843dcae1dd",
+    "gradle/wrapper/gradle-wrapper.jar": "7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172",
+    "gradlew": "b187b4c52e749f5760afdd6fadc31b2a98ad35fb249bf0dff03b72650f320409",
+    "src/test/kotlin/me/manga/kira/backend/support/AbstractIntegrationTest.kt": "b39a14d78dcfe1385b03e69d56b7aa7f4b45b7a3c48b0b5e6970154231a21496",
+    "src/main/resources/db/migration/V9__tutorials.sql": "03a61db889326d7b7893904ab2914f4d667228d3d42853cfe16ec324a1186ea2",
+    "scripts/ci/test_backup_bundle.py": "159f467d0f3585c1eb25a3670a279b2a431410b2f4fb51e8ce2877f824aee766",
+    "config/detekt/detekt.yml": "509eb13c3915934d49a3de84dcb5332ff372deee0326c6aaceeed4c2a0b38760"
+  },
+  "carried_local": {
+    "accepted_by_primary": true,
+    "kotlin_units": 46,
+    "python_tests": 38,
+    "static_kotlin_paths": 18,
+    "ktlint_version": "1.8.0",
+    "detekt_version": "1.23.8",
+    "ordinary_main_all_test_compilation": "PASS prior to formatter/pure-guard delta",
+    "core_batch_overall": "FAIL on prior statics; only its successful compilation/46 tests are carried",
+    "later_static_batch": "PASS formatter+exact18 statics only; no tests rerun",
+    "delta_sha256": "a2bde92ef4c6cb58e04c024c26a921193ff3eae44e0ddedf6872cb8492d58877",
+    "receipts_sha256": {
+      "kotlin_compilation_units": "6603352b58fed117f7c4a1cd5bcc11421d61040937252a26ea629a9c73d4cba9",
+      "changed18_statics": "e29364764a786dd52a97bab1b54c03a9310555650b8b278d8420bcc29dcd6d11",
+      "python38": "482bfcf07907c90792017dbb17787afc449d453967fbb961ac0460f50c1654d4"
+    }
+  }
+}
