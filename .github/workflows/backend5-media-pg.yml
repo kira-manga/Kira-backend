@@ -1,0 +1,72 @@
+# Preparation only. The exact public source is bound; the request is deliberately unauthorized.
+name: Backend5 focused media PostgreSQL gate
+'on':
+  push:
+    branches: [verify/backend-5-media-pg-01]
+permissions:
+  contents: read
+concurrency:
+  group: backend5-media-postgres-one-batch
+  cancel-in-progress: false
+jobs:
+  media-postgres:
+    if: github.repository == 'kira-manga/Kira-backend' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 36
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Check out exact public gate carrier without persisted credentials
+        timeout-minutes: 1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: gate
+          persist-credentials: false
+      - name: Require the primary's one-batch authorization and exact public target
+        id: target
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          python3 -B - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          request = json.loads(Path('gate/scripts/ci/backend5-media-pg.request.json').read_text())
+          sha = request.get('backend_sha', '')
+          if request.get('authorization') != 'BACKEND5_ONE_PUBLIC_PG_BATCH_AUTHORIZED' or not re.fullmatch('[0-9a-f]{40}', sha) or sha == '0' * 40:
+              raise SystemExit('Unbound/unauthorized Backend5 request; no target checkout or build')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('sha=' + sha + '\n')
+          PY
+      - name: Check out only the exact public Backend5 source commit
+        timeout-minutes: 1
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: kira-manga/Kira-backend
+          ref: ${{ steps.target.outputs.sha }}
+          path: backend
+          persist-credentials: false
+      - name: Use the ordinary Java 21 toolchain
+        timeout-minutes: 2
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Compile normally and run only media PostgreSQL ITs plus the fixed SELECT witness
+        id: validation
+        timeout-minutes: 28
+        env:
+          BACKEND5_RUN: ${{ runner.temp }}/backend5-media-pg-${{ github.run_id }}-${{ github.run_attempt }}
+          KIRA_PACKAGES_USER: ${{ github.actor }}
+          KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
+        run: python3 -B gate/scripts/ci/backend5-media-pg.py
+      - name: Preserve scoped public-safe readback even on a failed validation
+        if: always() && steps.validation.outcome != 'skipped'
+        timeout-minutes: 2
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend5-media-pg-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/backend5-media-pg-${{ github.run_id }}-${{ github.run_attempt }}/reports/
+          retention-days: 3
+          if-no-files-found: error

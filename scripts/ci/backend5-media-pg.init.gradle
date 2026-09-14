@@ -1,0 +1,70 @@
+import groovy.json.JsonOutput
+import java.security.MessageDigest
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.tasks.testing.Test
+
+// Validation isolation/observations only: no repository, dependency, source or classpath replacement.
+def run = new File(System.getenv('BACKEND5_RUN')).canonicalFile
+def expected = [
+    'source-contract-jvm-0.1.0.jar': '9eeb54df5d09f14ebe612b1255721fa536c2517502b05cbd815e8b98370e0b7d',
+    'source-engine-jvm-0.1.0.jar': 'e2a20c63ab115dabfc75fc6a0ea33a36fd6c272c6ee22ed17ef2aa9cab840a2d'
+]
+def sha = { File file ->
+    def digest = MessageDigest.getInstance('SHA-256')
+    file.withInputStream { input ->
+        byte[] buffer = new byte[65536]
+        int size
+        while ((size = input.read(buffer)) != -1) digest.update(buffer, 0, size)
+    }
+    digest.digest().encodeHex().toString()
+}
+def observe = { project, String configuration ->
+    def artifacts = project.configurations.getByName(configuration).incoming.artifacts.artifacts.collect { artifact ->
+        def id = artifact.id.componentIdentifier
+        if (!(id instanceof ModuleComponentIdentifier)) throw new GradleException('Non-module ordinary classpath artifact')
+        [group: id.group, module: id.module, version: id.version, file: artifact.file.name, sha256: sha(artifact.file)]
+    }.sort { a, b -> "${a.group}:${a.module}:${a.version}:${a.file}" <=> "${b.group}:${b.module}:${b.version}:${b.file}" }
+    def engine = artifacts.findAll { it.group == 'me.manga.kira.source' }
+    if (engine.size() != 2 || engine.any { it.version != '0.1.0' } ||
+        engine.collectEntries { [(it.file): it.sha256] } != expected) {
+        throw new GradleException('Published 0.1.0 JVM artifacts differ from accepted local consumer inputs; no fallback')
+    }
+    new File(run, "reports/dependencies-${configuration}.json").text = JsonOutput.prettyPrint(JsonOutput.toJson(artifacts)) + '\n'
+    logger.lifecycle("BACKEND5_ORDINARY_CLASSPATH ${configuration}: ${artifacts.size()} artifacts; accepted Engine JVM hashes matched")
+}
+gradle.beforeProject { project ->
+    project.layout.buildDirectory.set(new File(run, 'build'))
+    project.tasks.matching { it.name in ['compileKotlin', 'compileTestKotlin'] }.configureEach { task ->
+        task.doFirst {
+            observe(project, task.name == 'compileKotlin' ? 'compileClasspath' : 'testCompileClasspath')
+        }
+    }
+    project.tasks.withType(Test).configureEach { task ->
+        maxParallelForks = 1
+        forkEvery = 0
+        maxHeapSize = '1g'
+        filter.failOnNoMatchingTests = true
+        ignoreFailures = false
+        systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+        systemProperty('java.io.tmpdir', new File(run, 'tmp').absolutePath)
+        systemProperty('user.home', new File(run, 'home').absolutePath)
+        // Package credentials belong only to Gradle resolution, never to test workers.
+        ['KIRA_PACKAGES_READ_TOKEN', 'GITHUB_TOKEN', 'GH_TOKEN', 'ACTIONS_RUNTIME_TOKEN'].each { environment.remove(it) }
+        outputs.upToDateWhen { false }
+        doFirst {
+            observe(project, 'testRuntimeClasspath')
+            def jars = classpath.files.findAll { it.name in expected.keySet() }
+            if (jars.size() != 2 || jars.collectEntries { [(it.name): sha(it)] } != expected) {
+                throw new GradleException('Actual test worker classpath differs from accepted Engine JVM inputs')
+            }
+        }
+    }
+}
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name.toLowerCase(Locale.ROOT) =~ /publish|deploy|release/ } ||
+        graph.allTasks.findAll { it instanceof Test }.collect { it.path } != [':test']) {
+        throw new GradleException('Only the single ordinary targeted test task may run; no publishing/deployment')
+    }
+    new File(run, 'reports/task-graph.json').text = JsonOutput.toJson(graph.allTasks.collect { it.path }) + '\n'
+}
