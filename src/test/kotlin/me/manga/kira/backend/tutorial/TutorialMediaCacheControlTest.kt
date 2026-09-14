@@ -4,13 +4,15 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.GlobalExceptionHandler
 import me.manga.kira.backend.common.Sha256
-import me.manga.kira.backend.config.KiraTutorialProperties
 import me.manga.kira.backend.security.AuthenticatedUser
 import me.manga.kira.backend.security.CurrentUser
 import me.manga.kira.backend.tutorial.api.PublicTutorialController
 import me.manga.kira.backend.tutorial.application.TutorialMediaService
 import me.manga.kira.backend.tutorial.application.TutorialService
+import me.manga.kira.backend.tutorial.domain.MediaReadResult
+import me.manga.kira.backend.tutorial.domain.MediaStorageIssue
 import me.manga.kira.backend.tutorial.domain.StoredMedia
+import me.manga.kira.backend.tutorial.domain.TutorialMediaStorage
 import me.manga.kira.backend.tutorial.domain.TutorialRepository
 import me.manga.kira.backend.user.domain.Role
 import org.junit.jupiter.api.AfterEach
@@ -22,6 +24,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
@@ -46,12 +50,13 @@ import java.time.ZoneOffset
 import java.util.UUID
 import javax.imageio.ImageIO
 
-/** Real media authorization and servlet delivery, without Boot, JWT/filter-chain setup or a database. */
+/** Real authorization/controller with a verified-byte port fixture, not a real filter chain or database. */
 class TutorialMediaCacheControlTest {
     @TempDir
     lateinit var mediaDirectory: Path
 
     private val repository = mock(TutorialRepository::class.java)
+    private val storage = mock(TutorialMediaStorage::class.java)
     private val tutorials = mock(TutorialService::class.java)
     private val audit = mock(AuditService::class.java)
     private val objectMapper = ObjectMapper()
@@ -82,7 +87,7 @@ class TutorialMediaCacheControlTest {
         Files.write(mediaDirectory.resolve(metadata.storageFilename), mediaBytes)
         val media = TutorialMediaService(
             repository,
-            KiraTutorialProperties(mediaDirectory = mediaDirectory, seedEnabled = false),
+            storage,
             CurrentUser(),
             audit,
             Clock.fixed(Instant.EPOCH, ZoneOffset.UTC),
@@ -127,12 +132,49 @@ class TutorialMediaCacheControlTest {
         assertNotModified(deliver(published = true, conditional = true), "public, max-age=31536000, immutable")
     }
 
-    private fun deliver(published: Boolean, role: Role? = null, conditional: Boolean = false): MockHttpServletResponse {
+    @Test
+    fun `200 sends the verified bytes and does not reopen the subsequently changed path`() {
+        assertDelivered(
+            deliver(published = true, replacePathAfterVerification = true),
+            "public, max-age=31536000, immutable",
+        )
+        assertFalse(Files.readAllBytes(mediaDirectory.resolve(metadata.storageFilename)).contentEquals(mediaBytes))
+    }
+
+    @ParameterizedTest
+    @EnumSource(MediaStorageIssue::class, names = ["MISSING", "SIZE_MISMATCH", "CHECKSUM_MISMATCH"])
+    fun `published matching ETag cannot bypass unavailable bytes`(issue: MediaStorageIssue) {
+        assertConcealed(deliver(published = true, conditional = true, readIssue = issue))
+    }
+
+    @ParameterizedTest
+    @EnumSource(MediaStorageIssue::class, names = ["MISSING", "SIZE_MISMATCH", "CHECKSUM_MISMATCH"])
+    fun `ADMIN matching ETag cannot bypass unavailable draft bytes`(issue: MediaStorageIssue) {
+        assertConcealed(deliver(published = false, role = Role.ADMIN, conditional = true, readIssue = issue))
+    }
+
+    private fun deliver(
+        published: Boolean,
+        role: Role? = null,
+        conditional: Boolean = false,
+        readIssue: MediaStorageIssue? = null,
+        replacePathAfterVerification: Boolean = false,
+    ): MockHttpServletResponse {
         // A known row and existing owned file keep denial cases from passing because an asset is missing.
-        `when`(repository.findMedia(mediaId)).thenReturn(metadata.copy(published = published))
+        val selected = metadata.copy(published = published)
+        `when`(repository.findMedia(mediaId)).thenReturn(selected)
         val path = mediaDirectory.resolve(metadata.storageFilename)
         assertTrue(Files.isRegularFile(path))
         assertArrayEquals(mediaBytes, Files.readAllBytes(path))
+        `when`(storage.readVerified(selected)).thenAnswer {
+            if (readIssue != null) {
+                MediaReadResult.Unavailable(readIssue)
+            } else {
+                val verified = mediaBytes.copyOf()
+                if (replacePathAfterVerification) Files.write(path, byteArrayOf(1, 2, 3))
+                MediaReadResult.Verified(verified)
+            }
+        }
         val context = SecurityContextHolder.createEmptyContext()
         if (role != null) {
             val principal = AuthenticatedUser(userId, "fixture@example.test", role, Instant.EPOCH)
@@ -149,6 +191,12 @@ class TutorialMediaCacheControlTest {
             }.andReturn().response
             verify(repository).findMedia(mediaId)
             verifyNoMoreInteractions(repository)
+            if (published || role == Role.ADMIN) {
+                verify(storage).readVerified(selected)
+                verifyNoMoreInteractions(storage)
+            } else {
+                verifyNoInteractions(storage)
+            }
             verifyNoInteractions(tutorials, audit)
             response
         } finally {
@@ -179,6 +227,7 @@ class TutorialMediaCacheControlTest {
 
     private fun assertConcealed(response: MockHttpServletResponse) {
         assertEquals(404, response.status)
+        assertEquals("no-store", response.getHeader(HttpHeaders.CACHE_CONTROL))
         assertEquals(MediaType.APPLICATION_PROBLEM_JSON_VALUE, response.contentType)
         assertFalse(response.containsHeader(HttpHeaders.ETAG))
         assertFalse(response.contentAsByteArray.contentEquals(mediaBytes))

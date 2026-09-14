@@ -2,24 +2,28 @@ package me.manga.kira.backend.tutorial.application
 
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.audit.domain.AuditAction
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.PayloadTooLargeException
-import me.manga.kira.backend.config.KiraTutorialProperties
 import me.manga.kira.backend.security.CurrentUser
+import me.manga.kira.backend.tutorial.domain.MediaReadResult
+import me.manga.kira.backend.tutorial.domain.MediaStorageIssue
 import me.manga.kira.backend.tutorial.domain.StoredMedia
+import me.manga.kira.backend.tutorial.domain.TutorialMediaStorage
+import me.manga.kira.backend.tutorial.domain.TutorialMediaStorageException
+import me.manga.kira.backend.tutorial.domain.TutorialMediaStorageLimits
 import me.manga.kira.backend.tutorial.domain.TutorialRepository
 import me.manga.kira.backend.user.domain.Role
+import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import org.springframework.transaction.support.TransactionSynchronization
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile
 import java.awt.Color
 import java.awt.image.BufferedImage
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.nio.file.Files
-import java.nio.file.Path
-import java.nio.file.StandardCopyOption
-import java.security.MessageDigest
 import java.time.Clock
 import java.util.UUID
 import javax.imageio.IIOImage
@@ -29,17 +33,12 @@ import javax.imageio.ImageWriteParam
 @Service
 class TutorialMediaService(
     private val repository: TutorialRepository,
-    private val properties: KiraTutorialProperties,
+    private val storage: TutorialMediaStorage,
     private val currentUser: CurrentUser,
     private val audit: AuditService,
     private val clock: Clock,
 ) {
-    init {
-        Files.createDirectories(properties.mediaDirectory)
-    }
-
-    @Transactional
-    @Suppress("TooGenericExceptionCaught")
+    @Transactional(rollbackFor = [Exception::class])
     fun upload(file: MultipartFile): StoredMedia {
         val raw = file.inputStream.use { it.readNBytes(MAX_BYTES + 1) }
         if (raw.size > MAX_BYTES) throw PayloadTooLargeException("tutorial media must not exceed 4 MiB.")
@@ -47,48 +46,46 @@ class TutorialMediaService(
         val decoded = decode(raw, format)
         val encoded = encode(decoded.image, format)
         if (encoded.size > MAX_BYTES) throw PayloadTooLargeException("sanitized tutorial media must not exceed 4 MiB.")
+        val transaction = repository.acquireMediaLock()
         val id = UUID.randomUUID()
         val extension = if (format == ImageFormat.PNG) "png" else "jpg"
         val filename = "$id.$extension"
-        val destination = safePath(filename)
-        val temporary = Files.createTempFile(properties.mediaDirectory, ".upload-", ".$extension")
-        try {
-            Files.write(temporary, encoded)
-            Files.move(temporary, destination, StandardCopyOption.ATOMIC_MOVE)
-            val media = StoredMedia(
-                id, filename, format.contentType, encoded.size.toLong(), decoded.width, decoded.height,
-                sha256(encoded), published = false, currentUser.getOrNull()?.id, clock.instant(),
-            )
-            repository.createMedia(media)
-            audit.record(
-                AuditAction.TUTORIAL_MEDIA_UPLOADED,
-                AuditService.ENTITY_TUTORIAL_MEDIA,
-                id.toString(),
-                mapOf("sha256" to media.sha256, "bytes" to media.byteSize),
-            )
-            return media
-        } catch (exception: Exception) {
-            Files.deleteIfExists(temporary)
-            Files.deleteIfExists(destination)
-            throw exception
-        }
+        val media = StoredMedia(
+            id, filename, format.contentType, encoded.size.toLong(), decoded.width, decoded.height,
+            Sha256.hex(encoded), published = false, currentUser.getOrNull()?.id, clock.instant(),
+        )
+        repository.verifyMediaLock(transaction)
+        storage.installNew(media, encoded)
+        repository.verifyMediaLock(transaction)
+        repository.createMedia(media)
+        audit.record(
+            AuditAction.TUTORIAL_MEDIA_UPLOADED,
+            AuditService.ENTITY_TUTORIAL_MEDIA,
+            id.toString(),
+            mapOf("sha256" to media.sha256, "bytes" to media.byteSize),
+        )
+        // Neither a proxy exception nor UNKNOWN completion proves rollback. Rowless files are
+        // deliberately left for locked reconciliation; no destructive compensation belongs here.
+        return media
     }
 
     @Transactional(readOnly = true)
     fun list(): List<StoredMedia> = repository.listMedia()
 
     @Transactional(readOnly = true)
-    fun loadForDelivery(id: UUID): Pair<StoredMedia, Path> {
+    fun loadForDelivery(id: UUID): Pair<StoredMedia, ByteArray> {
         val media = repository.findMedia(id) ?: throw TutorialMediaNotFoundException()
         val admin = currentUser.getOrNull()?.role == Role.ADMIN
         if (!media.published && !admin) throw TutorialMediaNotFoundException()
-        val path = safePath(media.storageFilename)
-        if (!Files.isRegularFile(path)) throw TutorialMediaNotFoundException()
-        return media to path
+        return when (val result = storage.readVerified(media)) {
+            is MediaReadResult.Verified -> media to result.bytes
+            is MediaReadResult.Unavailable -> throw TutorialMediaNotFoundException()
+        }
     }
 
-    @Transactional(noRollbackFor = [TutorialMediaInUseException::class])
+    @Transactional(rollbackFor = [Exception::class], noRollbackFor = [TutorialMediaInUseException::class])
     fun delete(id: UUID) {
+        val transaction = repository.acquireMediaLock()
         val media = repository.findMedia(id) ?: throw TutorialMediaNotFoundException()
         val references = repository.mediaReferenceCount(id)
         if (references > 0) {
@@ -100,34 +97,51 @@ class TutorialMediaService(
             )
             throw TutorialMediaInUseException()
         }
+        repository.verifyMediaLock(transaction)
         if (!repository.deleteMedia(id)) throw TutorialMediaNotFoundException()
         audit.record(AuditAction.TUTORIAL_MEDIA_DELETED, AuditService.ENTITY_TUTORIAL_MEDIA, id.toString())
-        Files.deleteIfExists(safePath(media.storageFilename))
+        TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+            override fun afterCompletion(status: Int) {
+                // The advisory lock is already gone here. This is a physical-only acceleration
+                // for one immutable name, never a nested DB transaction or a substitute scanner.
+                if (status == TransactionSynchronization.STATUS_COMMITTED) cleanupCommitted(media)
+            }
+        })
     }
 
-    @Transactional
+    @Transactional(rollbackFor = [Exception::class])
+    @Suppress("ComplexCondition") // Every recorded content property must agree before exact-byte repair.
     fun importSeedAsset(bytes: ByteArray, published: Boolean = true): StoredMedia {
+        if (bytes.size > MAX_BYTES) throw PayloadTooLargeException("tutorial media must not exceed 4 MiB.")
         val format = detect(bytes)
         val decoded = decode(bytes, format)
         val encoded = encode(decoded.image, format)
-        val checksum = sha256(encoded)
-        repository.listMedia().firstOrNull { it.sha256 == checksum }?.let { existing ->
-            val path = safePath(existing.storageFilename)
-            if (!Files.isRegularFile(path) || sha256(Files.readAllBytes(path)) != checksum) {
-                Files.write(path, encoded)
+        if (encoded.size > MAX_BYTES) throw PayloadTooLargeException("sanitized tutorial media must not exceed 4 MiB.")
+        val checksum = Sha256.hex(encoded)
+        val transaction = repository.acquireMediaLock()
+        repository.findMediaByChecksum(checksum)?.let { existing ->
+            if (
+                existing.sha256 != checksum || existing.byteSize != encoded.size.toLong() ||
+                existing.contentType != format.contentType || existing.width != decoded.width || existing.height != decoded.height
+            ) {
+                throw TutorialMediaStorageException(MediaStorageIssue.INVALID_METADATA)
             }
+            repository.verifyMediaLock(transaction)
+            storage.repair(existing, encoded) { repository.verifyMediaLock(transaction) }
+            repository.verifyMediaLock(transaction)
             return existing
         }
         val id = UUID.randomUUID()
         val extension = if (format == ImageFormat.PNG) "png" else "jpg"
         val filename = "$id.$extension"
-        Files.write(safePath(filename), encoded)
-        val media = repository.createMedia(
-            StoredMedia(
-                id, filename, format.contentType, encoded.size.toLong(), decoded.width, decoded.height,
-                checksum, published, null, clock.instant(),
-            ),
+        val media = StoredMedia(
+            id, filename, format.contentType, encoded.size.toLong(), decoded.width, decoded.height,
+            checksum, published, null, clock.instant(),
         )
+        repository.verifyMediaLock(transaction)
+        storage.installNew(media, encoded)
+        repository.verifyMediaLock(transaction)
+        repository.createMedia(media)
         audit.record(
             AuditAction.TUTORIAL_MEDIA_UPLOADED,
             AuditService.ENTITY_TUTORIAL_MEDIA,
@@ -138,12 +152,16 @@ class TutorialMediaService(
         return media
     }
 
-    private fun safePath(filename: String): Path {
-        check(SAFE_FILENAME.matches(filename)) { "invalid server-owned tutorial media filename" }
-        val root = properties.mediaDirectory.toAbsolutePath().normalize()
-        val resolved = root.resolve(filename).normalize()
-        check(resolved.parent == root) { "tutorial media path escaped storage directory" }
-        return resolved
+    @Suppress("TooGenericExceptionCaught", "SwallowedException")
+    private fun cleanupCommitted(media: StoredMedia) {
+        try {
+            storage.deleteCommitted(media)
+        } catch (exception: Exception) {
+            // A cleanup failure cannot change the already-committed API outcome. No exception
+            // message/path/stack is logged here; restart reconciliation retains the recovery work.
+            val reason = (exception as? TutorialMediaStorageException)?.issue?.name ?: "OPERATION_FAILED"
+            log.warn("Tutorial media post-commit cleanup failed; reconciliation required (mediaId={}, reason={})", media.id, reason)
+        }
     }
 
     private fun detect(bytes: ByteArray): ImageFormat = when {
@@ -207,16 +225,14 @@ class TutorialMediaService(
         return output.toByteArray()
     }
 
-    private fun sha256(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-
     private data class DecodedImage(val image: BufferedImage, val width: Int, val height: Int)
     private enum class ImageFormat(val contentType: String) { JPEG("image/jpeg"), PNG("image/png") }
 
     companion object {
-        const val MAX_BYTES = 4 * 1024 * 1024
+        const val MAX_BYTES = TutorialMediaStorageLimits.MAX_BYTES
         const val MAX_DIMENSION = 4096
         const val MAX_PIXELS = 16_000_000L
-        private val SAFE_FILENAME = Regex("[0-9a-f-]{36}\\.(?:jpg|png)")
+        private val log = LoggerFactory.getLogger(TutorialMediaService::class.java)
         private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
     }
 }

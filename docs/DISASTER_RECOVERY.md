@@ -39,9 +39,11 @@ enforce the same prerequisites themselves. No script is an authorization boundar
 root, the executing user or a party able to replace its Python/client executables.
 
 Before capture, exclude **all** relevant database/media writers and positively drain their in-flight
-work, including tutorial ADMIN mutations. Keep that exclusion through the whole capture. A container
-pause is **not drain**: a media deletion before its DB commit can create an internally inconsistent
-pair even when both hashes are correct. Set the explicit attestation only after verification:
+work, including tutorial ADMIN mutations, old/noncooperating binaries and post-commit physical cleanup
+tails. Keep that exclusion through the whole capture. A container pause is **not drain**: old media
+deletion before its DB commit, or a later cleanup callback, can invalidate a capture boundary even
+when both selected hashes are correct. The new cooperative media lock does not fence old/independent
+writers. Set the explicit attestation only after verification:
 
 ```sh
 # Supply PGHOST, PGDATABASE, PGUSER and secret-manager credentials first.
@@ -99,6 +101,7 @@ The shared public ABI is:
 create --bundle B --dump D --media M
 verify --bundle B --dump D --media M --expected-sha256 HEX [--legacy-two-record]
 publish-directory --stage S --target T
+verify-restored-pair --attempt ATTEMPT_DIR
 ```
 
 Invoke via `python3 -I -B scripts/db/backup_bundle.py COMMAND ...`. `create` checks the completed
@@ -262,6 +265,68 @@ authorize traffic or assert application integrity. A source-V12 backup legitimat
 `SOURCE_VERSION=12` while V13 is pending. Exact-release migration/target-version/Flyway checksum
 validation is a separate subsequent gate, never hidden inside the as-restored source predicate.
 
+### Read-only restored-pair media verification
+
+After **both successful** selected restore stages, keep the same exclusive disposable DB/attempt/
+target-parent custody and run:
+
+```sh
+python3 -I -B scripts/db/backup_bundle.py verify-restored-pair --attempt /secure/attempts/drill-001
+```
+
+Use the same reviewed helper, PG17 client, endpoint/user and secret-manager/TLS environment. The
+existing `kira_restore_*`, nonproduction, `KIRA_ALLOW_DESTRUCTIVE_RESTORE_TEST=yes` and
+`KIRA_RESTORE_CUSTODY_CONFIRMED=yes` gates are deliberately retained even though this command is
+read-only. It never calls restore or writes DB/media/attempt/receipt/`STOP.json` state, on success
+**or failure**. The existing attempt lock is opened read-only; no new lock or result receipt is
+created. Output is a bounded JSON observation, **not another restoration stage or durable receipt**.
+
+The checker accepts only the attempt, not independently selectable DB/media paths. It reuses the
+strict request/selection/frozen-byte loaders; requires corresponding DB-started, DB, media-started
+and pair records; refuses any existing STOP; and verifies the exact intended target path/device/inode,
+private directories700/files600, nonsymlink ancestors and owned immediate parents. It rechecks actual
+DB identity/OID and full successful source history before the inspection, in the connection returning
+the media rows, and afterward. A completed-looking receipt cannot redeem a failed/interrupted
+restoration: the existing external no-advance obligation still applies even if STOP could not be
+written. Run this check **before** migrations, ownership/access handoff, backend startup or resuming
+independent writers. Identity/history checks do not detect every same-history business-data change
+or turn the multi-file observation into an atomic DB/filesystem snapshot.
+
+Every draft **and** published `tutorial_media` row must have its canonical lowercase UUID filename
+equal to `id + .jpg` for `image/jpeg` or `id + .png` for `image/png`, supported metadata, positive size
+at most 4 MiB, and lowercase 64-hex SHA-256. The checker uses regular nonsymlink, single-link files and
+bounded opened-byte reads, comparing exact size/SHA and detecting observed identity changes. It does
+not decode images, authenticate arbitrary historical SQL, or replace relational/publication and
+exact-release validation. A manifest-valid archive with missing, truncated or same-size corrupt
+draft/published bytes **fails** this semantic gate. Empty rows/media can pass; that is not first-seed
+or application-readiness evidence.
+
+The recognized retained quarantine shape is
+`quarantine/<canonical-uuid>--<original-basename>--<lowercase-sha256>/content`, where the original is
+a canonical UUID `.jpg`/`.png` final or `.upload-[A-Za-z0-9-]{1,80}\.(jpg|png)` staging basename. Exactly
+one regular nonsymlink leaf, 0–4 MiB, must match the directory's SHA. Complete copies are counted
+explicitly as `quarantine_files`; they may accompany a successful row verification but are **retained
+evidence**, not current row content or permission for expiry. Unknown/unsafe/partial quarantine,
+root-level rowless finals, staging files and any unexpected extras produce a nonzero result and are
+left untouched. Unknown trees are not recursively traversed. This ordinary directory/file shape
+already fits the unchanged Backup29 tar profile; it adds no link, archive or custody exception.
+
+The additional fixed semantic limits are **10,000 rows, 10,000 filesystem entries** (including
+quarantine directories/leaves), **8 MiB** for the row-query response and **32 GiB** cumulatively read
+media/quarantine bytes. The existing frozen-bundle/archive bounds still apply separately. Overflow,
+listing/query/permission error or incomplete inspection is failure, never a clean truncated sample.
+Successful JSON has `verified: true`, draft/published verified counts, quarantine count and no issues;
+semantic failure has `verified: false` and classified issues. A guard or incomplete observation may
+fail before emitting JSON. Treat the exit status and scope together, not a partial counter as success.
+
+On failure, retain rows, exact bytes, receipts, quarantine and the incident disposition. No checksum
+rewrite, row deletion, fabricated replacement or automatic repair is provided here. Authentic exact
+recovery is a separate approved operation; see [tutorial repair/reconciliation](TUTORIALS.md#media-transactions-and-reconciliation).
+Do not retry either restoration stage, erase STOP or treat a later inspection as proof that a failed
+restore succeeded. The read-only check may be repeated on an intact successfully completed pair
+under continuing custody; it always rereads the state rather than returning cached success. Neither
+its JSON nor pair receipts advance restore-freshness telemetry, authorize traffic or close a drill.
+
 ## Restoration and PITR procedure
 
 1. Declare the incident, freeze writes/rollouts, record the requested recovery timestamp, and preserve
@@ -271,10 +336,11 @@ validation is a separate subsequent gate, never hidden inside the as-restored so
    above; the scripts intentionally refuse in-place production restoration.
 3. Verify TLS, roles/grants, Flyway history checksums, row counts, constraints, publication pointers,
    latest signed document checksum, admin availability, tutorial media checksums, and completion/audit
-   retention expectations. Complete the bound media stage into its absent target, then arrange
-   least-privilege application access and point `KIRA_TUTORIAL_MEDIA_DIRECTORY` at it. Start the backend in quarantine so startup
-   validation checks every published file/reference before traffic switches. This supports
-   relocation without preserving the old host path.
+   retention expectations. Complete the bound media stage into its absent target and run the read-only
+   selected-pair semantic check above while original source-history/custody gates still hold. Then
+   arrange least-privilege application access and point `KIRA_TUTORIAL_MEDIA_DIRECTORY` at it. Start
+   the backend in quarantine only after the separate migration gate below; startup checks published
+   bytes/references before traffic switches. This supports relocation without preserving the old path.
 4. Run the exact release image migration Job and separately assert its expected target version plus
    successful Flyway validation/checksums. Flyway clean, baselining, out-of-order migrations, and
    reverse migrations remain disabled. A failed migration is repaired only after the cause is fixed
@@ -293,6 +359,13 @@ and explicit no-fallthrough PG command stubs: selected-pair relocation/mixing, p
 snapshots, predicates, locks, no-clobber publication and real partial-link/rename failure effects.
 It is discovered with the existing image/receiver unittest suite, not a new framework. Stub results
 do not prove PostgreSQL semantics, daemon termination, actual writer drain or crash durability.
+
+`scripts/ci/test_restored_pair.py` reuses those owned fixtures and explicit PG stubs to exercise the
+new read-only CLI: valid all-row pairs; manifest-valid draft/published corruption; canonical metadata,
+unsafe paths, bounds, quarantine and extras; identity/history/selection/receipt/STOP/custody refusals;
+and unchanged attempt/media/database-effect bytes with forbidden-mutator traps. These are focused
+offline regressions, not proof of actual PostgreSQL row-query execution, installed custody, image
+decoding or a completed restore drill. No tests are claimed passing merely because they are authored.
 
 `DatabaseBackupRestoreIT` uses real `postgres:17.6-alpine`, custom dump **file-copy streams** (never
 decoded exec stdout), the real helper/restore scripts, representative data/media, V12 and V13 source
