@@ -1,7 +1,10 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.post
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch
@@ -9,6 +12,37 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPat
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 class SourcePreviewIT : AbstractAdminSourceIT() {
+    @ParameterizedTest
+    @CsvSource("503, Http", "200, InvalidResponse")
+    fun `preview maps shared engine failures without exposing the saved response`(responseStatus: Int, expectedError: String) {
+        val pending =
+            mockMvc.post("/api/v1/admin/source-preview") {
+                header("Authorization", "Bearer $adminToken")
+                contentType = MediaType.APPLICATION_JSON
+                content =
+                    objectMapper.writeValueAsString(
+                        mapOf(
+                            "sourceJson" to toJson(SourceConfigFixtures.validGenericSource("FailurePreview")),
+                            "operation" to "home",
+                            "responseStatus" to responseStatus,
+                            "responseBody" to """{"private":"preview-response-sentinel" """,
+                        ),
+                    )
+            }.andExpect {
+                request { asyncStarted() }
+            }.andReturn()
+        val response =
+            mockMvc
+                .perform(asyncDispatch(pending))
+                .andExpect(status().isOk)
+                .andExpect(jsonPath("$.success").value(false))
+                .andExpect(jsonPath("$.error").value(expectedError))
+                .andExpect(jsonPath("$.output").doesNotExist())
+                .andExpect(jsonPath("$.request").doesNotExist())
+                .andReturn().response.contentAsString
+        assertFalse(response.contains("preview-response-sentinel"))
+    }
+
     @Test
     fun `preview executes the shared engine against an inert response fixture`() {
         val source = SourceConfigFixtures.validGenericSource("Previewed")
