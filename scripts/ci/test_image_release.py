@@ -64,7 +64,7 @@ def permissive_default_acl(directory):
         acl.acl_free(value)
 
 
-def tiny_image(component='backend', variant='A', *, oci=False, legacy=False):
+def tiny_image(component='backend', variant='A', *, oci=False, legacy=False, state_profile=release.STATE_PROFILE):
     layer = io.BytesIO()
     with tarfile.open(fileobj=layer, mode='w', format=tarfile.USTAR_FORMAT) as bundle:
         data = variant.encode()
@@ -82,6 +82,8 @@ def tiny_image(component='backend', variant='A', *, oci=False, legacy=False):
     if component == 'backend':
         config['config']['Labels'] = {'org.opencontainers.image.revision': SHA,
                                      'org.opencontainers.image.version': '1.0.0'}
+        if state_profile is not None:
+            config['config']['Labels'][release.STATE_LABEL] = state_profile
     config_raw = release.canonical(config)
     identity = 'sha256:' + release.digest(config_raw)
     config_name = 'blobs/sha256/' + identity[7:] if oci else identity[7:] + '.json'
@@ -223,6 +225,72 @@ class ArchiveTests(unittest.TestCase):
         for raw in (b'{"id":1,"id":1}', b'{"number":NaN}', b'{"number":1e999}', b'{} trailing'):
             with self.subTest(raw=raw), self.assertRaises(release.Refused): release.parse_json(raw, 100)
 
+    def test_backend_state_check_is_separate_from_the_two_token_archive_identity_abi(self):
+        for profile in (release.STATE_PROFILE, None, '', 'future-profile', 1, [], {}):
+            with self.subTest(profile=profile):
+                identity, tag, files = tiny_image(state_profile=profile, oci=True, legacy=True)
+                archive = write_image(self.root, files)
+                expected = release.digest(archive.read_bytes())
+                # Missing capability must not prevent custody/identity-only legacy adoption.
+                image, _ = release.validate_archive(archive, tag, backend=True)
+                self.assertEqual(image['id'], identity)
+                args = [sys.executable, '-I', '-B', str(ROOT / 'scripts/ci/image_release.py')]
+                identity_result = subprocess.run([*args, 'archive', 'backend', SHA, str(archive), expected, identity],
+                                                 capture_output=True, timeout=5)
+                self.assertEqual(identity_result.returncode, 0, identity_result.stderr)
+                self.assertEqual(identity_result.stdout, (identity + ' ' + expected + '\n').encode())
+                state_result = subprocess.run([*args, 'backend-state', SHA, str(archive), expected, identity],
+                                              capture_output=True, timeout=5)
+                self.assertEqual(state_result.returncode, 0 if profile == release.STATE_PROFILE else 1)
+                self.assertEqual(state_result.stdout, b'')
+                if profile != release.STATE_PROFILE:
+                    self.assertIn(b'backend state contract unproven', state_result.stderr)
+        with self.assertRaises(release.Refused):
+            release.validate_archive(archive, tag, backend=True, state_contract=True, expected_id='sha256:' + '0' * 64)
+
+    def test_finite_state_policy_rejects_future_missing_or_rewritten_migrations(self):
+        self.assertIn(release.STATE_SMOKE, release.CONTRACT)
+        self.assertIn(release.SIGNING_KEY_HELPER, release.CONTRACT)
+        self.assertIn(release.BOOTSTRAP_FIXTURE, release.CONTRACT)
+        self.assertIn(release.BOOTSTRAP_REFERENCE, release.CONTRACT)
+        self.assertIn('Dockerfile', release.CONTRACT)
+        self.assertNotEqual(release.POLICY, 'backend-production-profile-v1')
+        self.assertIn('io.kira.backend.state-contract="' + release.STATE_PROFILE + '"', (ROOT / 'Dockerfile').read_text())
+        self.assertIn('backend_state_profile=' + release.STATE_PROFILE + '\n', (ROOT / 'deploy/server3/kira-deploy').read_text())
+        expected = dict(release.STATE_MIGRATIONS)
+        release.migration_inventory(expected)
+        release.migration_bytes(expected)
+        for paths in (set(expected) - {next(iter(expected))},
+                      set(expected) | {release.MIGRATION_DIRECTORY + '/V999__unreviewed.sql'},
+                      set(expected) | {release.MIGRATION_DIRECTORY + '/extra/hidden.sql'}):
+            with self.subTest(paths=paths), self.assertRaises(release.Refused): release.migration_inventory(paths)
+        for name in expected:
+            with self.subTest(migration=name), self.assertRaises(release.Refused):
+                release.migration_bytes({**expected, name: '0' * 64})
+
+    def test_local_migration_drift_precedes_any_candidate_execution(self):
+        for relative in (*release.CONTRACT, release.DEPLOY):
+            target = self.root / relative; target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / relative).read_bytes())
+        with patch.object(release, 'ROOT', self.root):
+            release.local_contract()
+            (self.root / release.MIGRATION_DIRECTORY / 'V999__unreviewed.sql').write_text('synthetic unreviewed input')
+            with patch.object(release, 'inspect_image') as inspect, patch.object(release, 'command') as command, \
+                    self.assertRaisesRegex(release.Refused, 'migration inventory'):
+                release.produce(self.root, {'sha': SHA})
+            inspect.assert_not_called(); command.assert_not_called()
+
+    def test_remote_migration_inventory_drift_is_refused_before_blob_readback(self):
+        api = release.GitHub('offline-fixture-no-network')
+        names = [*release.CONTRACT, release.DEPLOY, release.MIGRATION_DIRECTORY + '/V999__unreviewed.sql']
+        commit = {'sha': SHA, 'tree': {'sha': TREE}}
+        listing = {'sha': TREE, 'truncated': False, 'tree': [{'path': name} for name in names]}
+        with patch.object(api, 'get', side_effect=[commit, listing]) as get, \
+                self.assertRaisesRegex(release.Refused, 'migration inventory'):
+            api.source(SHA)
+        self.assertEqual(get.call_count, 2)
+        self.assertEqual(api.sources, {})
+
     def test_receive_cli_private_bytes_exclusive_paths_and_empty_refusal(self):
         def receive(target, data):
             return subprocess.run([sys.executable, '-I', '-B', str(ROOT / 'scripts/ci/image_release.py'), 'receive', str(target)],
@@ -342,6 +410,7 @@ class ProvenanceTests(unittest.TestCase):
         mutations = [lambda r: r.update({'unknown': True}), lambda r: r.update({'schema': True}),
                      lambda r: r['producer'].update({'run_attempt': True}), lambda r: r['source'].update({'repository_id': True}),
                      lambda r: r['smoke'].update({'image_id': 'sha256:' + 'f' * 64}),
+                     lambda r: r['smoke'].update({'policy': 'backend-production-profile-v1'}),
                      lambda r: r['archive'].update({'bytes': True}), lambda r: r['image'].update({'revision': 'd' * 40}),
                      lambda r: r.update({'purpose': 'no-deploy-rehearsal'})]
         for index, mutate in enumerate(mutations):
@@ -349,6 +418,15 @@ class ProvenanceTests(unittest.TestCase):
                 changed = copy.deepcopy(receipt); mutate(changed)
                 (self.root / 'receipt.json').write_bytes(release.canonical(changed))
                 with self.assertRaises(release.Refused): release.validate_receipt(self.root, metadata)
+
+    def test_new_smoke_policy_receipt_does_not_qualify_an_unmarked_or_unknown_profile_archive(self):
+        metadata = self.api.metadata()
+        for profile in (None, 'unknown-state-contract'):
+            with self.subTest(profile=profile):
+                _, _, files = tiny_image(state_profile=profile)
+                receipt_for(self.root, metadata, files)
+                with self.assertRaisesRegex(release.Refused, 'backend state contract unproven'):
+                    release.validate_receipt(self.root, metadata)
 
     def test_authenticated_envelope_refusals(self):
         cases = [('', 'id', True), ('', 'full_name', 'attacker/fork'),
@@ -452,7 +530,8 @@ class ProvenanceTests(unittest.TestCase):
         raw = docker_bytes(files); calls = []
         inspect = [{'Id': identity, 'RepoTags': [tag], 'Os': 'linux', 'Architecture': 'amd64',
                     'Config': {'User': '10001:10001', 'Labels': {'org.opencontainers.image.revision': SHA,
-                                                               'org.opencontainers.image.version': '1.0.0'}}}]
+                                                               'org.opencontainers.image.version': '1.0.0',
+                                                               release.STATE_LABEL: release.STATE_PROFILE}}}]
         def command(argv, **kwargs):
             calls.append(argv)
             if argv[:3] == ['docker', 'image', 'inspect']: return release.canonical(inspect)
@@ -472,6 +551,19 @@ class ProvenanceTests(unittest.TestCase):
              patch.dict(os.environ, {'BUILDX_IMAGE_ID': identity}), self.assertRaises(release.Refused):
             release.produce(failed, ctx)
         self.assertEqual(list(failed.iterdir()), [])
+
+    def test_producer_contract_drift_during_smoke_prevents_export(self):
+        identity, _, _ = tiny_image()
+        contract = release.local_contract()
+        changed = {**contract, release.STATE_SMOKE: '0' * 64}
+        with patch.object(release, 'local_contract', side_effect=[contract, changed]), \
+             patch.object(release, 'inspect_image', return_value=identity), \
+             patch.object(release, 'command', return_value=b'') as command, \
+             patch.dict(os.environ, {'BUILDX_IMAGE_ID': identity}), \
+             self.assertRaisesRegex(release.Refused, 'contract changed during smoke'):
+            release.produce(self.root, {'sha': SHA})
+        command.assert_called_once_with([str(ROOT / release.SMOKE), identity], seconds=600, maximum=release.MAX_CONFIG)
+        self.assertEqual(list(self.root.iterdir()), [])
 
     def test_workflow_has_no_deployment_build_and_keeps_all_gates(self):
         producer = (ROOT / release.CI).read_text(); consumer = (ROOT / release.DEPLOY).read_text()
@@ -1016,8 +1108,12 @@ if args[:2] == ['image', 'inspect']:
     if form == '{{.Id}}': done(output=image['Id'])
     if form == '{{.Config.User}}': done(output=image['Config']['User'])
     if '{{.Os}}' in form:
-        done(output=' '.join([image['Id'], image['Os'], image['Architecture'], image['Config']['User'],
-                             image['Config'].get('Labels', {}).get('org.opencontainers.image.revision', '')]))
+        fields = [image['Id'], image['Os'], image['Architecture'], image['Config']['User'],
+                  image['Config'].get('Labels', {}).get('org.opencontainers.image.revision', '')]
+        if 'io.kira.backend.state-contract' in form:
+            profile = image['Config'].get('Labels', {}).get('io.kira.backend.state-contract', '')
+            fields.append('unproven' if flag('wrong_loaded_state') and image['Id'] == s.get('B') else profile)
+        done(output=' '.join(fields))
     done(output=json.dumps([image]))
 if args and args[0] == 'load':
     before_phase(phase)
@@ -1046,6 +1142,10 @@ if args and args[0] == 'compose':
         completed_mutation(phase)
     if service == 'backend-migrate':
         s.setdefault('migrations', []).append(image)
+        if image == s.get('B') and flag('lose_predecessor_archive_after_migration'):
+            record = (BASE / 'root/releases/backend/activation').read_text().splitlines()[0].split()
+            assert record[:3] == ['active', 'a' * 40, s['A']]
+            (BASE / 'root/releases/backend' / (record[3] + '.tar.gz')).unlink()
         done(1 if flag('fail_migration') else 0)
     if service != component or 'up' not in tail: done(92)
     if image not in s['images']: done(1)
@@ -1114,7 +1214,7 @@ done(93)
 
 
 class ReceiverFixture:
-    def __init__(self, base, component):
+    def __init__(self, base, component, *, profile_a=release.STATE_PROFILE, profile_b=release.STATE_PROFILE):
         self.base, self.component = base, component
         self.root = base / 'root'; self.root.mkdir(mode=0o700)
         self.bin = base / 'bin'; self.bin.mkdir()
@@ -1153,8 +1253,8 @@ class ReceiverFixture:
         for name in ('docker', 'sudo', 'mv', 'rm', 'ln', 'timeout', 'chmod', 'mktemp', 'sha256sum', 'tar'):
             path = self.bin / name; path.write_text(STUB.replace('@BASE@', repr(str(base)))); path.chmod(0o755)
         self.state_path = base / 'docker-state.json'
-        self.A, _, a = tiny_image(component, 'A', oci=True, legacy=True)
-        self.B, _, b = tiny_image(component, 'B', oci=True, legacy=True)
+        self.A, _, a = tiny_image(component, 'A', oci=True, legacy=True, state_profile=profile_a)
+        self.B, _, b = tiny_image(component, 'B', oci=True, legacy=True, state_profile=profile_b)
         self.archives = {'A': gzip.compress(docker_bytes(a), mtime=0), 'B': gzip.compress(docker_bytes(b), mtime=0)}
         self.state_path.write_text(json.dumps({'component': component, 'images': {}, 'tags': {}, 'container': None,
                                              'postgres': {'id': 'f' * 64, 'image': 'sha256:' + 'e' * 64,
@@ -1194,6 +1294,20 @@ class ReceiverFixture:
         self.update(lambda state: state.update(container={'id': 'c' * 64, 'image': self.A, 'running': running,
                                                          'paused': paused, 'health': 'healthy', 'project': project, 'service': 'backend'}))
 
+    def seed_legacy_backend(self):
+        """Install only a synthetic legacy runtime/archive, never bypass the real receiver gate."""
+        assert self.component == 'backend'
+        with tarfile.open(fileobj=io.BytesIO(self.archives['A']), mode='r:gz') as bundle:
+            manifest = json.load(bundle.extractfile('manifest.json'))[0]
+            config = json.load(bundle.extractfile(manifest['Config']))
+        entry = {'Id': self.A, 'Config': config['config'], 'Os': config['os'], 'Architecture': config['architecture'],
+                 'RepoTags': manifest['RepoTags']}
+        self.update(lambda s: s.update(images={self.A: entry}, tags={manifest['RepoTags'][0]: self.A}))
+        self.seed_backend()
+        directory = self.root / 'releases'; directory.mkdir(mode=0o700)
+        archive = directory / ('backend-' + SHA + '.tar.gz')
+        archive.write_bytes(self.archives['A']); archive.chmod(0o600)
+
     def backup_pending(self): return self.root / 'backups/.pending'
     def backup_generations(self): return sorted(self.root.glob('backups/kira-*'))
     def backup_record(self):
@@ -1206,9 +1320,9 @@ class ReceiverFixture:
 
 
 class ReceiverTests(unittest.TestCase):
-    def fixture(self, component='web'):
+    def fixture(self, component='web', **kwargs):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        return ReceiverFixture(Path(temp.name), component)
+        return ReceiverFixture(Path(temp.name), component, **kwargs)
 
     def assert_ok(self, result): self.assertEqual(result.returncode, 0, result.stderr.decode())
     def assert_failed(self, result, message=None, code=70):
@@ -1357,6 +1471,77 @@ class ReceiverTests(unittest.TestCase):
         self.assertEqual(fixture.state()['migrations'], [fixture.A])
         self.assert_failed(fixture.run('B', data=b'invalid-gzip'), 'archive validation failed')
         self.assertEqual(fixture.state()['loads'], before)
+
+    def test_backend_unknown_incoming_profile_preserves_runtime_records_and_attestation(self):
+        for profile in (None, '', 'future-profile', 1):
+            with self.subTest(profile=profile):
+                fixture = self.fixture('backend', profile_b=profile)
+                self.assert_ok(fixture.run('A'))
+                fixture.attest()
+                marker = fixture.root / 'backups/.writers-frozen-and-drained'
+                before_marker = marker.stat(); before = fixture.state()
+                record = fixture.activation().read_bytes(); images = fixture.root.joinpath('images.env').read_bytes()
+                self.assert_failed(fixture.run('B', attest=False), 'incoming Backend state contract unproven', code=70)
+                self.assertEqual(fixture.state()['loads'], before['loads'])
+                self.assertEqual(fixture.state()['migrations'], before['migrations'])
+                self.assertEqual(fixture.state()['container'], before['container'])
+                self.assertEqual(fixture.activation().read_bytes(), record)
+                self.assertEqual(fixture.root.joinpath('images.env').read_bytes(), images)
+                self.assertEqual(marker.stat(), before_marker)
+                self.assertFalse(fixture.backup_pending().exists())
+                self.assertFalse(fixture.activation().parent.joinpath('pending').exists())
+
+    def test_legacy_backend_adoption_and_noop_cannot_authorize_a_different_image(self):
+        fixture = self.fixture('backend', profile_a=None)
+        fixture.seed_legacy_backend()
+        self.assert_ok(fixture.run(args=['adopt', 'backend', SHA], data=b''))
+        self.assertEqual(fixture.state().get('loads', 0), 0)
+        self.assert_ok(fixture.run('A'))  # Identity-only no-op, not a compatible-baseline receipt.
+        before = fixture.activation().read_bytes(); runtime = fixture.state()['container']
+        fixture.attest(); marker = fixture.root / 'backups/.writers-frozen-and-drained'; identity = marker.stat()
+        self.assert_failed(fixture.run('B', attest=False), 'actual Backend predecessor state contract unproven', code=70)
+        self.assertEqual(fixture.state().get('loads', 0), 0)
+        self.assertEqual(fixture.state().get('migrations', []), [])
+        self.assertEqual(fixture.state()['container'], runtime)
+        self.assertEqual(fixture.activation().read_bytes(), before)
+        self.assertEqual(marker.stat(), identity)
+        self.assertFalse(fixture.backup_pending().exists())
+
+    def test_recorded_previous_backend_activation_cannot_bypass_profile_admission(self):
+        fixture = self.fixture('backend', profile_a=None)
+        self.assert_ok(fixture.run('B'))
+        # A is a retained legacy archive, not the actual active/fallback image.
+        fixture.archive('A').write_bytes(fixture.archives['A']); fixture.archive('A').chmod(0o600)
+        record = fixture.activation().read_text().splitlines()[0] + '\nprevious ' + SHA + ' ' + fixture.A + ' ' + release.digest(fixture.archives['A']) + '\n'
+        fixture.activation().write_text(record)
+        before = fixture.state()
+        self.assert_failed(fixture.run(args=['activate', 'backend', fixture.A], data=b''), 'incoming Backend state contract unproven', code=70)
+        self.assertEqual(fixture.state()['loads'], before['loads'])
+        self.assertEqual(fixture.state()['migrations'], before['migrations'])
+        self.assertEqual(fixture.state()['container'], before['container'])
+        self.assertEqual(fixture.activation().read_text(), record)
+
+    def test_backend_loaded_profile_drift_stops_before_migration_without_clearing_backup_custody(self):
+        fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+        fixture.flags(wrong_loaded_state=True)
+        self.assert_failed(fixture.run('B'), 'backup custody unresolved', code=73)
+        self.assertEqual(fixture.state()['migrations'], [fixture.A])
+        self.assertTrue(fixture.backup_pending().exists())
+        self.assertTrue(fixture.activation().parent.joinpath('pending').exists())
+
+    def test_backend_lost_fallback_evidence_after_migration_never_starts_old_image_or_claims_71(self):
+        for flag in ('fail_migration', 'fail_activation', 'fail_health', 'fail_persist_once'):
+            with self.subTest(flag=flag):
+                fixture = self.fixture('backend'); self.assert_ok(fixture.run('A'))
+                fixture.flags(lose_predecessor_archive_after_migration=True, **{flag: True})
+                result = fixture.run('B')
+                self.assert_failed(result, 'rollback=REFUSED (Backend state contract unproven)', code=73)
+                self.assertTrue(fixture.activation().parent.joinpath('pending').exists())
+                self.assertFalse(fixture.backup_pending().exists())  # Completed backup, not authority to roll back.
+                self.assertEqual(fixture.state()['migrations'], [fixture.A, fixture.B])
+                prior_starts = [x for x in fixture.state()['calls'] if x['args'][0] == 'compose' and
+                                x['args'][-1] == 'backend' and 'up' in x['args'] and x['image'] == fixture.A]
+                self.assertEqual(len(prior_starts), 1)  # Only the original A deployment.
 
     def test_runtime_drift_unowned_unhealthy_and_duplicate_configuration_stop(self):
         for kind in ('drift', 'unowned', 'unhealthy', 'duplicate', 'ambiguous', 'missing-archive', 'missing-record', 'preflight'):

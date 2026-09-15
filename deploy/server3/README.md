@@ -34,11 +34,14 @@ Do not commit the production `*.env`, TLS keys, signing keys, initial administra
 ## Exact tested-image promotion
 
 Backend CI builds **once**, retaining the existing `VERSION=1.0.0` behavior. The container job
-reconciles Buildx's `imageid` with Docker's `.Id`, smokes that immutable ID with the unchanged
-production-profile smoke, confirms the tag still identifies it, saves that one tag once, and
-compresses once. The strict archive check binds raw image configuration to its SHA-256 image ID
-and the layer bytes to its DiffIDs. A registry manifest digest or `RepoDigests` is not this local
-Docker image ID. The Kubernetes/semantic-tag release workflow is a separate path.
+reconciles Buildx's `imageid` with Docker's `.Id`, runs the `backend-production-state-v1` exact-ID
+production smoke, confirms the tag still identifies it, saves that one tag once, and compresses
+once. The required smoke covers source-catalog/credential state and a same-image seed-disabled
+restart, not only health/metrics. See [Backend release compatibility](../../docs/RELEASE_COMPATIBILITY.md)
+for the fixed profile, migration fingerprints, private-fixture scope and external recovery limits.
+The strict archive check binds raw image configuration to its SHA-256 image ID and layer bytes to
+their DiffIDs. A registry manifest digest or `RepoDigests` is not this local Docker image ID.
+The manual five-member release publication path remains separate from this two-member server3 packet.
 
 Only a push/main attempt can publish `backend-image-<run_id>-<run_attempt>`, containing exactly
 `image.tar.gz` and `receipt.json`. The receipt binds repository/source tree, producing workflow/run/
@@ -46,6 +49,8 @@ attempt, trusted contract-file hashes, image ID/platform/revision, original and 
 bytes/digests, and the exact-ID smoke result. Upload is immutable (`overwrite: false`) with three-day
 retention. The artifact may exist before parallel supply-chain work finishes; it is **not eligible**
 until authenticated CI **and** that attempt's `verify`, `supply-chain` and `container` jobs succeed.
+The unconditional `observability-rules` job also gates overall CI success and is required by the
+native main-protection policy; do not replace this workflow with an older three-gate CI definition.
 
 `Deploy server3` retains the existing `workflow_run: CI/completed` entry and **never builds, runs,
 resaves or recompresses an image**. Its `contents: read` / `actions: read` token authenticates canonical
@@ -54,7 +59,7 @@ producer attempt, complete bounded job/artifact listings and the unique individu
 It fails on missing API evidence, incomplete lists, skipped gates, forks, changed attempts, replaced/
 expired artifacts or digest mismatches; it never follows a replacement candidate or rebuilds one.
 
-Credential-free preflight (apart from the read-only workflow token) freezes the artifact ID, actual
+Preflight (read-only workflow and dedicated policy-read tokens only) freezes the artifact ID, actual
 outer ZIP digest/length, source/tree/run/attempt and complete receipt/image/archive identity **before**
 the separate `production` environment job. Both jobs check out `${{ github.sha }}`: the trusted
 default-branch **consumer**, not `workflow_run.head_sha`'s producer-selected scripts. The fixed
@@ -63,6 +68,11 @@ bytes. The event's producer source must still be current `main`; artifact creati
 72 hours old and its actual API expiry must be in the future. These checks run again after download,
 after environment approval, and immediately before SSH key materialization. Consumer attempts other
 than `1` are refused: use a new eligible producer completion, not a rerun that silently reselects.
+The new `release_policy.py` additionally authenticates the current consumer SHA/full tree and all
+authorization control bytes, freezes installed main/environment protection and the exact legacy
+release-workflow disabled snapshot, and rereads them after permanent native approval, immediately
+before the existing transfer step. A policy hash only detects drift; it is never an approval receipt.
+No receiver/archive/cleanup ABI is changed by this gate.
 
 The Backend repository is **public by deliberate policy**. API authentication establishes provenance,
 not confidentiality. Candidate images/receipts must never contain secrets, signing material,
@@ -123,6 +133,13 @@ reference *before load*. An unhealthy/unowned runtime, unresolved predecessor, d
 runtime/configuration mismatch stops the attempt. A missing container has **no previous healthy
 runtime**; a configured but nonrunning tag is not automatically restored or reported as one.
 
+A different-image Backend transaction additionally requires the incoming archive and, when present,
+the actual running predecessor's retained archive to declare the fixed `kira-backend-state-v1`
+profile. Missing/unknown declarations refuse before Docker mutation or consumption of the backup
+writer-drain attestation. The loaded candidate is rechecked before migration. Adoption and a true
+same-actual-image no-op remain identity-only: neither authorizes a different-image transition from
+an unmarked predecessor. An initial supported forward baseline requires separate owner authority.
+
 After byte validation and quiet configuration preflight, the predecessor's configuration is pinned
 to its captured ID before a tag can be overwritten. Backend media initialization and migration use
 the verified candidate ID. Application activation/rollback use IDs with pulling/building disabled;
@@ -134,9 +151,12 @@ object. `releases/<component>/activation` contains `active <source> <image-id> <
 `previous <source> <image-id> <archive-sha256>` (or `previous - - -`). `images.env` and each activation
 record are individually atomically replaced; they are **not a multi-file atomic transaction**.
 The persistent `pending` marker makes an interrupted/incomplete transition an explicit STOP.
-On failure, rollback must itself pass Compose, actual image/health and persistence checks; otherwise
-the report says failed/indeterminate, never “restored when available”. A failed first deployment removes
-only its owned candidate and reports `rollback=none`. Original deployment failure remains nonzero.
+On failure, Backend rechecks the actual predecessor's retained archive/profile before starting it.
+Missing/unproven compatibility refuses the old-image start, retains pending custody and returns
+outcome 73, not restored71. Unresolved backup obligations already take precedence. An admitted
+rollback must still pass Compose, actual image/health and persistence checks; otherwise the report
+is failed/indeterminate. A failed first deployment removes only its owned candidate and reports
+`rollback=none`. Original deployment failure remains nonzero. No image path reverses migrations.
 
 Deployment/activation outcomes are finalized **after EXIT cleanup**, including the final receiver
 message. Backend transfer interprets only these fixed exit codes, after its own process/key cleanup;
@@ -173,7 +193,10 @@ sudo /usr/local/sbin/kira-deploy adopt web <full-source-sha>
 
 This checks the existing root-owned `releases/web-<source-sha>.tar.gz` against the **actual running
 image**, adopts its content-addressed bytes and records/pins that ID without loading or restarting it.
-The same command form supports Backend/Admin. If the legacy archive is absent, already overwritten
+The same command form supports Backend/Admin. Backend adoption records identity/custody only. It does
+not add a profile label, certify semantic compatibility or bypass the different-image predecessor gate.
+
+If the legacy archive is absent, already overwritten
 by another same-SHA image, or otherwise mismatched, **STOP**. There is no automatic export/backup of
 the daemon's current image and no tag-based fallback; obtaining an authorized verified predecessor
 archive is a separate operator recovery action. Do not simply delete a pending marker or invent a
@@ -198,17 +221,76 @@ Web post-deployment behavior, or substitute for the separately authorized tiny r
 
 ## GitHub production environment
 
-Create a protected `production` environment in the backend, public web, and admin repositories.
+Backend must have a **permanently** protected `production` environment before admitting either this
+deployment job or the [manual release publisher](../../docs/RELEASE.md). Require owner-controlled
+explicit User reviewers, prevent self-review, forbid admin bypass, and configure exactly one custom
+deployment policy `{type: branch, name: main}`. GitHub requires one listed reviewer, not every listed
+reviewer. Do not remove approval after a first successful deployment. A tag push, main merge, CI
+success or workflow input never authorizes production. Web/Admin retain their separately reviewed
+repository policies; this Backend change neither installs nor relaxes sibling settings.
+
+Native main protection must enforce reviewed PRs, stale-approval dismissal, latest-push independent
+approval, no review bypass, enforced admins, no force push/deletion, and strict `verify`, `supply-chain`,
+`container`, `observability-rules` checks bound to GitHub Actions app ID `15368`. The helper supports
+this explicit classic-protection model, not an assumed ruleset-only equivalent. Independently review
+the bootstrap main tip; current API settings are not evidence of past protection. Missing, unsupported,
+unreadable or changed main/environment policy denies transfer without repairing settings.
 
 | Kind | Name | Value |
 |---|---|---|
-| Variable | `SERVER3_HOST` | `213.130.144.21` |
-| Variable | `SERVER3_PORT` | `22` |
-| Variable | `SERVER3_USER` | `kira-deploy` |
-| Secret | `SERVER3_SSH_PRIVATE_KEY` | Dedicated restricted key; never a personal SSH key |
-| Secret | `SERVER3_KNOWN_HOSTS` | Pinned server3 host-key line |
+| Production variable | `SERVER3_HOST` | Owner-verified server3 host (existing topology: `213.130.144.21`) |
+| Production variable | `SERVER3_PORT` | `22`, if still the verified installed port |
+| Production variable | `SERVER3_USER` | `kira-deploy`, subject to the installed authority review below |
+| Production-only secret | `BACKEND_PRODUCTION_SSH_PRIVATE_KEY` | New dedicated restricted Backend key; never a personal/shared fallback |
+| Production-only secret | `BACKEND_PRODUCTION_KNOWN_HOSTS` | Owner-verified pinned server3 host-key line |
+| Repository secret | `BACKEND_POLICY_READ_TOKEN` | Expiring, single-repository fine-grained read-only policy capability |
 
-The web environment also needs `ANDROID_APP_SHA256_CERT_FINGERPRINT`, `ANDROID_PACKAGE_NAME`, `APPLE_TEAM_ID`, and `IOS_BUNDLE_ID`. Require manual environment approval until the first automated release is verified.
+The dedicated token needs Administration:read and, for releases, Variables:read plus metadata access;
+Administration:read cannot be requested as a `GITHUB_TOKEN` permission. It is confined to native
+protection/ruleset/public-signer GET steps; ordinary workflow tokens handle source/actions/environment
+reads, including the single exact legacy-workflow numeric GET below. No policy-token permission is
+added for that Actions read. Verify actual endpoint access with the workflow identity. No broad PAT, alternate-token retry,
+settings write, production key or candidate script belongs in preflight. Public signer trust/tag
+rules for the separate release publisher are specified in [RELEASE.md](../../docs/RELEASE.md).
+
+**EXTERNAL BOOTSTRAP / OLD-AUTHORITY RETIREMENT REQUIRED:** provision those Backend secrets only in
+the protected environment, with **no same-named repository/organization secret fallback**. Retire
+the old `SERVER3_SSH_PRIVATE_KEY` Backend workflow credential and revoke its installed key authority;
+renaming a secret alone does not revoke a key. Cancel pending/running legacy deployments/releases/
+approvals and reconcile issued writer authority or partial mutations. Changing main does not patch
+old workflow code. Review other GHCR/release/tag writers; read-only default workflow permissions do
+not cap explicit writes in historical definitions. The new protected publisher's write token is
+job-scoped; a failed recheck blocks the following mutation, not earlier completed publication
+stages, and does not prove that a token was never minted.
+
+**Legacy tag-writer block:** the new manual publisher is `.github/workflows/publish-release.yml`,
+not the historical `.github/workflows/release.yml` identity **315951352**. Before either deployment
+or publication, the helper requires a fresh ordinary Actions-read
+`GET /repos/kira-manga/Kira-backend/actions/workflows/315951352`, exact numeric ID/path and state
+**`disabled_manually`**, in every trusted-context snapshot/recheck. Other disabled states, active,
+missing/ambiguous evidence and mismatched identity deny; no settings mutation or broader-token retry
+is available. The retained 2026-09-15 03:15 UTC observation was active, not retirement evidence.
+
+**Rollout remains blocked** until the owner verifies durable retirement/capability controls for
+**new ancestor-tag invocations**, **historical reruns** and pending legacy work. Record actual old/new
+workflow and creator IDs, policies and platform capabilities, including constrained creators' inability
+to **re-enable** the retired workflow or introduce **alternate writers**. Unknown capabilities remain
+blocking: today's disabled snapshot does not prove them. A rename/deletion or green tests are
+**not retirement**. Do not exercise a legacy tag/publication as a test. Follow the detailed
+[release retirement boundary](../../docs/RELEASE.md#legacy-workflow-retirement-and-rollout-block).
+
+Coordinate host/key retirement with the Web/Admin owners. The versioned shared gateway/sudo user can
+accept all three component deploy commands: a dedicated key by itself does **not** prove installed
+Backend-only authority. Verify actual forced commands, sudo rules, host keys, credential scope and
+revocation before rollout, without reinstalling or weakening siblings from this task. Native policy
+reads are snapshots, not an atomic approval/revocation/SSH-transfer transaction or historic proof.
+Separately authorize and verify actual rejected/approved native paths; do not deploy as an incidental
+test of this source change.
+
+The web environment also needs `ANDROID_APP_SHA256_CERT_FINGERPRINT`, `ANDROID_PACKAGE_NAME`,
+`APPLE_TEAM_ID`, and `IOS_BUNDLE_ID`; its own owner-reviewed authorization controls still apply.
+Backend authorization does not waive [#26's](https://github.com/kira-manga/Kira-backend/issues/26)
+separate state-compatibility/rollback-floor gate, forward-only migration limits or matched recovery.
 
 The admin repository needs no backend credential: its server-side BFF uses the operator's
 short-lived ADMIN token. Configure `/opt/kira/admin.env` with:

@@ -385,9 +385,15 @@ receipts cannot substitute for any of these operational proofs.
 
 ## Release rollback and failed migration
 
-Application-only releases roll back to the previous immutable image digest. Schema migrations are
-forward-only and expand/contract: deploy additive schema first, deploy compatible code, backfill in
-bounded batches, and remove obsolete schema only in a later release. If deployment fails after an
-additive migration, roll the application back while retaining the compatible schema. If a migration
-partially fails, keep traffic on the prior release, diagnose from Flyway/database logs, and ship a
-tested forward-recovery migration—never edit an applied migration or invoke `flyway clean`.
+Application rollback is conditional, not a generic response to an additive or failed migration.
+A previous digest, healthy process, schema number or label does not demonstrate compatibility.
+The selected binary must read **and write** the actual migrated data, including WITHHELD/signed v2,
+V13.2 bootstrap phase/receipt and V13.1 credential revocation. Follow
+[release compatibility](RELEASE_COMPATIBILITY.md) for the fixed server3 admission floor and the
+separate baseline/historical-image evidence still needed. Sustain exclusion of incompatible writers;
+a temporary backup pause/resume is not that fence. If compatibility is unknown or a migration
+partially fails, preserve exact runtime, migration, archive and pending-custody evidence and obtain
+separately authorized forward recovery. Do not simply start/keep an incompatible prior writer,
+retry through a pending guard, delete markers or auto-restore. Schema changes remain forward-only;
+never edit an applied migration or invoke `flyway clean`. Matched backup/media restore remains its
+own approved procedure, not an image undo.

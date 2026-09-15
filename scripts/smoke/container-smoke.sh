@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 IMAGE" >&2
@@ -7,6 +7,10 @@ if [[ $# -ne 1 ]]; then
 fi
 
 image=$1
+if [[ ! $image =~ ^sha256:[0-9a-f]{64}$ ]]; then
+  echo "production state smoke requires an immutable image ID" >&2
+  exit 64
+fi
 suffix="$$"
 network="kira-release-smoke-$suffix"
 database="kira-release-smoke-postgres-$suffix"
@@ -15,13 +19,14 @@ media_volume="kira-release-smoke-media-$suffix"
 smoke_temp_root=${KIRA_SMOKE_TEMP_ROOT:-"$PWD/build/tmp"}
 postgres_image="postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94"
 failure_stage=initialization
+private_state_started=false
 mkdir -p "$smoke_temp_root"
 temporary_directory=$(mktemp -d "$smoke_temp_root/kira-release-smoke.XXXXXX")
 
 redact_stream() {
   local line sensitive
   while IFS= read -r line; do
-    for sensitive in "${database_password:-}" "${jwt_secret:-}" "${signing_private:-}"; do
+    for sensitive in "${database_password:-}" "${jwt_secret:-}" "${signing_private:-}" "${admin_password:-}"; do
       if [[ -n $sensitive ]]; then
         line=${line//"$sensitive"/[REDACTED]}
       fi
@@ -44,6 +49,12 @@ report_failure() {
   local line=$2
   trap - ERR
   echo "production-profile container smoke failed during $failure_stage (line $line, status $status)" >&2
+  # The semantic phase uses private bearer tokens and request bodies. Do not collect candidate
+  # container logs after it begins, including on the seed-disabled restart failure path.
+  if [[ $private_state_started == true ]]; then
+    echo "private state probe logs and checkpoint intentionally not collected" >&2
+    exit "$status"
+  fi
   if [[ -f $temporary_directory/migration.log ]]; then
     redact_stream < "$temporary_directory/migration.log" >&2
   fi
@@ -57,6 +68,9 @@ report_failure() {
 }
 trap 'report_failure "$?" "$LINENO"' ERR
 
+failure_stage="immutable image identity check"
+[[ $(docker image inspect --format '{{.Id}}' "$image") == "$image" ]]
+
 failure_stage="ephemeral TLS and signing material generation"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -keyout "$temporary_directory/ca.key" -out "$temporary_directory/ca.crt" \
@@ -69,6 +83,8 @@ openssl x509 -req -days 1 -sha256 \
   -in "$temporary_directory/server.csr" -CA "$temporary_directory/ca.crt" \
   -CAkey "$temporary_directory/ca.key" -CAcreateserial \
   -extfile "$temporary_directory/server.ext" -out "$temporary_directory/server.crt" >/dev/null 2>&1
+# This public CA must remain readable by the image's unprivileged numeric UID, even with umask 077.
+chmod 644 "$temporary_directory/ca.crt"
 
 mkdir -p "$temporary_directory/signing"
 scripts/signing/generate-key.sh smoke "$temporary_directory/signing" >/dev/null
@@ -76,6 +92,9 @@ signing_private=$(tr -d '\n' < "$temporary_directory/signing/smoke.private.b64")
 signing_public=$(tr -d '\n' < "$temporary_directory/signing/smoke.public.b64")
 jwt_secret=$(openssl rand -base64 48 | tr -d '\n')
 database_password=$(openssl rand -hex 24)
+admin_password=$(openssl rand -hex 24)
+mkdir -m 700 "$temporary_directory/state"
+(umask 077; printf '%s' "$admin_password" > "$temporary_directory/state/admin-password")
 jdbc_url="jdbc:postgresql://$database:5432/kira?sslmode=verify-full&sslrootcert=/run/kira-smoke/ca.crt"
 
 failure_stage="disposable PostgreSQL startup"
@@ -137,36 +156,72 @@ docker run --rm --network none --read-only \
   'test -d "$1" && test -r "$1" && test -w "$1" && test -x "$1"' \
   sh /var/lib/kira/tutorial-media
 
-docker run --detach --name "$application" --network "$network" \
-  --read-only --tmpfs /tmp:size=128m,mode=1777 \
-  --volume "$temporary_directory/ca.crt:/run/kira-smoke/ca.crt:ro" \
-  --volume "$media_volume:/var/lib/kira/tutorial-media" \
-  --env "SPRING_DATASOURCE_URL=$jdbc_url" --env SPRING_DATASOURCE_USERNAME=kira \
-  --env "SPRING_DATASOURCE_PASSWORD=$database_password" --env "KIRA_JWT_SECRET=$jwt_secret" \
-  --env KIRA_SECURITY_EXTERNAL_BASE_URL=https://api.smoke.invalid \
-  --env KIRA_SECURITY_THROTTLE_BACKEND=memory --env KIRA_SECURITY_THROTTLE_INSTANCE_COUNT=1 \
-  --env KIRA_ADMIN_SEED_ENABLED=false --env KIRA_COMPLETION_ENABLED=false \
-  --env KIRA_SIGNING_ACTIVE_KEY_ID=smoke --env "KIRA_SIGNING_PRIVATE_KEY=$signing_private" \
-  --env KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID=smoke \
-  --env "KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY=$signing_public" \
-  --env KIRA_TUTORIAL_MEDIA_DIRECTORY=/var/lib/kira/tutorial-media \
-  "$image" >/dev/null
-
-failure_stage="readiness, liveness, and metrics probes"
-for _ in $(seq 1 60); do
-  if docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/readiness; then
-    docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/liveness
-    docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/prometheus
-    echo "production-profile container smoke passed"
-    exit 0
+start_application() {
+  local seed=$1 binding
+  local -a seed_environment=(--env KIRA_ADMIN_SEED_ENABLED=false)
+  if [[ $seed == true ]]; then
+    # Existing AdminSeeder, only on this newly created disposable database. Registration stays off,
+    # prod validators stay on, and no fixture credentials are given to the acceptance restart.
+    seed_environment=(--env KIRA_ADMIN_SEED_ENABLED=true --env KIRA_ADMIN_EMAIL=release-smoke@kira.invalid
+      --env "KIRA_ADMIN_PASSWORD=$admin_password")
   fi
-  if [[ $(docker inspect --format '{{.State.Running}}' "$application") != true ]]; then
-    docker logs "$application" >&2
-    exit 1
+  docker run --detach --name "$application" --network "$network" \
+    --read-only --tmpfs /tmp:size=128m,mode=1777 --publish 127.0.0.1::8080 \
+    --volume "$temporary_directory/ca.crt:/run/kira-smoke/ca.crt:ro" \
+    --volume "$media_volume:/var/lib/kira/tutorial-media" \
+    --env SPRING_PROFILES_ACTIVE=prod \
+    --env "SPRING_DATASOURCE_URL=$jdbc_url" --env SPRING_DATASOURCE_USERNAME=kira \
+    --env "SPRING_DATASOURCE_PASSWORD=$database_password" --env "KIRA_JWT_SECRET=$jwt_secret" \
+    --env KIRA_SECURITY_EXTERNAL_BASE_URL=https://api.smoke.invalid \
+    --env KIRA_SECURITY_THROTTLE_BACKEND=memory --env KIRA_SECURITY_THROTTLE_INSTANCE_COUNT=1 \
+    "${seed_environment[@]}" --env KIRA_COMPLETION_ENABLED=false \
+    --env KIRA_SIGNING_ACTIVE_KEY_ID=smoke --env "KIRA_SIGNING_PRIVATE_KEY=$signing_private" \
+    --env KIRA_SIGNING_VERIFICATION_KEYS_0_KEY_ID=smoke \
+    --env "KIRA_SIGNING_VERIFICATION_KEYS_0_PUBLIC_KEY=$signing_public" \
+    --env KIRA_TUTORIAL_MEDIA_DIRECTORY=/var/lib/kira/tutorial-media \
+    "$image" >/dev/null
+  [[ $(docker inspect --format '{{.Image}}' "$application") == "$image" ]]
+  binding=$(docker inspect --format '{{range (index .NetworkSettings.Ports "8080/tcp")}}{{.HostIp}}:{{.HostPort}}{{"\n"}}{{end}}' "$application")
+  if [[ ! $binding =~ ^127\.0\.0\.1:([1-9][0-9]{0,4})$ ]]; then
+    echo "semantic smoke requires one loopback-only ephemeral port" >&2
+    return 1
   fi
-  sleep 2
-done
+  application_port=${BASH_REMATCH[1]}
+  (( application_port <= 65535 ))
+}
 
-docker logs "$application" >&2
-echo "production-profile container did not become ready" >&2
-exit 1
+wait_ready() {
+  for _ in $(seq 1 60); do
+    if docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/readiness; then
+      docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/health/liveness
+      docker exec "$application" wget -q -O /dev/null http://127.0.0.1:9090/actuator/prometheus
+      return 0
+    fi
+    if [[ $(docker inspect --format '{{.State.Running}}' "$application") != true ]]; then
+      echo "production-profile container stopped before readiness" >&2
+      return 1
+    fi
+    sleep 2
+  done
+  echo "production-profile container did not become ready" >&2
+  return 1
+}
+
+failure_stage="disposable fixture admin startup and health/metrics probes"
+start_application true
+wait_ready
+failure_stage="source-catalog and credential initialization probe"
+private_state_started=true
+scripts/smoke/source-catalog-recovery-smoke.sh initialize "$application_port" "$temporary_directory"
+
+failure_stage="same-image seed-disabled recovery startup and health/metrics probes"
+docker stop --time 30 "$application" >/dev/null
+docker rm "$application" >/dev/null
+start_application false
+wait_ready
+failure_stage="source-catalog and credential recovery probe"
+scripts/smoke/source-catalog-recovery-smoke.sh recover "$application_port" "$temporary_directory"
+failure_stage="private fixture cleanup"
+cleanup
+trap - EXIT INT TERM
+echo "production-profile state/recovery container smoke passed"

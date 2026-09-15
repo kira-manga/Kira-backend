@@ -8,6 +8,7 @@ on:
 permissions:
   contents: read
   actions: read
+  deployments: read
 
 env:
   CI_RUN_ID: ${{ github.event.workflow_run.id }}
@@ -24,7 +25,13 @@ jobs:
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.event == 'push' &&
-      github.repository == 'kira-manga/Kira-backend'
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'workflow_run' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == '1' &&
+      github.workflow_ref == 'kira-manga/Kira-backend/.github/workflows/deploy-server3.yml@refs/heads/main' &&
+      github.workflow_sha == github.sha
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -32,6 +39,7 @@ jobs:
       artifact_id: ${{ steps.candidate.outputs.artifact_id }}
       zip_sha256: ${{ steps.candidate.outputs.zip_sha256 }}
       zip_bytes: ${{ steps.candidate.outputs.zip_bytes }}
+      policy: ${{ steps.policy.outputs.policy }}
     steps:
       - name: Check out this trusted consumer, never producer-selected scripts
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -41,6 +49,13 @@ jobs:
       - name: Allocate owned candidate scratch
         id: scratch
         run: python3 -B scripts/ci/image_release.py scratch
+      - name: Freeze native approval policy and the exact legacy-release disabled snapshot
+        id: policy
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKEND_POLICY_READ_TOKEN: ${{ secrets.BACKEND_POLICY_READ_TOKEN }}
+        run: python3 -B scripts/ci/release_policy.py deploy
       - name: Authenticate and freeze one immutable candidate before production approval
         id: candidate
         env:
@@ -55,6 +70,15 @@ jobs:
 
   deploy:
     needs: preflight
+    if: >-
+      needs.preflight.result == 'success' &&
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'workflow_run' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == '1' &&
+      github.workflow_ref == 'kira-manga/Kira-backend/.github/workflows/deploy-server3.yml@refs/heads/main' &&
+      github.workflow_sha == github.sha
     runs-on: ubuntu-latest
     environment: production
     timeout-minutes: 20
@@ -63,6 +87,7 @@ jobs:
       EXPECTED_ARTIFACT_ID: ${{ needs.preflight.outputs.artifact_id }}
       EXPECTED_ZIP_SHA256: ${{ needs.preflight.outputs.zip_sha256 }}
       EXPECTED_ZIP_BYTES: ${{ needs.preflight.outputs.zip_bytes }}
+      EXPECTED_POLICY: ${{ needs.preflight.outputs.policy }}
     steps:
       - name: Check out the same trusted consumer after approval
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -77,12 +102,18 @@ jobs:
           SCRATCH: ${{ steps.scratch.outputs.path }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python3 -B scripts/ci/image_release.py verify
+      - name: Recheck native authorization and legacy-release disabled state before transfer
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKEND_POLICY_READ_TOKEN: ${{ secrets.BACKEND_POLICY_READ_TOKEN }}
+        run: python3 -B scripts/ci/release_policy.py deploy
       - name: Recheck freshness before keys, then stream the original verified gzip
         env:
           SCRATCH: ${{ steps.scratch.outputs.path }}
           GITHUB_TOKEN: ${{ github.token }}
-          DEPLOY_KEY: ${{ secrets.SERVER3_SSH_PRIVATE_KEY }}
-          KNOWN_HOSTS: ${{ secrets.SERVER3_KNOWN_HOSTS }}
+          DEPLOY_KEY: ${{ secrets.BACKEND_PRODUCTION_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS: ${{ secrets.BACKEND_PRODUCTION_KNOWN_HOSTS }}
           DEPLOY_HOST: ${{ vars.SERVER3_HOST }}
           DEPLOY_PORT: ${{ vars.SERVER3_PORT }}
           DEPLOY_USER: ${{ vars.SERVER3_USER }}

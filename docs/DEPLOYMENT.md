@@ -6,7 +6,7 @@ two replaceable application processes behind a TLS ingress, with shared PostgreS
 restricted pod security, and bounded ingress traffic. It is a template, not evidence that the
 infrastructure exists or is production-ready. **Never apply the unresolved base.**
 
-## Server3 exact-image path (separate from Kubernetes/tag releases)
+## Server3 exact-image path (separate from Kubernetes/manual releases)
 
 Server3's [runbook](../deploy/server3/README.md#exact-tested-image-promotion) documents its shared
 Compose receiver and immutable image/archive recovery contract. Backend CI builds once and smokes
@@ -15,6 +15,30 @@ and its finite, three-day artifact, verifies original bytes and image identity, 
 It freezes the artifact before the separate production approval job and rechecks current-main /
 72-hour freshness immediately before keys/transfer. Consumer reruns are refused.
 
+Automatic CI completion is **candidate discovery, not authorization**. The separate job requires
+permanent native `production` approval with non-self explicit human reviewers, no admin bypass and
+exact-main environment policy. Read-only preflight freezes actual installed main/environment policy
+and authenticated main source/tree/control bytes; the trusted consumer rechecks them after approval,
+immediately before the existing freshness/SSH transfer path. Missing/unreadable/relaxed/changed
+policy fails closed. No boolean, CI receipt, policy hash or main merge substitutes for approval.
+The policy-read capability, new environment-only Backend SSH secret names and old-authority
+retirement are [external operator prerequisites](../deploy/server3/README.md#github-production-environment),
+not provisioned by YAML. These snapshots do not prove historical protection or atomic revocation.
+The separate [manual release path](RELEASE.md), `.github/workflows/publish-release.yml`, has its own
+read-only candidate and protected publisher. Tag pushes do not invoke that new entry; this does
+not retire historical tag-triggered writers. Both trusted-context snapshots/rechecks require a fresh
+ordinary Actions-read GET for legacy workflow **315951352**, exact path `.github/workflows/release.yml`,
+state **`disabled_manually`**. Missing, active, other disabled states or ID/path mismatch deny; the
+special policy token is not expanded and the helper cannot change settings.
+
+**Rollout remains blocked** until the owner verifies durable retirement/capability controls covering
+**new ancestor-tag invocations**, **historical reruns**, pending legacy work and the constrained
+creators' inability to **re-enable** or introduce **alternate writers**. A rename/deletion or green
+tests are **not retirement**; a current disabled snapshot is necessary, not sufficient. Record actual
+workflow/creator IDs, installed policy and platform capabilities; unknowns remain blocking. See the
+[release retirement requirements](RELEASE.md#legacy-workflow-retirement-and-rollout-block), without
+executing a legacy tag or publication as a test.
+
 The host captures the healthy owned running `.Image` before load and uses full local image IDs for
 activation, migration and checked application rollback. Active/previous **distinct successful**
 gzip archives are content-addressed and survive GitHub expiry. Runtime/config drift or an absent
@@ -22,11 +46,21 @@ verified predecessor archive is an operator STOP, not a silent backup/tag fallba
 command now binds source, gzip SHA-256 and image ID; Web/Admin keep their existing three-token forms.
 Root-only archive adoption is required for a healthy legacy predecessor without a matching record.
 
+Backend adoption is identity-only. Normal different-image deploy/activate requires the exact
+`kira-backend-state-v1` profile on both target and actual predecessor archives; an unmarked runtime
+needs a separately authorized forward baseline. Failed attempts cannot start an unproven fallback
+or clear pending custody. [Release compatibility](RELEASE_COMPATIBILITY.md) distinguishes image
+declaration, semantic producer evidence and genuine old-image/live-data recovery proof.
+
 Backend is intentionally public: artifact authentication is not confidentiality. No credentials,
 signing material, production responses or private review archives belong in image artifacts/logs.
 Source/stub checks are not installed-host or production proof. Coordinate reviewed receiver/helper/
 gateway installation and separately verify GitHub protections and SSH authority before rollout.
 Neither application rollback path below nor Server3's ID rollback reverses database migrations.
+Native approval and immutable image identity also do not establish state/schema compatibility.
+Backend [#26](https://github.com/kira-manga/Kira-backend/issues/26) owns the independent image-bound
+state-contract/rollback-floor gate. Its acceptance and matched backup/operator recovery requirements
+must not be waived by an authorization or image-verification result.
 
 ## Required overlay
 
@@ -89,10 +123,14 @@ the server-side dry run only against the authorized cluster/context; do not appl
 )
 ```
 
-CI also runs `scripts/smoke/container-smoke.sh IMAGE`. It creates disposable TLS PostgreSQL
-infrastructure, runs the packaged migration CLI, boots the exact image with the `prod` profile and
-ephemeral signing/JWT material, then verifies readiness, liveness, and Prometheus before removing all
-disposable resources. The rendered base is schema-checked in strict mode against Kubernetes 1.34.1
+CI runs `scripts/smoke/container-smoke.sh sha256:IMAGE_ID`. It creates disposable TLS PostgreSQL,
+executes the packaged migration CLI, and exercises the exact image with production validators,
+generated signing/JWT material and an initial disposable AdminSeeder fixture. The semantic probe
+covers bootstrap receipt/lifecycle/signed artifacts and credential revocation, then restarts the
+same immutable ID with seeding disabled and verifies retained state plus forward publication.
+Health/metrics alone and old health-only receipts do not satisfy the new policy. This is not a
+historical-image rollback or live-data recovery certificate; see [release compatibility](RELEASE_COMPATIBILITY.md).
+The rendered base is schema-checked in strict mode against Kubernetes 1.34.1
 and checked as TEMPLATE_ONLY; these checks are not installed PVC or bootstrap tests. The environment
 overlay still needs resolved policy/schema checks and the server-side dry run before deployment.
 
@@ -209,8 +247,14 @@ Those timings are not positive proof that all database/media writers have draine
 
 ## Rollback and forward recovery
 
-Application-only rollback uses `kubectl rollout undo deployment/kira-backend -n kira` to the previous
-known-good image digest. Database migrations are forward-only: never reverse or edit an applied Flyway
-migration. If a release has migrated the schema, deploy a tested forward-recovery migration compatible
-with both the prior and next application versions. Follow `docs/DISASTER_RECOVERY.md` for data loss or
-database restoration; follow `docs/SOURCE_CONFIG_LIFECYCLE.md` only for publication-pointer repair.
+Do not use `kubectl rollout undo` or a retained image digest as compatibility authority. A target
+must be independently demonstrated to read **and write** the actual migrated state, including
+WITHHELD/signed v2, V13.2 bootstrap phase/receipt and V13.1 credential revocation; see
+[release compatibility](RELEASE_COMPATIBILITY.md). Kubernetes/manual paths do not inherit server3's
+admission gate, and recorded-ID activation is not a compatibility/rollback-floor bypass. Obtain
+owner-approved exact-image recovery evidence and sustained incompatible-writer exclusion before a
+supported application-only rollback. Database migrations remain forward-only: never reverse/edit
+an applied migration. Unknown compatibility, pending custody or partial migration failure means
+STOP and separately authorized forward recovery, not automatic old-image restart. Follow
+[disaster recovery](DISASTER_RECOVERY.md) for matched data/media recovery; source publication-pointer
+repair alone is not binary compatibility.

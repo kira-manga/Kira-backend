@@ -1,0 +1,315 @@
+name: Publish release
+
+# This distinct manual-only entry does not react to tags; inputs are NOT approval.
+# Renaming/deleting release.yml does not retire its historical writer. See docs/RELEASE.md.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing SSH-signed annotated stable tag (vMAJOR.MINOR.PATCH)
+        type: string
+        required: true
+      source_sha:
+        description: Full tag target SHA in protected main history
+        type: string
+        required: true
+      ci_run_id:
+        description: Successful push/main CI run for that exact SHA
+        type: string
+        required: true
+      ci_run_attempt:
+        description: Explicit current successful CI attempt
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+  deployments: read
+
+concurrency:
+  group: kira-backend-release-production
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: control
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+  CI_SHA: ${{ inputs.source_sha }}
+  CI_RUN_ID: ${{ inputs.ci_run_id }}
+  CI_RUN_ATTEMPT: ${{ inputs.ci_run_attempt }}
+
+jobs:
+  preflight:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == '1' &&
+      github.workflow_ref == 'kira-manga/Kira-backend/.github/workflows/publish-release.yml@refs/heads/main' &&
+      github.workflow_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      selection: ${{ steps.source.outputs.selection }}
+      sha: ${{ steps.source.outputs.sha }}
+      tag: ${{ steps.source.outputs.tag }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - name: Check out only the trusted-main release controls
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Allocate owned preflight scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Authenticate source, signed tag, CI, native policy and the legacy-disabled snapshot
+        id: source
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKEND_POLICY_READ_TOKEN: ${{ secrets.BACKEND_POLICY_READ_TOKEN }}
+        run: python3 -B scripts/ci/release_policy.py select
+      - name: Remove only owned preflight scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup
+
+  build:
+    needs: preflight
+    if: >-
+      needs.preflight.result == 'success' &&
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == '1' &&
+      github.workflow_ref == 'kira-manga/Kira-backend/.github/workflows/publish-release.yml@refs/heads/main' &&
+      github.workflow_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      zip_sha256: ${{ steps.upload.outputs.artifact-digest }}
+    env:
+      EXPECTED_SELECTION: ${{ needs.preflight.outputs.selection }}
+      SOURCE_DIR: ${{ github.workspace }}/source
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+      - name: Check out the validated immutable source without persisted credentials
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - name: Allocate owned candidate scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Bind actual Gradle version and JAR source metadata
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/release_policy.py prepare-build
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@0b6dd653ba04f4f93bf581ec31e66cbd7dcb644d # v4
+        with:
+          cache-read-only: true
+      - name: Build JAR and SBOM from the independently CI-verified source
+        working-directory: source
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          KIRA_PACKAGES_USER: ${{ github.actor }}
+          KIRA_PACKAGES_READ_TOKEN: ${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
+        run: ./gradlew --no-daemon --init-script "$SCRATCH/release.init.gradle" clean bootJar cyclonedxBom
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - name: Construct the candidate with read-only dependency authority, never push
+        id: image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: ./source
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: kira-backend:${{ needs.preflight.outputs.sha }}
+          build-args: |
+            VERSION=${{ needs.preflight.outputs.version }}
+            VCS_REF=${{ needs.preflight.outputs.sha }}
+            BUILD_DATE=1970-01-01T00:00:00Z
+            KIRA_PACKAGES_USER=${{ github.actor }}
+          secrets: |
+            github_token=${{ secrets.KIRA_PACKAGES_READ_TOKEN }}
+      - name: Smoke the actual image ID and seal the separate release packet
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          BUILDX_IMAGE_ID: ${{ steps.image.outputs.imageid }}
+        run: python3 -B scripts/ci/release_policy.py seal
+      - name: Retain exactly one immutable release packet, not a server3 packet
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-release-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.scratch.outputs.path }}/package/image.tar.gz
+            ${{ steps.scratch.outputs.path }}/package/kira-backend-${{ needs.preflight.outputs.version }}.jar
+            ${{ steps.scratch.outputs.path }}/package/bom.json
+            ${{ steps.scratch.outputs.path }}/package/bom.xml
+            ${{ steps.scratch.outputs.path }}/package/manifest.json
+          if-no-files-found: error
+          overwrite: false
+          compression-level: 0
+          retention-days: 3
+      - name: Remove only owned build scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup
+
+  freeze:
+    needs: [preflight, build]
+    if: >-
+      needs.preflight.result == 'success' && needs.build.result == 'success' &&
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == '1' &&
+      github.workflow_ref == 'kira-manga/Kira-backend/.github/workflows/publish-release.yml@refs/heads/main' &&
+      github.workflow_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      envelope: ${{ steps.candidate.outputs.envelope }}
+    env:
+      EXPECTED_SELECTION: ${{ needs.preflight.outputs.selection }}
+      BUILT_ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
+      BUILT_ZIP_SHA256: ${{ needs.build.outputs.zip_sha256 }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Allocate owned verification scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Revalidate policy/legacy-disabled snapshot and freeze exact artifact bytes before approval
+        id: candidate
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKEND_POLICY_READ_TOKEN: ${{ secrets.BACKEND_POLICY_READ_TOKEN }}
+        run: python3 -B scripts/ci/release_policy.py freeze
+      - name: Remove only owned verification scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup
+
+  publish:
+    needs: [preflight, freeze]
+    if: >-
+      needs.preflight.result == 'success' && needs.freeze.result == 'success' &&
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main' &&
+      github.run_attempt == '1' &&
+      github.workflow_ref == 'kira-manga/Kira-backend/.github/workflows/publish-release.yml@refs/heads/main' &&
+      github.workflow_sha == github.sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: write
+      actions: read
+      packages: write
+      deployments: read
+      id-token: write
+      attestations: write
+    env:
+      EXPECTED_SELECTION: ${{ needs.preflight.outputs.selection }}
+      EXPECTED_ENVELOPE: ${{ needs.freeze.outputs.envelope }}
+    steps:
+      - name: Check out the same trusted-main publisher, never the candidate source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Allocate owned publisher scratch
+        id: scratch
+        run: python3 -B scripts/ci/image_release.py scratch
+      - name: Revalidate sealed bytes and load without building or running candidate code
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/release_policy.py load
+      - name: Fresh post-approval native-policy, legacy-disabled, signer, source and artifact recheck
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKEND_POLICY_READ_TOKEN: ${{ secrets.BACKEND_POLICY_READ_TOKEN }}
+        run: python3 -B scripts/ci/release_policy.py recheck
+      - name: Refuse existing targets and publish only the sealed image
+        id: image
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 -B scripts/ci/release_policy.py publish-image
+      - uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        env:
+          DOCKER_CONFIG: ${{ steps.scratch.outputs.path }}/docker-config
+        with:
+          subject-name: ghcr.io/kira-manga/kira-backend
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Recheck native authorization, legacy-disabled snapshot and source before release creation
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BACKEND_POLICY_READ_TOKEN: ${{ secrets.BACKEND_POLICY_READ_TOKEN }}
+        run: python3 -B scripts/ci/release_policy.py recheck
+      - name: Create a new release only, never update or replace existing assets
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_SOURCE_SHA: ${{ needs.preflight.outputs.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ github.token }}
+          GH_HOST: github.com
+        run: |
+          set -euo pipefail
+          python3 -B scripts/ci/release_policy.py prepare-release
+          timeout --kill-after=5s 120s gh release create "$RELEASE_TAG" \
+            --repo kira-manga/Kira-backend --verify-tag --target "$RELEASE_SOURCE_SHA" \
+            --title "Kira backend $RELEASE_VERSION" --latest=false \
+            --notes-file "$SCRATCH/release-notes.md" \
+            "$SCRATCH/kira-backend-$RELEASE_VERSION.jar" \
+            "$SCRATCH/bom.json" "$SCRATCH/bom.xml" "$SCRATCH/manifest.json"
+          python3 -B scripts/ci/release_policy.py confirm-release
+      - name: Remove only owned publisher packet and credential scratch
+        if: always() && steps.scratch.outputs.path != ''
+        env:
+          SCRATCH: ${{ steps.scratch.outputs.path }}
+        run: python3 -B scripts/ci/image_release.py cleanup

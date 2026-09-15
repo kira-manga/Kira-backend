@@ -15,6 +15,9 @@ ingress_file="$deployment_root/ingress.env"
 backup_root="$deployment_root/backups"
 release_root="$deployment_root/releases"
 archive_helper=/usr/local/libexec/kira-image-release.py
+# Categorical floor, coordinated with the trusted archive helper and producer probe.
+# This is not a health check, a schema-version comparison, or a caller override.
+backend_state_profile=kira-backend-state-v1
 backup_helper=/usr/local/libexec/kira-backup-bundle.py
 backup_pin=/usr/local/libexec/kira-backup-bundle.sha256
 backup_pending="$backup_root/.pending"
@@ -247,6 +250,11 @@ check_record_archive() {
   local source=$1 image=$2 archive=$3 file="$component_root/$3.tar.gz"
   owned_file "$file" || return 1
   helper archive "$component" "$source" "$file" "$archive" "$image" >/dev/null
+}
+check_backend_state_archive() {
+  local source=$1 image=$2 archive=$3 file=${4:-"$component_root/$3.tar.gz"}
+  owned_file "$file" || return 1
+  helper backend-state "$source" "$file" "$archive" "$image" >/dev/null 2>&1
 }
 check_predecessor_archive() {
   read_state || fail 'invalid activation record; operator reconciliation required'
@@ -568,6 +576,10 @@ restore_persistence() {
 rollback_component() {
   local resolved
   if [[ -n $previous_id ]]; then
+    if [[ $component == backend ]] && ! check_backend_state_archive "$saved_source" "$previous_id" "$saved_archive"; then
+      rollback_compatibility_refused=true
+      return 1
+    fi
     resolved=$(docker_bounded image inspect --format '{{.Id}}' "$previous_id") || return 1
     [[ $resolved == "$previous_id" ]] || return 1
     component_compose "$previous_id" up --detach --no-deps --no-build --pull never "$component" >/dev/null 2>&1 &&
@@ -588,6 +600,7 @@ abort_attempt() {
     outcome=73
     fail "primary=$primary; backup obligation unresolved; inspect exact daemon effects; no restoration claim"
   fi
+  rollback_compatibility_refused=false
   if rollback_component; then
     if [[ -n $previous_id ]]; then
       outcome=71
@@ -596,10 +609,14 @@ abort_attempt() {
     outcome=72
     fail "primary=$primary; rollback=none (no previous healthy runtime); owned candidate removed"
   fi
+  if [[ $rollback_compatibility_refused == true ]]; then
+    outcome=73
+    fail "primary=$primary; rollback=REFUSED (Backend state contract unproven); pending retained; separately authorized forward recovery required"
+  fi
   fail "primary=$primary; rollback=FAILED; inspect actual runtime, images.env and pending transaction; no restoration claim"
 }
 verify_loaded() {
-  local result loaded_id loaded_os loaded_arch loaded_user loaded_revision extra
+  local result loaded_id loaded_os loaded_arch loaded_user loaded_revision loaded_state extra
   result=$(docker_bounded image inspect --format '{{.Id}}' "kira-$component:$revision") || return 1
   [[ $result == "$candidate_id" ]] || return 1
   # The archive config hashes to candidate_id; after load that full ID must exist,
@@ -607,10 +624,10 @@ verify_loaded() {
   result=$(docker_bounded image inspect --format '{{.Id}}' "$candidate_id") || return 1
   [[ $result == "$candidate_id" ]] || return 1
   if [[ $component == backend ]]; then
-    result=$(docker_bounded image inspect --format '{{.Id}} {{.Os}} {{.Architecture}} {{.Config.User}} {{index .Config.Labels "org.opencontainers.image.revision"}}' "$candidate_id") || return 1
-    read -r loaded_id loaded_os loaded_arch loaded_user loaded_revision extra <<< "$result"
+    result=$(docker_bounded image inspect --format '{{.Id}} {{.Os}} {{.Architecture}} {{.Config.User}} {{index .Config.Labels "org.opencontainers.image.revision"}} {{index .Config.Labels "io.kira.backend.state-contract"}}' "$candidate_id") || return 1
+    read -r loaded_id loaded_os loaded_arch loaded_user loaded_revision loaded_state extra <<< "$result"
     [[ -z $extra && $loaded_id == "$candidate_id" && $loaded_os == linux && $loaded_arch == amd64 &&
-       $loaded_user =~ ^[0-9]+:[0-9]+$ && $loaded_revision == "$revision" ]] || return 1
+       $loaded_user =~ ^[0-9]+:[0-9]+$ && $loaded_revision == "$revision" && $loaded_state == "$backend_state_profile" ]] || return 1
   fi
 }
 activate_candidate() {
@@ -646,7 +663,18 @@ deploy_stream() {
     printf -v final_message 'already healthy at immutable image %s; active/previous archives unchanged' "$previous_id"
     return 0
   fi
-  if [[ $component == backend ]]; then backup_begin || fail "$backup_reason"; fi
+  if [[ $component == backend ]]; then
+    # A normal different-image transaction needs an admitted target AND actual
+    # fallback before any Docker mutation or consumption of the backup attestation.
+    # Legacy adoption/no-op proves identity only; it cannot manufacture eligibility.
+    check_backend_state_archive "$revision" "$candidate_id" "$candidate_archive" "$incoming/image.tar.gz" ||
+      fail 'incoming Backend state contract unproven; STOP before mutation'
+    if [[ -n $previous_id ]]; then
+      check_backend_state_archive "$saved_source" "$previous_id" "$saved_archive" ||
+        fail 'actual Backend predecessor state contract unproven; separately authorized forward baseline required'
+    fi
+    backup_begin || fail "$backup_reason"
+  fi
   created_archive=''
   outcome=73
   begin_transaction || abort_attempt predecessor-persistence

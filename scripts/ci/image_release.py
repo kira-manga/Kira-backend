@@ -36,7 +36,34 @@ REPOSITORY_ID = 1304735394
 CI = '.github/workflows/ci.yml'
 DEPLOY = '.github/workflows/deploy-server3.yml'
 SMOKE = 'scripts/smoke/container-smoke.sh'
-CONTRACT = (CI, 'scripts/ci/image_release.py', SMOKE)
+STATE_SMOKE = 'scripts/smoke/source-catalog-recovery-smoke.sh'
+SIGNING_KEY_HELPER = 'scripts/signing/generate-key.sh'
+STATE_PROFILE = 'kira-backend-state-v1'
+STATE_LABEL = 'io.kira.backend.state-contract'
+BOOTSTRAP_FIXTURE = 'src/test/resources/fixtures/bundled-full.json'
+BOOTSTRAP_REFERENCE = 'src/main/resources/source-config/bootstrap/app-bundle-v6-generic.json'
+MIGRATION_DIRECTORY = 'src/main/resources/db/migration'
+# Categorical contract, not a numeric minimum or permission to run a future migration.
+# Changes require a reviewed state profile and genuine image probes before promotion.
+STATE_MIGRATIONS = {MIGRATION_DIRECTORY + '/' + name: checksum for name, checksum in (
+    ('V1__users.sql', '258b001e00c9e196d6a03f41a12ac5c3114cb026b886f00a9eb0c06c5aabfa3f'),
+    ('V2__source_config.sql', '62be7c7851b1726041bf20c4dd6b94d4ce84f942d8610c7c9cb5dd66a597e3c2'),
+    ('V3__published_documents.sql', 'e1c3681df987f70e9f71402212c6219d469581b811fbc7c68958d0fb5b51bd23'),
+    ('V4__audit_log.sql', 'e53c6125b720b3adf73584a1a804869caf69c003504e0e10766ab496b6423204'),
+    ('V5__completions.sql', '34f863306aa47d138c9c6971a70d32c22f4928b7d39d60d4b45f1410f39ac6c5'),
+    ('V6__completion_retention.sql', '90dfc7a272cac558b87c495519275e1437ecbc38a0fae0364d7e981f4183d1cc'),
+    ('V7__signed_published_documents.sql', 'd6ddaa2b248598e34e507544e9426be86a7c6740e806a00ed32154f4a9fee243'),
+    ('V8__enforce_completion_result_xor.sql', '3bb5490732cd45fb7fa97420a31cd5d9ff57b4690a7447a3b6f5b97bc60b13ea'),
+    ('V9__tutorials.sql', '03a61db889326d7b7893904ab2914f4d667228d3d42853cfe16ec324a1186ea2'),
+    ('V10__source_catalog_v2.sql', '02861602565a779ba3c135f353b658fcdb70921e813cd55c840aac8f6b868d41'),
+    ('V11__source_editor_drafts.sql', 'd07498dea1167916b539733d0087539438377b73399ecb816120b8b10258e268'),
+    ('V12__admin_step_up_grants.sql', '83ba1521125518bb6c81a3fccf390f73ad1ceba2e758ebb6cfb2cb79c8d08073'),
+    ('V13__source_changesets.sql', '2860a22d36a52c4f3b79c30704aa8a9dea6bcf554a0dde5c255529ca778eaa60'),
+    ('V13_1__user_credential_version.sql', '08086569e570276c2bad7184a1a2cc70410d1d07c7a6eed57563f51c01f4575e'),
+    ('V13_2__source_catalog_bootstrap_state.sql', 'f3b283507efe057ff15516060c02b27908449f60ab7a03f757a2747d75930045'),
+)}
+CONTRACT = (CI, 'scripts/ci/image_release.py', SMOKE, STATE_SMOKE, SIGNING_KEY_HELPER, 'Dockerfile',
+            BOOTSTRAP_FIXTURE, BOOTSTRAP_REFERENCE, *STATE_MIGRATIONS)
 ROOT = Path(__file__).resolve().parents[2]
 MAX_IMAGE = 512 * 1024 * 1024
 MAX_TAR = 2 * 1024 * 1024 * 1024
@@ -45,7 +72,7 @@ MAX_MANIFEST = 64 * 1024
 MAX_CONFIG = 1024 * 1024
 MAX_API = 4 * 1024 * 1024
 FILES = {'image.tar.gz': MAX_IMAGE, 'receipt.json': MAX_RECEIPT}
-POLICY = 'backend-production-profile-v1'
+POLICY = 'backend-production-state-v1'  # Old health-only receipts are ineligible.
 
 
 class Refused(Exception):
@@ -252,7 +279,7 @@ def command(argv, *, seconds=60, output=None, maximum=MAX_CONFIG, stdin=None, re
     return process.returncode if return_status else bytes(result)
 
 
-def docker_tar(path, tag, backend):
+def docker_tar(path, tag, backend, *, state_contract=False):
     """Single-image Docker-save profile, not a general OCI importer or layer extractor.
 
     Scan ordinary tar headers ourselves before reading any metadata: tarfile's PAX/
@@ -337,6 +364,8 @@ def docker_tar(path, tag, backend):
         if backend:
             need(platform == {'os': 'linux', 'architecture': 'amd64'} and revision == tag.split(':')[1]
                  and re.fullmatch(r'[0-9]+:[0-9]+', config['config'].get('User', '')), 'backend image policy mismatch')
+        if state_contract:
+            need(backend and labels.get(STATE_LABEL) == STATE_PROFILE, 'backend state contract unproven')
 
         used = {'manifest.json', config_name, *layers}
 
@@ -414,7 +443,7 @@ def docker_tar(path, tag, backend):
         return {'id': identity, 'tag': tag, **platform, 'revision': revision}
 
 
-def validate_archive(archive, tag, *, backend=False, expected_id=None, expected_digest=None):
+def validate_archive(archive, tag, *, backend=False, expected_id=None, expected_digest=None, state_contract=False):
     with deadline(90):
         compressed = file_identity(archive, MAX_IMAGE)
         need(compressed['bytes'] > 0 and (expected_digest is None or compressed['sha256'] == hex_value(expected_digest)),
@@ -423,7 +452,7 @@ def validate_archive(archive, tag, *, backend=False, expected_id=None, expected_
             with gzip.open(archive, 'rb') as stream:
                 expanded = copy_bounded(stream, plain, MAX_TAR)
             plain.flush()
-            image = docker_tar(Path(plain.name), tag, backend)
+            image = docker_tar(Path(plain.name), tag, backend, state_contract=state_contract)
         need(expected_id is None or image['id'] == image_id(expected_id), 'archive image ID mismatch')
         return image, {**compressed, 'expanded_bytes': expanded['bytes'], 'expanded_sha256': expanded['sha256']}
 
@@ -517,6 +546,7 @@ class GitHub:
             need(listing.get('sha') == tree and listing.get('truncated') is False, 'incomplete Git tree')
             entries = {x['path']: x for x in listing['tree']}
             need(len(entries) == len(listing['tree']), 'ambiguous Git tree')
+            migration_inventory(entries)
             hashes = {}
             for name in (*CONTRACT, DEPLOY):
                 item = entries.get(name, {})
@@ -529,6 +559,7 @@ class GitHub:
                 need(len(raw) == record['size'] and hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest() == blob,
                      'Git blob content mismatch')
                 hashes[name] = digest(raw)
+            migration_bytes(hashes)
             self.sources[sha] = (tree, hashes)
         return self.sources[sha]
 
@@ -540,8 +571,21 @@ def timestamp(value):
     return result.timestamp()
 
 
+def migration_inventory(paths):
+    need({name for name in paths if name.startswith(MIGRATION_DIRECTORY + '/')} == set(STATE_MIGRATIONS),
+         'migration inventory outside reviewed backend state contract')
+
+
+def migration_bytes(hashes):
+    need(all(hashes.get(name) == expected for name, expected in STATE_MIGRATIONS.items()),
+         'migration bytes outside reviewed backend state contract')
+
+
 def local_contract():
-    return {name: digest(file_bytes(ROOT / name, MAX_CONFIG)) for name in (*CONTRACT, DEPLOY)}
+    migration_inventory(str(path.relative_to(ROOT)) for path in (ROOT / MIGRATION_DIRECTORY).rglob('*'))
+    hashes = {name: digest(file_bytes(ROOT / name, MAX_CONFIG)) for name in (*CONTRACT, DEPLOY)}
+    migration_bytes(hashes)
+    return hashes
 
 
 def context():
@@ -660,7 +704,7 @@ def validate_receipt(directory, metadata):
         hex_value(receipt['archive'][key])
     image, archive = validate_archive(directory / 'image.tar.gz', 'kira-backend:' + metadata['source']['sha'],
                                       backend=True, expected_id=receipt['image']['id'],
-                                      expected_digest=receipt['archive']['sha256'])
+                                      expected_digest=receipt['archive']['sha256'], state_contract=True)
     need(receipt['image'] == image and receipt['archive'] == archive, 'receipt image/archive mismatch')
     keys(receipt['smoke'], 'policy image_id result')
     need(receipt['smoke'] == {'policy': POLICY, 'image_id': image['id'], 'result': 'pass'}, 'smoke receipt mismatch')
@@ -735,14 +779,17 @@ def inspect_image(tag, expected=None):
     need((expected is None or identity == image_id(expected)) and tag in image.get('RepoTags', [])
          and image.get('Os') == 'linux' and image.get('Architecture') == 'amd64'
          and image.get('Config', {}).get('Labels', {}).get('org.opencontainers.image.revision') == tag.split(':')[1]
+         and image.get('Config', {}).get('Labels', {}).get(STATE_LABEL) == STATE_PROFILE
          and re.fullmatch(r'[0-9]+:[0-9]+', image.get('Config', {}).get('User', '')), 'built image/tag policy mismatch')
     return identity
 
 
 def produce(directory, ctx):
+    contract = local_contract()  # Refuse source/profile drift before executing the candidate.
     tag = 'kira-backend:' + ctx['sha']
     identity = inspect_image(tag, image_id(os.environ.get('BUILDX_IMAGE_ID')))
     command([str(ROOT / SMOKE), identity], seconds=600, maximum=MAX_CONFIG)
+    need(local_contract() == contract, 'producer state contract changed during smoke')
     inspect_image(tag, identity)  # The tag saved below still identifies the smoked object.
     if ctx['event'] != 'push' or ctx['ref'] != 'refs/heads/main':
         print('Exact-ID smoke passed; non-main/PR output is not a production candidate')
@@ -753,15 +800,15 @@ def produce(directory, ctx):
     plain = directory / 'image.tar'
     with plain.open('xb') as target:
         command(['docker', 'save', tag], seconds=180, maximum=MAX_TAR, output=target)
-    docker_tar(plain, tag, True)
+    docker_tar(plain, tag, True, state_contract=True)
     with (directory / 'image.tar.gz').open('xb') as target:
         command(['gzip', '--no-name', '--stdout', str(plain)], seconds=180, maximum=MAX_IMAGE, output=target)
-    image, archive = validate_archive(directory / 'image.tar.gz', tag, backend=True, expected_id=identity)
+    image, archive = validate_archive(directory / 'image.tar.gz', tag, backend=True, expected_id=identity, state_contract=True)
     plain.unlink()
     receipt = {'schema': 1, 'purpose': 'production-candidate',
                'source': {'repository': REPOSITORY, 'repository_id': REPOSITORY_ID, 'sha': ctx['sha'], 'tree': tree},
                'producer': {'workflow': CI, 'run_id': ctx['run_id'], 'run_attempt': ctx['attempt'], 'event': 'push', 'ref': ctx['ref']},
-               'contract': {name: local_contract()[name] for name in CONTRACT}, 'image': image, 'archive': archive,
+               'contract': {name: contract[name] for name in CONTRACT}, 'image': image, 'archive': archive,
                'smoke': {'policy': POLICY, 'image_id': identity, 'result': 'pass'}}
     raw = canonical(receipt)
     need(len(raw) <= MAX_RECEIPT, 'receipt byte limit')
@@ -823,7 +870,7 @@ def transfer(directory, ctx):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=('scratch', 'cleanup', 'produce', 'verify', 'transfer', 'receive', 'archive'))
+    parser.add_argument('action', choices=('scratch', 'cleanup', 'produce', 'verify', 'transfer', 'receive', 'archive', 'backend-state'))
     parser.add_argument('args', nargs='*')
     args = parser.parse_args()
     if args.action == 'receive':
@@ -843,6 +890,12 @@ def main():
                 target.flush()
                 os.fsync(target.fileno())
         return
+    if args.action == 'backend-state':
+        need(len(args.args) == 4, 'backend-state requires source, archive, archive digest and image ID')
+        sha, name, expected_digest, expected_id = args.args
+        validate_archive(Path(name), 'kira-backend:' + hex_value(sha, 40), backend=True, state_contract=True,
+                         expected_id=expected_id, expected_digest=expected_digest)
+        return  # A separate admission check; archive's two-token identity ABI is unchanged.
     if args.action == 'archive':
         need(len(args.args) in (3, 5), 'archive requires component, source and fixed archive path')
         component, sha, name = args.args[:3]

@@ -24,7 +24,8 @@ LABEL org.opencontainers.image.title="Kira backend" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.licenses="Apache-2.0" \
+      io.kira.backend.state-contract="kira-backend-state-v1"
 
 RUN addgroup -S -g 10001 kira && adduser -S -D -H -u 10001 -G kira kira \
     && mkdir -p /var/lib/kira/tutorial-media \
