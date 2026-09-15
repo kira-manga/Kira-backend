@@ -27,6 +27,7 @@ class SourceConfigValidationConfig {
 
     companion object {
         /** Lets a stored "valid" be recognized as stale after a rule change (PLAN §5 `rules_version`). */
-        const val RULES_VERSION = "schema1/rules-2026.09-declarations"
+        // Persisted in source_validation_results.rules_version varchar(32); keep this token bounded.
+        const val RULES_VERSION = "schema1/rules-2026.09-decl"
     }
 }
