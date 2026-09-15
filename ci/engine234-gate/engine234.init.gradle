@@ -1,0 +1,221 @@
+// Exact Engine234 / Backend14 hosted JVM gate. No remote publication or platform acceptance.
+import org.gradle.api.GradleException
+import org.gradle.api.publish.PublishingExtension
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+import org.gradle.api.tasks.testing.Test
+import java.security.MessageDigest
+import groovy.json.JsonSlurper
+
+def args = gradle.startParameter.projectProperties
+def role = args['engine234Role']
+def version = args['engine234Version']
+def group = 'me.manga.kira.source'
+if (!(role in ['neutral', 'backend']) ||
+    !(version ==~ /0\.1\.0-engine234-8cb9ead84983-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*/) ||
+    !args['engine234RunRoot'] || !args['engine234Repository']) {
+    throw new GradleException('Explicit Engine234 role, unique version, run root and file repository required')
+}
+def runRoot = new File(args['engine234RunRoot']).canonicalFile
+def repo = new File(args['engine234Repository']).canonicalFile
+if (repo.parentFile != runRoot || repo.name != 'maven' ||
+    !['tmp', 'home'].every {
+        def dir = new File(runRoot, it)
+        dir.isDirectory() && dir.canonicalFile.parentFile == runRoot && dir.canonicalFile.name == it
+    }) {
+    throw new GradleException('Use the admitted run-owned maven/tmp/home layout')
+}
+if (role == 'neutral' && args['VERSION_NAME'] != version) {
+    throw new GradleException('Native publication VERSION_NAME must equal the candidate version')
+}
+if (gradle.startParameter.taskNames.any {
+    def name = it.tokenize(':').last()
+    name == 'publish' || name.contains('MavenLocal') || name.startsWith('publishAll')
+}) {
+    throw new GradleException('No aggregate/default publication or global MavenLocal task is admitted')
+}
+def sha = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+def modules = ['source-contract-jvm', 'source-engine-jvm', 'source-testkit-jvm']
+def evidence = new File(runRoot, 'evidence')
+def runtimeManifest = new File(evidence, 'runtime.tsv')
+def publishedManifest = role == 'backend' ?
+    new JsonSlurper().parse(new File(evidence, 'publications.json')) : null
+def observe = { label, File file ->
+    runtimeManifest.append("${role}\t${label}\t${file.name}\t${sha(file)}\n")
+}
+def allJvmTests = { modules.collect { p ->
+    gradle.rootProject.project(':' + p.replace('-jvm', '')).tasks.named('jvmTest').get()
+} }
+
+def checkSourceJars = { files, expected, label ->
+    def jars = files.findAll { f ->
+        f.name.endsWith('.jar') && ['source-contract-', 'source-engine-', 'source-testkit-'].any {
+            prefix -> f.name.startsWith(prefix)
+        }
+    }
+    if (jars.size() != expected.size()) {
+        throw new GradleException("${label}: expected exactly ${expected.size()} candidate source JVM jars")
+    }
+    expected.each { module ->
+        def jar = jars.find { it.name == "${module}-${version}.jar" }
+        def published = new File(repo, "me/manga/kira/source/${module}/${version}/${module}-${version}.jar")
+        def relative = repo.toPath().relativize(published.toPath()).toString()
+        if (jar == null || !published.isFile() || sha(jar) != sha(published) ||
+            publishedManifest?.version != version || publishedManifest?.files?.get(relative)?.sha256 != sha(jar)) {
+            throw new GradleException("${label}: wrong/missing candidate runtime artifact ${module}")
+        }
+        observe(label, jar)
+        logger.lifecycle("ENGINE234_RUNTIME ${label} ${jar.canonicalPath} SHA256=${sha(jar)}")
+    }
+}
+def checkParser = { files, label ->
+    def jars = files.findAll { it.name.startsWith('ksoup-') && it.name.endsWith('.jar') }
+    if (jars.size() != 1 || jars.first().name != 'ksoup-jvm-0.2.5.jar') {
+        throw new GradleException("${label}: expected one actual Ksoup JVM 0.2.5 jar; do not change non-source locks")
+    }
+    observe(label, jars.first())
+    logger.lifecycle("ENGINE234_PARSER ${label} ${jars.first().canonicalPath} SHA256=${sha(jars.first())}")
+}
+gradle.beforeProject { p ->
+    if (role == 'neutral') {
+        p.pluginManager.withPlugin('maven-publish') {
+            p.extensions.getByType(PublishingExtension).repositories.maven {
+                name = 'Engine234Candidate'; url = repo.toURI()
+            }
+            p.tasks.withType(PublishToMavenRepository).configureEach { publicationTask ->
+                doFirst {
+                    if (!allJvmTests().every { it.state.executed && !it.state.skipped && it.state.failure == null }) {
+                        throw new GradleException('Every JVM test task must actually pass before any publication')
+                    }
+                    def publication = publicationTask.publication
+                    def target = publicationTask.repository
+                    if (!(publication.name in ['jvm', 'kotlinMultiplatform']) ||
+                        target.name != 'Engine234Candidate' || target.url.scheme != 'file' ||
+                        new File(target.url).canonicalFile != repo ||
+                        publication.groupId != group || publication.version != version) {
+                        throw new GradleException('Only native root/JVM publication to the admitted private file repository is allowed')
+                    }
+                    new File(evidence, 'publications-model.tsv').append(
+                        "${publicationTask.path}\t${publication.groupId}:${publication.artifactId}:${publication.version}\n")
+                    logger.lifecycle("ENGINE234_NATIVE_PUBLICATION ${publicationTask.path} " +
+                        "${publication.groupId}:${publication.artifactId}:${publication.version} ${target.url}")
+                }
+            }
+        }
+    } else {
+        def sourceRule = { d ->
+            if (d.requested.group == group) {
+                d.useVersion(version)
+                d.because('Exact unpublished joined Engine234 source snapshot')
+            }
+        }
+        // Apply after Spring dependency management, including its detached BOM/exclusion configurations.
+        p.pluginManager.withPlugin('io.spring.dependency-management') {
+            p.configurations.configureEach { c -> c.resolutionStrategy.eachDependency(sourceRule) }
+            p.extensions.getByName('dependencyManagement').resolutionStrategy { eachDependency(sourceRule) }
+        }
+        p.repositories.exclusiveContent {
+            forRepository {
+                p.repositories.maven { name = 'Engine234Candidate'; url = repo.toURI() }
+            }
+            filter { includeGroup(group) }
+        }
+        // No other ignored group, lock-mode change, lock rewrite, forced version, or metadata bypass.
+        p.dependencyLocking.ignoredDependencies.add(group + ':*')
+    }
+    p.tasks.withType(Test).configureEach { t ->
+        maxParallelForks = 1
+        ignoreFailures = false
+        forkEvery = 0
+        maxHeapSize = '768m'
+        filter.failOnNoMatchingTests = true
+        systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+        systemProperty('java.io.tmpdir', new File(runRoot, 'tmp').absolutePath)
+        systemProperty('user.home', new File(runRoot, 'home').absolutePath)
+        doFirst {
+            if (role == 'backend') {
+                // These are the actual Test task's files, not merely declared coordinates.
+                checkSourceJars(t.classpath.files, modules, t.path)
+                checkParser(t.classpath.files, t.path)
+                ['runtimeClasspath', 'productionRuntimeClasspath', 'testRuntimeClasspath'].each { name ->
+                    def artifacts = p.configurations.getByName(name).resolvedConfiguration.resolvedArtifacts
+                    def sourceArtifacts = artifacts.findAll { it.moduleVersion.id.group == group }
+                    def expected = name == 'testRuntimeClasspath' ? modules : modules.take(2)
+                    if (sourceArtifacts.size() != expected.size() ||
+                        sourceArtifacts.any { it.moduleVersion.id.version != version }) {
+                        throw new GradleException("${name}: candidate group mismatch or production testkit leak")
+                    }
+                    checkSourceJars(sourceArtifacts.collect { it.file }, expected, name)
+                    checkParser(artifacts.collect { it.file }, name)
+                    artifacts.toList().sort { it.moduleVersion.id.toString() }.each {
+                        logger.lifecycle("ENGINE234_GRAPH ${name} ${it.moduleVersion.id} ${it.file.name}")
+                    }
+                }
+            } else if (p.name in ['source-engine', 'source-testkit']) {
+                checkParser(t.classpath.files, t.path)
+            }
+        }
+    }
+}
+
+// One ordinary graph: order writes after all JVM gates without re-running compilation.
+gradle.projectsEvaluated {
+    if (role == 'neutral') {
+        gradle.rootProject.subprojects.each { p ->
+            p.tasks.withType(PublishToMavenRepository).configureEach { mustRunAfter(allJvmTests()) }
+        }
+    }
+}
+def metadataCompiles = ['compileNativeMainKotlinMetadata', 'compileAppleMainKotlinMetadata', 'compileIosMainKotlinMetadata']
+def nativeMetadataSupport = ['commonizeNativeDistribution', 'downloadKotlinNativeDistribution',
+    'iosArm64MetadataElements', 'iosSimulatorArm64MetadataElements']
+['Native', 'Apple', 'Ios'].each { part ->
+    nativeMetadataSupport += ["transform${part}MainDependenciesMetadata".toString(),
+        "metadata${part}MainProcessResources".toString(), "metadata${part}MainClasses".toString()]
+}
+def neutralNames = ['kmpPartiallyResolvedDependenciesChecker', 'checkKotlinGradlePluginConfigurationErrors',
+    'compileKotlinJvm', 'compileTestKotlinJvm', 'compileJvmMainJava', 'compileJvmTestJava',
+    'jvmProcessResources', 'processJvmMainResources', 'jvmTestProcessResources', 'processJvmTestResources',
+    'jvmMainClasses', 'jvmTestClasses', 'jvmJar', 'jvmTest', 'jvmSourcesJar', 'sourcesJar',
+    'transformCommonMainDependenciesMetadata', 'compileCommonMainKotlinMetadata',
+    'generateProjectStructureMetadata', 'metadataCommonMainProcessResources', 'metadataCommonMainClasses',
+    'allMetadataJar', 'buildKotlinToolingMetadata',
+    'generateMetadataFileForKotlinMultiplatformPublication', 'generatePomFileForKotlinMultiplatformPublication',
+    'generateMetadataFileForJvmPublication', 'generatePomFileForJvmPublication',
+    'publishJvmPublicationToEngine234CandidateRepository', 'publishKotlinMultiplatformPublicationToEngine234CandidateRepository',
+    'exportCommonSourceSetsMetadataLocationsForMetadataApiElements', 'exportRootPublicationCoordinatesForMetadataApiElements',
+    'exportTargetPublicationCoordinatesForJvmApiElements', 'exportTargetPublicationCoordinatesForJvmRuntimeElements'] +
+    metadataCompiles + nativeMetadataSupport
+def backendNames = ['checkKotlinGradlePluginConfigurationErrors', 'compileKotlin', 'compileJava',
+    'processResources', 'classes', 'compileTestKotlin', 'compileTestJava', 'processTestResources', 'testClasses', 'test']
+gradle.taskGraph.whenReady { graph ->
+    def requested = role == 'neutral' ? modules.collectMany { module ->
+        def path = ':' + module.replace('-jvm', '') + ':'
+        [path + 'jvmTest', path + 'publishJvmPublicationToEngine234CandidateRepository',
+            path + 'publishKotlinMultiplatformPublicationToEngine234CandidateRepository']
+    } : ['test']
+    if (gradle.startParameter.continueOnFailure || gradle.startParameter.taskNames.toSet() != requested.toSet()) {
+        throw new GradleException('Only the exact single Engine or Backend gate invocation is allowed; no --continue')
+    }
+    def bad = graph.allTasks.findAll { task ->
+        role == 'neutral' ? !(modules.collect { ':' + it.replace('-jvm', '') }.contains(task.project.path) &&
+            neutralNames.contains(task.name)) : !(task.project.path == ':' && backendNames.contains(task.name))
+    }
+    new File(evidence, "${role}-task-graph.txt").text = graph.allTasks.collect { it.path }.join('\n') + '\n'
+    if (bad) throw new GradleException("Unadmitted task graph (no Android/native binaries/tests/link): ${bad*.path}")
+}
+gradle.taskGraph.beforeTask { task ->
+    if (role == 'neutral' && metadataCompiles.contains(task.name)) {
+        // Ordinary @SkipWhenEmpty source inputs only; never disable or force-skip the task.
+        if (!task.inputs.hasSourceFiles || !task.inputs.sourceFiles.isEmpty()) {
+            throw new GradleException("Nonempty/unprovable native metadata source inputs: ${task.path}")
+        }
+        new File(evidence, 'empty-native-metadata.tsv').append("${task.path}\tEMPTY_BEFORE_EXECUTION\n")
+    }
+}
+gradle.taskGraph.afterTask { task, state ->
+    def outcome = state.failure != null ? 'FAILED' : state.noSource ? 'NO-SOURCE' : state.skipped ? state.skipMessage : 'SUCCESS'
+    new File(evidence, "${role}-task-outcomes.tsv").append("${task.path}\t${outcome}\n")
+    if (role == 'neutral' && metadataCompiles.contains(task.name) && !state.noSource) {
+        throw new GradleException("Native metadata prerequisite did not remain NO-SOURCE: ${task.path}")
+    }
+}

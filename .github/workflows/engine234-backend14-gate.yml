@@ -1,0 +1,97 @@
+name: Engine234 Backend14 isolated JVM gate
+
+on:
+  push:
+    branches: [remediation/engine234-backend14-gate-20260915-01]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine234-backend14-gate
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.full_name == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/remediation/engine234-backend14-gate-20260915-01' &&
+      github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Read only the public carrier controls
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            .github/workflows/engine234-backend14-gate.yml
+            ci/engine234-gate
+
+      - name: Allocate fresh owned resources
+        id: setup
+        timeout-minutes: 1
+        run: bash control/ci/engine234-gate/gate.sh setup
+
+      - name: Read exact public Engine234 source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          repository: kira-manga/kira-source-engine
+          ref: 8cb9ead849831a2048601580f985305a8361027c
+          path: inputs/engine
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Read exact public Backend14 consumer source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          repository: kira-manga/Kira-backend
+          ref: 2da1f5fde9eacb57e89bf1ba151f5a4fa0a7ac5f
+          path: inputs/backend
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Bind sources and bounded stock prerequisites
+        timeout-minutes: 8
+        run: bash control/ci/engine234-gate/gate.sh prerequisites
+
+      - name: One Engine JVM gate and six native file publications
+        timeout-minutes: 25
+        run: bash control/ci/engine234-gate/gate.sh engine
+
+      - name: Stop Engine, preserve receipts, reclaim only owned resources, stop again
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 3
+        run: bash control/ci/engine234-gate/gate.sh engine-close
+
+      - name: One exact 19-class Backend gate with real PostgreSQL and Redis
+        timeout-minutes: 22
+        run: bash control/ci/engine234-gate/gate.sh backend
+
+      - name: Always close Backend and Docker, seal evidence, remove owned caches
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 4
+        run: bash control/ci/engine234-gate/gate.sh finish
+
+      - name: Retain only bounded public-source gate evidence
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        timeout-minutes: 3
+        with:
+          name: engine234-backend14-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/engine234-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+          retention-days: 1
+          if-no-files-found: error
