@@ -1,0 +1,42 @@
+{
+  "schema": "engine234-hosted-backend17-1",
+  "repository": "kira-manga/Kira-backend",
+  "source": {
+    "head": "3861504d2c52a9c107962122c32a956828ba5362",
+    "tree": "a3d02ed4f671393e2201bc9f511cdc95c7b8f4fb",
+    "protected_sha256": {
+      "build.gradle.kts": "7f183ef654bf8284209477d0f066bf9a88a6e732a897109ce788582d74501735",
+      "ci/engine234-gate/engine234.init.gradle": "72a1a91c69795ee9a6b41d95baf31779c1191b5b2e0562439d4986afe68e51a6",
+      "ci/engine234-gate/inputs.json": "d2513b154b918842e2095e1ac5c66bd18009dec1649165fcc17e0bfd31a20da2",
+      "ci/engine234-gate/backend-test-classes.txt": "b628b1e427e275185ed8cabcd407b3fd7102ccb463750dea8375a69ee02629b8",
+      "gradle.lockfile": "f300f729846e9794f0342e750d3c6a7a5dfc28ae527fd23e8a1e2fab554dba9e"
+    }
+  },
+  "lock_sha256": "f300f729846e9794f0342e750d3c6a7a5dfc28ae527fd23e8a1e2fab554dba9e",
+  "artifact": {
+    "id": 10416542685,
+    "name": "engine234-package-35018546402-1",
+    "size_in_bytes": 1694426,
+    "digest": "sha256:61a7af3571380cf83594b44f66db1edeaabf925e2a4e030eef1114948506ab2e",
+    "producer_carrier": "7059fa13043ae8ae6bacc15f0feaf414f053bfc7",
+    "producer_branch": "remediation/engine234-package-candidate-20260915-01",
+    "native_archive_bytes": 1650160,
+    "expires_at": "2026-09-16T20:22:21Z"
+  },
+  "images": [
+    "postgres:17.6-alpine"
+  ],
+  "resolved_configurations": {
+    "compileClasspath": 123,
+    "runtimeClasspath": 136,
+    "productionRuntimeClasspath": 136,
+    "testCompileClasspath": 165,
+    "testRuntimeClasspath": 180,
+    "implementationDependenciesMetadata": 128,
+    "testImplementationDependenciesMetadata": 171,
+    "ktlintReporter": 8,
+    "detekt": 39
+  },
+  "scope": "One exact locked validator16 plus unchanged FullBundledParityIT1; no producer, lock updates, obsolete38 cohort, Redis, release or App acceptance.",
+  "source_inputs_note": "inputs.json is the unchanged pre-phase1 source expectation. This hosted binding supplies the now-accepted lock, immutable source checkpoint and PG-only fixture; its old carried_engine_tests/images/NOT_GENERATED text is not execution authority."
+}

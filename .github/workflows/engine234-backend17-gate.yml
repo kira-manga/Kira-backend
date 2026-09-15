@@ -1,0 +1,85 @@
+name: Engine234 locked Backend consumer17
+
+on:
+  push:
+    branches: [remediation/engine234-backend-consumer-20260915-01]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: engine234-backend17-consumer
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.full_name == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/remediation/engine234-backend-consumer-20260915-01' &&
+      github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Read only this public carrier's controls
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 1
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            .github/workflows/engine234-backend17-gate.yml
+            ci/engine234-gate
+
+      - name: Allocate fresh owned resources
+        id: setup
+        timeout-minutes: 1
+        run: bash control/ci/engine234-gate/gate.sh setup
+
+      - name: Read exact reviewed consumer source and native lock
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 1
+        with:
+          repository: kira-manga/Kira-backend
+          ref: 3861504d2c52a9c107962122c32a956828ba5362
+          path: inputs/backend
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Read the accepted same-repository Actions artifact, without rebuilding
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash control/ci/engine234-gate/gate.sh candidate
+
+      - name: Bind Java21 and the unchanged PostgreSQL fixture
+        timeout-minutes: 2
+        run: bash control/ci/engine234-gate/gate.sh prerequisites
+
+      - name: One locked validator16 plus FullBundledParityIT1 graph
+        timeout-minutes: 8
+        run: bash control/ci/engine234-gate/gate.sh backend
+
+      - name: Always stop owned processes, collect XML, close Docker and remove artifacts
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 3
+        run: bash control/ci/engine234-gate/gate.sh finish
+
+      - name: Retain bounded consumer evidence only
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        timeout-minutes: 1
+        with:
+          name: engine234-backend17-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/engine234-backend17-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+          retention-days: 3
+          if-no-files-found: error
