@@ -1,0 +1,11 @@
+{
+  "schema": "backend2526-h2-request-v1",
+  "admission": "ADMITTED_TEST_ONLY",
+  "purpose": "test-only-db-empty-media-recovery",
+  "source_sha": "3ab56b1da87889ad573b84ece73635070e4ad6e8",
+  "source_tree": "04a343d7021bab739097cd5c2290cc23642867ab",
+  "source_pins_sha256": "d9a359dfd16e4567c0167df12b8b98474f4e687370de1596f2951516e912b040",
+  "outer_seconds": 600,
+  "work_seconds": 480,
+  "cleanup_seconds": 120
+}
