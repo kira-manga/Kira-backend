@@ -523,6 +523,11 @@ Prod onboarding (registration disabled): admins create users. Responses never ec
   `COMPLETION_CONCURRENCY_LIMIT` (`Retry-After: 1`); unavailable or indeterminate Redis
   acquisition is **503** `COMPLETION_COORDINATION_UNAVAILABLE` (`Retry-After: 5`). Retry delays
   are guidance, not recovery guarantees or a promise that arbitrary POST retries are safe.
+  Minute and daily allowances are rolling 60-second/24-hour windows, not fixed or calendar-day
+  resets. A rate/quota/capacity denial records no admission usage in any dimension. The rate/quota
+  Retry-After values remain full-window guidance, not a countdown to the oldest event; an event
+  exactly one window old still counts until it is strictly older. Already admitted attempts count
+  even if later provider work fails. An indeterminate Redis reply may follow a committed admission.
 - After `PENDING`/`RUNNING`, failed activation proposes sanitized `FAILED/PROVIDER_UNAVAILABLE`:
   absent/expired reservation uses the same capacity503/1 and indeterminate coordination uses503/5.
   That503 is returned only when the failure wins conditional publication; an earlier winner is preserved.
