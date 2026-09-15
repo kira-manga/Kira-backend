@@ -24,6 +24,8 @@ springBoot {
 // Boot 3.5.x's BOM pins an older Kotlin; overriding this BOM property keeps the runtime
 // stdlib aligned with the 2.1.x compiler (PLAN §3: Kotlin 2.1+).
 extra["kotlin.version"] = libs.versions.kotlin.get()
+// Align the JVM variants too: a root JSON version alone leaves Boot's older serialization BOM.
+extra["kotlin-serialization.version"] = libs.versions.kotlinxSerialization.get()
 extra["jackson-bom.version"] = libs.versions.jackson.get()
 extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
 extra["log4j2.version"] = libs.versions.log4j2.get()

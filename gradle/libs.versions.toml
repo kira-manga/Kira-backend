@@ -16,7 +16,7 @@
 kotlin = "2.1.21"                       # Kotlin plugins + stdlib (PLAN §3: "Kotlin 2.1+")
 springBoot = "3.5.16"                   # Spring Boot 3.5.x line (NOT 4.x — PLAN §3 hard pin)
 springDependencyManagement = "1.1.7"    # io.spring.dependency-management (applies the Boot BOM)
-kotlinxSerialization = "1.8.1"          # kotlinx-serialization-json runtime (PLAN §3: "1.7+")
+kotlinxSerialization = "1.9.0"          # Shared source engine's serialization runtime floor (PLAN §3: "1.7+")
 springdoc = "2.8.17"                    # springdoc-openapi 2.8.x = the Spring Boot 3.x line
 ktlintPlugin = "14.2.0"
 detekt = "1.23.8"
