@@ -103,7 +103,10 @@ local lease = decimal(ARGV[7], MAX_INTEGER)
 if not lease or lease < 1 or lease > MAX_INTEGER - now then return -1 end
 local deadline = now + lease
 
+local windows = {60000, 60000, 86400000}
 local limits = {}
+local counts = {}
+local cutoffs = {}
 for i = 1, 3 do
   limits[i] = decimal(ARGV[i + 2], 2147483647)
   if not limits[i] then return -1 end
@@ -111,32 +114,54 @@ for i = 1, 3 do
     if KEYS[i] == KEYS[j] then return -1 end
   end
   if limits[i] > 0 then
+    -- Match memory's strict-before cutoff: an event exactly one window old still counts.
+    -- The extra millisecond retains that boundary event until it can no longer count.
+    if now > MAX_INTEGER - windows[i] - 1 then return -1 end
+    cutoffs[i] = string.format('%.0f', now - windows[i])
     local rate_kind = redis.call('TYPE', KEYS[i]).ok
-    if rate_kind ~= 'none' and rate_kind ~= 'string' then return -1 end
-    if rate_kind == 'string' then
-      if redis.call('STRLEN', KEYS[i]) > 16 then return -1 end
-      if not decimal(redis.call('GET', KEYS[i]), MAX_INTEGER - 1) then return -1 end
+    -- The existing names remain the authority. Legacy fixed counters are never reset/imported.
+    if rate_kind ~= 'none' and rate_kind ~= 'zset' then return -1 end
+    if rate_kind == 'zset' then
+      -- Script-owned history: bounded extrema/collision reads, not a walk of every rate member.
+      local first = redis.call('ZRANGE', KEYS[i], 0, 0, 'WITHSCORES')
+      local last = redis.call('ZREVRANGE', KEYS[i], 0, 0, 'WITHSCORES')
+      if #first ~= 2 or #last ~= 2 then return -1 end
+      if not integer(first[2], 0, now) or not integer(last[2], 0, now) then return -1 end
+      local retained_until = redis.call('PEXPIRETIME', KEYS[i])
+      if retained_until ~= tonumber(last[2]) + windows[i] + 1 then return -1 end
+      -- Replayed/colliding UUIDs must not overwrite an event or obtain another permit.
+      if redis.call('ZSCORE', KEYS[i], token) then return -1 end
     end
+    counts[i] = redis.call('ZCOUNT', KEYS[i], cutoffs[i], '+inf')
   end
 end
 
--- Preserve the existing fixed windows, rejection order and earlier-counter accounting (Backend14).
-local ttl = {60000, 60000, 86400000}
+-- Decide against one server-time snapshot before any rate, quota, TTL or reservation mutation.
 for i = 1, 3 do
-  if limits[i] > 0 then
-    local count = redis.call('INCR', KEYS[i])
-    if count == 1 then redis.call('PEXPIRE', KEYS[i], ttl[i]) end
-    if count > limits[i] then redis.call('DECR', KEYS[i]); return i end
-  end
+  if limits[i] > 0 and counts[i] >= limits[i] then return i end
 end
 local count = #members / 2
 for i = 1, #members, 2 do
   if members[i + 1] ~= PINNED and tonumber(members[i + 1]) <= now then
-    redis.call('HDEL', key, members[i])
     count = count - 1
   end
 end
 if count >= capacity then return 4 end
+
+-- Commit only a fully admitted attempt. All enabled ledgers share its cross-instance UUID.
+-- Disabled dimensions are neither read nor written. Denials never extend any event's lifetime.
+for i = 1, 3 do
+  if limits[i] > 0 then
+    redis.call('ZREMRANGEBYSCORE', KEYS[i], '-inf', '(' .. cutoffs[i])
+    if redis.call('ZADD', KEYS[i], 'NX', string.format('%.0f', now), token) ~= 1 then return -1 end
+    if redis.call('PEXPIREAT', KEYS[i], string.format('%.0f', now + windows[i] + 1)) ~= 1 then return -1 end
+  end
+end
+for i = 1, #members, 2 do
+  if members[i + 1] ~= PINNED and tonumber(members[i + 1]) <= now then
+    redis.call('HDEL', key, members[i])
+  end
+end
 if redis.call('HSETNX', key, token, string.format('%.0f', deadline)) ~= 1 then return -1 end
 -- A pending reservation never lends a peer's execution pin an expiry.
 if pins == 0 then
