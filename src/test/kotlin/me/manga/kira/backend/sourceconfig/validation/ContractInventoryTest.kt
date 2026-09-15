@@ -5,6 +5,7 @@ import kotlinx.serialization.SerializationStrategy
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.domain.model.EndpointSpec
 import me.manga.kira.backend.sourceconfig.domain.model.FieldSpec
 import me.manga.kira.backend.sourceconfig.domain.model.FilterConditionSpec
@@ -33,7 +34,7 @@ class ContractInventoryTest {
 
     // encodeDefaults=true so EVERY field (incl. defaulted + null) appears — pins the full inventory.
     private val json = Json { encodeDefaults = true }
-    private val validator = SourceConfigValidator()
+    private val validator = SourceConfigValidator(declarations = SharedSourceDeclarationValidator())
 
     private fun <T> keysOf(serializer: SerializationStrategy<T>, value: T): Set<String> = json.encodeToJsonElement(serializer, value).jsonObject.keys
 

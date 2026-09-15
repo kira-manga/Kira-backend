@@ -1,6 +1,7 @@
 package me.manga.kira.backend.sourceconfig.validation
 
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.domain.model.EndpointSpec
 import me.manga.kira.backend.sourceconfig.domain.model.FieldSpec
 import me.manga.kira.backend.sourceconfig.domain.model.FilterSpec
@@ -21,7 +22,7 @@ import org.junit.jupiter.api.Test
  */
 class SourceConfigValidatorTest {
 
-    private val validator = SourceConfigValidator()
+    private val validator = SourceConfigValidator(declarations = SharedSourceDeclarationValidator())
 
     private fun codes(source: SourceConfig): Set<String> = validator.validate(SourceConfigFixtures.document(source)).errors.map { it.code }.toSet()
 

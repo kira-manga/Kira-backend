@@ -11,9 +11,9 @@ import me.manga.kira.backend.sourceconfig.validation.rules.LifecycleMetadataRule
 import me.manga.kira.backend.sourceconfig.validation.rules.SourceRules
 
 /**
- * The pure `1:1` mirror of the app's `DefaultSourceConfigValidator` (PLAN §8), plus the
- * server-additional rules 31–33. **FRAMEWORK-FREE (PLAN §3):** kotlin-stdlib only (plus the pure
- * model) — no Spring/JPA/Jackson — so it extracts verbatim into the future shared module.
+ * The pure mirror of the app's validation rules (PLAN §8), plus the server-additional rules 31–33
+ * and the required shared declaration-capability port. **FRAMEWORK-FREE (PLAN §3):** kotlin-stdlib
+ * only (plus the pure model) — no Spring/JPA/Jackson — so it extracts verbatim into the future shared module.
  *
  * Rules live as small pure classes grouped by concern ([DocumentRules], [SourceRules],
  * [EndpointRules], [FieldRules], [FilterRules], [LifecycleMetadataRules]), each writing into a
@@ -25,6 +25,7 @@ import me.manga.kira.backend.sourceconfig.validation.rules.SourceRules
  * Rules 28–30 (lifecycle transitions, publish gate, revision monotonicity) are **service-layer**
  * concerns (PLAN §9, Phases 5/6) and are deliberately NOT here.
  *
+ * @param declarations required capability check, adapted outside this pure layer with no no-op default.
  * @param strategies the server mirror of the app's strategy registry (PLAN §8 rules 12/15).
  * @param iconCatalog the packaged-icon catalog for the advisory icon warning (PLAN §8 rule 33).
  * @param publicHeaderPlaceholderValues the allowlist of non-secret sensitive-header values
@@ -32,6 +33,7 @@ import me.manga.kira.backend.sourceconfig.validation.rules.SourceRules
  *   exactly `["Bearer null"]`). Passed in because this layer cannot read Spring properties.
  */
 class SourceConfigValidator(
+    private val declarations: SourceDeclarationValidator,
     private val strategies: StrategyCatalog = ServerStrategyCatalog(),
     private val iconCatalog: PackagedIconCatalog = PackagedIconCatalog(),
     publicHeaderPlaceholderValues: Set<String> = setOf(DEFAULT_HEADER_PLACEHOLDER),
@@ -101,6 +103,9 @@ class SourceConfigValidator(
             EndpointRules.check(source, ctx, findings)
             FieldRules.check(source, ctx, findings)
             FilterRules.check(source, ctx, findings)
+            declarations.validate(source, ctx.strategies).forEach { error ->
+                findings.error(error.code, error.path, error.message)
+            }
         } else {
             // Non-generic (rule 11): filters must be empty; strategy/endpoint/field checks skipped.
             if (source.filters.isNotEmpty()) {

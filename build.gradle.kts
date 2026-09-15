@@ -83,6 +83,7 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     // --- Test ---
+    testImplementation("me.manga.kira.source:source-testkit:0.1.0")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.springframework.security:spring-security-test")

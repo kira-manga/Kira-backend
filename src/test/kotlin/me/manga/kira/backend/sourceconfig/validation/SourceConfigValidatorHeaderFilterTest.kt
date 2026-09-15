@@ -2,6 +2,7 @@ package me.manga.kira.backend.sourceconfig.validation
 
 import me.manga.kira.backend.sourceconfig.HeaderFilterSafetyFixtures
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.domain.model.FilterConditionSpec
 import me.manga.kira.backend.sourceconfig.domain.model.FilterDefinition
 import me.manga.kira.backend.sourceconfig.domain.model.FilterOptionSpec
@@ -15,7 +16,7 @@ import org.junit.jupiter.params.provider.Arguments
 import org.junit.jupiter.params.provider.MethodSource
 
 class SourceConfigValidatorHeaderFilterTest {
-    private val validator = SourceConfigValidator()
+    private val validator = SourceConfigValidator(declarations = SharedSourceDeclarationValidator())
 
     @ParameterizedTest(name = "header name case {index}")
     @MethodSource("headerNames")
@@ -75,7 +76,10 @@ class SourceConfigValidatorHeaderFilterTest {
         val source = SourceConfigFixtures.validGenericSource().copy(headers = mapOf("aUtHoRiZaTiOn" to "Bearer null"))
         assertTrue(validator.validate(SourceConfigFixtures.document(source)).isValid)
 
-        val configured = SourceConfigValidator(publicHeaderPlaceholderValues = setOf("PUBLIC_ONLY"))
+        val configured = SourceConfigValidator(
+            declarations = SharedSourceDeclarationValidator(),
+            publicHeaderPlaceholderValues = setOf("PUBLIC_ONLY"),
+        )
         fun codes(name: String, value: String): List<String> = configured.validate(
             SourceConfigFixtures.document(source.copy(headers = mapOf(name to value))),
         ).errors.map { it.code }

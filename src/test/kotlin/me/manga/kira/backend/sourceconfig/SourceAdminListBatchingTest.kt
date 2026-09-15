@@ -3,6 +3,7 @@ package me.manga.kira.backend.sourceconfig
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.observability.KiraMetrics
 import me.manga.kira.backend.sourceconfig.application.DocumentAssemblyService
+import me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidator
 import me.manga.kira.backend.sourceconfig.application.SourceAdminService
 import me.manga.kira.backend.sourceconfig.domain.AdminSourceListing
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
@@ -51,7 +52,7 @@ class SourceAdminListBatchingTest {
                 mock(ValidationResultRepository::class.java),
                 mock(PublishedDocumentRepository::class.java),
                 mock(DocumentAssemblyService::class.java),
-                SourceConfigValidator(),
+                SourceConfigValidator(declarations = SharedSourceDeclarationValidator()),
                 mock(AuditService::class.java),
                 Clock.systemUTC(),
                 mock(KiraMetrics::class.java),
