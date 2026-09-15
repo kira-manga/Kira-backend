@@ -88,7 +88,8 @@ class RedisCompletionAdmissionIT {
     fun `expired and replayed releases cannot touch successor tokens or their deadlines`() {
         val stale = RedisCompletionAdmission(template, properties(250)).acquire(USER)
         val (oldToken, oldDeadline) = reservations().entries.single().let { it.key to it.value.toLong() }
-        awaitServerTime(oldDeadline)
+        // Redis expires an existing key strictly AFTER its deadline, not at equal server time.
+        awaitServerTime(oldDeadline + 1)
         assertFalse(requireNotNull(template.hasKey(KEY))) // Abandonment frees capacity without a close.
         assertEquals(CompletionActivation.EXPIRED, stale.activate())
 
