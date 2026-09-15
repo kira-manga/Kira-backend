@@ -52,13 +52,13 @@ data class KiraCompletionProperties(
     val coordinationBackend: String = "memory",
     @field:Positive
     val instanceCount: Int = 1,
-    /** Per-user minute cap (memory rolling; Redis fixed window). Zero disables this specific cap. */
+    /** Per-user rolling minute cap. Only fully admitted attempts count; zero disables this cap. */
     @field:PositiveOrZero
     val perUserPerMinute: Int = 10,
-    /** Service-wide minute cap (memory rolling; Redis fixed window). Zero disables this specific cap. */
+    /** Service-wide rolling minute cap. Only fully admitted attempts count; zero disables this cap. */
     @field:PositiveOrZero
     val globalPerMinute: Int = 100,
-    /** Per-user daily request cap. Zero disables this specific cap. */
+    /** Per-user rolling 24-hour request cap, not a calendar-day reset. Zero disables this cap. */
     @field:PositiveOrZero
     val perUserDailyQuota: Int = 100,
     /**

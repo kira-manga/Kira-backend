@@ -16,7 +16,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Shared rate/quota admission with expiring pending reservations and acknowledged, nonexpiring pins.
+ * Atomic rolling rate/quota admission with expiring pending reservations and acknowledged, nonexpiring pins.
  * Physical ownership additionally requires the service owner and audited provider lifetime contract.
  * Requires the stopped/drained Redis protocol cutover and retained authority in SECURITY.md.
  */

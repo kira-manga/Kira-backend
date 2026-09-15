@@ -330,10 +330,31 @@ normalized. Startup does not query a provider model catalog.
 
 Admission checks per-user/global minute limits, daily quota, and pending reservations plus execution
 pins before the bounded executor. Multiple instances require Redis; memory keeps a nonexpiring counter
-for an explicitly declared single process. Redis retains its fixed per-counter windows and charges
-earlier counters when a later dimension rejects; this is not all-or-nothing rolling accounting
-(Backend14 remains separate). Rate/quota rejection stays 429 with Retry-After 60/86400; concurrency
-capacity stays 503/1 and indeterminate acquisition stays 503/5.
+for an explicitly declared single process. Both backends check all enabled dimensions and capacity
+before recording any admitted usage. A global, daily or capacity rejection never charges earlier
+dimensions. Already admitted attempts still count if subsequent persistence/provider work fails.
+Rate/quota rejection stays 429 with Retry-After 60/86400; concurrency capacity stays 503/1 and
+indeterminate acquisition stays 503/5. The full-window rate/quota delays remain guidance, not an
+oldest-event countdown or a guarantee of capacity at that instant.
+
+Redis rate keys (`user-minute:<uuid>`, `global-minute`, `user-day:<uuid>` under the existing
+`kira:completion-admission` prefix) are script-owned **sorted sets**, with each admitted request's
+UUIDv4 token as member and Redis server TIME in whole milliseconds as score. Minute windows are
+60 seconds; a day is a rolling 24 hours, not midnight. Like memory, pruning removes events strictly
+before `now - window`, so an event exactly at the cutoff still counts. Expiry is exactly the newest
+event plus its window plus one millisecond, retaining that boundary without retaining idle histories
+indefinitely. Admission prunes expired events before appending one event, bounding each live ledger
+by its configured allowance without imposing a new configuration cap. Disabled dimensions are not
+read, pruned or written. Denials do not refresh TTL or mutate rate/permit state.
+
+One script samples time and preflights all enabled rate-key types, score extrema, expiry and token
+collisions using constant-size reads and native `ZCOUNT`, not a member scan. It checks every allowance
+and live pending/pin capacity before any write, then records the same UUID in all enabled ledgers and
+reserves the permit. The histories are internally produced data, not an import/repair format; arbitrary
+Redis state tampering is not supported. Known protocol/schema failures precede writes. Lua atomicity
+does not roll back a server error after a write: ambiguous execution/reply failure still denies the
+caller, can leave charged usage/a pending reservation, and never triggers a speculative retry/refund.
+Activation and release continue to access only the unchanged concurrency authority.
 
 The queue timeout covers queue wait, RUNNING persistence and activation through invocation authorization,
 without restarting its original deadline. It does not cover earlier `createPending` work. Worker order
@@ -387,7 +408,15 @@ reset, rollout or completion enablement.
 authority (`noeviction` or equivalent), consistent capacity/protocol and controlled clock/state continuity.
 These multi-key scripts do not support Redis Cluster or guarantee bounds through arbitrary state loss,
 clock jumps or asynchronous failover. Redis 7+ is required; the fixture uses 7.4.7. Both legacy integers
-and earlier logical zsets are rejected, not imported/deleted; there is no parallel semaphore namespace.
+and earlier logical zsets **in the concurrency key** are rejected, not imported/deleted; there is no
+parallel semaphore namespace. Legacy fixed-counter strings in enabled rate keys are also rejected
+without conversion, deletion or a fresh namespace that would discard live quota. Counter totals do
+not contain enough timestamps for exact rolling conversion. A fixed-to-rolling cutover must stop
+every old admission writer, retain its keys, and wait a full longest enabled rolling window plus the
+boundary millisecond from the last possible old admission (24 hours if the daily quota is enabled),
+not merely the old first-event key TTL. Let ordinary expiry remove those old counters; persistent or
+otherwise inconsistent state requires separately approved recovery, never automatic repair. All
+nodes must use the same rate policy; mixed old/new writers or rollback are not a supported transition.
 Stop admission and every old writer, drain/resolve actual outstanding work and prevent old-version
 restarts before cutover. Waiting one TTL is not verified drain. A confirmed-stale-state reset or rollback
 requires a separately approved stopped/drained procedure; installed enforcement and supported remote

@@ -934,8 +934,14 @@ or socket close is not proof of remote termination: the generic HTTP adapter rem
 - **Admission:** per-user/global limits, daily quota, pending reservations plus execution pins, executor capacity,
   and separate queue/provider waits reject with 429/503 and retry guidance. Redis is mandatory for
   multiple instances; memory requires an explicitly declared single-instance topology. Redis counts
-  unexpired pending UUID reservations plus nonexpiring pins; its existing fixed rate windows
-  and earlier-counter accounting remain separate work. Coordination failure denies new work. The
+  unexpired pending UUID reservations plus nonexpiring pins. Both backends check every enabled
+  rate/quota dimension and capacity before recording an admitted attempt: a later rejection does
+  not consume an earlier allowance. Minute limits and the daily quota are rolling 60-second/24-hour
+  histories, not first-event TTL or calendar-day counters. Events exactly at the cutoff still count,
+  matching memory's strict-before pruning. Redis uses server TIME, UUID-identified sorted-set events,
+  and last-event-plus-window-plus-one-millisecond expiry; zero disables that dimension without Redis
+  access. The existing 60/86400-second Retry-After guidance is not a remaining-time countdown.
+  Coordination failure denies new work; an unknown reply can follow a real admission mutation. The
   bounded protocol, stopped/drained cutover and recovery requirements are explicit in `SECURITY.md`.
 - **Execution ownership:** wrap admission before `createPending`. Only real Callable entry may take
   ownership; prior caller close prevents entry. After entry, release requires both caller relinquishment
