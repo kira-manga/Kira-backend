@@ -1,0 +1,23 @@
+{
+  "control_sha256": {
+    ".github/workflows/backend2526-image-gate.yml": "d0cff3de56bc4b8aca783e21729078160141d1eb247fa8e3700d1cf9a8ddfcf4",
+    "ci/backend2526-h1/docker-owner.py": "7f5a7921586acb172eb8ca20c6733266d3329649422981a33eb0a2b20ae9f53a",
+    "ci/backend2526-h1/gate.py": "83ad9bf3cc76f96b441875e68791f7e9c01b46736b4ca118c1488613cdc9aef7",
+    "ci/backend2526-h1/h2-recovery.py": "680a8089c4a245f95c97324899fbcf06d76f38f67a00ea66ce39afd79f053e2c",
+    "ci/backend2526-h1/h2-request.json": "fcfcb77be5b8f617f8834bdff28b59bad456f6408e3c7b061eae1fa64c607eeb",
+    "ci/backend2526-h1/source-pins.json": "d9a359dfd16e4567c0167df12b8b98474f4e687370de1596f2951516e912b040"
+  },
+  "h1_seconds": 1800,
+  "h2_cleanup_seconds": 120,
+  "h2_seconds": 600,
+  "h2_status": "BOUND",
+  "h2_work_seconds": 480,
+  "independent_review_sha256": "d5a310c78d4bbc860898dff3ad01206aeb317a892f95e57c4933e926faa3493c",
+  "primary_admission": "H1_H2",
+  "schema": "backend2526-admission-v1",
+  "smoke_seconds": 600,
+  "source_pins_sha256": "d9a359dfd16e4567c0167df12b8b98474f4e687370de1596f2951516e912b040",
+  "source_sha": "3ab56b1da87889ad573b84ece73635070e4ad6e8",
+  "source_tree": "04a343d7021bab739097cd5c2290cc23642867ab",
+  "total_seconds": 2700
+}
