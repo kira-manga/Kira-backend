@@ -1,0 +1,2 @@
+me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidatorTest
+me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT

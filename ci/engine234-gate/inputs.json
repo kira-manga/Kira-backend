@@ -1,0 +1,78 @@
+{
+  "schema": "engine234-backend-consumer-1",
+  "engine": {
+    "repository": "kira-manga/kira-source-engine",
+    "head": "8cb9ead849831a2048601580f985305a8361027c",
+    "tree": "19ff19fa24d7865e496b07e1ad2321a608d65bdc",
+    "wrapper": "9.6.1",
+    "protected_sha256": {
+      "build.gradle.kts": "261fbc79798af00a2304707c2c1cf18054140f6df225e90913a397c16ebd5e79",
+      "gradle/wrapper/gradle-wrapper.properties": "1d126b2f29d1a87825e57ae7a7a1b1cc06f8dcbc89dd614dc6a5b493244ba2cc",
+      "gradle/libs.versions.toml": "cebe923affad01ff26806e9dad867d69d155e0bc67afc3466e9ac293116bad5b"
+    }
+  },
+  "candidate": {
+    "version": "0.1.0-engine234-8cb9ead84983-macos-35018546402-1",
+    "run": 35018546402,
+    "archive_sha256": "00719730667701e9c6ef661d12eb6f8d19d58b74dee2c590ddb8834e308c487f",
+    "publications_sha256": "d1e9dc1a99a10876512a3d60cc516acb744c3e0c3886ff6c21a6d10c38f799da",
+    "registry_publication": false
+  },
+  "backend": {
+    "repository": "kira-manga/Kira-backend",
+    "base_head": "86f9b788b3cb885d61dddc6d2d6f9d2b38362a9c",
+    "base_tree": "059446e096188bb5dc94bea6a68e24e6d375200d",
+    "wrapper": "8.14.5",
+    "protected_sha256": {
+      "build.gradle.kts": "7f183ef654bf8284209477d0f066bf9a88a6e732a897109ce788582d74501735",
+      "gradle/libs.versions.toml": "4c0d00876ff68776779d7f0914f39e912311fbc9698e5f146c7d60c32a3da2c9",
+      "gradle/wrapper/gradle-wrapper.properties": "89032df14851e71a09ea7eaaffde8c85d3e806cb5365bd747ae9ec843dcae1dd"
+    },
+    "initial_lock_sha256": "8b80e28ba8af804fc4312b3797e49f67c842fad149483bb83ee056723aaa0ba1",
+    "candidate_locks": "NOT_GENERATED; normal source-group --update-locks only after admission"
+  },
+  "compiler": "2.1.21",
+  "serialization": "1.9.0",
+  "parser": {
+    "module": "com.fleeksoft.ksoup:ksoup-jvm:0.2.5",
+    "sha256": "5874f837ef4d95fa0e8117d50bb4da7dd601e37ea270c141978bd7c0f210b7f4"
+  },
+  "backend_tests": {
+    "me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidatorTest": 16,
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT": 1
+  },
+  "backend_test_selectors": [
+    "me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidatorTest",
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT"
+  ],
+  "backend_cases": {
+    "me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidatorTest": [
+      "shared declaration all_seeded_request_names_including_empty",
+      "shared declaration placeholder_filters_share_active_request_namespace",
+      "shared declaration field_own_vars_coalescing_pipes_and_base_shadow",
+      "shared declaration css_real_parser_not_a_regex_subset",
+      "shared declaration mixed_formats_respect_field_overrides",
+      "shared declaration page_root_and_dir_without_root_dirs",
+      "shared declaration unknown_url_variable",
+      "shared declaration unknown_form_variable_post-form",
+      "shared declaration json_scalar_path",
+      "shared declaration malformed_css_field",
+      "shared declaration page_counter_does_not_update_page_offset",
+      "shared declaration script_json_inline_chapters_unsupported",
+      "model conversion preserves ordinal map paths without exposing submitted names or values()",
+      "variable pipes honor the same caller catalog as existing transform rules()",
+      "capability findings augment server errors and advisory warnings at both entrypoints()",
+      "schema and collection guards still precede capability inspection and legacy remains outside it()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT": [
+      "the full bundled document parses, validates, canonicalizes, imports, serves and re-checksums()"
+    ]
+  },
+  "counts_are": "Source expectations only; fresh exact XML/zero failures/errors/skips and actual task outcomes remain required.",
+  "images": [
+    "postgres:17.6-alpine",
+    "redis:7.4.7-alpine"
+  ],
+  "carried_engine_tests": 137,
+  "scope": "Consumer-only: normal candidate declarations, actual lock resolution then exact17 locked tests. No producer/package/release/Apple/App acceptance."
+}

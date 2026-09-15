@@ -1,0 +1,238 @@
+// Gate09 consumer-only derivative. Source-only until primary admits real resolution/test phases.
+// Uses normal explicit candidate GAVs and Gradle locks: no version substitution or ignored locks.
+import org.gradle.api.GradleException
+import org.gradle.api.tasks.testing.Test
+import java.security.MessageDigest
+import groovy.json.JsonSlurper
+
+def args = gradle.startParameter.projectProperties
+def role = args['engine234Role']
+def phase = args['engine234Phase']
+def version = args['engine234Version']
+def group = 'me.manga.kira.source'
+if (role != 'backend' || !(phase in ['resolve', 'test']) ||
+    version != '0.1.0-engine234-8cb9ead84983-macos-35018546402-1' ||
+    !args['engine234RunRoot'] || !args['engine234Repository']) {
+    throw new GradleException('Exact Backend consumer, phase, accepted candidate and owned paths required')
+}
+def runRoot = new File(args['engine234RunRoot']).canonicalFile
+def repo = new File(args['engine234Repository']).canonicalFile
+if (repo.parentFile != runRoot || repo.name != 'maven' ||
+    !['tmp', 'home', 'evidence'].every {
+        def dir = new File(runRoot, it)
+        dir.isDirectory() && dir.canonicalFile.parentFile == runRoot && dir.canonicalFile.name == it
+    }) {
+    throw new GradleException('Use the admitted run-owned maven/tmp/home/evidence layout')
+}
+if (gradle.startParameter.continueOnFailure || gradle.startParameter.taskNames.any {
+    def name = it.tokenize(':').last()
+    name.startsWith('publish') || name.contains('MavenLocal')
+}) {
+    throw new GradleException('No --continue, producer/publication or MavenLocal task is admitted')
+}
+def updates = gradle.startParameter.lockedDependenciesToUpdate.toSet()
+if (phase == 'resolve' ? updates != [group + ':*'].toSet() :
+    (gradle.startParameter.writeDependencyLocks || !updates.empty)) {
+    throw new GradleException('Resolve requires only --update-locks me.manga.kira.source:*; tests cannot write locks')
+}
+def sha = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+def modules = ['source-contract-jvm', 'source-engine-jvm', 'source-testkit-jvm']
+def evidence = new File(runRoot, 'evidence')
+def inputs = new JsonSlurper().parse(new File(evidence, 'inputs.json'))
+def manifestFile = new File(evidence, 'publications.json')
+if (inputs.candidate.version != version || sha(manifestFile) != inputs.candidate.publications_sha256) {
+    throw new GradleException('Accepted producer manifest/version binding differs')
+}
+def publishedManifest = new JsonSlurper().parse(manifestFile)
+if (publishedManifest.version != version || publishedManifest.producer != inputs.engine.head ||
+    publishedManifest.files.size() != 420 || publishedManifest.components.size() != 15) {
+    throw new GradleException('Expected the admitted genuine15-component producer manifest')
+}
+// Gate09's repository drift check, moved before resolution; no extraction or producer execution.
+def actualFiles = [:]
+repo.eachFileRecurse { file ->
+    if (java.nio.file.Files.isSymbolicLink(file.toPath()) ||
+        !file.canonicalFile.toPath().startsWith(repo.toPath())) {
+        throw new GradleException('Candidate repository contains a link or escaping path')
+    }
+    if (file.isFile()) {
+        def relative = repo.toPath().relativize(file.toPath()).toString()
+        def expected = publishedManifest.files[relative]
+        if (expected == null || file.length() != expected.bytes || sha(file) != expected.sha256) {
+            throw new GradleException('Candidate repository file differs from the accepted archive')
+        }
+        actualFiles[relative] = true
+    }
+}
+if (actualFiles.keySet() != publishedManifest.files.keySet()) {
+    throw new GradleException('Candidate file-Maven differs from the accepted full archive')
+}
+def runtimeManifest = new File(evidence, "${phase}-runtime.tsv")
+def resolutionManifest = new File(evidence, "${phase}-resolved-artifacts.tsv")
+def graphManifest = new File(evidence, "${phase}-task-graph.txt")
+def outcomeManifest = new File(evidence, "${phase}-task-outcomes.tsv")
+if ([runtimeManifest, resolutionManifest, graphManifest, outcomeManifest].any { it.exists() }) {
+    throw new GradleException('Use a fresh admitted phase; never append to stale phase evidence')
+}
+def observe = { label, File file ->
+    runtimeManifest.append("${role}\t${label}\t${file.name}\t${sha(file)}\n")
+}
+def checkSourceJars = { files, expected, label ->
+    def jars = files.findAll { f ->
+        f.name.endsWith('.jar') && ['source-contract-', 'source-engine-', 'source-testkit-'].any {
+            prefix -> f.name.startsWith(prefix)
+        }
+    }
+    if (jars.size() != expected.size()) {
+        throw new GradleException("${label}: expected exactly ${expected.size()} candidate source JVM jars")
+    }
+    expected.each { module ->
+        def jar = jars.find { it.name == "${module}-${version}.jar" }
+        def published = new File(repo, "me/manga/kira/source/${module}/${version}/${module}-${version}.jar")
+        def relative = repo.toPath().relativize(published.toPath()).toString()
+        if (jar == null || !published.isFile() || sha(jar) != sha(published) ||
+            publishedManifest?.version != version || publishedManifest?.files?.get(relative)?.sha256 != sha(jar)) {
+            throw new GradleException("${label}: wrong/missing candidate runtime artifact ${module}")
+        }
+        observe(label, jar)
+        logger.lifecycle("ENGINE234_RUNTIME ${label} ${jar.canonicalPath} SHA256=${sha(jar)}")
+    }
+}
+def checkParser = { files, label ->
+    def jars = files.findAll { it.name.startsWith('ksoup-') && it.name.endsWith('.jar') }
+    if (jars.size() != 1 || jars.first().name != 'ksoup-jvm-0.2.5.jar' ||
+        sha(jars.first()) != inputs.parser.sha256) {
+        throw new GradleException("${label}: expected one actual Ksoup JVM 0.2.5 jar; do not change non-source locks")
+    }
+    observe(label, jars.first())
+    logger.lifecycle("ENGINE234_PARSER ${label} ${jars.first().canonicalPath} SHA256=${sha(jars.first())}")
+}
+gradle.beforeProject { p ->
+    // Ordinary repository routing only. Candidate versions are declared in build.gradle.kts;
+    // keep Spring dependency management and all existing parser/serialization rules unchanged.
+    p.repositories.exclusiveContent {
+        forRepository {
+            p.repositories.maven { name = 'Engine234Candidate'; url = repo.toURI() }
+        }
+        filter { includeGroup(group) }
+    }
+    p.tasks.withType(Test).configureEach { t ->
+        maxParallelForks = 1
+        ignoreFailures = false
+        forkEvery = 0
+        maxHeapSize = '768m'
+        filter.failOnNoMatchingTests = true
+        systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+        systemProperty('java.io.tmpdir', new File(runRoot, 'tmp').absolutePath)
+        systemProperty('user.home', new File(runRoot, 'home').absolutePath)
+        systemProperty('spring.test.mockmvc.print', 'NONE')
+        doFirst {
+            // Real Test files, not only coordinates or a configuration report.
+            checkSourceJars(t.classpath.files, modules, t.path)
+            checkParser(t.classpath.files, t.path)
+            ['runtimeClasspath', 'productionRuntimeClasspath', 'testRuntimeClasspath'].each { name ->
+                def artifacts = p.configurations.getByName(name).resolvedConfiguration.resolvedArtifacts
+                def sourceArtifacts = artifacts.findAll { it.moduleVersion.id.group == group }
+                def expected = name == 'testRuntimeClasspath' ? modules : modules.take(2)
+                if (sourceArtifacts.size() != expected.size() ||
+                    sourceArtifacts.any { it.moduleVersion.id.version != version }) {
+                    throw new GradleException("${name}: candidate group mismatch or production testkit leak")
+                }
+                checkSourceJars(sourceArtifacts.collect { it.file }, expected, name)
+                checkParser(artifacts.collect { it.file }, name)
+            }
+        }
+    }
+}
+gradle.projectsEvaluated {
+    def project = gradle.rootProject
+    if (project.allprojects.size() != 1 || !project.dependencyLocking.ignoredDependencies.get().empty) {
+        throw new GradleException('Exact single-module Backend with no ignored dependency locks required')
+    }
+    inputs.backend.protected_sha256.each { path, expected ->
+        if (sha(new File(project.projectDir, path)) != expected) {
+            throw new GradleException("Reviewed source/catalog/wrapper postimage changed: ${path}")
+        }
+    }
+    def lock = new File(project.projectDir, 'gradle.lockfile')
+    def expectedLock = phase == 'resolve' ? inputs.backend.initial_lock_sha256 : args['engine234LockSha256']
+    if (!(expectedLock ==~ /[0-9a-f]{64}/) || sha(lock) != expectedLock) {
+        throw new GradleException('Resolve needs the named baseline lock; tests need the reviewed real migrated lock hash')
+    }
+    new File(evidence, "${phase}-lock-before.sha256").text = expectedLock + '\n'
+}
+def backendNames = ['checkKotlinGradlePluginConfigurationErrors', 'compileKotlin', 'compileJava',
+    'processResources', 'classes', 'jar', 'compileTestKotlin', 'compileTestJava', 'processTestResources', 'testClasses', 'test']
+def configurations = ['compileClasspath', 'runtimeClasspath', 'productionRuntimeClasspath', 'testCompileClasspath',
+    'testRuntimeClasspath', 'implementationDependenciesMetadata', 'testImplementationDependenciesMetadata',
+    'ktlintReporter', 'detekt']
+gradle.taskGraph.whenReady { graph ->
+    def tests = graph.allTasks.findAll { it instanceof Test }
+    if (phase == 'resolve') {
+        if (gradle.startParameter.taskNames != [':help'] || graph.allTasks*.path != [':help'] || !tests.empty) {
+            throw new GradleException('Only :help plus actual nine-configuration lock resolution is admitted')
+        }
+    } else {
+        def expectedClasses = inputs.backend_tests.keySet()
+        def expectedSelectors = inputs.backend_test_selectors.toSet()
+        if (tests*.path != [':test'] || expectedClasses.size() != 2 || expectedSelectors.size() != 2 ||
+            inputs.backend_tests.values().sum() != 17 ||
+            tests[0].filter.commandLineIncludePatterns.toSet() != expectedSelectors ||
+            !tests[0].filter.includePatterns.empty || !tests[0].filter.excludePatterns.empty ||
+            !tests[0].includes.empty || !tests[0].excludes.empty) {
+            throw new GradleException('Only the exact validator16 + FullBundledParityIT1 filter is allowed')
+        }
+        def bad = graph.allTasks.findAll { it.project.path != ':' || !backendNames.contains(it.name) }
+        if (bad) throw new GradleException("Unadmitted task graph: ${bad*.path}")
+        new File(evidence, 'backend-test-filter.txt').text =
+            tests[0].filter.commandLineIncludePatterns.toList().sort().join('\n') + '\n'
+    }
+    graphManifest.text = graph.allTasks.collect { it.path }.join('\n') + '\n'
+    // Same real-file resolution as Gate09. Normal --update-locks persists actual selected state;
+    // the test phase uses that reviewed lock unchanged. No lenient views or synthetic lock rows.
+    def failures = []
+    configurations.each { name ->
+        try {
+            def configuration = gradle.rootProject.configurations.getByName(name)
+            def files = configuration.resolve()
+            if (files.empty || files.any { !it.isFile() }) throw new GradleException('Missing resolved files')
+            def artifacts = configuration.resolvedConfiguration.resolvedArtifacts
+            def sourceArtifacts = artifacts.findAll { it.moduleVersion.id.group == group }
+            if (sourceArtifacts.any { it.moduleVersion.id.version != version }) {
+                throw new GradleException('Resolved old/mixed source-group coordinates')
+            }
+            artifacts.toList().sort { it.moduleVersion.id.toString() + ':' + it.file.name }.each {
+                resolutionManifest.append("${name}\t${it.moduleVersion.id}\t${it.file.name}\t${sha(it.file)}\n")
+            }
+            if (name in ['runtimeClasspath', 'productionRuntimeClasspath', 'testRuntimeClasspath']) {
+                def expected = name == 'testRuntimeClasspath' ? modules : modules.take(2)
+                if (sourceArtifacts.size() != expected.size()) {
+                    throw new GradleException('Wrong runtime source closure or production testkit leak')
+                }
+                checkSourceJars(sourceArtifacts.collect { it.file }, expected, name)
+                checkParser(artifacts.collect { it.file }, name)
+                def expectedSerializers = ['kotlinx-serialization-core-jvm', 'kotlinx-serialization-json-jvm']
+                def serializers = artifacts.findAll {
+                    it.moduleVersion.id.group == 'org.jetbrains.kotlinx' && it.name in expectedSerializers
+                }
+                if (serializers*.name.toSet() != expectedSerializers.toSet() ||
+                    serializers.size() != 2 || serializers.any { it.moduleVersion.id.version != '1.9.0' }) {
+                    throw new GradleException('Expected actual core/json JVM serialization1.9.0 artifacts')
+                }
+            }
+            logger.lifecycle("ENGINE234_STRICT_RESOLVE ${name} PASS files=${files.size()}")
+        } catch (Exception failure) {
+            failures << name
+            def messages = []
+            for (def cause = failure; cause != null && messages.size() < 4; cause = cause.cause) {
+                messages << "${cause.class.simpleName}: ${cause.message}".replaceAll('[\r\n\t]+', ' ').take(500)
+            }
+            logger.error("ENGINE234_STRICT_RESOLVE ${name} FAIL ${messages.join(' <- ')}")
+        }
+    }
+    if (failures) throw new GradleException("Strict dependency resolution failed: ${failures.join(', ')}")
+}
+gradle.taskGraph.afterTask { task, state ->
+    def outcome = state.failure != null ? 'FAILED' : state.noSource ? 'NO-SOURCE' : state.skipped ? state.skipMessage : 'SUCCESS'
+    outcomeManifest.append("${task.path}\t${outcome}\n")
+}

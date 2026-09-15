@@ -76,7 +76,7 @@ dependencies {
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-reactor")
     implementation(libs.kotlinx.serialization.json)
-    implementation("me.manga.kira.source:source-engine:0.1.0")
+    implementation("me.manga.kira.source:source-engine:0.1.0-engine234-8cb9ead84983-macos-35018546402-1")
 
     // --- API docs ---
     implementation(libs.springdoc.openapi.starter.webmvc.ui)
@@ -85,7 +85,7 @@ dependencies {
     runtimeOnly("org.postgresql:postgresql")
 
     // --- Test ---
-    testImplementation("me.manga.kira.source:source-testkit:0.1.0")
+    testImplementation("me.manga.kira.source:source-testkit:0.1.0-engine234-8cb9ead84983-macos-35018546402-1")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.boot:spring-boot-testcontainers")
     testImplementation("org.springframework.security:spring-security-test")
