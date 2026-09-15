@@ -1,0 +1,74 @@
+{
+  "engine": {
+    "repository": "kira-manga/kira-source-engine",
+    "head": "8cb9ead849831a2048601580f985305a8361027c",
+    "tree": "19ff19fa24d7865e496b07e1ad2321a608d65bdc",
+    "wrapper": "9.6.1",
+    "protected_sha256": {
+      "build.gradle.kts": "261fbc79798af00a2304707c2c1cf18054140f6df225e90913a397c16ebd5e79",
+      "gradle/wrapper/gradle-wrapper.properties": "1d126b2f29d1a87825e57ae7a7a1b1cc06f8dcbc89dd614dc6a5b493244ba2cc",
+      "gradle/libs.versions.toml": "cebe923affad01ff26806e9dad867d69d155e0bc67afc3466e9ac293116bad5b"
+    }
+  },
+  "backend": {
+    "repository": "kira-manga/Kira-backend",
+    "head": "99cc88219544d26c2ca031c759c7ce1810df8857",
+    "tree": "8c9a4d2d864fedd084f0cf9bcb9f90e1962643b6",
+    "public_base": "96a934ab108208e01a29805d1ec448ee5827f6f4",
+    "wrapper": "8.14.5",
+    "protected_sha256": {
+      "gradle.lockfile": "8b80e28ba8af804fc4312b3797e49f67c842fad149483bb83ee056723aaa0ba1",
+      "gradle/wrapper/gradle-wrapper.properties": "89032df14851e71a09ea7eaaffde8c85d3e806cb5365bd747ae9ec843dcae1dd",
+      "gradle/libs.versions.toml": "4c0d00876ff68776779d7f0914f39e912311fbc9698e5f146c7d60c32a3da2c9",
+      "build.gradle.kts": "cffcd5282f1d6890c86817b1bf9b877b382ea0f16aff69fc8a80d6ff1dcac2db"
+    }
+  },
+  "engine_tests": {
+    "me.manga.kira.source.contracts.SourceBaseUrlTest": 2,
+    "me.manga.kira.source.engine.DefaultSourceConfigValidatorFilterTest": 26,
+    "me.manga.kira.source.engine.DefaultSourceConfigValidatorTest": 19,
+    "me.manga.kira.source.engine.GenericSourceClientBlacklistTest": 1,
+    "me.manga.kira.source.engine.GenericSourceClientChapterPaginationTest": 7,
+    "me.manga.kira.source.engine.GenericSourceClientFilterRequestTest": 10,
+    "me.manga.kira.source.engine.GenericSourceClientHtmlGoldenTest": 4,
+    "me.manga.kira.source.engine.GenericSourceClientJsonGoldenTest": 4,
+    "me.manga.kira.source.engine.GenericSourceClientPostJsonFilterRootTest": 3,
+    "me.manga.kira.source.engine.GenericSourceClientScriptJsonTest": 3,
+    "me.manga.kira.source.engine.GenericSourceClientSeparateChaptersTest": 2,
+    "me.manga.kira.source.engine.GenericSourceEngineFailureBoundaryTest": 4,
+    "me.manga.kira.source.engine.internal.ExtractorDeclarationTest": 3,
+    "me.manga.kira.source.engine.internal.FilterRequestComposerTest": 16,
+    "me.manga.kira.source.engine.internal.JsonPathTest": 10,
+    "me.manga.kira.source.engine.internal.TemplatesTest": 3,
+    "me.manga.kira.source.engine.internal.TransformsTest": 10,
+    "me.manga.kira.sources.testkit.DeclarationCapabilitiesTest": 8,
+    "me.manga.kira.sources.testkit.FixtureTransportTest": 2
+  },
+  "backend_tests": {
+    "me.manga.kira.backend.sourceconfig.application.SharedSourceDeclarationValidatorTest": 16,
+    "me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorTest": null,
+    "me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorComplexityTest": null,
+    "me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorFilterTest": null,
+    "me.manga.kira.backend.sourceconfig.validation.SourceConfigValidatorHeaderFilterTest": null,
+    "me.manga.kira.backend.sourceconfig.validation.ContractInventoryTest": null,
+    "me.manga.kira.backend.sourceconfig.SourceAdminListBatchingTest": null,
+    "me.manga.kira.backend.completion.InMemoryCompletionAdmissionPolicyTest": 13,
+    "me.manga.kira.backend.sourceconfig.admin.SourcePreviewIT": 4,
+    "me.manga.kira.backend.sourceconfig.admin.SourceDeclarationValidationIT": 11,
+    "me.manga.kira.backend.sourceconfig.admin.SourceEditorDraftIT": null,
+    "me.manga.kira.backend.sourceconfig.admin.SourceChangesetIT": null,
+    "me.manga.kira.backend.sourceconfig.admin.PublishInvalidFailsIT": null,
+    "me.manga.kira.backend.sourceconfig.admin.StructuralGateIT": null,
+    "me.manga.kira.backend.sourceconfig.admin.PublicConfigSecretsRejectedIT": null,
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT": null,
+    "me.manga.kira.backend.sourceconfig.admin.BootstrapEndpointIT": null,
+    "me.manga.kira.backend.completion.RedisCompletionAdmissionPolicyIT": 26,
+    "me.manga.kira.backend.completion.RedisCompletionAdmissionIT": null
+  },
+  "counts_are": "Source expectations, not observed results. Execution must produce fresh XML and no required skips/failures.",
+  "images": [
+    "postgres:17.6-alpine",
+    "redis:7.4.7-alpine"
+  ],
+  "scope": "JVM tests and ordinary native root/JVM file-Maven publications only; no App/platform/package/store/production acceptance."
+}
