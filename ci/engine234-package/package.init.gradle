@@ -1,0 +1,86 @@
+// Native file-publisher guard derived from Gate09; full15 model carried from Engine6 real-export02.
+// No producer test replay, remote destination, project dependency substitution or product source edit.
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import org.gradle.api.GradleException
+import org.gradle.api.publish.PublishingExtension
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
+import org.gradle.api.tasks.testing.Test
+import java.security.MessageDigest
+
+def opt = gradle.startParameter.projectProperties
+def require = { ok, message -> if (!ok) throw new GradleException(message) }
+def version = opt['engine234Version']
+require(version ==~ /0\.1\.0-engine234-8cb9ead84983-macos-[0-9]+-1/, 'New first-attempt candidate version required')
+require(opt['VERSION_NAME'] == version && opt['engine234RunRoot'], 'Version-only source override required')
+def root = new File(opt['engine234RunRoot']).canonicalFile
+def reports = new File(root, 'reports')
+def repo = new File(root, 'repository').canonicalFile
+def input = new JsonSlurper().parse(new File(reports, 'inputs.json'))
+def group = 'me.manga.kira.source'
+def modulePaths = input.modules.collect { ':' + it }.toSet()
+def publicationNames = input.publications.keySet()
+def publishName = { name -> 'publish' + name.capitalize() + 'PublicationToEngine234CandidateRepository' }
+def expectedTasks = modulePaths.collectMany { path -> publicationNames.collect { path + ':' + publishName(it) } }.toSet()
+require(repo.isDirectory() && repo.parentFile == root && repo.listFiles().length == 0, 'Fresh owned empty file-Maven required')
+require(gradle.startParameter.taskNames.size() == 15 && gradle.startParameter.taskNames.toSet() == expectedTasks,
+    'Only the15 explicit native publication tasks; no aggregate, build/test or MavenLocal task')
+def sha = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+
+gradle.beforeProject { p ->
+    p.pluginManager.withPlugin('maven-publish') {
+        require(modulePaths.contains(p.path), 'Unexpected publisher project')
+        def publishing = p.extensions.getByType(PublishingExtension)
+        require(publishing.repositories.empty, 'Source unexpectedly configures a publishing destination')
+        publishing.repositories.maven { name = 'Engine234Candidate'; url = repo.toURI() }
+        p.tasks.withType(PublishToMavenLocal).configureEach {
+            doFirst { throw new GradleException('No MavenLocal publication in this lane') }
+        }
+        p.tasks.withType(PublishToMavenRepository).configureEach { t ->
+            doFirst {
+                def pub = t.publication
+                require(publicationNames.contains(pub.name), 'Unadmitted publication')
+                require(t.repository.name == 'Engine234Candidate' && t.repository.url.scheme == 'file' &&
+                    new File(t.repository.url).canonicalFile == repo, 'Only the owned native file destination')
+                require(pub.groupId == group && pub.artifactId == p.name + input.publications[pub.name].suffix &&
+                    pub.version == version, 'Wrong native publication GAV')
+                new File(reports, 'publications-model.tsv').append("${t.path}\t${pub.groupId}:${pub.artifactId}:${pub.version}\n")
+            }
+        }
+    }
+    if (p.name == 'source-engine') {
+        p.tasks.matching { it.name == 'compileKotlinJvm' }.configureEach { t ->
+            t.doFirst {
+                def artifacts = p.configurations.getByName('jvmCompileClasspath').resolvedConfiguration.resolvedArtifacts
+                def parsers = artifacts.findAll { it.moduleVersion.id.group == 'com.fleeksoft.ksoup' && it.name == 'ksoup-jvm' }
+                require(parsers.size() == 1 && parsers[0].moduleVersion.id.version == '0.2.5' &&
+                    sha(parsers[0].file) == input.parser.producer_jvm_sha256, 'Producer parser must remain actual0.2.5')
+                new File(reports, 'producer-parser.json').text = JsonOutput.toJson([
+                    configuration: 'jvmCompileClasspath', module: parsers[0].moduleVersion.id.toString(), sha256: sha(parsers[0].file)])
+            }
+        }
+    }
+}
+gradle.projectsEvaluated {
+    modulePaths.each { path ->
+        def p = gradle.rootProject.project(path)
+        def publications = p.extensions.getByType(PublishingExtension).publications
+        require(publications*.name.toSet() == publicationNames, 'Expected all five native components per module')
+        def kotlin = p.extensions.getByName('kotlin')
+        require(kotlin.compilerOptions.languageVersion.get().name() == 'KOTLIN_2_1' &&
+            kotlin.compilerOptions.apiVersion.get().name() == 'KOTLIN_2_1', 'Public language/API level must remain2.1')
+    }
+}
+gradle.taskGraph.whenReady { graph ->
+    def bad = graph.allTasks.findAll { t -> !modulePaths.contains(t.project.path) ||
+        !input.allowed_task_names.contains(t.name) || t instanceof Test || t instanceof PublishToMavenLocal }
+    new File(reports, 'task-graph.tsv').text = graph.allTasks.collect { it.path }.join('\n') + '\n'
+    require(bad.empty, "Unadmitted task graph (no tests/frameworks/remote writes): ${bad*.path}")
+    require(graph.allTasks.findAll { it instanceof PublishToMavenRepository }*.path.toSet() == expectedTasks,
+        'Incomplete native publication task graph')
+}
+gradle.taskGraph.afterTask { task, state ->
+    def outcome = state.failure != null ? 'FAILED' : state.noSource ? 'NO-SOURCE' : state.skipped ? state.skipMessage : 'SUCCESS'
+    new File(reports, 'task-outcomes.tsv').append("${task.path}\t${outcome}\n")
+}

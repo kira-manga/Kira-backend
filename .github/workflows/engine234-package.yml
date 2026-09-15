@@ -1,0 +1,135 @@
+# Source-only proposal. Lead review/admission/push required; no store or registry publication.
+name: Engine234 isolated full15 candidate bytes
+
+on:
+  push:
+    branches: [remediation/engine234-package-candidate-20260915-01]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: engine234-full15-candidate
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.full_name == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/remediation/engine234-package-candidate-20260915-01' &&
+      github.run_attempt == '1'
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Read exact public validation controls only
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          persist-credentials: false
+          fetch-depth: 1
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            .github/workflows/engine234-package.yml
+            ci/engine234-package
+
+      - name: Java21 for the retained producer toolchain
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        timeout-minutes: 2
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Read immutable public Engine8cb source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          repository: kira-manga/kira-source-engine
+          ref: 8cb9ead849831a2048601580f985305a8361027c
+          path: inputs/engine
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Bind exact source, new version, Darwin controls and owned paths
+        id: prepare
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          export ENGINE234_PACKAGE_RUN="$RUNNER_TEMP/engine234-package-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf 'ENGINE234_PACKAGE_RUN=%s\n' "$ENGINE234_PACKAGE_RUN" >> "$GITHUB_ENV"
+          python3 -B control/ci/engine234-package/package.py prepare
+
+      - name: Install only SDK37.0 revision2 and build-tools36 into the owned SDK
+        timeout-minutes: 9
+        run: |
+          set -euo pipefail
+          controller="$GITHUB_WORKSPACE/control/ci/engine234-package/package.py"
+          python3 -B "$controller" deadline sdk env -i "PATH=$PATH" "JAVA_HOME=$JAVA_HOME" \
+            "HOME=$ENGINE234_PACKAGE_RUN/home" "TMPDIR=$ENGINE234_PACKAGE_RUN/tmp/" \
+            "ANDROID_USER_HOME=$ENGINE234_PACKAGE_RUN/home/.android" \
+            LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            "$ENGINE234_SDKMANAGER" "--sdk_root=$ENGINE234_PACKAGE_RUN/android-sdk" \
+            'platforms;android-37.0' 'build-tools;36.0.0' \
+            2>&1 | python3 -B "$controller" capture "$ENGINE234_PACKAGE_RUN/reports/sdk.log"
+          python3 -B "$controller" sdk
+
+      - name: Build exact8cb once and publish all15 native components to file-Maven only
+        id: producer
+        timeout-minutes: 21
+        run: |
+          set -euo pipefail
+          umask 077
+          controller="$GITHUB_WORKSPACE/control/ci/engine234-package/package.py"
+          v="0.1.0-engine234-8cb9ead84983-macos-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          tasks=()
+          for module in source-contract source-engine source-testkit; do
+            for publication in KotlinMultiplatform Android Jvm IosArm64 IosSimulatorArm64; do
+              tasks+=(":$module:publish${publication}PublicationToEngine234CandidateRepository")
+            done
+          done
+          cd "$ENGINE234_PACKAGE_RUN/neutral"
+          python3 -B "$controller" deadline publish env -i "PATH=$PATH" "JAVA_HOME=$JAVA_HOME" \
+            "HOME=$ENGINE234_PACKAGE_RUN/home" "TMPDIR=$ENGINE234_PACKAGE_RUN/tmp/" \
+            "GRADLE_USER_HOME=$ENGINE234_PACKAGE_RUN/gradle-home" "KONAN_DATA_DIR=$ENGINE234_PACKAGE_RUN/konan" \
+            "ANDROID_HOME=$ENGINE234_PACKAGE_RUN/android-sdk" "ANDROID_SDK_ROOT=$ENGINE234_PACKAGE_RUN/android-sdk" \
+            "ANDROID_USER_HOME=$ENGINE234_PACKAGE_RUN/home/.android" \
+            DEVELOPER_DIR=/Applications/Xcode_26.0.1.app/Contents/Developer LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 \
+            ./gradlew --no-daemon --no-parallel --max-workers=1 --no-build-cache --no-configuration-cache \
+            --console=plain --stacktrace -Pkotlin.compiler.execution.strategy=in-process \
+            -Pkotlin.native.parallelThreads=1 -Pkotlin.native.jvmArgs=-Xmx768m \
+            -Porg.gradle.java.installations.auto-download=false -Pandroid.builder.sdkDownload=false \
+            -Dorg.gradle.vfs.watch=false \
+            "-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -XX:ActiveProcessorCount=2 -Duser.home=$ENGINE234_PACKAGE_RUN/home -Djava.io.tmpdir=$ENGINE234_PACKAGE_RUN/tmp -Dengine234.package.owner=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            -I "$GITHUB_WORKSPACE/control/ci/engine234-package/package.init.gradle" \
+            "-Pengine234Version=$v" "-Pengine234RunRoot=$ENGINE234_PACKAGE_RUN" "-PVERSION_NAME=$v" \
+            "${tasks[@]}" \
+            2>&1 | python3 -B "$controller" capture "$ENGINE234_PACKAGE_RUN/reports/neutral.log"
+
+      - name: Check complete native bytes, exact POM and module links, API presence and source preservation
+        if: ${{ always() && steps.prepare.outcome != 'skipped' }}
+        timeout-minutes: 1
+        env:
+          ENGINE234_PRODUCER_OUTCOME: ${{ steps.producer.outcome }}
+        run: python3 -B control/ci/engine234-package/proof.py collect
+
+      - name: Stop owned workers, preserve bounded candidate, reclaim owned SDK and caches
+        if: ${{ always() && steps.prepare.outcome != 'skipped' }}
+        timeout-minutes: 3
+        run: python3 -B control/ci/engine234-package/package.py cleanup
+
+      - name: Retain public-source candidate file-Maven and receipts for one day
+        if: ${{ always() && steps.prepare.outcome != 'skipped' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        timeout-minutes: 2
+        with:
+          name: engine234-package-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.ENGINE234_PACKAGE_RUN }}/reports/upload/
+          retention-days: 1
+          if-no-files-found: error
