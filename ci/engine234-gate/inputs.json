@@ -1,0 +1,136 @@
+{
+  "engine": {
+    "repository": "kira-manga/kira-source-engine",
+    "head": "8cb9ead849831a2048601580f985305a8361027c",
+    "tree": "19ff19fa24d7865e496b07e1ad2321a608d65bdc",
+    "wrapper": "9.6.1",
+    "protected_sha256": {
+      "build.gradle.kts": "261fbc79798af00a2304707c2c1cf18054140f6df225e90913a397c16ebd5e79",
+      "gradle/wrapper/gradle-wrapper.properties": "1d126b2f29d1a87825e57ae7a7a1b1cc06f8dcbc89dd614dc6a5b493244ba2cc",
+      "gradle/libs.versions.toml": "cebe923affad01ff26806e9dad867d69d155e0bc67afc3466e9ac293116bad5b"
+    }
+  },
+  "backend": {
+    "repository": "kira-manga/Kira-backend",
+    "head": "86f9b788b3cb885d61dddc6d2d6f9d2b38362a9c",
+    "tree": "059446e096188bb5dc94bea6a68e24e6d375200d",
+    "public_base": "96a934ab108208e01a29805d1ec448ee5827f6f4",
+    "wrapper": "8.14.5",
+    "protected_sha256": {
+      "gradle.lockfile": "8b80e28ba8af804fc4312b3797e49f67c842fad149483bb83ee056723aaa0ba1",
+      "gradle/wrapper/gradle-wrapper.properties": "89032df14851e71a09ea7eaaffde8c85d3e806cb5365bd747ae9ec843dcae1dd",
+      "gradle/libs.versions.toml": "4c0d00876ff68776779d7f0914f39e912311fbc9698e5f146c7d60c32a3da2c9",
+      "build.gradle.kts": "cffcd5282f1d6890c86817b1bf9b877b382ea0f16aff69fc8a80d6ff1dcac2db"
+    }
+  },
+  "engine_tests": {
+    "me.manga.kira.source.contracts.SourceBaseUrlTest": 2,
+    "me.manga.kira.source.engine.DefaultSourceConfigValidatorFilterTest": 26,
+    "me.manga.kira.source.engine.DefaultSourceConfigValidatorTest": 19,
+    "me.manga.kira.source.engine.GenericSourceClientBlacklistTest": 1,
+    "me.manga.kira.source.engine.GenericSourceClientChapterPaginationTest": 7,
+    "me.manga.kira.source.engine.GenericSourceClientFilterRequestTest": 10,
+    "me.manga.kira.source.engine.GenericSourceClientHtmlGoldenTest": 4,
+    "me.manga.kira.source.engine.GenericSourceClientJsonGoldenTest": 4,
+    "me.manga.kira.source.engine.GenericSourceClientPostJsonFilterRootTest": 3,
+    "me.manga.kira.source.engine.GenericSourceClientScriptJsonTest": 3,
+    "me.manga.kira.source.engine.GenericSourceClientSeparateChaptersTest": 2,
+    "me.manga.kira.source.engine.GenericSourceEngineFailureBoundaryTest": 4,
+    "me.manga.kira.source.engine.internal.ExtractorDeclarationTest": 3,
+    "me.manga.kira.source.engine.internal.FilterRequestComposerTest": 16,
+    "me.manga.kira.source.engine.internal.JsonPathTest": 10,
+    "me.manga.kira.source.engine.internal.TemplatesTest": 3,
+    "me.manga.kira.source.engine.internal.TransformsTest": 10,
+    "me.manga.kira.sources.testkit.DeclarationCapabilitiesTest": 8,
+    "me.manga.kira.sources.testkit.FixtureTransportTest": 2
+  },
+  "backend_tests": {
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT": 1,
+    "me.manga.kira.backend.sourceconfig.admin.PublicConfigSecretsRejectedIT": 7,
+    "me.manga.kira.backend.sourceconfig.admin.PublishInvalidFailsIT": 1,
+    "me.manga.kira.backend.sourceconfig.admin.SourceChangesetIT": 3,
+    "me.manga.kira.backend.sourceconfig.admin.SourceDeclarationValidationIT": 11,
+    "me.manga.kira.backend.sourceconfig.admin.SourceEditorDraftIT": 6,
+    "me.manga.kira.backend.sourceconfig.admin.StructuralGateIT": 2,
+    "me.manga.kira.backend.sourceconfig.admin.BootstrapEndpointIT": 6,
+    "me.manga.kira.backend.completion.RedisCompletionAdmissionIT": 1
+  },
+  "counts_are": "Source expectations, not observed results. Execution must produce fresh XML and no required skips/failures.",
+  "images": [
+    "postgres:17.6-alpine",
+    "redis:7.4.7-alpine"
+  ],
+  "scope": "JVM tests and ordinary native root/JVM file-Maven publications only; no App/platform/package/store/production acceptance.",
+  "backend_test_selectors": [
+    "me.manga.kira.backend.completion.RedisCompletionAdmissionIT.expired and replayed releases cannot touch successor tokens or their deadlines",
+    "me.manga.kira.backend.sourceconfig.admin.BootstrapEndpointIT",
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT",
+    "me.manga.kira.backend.sourceconfig.admin.PublicConfigSecretsRejectedIT",
+    "me.manga.kira.backend.sourceconfig.admin.PublishInvalidFailsIT",
+    "me.manga.kira.backend.sourceconfig.admin.SourceChangesetIT",
+    "me.manga.kira.backend.sourceconfig.admin.SourceDeclarationValidationIT",
+    "me.manga.kira.backend.sourceconfig.admin.SourceEditorDraftIT",
+    "me.manga.kira.backend.sourceconfig.admin.StructuralGateIT.a Tier-2-invalid draft is created and stored with its validation result",
+    "me.manga.kira.backend.sourceconfig.admin.StructuralGateIT.a missing endpoint is not a structural 400"
+  ],
+  "backend_cases": {
+    "me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT": [
+      "the full bundled document parses, validates, canonicalizes, imports, serves and re-checksums()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.PublicConfigSecretsRejectedIT": [
+      "a forbidden Cookie header is rejected()",
+      "unsafe header drafts retain content and safe diagnostics but cannot change public v1 or v2()",
+      "the full real bundled document passes all secret-safety rules()",
+      "a whitespace-padded authorization header cannot bypass publication validation()",
+      "a real bearer token on authorization is rejected as secret-like()",
+      "the Bearer null placeholder is accepted()",
+      "a url with user-info is rejected()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.PublishInvalidFailsIT": [
+      "publishing an invalid revision is 422 and leaves the document unchanged()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.SourceChangesetIT": [
+      "changesets autosave with etags and apply two sources in one snapshot()",
+      "stale changeset write fails and apply requires one-time step-up()",
+      "failed changeset makes no partial lifecycle or catalog change()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.SourceDeclarationValidationIT": [
+      "inspectable declaration draft unknown_url_variable",
+      "inspectable declaration draft json_scalar_path",
+      "inspectable declaration draft page_counter_does_not_update_page_offset",
+      "mixed changeset revalidates stale stored validity before any source revision or catalog is applied()",
+      "quick publish refuses an unsupported counter and preserves editor baseline revisions audits and both public artifacts()",
+      "atomic semantic finalize unknown_url_variable",
+      "atomic semantic finalize json_scalar_path",
+      "atomic semantic finalize page_counter_does_not_update_page_offset",
+      "stale stored validity unknown_url_variable",
+      "stale stored validity json_scalar_path",
+      "stale stored validity page_counter_does_not_update_page_offset"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.SourceEditorDraftIT": [
+      "autosave uses optimistic etags and keeps invalid JSON outside immutable history()",
+      "oversized autosave fails without changing the draft()",
+      "invalid draft fails strict finalization and discard is compare and swap()",
+      "quick publish is atomic and requires one-time password step-up()",
+      "finalize is strict and atomically advances the editor baseline()",
+      "unsafe header quick publish rolls back its new revision and preserves editor and public state()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.StructuralGateIT": [
+      "a missing endpoint is not a structural 400()",
+      "a Tier-2-invalid draft is created and stored with its validation result()"
+    ],
+    "me.manga.kira.backend.sourceconfig.admin.BootstrapEndpointIT": [
+      "anonymous and USER cannot bootstrap and ADMIN still needs exact confirmation()",
+      "valid padded UTF8 JSON crosses the default body cap without charset transcoding()",
+      "exactly five MiB is accepted but one byte more is rejected before PENDING or COMPLETE dispatch()",
+      "malformed UTF8 in an otherwise admissible provenance string is not replacement decoded()",
+      "valid same roster stale Azora is rejected without bootstrap or public artifacts()",
+      "valid same roster non Azora drift is rejected without bootstrap or public artifacts()"
+    ],
+    "me.manga.kira.backend.completion.RedisCompletionAdmissionIT": [
+      "expired and replayed releases cannot touch successor tokens or their deadlines()"
+    ]
+  },
+  "backend_scope": "Only Gate08 retained persistence-failure methods, all six Bootstrap methods lacking retained XML, and the single corrected Redis expiry/replay method: 38 expected invocations, not results.",
+  "engine_scope": "Unchanged coupled source publication prerequisite; repeated137 earns no new issue credit. No producer-only harness or broad Backend19 replay."
+}

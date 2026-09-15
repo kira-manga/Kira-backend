@@ -1,0 +1,10 @@
+me.manga.kira.backend.completion.RedisCompletionAdmissionIT.expired and replayed releases cannot touch successor tokens or their deadlines
+me.manga.kira.backend.sourceconfig.admin.BootstrapEndpointIT
+me.manga.kira.backend.sourceconfig.admin.FullBundledParityIT
+me.manga.kira.backend.sourceconfig.admin.PublicConfigSecretsRejectedIT
+me.manga.kira.backend.sourceconfig.admin.PublishInvalidFailsIT
+me.manga.kira.backend.sourceconfig.admin.SourceChangesetIT
+me.manga.kira.backend.sourceconfig.admin.SourceDeclarationValidationIT
+me.manga.kira.backend.sourceconfig.admin.SourceEditorDraftIT
+me.manga.kira.backend.sourceconfig.admin.StructuralGateIT.a Tier-2-invalid draft is created and stored with its validation result
+me.manga.kira.backend.sourceconfig.admin.StructuralGateIT.a missing endpoint is not a structural 400
