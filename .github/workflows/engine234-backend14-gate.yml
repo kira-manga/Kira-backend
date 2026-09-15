@@ -2,7 +2,7 @@ name: Engine234 Backend14 isolated JVM gate
 
 on:
   push:
-    branches: [remediation/engine234-backend14-gate-20260915-02]
+    branches: [remediation/engine234-backend14-gate-20260915-03]
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
       github.event.repository.full_name == 'kira-manga/Kira-backend' &&
       github.event.repository.private == false &&
       github.event_name == 'push' &&
-      github.ref == 'refs/heads/remediation/engine234-backend14-gate-20260915-02' &&
+      github.ref == 'refs/heads/remediation/engine234-backend14-gate-20260915-03' &&
       github.run_attempt == '1'
     runs-on: ubuntu-24.04
     timeout-minutes: 75

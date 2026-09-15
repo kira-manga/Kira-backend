@@ -3,6 +3,7 @@ import collections
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -51,11 +52,49 @@ def check_versions(node):
             check_versions(child)
 
 
+def identity_value(value, *, path=False, rejected=False):
+    grammar = r"(?:\.\./){0,2}[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*" if path else r"[A-Za-z0-9_.-]+"
+    if not rejected and isinstance(value, str) and len(value) <= (512 if path else 160) and re.fullmatch(grammar, value):
+        return value
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
+    return {"rejected_type": type(value).__name__, "json_bytes": len(encoded), "sha256": hashlib.sha256(encoded).hexdigest()}
+
+
+def check_component(metadata, module, jvm):
+    component = metadata.get("component") if isinstance(metadata, dict) else None
+    assert isinstance(component, dict) and all(component.get(k) == v for k, v in
+        {"group": group, "module": module, "version": version}.items()), "native module identity"
+    backlink = f"../../{module}/{version}/{module}-{version}.module"
+    assert (component.get("url") == backlink if jvm else "url" not in component), "native module backlink"
+
+
 def publications():
     files = repository()
     model = set(line.split("\t")[1] for line in evidence.joinpath("publications-model.tsv").read_text().splitlines())
     coordinates = {f"{group}:{m}{suffix}:{version}" for m in modules for suffix in ["", "-jvm"]}
     assert model == coordinates, "native publication model"
+    metadata_by_name, diagnostic = {}, []
+    for module in modules:
+        for suffix in ["", "-jvm"]:
+            name = module + suffix
+            path = root / "maven/me/manga/kira/source" / name / version / (name + "-" + version + ".module")
+            relative = str(path.relative_to(root / "maven"))
+            note = {"file": identity_value(relative, path=True), **files.get(relative, {})}
+            try:
+                metadata = json.loads(path.read_text())
+            except (OSError, ValueError, RecursionError) as error:
+                metadata, note["read_error"] = None, type(error).__name__
+            else:
+                component = metadata.get("component") if isinstance(metadata, dict) else None
+                note.update(metadata_type=type(metadata).__name__, component_present=isinstance(metadata, dict) and "component" in metadata,
+                    component={k: identity_value(component[k], path=k == "url") if k in component else {"missing": True}
+                               for k in ["group", "module", "version", "url"]} if isinstance(component, dict)
+                              else identity_value(component, rejected=True))
+            metadata_by_name[name] = metadata
+            diagnostic.append(note)
+    # Preserve all six bounded identities before any identity refusal; never publish raw rejected values.
+    assert len(diagnostic) == 6 and len((json.dumps(diagnostic, indent=2) + "\n").encode()) <= 16384, "module diagnostic bounds"
+    save("module-components.json", diagnostic)
     for module in modules:
         for suffix in ["", "-jvm"]:
             name = module + suffix
@@ -65,8 +104,8 @@ def publications():
             for dependency in pom.findall(".//{*}dependency"):
                 if dependency.findtext("{*}groupId") == group:
                     assert dependency.findtext("{*}version") == version, "native POM dependency"
-            metadata = json.loads(Path(str(prefix) + ".module").read_text())
-            assert metadata["component"] == {**metadata["component"], "group": group, "module": name, "version": version}, "native module identity"
+            metadata = metadata_by_name[name]
+            check_component(metadata, module, suffix == "-jvm")
             check_versions(metadata)
             assert Path(str(prefix) + ".jar").is_file(), "native root/JVM jar"
     outcomes = dict(line.split("\t", 1) for line in evidence.joinpath("neutral-task-outcomes.tsv").read_text().splitlines())
