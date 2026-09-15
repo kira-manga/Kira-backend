@@ -1,0 +1,2863 @@
+{
+  "accepted476_snapshot_sha256": "6486f5b4a67b6110648af9b04ab682a0e433ad80a3110ab8cfc7912e53c02751",
+  "files": [
+    {
+      "bytes": 128,
+      "git_mode": "100644",
+      "path": ".dockerignore",
+      "sha256": "7d70c95f35cb64016a32c3e7d480ba73831956d0a331e25b44795354378e15eb"
+    },
+    {
+      "bytes": 275,
+      "git_mode": "100644",
+      "path": ".editorconfig",
+      "sha256": "ecc589d2ee57adaacd3e951b625a6f4ad31f6ebc41f354e332cf0b9b39f2c6cd"
+    },
+    {
+      "bytes": 5838,
+      "git_mode": "100644",
+      "path": ".env.example",
+      "sha256": "c02f3cc21b0dbfaa0c2f8bf19a62678ff1e403fcf4a412504c677b47b3b454ad"
+    },
+    {
+      "bytes": 8705,
+      "git_mode": "100644",
+      "path": ".github/workflows/ci.yml",
+      "sha256": "4dd018bb94610559ff23de3b7610b91ba2be8cef7355e57f2fcb78002ebde28d"
+    },
+    {
+      "bytes": 5204,
+      "git_mode": "100644",
+      "path": ".github/workflows/deploy-server3.yml",
+      "sha256": "6fe641bdf3d170e497b40a018c922de4e3a9fa05f7cbab361c4aec45663016bf"
+    },
+    {
+      "bytes": 13201,
+      "git_mode": "100644",
+      "path": ".github/workflows/publish-release.yml",
+      "sha256": "6efa82aca266f940cc6e0f54da828d55569afe3695861b0d5860826656bcd4a1"
+    },
+    {
+      "bytes": 297,
+      "git_mode": "100644",
+      "path": ".gitignore",
+      "sha256": "7f9dd3b5a6da6987da71ce102e2092f41441c9051df9019cfb6b3eebd463b5cc"
+    },
+    {
+      "bytes": 740,
+      "git_mode": "100644",
+      "path": ".gitleaksignore",
+      "sha256": "eab39af3228fd9a6e25da6463c2ae73deebd76884c43062637d88b141850c1e1"
+    },
+    {
+      "bytes": 7028,
+      "git_mode": "100644",
+      "path": "AGENTS.md",
+      "sha256": "e65987b4aacc4b090d2cc3e3bcba040d56fefae4c0357afef3588b323f59f7b9"
+    },
+    {
+      "bytes": 1695,
+      "git_mode": "100644",
+      "path": "CHANGELOG.md",
+      "sha256": "1aed5876874ebb243fd553a029c0ec14b36e6a828afa63123e1fa6d076f0d127"
+    },
+    {
+      "bytes": 2001,
+      "git_mode": "100644",
+      "path": "Dockerfile",
+      "sha256": "82d7bd7b431ebf87dc6b0125e32173155ed558e2be4af69012fd9ade49968168"
+    },
+    {
+      "bytes": 14025,
+      "git_mode": "100644",
+      "path": "README.md",
+      "sha256": "6e61bfbc8fcb87976b68b081a916f7a8f7399377abb1ae1b03f5a387ae50151a"
+    },
+    {
+      "bytes": 5780,
+      "git_mode": "100644",
+      "path": "build.gradle.kts",
+      "sha256": "8b6116173f5a5fd76de7c9654685754631e2df1a480a692082995b3122fb7aa0"
+    },
+    {
+      "bytes": 1089,
+      "git_mode": "100644",
+      "path": "config/detekt/detekt.yml",
+      "sha256": "509eb13c3915934d49a3de84dcb5332ff372deee0326c6aaceeed4c2a0b38760"
+    },
+    {
+      "bytes": 520,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/config-map.yaml",
+      "sha256": "66f9e01379b228e9c8af634936a5a7ec8bff280b0073da174ed2ae9f9201a847"
+    },
+    {
+      "bytes": 4834,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/deployment.yaml",
+      "sha256": "da245bbcafb8e53b5a4d46008d26c87f6aa2ddd2f68d07f847b92d37fb5f40bb"
+    },
+    {
+      "bytes": 865,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/ingress-import.yaml",
+      "sha256": "1af718d8093e3e433b68bd2cdad230037441a61e20cd3df951a13832681420bb"
+    },
+    {
+      "bytes": 827,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/ingress.yaml",
+      "sha256": "5ee10450070eba9f2cced9a9888fecba6eee35e7623c91bd4558f0b8a0c6f5cd"
+    },
+    {
+      "bytes": 466,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/kustomization.yaml",
+      "sha256": "df52a8c0c9c3c7632b47187982ba4cb84fd9c840c3f9f249216d20df3780ad46"
+    },
+    {
+      "bytes": 1975,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/migration-job.yaml",
+      "sha256": "5a09d92d71906a396f49c8956cd2e38d894871b25eb09b96f337dc1b3488ce1f"
+    },
+    {
+      "bytes": 54,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/namespace.yaml",
+      "sha256": "7f883b7e6308cf5e14156c18c265904f5d260cd61bab43f01830c8beae14fb52"
+    },
+    {
+      "bytes": 943,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/network-policy.yaml",
+      "sha256": "8755aafffa83edae3f20424ca7b73f5d60d87c33cb23413bb84576624b4098ae"
+    },
+    {
+      "bytes": 175,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/pod-disruption-budget.yaml",
+      "sha256": "0a06a5bc8550a1f6153fc2eaa01c75007aff14cb2858522254163c1b6e641417"
+    },
+    {
+      "bytes": 103,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/service-account.yaml",
+      "sha256": "f220821c0c276d50ccc9da81a4338b230fdba7104fcd988bd6818b2e56bdf5c8"
+    },
+    {
+      "bytes": 270,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/service.yaml",
+      "sha256": "7db2e5b8bba301421385752ca91e8923208ae31138d315cc084e16da2b19ea5d"
+    },
+    {
+      "bytes": 617,
+      "git_mode": "100644",
+      "path": "deploy/kubernetes/base/tutorial-media-pvc.yaml",
+      "sha256": "3095e300ebe9509b4578744d1ff736594e7fb304e36236198c9509bf40d13b70"
+    },
+    {
+      "bytes": 16296,
+      "git_mode": "100644",
+      "path": "deploy/observability/alerts.test.yaml",
+      "sha256": "c6a7676d13124959a3fe2ca748c9d49e53aead93cb9c5133d19b1c3f463064a3"
+    },
+    {
+      "bytes": 6143,
+      "git_mode": "100644",
+      "path": "deploy/observability/alerts.yaml",
+      "sha256": "4d5c0f476b62adf7c4e1adcbe099c071f8bbcff5d0977b47cec7810b7463f747"
+    },
+    {
+      "bytes": 1144,
+      "git_mode": "100644",
+      "path": "deploy/observability/prometheus-scrape.yaml",
+      "sha256": "8c125032ab06e1fe306ba9f46122fa325f545d1fd1cf4e2ff3bd9cba975b0839"
+    },
+    {
+      "bytes": 45137,
+      "git_mode": "100644",
+      "path": "deploy/server3/README.md",
+      "sha256": "9c9f2c1afa01a4bb064b4d16d53010eb85fdcfa3ac7710f966ebfcd33941702d"
+    },
+    {
+      "bytes": 5212,
+      "git_mode": "100644",
+      "path": "deploy/server3/compose.yaml",
+      "sha256": "1c7d6e59085690131c47b78bc6194668719f93c6638b4db3e986d4a2e7720c69"
+    },
+    {
+      "bytes": 690,
+      "git_mode": "100644",
+      "path": "deploy/server3/ingress.env.example",
+      "sha256": "ea567bafe08de6d61396539cd3d168f13009a65dc502a4381500402d6a9076d2"
+    },
+    {
+      "bytes": 40063,
+      "git_mode": "100755",
+      "path": "deploy/server3/kira-deploy",
+      "sha256": "a73f45c80d000568d3d64df7381252a4876ff7e25280e3daf4426303fd08b0db"
+    },
+    {
+      "bytes": 519,
+      "git_mode": "100644",
+      "path": "deploy/server3/kira-deploy-gateway",
+      "sha256": "3c2ffbdec7b48274097416b992d30f8e33add2b9b53b0947712beb65812b6ec7"
+    },
+    {
+      "bytes": 184,
+      "git_mode": "100644",
+      "path": "deploy/server3/kira-deploy.sshd.conf",
+      "sha256": "c4e6414e714dc99f0c01c2455dc4c011949b418623e36bc1ad4d4058aa39d8bc"
+    },
+    {
+      "bytes": 164,
+      "git_mode": "100644",
+      "path": "deploy/server3/kira-deploy.sudoers",
+      "sha256": "86c8ee1bad59fede0e3f247be901e8792fbbeddf87fffab742ca7b379cf4f673"
+    },
+    {
+      "bytes": 228,
+      "git_mode": "100644",
+      "path": "deploy/server3/nginx/admin.kiramanga.me.http.conf",
+      "sha256": "a40a6b6f60a71e117ee1349480b67e5875bbdb7809a9a5f2f6d407a015704b51"
+    },
+    {
+      "bytes": 1192,
+      "git_mode": "100644",
+      "path": "deploy/server3/nginx/admin.kiramanga.me.tls.conf",
+      "sha256": "860d27556f941be42ec789dc32a997dd013099910dd0514efaf1494e9bc4a22c"
+    },
+    {
+      "bytes": 633,
+      "git_mode": "100644",
+      "path": "deploy/server3/nginx/api.kiramanga.me.http.conf",
+      "sha256": "37d65e9890ca32784be5e981c38c1f7170074996bdb909abb23f79fa59abc400"
+    },
+    {
+      "bytes": 1191,
+      "git_mode": "100644",
+      "path": "deploy/server3/nginx/api.kiramanga.me.tls.conf",
+      "sha256": "97aa8159a05adb50b3eec9bd6f9a3870cd827150c28266378ba09ab9ad481788"
+    },
+    {
+      "bytes": 543,
+      "git_mode": "100644",
+      "path": "deploy/server3/nginx/kiramanga.me.http.conf",
+      "sha256": "ad01a0f489cab95686eb41b141618919ef8bc2bd2d6084ce32e4f9ee954ef1f2"
+    },
+    {
+      "bytes": 1442,
+      "git_mode": "100644",
+      "path": "deploy/server3/nginx/kiramanga.me.tls.conf",
+      "sha256": "5f2c6cd385b9e74eede0962b99182b6238a00d55b5ed7e939ddb9302e40ed8e4"
+    },
+    {
+      "bytes": 953,
+      "git_mode": "100644",
+      "path": "deploy/server3/postgres-init.sh",
+      "sha256": "fd1e7a3517d5d0f4fdce9ab826e2fed7094761b57e3404d846eef822e2f66112"
+    },
+    {
+      "bytes": 11614,
+      "git_mode": "100644",
+      "path": "deploy/server3/test_verify_hsts.py",
+      "sha256": "25a3ab929ac8e4b21a84b9f77d290828dc5f46bf9e96fd262a50151b768114a2"
+    },
+    {
+      "bytes": 7026,
+      "git_mode": "100644",
+      "path": "deploy/server3/verify_hsts.py",
+      "sha256": "706bf3d0b1d9b9a229dfe10c1c53a06864301e5ebc0d14a896f14d3781a29f26"
+    },
+    {
+      "bytes": 806,
+      "git_mode": "100644",
+      "path": "docker-compose.yml",
+      "sha256": "7f1e05314d6bc6d4f48e73291143a873003d88a13478538e94b7194cbc87b1b1"
+    },
+    {
+      "bytes": 39770,
+      "git_mode": "100644",
+      "path": "docs/API.md",
+      "sha256": "f583a02e34e0469153549bb865b36c554a1528b56607932f103391709363b379"
+    },
+    {
+      "bytes": 19917,
+      "git_mode": "100644",
+      "path": "docs/DEPLOYMENT.md",
+      "sha256": "c5b89492e6987b833a86c76b80c5386d854db1aff58da51194d272644752c108"
+    },
+    {
+      "bytes": 29004,
+      "git_mode": "100644",
+      "path": "docs/DISASTER_RECOVERY.md",
+      "sha256": "229d04b6950eb95b3731c9f7e96b07e233a1465b9e5c8710ee74ab1a3beae574"
+    },
+    {
+      "bytes": 1102,
+      "git_mode": "100644",
+      "path": "docs/LOAD_TEST.md",
+      "sha256": "6b7ab4daabdd8052db9c24ee425fc3695fc68f3dc779feda2e3532b08179bfc2"
+    },
+    {
+      "bytes": 14137,
+      "git_mode": "100644",
+      "path": "docs/LOCAL_DEV.md",
+      "sha256": "b17f1680b045d33d8420b2c64ba5f00ddff57d10c4ab9be46dc1a16a3ad8a5aa"
+    },
+    {
+      "bytes": 18178,
+      "git_mode": "100644",
+      "path": "docs/MIGRATION_BUNDLED_TO_REMOTE.md",
+      "sha256": "a688796bea719124b77ca3266dea202863252915d3092d3ff72e3bcddc419d08"
+    },
+    {
+      "bytes": 8558,
+      "git_mode": "100644",
+      "path": "docs/OBSERVABILITY.md",
+      "sha256": "5195affcf78c5f6c818299c53ca2809e713c6579cfe5bfc4fca27dab5828e549"
+    },
+    {
+      "bytes": 185439,
+      "git_mode": "100644",
+      "path": "docs/PLAN.md",
+      "sha256": "a4023a9a1c488075db2379a6a40b967dffde00aea778f84f3b5d2ff878da21c6"
+    },
+    {
+      "bytes": 9814,
+      "git_mode": "100644",
+      "path": "docs/PRODUCTION_WORK_LOG.md",
+      "sha256": "429f9cd8fef8b5eb2515d8e288e9b5268faa592031321b24db1c85e854d145fa"
+    },
+    {
+      "bytes": 16054,
+      "git_mode": "100644",
+      "path": "docs/RELEASE.md",
+      "sha256": "a5766c56e2a87133b667a303205f6f8be442d6d3a1b0777204abd5c89c973c08"
+    },
+    {
+      "bytes": 9024,
+      "git_mode": "100644",
+      "path": "docs/RELEASE_COMPATIBILITY.md",
+      "sha256": "5a01a31ebd12bad4da0a08732b07882bd3dab4ee510c970fd7c9579feb423632"
+    },
+    {
+      "bytes": 14594,
+      "git_mode": "100644",
+      "path": "docs/REVIEW_2026-07-12.md",
+      "sha256": "18ef59b52b1d2931e29d5f018eee7da19eea285384886220a64f83bddbc56f76"
+    },
+    {
+      "bytes": 4516,
+      "git_mode": "100644",
+      "path": "docs/REVIEW_RESOLUTION_2026-07-18.md",
+      "sha256": "16ecd6eda0432168939b9e5f5deff0b1905ff2d6c01c32dd0d99c98d19f494c3"
+    },
+    {
+      "bytes": 37079,
+      "git_mode": "100644",
+      "path": "docs/SECURITY.md",
+      "sha256": "d74bc2a1cc7b77ce07436d3f2411f137c3a108027e4183ac507adbafc2628809"
+    },
+    {
+      "bytes": 20188,
+      "git_mode": "100644",
+      "path": "docs/SOURCE_CONFIG_LIFECYCLE.md",
+      "sha256": "8dff875d302a67667858fc0669a4947b80f2d12f3aa9853100c0deffbe5c46ae"
+    },
+    {
+      "bytes": 4295,
+      "git_mode": "100644",
+      "path": "docs/SOURCE_DOCUMENT_SIGNING.md",
+      "sha256": "be9f52ebb202a66cce2adf070affcc1c462be88389afa8b8d7f833674c99aa6f"
+    },
+    {
+      "bytes": 13099,
+      "git_mode": "100644",
+      "path": "docs/TUTORIALS.md",
+      "sha256": "de3803123e22c5eb5486f158e4dc90af6496cb92d50ba3eb529c0f4161f15807"
+    },
+    {
+      "bytes": 15007,
+      "git_mode": "100644",
+      "path": "docs/USAGE.md",
+      "sha256": "b9987018093ceacf036ba006617bcd1dc5138dafa4c2b6bfa837a9de095c54f9"
+    },
+    {
+      "bytes": 45167,
+      "git_mode": "100644",
+      "path": "gradle.lockfile",
+      "sha256": "5e4078d2b0dff054871f67fc58b2349ab28b2c79d703ce541a5c9a9b2b50605f"
+    },
+    {
+      "bytes": 3301,
+      "git_mode": "100644",
+      "path": "gradle/libs.versions.toml",
+      "sha256": "041f4429eef81414ad3ede5825d570d1e1f8790fd8014332c9355a3a2177a120"
+    },
+    {
+      "bytes": 43764,
+      "git_mode": "100644",
+      "path": "gradle/wrapper/gradle-wrapper.jar",
+      "sha256": "7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172"
+    },
+    {
+      "bytes": 340,
+      "git_mode": "100644",
+      "path": "gradle/wrapper/gradle-wrapper.properties",
+      "sha256": "89032df14851e71a09ea7eaaffde8c85d3e806cb5365bd747ae9ec843dcae1dd"
+    },
+    {
+      "bytes": 8733,
+      "git_mode": "100755",
+      "path": "gradlew",
+      "sha256": "b187b4c52e749f5760afdd6fadc31b2a98ad35fb249bf0dff03b72650f320409"
+    },
+    {
+      "bytes": 2937,
+      "git_mode": "100644",
+      "path": "gradlew.bat",
+      "sha256": "1d297e00bd21de3ace22b4d7f2de1f9dfa858883d66bbf7c1ccbecccec8f4f3b"
+    },
+    {
+      "bytes": 2079,
+      "git_mode": "100644",
+      "path": "load/k6-production-smoke.js",
+      "sha256": "994dbfdb9da06a8c81d2cd5a6bc2e105156d9bab6d5ea1616e2be61ff057d78a"
+    },
+    {
+      "bytes": 50594,
+      "git_mode": "100644",
+      "path": "scripts/ci/image_release.py",
+      "sha256": "e677d40f0e391ddaea0342e2da9915a1448164204e0cea7bd645172f750a3fa6"
+    },
+    {
+      "bytes": 447,
+      "git_mode": "100644",
+      "path": "scripts/ci/kubernetes-media-requirements.txt",
+      "sha256": "fc94d50f12b130dc8036e87e34529809c360de5489d7dcba6dec5b9138e0404e"
+    },
+    {
+      "bytes": 47100,
+      "git_mode": "100644",
+      "path": "scripts/ci/release_policy.py",
+      "sha256": "7ad7d24115b63d763053e008196e13ebc4af89f6baeafbf08fb6030dbc852a02"
+    },
+    {
+      "bytes": 58973,
+      "git_mode": "100644",
+      "path": "scripts/ci/test_backup_bundle.py",
+      "sha256": "159f467d0f3585c1eb25a3670a279b2a431410b2f4fb51e8ce2877f824aee766"
+    },
+    {
+      "bytes": 124083,
+      "git_mode": "100644",
+      "path": "scripts/ci/test_image_release.py",
+      "sha256": "0e5a5dcf87acc921ba2d9c30097a6d9a8b91cfa5e7ae6c06c6362006ef24601b"
+    },
+    {
+      "bytes": 44656,
+      "git_mode": "100644",
+      "path": "scripts/ci/test_kubernetes_media_storage.py",
+      "sha256": "bc71ab9a644997e4f13e9a5e36dcb46498fdb3d68e9ecf65547ef16c6f3ded9c"
+    },
+    {
+      "bytes": 61062,
+      "git_mode": "100644",
+      "path": "scripts/ci/test_release_policy.py",
+      "sha256": "831078a9fe993f16e6d4b8f6e6a75d2e9563c36626c3ed2ed73e6d3b9130afae"
+    },
+    {
+      "bytes": 27822,
+      "git_mode": "100644",
+      "path": "scripts/ci/test_restored_pair.py",
+      "sha256": "3b0b84acffc759ba42817380eef374decbe461454fc3f77260d95ee3e181fd11"
+    },
+    {
+      "bytes": 238,
+      "git_mode": "100755",
+      "path": "scripts/db/backup.sh",
+      "sha256": "b70843e2a1dc5c4cf6f6d620ffcf53edc3e230ad632df6546c6558ad000e8ad1"
+    },
+    {
+      "bytes": 61023,
+      "git_mode": "100755",
+      "path": "scripts/db/backup_bundle.py",
+      "sha256": "a5a85576b144e3b57cf98e25f24ecbe6a195d47ccfa793c638c3023b30e553fa"
+    },
+    {
+      "bytes": 1440,
+      "git_mode": "100644",
+      "path": "scripts/db/create-roles.sql",
+      "sha256": "63d3788d6e4959d22c1e1765ddefa9a6c2c6cf8600c0e6b83590df9a19ed8bba"
+    },
+    {
+      "bytes": 246,
+      "git_mode": "100755",
+      "path": "scripts/db/restore-media.sh",
+      "sha256": "e3a5eb8679d386843011cca386bce2033b439cac8ac08d5479a75c0bcc4998fa"
+    },
+    {
+      "bytes": 252,
+      "git_mode": "100755",
+      "path": "scripts/db/verify-restore.sh",
+      "sha256": "0825d2b7ce239fb26961660fb054c9a67ab61d04149230d68a76ac9bf301822b"
+    },
+    {
+      "bytes": 1651,
+      "git_mode": "100755",
+      "path": "scripts/signing/generate-key.sh",
+      "sha256": "530c48d6fceb9edec0b22a324570748d4a6e5a551a89ab743535630a571e4a05"
+    },
+    {
+      "bytes": 873,
+      "git_mode": "100755",
+      "path": "scripts/signing/install-github-secret.sh",
+      "sha256": "06914bd50a5f0c64fc552ad86c0a86b1e699068c0427d9ce7e7836febff7f0ba"
+    },
+    {
+      "bytes": 10203,
+      "git_mode": "100755",
+      "path": "scripts/smoke/container-smoke.sh",
+      "sha256": "c057766a1c08fdc7cd676383114b2a74d1d5419ecfca6767f09912c7b9cad3a3"
+    },
+    {
+      "bytes": 22317,
+      "git_mode": "100755",
+      "path": "scripts/smoke/source-catalog-recovery-smoke.sh",
+      "sha256": "2e4eb507d60b70cf653c933d97aeb0b56defd54992b313d18a4511857d64d4c4"
+    },
+    {
+      "bytes": 198,
+      "git_mode": "100644",
+      "path": "settings-gradle.lockfile",
+      "sha256": "e58bb2ed80db9f829601a658d7c33b9802eb7d2191c31e79c28e01f14c225926"
+    },
+    {
+      "bytes": 117,
+      "git_mode": "100644",
+      "path": "settings.gradle.kts",
+      "sha256": "f2ffbdad8a2e99edd1b87d7b03d66e669ea2e1965bde5abab10d630d50841044"
+    },
+    {
+      "bytes": 725,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/KiraBackendApplication.kt",
+      "sha256": "dd82c17ee6147a28e9fb6e2cb1c105665e6d6544654e670a0d8acb16aa88f162"
+    },
+    {
+      "bytes": 1839,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/api/AdminAuditController.kt",
+      "sha256": "c85b38154a330074b05d777d33dbab5cdba0fc65a0def03776e076d576fc9bf8"
+    },
+    {
+      "bytes": 3940,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/application/AuditService.kt",
+      "sha256": "7776a5e1dd65a5a6d24d710dd5714b26901cd8b71e607d22240b7bfe4f5824cf"
+    },
+    {
+      "bytes": 2647,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/domain/AuditAction.kt",
+      "sha256": "fa90e5a980a1d36953756b9cdd21395cc7583fd36bbd21f53495949da4c7afa4"
+    },
+    {
+      "bytes": 1399,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/domain/AuditRepository.kt",
+      "sha256": "32462771d8430b2dea56c63951fcd6b2d8311ce66ab0b590a85568c4175781ec"
+    },
+    {
+      "bytes": 1842,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/infrastructure/AuditLogEntity.kt",
+      "sha256": "6b354e8bada2c0bdfa0bf5150cd941a73714d0740e075dedfff41a9f51a53bfe"
+    },
+    {
+      "bytes": 1904,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/infrastructure/JpaAuditRepositoryAdapter.kt",
+      "sha256": "524654651f29d7b477e8fb5e6a93bf9253fcbdfc536652638fc87f3d443e5d1e"
+    },
+    {
+      "bytes": 363,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/audit/infrastructure/SpringDataAuditLogRepository.kt",
+      "sha256": "eea92fb3356e40b385e0eb4a0e272f6878bd0e6efe571d245fd66a91ec8c6813"
+    },
+    {
+      "bytes": 1355,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/ApiError.kt",
+      "sha256": "0dbb70f297dfaf34d619dc2a78182ac87436b670fa9d1f4c16620306f37863c0"
+    },
+    {
+      "bytes": 4496,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/CanonicalJson.kt",
+      "sha256": "9574ee48f7e91d699e6aad9ad904eb364e48cc713150a956861fbf856d6da48d"
+    },
+    {
+      "bytes": 10118,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/GlobalExceptionHandler.kt",
+      "sha256": "365123ec17d84c781af8c7490de34ada624d3ac350e4240fd7889739b86b3e89"
+    },
+    {
+      "bytes": 495,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/PageResponse.kt",
+      "sha256": "a1550898998a856054c3455aa5a6013573806feb8f502da69042fc9d05b8592c"
+    },
+    {
+      "bytes": 983,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/Sha256.kt",
+      "sha256": "9f22b92c5acf77aa66edffe351047f76deeb666292c73a172877d2ff15c913ab"
+    },
+    {
+      "bytes": 4904,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/exception/ApiExceptions.kt",
+      "sha256": "96de27e3b1b74fe1ab1f7d3ab34af511b23467a05880ca1d6dbea72f4874eb05"
+    },
+    {
+      "bytes": 1350,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/web/JsonUtf8ResponseAdvice.kt",
+      "sha256": "0b37e61fcc978d7511948004efb45b6fb1b4290e2cc82ddd1dde41187a1ba445"
+    },
+    {
+      "bytes": 5455,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/web/RequestBodySizeLimitFilter.kt",
+      "sha256": "0b78a3e8a368de063f715a3b55d0b61344dba1eddb7b0ac6268a5b0d281d20e4"
+    },
+    {
+      "bytes": 3922,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/common/web/RequestDiagnosticsFilter.kt",
+      "sha256": "253eb98db0ad8015685bee34c48e1e42dd5f782c7c0e3829f627b2fca4fd6cea"
+    },
+    {
+      "bytes": 4358,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/api/CompletionController.kt",
+      "sha256": "4a6d6dd46563f598c4ecafcc37044c3962e37fbd843634940a49140d7731c27d"
+    },
+    {
+      "bytes": 1471,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/api/dto/CompletionDtos.kt",
+      "sha256": "58712d819aa2216ebbcc219fc9aaaf98326072f0cb7d0e489474ef1163c00aa9"
+    },
+    {
+      "bytes": 1090,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/BoundedCompletionExecutor.kt",
+      "sha256": "26ccaca5f056b100b44354dc4312eaa10c8880a7d069740fcad2978bfa98d2b0"
+    },
+    {
+      "bytes": 1284,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/CompletionAdmission.kt",
+      "sha256": "1866a1fba19ebde4801be184dde1ce3c14de62233738084fb0d2449559f977ee"
+    },
+    {
+      "bytes": 2078,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/CompletionExecutionOwnership.kt",
+      "sha256": "bc3de5791ac38a79af61d8137d90924479741f7ab198e027b5314a7dad3a0d06"
+    },
+    {
+      "bytes": 5750,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/CompletionPersistence.kt",
+      "sha256": "1ffb0f62cc32e9d272eb177833e6572bb32cd6914e40f04f3719adf31904af2a"
+    },
+    {
+      "bytes": 3697,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/CompletionRetentionService.kt",
+      "sha256": "b68de4c642a6325111d11f68b1d559e817465a5867c7dca1347ed0e7f828918c"
+    },
+    {
+      "bytes": 18040,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/CompletionService.kt",
+      "sha256": "3abcd336e8ed90677713136f7dad9848f56ac4b306548a84380470e242901731"
+    },
+    {
+      "bytes": 3283,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/CompletionStartup.kt",
+      "sha256": "be9c11835c91f91d0405379cb4b6406210eb40754d542a4521ddecf3401fd1f3"
+    },
+    {
+      "bytes": 3958,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/InMemoryCompletionAdmission.kt",
+      "sha256": "411fe4af6d0e7ba8f26ac0c299a68fcbe09c2501bd640a5a9a2014bcd6d5eef6"
+    },
+    {
+      "bytes": 7309,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/application/RedisCompletionAdmission.kt",
+      "sha256": "8463d02d011f6bcdbd8e0bba0398eb9699f5acfd6c8b2429bf867bb309a4b819"
+    },
+    {
+      "bytes": 2409,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/Completion.kt",
+      "sha256": "ac7d151efe47b4a68974ee358b4e5bd6f40ced241d043d9d85da9b94df2c0171"
+    },
+    {
+      "bytes": 1502,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/CompletionErrorCode.kt",
+      "sha256": "04926d5b4392568d5e96da09919d73c4b6c3eb8a9c2ed27b53ea9e53ac5adc00"
+    },
+    {
+      "bytes": 2086,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/CompletionProvider.kt",
+      "sha256": "7a3709e5b59c121e0ecac2bfb4ce789d5b71c937611d08825d37deb07969ffa8"
+    },
+    {
+      "bytes": 902,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/CompletionProviderExceptions.kt",
+      "sha256": "687c4d87a6c5e32a8f136fe9ec98cac9adaf2c8e7c3c29b3a03a171149c98d81"
+    },
+    {
+      "bytes": 1113,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/CompletionRequestRepository.kt",
+      "sha256": "55405eeaea6d32b46d991d6691aa5f6d54ef2a773fb79925e93b254a0ce9d950"
+    },
+    {
+      "bytes": 618,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/CompletionResultRepository.kt",
+      "sha256": "3c77885eef2c3df899101a3e82ac9b8201d22f27950b6335238decf3e5daeefb"
+    },
+    {
+      "bytes": 554,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/domain/CompletionStatus.kt",
+      "sha256": "e220d9e4bfdb5120bd81453c49ea8eeca3636cde97ef2d0df65fde616d0454e2"
+    },
+    {
+      "bytes": 2079,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/CompletionRequestEntity.kt",
+      "sha256": "1cc9570ee239d020c52adfcb505a21b39fc183a2841abde0fe795cf5635696f0"
+    },
+    {
+      "bytes": 1603,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/CompletionResultEntity.kt",
+      "sha256": "5dde7a248b7b7be52bc1e04090074181c126246a428ec5f8ae6a19b0426c291d"
+    },
+    {
+      "bytes": 1615,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/EchoCompletionProvider.kt",
+      "sha256": "a2cf87f12969097d9a9fdc43fa565012cba77d90be94fe06a80183f7d73f7065"
+    },
+    {
+      "bytes": 4216,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/HttpCompletionProvider.kt",
+      "sha256": "42185c4280e6e3008fb3225b034ec6fc25e2fd21eb1e0aa6741202cb399a3727"
+    },
+    {
+      "bytes": 2663,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/JpaCompletionRequestRepositoryAdapter.kt",
+      "sha256": "5719856e717d02cea05b11fd7f82131389c1f8409469d34e3239f5ad4f9f72a0"
+    },
+    {
+      "bytes": 1829,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/JpaCompletionResultRepositoryAdapter.kt",
+      "sha256": "d397234c211fb2bf5a258cf9553da8c80196eb05c31ba1539bf9b59c4fca6c28"
+    },
+    {
+      "bytes": 1773,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/SpringDataCompletionRequestRepository.kt",
+      "sha256": "2412f993fd1354b6f01ab57f950624b2c72301b6e230296a26822c92fd933c12"
+    },
+    {
+      "bytes": 539,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/completion/infrastructure/SpringDataCompletionResultRepository.kt",
+      "sha256": "c2db9c3089b6395cd85d7e98fe685c1ee9880d7fe5bf62b069575e42eef26c18"
+    },
+    {
+      "bytes": 571,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/ClockConfig.kt",
+      "sha256": "6fc237a25dc359abf91fb96507809c5e04254af11e6f1ce272e03e701ba572f1"
+    },
+    {
+      "bytes": 1328,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraAdminSeedProperties.kt",
+      "sha256": "487714074dbf713c53db9f127d94fd34183bd3b6df938e961c95f1aeb15ddefa"
+    },
+    {
+      "bytes": 653,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraAdminStudioProperties.kt",
+      "sha256": "9c0f61fa53f714e932275a5b76285682740f30ad8c28e9a81d1a33c63f42cb41"
+    },
+    {
+      "bytes": 634,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraAuthProperties.kt",
+      "sha256": "c0d4f3eb33033a21a7dd143f2ac6f19c98b1c76471ed39c938bdb670639ff733"
+    },
+    {
+      "bytes": 5110,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraCompletionProperties.kt",
+      "sha256": "1f68c78062ff931d19b466702f18901db009f1529d92eeeab14bf2cc7f5822ad"
+    },
+    {
+      "bytes": 2127,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraConfigProperties.kt",
+      "sha256": "003d8c331f896e0d62cc7decffc2ce9946c4fc2ea452b3c245954eccf9aa53e3"
+    },
+    {
+      "bytes": 7266,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraSecurityProperties.kt",
+      "sha256": "0344ebc39a2f02b0b4004251b034e5d87a9883bfeac89728a047695054631812"
+    },
+    {
+      "bytes": 348,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraServer3Properties.kt",
+      "sha256": "866c38be6f4725e795b094b565d802b18d25acbfd6f44df8f7362aa027cac094"
+    },
+    {
+      "bytes": 612,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraSigningProperties.kt",
+      "sha256": "51a0516d44ac9cb56716a6bc664c770fbbece518410951e2d4efd6b48a5c792a"
+    },
+    {
+      "bytes": 978,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraTutorialProperties.kt",
+      "sha256": "76ea3c01d728ca8eb2597c23f933053d8a6e092dfbed9afc6ad7e07b07254e8f"
+    },
+    {
+      "bytes": 993,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/KiraValidationProperties.kt",
+      "sha256": "38e431f617c804c062dfe4ad85615f848a30cc89c7d10579a0405ec9f470157f"
+    },
+    {
+      "bytes": 1767,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/OpenApiConfig.kt",
+      "sha256": "43b7ab16f448be3c3c6b190a4c7235d5067bec21a677c1d63aa9e7bd8a31a9a2"
+    },
+    {
+      "bytes": 6033,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/ProductionSecurityValidator.kt",
+      "sha256": "9479e5f6a2ba43d0dc7563d51e3690680940260f505f288f64bc32bfd9359b66"
+    },
+    {
+      "bytes": 221,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/SchedulingConfig.kt",
+      "sha256": "ea933412ab4bc22eb1afab6dab34c0de6c6026993fc4baf658ffa8ce12384164"
+    },
+    {
+      "bytes": 2915,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/Server3IngressConfiguration.kt",
+      "sha256": "b20ea4a4f335f50261e213e458c4c20fb0d7a0ecb42a2692077192dcc14fc192"
+    },
+    {
+      "bytes": 2212,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/config/WebDiagnosticsConfig.kt",
+      "sha256": "0825335fc1c4349c1429903fdd201dd1ce587593be6a1084175ac5affcca30b2"
+    },
+    {
+      "bytes": 1626,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/database/DatabaseMigrationMain.kt",
+      "sha256": "bea4c0b52073618d4c7e25de720ad6e0cd2dfbcb70fe5e2b64e7b2e804f7de88"
+    },
+    {
+      "bytes": 1467,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/observability/CoordinationHealthIndicator.kt",
+      "sha256": "388c0f856d2337fb37cd009349c3b4d983a5e468d6cb439066120823775cc15d"
+    },
+    {
+      "bytes": 2065,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/observability/KiraMetrics.kt",
+      "sha256": "12c3787d49fb44b5e7701f483347f438e769289643738d01038169cbf8f511d8"
+    },
+    {
+      "bytes": 2284,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AdminSeeder.kt",
+      "sha256": "69984fe7bebf1622812ba4fa77b32524a4f472740191f7a54f94c80120ab8331"
+    },
+    {
+      "bytes": 595,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AdminStepUpGrantRepository.kt",
+      "sha256": "70b8520c7dd4c48968833142385098f5814dbd02bc8a949ebf04c8e0d4c922e8"
+    },
+    {
+      "bytes": 3710,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AdminStepUpService.kt",
+      "sha256": "1066928182e0824e9a1067b10b240d7ca630990f3292099cfeb5e3e08576e536"
+    },
+    {
+      "bytes": 1592,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AuthThrottle.kt",
+      "sha256": "c58be9f1d3426a3e2a52487c76c6fde95fd78fe15d88dad374111a64f9692ef9"
+    },
+    {
+      "bytes": 9177,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AuthThrottleService.kt",
+      "sha256": "038f29be4035ddf30f5502393c98ba08b0343215f94b0d3bf805880e0af13248"
+    },
+    {
+      "bytes": 1959,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AuthenticatedMdcFilter.kt",
+      "sha256": "3bb9b4c4153a79d59563ca66d24d912659ceac6fcf9cd7eb934b79b9a042775a"
+    },
+    {
+      "bytes": 805,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/AuthenticatedUser.kt",
+      "sha256": "25c6614c6a5ed58874bf39f85922c32beab46e63afa8dc07c2f0ebaec2644c38"
+    },
+    {
+      "bytes": 984,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/BearerUserAuthenticationToken.kt",
+      "sha256": "6e3b27bfd14a8d52e0e917a07400e9fdd2733df585d0c6d12e15e867fdba48b8"
+    },
+    {
+      "bytes": 5825,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/ClientIpResolver.kt",
+      "sha256": "0a310a992f84b52ab1b8f0f3365e2c668a35efeb1fd9182d278bc9719e8f4556"
+    },
+    {
+      "bytes": 1074,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/CurrentUser.kt",
+      "sha256": "d33db3c42f0ef155d018c16417c761de84bc4e2bb99fabf096a545ee4a42b9a4"
+    },
+    {
+      "bytes": 3332,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/DbUserJwtAuthenticationConverter.kt",
+      "sha256": "25e98356d4cbef4297c7ac053ad0ba84847d01153dab561a7947a88d87d81360"
+    },
+    {
+      "bytes": 1490,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/JdbcAdminStepUpGrantRepository.kt",
+      "sha256": "a8c12ea252dc92e0a5c4defd65dc349bae27bde4d8ff20d186173b3d702f841f"
+    },
+    {
+      "bytes": 2430,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/JwtKeyProvider.kt",
+      "sha256": "c96ce26bebf6293df1e4032f23ad53718229665f9656806095bc901ef83bdbe4"
+    },
+    {
+      "bytes": 3595,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/JwtService.kt",
+      "sha256": "5d81bc94df2f1a28337220ab99151002c10045879a690267bdc65b412090ecc0"
+    },
+    {
+      "bytes": 4101,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/NumericIpAddress.kt",
+      "sha256": "b83f3e48baf46022ec8aece36e35140cdf8d2a94129e65d189bc96b37e149384"
+    },
+    {
+      "bytes": 2618,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/ProblemSecurityHandlers.kt",
+      "sha256": "b4bd68e48a931b968033c6019eca123cece6cc97cd62f1b47d5b4c1b4bea996a"
+    },
+    {
+      "bytes": 6357,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/RedisAuthThrottleService.kt",
+      "sha256": "a341e87998a8ef9d53b734770525c9fc9901b408345ffd58fadff655671eb2d7"
+    },
+    {
+      "bytes": 568,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/Roles.kt",
+      "sha256": "00117602a50d8d752eb599c742243ec25456219817af4e792ce89409e452653c"
+    },
+    {
+      "bytes": 9096,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/security/SecurityConfig.kt",
+      "sha256": "f421d64ce0aea32b7d9e95c6624ebd9c62bd3a09e69838c652252ce7b99ffb60"
+    },
+    {
+      "bytes": 3090,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/AdminDocumentsController.kt",
+      "sha256": "d65997b74255297510602f0fe833cc11c0074de46c96b14cea88be5173fcebeb"
+    },
+    {
+      "bytes": 1571,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/AdminHistoryParameters.kt",
+      "sha256": "5790bfef12d347b386e9ef5199e4f43344da24893e0048c542bcbea91f2b4b09"
+    },
+    {
+      "bytes": 10473,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/AdminSourcesController.kt",
+      "sha256": "5d8c4de7ff88ca2b1ec939a7d90f9ad88dfa7b0d7b3b77bf566804fbcee35f4e"
+    },
+    {
+      "bytes": 1885,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/AdminStepUpController.kt",
+      "sha256": "94e673f2245942ccad3fd280be4ec3ad0a5f39ece631b1eb8909eae54c1eb4cf"
+    },
+    {
+      "bytes": 4862,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/DocumentResponseWriter.kt",
+      "sha256": "0cf5980bc10f5a678ffca15531d3ff2be73c049095562c1b28dac812f995a4d8"
+    },
+    {
+      "bytes": 3024,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/GenericV2CutoverController.kt",
+      "sha256": "76b203af5028c0207aaa5cea69917672ac42545a40a9c9d86ac0aec2e0b058ce"
+    },
+    {
+      "bytes": 2060,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/IfNoneMatchMatcher.kt",
+      "sha256": "033a763bb0468abfb5cb5860e208211183bf1367ab86d15d0b2055391ba98069"
+    },
+    {
+      "bytes": 1720,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourceCatalogV2Controller.kt",
+      "sha256": "e78732c053616c597b76e22257882418dfc676e2273e74f93098bced675a3b45"
+    },
+    {
+      "bytes": 3818,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourceCatalogV2ResponseWriter.kt",
+      "sha256": "f2918cb346c1d1c127a9efab08a8ec6d8c959abf20ce60db0b8a245bd2f544ab"
+    },
+    {
+      "bytes": 4728,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourceChangesetController.kt",
+      "sha256": "1942e9534943e95505e3d060ece37dc35062385d05e95e9d6b1d75f210405c77"
+    },
+    {
+      "bytes": 4737,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourceDocumentController.kt",
+      "sha256": "1b25239d3d1a514dc7da5ecce288242058167b7ba8b9eee74a6d83ade484d996"
+    },
+    {
+      "bytes": 4932,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourceEditorDraftController.kt",
+      "sha256": "36524cf5aedd05195805798c6010d05f2a606a5ad452714ae6f0686a7ecd7a55"
+    },
+    {
+      "bytes": 4951,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourcePreviewController.kt",
+      "sha256": "a3b9d320952ad17dad91415896475777b057ff977b52afda4d4f545bbed27cde"
+    },
+    {
+      "bytes": 2489,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourceStudioCapabilitiesController.kt",
+      "sha256": "fc04bb428df24c14436750306ef082365a773894b80b6446851a7ed158bdb03b"
+    },
+    {
+      "bytes": 4056,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/SourcesController.kt",
+      "sha256": "e6f8c5ab50b7cf2cf02b003f7bd851f9c09e4ae345d43c6ed3407b9db423bdc9"
+    },
+    {
+      "bytes": 10726,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/dto/AdminSourceDtos.kt",
+      "sha256": "3b4567033c79f94aa2e4cca08644bb68a8f7a506130c7d92ac2edd47a0c09e26"
+    },
+    {
+      "bytes": 1191,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/dto/InitialSourceCatalogReceiptResponse.kt",
+      "sha256": "ea1077fa34aed836f40689e82c637347524302c0dab9052b281553b3d16988a2"
+    },
+    {
+      "bytes": 2950,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/dto/PublicSourceDtos.kt",
+      "sha256": "67eb6f5cbe09c30fad49e98055d5dee3ab73868a44b00824c96143a95a1cac9f"
+    },
+    {
+      "bytes": 3608,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/dto/SourceChangesetDtos.kt",
+      "sha256": "05c1a3349e677598dfd8d957b429de3a29a72bd58d0897c17d2cfea4cf0cd578"
+    },
+    {
+      "bytes": 2032,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/api/dto/SourceEditorDraftDtos.kt",
+      "sha256": "0534a77cffc6711e86e6facbd61c674a8695bf8e9c403e93eee9cac4db7593ae"
+    },
+    {
+      "bytes": 23333,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/BundledImportService.kt",
+      "sha256": "7ca4e4896b9138df41ed7681705fe0d47103d697b80543df9d76dbec8379b1b6"
+    },
+    {
+      "bytes": 18337,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/DocumentAssemblyService.kt",
+      "sha256": "1dce418396abe743a70a2a1156cb843978883a6629e3030cf73aadd3a85e885f"
+    },
+    {
+      "bytes": 9202,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/GenericV2CutoverService.kt",
+      "sha256": "33c118e558fdd8ab8230e068c5445dd1ca0527bdf3059ab51cf65433631d6f01"
+    },
+    {
+      "bytes": 37090,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceAdminService.kt",
+      "sha256": "7bed1600540175d0cb3dbd355c5d975b37a35e3890a9278d04e22b676222cedd"
+    },
+    {
+      "bytes": 1054,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceCatalogQueryService.kt",
+      "sha256": "ad3f33a29c908818bb6bc08ae5f3853f0ca03e67c75b9e8962fcabef623f5a1d"
+    },
+    {
+      "bytes": 5126,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceChangesetService.kt",
+      "sha256": "95bab8c6c4ee4375be8623e65110b65743fb0484c55b9e9a942ba6e9f09aafd2"
+    },
+    {
+      "bytes": 6076,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceConfigExceptions.kt",
+      "sha256": "130aa5a10121be67cb238c78c610411bee7d0f5d2932be4344226f2d186f0f59"
+    },
+    {
+      "bytes": 1506,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceConfigValidationConfig.kt",
+      "sha256": "b3c4b5823077307756d1cd507abc727bfba0d899dad43d66e4f32456d50e40ea"
+    },
+    {
+      "bytes": 7766,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceEditorDraftService.kt",
+      "sha256": "cd59588370fe2cd55368978dc4b6ec9d9a5d0a661267289fdfd94f7601107d5a"
+    },
+    {
+      "bytes": 11360,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceOperationalModeService.kt",
+      "sha256": "84a4e1cfc955d2d52166f127ff43bd25ec76ab28762a3737bf0825f62ae14a70"
+    },
+    {
+      "bytes": 7356,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/SourceQueryService.kt",
+      "sha256": "35531d063c8f96460cca43a0b0348625123c837a56cf71cb624719237a3ab17e"
+    },
+    {
+      "bytes": 6651,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/application/StructuralAuthoringGate.kt",
+      "sha256": "cc38562da5c69f74ccea7dbb8b5c0216479794ac660443e9349a1febdbc358e8"
+    },
+    {
+      "bytes": 1331,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/AdminHistory.kt",
+      "sha256": "964a63fdb08f0fdc003b61613911f882f53a675527befd25d5bfba3669ddd278"
+    },
+    {
+      "bytes": 2928,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/InitialSourceCatalogPolicy.kt",
+      "sha256": "23d53cc1ee42ef25c31f1a887938c269076416ff9839ae7b9919fbb3fea46966"
+    },
+    {
+      "bytes": 2464,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/InitialSourceCatalogState.kt",
+      "sha256": "e9743c5043705f3dc71891961635034d62a379f23daa1ac5be0f28f2b2ef5319"
+    },
+    {
+      "bytes": 6364,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/LifecycleStateMachine.kt",
+      "sha256": "6319fe919ec2860f3f9e0d5d2bd41a40dff4e1c1def26500d167bf65d52c0c89"
+    },
+    {
+      "bytes": 1040,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/PublishedDocument.kt",
+      "sha256": "a72109220af9ee2be06a51529080d2336f22db486740e11586208bdd998b5fae"
+    },
+    {
+      "bytes": 4314,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/PublishedDocumentRepository.kt",
+      "sha256": "b5a86110acca52c8c37d9cf2b9fac424c69461246f14c870a585e968afe0453c"
+    },
+    {
+      "bytes": 1662,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/PublishedSourceCatalog.kt",
+      "sha256": "5d7a06975db3b4ffe71ab3ae591cd2947e5819ce5023a9500ffe25471d754450"
+    },
+    {
+      "bytes": 780,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/PublishedSourceCatalogRepository.kt",
+      "sha256": "4abdcbcc8beab20714f42077a8bcaf3ed872ffd9d6ddc30678e6cdc9799879ba"
+    },
+    {
+      "bytes": 2787,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/RevisionRepository.kt",
+      "sha256": "6f195eb385b5229d6308e7d1497e0a4f19b3ad8e6ad2fa48b4001f6cce35cc85"
+    },
+    {
+      "bytes": 1060,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/RevisionStatus.kt",
+      "sha256": "0cfceca205e9631e4c31a9c56ccabe74403c4d097fc42817387417dd4168a1f2"
+    },
+    {
+      "bytes": 1378,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceChangeset.kt",
+      "sha256": "97e68840f0d51fbf78a1c3deba6f3e2ec48b8fd8d89498af5399ede8cedcfce7"
+    },
+    {
+      "bytes": 1088,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceConfigHead.kt",
+      "sha256": "cc03bda2351682bd6bebf4591b45748ca1cc2a2d376b3e8daf02891cb7fb4467"
+    },
+    {
+      "bytes": 6245,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceConfigRepository.kt",
+      "sha256": "60e1a8d8fd0b089be3ba73b1f3e630a80a890340fbfbdb5d8fa5b073a288c187"
+    },
+    {
+      "bytes": 722,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceEditorDraft.kt",
+      "sha256": "6557eedc4a39205fa7793bbfcf07bc6038849bc2353516e63a99c51639faef0f"
+    },
+    {
+      "bytes": 1080,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceEditorDraftRepository.kt",
+      "sha256": "7d226a9a91cec8472d8ff5ea0af01bd498d43947483dbab23103fc6667af79cb"
+    },
+    {
+      "bytes": 1819,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceLifecycleStatus.kt",
+      "sha256": "a776db0454189f6ab1ec1134b0cfc8c5bab1057515eb58c053421cbba9efbccd"
+    },
+    {
+      "bytes": 1678,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceOperationalMode.kt",
+      "sha256": "90eaec2b6fa084ad5aaa2eda7b1f48df9c56ab8226e37203114aeb5971ea7b93"
+    },
+    {
+      "bytes": 850,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/SourceRevision.kt",
+      "sha256": "3f408ef286cd3788159bfa3a87241af81d18899f631dc71ddbdd58b5de6c0107"
+    },
+    {
+      "bytes": 937,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/StoredValidationResult.kt",
+      "sha256": "39d70bc4858643f749f87b2a7357f8bcec452a632fac8e42f02ecde3a765cbcb"
+    },
+    {
+      "bytes": 1185,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/ValidationResultRepository.kt",
+      "sha256": "226e5db902d305a1842a638e4cf15defe6386c52e851c64ea47c4ad47fdf49dc"
+    },
+    {
+      "bytes": 817,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/model/SourceCatalogManifest.kt",
+      "sha256": "d33e0319aa1261ce50cd5ba3864ed826964f591b13c514fc32d13777a998cb44"
+    },
+    {
+      "bytes": 7973,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/domain/model/SourceConfig.kt",
+      "sha256": "e378d6837b2b0421ee17d2d5861b35870d328436ffc8b4eace608bc49213f16e"
+    },
+    {
+      "bytes": 8216,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/ClasspathInitialSourceCatalogPolicy.kt",
+      "sha256": "78d3767b580c3df392f8a54654b9ed5442a92da40d6e2a3c5026110915a40e60"
+    },
+    {
+      "bytes": 2287,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/DocumentPublicationStateEntity.kt",
+      "sha256": "89829545f064e80d0efa7ce37aec78b346717b9263f6b759cb0b61e74f5771ef"
+    },
+    {
+      "bytes": 6202,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JdbcPublishedSourceCatalogRepository.kt",
+      "sha256": "0f86e2bda99c5c4f76bc0b36ac3200ab0e34e11ea0ebe28e4717c9abd3320bcb"
+    },
+    {
+      "bytes": 5455,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JdbcSourceChangesetRepository.kt",
+      "sha256": "6c62793dcbe9d3b02c94c4f3645c5b1478bc9fcc9c20001ac7e9bcf92d009bd9"
+    },
+    {
+      "bytes": 4320,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JdbcSourceEditorDraftRepository.kt",
+      "sha256": "f3e9705737f600f690fca74b0af30044b9aef87a984c881eb362a5849a959db4"
+    },
+    {
+      "bytes": 14583,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JpaPublishedDocumentRepositoryAdapter.kt",
+      "sha256": "f3a9341cec57e54fc6f8a9fe5a4e0831b943a9f32d50fb07972ddff41e5b1409"
+    },
+    {
+      "bytes": 4959,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JpaRevisionRepositoryAdapter.kt",
+      "sha256": "2ed78d8eb48463dcbada88f9e7d1fc78c31a0b43f50887d55074e14d1c5d63c6"
+    },
+    {
+      "bytes": 9966,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JpaSourceConfigRepositoryAdapter.kt",
+      "sha256": "41f9fb4c313e42d28ab9ad3e12410f79cb8587146c8cb41e3866bde7e33f8c24"
+    },
+    {
+      "bytes": 3977,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/JpaValidationResultRepositoryAdapter.kt",
+      "sha256": "d2a4b0fb0725c1aaec489b5f143d753e40e0226939fade3bccb1618894bb6980"
+    },
+    {
+      "bytes": 1300,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/LifecycleStatusConverters.kt",
+      "sha256": "38ba44b7a7f692637f8b045706dd9f1f7953de8b016ef59d3b8cafe3040b1a1f"
+    },
+    {
+      "bytes": 3795,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/PublicationStateStartupValidator.kt",
+      "sha256": "dc1f72dbe2605714ccf582bb9cae8c55dde1bf14603011f48d1d4db8d1af8313"
+    },
+    {
+      "bytes": 3038,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/PublishedDocumentEntity.kt",
+      "sha256": "930ac626a5a7f0d6ca3841fded2a26423664c2254787f2c9a0f1cd5ccb69a710"
+    },
+    {
+      "bytes": 3645,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/RevisionFloorStartupValidator.kt",
+      "sha256": "06157babfda0a6a3d6f6416775bd35b170fb796667efd89178e76be02edc113a"
+    },
+    {
+      "bytes": 2739,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SourceConfigEntity.kt",
+      "sha256": "52b73fd30dc7e006852f05c33334e82d73fc779b0d5d89f4a81f8ca896d1ad64"
+    },
+    {
+      "bytes": 2726,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SourceConfigRevisionEntity.kt",
+      "sha256": "7279574143c17ea2a4c7af923f0e25564ac66bf30b5751fc5278ff363429d90a"
+    },
+    {
+      "bytes": 1651,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SourceValidationResultEntity.kt",
+      "sha256": "d953c6793d1a9130b4c756f7b035f73cd7c39828ef487da8fdacabdb8a59602c"
+    },
+    {
+      "bytes": 1317,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SpringDataDocumentPublicationStateRepository.kt",
+      "sha256": "fc17599298b36371faa644c6529b7259156c55a8da6067de21f9d381dec5230f"
+    },
+    {
+      "bytes": 796,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SpringDataPublishedDocumentRepository.kt",
+      "sha256": "4adbc6b3d7d691d68a2e6d76a8fb773003b889544f55f3d90b7210c9eb3c8c6b"
+    },
+    {
+      "bytes": 1829,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SpringDataRevisionRepository.kt",
+      "sha256": "74fa35e04f63b5f0546ee740f1d7c17b070f0dd5bdd1b085bf439d45b285dc74"
+    },
+    {
+      "bytes": 2693,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SpringDataSourceConfigRepository.kt",
+      "sha256": "df6e074acfb6d6ba292cf8db3b6772731df7519bf55d3d7d4d9083823c6a571b"
+    },
+    {
+      "bytes": 640,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/SpringDataValidationResultRepository.kt",
+      "sha256": "591f17eb98c3cfa269160bdb584e70b3b10f8e718f3347297a0667c468c58336"
+    },
+    {
+      "bytes": 1187,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/StartupConsistencyRunner.kt",
+      "sha256": "6fb046d5c138f8077776aa873499884c780f42982c49dfd02250b66f78897f65"
+    },
+    {
+      "bytes": 7539,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/parsing/SourceConfigParser.kt",
+      "sha256": "645adb5365e7890904ed1da4e1d6ab9b0c9412c5d2be98fe0ec6dbc66ea2596b"
+    },
+    {
+      "bytes": 497,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/signing/DocumentSignature.kt",
+      "sha256": "13e647dd5ee3635b467a3d62a3cd4476150c7f7fbe76d0029b7ee23f84b1c8ce"
+    },
+    {
+      "bytes": 918,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/signing/DocumentSignatureCodec.kt",
+      "sha256": "a51de3868fc35332e3d36c5f8dec3b56557de48bf99ed5dcf18a81530242d3ea"
+    },
+    {
+      "bytes": 5520,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/signing/DocumentSigner.kt",
+      "sha256": "63c1df4254ae78c0e59a7d57cbcd54d3f339fe91b60c5b7422808715d386910d"
+    },
+    {
+      "bytes": 1506,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/signing/SourceCatalogSignatureCodec.kt",
+      "sha256": "c77160d8a4b2fb7cc66dd897ebaf4fab7191a2ed97d68e27b1942b5076e02562"
+    },
+    {
+      "bytes": 2939,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/PackagedIconCatalog.kt",
+      "sha256": "8a2ddedbe2f0f4fe89274d223e56c6155d25bf4d71d205ae648ec542af5bed11"
+    },
+    {
+      "bytes": 7161,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/SourceConfigValidator.kt",
+      "sha256": "7bae350ef3be101e7174ded44f246b2e5cb31dcc990541dc252e871167086a05"
+    },
+    {
+      "bytes": 3373,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/StrategyCatalog.kt",
+      "sha256": "09896a7427d4b04dc15e38e98903a1bae98bf968aeeb255dde92328927cf3433"
+    },
+    {
+      "bytes": 7199,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/ValidationCodes.kt",
+      "sha256": "503fdb313fa2a5dddcff80894a7216f32af51120ab432cb7035d4e0afca97d5c"
+    },
+    {
+      "bytes": 1431,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/ValidationResult.kt",
+      "sha256": "3e7509f01466c186167db27cd6f04077ca3c7d3503a7276ace2518187e847738"
+    },
+    {
+      "bytes": 4886,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/ComplexityRules.kt",
+      "sha256": "65ba15a2c934016d249a98e46af238400b0412a249c42fb63eadbbf3fab48457"
+    },
+    {
+      "bytes": 1970,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/DocumentRules.kt",
+      "sha256": "8d7746cffaac376a4c579711e69e8a1f763c0031c8b818ca51d42a25b1e50fa4"
+    },
+    {
+      "bytes": 5353,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/EndpointRules.kt",
+      "sha256": "f9bd1db112178e279cc5a6bb6491e27992b1521920eba7d610577462688a80d2"
+    },
+    {
+      "bytes": 2110,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/FieldRules.kt",
+      "sha256": "0258a2b1fc738ebf0c96b65b2f1d45db66eeced129015f893105d027dea86c66"
+    },
+    {
+      "bytes": 19485,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/FilterRules.kt",
+      "sha256": "b1dba3f7d26b242a946f439f1e82fed05ef5dd8bfefde2acadc72925c959abb5"
+    },
+    {
+      "bytes": 1321,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/HeaderNamePolicy.kt",
+      "sha256": "f8f09ee7fb4644120d8213009082af080b0007d554ccdce67af89ac3fdde7f9f"
+    },
+    {
+      "bytes": 4877,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/LifecycleMetadataRules.kt",
+      "sha256": "9dd1becba2675a2c8f91cc22c8e1f6d4c20777f8873d6e2e27afdd58c5114540"
+    },
+    {
+      "bytes": 4321,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/SourceRules.kt",
+      "sha256": "1b7a102eebdb2e0f1d023895972ec06158d1e83e1cdb482b1838c332431dfa35"
+    },
+    {
+      "bytes": 2200,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/sourceconfig/validation/rules/UrlSafety.kt",
+      "sha256": "a8a12cc27d5b3124e929728787c58b8dba2b9be4926663da991e6ccf065b1c43"
+    },
+    {
+      "bytes": 5191,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/api/AdminTutorialController.kt",
+      "sha256": "b388a636327cb0e5f3e31fa78e949df39ab3bc8fb178771eee191d7f8ddc0539"
+    },
+    {
+      "bytes": 4420,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/api/PublicTutorialController.kt",
+      "sha256": "9e4db6168ddcb58b9647b6976be531f8d41fcf2e441c4991a3c33bafb49b12d5"
+    },
+    {
+      "bytes": 11529,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/api/TutorialDtos.kt",
+      "sha256": "fc206f267c457585bf50218233dbbf46bd31560b38b2e692c88ab2b5487b3f09"
+    },
+    {
+      "bytes": 940,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialExceptions.kt",
+      "sha256": "292244afc25ef0415d67bd0e6f51d2472c3997bd7bdb09fc1d372a97e1df53bc"
+    },
+    {
+      "bytes": 1777,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialMediaReconciliationScheduler.kt",
+      "sha256": "47a3d5e1a6a7d3fd321dbe318fdd36b05de76912e83341bdbcaa20dc0c129d39"
+    },
+    {
+      "bytes": 5661,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialMediaReconciliationService.kt",
+      "sha256": "a03def210b57617c8676a51963ec5b8ada3db4979c2ef923827de52fcb522797"
+    },
+    {
+      "bytes": 12379,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialMediaService.kt",
+      "sha256": "dfcfc60c038cbdf79478d40dee91a81cd9e0dd264a0506f1d9eaba4ebc41e515"
+    },
+    {
+      "bytes": 7805,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialSeed.kt",
+      "sha256": "bf54d776f0e1823a81c3d821fe94625cc6374ba6f175894e5d499d92c9ec0f7c"
+    },
+    {
+      "bytes": 20447,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialService.kt",
+      "sha256": "e2ce6a1708e65d362278e77dd54dbdaef1c666d3f5439972580b6e0794d6f6ce"
+    },
+    {
+      "bytes": 2420,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/application/TutorialViews.kt",
+      "sha256": "9fbe9286e82d64a43fa0bb0c5ecba16cf3bf4daeb795aade383700fcfe9b8d7a"
+    },
+    {
+      "bytes": 995,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialMediaReconciliation.kt",
+      "sha256": "ab1d203242458bbeec0fa609bc2e9bd0755674e8c6b992ab28f319cc4910d8bb"
+    },
+    {
+      "bytes": 2503,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialMediaStorage.kt",
+      "sha256": "4238339ba120ed6e1f1362e1fe3391b42c82ae20b1b84ead558b73639dab8b8e"
+    },
+    {
+      "bytes": 2517,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialModels.kt",
+      "sha256": "6055064684ae5729e4c2d987431356cc23de7ac5c23dfa9f9c4e4210a429b491"
+    },
+    {
+      "bytes": 2723,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialRepository.kt",
+      "sha256": "a27c064a33f1a8a7df6d0d40f6781cc27c7ac6d920a493c849ace7514cb4f024"
+    },
+    {
+      "bytes": 4479,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/domain/TutorialValidator.kt",
+      "sha256": "f7c05c068f5638eea854455eb004b97194ce25eff8e29217410e74a2137dbeb8"
+    },
+    {
+      "bytes": 20656,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/infrastructure/FilesystemTutorialMediaStorage.kt",
+      "sha256": "47260be08a47f8ffbfc2219a95400830fd79b2cee1dd59609c877024ee7743b7"
+    },
+    {
+      "bytes": 20683,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/tutorial/infrastructure/JdbcTutorialRepository.kt",
+      "sha256": "2714bd8c7e33e98ab6e9d12274d96276e22d3805bf99991fa4e69e815ef5a3a3"
+    },
+    {
+      "bytes": 2881,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/api/AdminUsersController.kt",
+      "sha256": "4c326299ccf0f5db122be8d7d038f604427722d38894a9069da0b05d7213b261"
+    },
+    {
+      "bytes": 2587,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/api/AuthController.kt",
+      "sha256": "e48e8dff17fcd526235e70098c19e39a3685999314707fcd749d242e74411a47"
+    },
+    {
+      "bytes": 1099,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/api/dto/AdminUserDtos.kt",
+      "sha256": "d7bc82deaaa2f2bc50f7b7f4a550de46b6c2c7257978c05ff95c932899fba8bf"
+    },
+    {
+      "bytes": 1195,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/api/dto/AuthDtos.kt",
+      "sha256": "b7d87260a9559f40e5a05e41ec17a149d824ea5abbf3d92d048268a8a8eec81f"
+    },
+    {
+      "bytes": 4197,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/application/AuthService.kt",
+      "sha256": "950d6190a8e992d8548f14650426ca17883d9b22b6d2f16bd33407dd99ac8407"
+    },
+    {
+      "bytes": 1157,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/application/CredentialVerifier.kt",
+      "sha256": "802108411db2426e8833971dd42cffdeb5e8dddb9ab4f3412a8f55feab32b094"
+    },
+    {
+      "bytes": 1413,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/application/PasswordPolicy.kt",
+      "sha256": "e425bffdcac1df1c1ca104d7a91e0eb6f1d26c54e6f6c672bd57983be6e8e324"
+    },
+    {
+      "bytes": 4352,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/application/UserAdminService.kt",
+      "sha256": "4ded0a3680c5c9bd7bec8f15a5ed0f47265281427ed022c85940b8ed931c08a6"
+    },
+    {
+      "bytes": 2740,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/application/UserService.kt",
+      "sha256": "3838e57c2c7bfdc8d7d35e20826bdce37c73cef12587c2374d3774ae230f0d3c"
+    },
+    {
+      "bytes": 350,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/domain/Role.kt",
+      "sha256": "04318a4cf491861c8b6e851c357b856fc326f4890b062f0f6657647c7820420c"
+    },
+    {
+      "bytes": 698,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/domain/SecurityStateRepository.kt",
+      "sha256": "40b9c9f1cd9a7638069e11aa606dbcd3edc23f7e88211f8b45b757f8f5c1dadf"
+    },
+    {
+      "bytes": 719,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/domain/User.kt",
+      "sha256": "948785d6e466d6c683c69a9785da57349e20c3fa78388eb105dcdb2d994349e7"
+    },
+    {
+      "bytes": 1297,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/domain/UserExceptions.kt",
+      "sha256": "f030d823529ea02d5d0970ad226ea0a5fc4ce2754110bd051270e559bc92cb30"
+    },
+    {
+      "bytes": 2643,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/domain/UserRepository.kt",
+      "sha256": "1d749e8aafbf189829c6d8c2eacdd5e889df390a467b7ba3f810f03e82465ce9"
+    },
+    {
+      "bytes": 754,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/infrastructure/JpaSecurityStateRepositoryAdapter.kt",
+      "sha256": "400292c514dc0f856748e747b621ef275e60a67617b347613be706aefb1746e0"
+    },
+    {
+      "bytes": 3119,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/infrastructure/JpaUserRepositoryAdapter.kt",
+      "sha256": "201fa86309740c0d0541d622d9826ae056a068c7a858c3d5bd11e3204381475d"
+    },
+    {
+      "bytes": 640,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/infrastructure/SecurityStateEntity.kt",
+      "sha256": "6be8fbe32753a72e15a585ffca70be9ed5cf94f51a606a98fa38b5c14e1c47e4"
+    },
+    {
+      "bytes": 776,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/infrastructure/SpringDataSecurityStateRepository.kt",
+      "sha256": "7eacff6c8782d006fb434c8aa72875637b17b7d13b0f90c012d407f156a88c72"
+    },
+    {
+      "bytes": 2880,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/infrastructure/SpringDataUserRepository.kt",
+      "sha256": "966626ca4ef4acc332399a9a33fc9f581f6efca03a7e3bd8ccb87fcd38f6c393"
+    },
+    {
+      "bytes": 2284,
+      "git_mode": "100644",
+      "path": "src/main/kotlin/me/manga/kira/backend/user/infrastructure/UserEntity.kt",
+      "sha256": "381a9391e7625e124d23306d8f15f3abf9da66e11ce8c26e257114547f743258"
+    },
+    {
+      "bytes": 1376,
+      "git_mode": "100644",
+      "path": "src/main/resources/application-dev.yml",
+      "sha256": "9ff97fbbca61fc8e92e4da0e8a3b17d9f4a92b01f018883fcf876e1eb02f94f4"
+    },
+    {
+      "bytes": 2337,
+      "git_mode": "100644",
+      "path": "src/main/resources/application-prod.yml",
+      "sha256": "dbdb4d007dceb683703d445092ff4f56a2058ad881ea599ae1216ffead62c497"
+    },
+    {
+      "bytes": 499,
+      "git_mode": "100644",
+      "path": "src/main/resources/application-server3.yml",
+      "sha256": "5900ee3cbc46c3b464ff6bbb5ccc3cfdbcd80a6589df746c7ffb3dd530223e6d"
+    },
+    {
+      "bytes": 2839,
+      "git_mode": "100644",
+      "path": "src/main/resources/application.yml",
+      "sha256": "a6cb928aaa724994c4d2cf4338d2dbde70e55934a359a43147e4f73d4996f0d6"
+    },
+    {
+      "bytes": 5447,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V10__source_catalog_v2.sql",
+      "sha256": "02861602565a779ba3c135f353b658fcdb70921e813cd55c840aac8f6b868d41"
+    },
+    {
+      "bytes": 1708,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V11__source_editor_drafts.sql",
+      "sha256": "d07498dea1167916b539733d0087539438377b73399ecb816120b8b10258e268"
+    },
+    {
+      "bytes": 1074,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V12__admin_step_up_grants.sql",
+      "sha256": "83ba1521125518bb6c81a3fccf390f73ad1ceba2e758ebb6cfb2cb79c8d08073"
+    },
+    {
+      "bytes": 430,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V13_1__user_credential_version.sql",
+      "sha256": "08086569e570276c2bad7184a1a2cc70410d1d07c7a6eed57563f51c01f4575e"
+    },
+    {
+      "bytes": 4409,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V13_2__source_catalog_bootstrap_state.sql",
+      "sha256": "f3b283507efe057ff15516060c02b27908449f60ab7a03f757a2747d75930045"
+    },
+    {
+      "bytes": 1647,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V13__source_changesets.sql",
+      "sha256": "2860a22d36a52c4f3b79c30704aa8a9dea6bcf554a0dde5c255529ca778eaa60"
+    },
+    {
+      "bytes": 1878,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V1__users.sql",
+      "sha256": "258b001e00c9e196d6a03f41a12ac5c3114cb026b886f00a9eb0c06c5aabfa3f"
+    },
+    {
+      "bytes": 6119,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V2__source_config.sql",
+      "sha256": "62be7c7851b1726041bf20c4dd6b94d4ce84f942d8610c7c9cb5dd66a597e3c2"
+    },
+    {
+      "bytes": 3775,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V3__published_documents.sql",
+      "sha256": "e1c3681df987f70e9f71402212c6219d469581b811fbc7c68958d0fb5b51bd23"
+    },
+    {
+      "bytes": 1774,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V4__audit_log.sql",
+      "sha256": "e53c6125b720b3adf73584a1a804869caf69c003504e0e10766ab496b6423204"
+    },
+    {
+      "bytes": 3750,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V5__completions.sql",
+      "sha256": "34f863306aa47d138c9c6971a70d32c22f4928b7d39d60d4b45f1410f39ac6c5"
+    },
+    {
+      "bytes": 247,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V6__completion_retention.sql",
+      "sha256": "90dfc7a272cac558b87c495519275e1437ecbc38a0fae0364d7e981f4183d1cc"
+    },
+    {
+      "bytes": 1309,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V7__signed_published_documents.sql",
+      "sha256": "d6ddaa2b248598e34e507544e9426be86a7c6740e806a00ed32154f4a9fee243"
+    },
+    {
+      "bytes": 358,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V8__enforce_completion_result_xor.sql",
+      "sha256": "3bb5490732cd45fb7fa97420a31cd5d9ff57b4690a7447a3b6f5b97bc60b13ea"
+    },
+    {
+      "bytes": 6183,
+      "git_mode": "100644",
+      "path": "src/main/resources/db/migration/V9__tutorials.sql",
+      "sha256": "03a61db889326d7b7893904ab2914f4d667228d3d42853cfe16ec324a1186ea2"
+    },
+    {
+      "bytes": 9542,
+      "git_mode": "100644",
+      "path": "src/main/resources/redis/auth-throttle.lua",
+      "sha256": "ab335d3405d63ac925204e62242bde73d03d3f9bf5355ba107a09ba44639b349"
+    },
+    {
+      "bytes": 5665,
+      "git_mode": "100644",
+      "path": "src/main/resources/redis/completion-admission.lua",
+      "sha256": "29e9cba7ef88e41883999fa4f9c59729df15203ead5cceeeeb005ef8c8a734b8"
+    },
+    {
+      "bytes": 30742,
+      "git_mode": "100644",
+      "path": "src/main/resources/source-config/bootstrap/app-bundle-v6-generic.json",
+      "sha256": "42a26ca29182a0c8c1150196ff55979fc41a8d828ed60556e9dcf6062b8b9095"
+    },
+    {
+      "bytes": 117801,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/media/discover-ar-dark.jpg",
+      "sha256": "8f87d7189d66b6cd9ec15c025e38c476f9bae76f5f349c3ab9a97f3cbb061508"
+    },
+    {
+      "bytes": 117499,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/media/discover-ar-light.jpg",
+      "sha256": "1d47942a07f55a76353fe8e79099f2daf18fa1e0651b75c18341769eefdba3e1"
+    },
+    {
+      "bytes": 123060,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/media/discover-en-dark.jpg",
+      "sha256": "7015d47ddf3a49aa518baac46429845cd780a70d8a33e3f66f86d35c48816891"
+    },
+    {
+      "bytes": 121510,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/media/discover-en-light.jpg",
+      "sha256": "f7bcc10ef46f6466d97c3be0f0226c4f7b8fae348583e504aaa45031ab8baad6"
+    },
+    {
+      "bytes": 65300,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/media/manga-details.jpg",
+      "sha256": "81098605f2808e1fdb8687491584412273d7b37d342cb8db9d9c4540adb4f45b"
+    },
+    {
+      "bytes": 112157,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/media/settings-dark.jpg",
+      "sha256": "6c326c649da36a9a87038c3183ae7f1c8780ea4229aa50698069d8f7c0ec4d7f"
+    },
+    {
+      "bytes": 12703,
+      "git_mode": "100644",
+      "path": "src/main/resources/tutorial-seed/tutorials.json",
+      "sha256": "b5354b5993564a1d8474dd11fb99206e921bd2330e82384d5f0f6f7edbb8e72c"
+    },
+    {
+      "bytes": 1414,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/ContextLoadsIT.kt",
+      "sha256": "22545b87985eb78321927ddbe19633181de2cd9be92e27865a2d3e8aa7dcf426"
+    },
+    {
+      "bytes": 5671,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/CanonicalJsonTest.kt",
+      "sha256": "fb01d86f5f8ffab577e9234d249aa9fd18190369ec1a45eb4a664a2ff3cefc5b"
+    },
+    {
+      "bytes": 4383,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/GlobalExceptionHandlerTest.kt",
+      "sha256": "024ffd850d5c76a43143142c9aff54ffd0e9ddc2d6ad03ef7d3bb307679a8041"
+    },
+    {
+      "bytes": 8073,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/web/RequestBodySizeLimitFilterTest.kt",
+      "sha256": "e01a0073e70bdc391aa476548bd19546add85a7d70f35ffa0dcbbeaaf3425b09"
+    },
+    {
+      "bytes": 1786,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/BoundedCompletionExecutorTest.kt",
+      "sha256": "165b93ab89a40279f87ea7279cb563add16cb5bdc6873b43df04a4d360146696"
+    },
+    {
+      "bytes": 16195,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionAdmissionResponseTest.kt",
+      "sha256": "e1ed673cfb24b7443022b2326445fd7583bbc723d05990b206f5e97d6ab5a40a"
+    },
+    {
+      "bytes": 1559,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionControllerTest.kt",
+      "sha256": "cbf3986c776f969f851d3853a90cf1cd398ec189d44d23a0bdd238e9edddddd6"
+    },
+    {
+      "bytes": 9705,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionDefaultModelTest.kt",
+      "sha256": "2d8d16a0223c2b79cefaa23fc15520a267cdddb8d907b4a0b1ddd811f66d2a55"
+    },
+    {
+      "bytes": 9279,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionErrorTaxonomyIT.kt",
+      "sha256": "720a8f7370fc2fb6bd41395665e69171ceb5e514885139582790b459ce0ef9b6"
+    },
+    {
+      "bytes": 9085,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionExecutionOwnershipTest.kt",
+      "sha256": "0a4b4aad5ba9aa2a975e75511efb1ba81570352e9c3edd132bd04e149679b2d2"
+    },
+    {
+      "bytes": 11014,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionIT.kt",
+      "sha256": "24d261d000de9921c4837f2317f1770adc248677f103aeebc49c186d7f91ed87"
+    },
+    {
+      "bytes": 8299,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionInterruptionTest.kt",
+      "sha256": "0b8a31bb1ffccd6ffca2c729e9ea988e2d17133b16bc93165a0971978786fee2"
+    },
+    {
+      "bytes": 23541,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionLifecycleIT.kt",
+      "sha256": "ed3dff52dbb502a99ae8b944c3da6f74352caaaec7e71ddd9ba6068eee242ebb"
+    },
+    {
+      "bytes": 28373,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionLifecycleTest.kt",
+      "sha256": "2d9df5050b35b032329a8a729a91658e9eeec5bc94e343dcba953f1f3ca61e63"
+    },
+    {
+      "bytes": 3838,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionOverloadIT.kt",
+      "sha256": "c023c878d04d7566e48a616b398e4ffcaf2931430d43e69fb7cc457be62f557c"
+    },
+    {
+      "bytes": 13417,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionReleaseFailureHttpIT.kt",
+      "sha256": "18759ae9406fdd54fdd1947533d1314a9df55e986ff707588df52beb3d33baea"
+    },
+    {
+      "bytes": 1574,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionResultConstraintIT.kt",
+      "sha256": "390d82919f75fbdf712a922110a10f56bc0db39c23ed99ece603d60e51f76b4f"
+    },
+    {
+      "bytes": 2214,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionRetentionIT.kt",
+      "sha256": "032e8331f12232e7ca752498937528afca423e5f33b29dcb50470ddfa6cfa877"
+    },
+    {
+      "bytes": 6634,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/CompletionStartupTest.kt",
+      "sha256": "89aee0be32b0225a867ea12bd057087f54fb368ce549478a529270f39dec6dd2"
+    },
+    {
+      "bytes": 2122,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/EchoCompletionProviderTest.kt",
+      "sha256": "292c9002d878db4c63bd37d5d5f818b499884176d71f6559034de93b22a70725"
+    },
+    {
+      "bytes": 2886,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/HttpCompletionProviderTest.kt",
+      "sha256": "c80df485b957d1527b0cd98b8d592fa987925a5bea6bb67e23926d23cb81b319"
+    },
+    {
+      "bytes": 3002,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/InMemoryCompletionAdmissionTest.kt",
+      "sha256": "00c04a61255bcad0fbf2a543c51d4de19147943086908011e87f18c0229e53b7"
+    },
+    {
+      "bytes": 37246,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/completion/RedisCompletionAdmissionIT.kt",
+      "sha256": "a575f9f23dae2f698e31de089cc0f8614325e7211d3ae68339f041537c4efe34"
+    },
+    {
+      "bytes": 1275,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/config/AuthThrottleBindingTest.kt",
+      "sha256": "4ddc1d55017ec11f59740037c3abed3a49c7f96d7ed683fd2925a64b8d019e68"
+    },
+    {
+      "bytes": 4718,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/config/CompletionDefaultModelBindingTest.kt",
+      "sha256": "7fa7e1d97f74b540bf982342fee49654e96dfd05884ce3f214619ac967f46a2d"
+    },
+    {
+      "bytes": 11691,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/config/DocumentSigningStartupTest.kt",
+      "sha256": "159f92c86481d6a587e1a4ff2815ccdd2a884d40c80c6b24ceeec9072a01eab9"
+    },
+    {
+      "bytes": 6542,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/config/ProductionSecurityPolicyTest.kt",
+      "sha256": "ba2946dc6c204c18f2239d19cdd799d082de1be93c13c61e24d06b4d4024cffe"
+    },
+    {
+      "bytes": 7744,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/config/Server3IngressBindingTest.kt",
+      "sha256": "c96172f5f9016e7d0055b15563e0ad1253bc6d5801d443ea04d78db536654bde"
+    },
+    {
+      "bytes": 30793,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/database/DatabaseBackupRestoreIT.kt",
+      "sha256": "38295bfb332989f117ddbf4e9af25366ab093aa390ffc9ef2a84d10ee81ba975"
+    },
+    {
+      "bytes": 1376,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/observability/CoordinationHealthIndicatorTest.kt",
+      "sha256": "1129fc88d68aa5b92e5fd6c02ab9a3bffb16865f6f6a07980b0e4d600bf3b883"
+    },
+    {
+      "bytes": 1297,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/observability/MetricsEndpointIT.kt",
+      "sha256": "f5e676a2049e17fd062a8668220de28e1568169b990b469b9566c332dec6739e"
+    },
+    {
+      "bytes": 2080,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/AdminSeederIT.kt",
+      "sha256": "4ee224d48a1bf887883b33395211bff8084744217b92b878c8fa1d67352f8cba"
+    },
+    {
+      "bytes": 6879,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/AuthAdmissionConcurrencyTest.kt",
+      "sha256": "93c6b34b5289153662db446ad4987fb0feb22d013a575c1af75659da5cbc55b5"
+    },
+    {
+      "bytes": 10968,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/AuthAttemptCallerTest.kt",
+      "sha256": "b437baa930795c65e15bbbeeabcd28aacce68da46df1da8c78193580d9542692"
+    },
+    {
+      "bytes": 9432,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/AuthThrottleServiceTest.kt",
+      "sha256": "e629c49a05cae063c93e164106a86d33eb54585042157b7042ee37030e501b57"
+    },
+    {
+      "bytes": 7293,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ClientIpResolutionIT.kt",
+      "sha256": "28f9ecc175d9deff2fcfe838246934eea2cb0af3121a27f1e8fc12bd247c3583"
+    },
+    {
+      "bytes": 4940,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/JwtServiceTest.kt",
+      "sha256": "5bc831102662eb1ec4ce6ffeac477e75cd63e96cd09c3703c0ad536283e9c5ba"
+    },
+    {
+      "bytes": 1374,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/PasswordHashingTest.kt",
+      "sha256": "f9150daa161ba9b45b15c400ecc5fe4281c0a3be6c473a6051644f2f09d9bc98"
+    },
+    {
+      "bytes": 5849,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/RedisCoordinationFailureTest.kt",
+      "sha256": "8f220a134923f36df60ff84c6dbbca55853fda5433988803dd354dd453077bf0"
+    },
+    {
+      "bytes": 26535,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/RedisCoordinationIT.kt",
+      "sha256": "46a195a8dd06bd7872e9dff048d2b0cde815b3e7b276f34f5e73e8334f54d237"
+    },
+    {
+      "bytes": 10009,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/TrustedIngressIdentityTest.kt",
+      "sha256": "5fc3dc9a9fef7a70b64cb66b103b57da162ddff594a67100cbd1884915bf5840"
+    },
+    {
+      "bytes": 23344,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/FlywayIncrementalOrderIT.kt",
+      "sha256": "43ead5ba258d45e3cdcfbe804d33aab6ff181beba7cd457b22730b25eabea476"
+    },
+    {
+      "bytes": 4298,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/FlywayMigrationIT.kt",
+      "sha256": "b58412530ff4130d9563202d5419437ed62a557a0198d7b5e2fc9562848d1d13"
+    },
+    {
+      "bytes": 3748,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/HeaderFilterSafetyFixtures.kt",
+      "sha256": "e498ff6197773585923517c7efaa1acfb57139abfb70888908e7c3be76fe2afd"
+    },
+    {
+      "bytes": 4208,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/HistoricalRevisionChecksumIT.kt",
+      "sha256": "5a521805ef5f179ed7b202d15ad281e4f04d1618d2daf2db603eb028c4a7ee41"
+    },
+    {
+      "bytes": 2085,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/InitialSourceCatalogFixtures.kt",
+      "sha256": "07e729dd897ba0899d086f8b2b1b2f5b6ec8aa3a87c582dd3e9f928cefa77bab"
+    },
+    {
+      "bytes": 4488,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/InitialSourceCatalogFixturesTest.kt",
+      "sha256": "947db836a03a6f17fb966b43c937bf17bba7381362884b8459badc9e01ada396"
+    },
+    {
+      "bytes": 6744,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/SourceAdminHistoryTest.kt",
+      "sha256": "4fafc89c16f2f0fd909f19030822e913bd9fd6dd97edb04b41d05eea41001bfc"
+    },
+    {
+      "bytes": 2996,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/SourceAdminListBatchingTest.kt",
+      "sha256": "8521b2bf2df998fe9766b6138422d4e49d68a56882ba48801e2c19d3a633a223"
+    },
+    {
+      "bytes": 2623,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/SourceConfigFixtures.kt",
+      "sha256": "097234e984e50f32c327dc52fe4b5f38d4a280f978a2a7336379fb699f9fce33"
+    },
+    {
+      "bytes": 12875,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/StartupConsistencyIT.kt",
+      "sha256": "1ed4070a137a5555dd3a5796ed233a6e03c6446d1b4bc66596474b729b1390dc"
+    },
+    {
+      "bytes": 17068,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AbstractAdminSourceIT.kt",
+      "sha256": "757ca4c2c54b59365259340f245c8ddef523bea6aa9a728c09d35b6dc875f212"
+    },
+    {
+      "bytes": 1237,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AdminAuditIT.kt",
+      "sha256": "6bf4f9b439980f2a90a3ec5894390b13568c43b3967af394a03e19ba7deed3d8"
+    },
+    {
+      "bytes": 3059,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AdminStepUpIT.kt",
+      "sha256": "243b54adb86811017c4926992e8da6ebd8d4352bf18d60130c949d76220e45cd"
+    },
+    {
+      "bytes": 2296,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AuditLogIT.kt",
+      "sha256": "f06196caaa7d99c91d585cd513ba9538f05f35aecf43c4c2bbe0cc927050d519"
+    },
+    {
+      "bytes": 20483,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/BootstrapConcurrencyIT.kt",
+      "sha256": "f54345069b0c2099c491f2816adb636471b59ca173833869e1f92f21acf0c5ae"
+    },
+    {
+      "bytes": 14208,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/BootstrapEndpointIT.kt",
+      "sha256": "f38c37fcbe3ddd6022d8699d9e358405f1af88d07f7cbe3ab2b1b402a5df0fd5"
+    },
+    {
+      "bytes": 8884,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/BootstrapLateRollbackIT.kt",
+      "sha256": "01b0a7b769b3b67f6e7820cdcec9bb2ecc5b07d976f54aa7981058ef2ba2581b"
+    },
+    {
+      "bytes": 10286,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/BootstrapPublicationGuardIT.kt",
+      "sha256": "3ed1c1cf5abe622a93189b52b8bd61e5752981b43afec9e750ba90dd84bc7d1e"
+    },
+    {
+      "bytes": 7449,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/BootstrapReplayIT.kt",
+      "sha256": "3073f0bf57ac546110c6f460c361a92cb460d37da323cc202cc5fbe6d8541008"
+    },
+    {
+      "bytes": 2216,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ConcurrentDifferentSourcePublishIT.kt",
+      "sha256": "9c94cf3f082a087f6ce509d8451044f31286113afa93f542fde8f142bf8c7385"
+    },
+    {
+      "bytes": 3132,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ConcurrentSameSourcePublishIT.kt",
+      "sha256": "88ed6aeb19bd0476d41776cf10172662f2369ffe517be333f88fe74ce113fefd"
+    },
+    {
+      "bytes": 2178,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ConcurrentSameSourceRevisionIT.kt",
+      "sha256": "9ec1bb21c34ca87a9c1cf68c1e59ed327e5e865f7197d2f04ef06a450e77cced"
+    },
+    {
+      "bytes": 3867,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/DisableRemoveVisibilityIT.kt",
+      "sha256": "2100d6eb53b6d4142bbaee4e30d098999f036841bafa9f873e15069a55573db6"
+    },
+    {
+      "bytes": 3995,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/DocumentOrderDeterminismIT.kt",
+      "sha256": "6ab5c46e1eb0f8b73414e1629183a9d98214f5db6c29185dd49489cea853982e"
+    },
+    {
+      "bytes": 3615,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/EmptyDocumentPublishIT.kt",
+      "sha256": "d90eaf8819f23490f9f9c0094a257bf1be4989fca0328e31b9ab74e57fa09e19"
+    },
+    {
+      "bytes": 2938,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/EndpointCompletenessIT.kt",
+      "sha256": "8e0c1f5d221929cfaa4d06ebc90c5219c4fc72bc863690324f45c397a356aff5"
+    },
+    {
+      "bytes": 4711,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/FullBundledParityIT.kt",
+      "sha256": "35c1a00ae1359ba64ae90feb4ce4c3269786c1186759369258abf8b6dc3e84e7"
+    },
+    {
+      "bytes": 15402,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ImportBundledIT.kt",
+      "sha256": "1bc6a6406619facba5454fbc52d252846dcbcfbbeb03ba327ccbba7b3b1eaf01"
+    },
+    {
+      "bytes": 1345,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ImportCreatesSingleSnapshotIT.kt",
+      "sha256": "279a19ec00a9f6c48af0cb08ea3ab388b3fd034027932bb9f1f10df466532771"
+    },
+    {
+      "bytes": 2904,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ImportNoChangesIsNoOpIT.kt",
+      "sha256": "02ae637387b85f7e64ff121037392d5d4fe2f99042d07a0b74982ff839d92d97"
+    },
+    {
+      "bytes": 3897,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/LifecycleNeutralStorageIT.kt",
+      "sha256": "361e7c5a718fdc1302d19d981884d48d0ce152619344715b1ec3e61cedf32022"
+    },
+    {
+      "bytes": 938,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/PathApiMismatchIT.kt",
+      "sha256": "9fcabb9b71f3171871bf92e10cec6165ebe385fe3095f963a667e50fea5066df"
+    },
+    {
+      "bytes": 8968,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/PublicConfigSecretsRejectedIT.kt",
+      "sha256": "c1646d0eb17fcc781038bee44dd6837a9665adfe17bc303e924f933ae40a19da"
+    },
+    {
+      "bytes": 1981,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/PublicationFailureRollbackIT.kt",
+      "sha256": "0a9c8c585274264df766fcf2e6f4b76dba06c329e18dadfa97298fd5eb78e59e"
+    },
+    {
+      "bytes": 2379,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/PublishInvalidFailsIT.kt",
+      "sha256": "bcfea31adcc76410828bfbf4a7befcb4b8c9e052e1197bdf28e014253d27bff0"
+    },
+    {
+      "bytes": 3264,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/PublishStateRulesIT.kt",
+      "sha256": "1a77ab51e4a0ce31eb4ccb62dd2ac953d0658f6a08fa0a1f3606cae6df684b22"
+    },
+    {
+      "bytes": 2040,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/RemovedCannotReturnIT.kt",
+      "sha256": "a7e3f612a227ec9ba826b5387fb38c53ac13186de5802c2314f5ed236c4f4bf4"
+    },
+    {
+      "bytes": 2834,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/RetiredSourceVisibilityIT.kt",
+      "sha256": "d52af4a7c653910e6692be522cf1d7bdb25b40602d53bb7523835799ac34b651"
+    },
+    {
+      "bytes": 3998,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/RollbackIT.kt",
+      "sha256": "0955d55d4f6280b71283f60a627237ac24de5e5e498d152f04d41199ed54269f"
+    },
+    {
+      "bytes": 2292,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/ServerManagedLifecycleIT.kt",
+      "sha256": "c60f9a818513cfb36e814b06fd77097f9fb070e82ac5dafb0f9390195e99d893"
+    },
+    {
+      "bytes": 2912,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SnapshotTimestampConsistencyIT.kt",
+      "sha256": "1d339de4a9b7ead1b0ac3649f5e976cc8a9a9fe023275770d44e77feaa9ca5a5"
+    },
+    {
+      "bytes": 6116,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SourceChangesetIT.kt",
+      "sha256": "427f7eda67a55df068688abc73c41366e638d5aaf08b7062e21c42d743e1e7a6"
+    },
+    {
+      "bytes": 13539,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SourceEditorDraftIT.kt",
+      "sha256": "a26764c204b98fe78221ddbdaed55d810c487256ecb1d3effd6858fb3e5595d6"
+    },
+    {
+      "bytes": 9478,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SourceOperationalModeIT.kt",
+      "sha256": "6a5ac6fedee59aee933b211391ba0c25cd931e08f1326195a59943a94436305d"
+    },
+    {
+      "bytes": 2842,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SourcePreviewIT.kt",
+      "sha256": "16a57f9f8c9702f4d9f4e56ae5204a6c879aa9ea05e5d46e75eb3f70f4bea2ed"
+    },
+    {
+      "bytes": 4248,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SourcePublishFlowIT.kt",
+      "sha256": "2f1d50b6cfee2128d9b48cb8671254af7f281356b06cb9e573cb00de6fd23c10"
+    },
+    {
+      "bytes": 1209,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/SourceStudioCapabilitiesIT.kt",
+      "sha256": "216486fa88a17647b242f5c366eb79355bc6045df4aa98583e7eee8ccae3c795"
+    },
+    {
+      "bytes": 4563,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/StrictAdminParserIT.kt",
+      "sha256": "780ba482d3bb92d46a41167adf38bca8446d48a2ede15862ce0b1b1dba0fbd27"
+    },
+    {
+      "bytes": 4412,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/StructuralGateIT.kt",
+      "sha256": "405646019392a02dc6a44a3690428f99c0f61e7633ea789203efc357fd5381e6"
+    },
+    {
+      "bytes": 9984,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/api/AdminHistoryControllerTest.kt",
+      "sha256": "7c035bdaf0a2cc11fea8826586d7babad85efe80ae1b2235f0eaa7e28c1f14c6"
+    },
+    {
+      "bytes": 12324,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/api/GenericV2CutoverControllerTest.kt",
+      "sha256": "5463c7cf1fcba65a24186259511d5103ed2c64469fa91b152906cd1bda1bbe2b"
+    },
+    {
+      "bytes": 3963,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/api/IfNoneMatchMatcherTest.kt",
+      "sha256": "517a2393c8bee98c647792a4ffb810406b15ac0b2e1e75d04440b51f909059d9"
+    },
+    {
+      "bytes": 10525,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/api/SourceConfigConditionalResponseTest.kt",
+      "sha256": "871a21b7761d3fe4ddc01efe496236f36ce3a500e712b6f08d3e495d9a705b83"
+    },
+    {
+      "bytes": 25733,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/domain/InitialSourceCatalogPolicyTest.kt",
+      "sha256": "1cef40d03932ada4fa61d85c6f77524c48d991e612a8e97220c7b824bf1c4b9a"
+    },
+    {
+      "bytes": 5839,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/domain/LifecycleStateMachineTest.kt",
+      "sha256": "b87deef990d820a3f89a0bfefa311a897e72497f8a2e0cabd3e298be1b39471f"
+    },
+    {
+      "bytes": 4533,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/AdminHistoryJdbcObserver.kt",
+      "sha256": "377a20271b7437a8c4c23a84a4247949e7ccf80fcea85b69cca5b0e6b5cc582f"
+    },
+    {
+      "bytes": 18200,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/infrastructure/AdminHistoryRepositoryIT.kt",
+      "sha256": "786bac5a93a345a6c5d764ca740c797a7f882f86119952815fbaf0a3935c8f94"
+    },
+    {
+      "bytes": 4052,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/parsing/SourceConfigParserTest.kt",
+      "sha256": "111f0ebef72bf2a18c006b522344d10c77612924b5b2ef8b087683ebae8a6dbd"
+    },
+    {
+      "bytes": 16481,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/BootstrapSignedCatalogFixtureIT.kt",
+      "sha256": "4756e1f21e6deeca4a14c729870f816a12cd2eea2816d7731fdc576ff53cb3a7"
+    },
+    {
+      "bytes": 4519,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/ETagIT.kt",
+      "sha256": "6d33e2702a5c74da8aa7c606915bb8196a134af8086d3a418e87aa367641c317"
+    },
+    {
+      "bytes": 2384,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/IfNoneMatchVariantsIT.kt",
+      "sha256": "cbec6825b348256556cfca5bd4742bc74f743cc7ba8f2ab2cde2c17027b3e34f"
+    },
+    {
+      "bytes": 10488,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/PublicSourceSummaryConsistencyIT.kt",
+      "sha256": "c2179ce8dc4eacfdc85488914839f97f237a4052a860972287aed7a84bdb30e8"
+    },
+    {
+      "bytes": 10876,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/PublicSourcesIT.kt",
+      "sha256": "fa3fd72b7f8aabbc8592e3f2271ef8d1e4773c01a2d5e7e3631c3b9608e962f2"
+    },
+    {
+      "bytes": 1634,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/RawBytesChecksumIT.kt",
+      "sha256": "d0dcb4d9cffc2ca54d881081374db384ef72a38fa23bae5355efd93b20272a5a"
+    },
+    {
+      "bytes": 9279,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/public/SourceCatalogV2IT.kt",
+      "sha256": "a1053ba8636947d3ffb69cd3da34af233ea544e9301b47b699f6bd8fe1cb8d93"
+    },
+    {
+      "bytes": 3405,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/signing/DocumentSignerTest.kt",
+      "sha256": "adfd49497533654c092f8b16e06906ad7260c3867b4fae7d16e053b9741a6601"
+    },
+    {
+      "bytes": 5409,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/signing/SignedDocumentIT.kt",
+      "sha256": "f99e5bffe90d329b7f945a437f47690f27461b8c85b295e486fe30257e3e6f05"
+    },
+    {
+      "bytes": 16722,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/validation/ContractInventoryTest.kt",
+      "sha256": "249b28d3fa4a94d30c6ff1f7cd581bd3f5cc76962e64b2aff6c50e8165a1440a"
+    },
+    {
+      "bytes": 2305,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/validation/SourceConfigValidatorComplexityTest.kt",
+      "sha256": "3fc9794f7ddada5a6eb703cfbe164de742005303e14e65f503be3359059e34d6"
+    },
+    {
+      "bytes": 16901,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/validation/SourceConfigValidatorFilterTest.kt",
+      "sha256": "bd648f6306851649191ef2570fc3bbf166800d4e0870c6815e6df1885f0a4c58"
+    },
+    {
+      "bytes": 8213,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/validation/SourceConfigValidatorHeaderFilterTest.kt",
+      "sha256": "2fafe319e2d9e5aa20f1e04a844e0b991b08878051aecdf3c62d65da0e22c016"
+    },
+    {
+      "bytes": 13503,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/validation/SourceConfigValidatorTest.kt",
+      "sha256": "99763db4bf508452ccce5a6023c0842554f22111d93dcbcefcfe598b901ab8f1"
+    },
+    {
+      "bytes": 6499,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/support/AbstractIntegrationTest.kt",
+      "sha256": "b39a14d78dcfe1385b03e69d56b7aa7f4b45b7a3c48b0b5e6970154231a21496"
+    },
+    {
+      "bytes": 3229,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/support/JwtTestSupport.kt",
+      "sha256": "5736acedc78e403a44f40a3529b14c85a753bd85b3cf910c3bd23abb181c4bf0"
+    },
+    {
+      "bytes": 765,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/support/MutableClock.kt",
+      "sha256": "c4608dab50508fd5b5198d614eb5562e00f4bd22032d2d5891f38b5467278cb0"
+    },
+    {
+      "bytes": 15592,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialCategoryRestartIT.kt",
+      "sha256": "4daaa85b496b69023baf9050d3785702d4021f564341c1c1fd94cb69fcbe06db"
+    },
+    {
+      "bytes": 27438,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialLifecycleIT.kt",
+      "sha256": "91155aacf66bedcf9494c354cda47803540d3b8dc1ee73790829aee1c2a83b33"
+    },
+    {
+      "bytes": 10727,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaCacheControlTest.kt",
+      "sha256": "700d6418f5b11174242cc9d1eb36975d044a6dbed45c76d41edaef34f5f3c0c9"
+    },
+    {
+      "bytes": 13243,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaIntegrationSupport.kt",
+      "sha256": "3084715e10e4cb0b7f374074eb68e3f5f085d8987313f5d4895e7745abc19a27"
+    },
+    {
+      "bytes": 15765,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaIntegrityIT.kt",
+      "sha256": "1f23d8e424b19037095ead527292a7fc972da9b2155c96a9e6cfbd41f4704af3"
+    },
+    {
+      "bytes": 30496,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaReconciliationIT.kt",
+      "sha256": "3cf220392b3915d4a8c3bfa3da66b2f8f0938bd20f922e96dc2b6106a6988298"
+    },
+    {
+      "bytes": 24823,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaStorageTest.kt",
+      "sha256": "87ad1eb5df3f7a3f879a5843f1eee6804669935321f0f01df8aa0dab9e3a915c"
+    },
+    {
+      "bytes": 15876,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialMediaTransactionIT.kt",
+      "sha256": "ec8919a59a522adce05424fa98b520c8ceb4a9e48b349a334ab2683362255807"
+    },
+    {
+      "bytes": 4255,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialSlugBoundaryIT.kt",
+      "sha256": "eecdf019238e1af297fa5ab1a3abcb2202449f150f24b6e6ace69d0e515e0b04"
+    },
+    {
+      "bytes": 2672,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/tutorial/TutorialValidatorTest.kt",
+      "sha256": "7c5ca3068511b2d1f5501655b50a6ca2ba982867e2253dd891fc6232580e2e42"
+    },
+    {
+      "bytes": 3474,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/AuthFlowIT.kt",
+      "sha256": "a947d14c1b9dbeb8b9c0793de91e7de53aaa016d2529ffe3c42d8860e719bf9e"
+    },
+    {
+      "bytes": 3540,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/AuthenticationRateLimitIT.kt",
+      "sha256": "8a9b79a38bee345cc86da4ae9cdba8258391898bdd1255297be61068b5cd70ea"
+    },
+    {
+      "bytes": 2739,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/ConcurrentLastAdminDisableIT.kt",
+      "sha256": "27f3ed7dd0d41cae1a58485fbbb3064b471982d7ab236a63f5cc3000fb75dad8"
+    },
+    {
+      "bytes": 1892,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/CredentialVerifierTest.kt",
+      "sha256": "b0bc4c7597d99f7d0340faac5029d339d617e8f708b0bdfdeb0cbb8ffb9aaa4d"
+    },
+    {
+      "bytes": 5041,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/DisabledUserAuthIT.kt",
+      "sha256": "3f0c369d2afd6f85451edafca4afdf727869fa03836d554ee41a0bcbce2dbcbb"
+    },
+    {
+      "bytes": 2705,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/EmailNormalizationBoundaryTest.kt",
+      "sha256": "a60e94ab77063d7b20621605dc1d9befcc5431b6030b9e9b3ad53a8b02cf226c"
+    },
+    {
+      "bytes": 8834,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/LoginAuditIdentifierIT.kt",
+      "sha256": "8ee4dc586e11bd90bca0388261f806e142fbc119ed8f51c93b0561b9dbe95314"
+    },
+    {
+      "bytes": 13000,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/RealBearerTokenIT.kt",
+      "sha256": "f584c748c69ec7c98636a07766eb27af1245d23e41cb9ddc3a3a0e992bcda364"
+    },
+    {
+      "bytes": 18709,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/SecurityMatrixIT.kt",
+      "sha256": "65eca9e5da8e2174916de2bf631d365e65bb7322dd5e2066a1efe25404505539"
+    },
+    {
+      "bytes": 16115,
+      "git_mode": "100644",
+      "path": "src/test/kotlin/me/manga/kira/backend/user/UserCredentialMutationIT.kt",
+      "sha256": "e8ee6dbfc0139d2ead3a5692b4fd1c52cfbf6587176397094212d2b914ca22b9"
+    },
+    {
+      "bytes": 1554,
+      "git_mode": "100644",
+      "path": "src/test/resources/application-test.yml",
+      "sha256": "af538d332c0dd2b05a7d555b28f434d5e8d3ac445810e1a22a83bffaabc7f17e"
+    },
+    {
+      "bytes": 40561,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/bootstrap-v2-v6-signed.json",
+      "sha256": "cfe2375bec17a9e137b373262cffb97a455d6e9a03f84dcbd4cdfca2eb018b65"
+    },
+    {
+      "bytes": 45117,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/bundled-full.json",
+      "sha256": "1aa86aac2f1ac4aa1fb2b7e3770617b0f364d699bfdd5e14788d6c3d71c9643c"
+    },
+    {
+      "bytes": 7643,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/bundled-trimmed.json",
+      "sha256": "6ce26fe63021bef6346751dbaa517a1ffa8e1e8a75d08aad7db18b9dea16ae39"
+    },
+    {
+      "bytes": 117,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/invalid-duplicate-key.json",
+      "sha256": "74f81ea1218a5effbdfb812ec575e37ae09c321dac828920eb42fe5f1d68320a"
+    },
+    {
+      "bytes": 122,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/invalid-trailing-garbage.json",
+      "sha256": "d4891b607052594c85cdf3ad8e775b9ee953cf7ff01b045582dfdeb04039818b"
+    },
+    {
+      "bytes": 129,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/invalid-unknown-key.json",
+      "sha256": "616d3cac528583349b5abfbb8fd020fae9a58f598d02cb2c2188b25da1c3a8ac"
+    },
+    {
+      "bytes": 3978,
+      "git_mode": "100644",
+      "path": "src/test/resources/fixtures/valid-document.json",
+      "sha256": "c4c46ab4f557ef35afdba8398c2dab936d5b17f6adf9e181044618a23d788578"
+    }
+  ],
+  "reviewed_base_sha": "96a934ab108208e01a29805d1ec448ee5827f6f4",
+  "schema": "backend2526-source-pins-v1"
+}
