@@ -14,7 +14,7 @@ MODE=${1:?}
 
 if [[ $MODE == setup ]]; then
   [[ ${GITHUB_REPOSITORY:?} == kira-manga/Kira-backend && ${GITHUB_EVENT_NAME:?} == push &&
-     ${GITHUB_REF:?} == refs/heads/remediation/engine234-backend14-gate-20260915-01 && $GITHUB_RUN_ATTEMPT == 1 ]]
+     ${GITHUB_REF:?} == refs/heads/remediation/engine234-backend14-gate-20260915-02 && $GITHUB_RUN_ATTEMPT == 1 ]]
   python3 - "${GITHUB_EVENT_PATH:?}" <<'EVENT'
 import json
 import sys
@@ -159,15 +159,6 @@ case "$MODE" in
     capture service-images 20s "${DOCKER[@]}" image inspect postgres:17.6-alpine redis:7.4.7-alpine \
       --format '{{.Id}} {{json .RepoTags}} {{json .RepoDigests}}'
     [[ -d ${ANDROID_HOME:?} ]]
-    if [[ ! -f $ANDROID_HOME/platforms/android-37/android.jar ]]; then
-      SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-      [[ -x $SDKMANAGER ]]
-      printf 'y\n%.0s' {1..100} > "$R/tmp/android-license-input"
-      capture sdk-platform 150s "${BASE_ENV[@]}" "$SDKMANAGER" \
-        "--sdk_root=$ANDROID_HOME" 'platforms;android-37' < "$R/tmp/android-license-input"
-    fi
-    [[ -f $ANDROID_HOME/platforms/android-37/android.jar ]]
-    sha256sum "$ANDROID_HOME/platforms/android-37/android.jar" > "$E/sdk37-android-jar.sha256"
     ;;
   engine)
     TASKS=()
