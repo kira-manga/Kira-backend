@@ -186,7 +186,7 @@ def neutralNames = ['kmpPartiallyResolvedDependenciesChecker', 'checkKotlinGradl
     'exportTargetPublicationCoordinatesForJvmApiElements', 'exportTargetPublicationCoordinatesForJvmRuntimeElements'] +
     metadataCompiles + nativeMetadataSupport
 def backendNames = ['checkKotlinGradlePluginConfigurationErrors', 'compileKotlin', 'compileJava',
-    'processResources', 'classes', 'compileTestKotlin', 'compileTestJava', 'processTestResources', 'testClasses', 'test']
+    'processResources', 'classes', 'jar', 'compileTestKotlin', 'compileTestJava', 'processTestResources', 'testClasses', 'test']
 gradle.taskGraph.whenReady { graph ->
     def requested = role == 'neutral' ? modules.collectMany { module ->
         def path = ':' + module.replace('-jvm', '') + ':'
