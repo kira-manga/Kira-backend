@@ -14,7 +14,7 @@ MODE=${1:?}
 
 if [[ $MODE == setup ]]; then
   [[ ${GITHUB_REPOSITORY:?} == kira-manga/Kira-backend && ${GITHUB_EVENT_NAME:?} == push &&
-     ${GITHUB_REF:?} == refs/heads/remediation/engine234-backend14-gate-20260915-03 && $GITHUB_RUN_ATTEMPT == 1 ]]
+     ${GITHUB_REF:?} == refs/heads/remediation/engine234-backend14-gate-20260915-04 && $GITHUB_RUN_ATTEMPT == 1 ]]
   python3 - "${GITHUB_EVENT_PATH:?}" <<'EVENT'
 import json
 import sys

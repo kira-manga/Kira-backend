@@ -193,8 +193,22 @@ gradle.taskGraph.whenReady { graph ->
         [path + 'jvmTest', path + 'publishJvmPublicationToEngine234CandidateRepository',
             path + 'publishKotlinMultiplatformPublicationToEngine234CandidateRepository']
     } : ['test']
-    if (gradle.startParameter.continueOnFailure || gradle.startParameter.taskNames.toSet() != requested.toSet()) {
-        throw new GradleException('Only the exact single Engine or Backend gate invocation is allowed; no --continue')
+    if (gradle.startParameter.continueOnFailure ||
+        role == 'neutral' && gradle.startParameter.taskNames.toSet() != requested.toSet()) {
+        throw new GradleException('No --continue or nonexact Engine gate request is allowed')
+    }
+    if (role == 'backend') {
+        // taskNames also contains --tests arguments; verify the effective Test selection instead.
+        def tests = graph.allTasks.findAll { it instanceof Test }
+        def expectedClasses = new JsonSlurper().parse(new File(evidence, 'inputs.json')).backend_tests.keySet()
+        if (tests*.path != [':test'] || expectedClasses.size() != 19 ||
+            tests[0].filter.commandLineIncludePatterns.toSet() != expectedClasses ||
+            !tests[0].filter.includePatterns.empty || !tests[0].filter.excludePatterns.empty ||
+            !tests[0].includes.empty || !tests[0].excludes.empty) {
+            throw new GradleException('Only the exact 19-class Backend Test filter is allowed')
+        }
+        new File(evidence, 'backend-test-filter.txt').text =
+            tests[0].filter.commandLineIncludePatterns.toList().sort().join('\n') + '\n'
     }
     def bad = graph.allTasks.findAll { task ->
         role == 'neutral' ? !(modules.collect { ':' + it.replace('-jvm', '') }.contains(task.project.path) &&
