@@ -8,7 +8,9 @@ internal class PersistenceJdbcDriverRoot(
     capacity: Int,
     val pathStyle: PersistencePathStyle,
     internal val sourceOnly: Boolean = false,
+    versionBound: VersionBoundPersistenceConfiguration? = null,
 ) {
+    private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly)
     val shutdown = AtomicBoolean()
     val retainedDriver = PersistenceRetainedPgDriver()
     val ordinary = PersistenceJdbcParticipant(this, capacity, deletion = false)
@@ -23,6 +25,7 @@ internal class PersistenceJdbcDriverRoot(
 
     fun start(): PersistenceLifecycleActivation {
         if (shutdown.get()) return PersistenceLifecycleActivation.CLOSED
+        if (publicTrust?.readyFor(this) == false) return PersistenceLifecycleActivation.FAILED
         if (!startClaimed.compareAndSet(false, true)) return PersistenceLifecycleActivation.ALREADY_CLAIMED
         return runCatching { startActors() }.getOrElse { failure ->
             failed.set(true)
@@ -79,6 +82,12 @@ internal class PersistenceJdbcDriverRoot(
         scanner.forbidStart()
         return first
     }
+
+    /** Explicit caller-owned filesystem work; never called by a scanner, phase or observer. */
+    internal fun preparePublicTrust(): PersistencePublicTrustPreparation = publicTrust?.prepare(this) ?: PersistencePublicTrustPreparation.NOT_REQUIRED
+
+    /** Only this exact root's permanent, strong all-role drain can authorize its trust-file disposal. */
+    internal fun releasePublicTrustAfterShutdown(): PersistencePublicTrustRelease = publicTrust?.release(this) ?: PersistencePublicTrustRelease.NOT_REQUIRED
 
     /** Stop only the existing deletion participant; the shared scanner/Timer remain owned by this root. */
     fun requestDeletionShutdown(): Boolean = deletion.forbidStarts()

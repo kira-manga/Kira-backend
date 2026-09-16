@@ -1,0 +1,133 @@
+package me.manga.kira.backend.common.infrastructure.persistence
+
+import me.manga.kira.backend.security.AcquiredVersionedSecret
+import me.manga.kira.backend.security.SecretMaterialFamily
+import me.manga.kira.backend.security.SecretMaterialPurpose
+import me.manga.kira.backend.security.VersionedSecretBinding
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
+import java.nio.file.Path
+
+/**
+ * Cold single-host password/SCRAM + verify-full input. No bean, pool, provider attestation or activation authority.
+ * Retain the bound owner before explicitly preparing its public trust file; one configuration binds only one root.
+ */
+internal class VersionBoundPersistenceConfiguration private constructor(
+    private val endpoint: ResolvedPersistenceEndpoint,
+    private val ordinaryCapacity: Int,
+    private val trust: OwnedPersistencePublicTrust,
+    authenticationPassword: VersionedSecretBinding,
+) {
+    val descriptor = EndpointDescriptor(endpoint, authenticationPassword, trust.sha256, trust.byteCount, trust.certificateCount)
+
+    fun bindLifecycleOwner(): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner.versionBound(this)
+
+    internal fun createRoot(): PersistenceJdbcDriverRoot =
+        PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this)
+
+    /** Root construction calls this before any actor can start. No independent endpoint/trust pairing is accepted. */
+    internal fun adopt(
+        root: PersistenceJdbcDriverRoot,
+        actualEndpoint: ResolvedPersistenceEndpoint,
+        capacity: Int,
+        pathStyle: PersistencePathStyle,
+        sourceOnly: Boolean,
+    ): OwnedPersistencePublicTrust {
+        requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
+        trust.adopt(root)
+        return trust
+    }
+
+    /**
+     * Only the exact original-provider endpoint input, NOT finalized Hikari/per-role settings or complete D.
+     * The generation-local filename and password are excluded; no secret-derived fingerprint is exposed.
+     */
+    class EndpointDescriptor internal constructor(
+        endpoint: ResolvedPersistenceEndpoint,
+        val authenticationPassword: VersionedSecretBinding,
+        val publicTrustSha256: String,
+        val publicTrustByteCount: Int,
+        val publicTrustCertificateCount: Int,
+    ) {
+        private val values = endpoint.driverProperties().let { properties ->
+            properties.stringPropertyNames().filterNot { it == "password" || it == "sslrootcert" }
+                .associateWith { properties.getProperty(it) }
+        }
+        val driverUrl: String = endpoint.driverUrl
+        val loginBudgetMillis: Long = endpoint.loginPolicy.durationMillis
+
+        fun publicDriverProperties(): Map<String, String> = values.toMutableMap()
+
+        override fun toString(): String = "VersionBoundPersistenceEndpointDescriptor(redacted)"
+    }
+
+    override fun toString(): String = "VersionBoundPersistenceConfiguration(redacted)"
+
+    companion object {
+        /** No trust-file I/O, resolver call, JDBC driver loading, pool construction or actor start. */
+        fun fromAcquired(
+            authenticationPassword: AcquiredVersionedSecret,
+            host: String,
+            port: Int,
+            database: String,
+            username: String,
+            ordinaryCapacity: Int,
+            publicTrustPem: ByteArray,
+            protectedTrustParent: Path,
+        ): VersionBoundPersistenceConfiguration = persistenceBootstrapBoundary {
+            val binding = authenticationPassword.descriptor
+            requireConfiguration(binding.family === SecretMaterialFamily.DATABASE && binding.purpose === SecretMaterialPurpose.AUTHENTICATION_PASSWORD)
+            requireConfiguration(host.length in 1..253 && host.split('.').all { DNS_LABEL.matches(it) })
+            requireConfiguration(port in 1..65_535 && DATABASE_NAME.matches(database) && DATABASE_NAME.matches(username))
+            requireConfiguration(ordinaryCapacity in 1..64)
+            val password = authenticationPassword.useMaterial(::decodePassword)
+            val trust = OwnedPersistencePublicTrust.capture(publicTrustPem, protectedTrustParent)
+            val endpoint = ResolvedPersistenceEndpoint(
+                mapOf(
+                    "PGHOST" to host,
+                    "PGPORT" to port.toString(),
+                    "PGDBNAME" to database,
+                    "user" to username,
+                    "password" to password,
+                    "loginTimeout" to "0",
+                    "connectTimeout" to "1",
+                    "socketTimeout" to "2",
+                    "cancelSignalTimeout" to "1",
+                    "sslmode" to "verify-full",
+                    "sslfactory" to "org.postgresql.ssl.LibPQFactory",
+                    "sslhostnameverifier" to "org.postgresql.ssl.PGjdbcHostnameVerifier",
+                    "sslrootcert" to trust.path.toString(),
+                    "sslcert" to "",
+                    "sslkey" to "",
+                    "requireAuth" to "password,scram-sha-256",
+                    "scramMaxIterations" to "100000",
+                    "gssEncMode" to "disable",
+                    "channelBinding" to "prefer",
+                ),
+                PersistenceLoginPolicy.resolve("2", 2000),
+            )
+            requireConfiguration(PersistenceNativeSettings.assessOrdinary(endpoint, PersistencePathStyle.POSIX) is PersistenceNativeSettingsResult.Supported)
+            VersionBoundPersistenceConfiguration(endpoint, ordinaryCapacity, trust, binding)
+        }
+
+        private fun decodePassword(material: ByteArray): String {
+            requireConfiguration(material.isNotEmpty() && material.none { it == 0.toByte() })
+            val decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+            val decoded = decoder.decode(ByteBuffer.wrap(material))
+            return try {
+                decoded.toString() // No trim, replacement decoding or Base64/SecretString fallback.
+            } finally {
+                if (decoded.hasArray()) decoded.array().fill('\u0000')
+            }
+        }
+
+        private fun requireConfiguration(condition: Boolean) {
+            if (!condition) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        }
+
+        private val DNS_LABEL = Regex("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+        private val DATABASE_NAME = Regex("[A-Za-z0-9_][A-Za-z0-9_.-]{0,62}")
+    }
+}

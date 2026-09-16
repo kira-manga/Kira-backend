@@ -83,3 +83,60 @@ This is a cold composition, not proof that the supplied user family matches the
 deployed `JwtService`, that no retained key was omitted, or that acquisition,
 rotation and provider permissions are genuine. It performs no lookup and creates
 neither complete desired configuration D nor runtime/installation authority.
+
+## Cold version-bound persistence password and public-trust custody
+
+`VersionBoundPersistenceConfiguration.fromAcquired` accepts one
+`DATABASE / AUTHENTICATION_PASSWORD` acquisition. The same acquisition supplies
+the actual pgjdbc password (strict UTF-8, no replacement, trimming or NUL) and its
+immutable version binding. There is no separate password/label pair or lookup.
+The retained JVM `String` is necessary for pgjdbc; whole-JVM erasure is not claimed.
+
+This deliberately narrow endpoint profile accepts one lowercase ASCII DNS host,
+an explicit port, 1–63-character `[A-Za-z0-9_][A-Za-z0-9_.-]*` database/user names
+and 1–64 ordinary physical slots. It fixes stock `LibPQFactory` and hostname
+verification, `verify-full`, password/SCRAM only, disabled GSS, bounded SCRAM
+iterations, no client certificate/key, a two-second external login budget,
+disabled pgjdbc login thread and 1/2/1-second connect/socket/cancel settings.
+There is no arbitrary property map, alternate factory, TLS identity or plaintext
+fallback. This is a settings subset, not evidence of a TLS handshake or suitable
+server trust policy.
+
+Public trust is 1–262,144 captured bytes containing 1–16 complete X.509 certificate
+PEM blocks only (ASCII, LF/CRLF, canonical Base64 lines of at most 76 characters;
+no keys, headers, comments, other PEM types or unparsed trailing material).
+Certificate validity, CA policy and the actual peer chain remain separate checks.
+The descriptor derives the explicit original-provider endpoint input and binds
+the captured public PEM bytes with SHA-256; it excludes the password and
+generation-local pathname. Identical public bytes therefore have the same trust
+identity across pods even when their protected filenames differ. This is **not**
+a finalized per-role/Hikari pool descriptor, complete D or activation authority.
+
+Call `bindLifecycleOwner()` once, retain that inert owner, then explicitly call
+`preparePublicTrust()`. Its exact root owns the captured material and reserved
+pathname before any filesystem work. Preparation creates an exclusive generation
+directory (`0700`) and a certificate-only file (`0400` after writing), verifies
+the actual written bytes and retains concrete file identities. New-profile starts
+refuse until preparation is ready. No second root can adopt that configuration;
+the legacy null-trust/source-only composition is not switched to this profile.
+
+The supplied parent must already be a private `0700` directory on the default
+POSIX filesystem, with no symlink ancestors and a trusted root/service-account
+ancestry (write-exposed ancestors require root-owned sticky directories). Parent,
+directory and file identities are checked; no recursive deletion is used. This
+assumes the service account and privileged host remain trusted. It does not defend
+against the same account replacing public files, mount changes, hostile filesystem
+providers or machine compromise. Filesystem calls can block: the caller must own
+that work outside request/phase/ownership locks; no I/O deadline is claimed here.
+
+Cleanup is a separate explicit `releasePublicTrustAfterShutdown()` call, outside
+observers/scanner/F/G. It consults its **own** root's permanent shutdown seal and
+exact `TRACKED_LOCAL_ENDED` result across ordinary, deletion, coordinator, worker,
+opener, scanner and shared Timer custody. Local drain, `close`, counters, unsealed
+or uncertain work and `DRIVER_CONTRACT_ONLY_ENDED` never authorize release. The
+INERT Timer case is valid only as part of that full root result. Preparation and
+cleanup serialize; a disposed generation cannot later write or be re-adopted.
+Partial/ambiguous creation or failed deletion retains custody and reports a
+sanitized result, not an inferred successful cleanup. No automatic reprepare or
+process-exit/crash cleanup is supplied. No provider-provenance, production wiring,
+native qualification, complete-D or runtime-route activation claim is added.

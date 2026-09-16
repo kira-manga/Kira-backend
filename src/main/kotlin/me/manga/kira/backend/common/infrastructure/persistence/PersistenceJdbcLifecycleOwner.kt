@@ -3,16 +3,11 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Inert construction. The caller retains this owner before start and must request/observe shutdown separately. */
-internal class PersistenceJdbcLifecycleOwner private constructor(
-    endpoint: ResolvedPersistenceEndpoint,
-    ordinaryCapacity: Int,
-    pathStyle: PersistencePathStyle,
-    internal val sourceOnly: Boolean,
-) {
+internal class PersistenceJdbcLifecycleOwner private constructor(private val root: PersistenceJdbcDriverRoot) {
     constructor(endpoint: ResolvedPersistenceEndpoint, ordinaryCapacity: Int, pathStyle: PersistencePathStyle) :
-        this(endpoint, ordinaryCapacity, pathStyle, sourceOnly = false)
+        this(PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle))
 
-    private val root = PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle, sourceOnly)
+    internal val sourceOnly: Boolean get() = root.sourceOnly
     internal val complaintContainment = PersistenceComplaintContainment()
     private val catalogBindingClaimed = AtomicBoolean()
 
@@ -70,6 +65,12 @@ internal class PersistenceJdbcLifecycleOwner private constructor(
 
     fun requestShutdown(): Boolean = root.requestShutdown()
 
+    /** Explicit blocking material preparation after this inert owner has been retained. No activation. */
+    internal fun preparePublicTrust(): PersistencePublicTrustPreparation = root.preparePublicTrust()
+
+    /** Explicit filesystem work outside observers; request/close/local drain is not release authority. */
+    internal fun releasePublicTrustAfterShutdown(): PersistencePublicTrustRelease = root.releasePublicTrustAfterShutdown()
+
     /** Does not release this root's shared Timer pin or stop its ordinary participant/scanner. */
     internal fun requestDeletionShutdown(): Boolean = root.requestDeletionShutdown()
 
@@ -118,6 +119,9 @@ internal class PersistenceJdbcLifecycleOwner private constructor(
     companion object {
         /** Original provider settings, owned-driver accounting, no native eligibility or deletion activation. */
         internal fun sourceOnly(endpoint: ResolvedPersistenceEndpoint, ordinaryCapacity: Int, pathStyle: PersistencePathStyle): PersistenceJdbcLifecycleOwner =
-            PersistenceJdbcLifecycleOwner(endpoint, ordinaryCapacity, pathStyle, sourceOnly = true)
+            PersistenceJdbcLifecycleOwner(PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle, sourceOnly = true))
+
+        internal fun versionBound(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createRoot())
     }
 }
