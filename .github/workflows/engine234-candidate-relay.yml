@@ -22,9 +22,17 @@ jobs:
       github.event.deleted == false && github.run_attempt == 1
     runs-on: ubuntu-24.04
     timeout-minutes: 6
-    env:
-      RELAY_ROOT: ${{ runner.temp }}/engine234-relay-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Establish the job-owned relay path
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
+          test "$GITHUB_RUN_ATTEMPT" = 1
+          [[ "$RUNNER_TEMP" == /* && "$RUNNER_TEMP" != *$'\n'* && "$RUNNER_TEMP" != *$'\r'* ]]
+          relay_root="$RUNNER_TEMP/engine234-relay-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -- "$relay_root"
+          printf 'RELAY_ROOT=%s\n' "$relay_root" >> "$GITHUB_ENV"
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.sha }}
@@ -38,7 +46,6 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
-          mkdir -- "$RELAY_ROOT"
           # Curl drops Authorization on cross-host redirects; never use location-trusted.
           # Disable curlrc/proxies; no retry, fallback artifact, or signed-URL logging.
           if ! curl --disable --silent --fail --location --noproxy '*' \
@@ -78,7 +85,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ -d "$RELAY_ROOT" ]; then
+          if [ -n "${RELAY_ROOT:-}" ] && [ -d "$RELAY_ROOT" ]; then
             rm -f -- "$RELAY_ROOT/original.zip" "$RELAY_ROOT/public/candidate-maven.tar.gz" "$RELAY_ROOT/public/origin.json"
             if [ -d "$RELAY_ROOT/public" ]; then rmdir -- "$RELAY_ROOT/public"; fi
             rmdir -- "$RELAY_ROOT"
