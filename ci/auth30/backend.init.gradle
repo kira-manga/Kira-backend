@@ -35,7 +35,7 @@ if (!new File(root, '.owner').isFile() || !repo.isDirectory() ||
         gradle.startParameter.continueOnFailure ||
         gradle.startParameter.excludedTaskNames != (['jacocoTestReport'] as Set) ||
         selection.expected_total != 33 || selection.selectors.size() != 33 ||
-        selection.selectors.toSet().size() != 33 || selection.static_paths.size() != 10) {
+        selection.selectors.toSet().size() != 33 || selection.static_paths.size() != 11) {
     throw new GradleException('Exact Auth30 Docker/source-supplier scope required')
 }
 gradle.beforeProject { p ->
@@ -181,7 +181,7 @@ gradle.projectsEvaluated {
         written('backend-task-graph.json', actual)
         if (!allowed.containsAll(actual) || !actual.containsAll(required) ||
                 graph.allTasks.findAll { it instanceof Test }*.path != [':test'] || p.tasks.named('jar').get().enabled) {
-            throw new GradleException('Only whole-source compile, static10 and normal exact33 test graph allowed')
+            throw new GradleException('Only whole-source compile, static11 and normal exact33 test graph allowed')
         }
         policies()
     }

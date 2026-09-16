@@ -3041,8 +3041,12 @@
       "sha256": "d2e5133aab03767a79be0673d98df9c2253264911a296eb51e5e746fcd1ad551"
     },
     "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpIT.kt": {
-      "bytes": 37776,
-      "sha256": "0594f21bb6b3c5d71ddc6bab282deb8b8cdbe32146ae63f6f20b932c114c2a7b"
+      "bytes": 35927,
+      "sha256": "b485df9957e2d7fc182508e773dcf4054c2e100e6889ee1c53ca6831605fe49e"
+    },
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpTestSupport.kt": {
+      "bytes": 2732,
+      "sha256": "89d61f20cdef0c101882e875ae28c7bf7936217d7a2f0dcd4f3d179d110d4d56"
     },
     "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedStepUpConnectionFreeTest.kt": {
       "bytes": 8312,

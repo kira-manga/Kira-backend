@@ -2,11 +2,15 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.common.exception.UnauthorizedException
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.UserChange
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.assertCapacityRefused
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.assertUserLockAvailable
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.issuancePhase
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.issueWithThrottle
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.security.AuthLoginAttempt
 import me.manga.kira.backend.security.AuthThrottle
 import me.manga.kira.backend.security.AuthThrottleService
-import me.manga.kira.backend.security.ScopedAdminStepUpIssuer
 import me.manga.kira.backend.security.ScopedAdminStepUpScope
 import me.manga.kira.backend.security.StepUpGrantIssuance
 import me.manga.kira.backend.support.MutableClock
@@ -360,8 +364,10 @@ class ScopedAdminStepUpIT {
                     val failure = assertThrows<PersistencePhaseException> { f.issue(scope, password) }
                     val expected = when (site) {
                         StepUpExternalCall.CHECK -> listOf(StepUpExternalCall.CHECK)
+
                         StepUpExternalCall.PASSWORD, StepUpExternalCall.FAILURE ->
                             listOf(StepUpExternalCall.CHECK, StepUpExternalCall.PASSWORD, StepUpExternalCall.FAILURE)
+
                         StepUpExternalCall.SUCCESS -> listOf(StepUpExternalCall.CHECK, StepUpExternalCall.PASSWORD, StepUpExternalCall.SUCCESS)
                     }
                     assertEquals(expected, f.dependencies.calls) // A password exception closes its actual attempt once as failure.
@@ -689,50 +695,5 @@ class ScopedAdminStepUpIT {
         withOrdinarySourceGrantCleanup(database.value, maximumPoolSize = poolSize) { f ->
             SyntheticComplaintCounters(f.foreignTemplate(), f.cutoff).use { counters -> test(ScopedStepUpFixture(f, counters)) }
         }
-    }
-
-    private fun issueWithThrottle(f: ScopedStepUpFixture, scope: ScopedAdminStepUpScope, throttle: AuthThrottle) {
-        val issuer = ScopedAdminStepUpIssuer(f.phases, f.dependencies, throttle)
-        when (scope) {
-            ScopedAdminStepUpScope.SOURCE -> issuer.issueSource(f.ordinary.userId, ScopedStepUpFixture.PASSWORD, "192.0.2.29")
-            ScopedAdminStepUpScope.COMPLAINT -> issuer.issueComplaint(f.ordinary.userId, ScopedStepUpFixture.PASSWORD, "192.0.2.29")
-        }
-    }
-
-    private fun assertCapacityRefused(f: ScopedStepUpFixture) {
-        val before = f.counters.snapshot()
-        val failure = assertThrows<PersistencePhaseException> { f.issue(ScopedAdminStepUpScope.COMPLAINT) }
-        assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, failure.databaseOutcome)
-        assertEquals(0, f.jdbc.counterUpdates)
-        assertEquals(0, f.jdbc.insertAttempts)
-        assertTrue(f.jdbc.issuances.isEmpty() && f.ordinary.grantIds().isEmpty())
-        assertEquals(before, f.counters.snapshot())
-    }
-
-    private fun issuancePhase(f: ScopedStepUpFixture, scope: ScopedAdminStepUpScope): PersistencePhaseContext = when (scope) {
-        ScopedAdminStepUpScope.SOURCE -> f.ordinary.ownership.enterSourceStepUpIssuance()
-        ScopedAdminStepUpScope.COMPLAINT -> f.ordinary.ownership.enterComplaintStepUpIssuance()
-    }
-
-    private fun assertUserLockAvailable(f: OrdinarySourceGrantCleanupFixture) {
-        checkNotNull(f.foreignTemplate().dataSource).connection.use { connection ->
-            connection.autoCommit = false
-            try {
-                connection.prepareStatement("SELECT id FROM users WHERE id = ? FOR UPDATE NOWAIT").use { statement ->
-                    statement.queryTimeout = 2
-                    statement.setObject(1, f.userId)
-                    statement.executeQuery().use { result -> assertTrue(result.next() && !result.next()) }
-                }
-            } finally {
-                connection.rollback()
-            }
-        }
-    }
-
-    private enum class UserChange(val sql: String) {
-        HASH("UPDATE users SET password_hash = 'changed-synthetic-hash' WHERE id = ?"),
-        ENABLED("UPDATE users SET enabled = false WHERE id = ?"),
-        ROLE("UPDATE users SET role = 'USER' WHERE id = ?"),
-        DELETED("DELETE FROM users WHERE id = ?"),
     }
 }

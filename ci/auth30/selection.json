@@ -183,6 +183,7 @@
     "src/main/kotlin/me/manga/kira/backend/security/VerifiedScopedAdminStepUp.kt",
     "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpFixture.kt",
     "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpIT.kt",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpTestSupport.kt",
     "src/test/kotlin/me/manga/kira/backend/security/AuthAdmissionConcurrencyTest.kt",
     "src/test/kotlin/me/manga/kira/backend/security/AuthAttemptCallerTest.kt",
     "src/test/kotlin/me/manga/kira/backend/security/RedisCoordinationFailureTest.kt",

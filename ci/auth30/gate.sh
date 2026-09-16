@@ -91,7 +91,13 @@ close_stage() {
     if [[ $stage == engine ]]; then
       remove_owned "$W/auth30-inputs/engine" || rc=1
     else
-      for path in build .gradle .kotlin; do remove_owned "$W/backend/$path" || rc=1; done
+      if [[ -f $E/backend-reports-preserved.json && ! -L $E/backend-reports-preserved.json ]]; then
+        remove_owned "$W/backend/build" || rc=1
+      else
+        printf 'Raw-report preservation incomplete; backend build retained.\n' > "$E/backend-build-retained.txt"
+        rc=1
+      fi
+      for path in .gradle .kotlin; do remove_owned "$W/backend/$path" || rc=1; done
     fi
     for path in "$stage-cache" "$stage-gradle/caches" konan; do remove_owned "$R/$path" || rc=1; done
     mkdir -p -- "$R/konan"

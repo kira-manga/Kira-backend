@@ -116,7 +116,39 @@ def engine():
                                        "qualified": False, "origin": "Fresh native root/JVM file publications; no retained binaries."})
 
 
+def preserve_backend_reports():
+    marker = E / "backend-reports-preserved.json"
+    marker.unlink(missing_ok=True)
+    reports = sorted((B / "build/test-results/test").glob("TEST-*.xml"))
+    lint_reports = [B / f"build/reports/ktlint/ktlint{kind}SourceSetCheck/ktlint{kind}SourceSetCheck.txt" for kind in ("Main", "Test")]
+    detekt = B / "build/reports/detekt/detekt.xml"
+    target = E / "tests"
+    assert not target.is_symlink(), "Unsafe report destination"
+    target.mkdir(exist_ok=True)
+    preserved = {}
+    for report in reports + lint_reports + [detekt]:
+        if not report.exists() and not report.is_symlink():
+            continue  # Earlier compilation/static failure may mean a later report was never produced.
+        assert report.is_file() and not report.is_symlink() and report.stat().st_size <= 5 * 1024 * 1024, "Unsafe/oversized raw report"
+        pin = identity(report)
+        destination = target / report.name
+        assert not destination.is_symlink(), "Unsafe report destination"
+        used = sum(p.stat().st_size for p in E.rglob("*") if p.is_file())
+        replaced = destination.stat().st_size if destination.exists() else 0
+        assert used - replaced + pin["bytes"] <= 48 * 1024 * 1024, "Evidence size bound exceeded before report copy"
+        shutil.copyfile(report, destination)
+        assert identity(destination) == pin, "Raw report copy changed"
+        preserved[report.name] = pin
+    payload = json.dumps({"all_existing_reports_preserved": True, "files": preserved}, indent=2, sort_keys=True) + "\n"
+    used = sum(p.stat().st_size for p in E.rglob("*") if p.is_file())
+    assert used + len(payload.encode("utf-8")) <= 48 * 1024 * 1024, "Evidence size bound exceeded before preservation marker"
+    marker.write_text(payload)
+    return ([target / p.name for p in reports], [target / p.name for p in lint_reports], target / detekt.name)
+
+
 def backend():
+    # Preserve bounded raw diagnostics even when Gradle or a later result assertion failed.
+    reports, lint_reports, detekt = preserve_backend_reports()
     exit_zero("backend.exit")
     backend_source()
     tasks = outcome("backend")
@@ -124,7 +156,6 @@ def backend():
         assert tasks[f":{task}"] == "SUCCESS", f"Required task did not freshly succeed: {task}"
     expected = collections.Counter((x["class"], x["method"]) for x in SELECTION["runtime_methods"])
     observed = collections.Counter()
-    reports = sorted((B / "build/test-results/test").glob("TEST-*.xml"))
     assert len(reports) == len(SELECTION["class_counts"]), "Missing or unexpected test class reports"
     for report in reports:
         assert report.stat().st_size <= 5 * 1024 * 1024, "Oversized focused test report"
@@ -134,9 +165,7 @@ def backend():
             assert not any(case.find(k) is not None for k in ("failure", "error", "skipped")), "Failed/skipped focused case"
             observed[(case.attrib["classname"], case.attrib["name"].removesuffix("()"))] += 1
     assert observed == expected and sum(observed.values()) == 33, "Exact33 case multiset mismatch"
-    lint_reports = [B / f"build/reports/ktlint/ktlint{kind}SourceSetCheck/ktlint{kind}SourceSetCheck.txt" for kind in ("Main", "Test")]
     assert all(p.read_bytes() == b"" for p in lint_reports), "Ktlint findings or report absent"
-    detekt = B / "build/reports/detekt/detekt.xml"
     assert not ET.parse(detekt).getroot().findall(".//error"), "Detekt findings"
     for kind in ("detekt", "main", "test"):
         scope = json.loads((E / f"static-{kind}-scope.json").read_text())
@@ -149,12 +178,9 @@ def backend():
     for supplier in ("engine", "pgjdbc"):
         for path, pin in json.loads((E / f"{supplier}-publications.json").read_text())["files"].items():
             assert identity(REPO / path) == {"sha256": pin["sha256"], "bytes": pin["bytes"]}, "Supplier output mutated"
-    (E / "tests").mkdir(exist_ok=True)
-    for report in reports + lint_reports + [detekt]:
-        shutil.copyfile(report, E / "tests" / report.name)
-    write("focused-result.json", {"status": "PASS_NORMAL33_STATIC10_WHOLE_SOURCE_COMPILE", "tests": 33,
+    write("focused-result.json", {"status": "PASS_NORMAL33_STATIC11_WHOLE_SOURCE_COMPILE", "tests": 33,
                                   "class_counts": dict(collections.Counter(c for c, _ in observed.elements())),
-                                  "static_files": 10, "source_inputs_unchanged": True,
+                                  "static_files": 11, "source_inputs_unchanged": True,
                                   "deployment_or_release_qualified": False})
 
 
