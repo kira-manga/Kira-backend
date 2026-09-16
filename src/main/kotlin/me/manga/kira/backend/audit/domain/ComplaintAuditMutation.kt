@@ -5,7 +5,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintIdentifiers
 import me.manga.kira.backend.complaint.domain.ComplaintStatus
 import java.util.UUID
 
-internal enum class ComplaintAuditActorKind { ADMIN, INSTALLATION, SYSTEM }
+enum class ComplaintAuditActorKind { ADMIN, INSTALLATION, SYSTEM }
 
 /** Structural FK pairing only; a future writer must establish the actual Admin's identity/authority. */
 internal class ComplaintAuditActor private constructor(val kind: ComplaintAuditActorKind, val adminUserId: UUID?) {

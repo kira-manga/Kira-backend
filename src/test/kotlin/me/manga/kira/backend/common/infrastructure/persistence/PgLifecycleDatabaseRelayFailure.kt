@@ -14,6 +14,8 @@ internal enum class PgLifecycleDatabaseRelayAssociation(val token: String) {
     PRIMARY_1("PRIMARY(1)"),
     AUX_0("AUX(0)"),
     AUX_1("AUX(1)"),
+    WARMED_PRIMARY("WARMED_PRIMARY"),
+    WARMED_AUX("WARMED_AUX"),
 }
 
 internal enum class PgLifecycleDatabaseRelayActor {

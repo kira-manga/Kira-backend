@@ -3,10 +3,23 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** One fixed ordinary or cold-deletion generation, entirely retained before any actor starts. */
-internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDriverRoot, capacity: Int, private val deletion: Boolean) {
+/** One fixed role generation, entirely retained before any actor starts. Roles never lend their physical slots. */
+internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDriverRoot, capacity: Int, private val role: PersistenceJdbcParticipantRole) {
+    constructor(root: PersistenceJdbcDriverRoot, capacity: Int, deletion: Boolean) :
+        this(root, capacity, if (deletion) PersistenceJdbcParticipantRole.DELETION else PersistenceJdbcParticipantRole.ORDINARY)
+
     private val binding = PersistencePhysicalFactoryBinding(capacity, root.shutdown, this)
-    private val loginPolicy = if (deletion) PersistenceNativeSettings.deletionLoginPolicy else root.endpoint.loginPolicy
+    private val loginPolicy = when (role) {
+        PersistenceJdbcParticipantRole.ORDINARY -> root.endpoint.loginPolicy
+        PersistenceJdbcParticipantRole.DELETION -> PersistenceNativeSettings.deletionLoginPolicy
+        PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> PersistenceNativeSettings.catalogCoordinatorLoginPolicy
+    }
+    private val strict = role !== PersistenceJdbcParticipantRole.ORDINARY
+    private val strictPolicy = when (role) {
+        PersistenceJdbcParticipantRole.ORDINARY -> null
+        PersistenceJdbcParticipantRole.DELETION -> PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION
+        PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> PersistenceDriverAttemptPolicy.TRACKED_CATALOG_CONJUNCTION
+    }
     private val worker = PersistenceFactoryWorker.owned(binding, PersistenceJdbcFactoryOperations(binding), loginPolicy)
     private val runners = Array(capacity) { PersistenceTerminalRunner(it) }
     private val controller = PersistenceRetainedPlatformThread("kira-persistence-controller", ::run)
@@ -18,13 +31,41 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
 
     fun start(): PersistenceFactoryStart = controller.start()
 
-    fun forbidStarts() {
+    fun forbidStarts(): Boolean {
         controller.forbidStart()
-        worker.requestOwnedStop()
+        val first = worker.requestOwnedStop()
         runners.forEach(PersistenceTerminalRunner::forbidStart)
+        return first
     }
 
-    fun isReady(): Boolean = binding.admissionOpen.get() && actorsPermitAdmission() && (!deletion || root.timer.canAcceptStrong())
+    internal fun shutdownRequested(): Boolean = binding.isClosed()
+
+    /** Fixed ledger observations only; not a sealed native/terminal-completion certificate. */
+    internal fun deletionPoolIdle(lifecycle: PoolLifecycle): Boolean = poolIdle(lifecycle, PersistenceJdbcParticipantRole.DELETION, 4)
+
+    internal fun catalogCoordinatorPoolIdle(lifecycle: PoolLifecycle): Boolean = poolIdle(lifecycle, PersistenceJdbcParticipantRole.CATALOG_COORDINATOR, 1)
+
+    internal fun ownsPoolIdentity(identity: PersistenceJdbcPoolIdentity): Boolean = binding.poolIdentity === identity
+
+    private fun poolIdle(lifecycle: PoolLifecycle, expected: PersistenceJdbcParticipantRole, size: Int): Boolean {
+        if (role !== expected || !isReady() || ownershipLockHeld()) return false
+        if (!binding.rendezvous.lock.tryLock()) return false
+        return try {
+            if (!binding.ledger.lock.tryLock()) return false
+            try {
+                binding.ledger.entries.size == size && binding.ledger.entries.all { entry ->
+                    entry != null && permits(entry) && entry.policy === strictPolicy &&
+                        entry.jdbc.poolIdleEligibleLocked(lifecycle)
+                }
+            } finally {
+                binding.ledger.lock.unlock()
+            }
+        } finally {
+            binding.rendezvous.lock.unlock()
+        }
+    }
+
+    fun isReady(): Boolean = binding.admissionOpen.get() && actorsPermitAdmission() && (!strict || root.timer.canAcceptStrong())
 
     fun preparationFinished(): Boolean = preparationEnded.get() || controller.termination() === PersistenceThreadTermination.INERT
 
@@ -38,6 +79,8 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     /** Selection happens after the original request budget exists, before any reservation or dispatch. */
     fun selectOpening(): PersistencePgDriverOpening? = if (!isReady()) {
         null
+    } else if (strict) {
+        trackedStrong.get() // Never degrade a coordinator/deletion attempt to another role or evidence policy.
     } else if (root.timer.canAcceptStrong()) {
         trackedStrong.get() ?: trackedWeak.get() ?: ordinary.get()
     } else {
@@ -50,7 +93,8 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
         val opening = entry.driverOpening ?: return false
         val strong = entry.policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION
         val exact = opening === ordinary.get() || opening === trackedWeak.get() || opening === trackedStrong.get()
-        return exact && (!deletion || strong) && (!strong || (opening.timer === root.timer && root.timer.canAcceptStrong()))
+        return exact && (!strict || (strong && entry.policy === strictPolicy)) &&
+            (!strong || (opening.timer === root.timer && root.timer.canAcceptStrong()))
     }
 
     /** The shared scanner only does fixed-size bookkeeping/mailbox work, never driver/close/abort. */
@@ -115,7 +159,7 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     private fun prepareAndStart() {
         try {
             prepare()
-            if (!binding.isClosed() && (if (deletion) trackedStrong.get() != null else ordinary.get() != null)) {
+            if (!binding.isClosed() && (if (strict) trackedStrong.get() != null else ordinary.get() != null)) {
                 startWorkers()
             } else {
                 worker.requestOwnedStop()
@@ -123,22 +167,25 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
             }
         } finally {
             preparationEnded.set(true)
-            if (!deletion) root.timer.finishMetadataIfAbsent()
+            if (!strict) root.timer.finishMetadataIfAbsent()
         }
     }
 
     private fun prepare() {
         if (binding.isClosed()) return
-        if (deletion) {
+        if (strict) {
             while (!root.ordinary.preparationFinished() && !binding.isClosed()) persistenceLifecyclePark()
             if (binding.isClosed() || !root.retainedDriver.isConstructed()) return
             while (!root.timer.canAcceptStrong() && !root.timer.preparationFailed() && !binding.isClosed()) persistenceLifecyclePark()
             if (!binding.isClosed() && root.timer.canAcceptStrong()) {
-                trackedStrong.set(optional { opening(PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION) })
+                trackedStrong.set(optional { opening(checkNotNull(strictPolicy)) })
             }
         } else {
             root.retainedDriver.construct()
             ordinary.set(opening(PersistenceDriverAttemptPolicy.ORIGINAL_PROVIDER))
+            // A healthy source-only runtime never silently substitutes a tracked socket/provider
+            // or treats successful ABI linkage as native/deployment qualification.
+            if (root.sourceOnly) return
             root.timer.publishMetadata(optional { root.retainedDriver.timerAccess() })
             trackedWeak.set(optional { opening(PersistenceDriverAttemptPolicy.TRACKED_ORDINARY_CONTRACT) })
             if (trackedWeak.get() != null) trackedStrong.set(opening(PersistenceDriverAttemptPolicy.TRACKED_ORDINARY_CONJUNCTION))
@@ -184,3 +231,5 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
 
     override fun toString(): String = "PersistenceJdbcParticipant(redacted)"
 }
+
+internal enum class PersistenceJdbcParticipantRole { ORDINARY, DELETION, CATALOG_COORDINATOR }

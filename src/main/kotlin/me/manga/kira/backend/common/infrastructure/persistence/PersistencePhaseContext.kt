@@ -1,6 +1,35 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import jakarta.persistence.EntityManager
+import me.manga.kira.backend.audit.infrastructure.ComplaintAuditSelectedHolder
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
+import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.ComplaintRecoverySettlementResult
+import me.manga.kira.backend.complaint.domain.ComplaintTestReserveSpendResult
+import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
+import me.manga.kira.backend.complaint.domain.InstallationEnrollmentResult
+import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
+import me.manga.kira.backend.complaint.domain.InstallationSessionResult
+import me.manga.kira.backend.complaint.domain.ScopedInstallationId
+import me.manga.kira.backend.complaint.domain.SessionPreflightResult
+import me.manga.kira.backend.complaint.domain.SessionRefreshResult
+import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
+import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurrentStateReadOperation
+import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
+import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintRecoverySettlementOperation
+import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintTestReserveSpendOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
+import me.manga.kira.backend.security.ComplaintAdmittedEnrollmentWrite
+import me.manga.kira.backend.security.ComplaintAdmittedSessionRefresh
+import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
+import me.manga.kira.backend.security.ComplaintGrantConsumption
+import me.manga.kira.backend.security.ComplaintIngressAdmission
+import me.manga.kira.backend.security.ScopedAdminStepUpScope
+import me.manga.kira.backend.security.StepUpGrantIssuance
+import me.manga.kira.backend.security.StepUpUserSnapshot
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.orm.jpa.EntityManagerHolder
@@ -9,25 +38,34 @@ import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.support.DefaultTransactionDefinition
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.lang.reflect.Method
+import java.sql.Connection
+import java.util.UUID
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 
 /**
- * One synchronous named source-cleanup owner. No application lambda, foreign thread or resource switch.
+ * One synchronous named owner. No application lambda, foreign thread or resource switch.
  * All guarded transitions share this retained phase/permit/lease rather than splitting their custody.
  */
 @Suppress("TooManyFunctions")
 internal class PersistencePhaseContext(
     private val ownership: PersistencePhaseOwnership,
-    private val permit: LocalPersistencePermit,
     private val slot: Int,
     private val caller: PersistenceOwnedFactoryCaller,
+    private val path: PersistencePhasePath,
+    private val deletionScope: ComplaintDataScope? = null,
+    private val enrollmentOwnerReference: UUID? = null,
 ) {
     private val manager = ownership.manager
+    private val dataSource = ownership.dataSource
+    private val entityManagerFactory = ownership.entityManagerFactory
     private val failure = AtomicReference<PersistencePhaseFailureCode?>()
+    private val jdbcFailureObserved = AtomicBoolean()
     private val refunded = AtomicBoolean()
+    private var permit: LocalPersistencePermit? = null
+    private val entrySettlement = EntrySettlementBoundary()
 
     @Volatile private var stage = Stage.PREPARED
 
@@ -49,6 +87,25 @@ internal class PersistencePhaseContext(
     private var completionEnded = false
     private var springSettled = false
     private var sourceOperationIssued = false
+    private var complaintOperationIssued = false
+    private var stepUpOperationIssued = false
+    private var stepUpSnapshot: StepUpUserSnapshot? = null
+    private var stepUpIssuance: StepUpGrantIssuance? = null
+    private var complaintConsumptionIssued = false
+    private var complaintConsumption: ComplaintGrantConsumption? = null
+    private val recoverySettlement = RecoverySettlementBoundary()
+    private val testReserveSpend = TestReserveSpendBoundary()
+    private val selectedHolder = SelectedHolderBoundary()
+    private val jdbcCapabilities = JdbcCapabilityBoundary()
+    internal val installationEnrollment: PersistenceInstallationEnrollment = InstallationEnrollmentBoundary()
+    internal val installationSession: PersistenceInstallationSession = InstallationSessionBoundary()
+    internal val installationCurrentState: PersistenceInstallationCurrentState = InstallationCurrentStateBoundary()
+    internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
+    internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
+    internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
+
+    // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
+    private var complaintBatch: ComplaintGrantCleanupBatch? = null
     private var changingReadCap = false
     private var readCapKind: PersistenceJdbcGuardCallKind? = null
     private var restoringReadCap = false
@@ -56,13 +113,22 @@ internal class PersistencePhaseContext(
     private var restoreInterrupt = false
     private var finalizerEnded = false
 
+    internal fun reserveComplaintClaim() = entrySettlement.reserveComplaintClaim()
+
+    internal fun retainEntryPermit(selected: LocalPersistencePermit) = entrySettlement.retainEntryPermit(selected)
+
+    internal fun publishEntry() = entrySettlement.publishEntry()
+
     internal fun begin() {
         requireCaller()
         if (stage !== Stage.PREPARED) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
         stage = Stage.STARTING
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
-            setName("SOURCE_GRANT_CLEANUP")
+            setName(path.name)
             timeout = 2
+            isReadOnly = path === PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT ||
+                path === PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE ||
+                path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT
         }
         manager.getTransaction(definition)
         // The wrapper retained TransactionStatus before this validation. A failure here still has rollback custody.
@@ -71,10 +137,12 @@ internal class PersistencePhaseContext(
         if (!TransactionSynchronizationManager.isActualTransactionActive() || !TransactionSynchronizationManager.isSynchronizationActive()) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
-        holder = TransactionSynchronizationManager.getResource(manager.dataSource) as? ConnectionHolder
+        holder = TransactionSynchronizationManager.getResource(dataSource) as? ConnectionHolder
             ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        entityHolder = TransactionSynchronizationManager.getResource(manager.entityManagerFactory) as? EntityManagerHolder
-            ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        entityManagerFactory?.let { factory ->
+            entityHolder = TransactionSynchronizationManager.getResource(factory) as? EntityManagerHolder
+                ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         // Do not use DataSourceUtils or bind a replacement. JPA's existing handle may acquire lazily here.
         val selected = requireNotNull(holder).connection
         val accepted = lease ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
@@ -86,6 +154,7 @@ internal class PersistencePhaseContext(
         requireWork()
         stage = Stage.SETTING_UP
         installLimits()
+        selectedHolder.acquireFence(selected)
         requireWork()
         stage = Stage.WORK
     }
@@ -118,6 +187,14 @@ internal class PersistencePhaseContext(
         createdEntityManager = entityManager // Before the real dialect/transaction begin, including the no-status path.
     }
 
+    /** The initializer frame still owns this exact EM; Spring has not received a holder or status. */
+    internal fun entityManagerInitializationFailed(candidate: GuardedJpaTransactionManager, entityManager: EntityManager, problem: Throwable) {
+        requireCaller()
+        check(candidate === manager && createdEntityManager === entityManager && stage === Stage.STARTING && beginDispatched && !beginEnded)
+        acquisitionAuthority = false // Failure cleanup must not start a fresh checkout.
+        recordFailure(problem)
+    }
+
     internal fun statusReturned(status: PersistenceManagedStatus) {
         requireCaller()
         if (status.root) {
@@ -135,7 +212,7 @@ internal class PersistencePhaseContext(
     @Suppress("ComplexCondition")
     internal fun authorizeAcquisition(dataSource: GuardedDataSource) {
         requireCaller()
-        if (dataSource !== manager.dataSource || stage !== Stage.STARTING || !acquisitionAuthority || acquisitionSpent) {
+        if (dataSource !== this.dataSource || stage !== Stage.STARTING || !acquisitionAuthority || acquisitionSpent) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         acquisitionSpent = true // Consumed before either DataSource overload reaches Hikari.
@@ -174,40 +251,220 @@ internal class PersistencePhaseContext(
         requireCaller()
         if (stage !== Stage.WORK || !beginEnded || completionActive) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
         requireWork()
-        requireSelectedHolder()
+        selectedHolder.requireCurrent()
     }
 
     internal fun requireSourceCleanup(jdbc: JdbcTemplate) {
         requireParticipation()
-        if (jdbc.dataSource !== manager.dataSource || sourceOperationIssued) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (path !== PersistencePhasePath.SOURCE_GRANT_CLEANUP || jdbc.dataSource !== dataSource || sourceOperationIssued) {
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         sourceOperationIssued = true // One fixed batch, not repeated cleanup until exhaustion.
         installLimits()
         requireWork()
     }
 
-    // Short-circuit Spring-state/holder identity checks before consulting the retained holder's connection.
-    @Suppress("ComplexCondition")
-    private fun requireSelectedHolder() {
-        if (!TransactionSynchronizationManager.isActualTransactionActive() || !TransactionSynchronizationManager.isSynchronizationActive() ||
-            TransactionSynchronizationManager.getResource(manager.dataSource) !== holder ||
-            TransactionSynchronizationManager.getResource(manager.entityManagerFactory) !== entityHolder ||
-            holder == null || entityHolder == null || holder?.connection !== connection
-        ) {
+    internal fun requireComplaintGrantCleanup(jdbc: JdbcTemplate) {
+        if (path !== PersistencePhasePath.COMPLAINT_GRANT_CLEANUP) {
+            recordFailure(PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED))
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
-        if (entityHolder?.entityManager !== createdEntityManager) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        val selected = lease ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        if (connection?.matches(selected) != true || acquisition?.matches(selected) != true) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        selected.requireBusiness()
+        requireParticipation()
+        if (jdbc.dataSource !== dataSource || complaintOperationIssued) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        complaintOperationIssued = true
+        installLimits()
+        requireWork()
+    }
+
+    @Suppress("ComplexCondition")
+    internal fun retainComplaintGrantBatch(batch: ComplaintGrantCleanupBatch, jdbc: JdbcTemplate) {
+        requireParticipation()
+        if (path !== PersistencePhasePath.COMPLAINT_GRANT_CLEANUP || !complaintOperationIssued || complaintBatch != null ||
+            !batch.belongsTo(this) || jdbc.dataSource !== dataSource
+        ) {
+            recordFailure(PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        complaintBatch = batch
+    }
+
+    internal fun requireComplaintGrantBatch(batch: ComplaintGrantCleanupBatch, jdbc: JdbcTemplate) {
+        requireParticipation()
+        if (path !== PersistencePhasePath.COMPLAINT_GRANT_CLEANUP || complaintBatch !== batch || jdbc.dataSource !== dataSource) {
+            recordFailure(PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
+
+    internal fun requireStepUpSnapshot(jdbc: JdbcTemplate, scope: ScopedAdminStepUpScope) = requireStepUpOperation(jdbc, scope.snapshotPath)
+
+    internal fun requireStepUpIssuance(jdbc: JdbcTemplate, scope: ScopedAdminStepUpScope) = requireStepUpOperation(jdbc, scope.issuancePath)
+
+    private fun requireStepUpOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+        requireStepUpResource(jdbc, expected)
+        if (stepUpOperationIssued) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        stepUpOperationIssued = true
+        installLimits()
+        requireWork()
+    }
+
+    internal fun retainStepUpSnapshot(snapshot: StepUpUserSnapshot, jdbc: JdbcTemplate) {
+        requireStepUpResource(jdbc, snapshot.scope.snapshotPath)
+        if (!stepUpOperationIssued || stepUpSnapshot != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        stepUpSnapshot = snapshot
+    }
+
+    internal fun retainStepUpIssuance(issuance: StepUpGrantIssuance, jdbc: JdbcTemplate) {
+        requireStepUpResource(jdbc, issuance.scope.issuancePath)
+        if (!stepUpOperationIssued || stepUpIssuance != null || !issuance.belongsTo(this)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        stepUpIssuance = issuance
+    }
+
+    internal fun requireStepUpIssuance(issuance: StepUpGrantIssuance, jdbc: JdbcTemplate) {
+        requireStepUpResource(jdbc, issuance.scope.issuancePath)
+        if (stepUpIssuance !== issuance) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun requireComplaintGrantConsumption(jdbc: JdbcTemplate) {
+        requireComplaintAdminResource(jdbc)
+        if (complaintConsumptionIssued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        complaintConsumptionIssued = true
+        installLimits()
+        requireWork()
+    }
+
+    internal fun retainComplaintGrantConsumption(consumption: ComplaintGrantConsumption, jdbc: JdbcTemplate) {
+        requireComplaintAdminResource(jdbc)
+        if (!complaintConsumptionIssued || complaintConsumption != null || !consumption.belongsTo(this)) {
+            refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+        complaintConsumption = consumption
+    }
+
+    internal fun requireComplaintGrantConsumption(consumption: ComplaintGrantConsumption, jdbc: JdbcTemplate) {
+        requireComplaintAdminResource(jdbc)
+        if (complaintConsumption !== consumption) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+    }
+
+    private fun requireComplaintAdminResource(jdbc: JdbcTemplate) = selectedHolder.requireComplaintAdminResource(jdbc)
+
+    /** Only this phase selects its original holder. No caller resource flag, lookup, checkout or fallback. */
+    internal fun complaintAuditHolder(consumption: ComplaintGrantConsumption, jdbc: JdbcTemplate): ComplaintAuditSelectedHolder {
+        requireComplaintGrantConsumption(consumption, jdbc)
+        return selectedHolder.complaintAuditHolder()
+    }
+
+    internal fun requireComplaintRecoverySettlement(jdbc: JdbcTemplate) = recoverySettlement.requireOperation(jdbc)
+
+    internal fun retainComplaintRecoverySettlement(operation: ComplaintRecoverySettlementOperation, jdbc: JdbcTemplate) =
+        recoverySettlement.retain(operation, jdbc)
+
+    internal fun requireComplaintRecoverySettlement(operation: ComplaintRecoverySettlementOperation, jdbc: JdbcTemplate) =
+        recoverySettlement.requireRetained(operation, jdbc)
+
+    internal fun checkComplaintRecoverySettlementWork(result: ComplaintRecoverySettlementResult) = recoverySettlement.checkWork(result)
+
+    internal fun complaintRecoverySettlementResult(result: ComplaintRecoverySettlementResult?): ComplaintRecoverySettlementResult =
+        recoverySettlement.result(result)
+
+    internal fun requireComplaintTestReserveSpend(jdbc: JdbcTemplate) = testReserveSpend.requireOperation(jdbc)
+
+    internal fun retainComplaintTestReserveSpend(operation: ComplaintTestReserveSpendOperation, jdbc: JdbcTemplate) = testReserveSpend.retain(operation, jdbc)
+
+    internal fun requireComplaintTestReserveSpend(operation: ComplaintTestReserveSpendOperation, jdbc: JdbcTemplate) =
+        testReserveSpend.requireRetained(operation, jdbc)
+
+    internal fun checkComplaintTestReserveSpendWork(result: ComplaintTestReserveSpendResult) = testReserveSpend.checkWork(result)
+
+    internal fun complaintTestReserveSpendResult(result: ComplaintTestReserveSpendResult?): ComplaintTestReserveSpendResult = testReserveSpend.result(result)
+
+    private fun requireStepUpResource(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+        if (path !== expected) {
+            recordFailure(PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        requireParticipation()
+        if (jdbc.dataSource !== dataSource) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun checkStepUpSnapshotResult(snapshot: StepUpUserSnapshot) {
+        if (!caller.isCurrent() || path !== snapshot.scope.snapshotPath || stepUpSnapshot !== snapshot) {
+            failure.compareAndSet(null, PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        requireSuccessfulResult()
+    }
+
+    internal fun checkStepUpIssuanceResult(issuance: StepUpGrantIssuance) {
+        if (!caller.isCurrent() || stepUpIssuance !== issuance || !issuance.completedFor(this)) {
+            failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+        }
+        requireSuccessfulResult()
+    }
+
+    internal fun checkComplaintAuditResult(consumption: ComplaintGrantConsumption) {
+        if (!caller.isCurrent() || complaintConsumption !== consumption || !consumption.completedFor(this)) {
+            failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+        }
+        requireSuccessfulResult()
+    }
+
+    internal fun recordNestedEntryFailure(requested: PersistencePhasePath, problem: Throwable) {
+        if (path !== PersistencePhasePath.SOURCE_GRANT_CLEANUP || requested !== PersistencePhasePath.SOURCE_GRANT_CLEANUP) recordFailure(problem)
     }
 
     internal fun checkWorkReturned(count: Int) {
         requireParticipation()
-        if (!sourceOperationIssued || count !in 0..50) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        val completed = when (path) {
+            PersistencePhasePath.SOURCE_GRANT_CLEANUP -> sourceOperationIssued
+            PersistencePhasePath.COMPLAINT_GRANT_CLEANUP -> complaintBatch?.completedCount(this) == count
+            else -> false // Snapshot/grant completion is bound to its exact object, never a caller count.
+        }
+        if (!completed || count !in 0..50) refuse(PersistencePhaseFailureCode.WORK_FAILED)
     }
 
     internal fun commit() {
         requireParticipation()
+        // Preserve the existing source-only participation contract.
+        val complete = when (path) {
+            PersistencePhasePath.SOURCE_GRANT_CLEANUP -> true
+
+            PersistencePhasePath.COMPLAINT_GRANT_CLEANUP -> complaintBatch?.completedCount(this) != null
+
+            PersistencePhasePath.SOURCE_STEP_UP_SNAPSHOT, PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT -> stepUpSnapshot != null
+
+            PersistencePhasePath.SOURCE_STEP_UP_ISSUANCE, PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE -> stepUpIssuance?.completedFor(this) == true
+
+            PersistencePhasePath.COMPLAINT_ADMIN_AUDIT,
+            PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
+            -> complaintConsumption?.completedFor(this) == true
+
+            PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT -> recoverySettlement.completed()
+
+            PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND -> testReserveSpend.completed()
+
+            PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
+
+            PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+            PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
+            -> installationSession.completed()
+
+            PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE -> installationCurrentState.completed()
+
+            PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
+
+            PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX -> selectedHolder.fenceAccepted()
+
+            PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT -> selectedHolder.controlSnapshotCaptured()
+
+            PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> catalogSnapshot.completed()
+
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+            -> catalogGenesis.completed()
+        }
+        if (!complete) refuse(PersistencePhaseFailureCode.WORK_FAILED) // No skipped check, unspent charge or incomplete insert can commit.
         stage = Stage.COMMITTING
         manager.commit(requireNotNull(rootStatus))
         if (databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
@@ -228,7 +485,7 @@ internal class PersistencePhaseContext(
         }
         if (commit) {
             requireWork()
-            requireSelectedHolder()
+            selectedHolder.requireCurrent()
         } else {
             cleanupBudget()
         }
@@ -259,8 +516,11 @@ internal class PersistencePhaseContext(
     }
 
     internal fun jdbcFailure() {
+        jdbcFailureObserved.set(true)
         failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
     }
+
+    internal fun isOriginalCaller(): Boolean = caller.isCurrent()
 
     /** Lower/upper dispatch uses this budget; no business worker or copied Spring context exists. */
     internal fun callBudget(kind: PersistenceJdbcGuardCallKind): PersistenceTimeBudget {
@@ -272,55 +532,17 @@ internal class PersistencePhaseContext(
             if (stage !in BUSINESS_STAGES || databaseOutcome() !== PersistenceDatabaseOutcome.NONE) {
                 refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
             }
-            return requireNotNull(work)
+            return selectedHolder.businessBudget()
         }
         return cleanupBudget()
     }
 
-    // Keep the closed JDBC capability table and exact rollback-stage conjunction together; no fallback grants cleanup authority.
-    @Suppress("CyclomaticComplexMethod", "ComplexCondition")
-    internal fun connectionKind(method: Method, arguments: Array<out Any?>?): PersistenceJdbcGuardCallKind {
-        requireCaller()
-        if (changingReadCap && method.name in READ_CAP_METHODS) return requireNotNull(readCapKind)
-        val completion = stage === Stage.ROLLING_BACK || stage === Stage.FINALIZING || stage === Stage.COMMITTING ||
-            (stage === Stage.STARTING && databaseOutcome() in KNOWN_OUTCOMES)
-        return when (method.name) {
-            "commit" -> {
-                if (stage !== Stage.COMMITTING || !completionActive) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
-                PersistenceJdbcGuardCallKind.BUSINESS
-            }
+    internal fun connectionKind(method: Method, arguments: Array<out Any?>?): PersistenceJdbcGuardCallKind = jdbcCapabilities.classify(method, arguments)
 
-            "rollback" -> {
-                if (arguments?.isNotEmpty() == true ||
-                    !((completionActive && stage in setOf(Stage.COMMITTING, Stage.ROLLING_BACK)) || (stage === Stage.STARTING && !beginEnded))
-                ) {
-                    refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
-                }
-                PersistenceJdbcGuardCallKind.CLEANUP
-            }
+    internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection) = selectedHolder.requireFence(fence, selected)
 
-            "setSavepoint", "releaseSavepoint" -> refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
-
-            "setNetworkTimeout" -> {
-                if (!changingReadCap && !restoringReadCap) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-                if (completion) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS
-            }
-
-            "setAutoCommit" -> {
-                if (arguments?.singleOrNull() == false) {
-                    if (stage !== Stage.STARTING || !acquisitionAuthority) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
-                    PersistenceJdbcGuardCallKind.BUSINESS
-                } else {
-                    if (!completion || databaseOutcome() !in KNOWN_OUTCOMES) refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
-                    PersistenceJdbcGuardCallKind.CLEANUP
-                }
-            }
-
-            in COMPLETION_LOCAL_METHODS -> if (completion) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS
-
-            else -> PersistenceJdbcGuardCallKind.BUSINESS
-        }
-    }
+    internal fun requireDeletionControlSnapshot(snapshot: PersistenceDeletionControlSnapshot, selected: Connection) =
+        selectedHolder.requireControlSnapshot(snapshot, selected)
 
     /** Reclips the actual JDBC read cap before every upper call, without recursion or a new time budget. */
     internal fun beforeJdbcCall(kind: PersistenceJdbcGuardCallKind) {
@@ -331,7 +553,7 @@ internal class PersistencePhaseContext(
         changingReadCap = true
         try {
             if (originalReadCap == null) originalReadCap = selected.networkTimeout
-            val ceiling = if (budget === emergency) EMERGENCY_READ_MILLIS else NORMAL_READ_MILLIS
+            val ceiling = if (budget === emergency) EMERGENCY_READ_MILLIS else selectedHolder.readCeiling()
             selected.setNetworkTimeout(INLINE, budget.remainingMillis(ceiling).toInt())
         } finally {
             changingReadCap = false
@@ -340,7 +562,7 @@ internal class PersistencePhaseContext(
     }
 
     internal fun afterJdbcCall(kind: PersistenceJdbcGuardCallKind) {
-        if (kind === PersistenceJdbcGuardCallKind.BUSINESS) requireWork()
+        if (kind === PersistenceJdbcGuardCallKind.BUSINESS) selectedHolder.afterBusinessCall()
     }
 
     private fun installLimits() {
@@ -392,7 +614,7 @@ internal class PersistencePhaseContext(
             stage = Stage.FINALIZING
             val selected = lease
             if (selected != null) {
-                if (springSettled && databaseOutcome() in KNOWN_OUTCOMES) {
+                if (springSettled && databaseOutcome() in KNOWN_OUTCOMES && !jdbcFailureObserved.get()) {
                     try {
                         // Manager reset may have swallowed failure; lower poison/transaction evidence still gates return.
                         restoringReadCap = true
@@ -425,10 +647,7 @@ internal class PersistencePhaseContext(
                 springSettled = false
             }
             finalizerEnded = true
-            if (!releaseIfProven()) {
-                failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
-                stage = Stage.QUARANTINED // Retain exact permit/holder/lease; this is an incident, not a lifetime PASS.
-            }
+            if (!releaseIfProven()) quarantine()
         }
     }
 
@@ -438,6 +657,7 @@ internal class PersistencePhaseContext(
         if (!PersistencePhaseOwnership.springConnectionFree() || completionActive || (beginDispatched && !beginEnded)) return false
         val status = rootStatus
         if (status?.hasReturnedStatus() == true && (!status.isCompleted || !completionEnded)) return false
+        if (entityManagerFactory == null) return selectedHolder.jdbcCompletionProven()
         // The private delegate retained the exact created EM before doBegin. Only actual close,
         // ended dispatch and empty Spring state settle a no-status begin; no rollback is invented.
         if (status != null && !status.hasReturnedStatus() && acquisition != null && createdEntityManager == null) return false
@@ -456,35 +676,36 @@ internal class PersistencePhaseContext(
         requireCaller()
         if (stage !== Stage.QUARANTINED || !finalizerEnded) return
         springSettled = springCompletionProven()
-        releaseIfProven()
+        if (!releaseIfProven()) quarantine()
     }
 
-    private fun releaseIfProven(): Boolean {
-        if (!finalizerEnded || !springSettled || acquisition?.quiescent() == false) return false
-        if (refunded.compareAndSet(false, true)) {
-            ownership.forget(this, slot)
-            check(permit.releaseAfterQuiescence())
-            PersistencePhaseOwnership.reconcileLoans()
-            stage = Stage.CLOSED
-        }
-        return true
-    }
+    private fun releaseIfProven(): Boolean = entrySettlement.releaseIfProven()
 
-    internal fun entryPublicationFailed() {
-        // No manager/checkout was entered. This is genuinely unused, not an invented lease receipt.
-        springSettled = true
-        finalizerEnded = true
-        releaseIfProven()
-    }
+    private fun quarantine() = entrySettlement.quarantine()
+
+    internal fun entryPublicationFailed() = entrySettlement.entryPublicationFailed()
 
     internal fun quarantined(): Boolean = stage === Stage.QUARANTINED
 
+    // Complaint incidents seal only complaint admission. Source-origin local health and the shared permit budget remain authoritative.
+    internal fun blocksEntry(candidate: PersistencePhasePath): Boolean = quarantined() && (!candidate.source || path.source)
+
     internal fun result(count: Int): Int {
+        if (path === PersistencePhasePath.COMPLAINT_GRANT_CLEANUP && complaintBatch?.completedCount(this) != count) {
+            failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+        }
+        if (path !== PersistencePhasePath.SOURCE_GRANT_CLEANUP && path !== PersistencePhasePath.COMPLAINT_GRANT_CLEANUP) {
+            failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+        }
+        requireSuccessfulResult()
+        return count
+    }
+
+    private fun requireSuccessfulResult() {
         val reason = failure.get()
         if (reason != null || !refunded.get() || databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) {
             throw failureException(reason ?: PersistencePhaseFailureCode.COMPLETION_FAILED)
         }
-        return count
     }
 
     internal fun failureException(default: PersistencePhaseFailureCode): PersistencePhaseException =
@@ -527,29 +748,803 @@ internal class PersistencePhaseContext(
         if (!caller.isCurrent() || PersistencePhaseOwnership.current() !== this) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
     }
 
-    private fun refuse(code: PersistencePhaseFailureCode): Nothing = throw failureException(code)
-
-    override fun toString(): String = "PersistencePhaseContext(SOURCE_GRANT_CLEANUP)"
-
-    private enum class Stage { PREPARED, STARTING, SETTING_UP, WORK, COMMITTING, ROLLING_BACK, FINALIZING, QUARANTINED, CLOSED }
-
-    private companion object {
-        const val WORK_MILLIS = 2_000L
-        const val EMERGENCY_MILLIS = 1_000L
-        const val NORMAL_READ_MILLIS = 1_000L
-        const val EMERGENCY_READ_MILLIS = 250L
-        val INLINE = Executor { command -> command.run() }
-        val BUSINESS_STAGES = setOf(Stage.STARTING, Stage.SETTING_UP, Stage.WORK, Stage.COMMITTING)
-        val KNOWN_OUTCOMES = setOf(PersistenceDatabaseOutcome.COMMITTED, PersistenceDatabaseOutcome.ROLLED_BACK)
-        val READ_CAP_METHODS = setOf("getNetworkTimeout", "setNetworkTimeout")
-        val COMPLETION_LOCAL_METHODS = setOf(
-            "getAutoCommit", "getNetworkTimeout", "setNetworkTimeout", "isClosed", "getWarnings", "clearWarnings",
-            "getTransactionIsolation", "setTransactionIsolation", "isReadOnly", "setReadOnly", "getHoldability", "setHoldability",
-            "getCatalog", "setCatalog", "getSchema", "setSchema", "getTypeMap", "setTypeMap",
-        )
-        const val LOCAL_LIMITS = "SELECT set_config('transaction_timeout', ?, true), set_config('statement_timeout', ?, true), " +
-            "set_config('idle_in_transaction_session_timeout', ?, true), set_config('lock_timeout', ?, true)"
+    private fun refuse(code: PersistencePhaseFailureCode): Nothing {
+        // New named operations are sticky even when an internal caller catches them. Preserve existing source-cleanup refusal semantics.
+        if (path !== PersistencePhasePath.SOURCE_GRANT_CLEANUP) {
+            failure.compareAndSet(null, code)
+            PersistencePhaseOwnership.current()?.takeIf { it !== this }?.recordFailure(PersistencePhaseException(code))
+        }
+        throw failureException(code)
     }
+
+    override fun toString(): String = "PersistencePhaseContext(${path.name})"
+
+    /** Entry and settlement bookkeeping over this exact phase, with no copied cleanup state or independent owner. */
+    private inner class EntrySettlementBoundary {
+        private var complaintClaim: PersistenceComplaintContainment.Claim? = null
+        private var ownershipSlotDetached = false
+
+        fun reserveComplaintClaim() {
+            requireCaller()
+            check(stage === Stage.PREPARED && complaintClaim == null && permit == null)
+            complaintClaim = dataSource.complaintContainment.reserve(this@PersistencePhaseContext, caller)
+        }
+
+        fun retainEntryPermit(selected: LocalPersistencePermit) {
+            requireCaller()
+            check(stage === Stage.PREPARED && permit == null)
+            permit = selected // Retain before any following entry bookkeeping can fail.
+            complaintClaim?.bind(this@PersistencePhaseContext, selected)
+        }
+
+        fun publishEntry() {
+            requireCaller()
+            check(permit != null)
+            complaintClaim?.publish(this@PersistencePhaseContext)
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        fun releaseIfProven(): Boolean {
+            if (refunded.get()) return true
+            if (!finalizerEnded || !springSettled || acquisition?.quiescent() == false) return false
+            return try {
+                permit?.let { selected ->
+                    if (!selected.releaseCompleted()) check(selected.releaseAfterQuiescence())
+                    check(selected.releaseCompleted()) // Initial release CAS and owner-count decrement are not this receipt.
+                }
+                PersistencePhaseOwnership.reconcileLoans()
+                if (!ownershipSlotDetached) {
+                    ownership.detach(this@PersistencePhaseContext, slot)
+                    ownershipSlotDetached = true // Exact completed detach receipt, never inferred from an empty/reused slot.
+                }
+                ownership.clearCaller(this@PersistencePhaseContext)
+                // Last fallible bookkeeping; no callback follows root clear.
+                complaintClaim?.let { check(it.clearAfterCleanup(this@PersistencePhaseContext)) }
+                refunded.set(true)
+                stage = Stage.CLOSED
+                true
+            } catch (_: Throwable) {
+                // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
+                ownership.retainCallerForRecovery(this@PersistencePhaseContext)
+                false
+            }
+        }
+
+        fun quarantine() {
+            failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
+            complaintClaim?.seal(this@PersistencePhaseContext)
+            stage = Stage.QUARANTINED // Retain exact phase/permit/holder/lease; an incident, not a lifetime PASS.
+        }
+
+        fun entryPublicationFailed() {
+            // No manager/checkout was entered. This is genuinely unused, not an invented lease receipt.
+            springSettled = springCompletionProven()
+            finalizerEnded = true
+            if (!releaseIfProven()) {
+                quarantine()
+                throw failureException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
+            }
+        }
+    }
+
+    /** Closed JDBC capability selection; reads the same enclosing phase without a copied state snapshot. */
+    private inner class JdbcCapabilityBoundary {
+        // Keep the closed JDBC capability table and exact rollback-stage conjunction together; no fallback grants cleanup authority.
+        @Suppress("CyclomaticComplexMethod", "ComplexCondition")
+        fun classify(method: Method, arguments: Array<out Any?>?): PersistenceJdbcGuardCallKind {
+            requireCaller()
+            if (changingReadCap && method.name in READ_CAP_METHODS) return requireNotNull(readCapKind)
+            val completion = stage === Stage.ROLLING_BACK || stage === Stage.FINALIZING || stage === Stage.COMMITTING ||
+                (stage === Stage.STARTING && databaseOutcome() in KNOWN_OUTCOMES)
+            return when (method.name) {
+                "commit" -> {
+                    if (stage !== Stage.COMMITTING || !completionActive) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
+                    PersistenceJdbcGuardCallKind.BUSINESS
+                }
+
+                "rollback" -> {
+                    if (arguments?.isNotEmpty() == true ||
+                        !((completionActive && stage in setOf(Stage.COMMITTING, Stage.ROLLING_BACK)) || (stage === Stage.STARTING && !beginEnded))
+                    ) {
+                        refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
+                    }
+                    PersistenceJdbcGuardCallKind.CLEANUP
+                }
+
+                "setSavepoint", "releaseSavepoint" -> refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
+
+                "setNetworkTimeout" -> {
+                    if (!changingReadCap && !restoringReadCap) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    if (completion) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS
+                }
+
+                "setAutoCommit" -> {
+                    if (arguments?.singleOrNull() == false) {
+                        if (stage !== Stage.STARTING || !acquisitionAuthority) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
+                        PersistenceJdbcGuardCallKind.BUSINESS
+                    } else {
+                        if (!completion || databaseOutcome() !in KNOWN_OUTCOMES) refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
+                        PersistenceJdbcGuardCallKind.CLEANUP
+                    }
+                }
+
+                in COMPLETION_LOCAL_METHODS -> if (completion) PersistenceJdbcGuardCallKind.CLEANUP else PersistenceJdbcGuardCallKind.BUSINESS
+
+                else -> PersistenceJdbcGuardCallKind.BUSINESS
+            }
+        }
+    }
+
+    /** Read-only guard view of this phase's retained resources, not another owner or finalizer. */
+    private inner class SelectedHolderBoundary {
+        private val deletionFence = when (path) {
+            PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
+            PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+            -> PersistenceDeletionFence(this@PersistencePhaseContext, ownership.nanoClock)
+
+            else -> null
+        }
+        private val deletionControlSnapshot = if (path === PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT) {
+            PersistenceDeletionControlSnapshot(this@PersistencePhaseContext, checkNotNull(deletionScope))
+        } else {
+            null
+        }
+        private var fenceLimitsRestored = false
+
+        fun acquireFence(selected: Connection) {
+            deletionFence?.let {
+                it.acquire(selected, requireNotNull(work))
+                installLimits() // Same remaining phase budget, only after an on-time true; never a new two-second allowance.
+                fenceLimitsRestored = true
+                deletionControlSnapshot?.capture(selected)
+            }
+        }
+
+        fun requireFence(fence: PersistenceDeletionFence, selected: Connection) {
+            requireCaller()
+            if (stage !== Stage.SETTING_UP || deletionFence !== fence || connection !== selected) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireCurrent()
+            requireWork()
+        }
+
+        fun fenceAccepted(): Boolean = deletionFence?.accepted() == true
+
+        fun fenceReady(): Boolean = fenceAccepted() && fenceLimitsRestored
+
+        fun requireControlSnapshot(snapshot: PersistenceDeletionControlSnapshot, selected: Connection) {
+            requireCaller()
+            if (stage !== Stage.SETTING_UP || deletionControlSnapshot !== snapshot || connection !== selected) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            if (!fenceAccepted() || !fenceLimitsRestored) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireCurrent()
+            requireWork()
+        }
+
+        fun controlSnapshotCaptured(): Boolean = fenceAccepted() && fenceLimitsRestored && deletionControlSnapshot?.captured() == true
+
+        fun businessBudget(): PersistenceTimeBudget {
+            if (deletionFence?.active() == true || deletionControlSnapshot?.active() == true) requireCurrent()
+            return deletionFence?.callBudget(requireNotNull(work)) ?: requireNotNull(work)
+        }
+
+        fun readCeiling(): Long = deletionFence?.readCeiling(NORMAL_READ_MILLIS) ?: NORMAL_READ_MILLIS
+
+        fun afterBusinessCall() {
+            requireWork()
+            deletionFence?.requireRemaining()
+        }
+
+        // Short-circuit Spring-state/holder identity checks before consulting the retained holder's connection.
+        fun requireCurrent() {
+            if (!TransactionSynchronizationManager.isActualTransactionActive() || !TransactionSynchronizationManager.isSynchronizationActive() ||
+                TransactionSynchronizationManager.getResource(dataSource) !== holder
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            if (entityManagerFactory == null) {
+                if (entityHolder != null || createdEntityManager != null || TransactionSynchronizationManager.getResourceMap().size != 1) {
+                    refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                }
+            } else {
+                if (entityHolder == null || TransactionSynchronizationManager.getResource(entityManagerFactory) !== entityHolder ||
+                    entityHolder?.entityManager !== createdEntityManager
+                ) {
+                    refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                }
+            }
+            if (holder == null || holder?.connection !== connection) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            val selected = lease ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            if (connection?.matches(selected) != true || acquisition?.matches(selected) != true) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            selected.requireBusiness()
+        }
+
+        fun requireComplaintAdminResource(jdbc: JdbcTemplate) {
+            if (path !== PersistencePhasePath.COMPLAINT_ADMIN_AUDIT && path !== PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT) {
+                recordFailure(PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, path)
+        }
+
+        fun complaintAuditHolder(): ComplaintAuditSelectedHolder = when (path) {
+            PersistencePhasePath.COMPLAINT_ADMIN_AUDIT ->
+                ComplaintAuditSelectedHolder.Ordinary(createdEntityManager ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+
+            PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT -> {
+                if (entityManagerFactory != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                ComplaintAuditSelectedHolder.Deletion(connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED))
+            }
+
+            else -> refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        fun jdbcCompletionProven(): Boolean {
+            if (createdEntityManager != null || entityHolder != null) return false
+            // A JDBC no-status begin needs its actual close or terminal custody. No absent-EM shortcut.
+            val retained = acquisition ?: return true
+            return retained.logicallyReleased() || retained.quiescent()
+        }
+    }
+
+    /** One fixed G1 operation; the same actual phase retains its fence, slot, holder, commit and cleanup. */
+    private inner class CatalogGenesisBoundary : PersistenceCatalogGenesisMutation {
+        private var issued = false
+        private var retained: CatalogGenesisMutationOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate, path: PersistencePhasePath) {
+            if (path !in setOf(
+                    PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+                    PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+                    PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+                    PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+                )
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, path)
+            if (issued || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: CatalogGenesisMutationOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: CatalogGenesisMutationOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireCommitted(operation: CatalogGenesisMutationOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** A concrete read, not a caller-supplied diagnostic enum, owns completion and the result-release seal. */
+    private inner class InstallationCurrentStateBoundary : PersistenceInstallationCurrentState {
+        private var issued = false
+        private var retained: InstallationCurrentStateReadOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun connection(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: InstallationCurrentStateReadOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** One exact read operation; completion is insufficient until the enclosing phase proves commit AND cleanup. */
+    private inner class CatalogSnapshotBoundary : PersistenceCatalogSnapshot {
+        private var issued = false
+        private var retained: CatalogSnapshotReadOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: CatalogSnapshotReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: CatalogSnapshotReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireCommitted(operation: CatalogSnapshotReadOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** One-operation cursor only; the enclosing phase retains the same permit, holder, lease and sticky failure. */
+    private inner class DeletionBoundary : PersistenceComplaintDeletion {
+        private var issued = false
+        private var retained: ComplaintDeletionOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_DELETION_MUTATION)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintDeletionOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_DELETION_MUTATION)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintDeletionOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_DELETION_MUTATION)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun connection(operation: ComplaintDeletionOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            if (entityManagerFactory != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            return this@PersistencePhaseContext.connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintDeletionOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** K04's one-operation state only; phase/permit/lease ownership and sticky failure remain on the enclosing owner. */
+    private inner class RecoverySettlementBoundary {
+        private var issued = false
+        private var retained: ComplaintRecoverySettlementOperation? = null
+
+        fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        fun retain(operation: ComplaintRecoverySettlementOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        fun requireRetained(operation: ComplaintRecoverySettlementOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        fun checkWork(result: ComplaintRecoverySettlementResult) {
+            requireParticipation()
+            if (path !== PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT || retained?.completedResult(this@PersistencePhaseContext) !== result) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+        }
+
+        fun result(result: ComplaintRecoverySettlementResult?): ComplaintRecoverySettlementResult {
+            if (!caller.isCurrent() || path !== PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            } else if (result == null || retained?.completedResult(this@PersistencePhaseContext) !== result) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+            return checkNotNull(result)
+        }
+
+        fun completed(): Boolean = retained?.completedResult(this@PersistencePhaseContext) != null
+    }
+
+    /** K05 state only; all resource, permit, lease and sticky failure custody remains on the same enclosing phase. */
+    private inner class TestReserveSpendBoundary {
+        private var issued = false
+        private var retained: ComplaintTestReserveSpendOperation? = null
+
+        fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        fun retain(operation: ComplaintTestReserveSpendOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        fun requireRetained(operation: ComplaintTestReserveSpendOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        fun checkWork(result: ComplaintTestReserveSpendResult) {
+            requireParticipation()
+            if (path !== PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND || retained?.completedResult(this@PersistencePhaseContext) !== result) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+        }
+
+        fun result(result: ComplaintTestReserveSpendResult?): ComplaintTestReserveSpendResult {
+            if (!caller.isCurrent() || path !== PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            } else if (result == null || retained?.completedResult(this@PersistencePhaseContext) !== result) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+            return checkNotNull(result)
+        }
+
+        fun completed(): Boolean = retained?.completedResult(this@PersistencePhaseContext) != null
+    }
+
+    /** Same exact result custody for paired creation, authenticated replay, or a no-write normal rejection. */
+    private inner class InstallationEnrollmentBoundary : PersistenceInstallationEnrollment {
+        private var issued = false
+        private var retained: ComplaintInstallationEnrollmentOperation? = null
+        private val enrollmentIdentity = Any()
+        private var admission: ComplaintAdmittedEnrollmentWrite? = null
+        private var admissionClaimed = false
+        private var admissionBoundsChecked = false
+        private var admissionWriteChecked = false
+
+        override fun bindAdmitted(handoff: ComplaintAdmittedEnrollmentWrite) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || path !== PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT || admission != null) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            admission = handoff // A caught failed bind cannot turn this into a raw unadmitted phase.
+            ComplaintIngressAdmission.bindEnrollment(handoff, enrollmentIdentity)
+        }
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT)
+            if (admission == null) ComplaintIngressAdmission.requireRawEnrollmentContext()
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun ownerReference(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate): UUID {
+            requireRetained(operation, jdbc)
+            val reference = enrollmentOwnerReference ?: refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!operation.ownerReferenceIsDistinct(reference)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            return reference
+        }
+
+        override fun claimAdmitted(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate, candidate: InstallationEnrollmentCandidate) {
+            requireRetained(operation, jdbc)
+            val handoff = admission ?: return
+            if (admissionClaimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.claimEnrollment(handoff, enrollmentIdentity, candidate)
+            admissionClaimed = true
+        }
+
+        override fun checkAdmittedBounds(
+            operation: ComplaintInstallationEnrollmentOperation,
+            jdbc: JdbcTemplate,
+            ledger: ComplaintCapacityLedger,
+            daily: ComplaintDailyAdmission,
+        ) {
+            requireRetained(operation, jdbc)
+            val handoff = admission ?: return
+            if (!admissionClaimed || admissionBoundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkEnrollmentBounds(handoff, enrollmentIdentity, ledger, daily)
+            admissionBoundsChecked = true
+        }
+
+        override fun checkAdmittedWrite(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            val handoff = admission ?: return
+            if (!admissionClaimed || !admissionBoundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkEnrollmentWrite(handoff, enrollmentIdentity)
+            admissionWriteChecked = true
+        }
+
+        override fun checkWork(result: InstallationEnrollmentResult) {
+            requireParticipation()
+            if (path !== PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT || retained?.completedResult(this@PersistencePhaseContext) !== result ||
+                !admissionCompleted(result)
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+        }
+
+        override fun result(result: InstallationEnrollmentResult?): InstallationEnrollmentResult {
+            if (!caller.isCurrent() || path !== PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            } else if (result == null || retained?.completedResult(this@PersistencePhaseContext) !== result || !admissionCompleted(result)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+            return checkNotNull(result)
+        }
+
+        override fun entityManager(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate): EntityManager {
+            requireRetained(operation, jdbc)
+            return createdEntityManager ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        private fun admissionCompleted(result: InstallationEnrollmentResult): Boolean = admission == null ||
+            (admissionClaimed && admissionBoundsChecked && (result !is InstallationEnrollmentResult.Enrolled || admissionWriteChecked))
+
+        override fun completed(): Boolean {
+            val result = retained?.completedResult(this@PersistencePhaseContext) ?: return false
+            return admissionCompleted(result)
+        }
+    }
+
+    /** Exact read/refresh operation and result custody; a normal rejection still needs real completion and release. */
+    private inner class InstallationSessionBoundary : PersistenceInstallationSession {
+        private var issued = false
+        private var retained: ComplaintInstallationSessionOperation? = null
+        private val refreshIdentity = Any()
+        private var admittedRefresh: ComplaintAdmittedSessionRefresh? = null
+        private var admissionClaimed = false
+        private var admissionWriteChecked = false
+
+        override fun bindAdmittedRefresh(handoff: ComplaintAdmittedSessionRefresh) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || path !== PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH || admittedRefresh != null) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            admittedRefresh = handoff // Even a caught bind failure cannot turn this into an unadmitted phase.
+            ComplaintIngressAdmission.bindSessionRefresh(handoff, refreshIdentity)
+        }
+
+        override fun requirePreflight(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT)
+
+        override fun requireRefresh(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH)
+
+        private fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            requireStepUpResource(jdbc, expected)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintInstallationSessionOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintInstallationSessionOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun ownerIdentity(operation: ComplaintInstallationSessionOperation, jdbc: JdbcTemplate): Any {
+            requireRetained(operation, jdbc)
+            return ownership.installationSessionIdentity
+        }
+
+        override fun claimAdmittedRefresh(
+            operation: ComplaintInstallationSessionOperation,
+            jdbc: JdbcTemplate,
+            preflight: InstallationSessionPreflight,
+            installation: ScopedInstallationId,
+            credentialVersion: Long,
+        ) {
+            requireRetained(operation, jdbc)
+            if (path !== PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            val handoff = admittedRefresh ?: return // Explicit dormant lower core only; a bound phase can never drop its handoff.
+            if (admissionClaimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.claimSessionRefresh(handoff, refreshIdentity, preflight, installation, credentialVersion)
+            admissionClaimed = true
+        }
+
+        override fun checkAdmittedRefreshWrite(
+            operation: ComplaintInstallationSessionOperation,
+            jdbc: JdbcTemplate,
+            installation: ScopedInstallationId,
+            credentialVersion: Long,
+        ) {
+            requireRetained(operation, jdbc)
+            if (path !== PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            val handoff = admittedRefresh ?: return
+            if (!admissionClaimed || admissionWriteChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkSessionRefreshWrite(handoff, refreshIdentity, installation, credentialVersion)
+            admissionWriteChecked = true
+        }
+
+        override fun checkWork(result: InstallationSessionResult) {
+            requireParticipation()
+            if (retained?.completedResult(this@PersistencePhaseContext) !== result || !admissionCompleted(result)) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+        }
+
+        override fun preflightResult(result: SessionPreflightResult?): SessionPreflightResult {
+            requireResult(result, PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT)
+            return checkNotNull(result)
+        }
+
+        override fun refreshResult(result: SessionRefreshResult?): SessionRefreshResult {
+            requireResult(result, PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH)
+            return checkNotNull(result)
+        }
+
+        private fun requireResult(result: InstallationSessionResult?, expected: PersistencePhasePath) {
+            if (!caller.isCurrent() || path !== expected) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            } else if (result == null || retained?.completedResult(this@PersistencePhaseContext) !== result || !admissionCompleted(result)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        private fun admissionCompleted(result: InstallationSessionResult): Boolean =
+            admittedRefresh == null || (admissionClaimed && (result !is SessionRefreshResult.Refreshed || admissionWriteChecked))
+
+        override fun completed(): Boolean {
+            val result = retained?.completedResult(this@PersistencePhaseContext) ?: return false
+            return admissionCompleted(result)
+        }
+    }
+}
+
+private enum class Stage { PREPARED, STARTING, SETTING_UP, WORK, COMMITTING, ROLLING_BACK, FINALIZING, QUARANTINED, CLOSED }
+
+private const val WORK_MILLIS = 2_000L
+private const val EMERGENCY_MILLIS = 1_000L
+private const val NORMAL_READ_MILLIS = 1_000L
+private const val EMERGENCY_READ_MILLIS = 250L
+private val INLINE = Executor { command -> command.run() }
+private val BUSINESS_STAGES = setOf(Stage.STARTING, Stage.SETTING_UP, Stage.WORK, Stage.COMMITTING)
+private val KNOWN_OUTCOMES = setOf(PersistenceDatabaseOutcome.COMMITTED, PersistenceDatabaseOutcome.ROLLED_BACK)
+private val READ_CAP_METHODS = setOf("getNetworkTimeout", "setNetworkTimeout")
+private val COMPLETION_LOCAL_METHODS = setOf(
+    "getAutoCommit", "getNetworkTimeout", "setNetworkTimeout", "isClosed", "getWarnings", "clearWarnings",
+    "getTransactionIsolation", "setTransactionIsolation", "isReadOnly", "setReadOnly", "getHoldability", "setHoldability",
+    "getCatalog", "setCatalog", "getSchema", "setSchema", "getTypeMap", "setTypeMap",
+)
+private const val LOCAL_LIMITS = "SELECT set_config('transaction_timeout', ?, true), set_config('statement_timeout', ?, true), " +
+    "set_config('idle_in_transaction_session_timeout', ?, true), set_config('lock_timeout', ?, true)"
+
+/** Only this phase's private boundary is used; implementing a view cannot manufacture a retained read. */
+internal interface PersistenceInstallationCurrentState {
+    fun requireOperation(jdbc: JdbcTemplate)
+    fun retain(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate)
+    fun connection(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate): Connection
+    fun requireCommitted(operation: InstallationCurrentStateReadOperation)
+    fun completed(): Boolean
+}
+
+/** Read-only K06 view of the exact phase's private boundary; no caller-supplied implementation is accepted. */
+internal interface PersistenceInstallationEnrollment {
+    fun bindAdmitted(handoff: ComplaintAdmittedEnrollmentWrite)
+    fun requireOperation(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate)
+    fun ownerReference(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate): UUID
+    fun claimAdmitted(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate, candidate: InstallationEnrollmentCandidate)
+
+    fun checkAdmittedBounds(
+        operation: ComplaintInstallationEnrollmentOperation,
+        jdbc: JdbcTemplate,
+        ledger: ComplaintCapacityLedger,
+        daily: ComplaintDailyAdmission,
+    )
+
+    fun checkAdmittedWrite(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate)
+    fun checkWork(result: InstallationEnrollmentResult)
+    fun result(result: InstallationEnrollmentResult?): InstallationEnrollmentResult
+    fun entityManager(operation: ComplaintInstallationEnrollmentOperation, jdbc: JdbcTemplate): EntityManager
+    fun completed(): Boolean
+}
+
+/** Read-only view of this phase's private session boundary; callers cannot replace its owner or completion predicate. */
+internal interface PersistenceInstallationSession {
+    fun bindAdmittedRefresh(handoff: ComplaintAdmittedSessionRefresh)
+    fun requirePreflight(jdbc: JdbcTemplate)
+    fun requireRefresh(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintInstallationSessionOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintInstallationSessionOperation, jdbc: JdbcTemplate)
+    fun ownerIdentity(operation: ComplaintInstallationSessionOperation, jdbc: JdbcTemplate): Any
+
+    fun claimAdmittedRefresh(
+        operation: ComplaintInstallationSessionOperation,
+        jdbc: JdbcTemplate,
+        preflight: InstallationSessionPreflight,
+        installation: ScopedInstallationId,
+        credentialVersion: Long,
+    )
+
+    fun checkAdmittedRefreshWrite(
+        operation: ComplaintInstallationSessionOperation,
+        jdbc: JdbcTemplate,
+        installation: ScopedInstallationId,
+        credentialVersion: Long,
+    )
+
+    fun checkWork(result: InstallationSessionResult)
+    fun preflightResult(result: SessionPreflightResult?): SessionPreflightResult
+    fun refreshResult(result: SessionRefreshResult?): SessionRefreshResult
+    fun completed(): Boolean
+}
+
+/** Read-only view of the phase's private deletion boundary; no caller implementation can replace it. */
+internal interface PersistenceComplaintDeletion {
+    fun requireOperation(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintDeletionOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintDeletionOperation, jdbc: JdbcTemplate)
+    fun connection(operation: ComplaintDeletionOperation, jdbc: JdbcTemplate): Connection
+    fun requireCommitted(operation: ComplaintDeletionOperation)
+    fun completed(): Boolean
 }
 
 /** Exact phase/path/one-operation/resource/holder/lease guard, before the fixed store's SQL. */

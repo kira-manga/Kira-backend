@@ -3,9 +3,11 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicInteger
 
 /** One shared scoped owner budget; it neither borrows a connection nor opens complaint capability. */
-internal class OrdinaryPersistenceAdmission(configuredPoolSize: Int) {
+internal class OrdinaryPersistenceAdmission private constructor(configuredPoolSize: Int, complaintPhases: Boolean) {
+    constructor(configuredPoolSize: Int) : this(configuredPoolSize, complaintPhases = true)
+
     val ownerLimit: Int = ownerLimit(configuredPoolSize)
-    private val complaintsAllowed = configuredPoolSize > 1
+    private val complaintsAllowed = complaintPhases && configuredPoolSize > 1
     private val owners = AtomicInteger()
 
     fun trySourceBoundary(): LocalPersistencePermit? = tryAcquire()
@@ -26,6 +28,10 @@ internal class OrdinaryPersistenceAdmission(configuredPoolSize: Int) {
 
     companion object {
         private const val MAX_OWNERS = 4
+
+        /** Production ordinary compatibility is not runtime qualification or complaint capability. */
+        internal fun sourceOnly(configuredPoolSize: Int): OrdinaryPersistenceAdmission =
+            OrdinaryPersistenceAdmission(configuredPoolSize, complaintPhases = false)
 
         private fun ownerLimit(configuredPoolSize: Int): Int {
             if (configuredPoolSize <= 0) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_POOL_CAPACITY)

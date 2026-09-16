@@ -1,0 +1,1410 @@
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java b/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
+@@ -9,7 +9,9 @@
+ import org.postgresql.core.Query;
+ import org.postgresql.core.QueryExecutor;
+ import org.postgresql.core.ResultCursor;
++import org.postgresql.core.TypeInfo;
+ import org.postgresql.core.v3.KiraOwnedParameterBridge;
++import org.postgresql.core.v3.QueryExecutorImpl;
+ import org.postgresql.util.LazyCleaner;
+ 
+ import org.checkerframework.checker.initialization.qual.UnknownInitialization;
+@@ -21,6 +23,7 @@
+ import java.lang.reflect.Method;
+ import java.sql.Connection;
+ import java.sql.Driver;
++import java.sql.PreparedStatement;
+ import java.sql.SQLException;
+ import java.util.ArrayList;
+ import java.util.HashMap;
+@@ -357,6 +360,277 @@
+   public static int rootState(Root root) {
+     NativeConnection c = root.nativeConnection;
+     return (c.cleanupFailed ? 1 : 0) | (c.uncertain || c.failedConstructions != 0 ? 2 : 0);
++  }
++
++  /**
++   * Read-only retained-state fact: FAILURE=1, UNRESOLVED=2, UNPROVED_RETENTION=4.
++   * Only zero qualifies, and only after core has sealed and actually drained all old producers
++   * (including disarmed finalizers and foreign cancellation). This is neither an exposure ledger
++   * nor proof of physical connection readiness. No graph, receipt or authority is changed here.
++   */
++  public static int retentionState(@Nullable Root root) {
++    if (root == null || root.nativeConnection == null) {
++      return 2;
++    }
++    NativeConnection c = root.nativeConnection;
++    Opening opening = c.opening;
++    int state = rootState(root);
++    if (opening == null) {
++      return state | 2;
++    }
++    int opened = openingState(opening);
++    if ((opened & 4) != 0) {
++      state |= 1;
++    }
++    if ((opened & (1 | 2 | 8 | 16)) != 1 || opening.cleanupClaim.get()
++        || opening.returned != c.connection || findConnection(opening, c.connection) != c
++        || !c.constructorEnded || !c.constructorReturned || c.cleaned || c.terminalCleanup
++        || c.current != null || c.retained != null || c.construction != null || c.transfer != null) {
++      state |= 2;
++    }
++    // Do not inspect mutable child/parameter graphs when an unfinished producer is already known.
++    if ((state & 2) != 0) {
++      return state;
++    }
++    if (c.connection == null || c.connection.getClass() != PgConnection.class
++        || c.connection.kira != c || c.executor == null
++        || c.executor.getClass() != QueryExecutorImpl.class
++        || c.connection.getQueryExecutor() != c.executor || c.action == null || c.cleanable == null) {
++      return state | 4;
++    }
++    TypeInfo types = c.connection.getTypeInfo(); // Exact PgConnection's data-only field reader.
++    if (types == null || types.getClass() != TypeInfoCache.class) {
++      return state | 4;
++    }
++    TypeInfoCache cache = (TypeInfoCache) types;
++    // Traversal must not hang on inconsistent links. No mirror graph or history is allocated.
++    Native slow = c.children;
++    Native fast = c.children;
++    while (fast != null && fast.next != null) {
++      slow = slow.next;
++      fast = fast.next.next;
++      if (slow == fast) {
++        return state | 2;
++      }
++    }
++    Construction slowConstruction = c.constructions;
++    Construction fastConstruction = c.constructions;
++    while (fastConstruction != null && fastConstruction.next != null) {
++      slowConstruction = slowConstruction.next;
++      fastConstruction = fastConstruction.next.next;
++      if (slowConstruction == fastConstruction) {
++        return state | 2;
++      }
++    }
++    for (Construction record = c.constructions; record != null; record = record.next) {
++      if (record.cleanupFailed) {
++        state |= 1;
++      }
++      boolean linked = false;
++      for (Native n = c.children; n != null; n = n.next) {
++        linked |= n == record.nativeState;
++      }
++      if (record.connection != c || !record.ended || !record.returned || !record.receiverComplete
++          || record.parent != null || record.borrows != null || record.cursor != null
++          || record.cleaned || record.cleanupAttempted || !linked
++          || record.nativeState == null || record.receiver != record.nativeState.receiver
++          || record.kind < 1 || record.kind > 5
++          || (record.kind == 5) != (record.nativeState.life.kind == 2)) {
++        state |= 2;
++      }
++    }
++    if ((state & 2) != 0) {
++      return state;
++    }
++    // Membership of surviving children is insufficient: first-close compaction can remove a
++    // statement while its non-null TypeInfo field still points at the now unusable receiver.
++    if (!cache.kiraRetentionShape(c.connection)) {
++      state |= 4;
++    }
++    long counted = 0;
++    for (Native n = c.children; n != null; n = n.next) {
++      if (n.counted) {
++        counted++;
++      }
++      if (!retentionNativeFacts(n, c) || n.receiver == null || nativeState(n.receiver) != n
++          || n.activeBatch != null) {
++        state |= 2;
++      }
++      Life life = n.life;
++      if (life.first == 3) {
++        state |= 1;
++        if (!life.revoked || n.counted || life.firstThread != null || life.firstCause != null) {
++          state |= 2;
++        }
++      } else if (life.first == 2) {
++        if (!retentionFirstReturned(n, c)) {
++          state |= 2;
++        }
++        // Own irreversible first return suffices even if normal compaction has not run.
++        // In particular do not clear the receiver's real Java parameters or queued inputs.
++      } else if (life.first != 0 || life.revoked || !n.counted || life.firstThread != null
++          || life.firstCause != null || life.firstScope != 0) {
++        state |= 2;
++      } else if (n.receiver == null
++          || !(retentionTypeInfoMember(n, cache) || retentionInertResult(n))) {
++        state |= 4;
++      }
++    }
++    if (counted != c.nativeChildren || counted < 0) {
++      state |= 2;
++    }
++    return state;
++  }
++
++  private static boolean retentionNativeFacts(Native n, NativeConnection c) {
++    Life life = n.life;
++    return n.connection == c && life.connection == c && life.nativeState == n
++        && n.factoryReturned && n.available && !n.partialDisposed
++        && (life.kind == 1 ? life.parent == null
++            : life.kind == 2 && life.parent != null && life.parent.connection == c
++                && life.parent.kind == 1 && life.parent.nativeState != null);
++  }
++
++  private static boolean retentionFirstReturned(Native n, NativeConnection c) {
++    Life life = n.life;
++    return retentionNativeFacts(n, c) && life.first == 2 && life.revoked && !n.counted
++        && life.firstThread == null && life.firstCause == null && n.activeBatch == null
++        && (life.kind == 1 ? life.firstScope == 1 : life.firstScope == 2 || life.firstScope == 3);
++  }
++
++  private static boolean retentionEmptyWork(Native n) {
++    return n.queries == null && n.queryTail == null && n.parameters == null && n.parameterTail == null
++        && n.rows != null && n.rows.getClass() == HashMap.class && n.rows.isEmpty()
++        && n.rowMap == null && n.activeBatch == null;
++  }
++
++  private static boolean retentionEmptyQueue(Object actual, Object tracked) {
++    return actual == tracked && (actual == null
++        || actual.getClass() == ArrayList.class && ((ArrayList<?>) actual).isEmpty());
++  }
++
++  private static boolean retentionQuery(CachedQuery query) {
++    if (query == null || query.getClass() != CachedQuery.class || query.isFunction
++        || query.key == null || query.key.getClass() != String.class || query.query == null) {
++      return false;
++    }
++    // SimpleQuery is package-private in core.v3. Its exact binary name plus defining loader is
++    // class identity, not an instanceof/SQL-text heuristic or an invocation of Query extensions.
++    // The successful pinned PgConnection factory supplies this final CachedQuery/query pair.
++    Class<?> type = query.query.getClass();
++    return type.getClassLoader() == QueryExecutorImpl.class.getClassLoader()
++        && type.getName().equals("org.postgresql.core.v3.SimpleQuery");
++  }
++
++  private static boolean retentionTypeInfoMember(Native n, TypeInfoCache cache) {
++    // Zero credit also requires the independent all-field read to prove every member's live shape.
++    return n.life.kind == 1 && n.receiver.getClass() == PgPreparedStatement.class
++        && cache.kiraOwnsStatement(n.connection.connection, (PgPreparedStatement) n.receiver);
++  }
++
++  /** Package-only half of TypeInfoCache's pure reader; no public statement or raw getter. */
++  static boolean retentionTypeInfoField(PgConnection connection, @Nullable PreparedStatement field) {
++    if (field == null) {
++      return true;
++    }
++    if (field.getClass() != PgPreparedStatement.class) {
++      return false;
++    }
++    PgPreparedStatement statement = (PgPreparedStatement) field;
++    Native n = statement.kira;
++    Life life = n.life;
++    if (statement.connection != connection || n.receiver != statement
++        || !retentionNativeFacts(n, connection.kira) || life.kind != 1
++        || life.first != 0 || life.revoked || !n.counted
++        || life.firstThread != null || life.firstCause != null || life.firstScope != 0
++        || !statement.kiraRetentionIdle(false) || !retentionQuery(statement.preparedQuery)
++        || statement.preparedParameters == null || statement.wantsGeneratedKeysOnce
++        || statement.wantsGeneratedKeysAlways || statement.generatedKeys != null
++        || !retentionEmptyWork(n)
++        || !retentionEmptyQueue(statement.batchStatements, n.queryList)
++        || !retentionEmptyQueue(statement.batchParameters, n.parameterList)
++        || !retentionClosedResult(statement.result, n)
++        || !retentionClosedResult(statement.firstUnclosedResult, n)) {
++      return false;
++    }
++    boolean linked = false;
++    // retentionState already excluded a cycle; core must supply the actual sealed/drained cut.
++    for (Native child = connection.kira.children; child != null; child = child.next) {
++      linked |= child == n;
++    }
++    if (!linked) {
++      return false;
++    }
++    Image image = KiraOwnedParameterBridge.snapshot(ENGINE, statement.preparedParameters, statement);
++    if (!image.complete) {
++      return false;
++    }
++    for (Binding binding : image.bindings) {
++      if (binding == null) {
++        continue; // The complete image proved an actually unset native slot.
++      }
++      if (!binding.complete || binding.owner != null || binding.dependencies.length != 0) {
++        return false;
++      }
++      Object stored = binding.stored;
++      // Fixed TypeInfo setters retain String, binary scalar byte[], or the private native SQL-NULL
++      // marker (exact Object, which has no retained fields). No StreamWrapper/ByteStreamWriter or
++      // other deferred caller representation qualifies merely because its known-Life set is empty.
++      if (stored != null && stored.getClass() != String.class && stored.getClass() != byte[].class
++          && stored.getClass() != Object.class) {
++        return false;
++      }
++    }
++    return true;
++  }
++
++  private static boolean retentionClosedResult(@Nullable ResultWrapper wrapper, Native parent) {
++    if (wrapper == null) {
++      return true;
++    }
++    if (wrapper.getClass() != ResultWrapper.class || wrapper.getNext() != null) {
++      return false;
++    }
++    Object result = wrapper.getResultSet(); // Exact ResultWrapper has only fixed field readers.
++    if (result == null || result.getClass() != PgResultSet.class) {
++      return false;
++    }
++    PgResultSet rs = (PgResultSet) result;
++    return rs.kira != null && rs.kira.life.parent == parent.life && rs.statement == parent.receiver
++        && rs.connection == parent.connection.connection && rs.rows == null
++        && retentionFirstReturned(rs.kira, parent.connection);
++  }
++
++  private static boolean retentionInertResult(Native n) {
++    if (n.life.kind != 2 || n.receiver.getClass() != PgResultSet.class
++        || !retentionEmptyWork(n) || n.queryList != null || n.parameterList != null) {
++      return false;
++    }
++    PgResultSet rs = (PgResultSet) n.receiver;
++    Life parent = n.life.parent;
++    if (parent == null || parent.nativeState == null
++        || !(rs.statement instanceof PgStatement) || rs.connection != n.connection.connection) {
++      return false;
++    }
++    PgStatement statement = (PgStatement) rs.statement;
++    if ((statement.getClass() != PgStatement.class && statement.getClass() != PgPreparedStatement.class)
++        || statement.kira != parent.nativeState || statement.connection != n.connection.connection
++        || !retentionFirstReturned(parent.nativeState, n.connection)
++        || !statement.kiraRetentionIdle(true) || !rs.kiraRetentionInert()) {
++      return false;
++    }
++    // A non-null query must be the closed parent's actual prepared query, not an arbitrary Query
++    // extension supplied to createResultSet. This is identity/shape, not a describe-origin marker.
++    if (rs.originalQuery != null) {
++      if (statement.getClass() != PgPreparedStatement.class) {
++        return false;
++      }
++      CachedQuery query = ((PgPreparedStatement) statement).preparedQuery;
++      if (!retentionQuery(query) || rs.originalQuery != query.query) {
++        return false;
++      }
++    }
++    return true;
+   }
+ 
+   public static final class Invocation {
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java
+@@ -1081,11 +1081,29 @@
+     checkClosed();
+ 
+     String level = null;
+-    final ResultSet rs = execSQLQuery("SHOW TRANSACTION ISOLATION LEVEL"); // nb: no BEGIN triggered
+-    if (rs.next()) {
+-      level = rs.getString(1);
+-    }
+-    rs.close();
++    // This scalar getter owns the statement even when execution never delivers a result.
++    try (BaseStatement stat = (BaseStatement) createStatement(ResultSet.TYPE_FORWARD_ONLY,
++        ResultSet.CONCUR_READ_ONLY)) {
++      boolean hasResultSet = stat.executeWithFlags("SHOW TRANSACTION ISOLATION LEVEL",
++          QueryExecutor.QUERY_SUPPRESS_BEGIN); // nb: no BEGIN triggered
++      while (!hasResultSet && stat.getUpdateCount() != -1) {
++        hasResultSet = stat.getMoreResults();
++      }
++      if (!hasResultSet) {
++        throw new PSQLException(GT.tr("No results were returned by the query."), PSQLState.NO_DATA);
++      }
++
++      // Preserve warnings before closing their private statement clears them.
++      SQLWarning warnings = stat.getWarnings();
++      if (warnings != null) {
++        addWarning(warnings);
++      }
++      try (ResultSet rs = castNonNull(stat.getResultSet(), "hasResultSet==true, yet getResultSet()==null")) {
++        if (rs.next()) {
++          level = rs.getString(1);
++        }
++      }
++    }
+ 
+     // TODO revisit: throw exception instead of silently eating the error in unknown cases?
+     if (level == null) {
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java
+@@ -572,6 +572,12 @@
+   private static final AtomicIntegerFieldUpdater<PgStatement> IS_CLOSED_UPDATER =
+       AtomicIntegerFieldUpdater.newUpdater(
+           PgStatement.class, "isClosed");
++
++  /** Observation only; neither cancels a timer nor establishes producer/cancellation drain. */
++  final boolean kiraRetentionIdle(boolean closed) {
++    return IS_CLOSED_UPDATER.get(this) == (closed ? 1 : 0)
++        && STATE_UPDATER.get(this) == StatementCancelState.IDLE && CANCEL_TIMER_UPDATER.get(this) == null;
++  }
+ 
+   @Override
+   public int getUpdateCount() throws SQLException {
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java b/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java
+@@ -148,6 +148,17 @@
+   private @Nullable ResultSetMetaData rsMetaData;
+   private final ResourceLock lock = new ResourceLock();
+ 
++  /** Exact empty shell facts only; no close, row clearing, cursor operation or metadata lookup. */
++  final boolean kiraRetentionInert() {
++    List<Tuple> rows = this.rows;
++    return rows != null && rows.getClass() == ArrayList.class && rows.isEmpty()
++        && cursor == null && refCursorName == null && deleteStatement == null
++        && currentRow == -1 && rowOffset == 0 && thisRow == null && rowBuffer == null
++        && !onInsertRow && !updateable && !doingUpdates && updateValues == null
++        && !usingOID && primaryKeys == null && !singleTable && tableName == null
++        && onlyTable.isEmpty() && lastUsedFetchSize == 0 && columnNameIndexMap == null;
++  }
++
+   protected ResultSetMetaData createMetaData() throws SQLException {
+     return new PgResultSetMetaData(connection, fields);
+   }
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java b/pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java
+@@ -74,6 +74,31 @@
+   private @Nullable PreparedStatement getTypeInfoStatement;
+   private @Nullable PreparedStatement getAllTypeInfoStatement;
+   private final ResourceLock lock = new ResourceLock();
++
++  /** Data-only membership check, after the owned connection's producers are sealed and drained. */
++  final boolean kiraOwnsStatement(PgConnection connection, PgPreparedStatement statement) {
++    return conn == connection && statement != null
++        && (statement == getOidStatementSimple || statement == getOidStatementComplexNonArray
++            || statement == getOidStatementComplexArray || statement == getNameStatement
++            || statement == getArrayElementOidStatement || statement == getArrayDelimiterStatement
++            || statement == getTypeInfoStatement || statement == getAllTypeInfoStatement);
++  }
++
++  /**
++   * Read every actual cache field, including statements removed from native custody by first close.
++   * Stock cache factories replace only null fields, not closed statements. No field is cleared here.
++   */
++  final boolean kiraRetentionShape(PgConnection connection) {
++    return conn == connection
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getOidStatementSimple)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getOidStatementComplexNonArray)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getOidStatementComplexArray)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getNameStatement)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getArrayElementOidStatement)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getArrayDelimiterStatement)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getTypeInfoStatement)
++        && KiraOwnedJdbcCut.retentionTypeInfoField(connection, getAllTypeInfoStatement);
++  }
+ 
+   // basic pg types info:
+   // 0 - type name
+diff --git a/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java b/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java
+--- a/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java
++++ b/pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java
+@@ -5,9 +5,11 @@
+ 
+ package org.postgresql.jdbc;
+ 
++import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+ import static org.junit.jupiter.api.Assertions.assertEquals;
+ import static org.junit.jupiter.api.Assertions.assertFalse;
+ import static org.junit.jupiter.api.Assertions.assertNotNull;
++import static org.junit.jupiter.api.Assertions.assertNotSame;
+ import static org.junit.jupiter.api.Assertions.assertNull;
+ import static org.junit.jupiter.api.Assertions.assertSame;
+ import static org.junit.jupiter.api.Assertions.assertThrows;
+@@ -16,6 +18,8 @@
+ import static org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.field;
+ import static org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.properties;
+ 
++import org.postgresql.core.Oid;
++import org.postgresql.core.TypeInfo;
+ import org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest.Owned;
+ import org.postgresql.test.TestUtil;
+ 
+@@ -23,6 +27,7 @@
+ import org.junit.jupiter.params.ParameterizedTest;
+ import org.junit.jupiter.params.provider.ValueSource;
+ 
++import java.io.InputStream;
+ import java.lang.reflect.Method;
+ import java.lang.reflect.Proxy;
+ import java.sql.Array;
+@@ -67,6 +72,13 @@
+         assertTrue(child.factoryReturned, "Cleanup authority is an actual successful factory receipt.");
+         assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
+       }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root),
++          "Only the separate core exposure ledger can also prove borrower close obligations.");
++      assertEquals((long) hidden.size(), KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      for (KiraOwnedJdbcCut.Native child : hidden) {
++        assertNotNull(child.receiver, "Observation is not terminal disposal or compaction.");
++        assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
++      }
+ 
+       // Every native call has actually ended before abort -> child cleanup -> final raw close.
+       f.retire();
+@@ -78,6 +90,8 @@
+       assertEquals(0, KiraOwnedJdbcCut.liveNativeChildren(f.root));
+       assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
+       assertEquals(9, KiraOwnedJdbcCut.openingState(f.opening));
++      assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2,
++          "A terminal-cleaned physical ledger is not a reusable retention receipt.");
+     }
+   }
+ 
+@@ -105,6 +119,34 @@
+       } finally {
+         KiraOwnedJdbcCut.endOpening(opening);
+       }
++      KiraOwnedJdbcCut.Root root = KiraOwnedJdbcCut.attach(opening, connection, new Object(), new Object());
++      KiraOwnedJdbcCut.Native head = connection.kira.children;
++      KiraOwnedJdbcCut.Construction constructions = connection.kira.constructions;
++      assertNotNull(constructions, "No Invocation.actualEnd has compacted opening custody.");
++      List<KiraOwnedJdbcCut.Native> linked = new ArrayList<>();
++      List<Object> receivers = new ArrayList<>();
++      List<Integer> first = new ArrayList<>();
++      for (KiraOwnedJdbcCut.Native n = head; n != null; n = n.next) {
++        linked.add(n);
++        receivers.add(n.receiver);
++        first.add(KiraOwnedJdbcCut.firstCloseState(n.life));
++      }
++      assertTrue(first.contains(2), "The observation must include genuine, uncompacted first returns.");
++      long count = connection.kira.nativeChildren;
++      int opened = KiraOwnedJdbcCut.openingState(opening);
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(root));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(root));
++      assertSame(head, connection.kira.children);
++      assertSame(constructions, connection.kira.constructions);
++      assertEquals(count, connection.kira.nativeChildren);
++      assertEquals(opened, KiraOwnedJdbcCut.openingState(opening));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(root));
++      for (int i = 0; i < linked.size(); i++) {
++        KiraOwnedJdbcCut.Native n = linked.get(i);
++        assertSame(receivers.get(i), n.receiver);
++        assertSame(i + 1 < linked.size() ? linked.get(i + 1) : null, n.next);
++        assertEquals(first.get(i).intValue(), KiraOwnedJdbcCut.firstCloseState(n.life));
++      }
+       connection.abort(Runnable::run);
+       KiraOwnedJdbcCut.cleanupOpening(opening);
+       for (KiraOwnedJdbcCut.Native child : hidden) {
+@@ -128,6 +170,343 @@
+           }
+         }
+       }
++    }
++  }
++
++  @Test
++  void unavailableRootAndAnActuallyArmedInvocationCannotSupplyRetentionConsent() throws Exception {
++    assertEquals(2, KiraOwnedJdbcCut.retentionState(null));
++    try (Owned f = new Owned(false)) {
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      KiraOwnedJdbcCut.Invocation invocation = f.begin(f.connection,
++          Connection.class.getMethod("getMetaData"), new Object[0]);
++      try {
++        assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2);
++        assertSame(invocation, f.connection.kira.current);
++      } finally {
++        f.end(invocation);
++      }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      // This does not prove the disarm/actualEnd or foreign-cancel gap: core must actually drain it.
++    }
++  }
++
++  @Test
++  void freshRootsObserveTheSameCanonicalPhysicalLifeWithoutRebindingOldOwners() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      KiraOwnedJdbcCut.Life life = f.life(cached);
++      KiraOwnedJdbcCut.Root next = KiraOwnedJdbcCut.attach(f.opening, f.connection, new Object(), new Object());
++      KiraOwnedJdbcCut.Owner nextOwner = KiraOwnedJdbcCut.owner(next);
++      assertNotSame(f.root, next);
++      assertSame(life, KiraOwnedJdbcCut.life(nextOwner, cached, null, false));
++      assertSame(f.root, field(f.owner, "root"));
++      assertSame(next, field(nextOwner, "root"));
++      assertTrue(KiraOwnedJdbcCut.isLive(f.owner, life));
++      assertTrue(KiraOwnedJdbcCut.isLive(nextOwner, life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(next));
++      assertEquals(KiraOwnedJdbcCut.liveNativeChildren(f.root), KiraOwnedJdbcCut.liveNativeChildren(next));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(life));
++      // Native-only fixture: admitting a new epoch and denying stale guards remain core obligations.
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {
++      "getOidStatementSimple", "getOidStatementComplexNonArray", "getOidStatementComplexArray",
++      "getNameStatement", "getArrayElementOidStatement", "getArrayDelimiterStatement",
++      "getTypeInfoStatement", "getAllTypeInfoStatement"
++  })
++  void everyActualTypeInfoFieldRefusesItsFirstClosedCompactedStatement(String slot) throws Exception {
++    try (Owned f = new Owned(false)) {
++      TypeInfoCache types = (TypeInfoCache) f.connection.getTypeInfo();
++      PgPreparedStatement cached = typeInfoStatement(f, slot);
++      KiraOwnedJdbcCut.Life life = f.life(cached);
++      long before = KiraOwnedJdbcCut.liveNativeChildren(f.root);
++      f.call(cached, Statement.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(life));
++      assertNull(cached.kira.receiver, "The real Invocation.actualEnd already compacted this native node.");
++      assertSame(cached, field(types, slot), "Stock TypeInfo replaces only null fields, not closed receivers.");
++      assertEquals(before - 1, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      Object[] values = cached.preparedParameters.getValues();
++      Object[] unchanged = values.clone();
++      KiraOwnedJdbcCut.Native head = f.connection.kira.children;
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root), "Successful close is not cleanup failure.");
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertSame(head, f.connection.kira.children);
++      assertSame(cached, field(types, slot));
++      assertSame(values, cached.preparedParameters.getValues());
++      assertArrayEquals(unchanged, values);
++
++      KiraOwnedJdbcCut.Root next = KiraOwnedJdbcCut.attach(f.opening, f.connection, new Object(), new Object());
++      assertSame(life, KiraOwnedJdbcCut.life(KiraOwnedJdbcCut.owner(next), cached, null, false));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(next), "Fresh Roots do not repair a closed cache field.");
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(life));
++    }
++  }
++
++  @Test
++  void firstClosedCacheIsAlsoRefusedBeforeAnyInvocationHasCompactedItsNativeNode() throws Exception {
++    Properties properties = properties(false);
++    org.postgresql.Driver driver = new org.postgresql.Driver();
++    KiraOwnedJdbcCut.Opening opening = KiraOwnedJdbcCut.prepareOpening(driver, new Object());
++    PgConnection connection = null;
++    PgPreparedStatement cached;
++    try {
++      KiraOwnedJdbcCut.armOpening(opening);
++      try {
++        connection = (PgConnection) Objects.requireNonNull(driver.connect(TestUtil.getURL(properties), properties));
++        KiraOwnedJdbcCut.recordReturned(opening, connection);
++        TypeInfoCache types = (TypeInfoCache) connection.getTypeInfo();
++        types.cacheSQLTypes();
++        cached = (PgPreparedStatement) field(types, "getAllTypeInfoStatement");
++        assertNotNull(cached);
++        cached.close(); // Genuine first close in the opening extent, not an unowned post-opening call.
++      } finally {
++        KiraOwnedJdbcCut.endOpening(opening);
++      }
++      KiraOwnedJdbcCut.Root root = KiraOwnedJdbcCut.attach(opening, connection, new Object(), new Object());
++      KiraOwnedJdbcCut.Native head = connection.kira.children;
++      KiraOwnedJdbcCut.Construction records = connection.kira.constructions;
++      long count = connection.kira.nativeChildren;
++      assertNotNull(records);
++      assertSame(cached, cached.kira.receiver);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(cached.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(root));
++      assertSame(cached, field(connection.getTypeInfo(), "getAllTypeInfoStatement"));
++      assertSame(cached, cached.kira.receiver, "The summary must not compact the genuine first close.");
++      assertSame(head, connection.kira.children);
++      assertSame(records, connection.kira.constructions);
++      assertEquals(count, connection.kira.nativeChildren);
++    } finally {
++      try {
++        if (connection != null) {
++          connection.abort(Runnable::run);
++        }
++      } finally {
++        try {
++          KiraOwnedJdbcCut.cleanupOpening(opening);
++        } finally {
++          if (connection != null) {
++            connection.close();
++          }
++        }
++      }
++    }
++  }
++
++  @Test
++  void actualCacheFieldWithoutItsNativeLinkCannotHideBehindAnAdjustedCount() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      KiraOwnedJdbcCut.Native head = f.connection.kira.children;
++      long count = f.connection.kira.nativeChildren;
++      assertSame(cached.kira, head);
++      // MODEL bookkeeping loss only. No native receiver, first-close receipt or actual field is replaced.
++      f.connection.kira.children = head.next;
++      f.connection.kira.nativeChildren = count - 1;
++      try {
++        assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++        assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++        assertSame(cached, field(f.connection.getTypeInfo(), "getOidStatementComplexNonArray"));
++        assertSame(head.next, f.connection.kira.children);
++        assertEquals(count - 1, f.connection.kira.nativeChildren);
++      } finally {
++        f.connection.kira.children = head;
++        f.connection.kira.nativeChildren = count;
++      }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void typeInfoScalarAndNullRepresentationsAreObservedWithoutClearingActualBindings() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      Object[] actual = cached.preparedParameters.getValues();
++      Object[] before = actual.clone();
++      Object metadata = field(cached.preparedParameters, "kira");
++      Object bindings = field(metadata, "bindings");
++      assertEquals("int4", actual[0]);
++      assertEquals(Object.class, actual[1].getClass(), "Real null-schema SQL-NULL marker, not a fabricated flag.");
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      assertSame(actual, cached.preparedParameters.getValues());
++      assertArrayEquals(before, actual);
++      assertSame(bindings, field(metadata, "bindings"));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(cached.kira.life));
++
++      TypeInfo types = f.connection.getTypeInfo();
++      f.call(types, TypeInfo.class, "getPGType", new Class<?>[]{int.class}, 99999999);
++      PgPreparedStatement byOid = (PgPreparedStatement) field(types, "getNameStatement");
++      assertNotNull(byOid);
++      Object scalar = byOid.preparedParameters.getValues()[0];
++      assertTrue(scalar.getClass() == byte[].class || scalar.getClass() == String.class);
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      assertSame(scalar, byOid.preparedParameters.getValues()[0]);
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(booleans = {false, true})
++  void retainedTypeInfoStreamIsUnprovedEvenWithoutKnownLifeMetadata(boolean known) throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      AtomicInteger reads = new AtomicInteger();
++      AtomicInteger closes = new AtomicInteger();
++      InputStream input = new InputStream() {
++        @Override public int read() {
++          reads.incrementAndGet();
++          return -1;
++        }
++
++        @Override public void close() {
++          closes.incrementAndGet();
++        }
++      };
++      if (known) {
++        f.bindStream(cached, input, f.life(input), true);
++      } else {
++        f.call(cached, PreparedStatement.class, "setBinaryStream",
++            new Class<?>[]{int.class, InputStream.class, int.class}, 1, input, 1);
++      }
++      Object stored = cached.preparedParameters.getValues()[0];
++      Object metadata = field(cached.preparedParameters, "kira");
++      Object bindings = field(metadata, "bindings");
++      long count = KiraOwnedJdbcCut.liveNativeChildren(f.root);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertSame(stored, cached.preparedParameters.getValues()[0]);
++      assertSame(bindings, field(metadata, "bindings"));
++      assertEquals(count, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(cached.kira.life));
++      assertEquals(0, reads.get());
++      assertEquals(0, closes.get());
++      f.call(cached, PreparedStatement.class, "clearParameters", NONE);
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root), "Only the genuine native clear changes C.");
++      // Direct adversarial native cache access, not proof that a public facade exposes this cache.
++    }
++  }
++
++  @Test
++  void scalarRepresentationAloneDoesNotExcuseOldKnownLifeAuthority() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      String input = new String("int4");
++      KiraOwnedJdbcCut.Life life = KiraOwnedJdbcCut.life(f.owner, input, null, false);
++      f.knownCall(cached, PreparedStatement.class.getMethod("setString", int.class, String.class),
++          new Object[]{1, input}, new Object[]{input}, new KiraOwnedJdbcCut.Life[]{life}, new int[]{1});
++      assertSame(input, cached.preparedParameters.getValues()[0]);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      KiraOwnedJdbcCut.Root next = KiraOwnedJdbcCut.attach(f.opening, f.connection, new Object(), new Object());
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(next));
++      assertSame(input, cached.preparedParameters.getValues()[0]);
++      f.call(cached, PreparedStatement.class, "setString", new Class<?>[]{int.class, String.class}, 1, "int4");
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(next));
++    }
++  }
++
++  @Test
++  void cachedTypeInfoQueuesAreObservedNotDrained() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      f.call(cached, PreparedStatement.class, "addBatch", NONE);
++      KiraOwnedJdbcCut.Node queries = cached.kira.queries;
++      KiraOwnedJdbcCut.Node parameters = cached.kira.parameters;
++      assertNotNull(queries);
++      assertNotNull(parameters);
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(1, cached.batchStatements.size());
++      assertEquals(1, cached.batchParameters.size());
++      assertSame(queries, cached.kira.queries);
++      assertSame(parameters, cached.kira.parameters);
++      f.call(cached, Statement.class, "clearBatch", NONE);
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void evenAnEmptyCachedResultNeedsItsOwnFirstReturnWhileItsCacheParentStaysLive() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      f.call(cached, PreparedStatement.class, "setString", new Class<?>[]{int.class, String.class}, 1, "");
++      PgResultSet result = (PgResultSet) f.call(cached, PreparedStatement.class, "executeQuery", NONE);
++      assertTrue(result.rows.isEmpty());
++      assertTrue(result.kiraRetentionInert());
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(cached.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      f.call(result, ResultSet.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(cached.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void identicalSqlAndScalarInputsDoNotMakeAnOrdinaryStatementACacheMember() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement cached = typeInfoStatement(f);
++      PgPreparedStatement other = f.prepare((String) cached.preparedQuery.key);
++      assertFalse(((TypeInfoCache) f.connection.getTypeInfo()).kiraOwnsStatement(f.connection, other));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(other.kira.life));
++      f.call(other, Statement.class, "close", NONE);
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void inertDescribeShellNeedsAnActuallyClosedParentAndItsOwnUntouchedFirstState() throws Exception {
++    try (Owned f = new Owned(false)) {
++      PgPreparedStatement parent = f.prepare("select ?::int as value");
++      assertNotNull(f.call(parent, PreparedStatement.class, "getMetaData", NONE));
++      PgResultSet shell = (PgResultSet) openChildren(f.connection).stream()
++          .filter(n -> n.receiver instanceof PgResultSet).findFirst().orElseThrow(AssertionError::new).receiver;
++      assertSame(parent.kira.life, field(shell.kira.life, "parent"));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(parent.kira.life));
++      f.call(parent, Statement.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(parent.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(shell.kira.life));
++      assertEquals(false, field(shell.kira.life, "revoked"));
++      Object tuples = shell.rows;
++      assertTrue(KiraOwnedJdbcCut.revoke(f.owner, shell.kira.life));
++      assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2);
++      assertSame(tuples, shell.rows);
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(shell.kira.life));
++      f.call(shell, ResultSet.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(shell.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      // An exposed FIRST_NEVER shell would fail the separate core ledger even before revoke().
++    }
++  }
++
++  @Test
++  void arrayResultDoesNotGrantAHiddenPlainParentAThirdRetentionWhitelist() throws Exception {
++    try (Owned f = new Owned(false)) {
++      Array array = array(f, 1);
++      PgResultSet result = (PgResultSet) f.call(array, Array.class, "getResultSet", NONE);
++      PgStatement parent = (PgStatement) result.statement;
++      assertEquals(PgStatement.class, parent.getClass());
++      f.call(result, ResultSet.class, "close", NONE);
++      f.call(array, Array.class, "free", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(parent.kira.life));
++      long count = KiraOwnedJdbcCut.liveNativeChildren(f.root);
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals(count, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertSame(parent, parent.kira.receiver);
++      f.call(parent, Statement.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(parent.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
+     }
+   }
+ 
+@@ -225,6 +604,7 @@
+       }
+       assertEquals(2, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
+       assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
+     }
+   }
+ 
+@@ -285,6 +665,7 @@
+       f.call(source, Statement.class, "close", NONE);
+       assertEquals(0, KiraOwnedJdbcCut.firstCloseState(fetched.kira.life));
+       assertEquals(0, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
+       f.retire();
+       assertEquals(2, KiraOwnedJdbcCut.firstCloseState(fetched.kira.life));
+       assertEquals(2, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
+@@ -301,6 +682,50 @@
+       }
+     }
+     return result;
++  }
++
++  private static PgPreparedStatement typeInfoStatement(Owned f) throws Exception {
++    return typeInfoStatement(f, "getOidStatementComplexNonArray");
++  }
++
++  private static PgPreparedStatement typeInfoStatement(Owned f, String slot) throws Exception {
++    TypeInfoCache types = (TypeInfoCache) f.connection.getTypeInfo();
++    switch (slot) {
++      case "getOidStatementSimple":
++        f.call(types, TypeInfo.class, "getPGType", new Class<?>[]{String.class}, "__kira_retention_missing_type__");
++        break;
++      case "getOidStatementComplexNonArray":
++        assertEquals(Oid.INT4, f.call(types, TypeInfo.class, "getPGType", new Class<?>[]{String.class}, "\"int4\""));
++        break;
++      case "getOidStatementComplexArray":
++        assertEquals(Oid.INT4_ARRAY,
++            f.call(types, TypeInfo.class, "getPGType", new Class<?>[]{String.class}, "\"int4\"[]"));
++        break;
++      case "getNameStatement":
++        f.call(types, TypeInfo.class, "getPGType", new Class<?>[]{int.class}, 99999999);
++        break;
++      case "getArrayElementOidStatement":
++      case "getArrayDelimiterStatement":
++        // aclitem is a real builtin but is not in TypeInfoCache's eagerly installed core types.
++        int arrayOid = f.scalar("select 'pg_catalog.aclitem[]'::regtype::oid::int");
++        f.call(types, TypeInfo.class,
++            slot.equals("getArrayElementOidStatement") ? "getPGArrayElement" : "getArrayDelimiter",
++            new Class<?>[]{int.class}, arrayOid);
++        break;
++      case "getTypeInfoStatement":
++        f.call(types, TypeInfo.class, "getSQLType", new Class<?>[]{int.class}, 99999999);
++        break;
++      case "getAllTypeInfoStatement":
++        f.call(types, TypeInfoCache.class, "cacheSQLTypes", NONE);
++        break;
++      default:
++        throw new IllegalArgumentException("Unknown TypeInfo test field.");
++    }
++    PgPreparedStatement statement = (PgPreparedStatement) field(types, slot);
++    assertNotNull(statement);
++    assertTrue(types.kiraOwnsStatement(f.connection, statement));
++    assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    return statement;
+   }
+ 
+   private static PgResultSet rows(Owned f) throws Exception {
+diff --git a/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java b/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java
+--- a/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java
++++ b/pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java
+@@ -26,6 +26,8 @@
+ import org.postgresql.core.Query;
+ import org.postgresql.core.QueryExecutor;
+ import org.postgresql.core.ResultCursor;
++import org.postgresql.core.ResultHandler;
++import org.postgresql.core.TransactionState;
+ import org.postgresql.core.Tuple;
+ import org.postgresql.test.TestUtil;
+ 
+@@ -45,20 +47,142 @@
+ import java.sql.PreparedStatement;
+ import java.sql.ResultSet;
+ import java.sql.SQLException;
++import java.sql.SQLWarning;
+ import java.sql.Statement;
+ import java.util.ArrayList;
+ import java.util.Arrays;
++import java.util.HashMap;
+ import java.util.List;
+ import java.util.Locale;
+ import java.util.Map;
+ import java.util.Objects;
+ import java.util.Properties;
++import java.util.TimerTask;
++import java.util.concurrent.atomic.AtomicInteger;
+ import java.util.concurrent.atomic.AtomicReference;
+ 
+ /** Faults at real native extents. No PgConnection/PgStatement/PgResultSet is mocked or spied. */
+ class KiraOwnedJdbcCutFaultTest {
+   private static final Class<?>[] NONE = new Class<?>[0];
+   private static final Object[] NO_ARGUMENTS = new Object[0];
++
++  @Test
++  void isolationGetterRepeatedSuccessClosesBothResourcesWithoutBeginningATransaction() throws Exception {
++    try (Owned f = new Owned()) {
++      f.call(f.connection, Connection.class, "setAutoCommit", new Class<?>[]{boolean.class}, false);
++      f.call(f.connection, Connection.class, "setTransactionIsolation", new Class<?>[]{int.class},
++          Connection.TRANSACTION_REPEATABLE_READ);
++      QueryExecutor original = f.connection.getQueryExecutor();
++      for (int attempt = 0; attempt < 2; attempt++) {
++        assertFalse(f.connection.getAutoCommit());
++        assertSame(TransactionState.IDLE, f.connection.getTransactionState());
++        f.call(f.connection, Connection.class, "clearWarnings", NONE);
++        AtomicReference<KiraOwnedJdbcCut.Life> statement = new AtomicReference<>();
++        AtomicReference<KiraOwnedJdbcCut.Life> result = new AtomicReference<>();
++        AtomicInteger executed = new AtomicInteger();
++        SQLWarning warning = new SQLWarning("test isolation getter warning");
++        try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++          if (invocation.getMethod().getName().equals("execute")
++              && invocation.getArgument(0) instanceof Query
++              && startsWith(invocation.getArgument(0), "SHOW TRANSACTION ISOLATION LEVEL")) {
++            executed.incrementAndGet();
++            assertEquals(QueryExecutor.QUERY_SUPPRESS_BEGIN,
++                (int) invocation.getArgument(5) & QueryExecutor.QUERY_SUPPRESS_BEGIN);
++            statement.set(liveNativeLife(f.connection, PgStatement.class));
++            Object returned = delegate(original, invocation);
++            result.set(liveNativeLife(f.connection, PgResultSet.class));
++            ((ResultHandler) invocation.getArgument(2)).handleWarning(warning);
++            return returned;
++          }
++          return delegate(original, invocation);
++        })) {
++          assertEquals(Connection.TRANSACTION_REPEATABLE_READ,
++              f.call(f.connection, Connection.class, "getTransactionIsolation", NONE));
++        }
++        assertSame(original, f.connection.getQueryExecutor());
++        assertEquals(1, executed.get());
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(statement.get())));
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(result.get())));
++        assertSame(warning, f.call(f.connection, Connection.class, "getWarnings", NONE));
++        assertEquals(0L, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++        assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++        assertFalse(f.connection.getAutoCommit());
++        assertSame(TransactionState.IDLE, f.connection.getTransactionState());
++      }
++    }
++  }
++
++  @Test
++  void isolationGetterExecuteFailureClosesItsStatementAndPreservesTheException() throws Exception {
++    try (Owned f = new Owned()) {
++      SQLException marker = new SQLException("test isolation execution failure", "XX000");
++      AtomicReference<KiraOwnedJdbcCut.Life> statement = new AtomicReference<>();
++      AtomicInteger injected = new AtomicInteger();
++      QueryExecutor original = f.connection.getQueryExecutor();
++      assertEquals(0L, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("execute")
++            && invocation.getArgument(0) instanceof Query
++            && startsWith(invocation.getArgument(0), "SHOW TRANSACTION ISOLATION LEVEL")) {
++          statement.set(liveNativeLife(f.connection, PgStatement.class));
++          assertEquals(1L, KiraOwnedJdbcCut.liveNativeChildren(f.root), "No result was created before this fault.");
++          injected.incrementAndGet();
++          throw marker;
++        }
++        return delegate(original, invocation);
++      })) {
++        assertSame(marker, assertThrows(SQLException.class,
++            () -> f.call(f.connection, Connection.class, "getTransactionIsolation", NONE)));
++      }
++      assertSame(original, f.connection.getQueryExecutor());
++      assertEquals(1, injected.get());
++      assertEquals(0, marker.getSuppressed().length);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(statement.get())));
++      assertEquals(0, KiraOwnedJdbcCut.invocationState(f.last));
++      assertEquals(0L, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void isolationGetterReadFailureClosesBothResourcesAndPreservesTheException() throws Exception {
++    try (Owned f = new Owned()) {
++      SQLException marker = new SQLException("test isolation result decoding failure", "XX000");
++      AtomicReference<KiraOwnedJdbcCut.Life> statement = new AtomicReference<>();
++      AtomicReference<KiraOwnedJdbcCut.Life> result = new AtomicReference<>();
++      AtomicInteger injected = new AtomicInteger();
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("execute")
++            && invocation.getArgument(0) instanceof Query
++            && startsWith(invocation.getArgument(0), "SHOW TRANSACTION ISOLATION LEVEL")) {
++          statement.set(liveNativeLife(f.connection, PgStatement.class));
++          Object returned = delegate(original, invocation);
++          result.set(liveNativeLife(f.connection, PgResultSet.class));
++          return returned;
++        }
++        if (invocation.getMethod().getName().equals("getEncoding") && result.get() != null) {
++          // Armed only after the real result factory returned, at PgResultSet.getString's dependency.
++          assertEquals(0, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(statement.get())));
++          assertEquals(0, KiraOwnedJdbcCut.firstCloseState(result.get()));
++          injected.incrementAndGet();
++          throw marker;
++        }
++        return delegate(original, invocation);
++      })) {
++        assertSame(marker, assertThrows(SQLException.class,
++            () -> f.call(f.connection, Connection.class, "getTransactionIsolation", NONE)));
++      }
++      assertSame(original, f.connection.getQueryExecutor());
++      assertEquals(1, injected.get());
++      assertEquals(0, marker.getSuppressed().length);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(statement.get())));
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(Objects.requireNonNull(result.get())));
++      assertEquals(0, KiraOwnedJdbcCut.invocationState(f.last));
++      assertEquals(0L, KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
+ 
+   @ParameterizedTest
+   @ValueSource(booleans = {false, true})
+@@ -70,6 +194,7 @@
+       PgPreparedStatement hidden = hiddenPrepared(f.connection, null);
+       assertTrue(hidden.kira.factoryReturned);
+       assertEquals(0, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
+       SQLException marker = new SQLException("test hidden first-close failure");
+       QueryExecutor original = f.connection.getQueryExecutor();
+       try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
+@@ -86,6 +211,7 @@
+           assertEquals(1, KiraOwnedJdbcCut.invocationState(f.last));
+           f.call(hidden, Statement.class, "close", NONE); // Native CAS loser, still inside a real invocation.
+           assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++          assertEquals(1, KiraOwnedJdbcCut.retentionState(f.root) & 1);
+         }
+         // terminalFirst locates the first failing close in authentic post-producer cleanup.
+         f.retire();
+@@ -95,8 +221,270 @@
+       assertEquals(0, KiraOwnedJdbcCut.liveNativeChildren(f.root));
+       assertEquals(1, KiraOwnedJdbcCut.rootState(f.root) & 1);
+       assertEquals(4, KiraOwnedJdbcCut.openingState(f.opening) & 4);
++      KiraOwnedJdbcCut.Root next = KiraOwnedJdbcCut.attach(f.opening, f.connection, new Object(), new Object());
++      assertEquals(1, KiraOwnedJdbcCut.retentionState(f.root) & 1);
++      assertEquals(1, KiraOwnedJdbcCut.retentionState(next) & 1);
++      assertSame(hidden.kira.life, KiraOwnedJdbcCut.life(KiraOwnedJdbcCut.owner(next), hidden, null, false));
+       KiraOwnedJdbcCut.cleanupOpening(f.opening); // The one-shot capsule cannot upgrade the failure either.
+       assertEquals(3, KiraOwnedJdbcCut.firstCloseState(hidden.kira.life));
++    }
++  }
++
++  @Test
++  void retentionCannotCreditAnActualFirstCloseStillInsideItsNativeBody() throws Exception {
++    try (Owned f = new Owned()) {
++      PgPreparedStatement statement = f.prepare("select 1");
++      QueryExecutor original = f.connection.getQueryExecutor();
++      AtomicInteger entered = new AtomicInteger();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        if (invocation.getMethod().getName().equals("releaseQuery")
++            && invocation.getArgument(0) == statement.preparedQuery) {
++          entered.incrementAndGet();
++          assertEquals(1, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++          assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2);
++          assertTrue(statement.kira.counted);
++          assertSame(statement, statement.kira.receiver);
++        }
++        return delegate(original, invocation);
++      })) {
++        f.call(statement, Statement.class, "close", NONE);
++      }
++      assertEquals(1, entered.get());
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      f.call(statement, Statement.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(statement.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void retentionRefusesAChangedExecutorWithoutCallingTheExtension() throws Exception {
++    try (Owned f = new Owned()) {
++      AtomicInteger callbacks = new AtomicInteger();
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        callbacks.incrementAndGet();
++        return delegate(original, invocation);
++      })) {
++        assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++        assertEquals(0, callbacks.get());
++        assertEquals(0, KiraOwnedJdbcCut.rootState(f.root), "The observer does not mutate uncertainty itself.");
++      }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void retentionRefusesAnUnknownQueryRepresentationWithoutInvokingIt() throws Exception {
++    try (Owned f = new Owned()) {
++      TypeInfoCache types = (TypeInfoCache) f.connection.getTypeInfo();
++      f.call(types, TypeInfoCache.class, "cacheSQLTypes", NONE);
++      PgPreparedStatement cached = (PgPreparedStatement) field(types, "getAllTypeInfoStatement");
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      CachedQuery original = cached.preparedQuery;
++      AtomicInteger callbacks = new AtomicInteger();
++      Query extension = mock(Query.class, invocation -> {
++        callbacks.incrementAndGet();
++        throw new AssertionError("A retained-state read must not invoke a Query extension.");
++      });
++      Field query = PgPreparedStatement.class.getDeclaredField("preparedQuery");
++      query.setAccessible(true);
++      // MODEL corrupted final query reference; the successful native factory/receiver is unchanged.
++      try {
++        query.set(cached, new CachedQuery(original.key, extension, false));
++        assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++        assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++        assertEquals(0, callbacks.get());
++        assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++        assertSame(extension, cached.preparedQuery.query);
++      } finally {
++        query.set(cached, original);
++      }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {"IN_QUERY", "CANCELING", "CANCELLED", "timer"})
++  void retentionReadsActualIdleAndTimerFieldsWithoutChangingThem(String state) throws Exception {
++    try (Owned f = new Owned()) {
++      TypeInfoCache types = (TypeInfoCache) f.connection.getTypeInfo();
++      f.call(types, TypeInfoCache.class, "cacheSQLTypes", NONE);
++      PgPreparedStatement cached = (PgPreparedStatement) field(types, "getAllTypeInfoStatement");
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      AtomicInteger callbacks = new AtomicInteger();
++      Field slot = PgStatement.class.getDeclaredField(state.equals("timer") ? "cancelTimerTask" : "statementState");
++      slot.setAccessible(true);
++      Object original = slot.get(cached);
++      TimerTask timer = new TimerTask() {
++        @Override public void run() {
++          callbacks.incrementAndGet();
++        }
++
++        @Override public boolean cancel() {
++          callbacks.incrementAndGet();
++          return super.cancel();
++        }
++      };
++      Object injected = state.equals("timer") ? timer : StatementCancelState.valueOf(state);
++      // MODEL field-cut states, not a scheduled task or a claim to reproduce cancellation timing.
++      try {
++        slot.set(cached, injected);
++        assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++        assertSame(injected, slot.get(cached));
++        assertEquals(0, KiraOwnedJdbcCut.firstCloseState(cached.kira.life));
++        assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++        assertEquals(0, callbacks.get());
++      } finally {
++        slot.set(cached, original);
++      }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++    }
++  }
++
++  @Test
++  void realMetadataErrorPathLeftoversAreNotTypeInfoRetention() throws Exception {
++    try (Owned f = new Owned()) {
++      DatabaseMetaData metadata = (DatabaseMetaData) f.call(f.connection, Connection.class, "getMetaData", NONE);
++      SQLException marker = new SQLException("test after metadata query actually produced its hidden result");
++      AtomicInteger injected = new AtomicInteger();
++      QueryExecutor original = f.connection.getQueryExecutor();
++      try (ExecutorFault ignored = new ExecutorFault(f.connection, invocation -> {
++        boolean metadataQuery = invocation.getMethod().getName().equals("execute")
++            && invocation.getArgument(0) instanceof Query
++            && ((Query) invocation.getArgument(0)).getNativeSql().contains("FROM pg_catalog.pg_proc p,");
++        Object returned = delegate(original, invocation);
++        if (metadataQuery) {
++          injected.incrementAndGet();
++          throw marker;
++        }
++        return returned;
++      })) {
++        assertSame(marker, assertThrows(SQLException.class, () -> f.call(metadata, DatabaseMetaData.class,
++            "getProcedureColumns", new Class<?>[]{String.class, String.class, String.class, String.class},
++            null, "pg_catalog", "abs", null)));
++      }
++      assertEquals(1, injected.get());
++      List<KiraOwnedJdbcCut.Native> leftovers = new ArrayList<>();
++      boolean nonCacheStatement = false;
++      boolean resultWithTuples = false;
++      TypeInfoCache types = (TypeInfoCache) f.connection.getTypeInfo();
++      for (KiraOwnedJdbcCut.Native child = f.connection.kira.children; child != null; child = child.next) {
++        if (KiraOwnedJdbcCut.firstCloseState(child.life) != 0) {
++          continue;
++        }
++        leftovers.add(child);
++        if (child.receiver instanceof PgPreparedStatement) {
++          nonCacheStatement |= !types.kiraOwnsStatement(f.connection, (PgPreparedStatement) child.receiver);
++        } else if (child.receiver instanceof PgResultSet) {
++          resultWithTuples |= !((PgResultSet) child.receiver).rows.isEmpty();
++        }
++      }
++      assertTrue(nonCacheStatement);
++      assertTrue(resultWithTuples);
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertEquals((long) leftovers.size(), KiraOwnedJdbcCut.liveNativeChildren(f.root));
++      for (KiraOwnedJdbcCut.Native child : leftovers) {
++        assertTrue(child.factoryReturned);
++        assertNotNull(child.receiver);
++        assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
++      }
++      f.retire();
++      for (KiraOwnedJdbcCut.Native child : leftovers) {
++        assertEquals(2, KiraOwnedJdbcCut.firstCloseState(child.life));
++      }
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(booleans = {false, true})
++  void uninstalledResultWithTuplesOrCursorIsNotAnInertClosedParentShell(boolean hasCursor) throws Exception {
++    try (Owned f = new Owned()) {
++      PgStatement parent = f.statement();
++      List<Tuple> tuples = new ArrayList<>();
++      if (!hasCursor) {
++        tuples.add(new Tuple(new byte[][]{new byte[]{49}}));
++      }
++      ResultCursor cursor = hasCursor ? mock(ResultCursor.class) : null;
++      PgResultSet result = (PgResultSet) f.call(parent, BaseStatement.class, "createResultSet",
++          new Class<?>[]{Query.class, org.postgresql.core.Field[].class, List.class, ResultCursor.class},
++          null, new org.postgresql.core.Field[]{new org.postgresql.core.Field("value", Oid.INT4)}, tuples, cursor);
++      f.call(parent, Statement.class, "close", NONE);
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(parent.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++      assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++      assertSame(tuples, result.rows);
++      assertSame(result, result.kira.receiver);
++      if (hasCursor) {
++        verify(cursor, never()).close();
++      }
++      f.retire();
++      assertEquals(2, KiraOwnedJdbcCut.firstCloseState(result.kira.life));
++      if (hasCursor) {
++        verify(cursor, times(1)).close();
++      }
++    }
++  }
++
++  @ParameterizedTest
++  @ValueSource(strings = {
++      "thisRow", "rowBuffer", "currentRow", "rowOffset", "onInsertRow", "updateable",
++      "doingUpdates", "updateValues", "refCursorName", "deleteStatement"
++  })
++  void inertResultReaderUsesActualFieldsRatherThanEmptyNativeRowMetadata(String retained) throws Exception {
++    try (Owned f = new Owned()) {
++      PgPreparedStatement parent = f.prepare("select 1");
++      List<Tuple> tuples = new ArrayList<>();
++      PgResultSet shell = (PgResultSet) f.call(parent, BaseStatement.class, "createResultSet",
++          new Class<?>[]{Query.class, org.postgresql.core.Field[].class, List.class, ResultCursor.class},
++          null, new org.postgresql.core.Field[]{new org.postgresql.core.Field("value", Oid.INT4)}, tuples, null);
++      f.call(parent, Statement.class, "close", NONE);
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      assertTrue(shell.kira.rows.isEmpty());
++      assertNull(shell.kira.rowMap);
++      Field slot = PgResultSet.class.getDeclaredField(retained);
++      slot.setAccessible(true);
++      Object original = slot.get(shell);
++      Object injected;
++      switch (retained) {
++        case "thisRow":
++        case "rowBuffer":
++          injected = new Tuple(new byte[][]{new byte[]{49}});
++          break;
++        case "currentRow":
++        case "rowOffset":
++          injected = 1;
++          break;
++        case "updateValues":
++          injected = new HashMap<String, Object>();
++          break;
++        case "refCursorName":
++          injected = "kira_unexecuted_model_cursor";
++          break;
++        case "deleteStatement":
++          injected = parent; // Even a genuinely closed parent is not an absent delete-statement field.
++          break;
++        default:
++          injected = true;
++      }
++      // MODEL retained-field fault, restored before the real terminal close. No alternate receiver.
++      try {
++        slot.set(shell, injected);
++        assertEquals(4, KiraOwnedJdbcCut.retentionState(f.root));
++        assertEquals(injected, slot.get(shell));
++        assertSame(tuples, shell.rows);
++        assertTrue(shell.kira.rows.isEmpty());
++        assertNull(shell.kira.rowMap);
++        assertEquals(0, KiraOwnedJdbcCut.firstCloseState(shell.kira.life));
++        assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      } finally {
++        slot.set(shell, original);
++      }
++      assertEquals(0, KiraOwnedJdbcCut.retentionState(f.root));
++      // Native-only shape credit: this exposed shell would still fail core's own-close ledger.
+     }
+   }
+ 
+@@ -340,6 +728,7 @@
+       }
+       assertEquals(1, f.connection.kira.failedConstructions);
+       assertEquals(0, f.connection.kira.nativeChildren);
++      assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2);
+       f.retire();
+       assertTrue(construction.cleaned);
+       assertTrue(partial.partialDisposed);
+@@ -347,6 +736,7 @@
+       assertEquals(0, f.connection.kira.failedConstructions);
+       assertNull(f.connection.kira.children);
+       assertEquals(0, KiraOwnedJdbcCut.rootState(f.root));
++      assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2);
+     }
+   }
+ 
+@@ -490,6 +880,11 @@
+       assertTrue(statement.batchStatements.isEmpty());
+       assertTrue(statement.batchParameters.isEmpty());
+       assertEquals(2, KiraOwnedJdbcCut.rootState(f.root) & 2);
++      KiraOwnedJdbcCut.Invocation retained = f.connection.kira.retained;
++      assertEquals(2, KiraOwnedJdbcCut.retentionState(f.root) & 2);
++      KiraOwnedJdbcCut.Root next = KiraOwnedJdbcCut.attach(f.opening, f.connection, new Object(), new Object());
++      assertEquals(2, KiraOwnedJdbcCut.retentionState(next) & 2);
++      assertSame(retained, f.connection.kira.retained);
+     }
+   }
+ 
+@@ -516,6 +911,20 @@
+     return query.getNativeSql().trim().toUpperCase(Locale.ROOT).startsWith(operation.toUpperCase(Locale.ROOT));
+   }
+ 
++  /** Capture the actual Life before the original call's actualEnd compacts closed receivers. */
++  private static KiraOwnedJdbcCut.Life liveNativeLife(PgConnection connection, Class<?> type) {
++    KiraOwnedJdbcCut.Life found = null;
++    for (KiraOwnedJdbcCut.Native child = connection.kira.children; child != null; child = child.next) {
++      if (child.receiver != null && child.receiver.getClass() == type) {
++        assertNull(found, "Expected only one matching native receiver in this getter extent.");
++        assertTrue(child.factoryReturned);
++        assertEquals(0, KiraOwnedJdbcCut.firstCloseState(child.life));
++        found = child.life;
++      }
++    }
++    return Objects.requireNonNull(found, "The actual native getter receiver was not constructed.");
++  }
++
+   private static PgPreparedStatement hiddenPrepared(PgConnection connection, CachedQuery query) {
+     for (KiraOwnedJdbcCut.Native child = connection.kira.children; child != null; child = child.next) {
+       if (child.receiver instanceof PgPreparedStatement) {
+@@ -530,7 +939,7 @@
+ 
+   private static Object delegate(Object original, InvocationOnMock invocation) throws Throwable {
+     try {
+-      return invocation.getMethod().invoke(original, invocation.getArguments());
++      return invocation.getMethod().invoke(original, invocation.getRawArguments());
+     } catch (InvocationTargetException failure) {
+       throw failure.getCause();
+     }

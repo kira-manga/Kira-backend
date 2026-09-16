@@ -1,3 +1,6 @@
 0001-native-owned-cut.patch
 0002-native-lifetime-correction.patch
 0003-native-owned-cut-regressions.patch
+0004-native-annotation-correction.patch
+0005-native-retention-getter-corrections.patch
+0006-private-publication.patch

@@ -99,6 +99,13 @@ Changing encoding requires a migration. `storage_bytes` is a conservative logica
 measured physical PostgreSQL/MVCC/index usage**. Charge calculation, aggregate reconciliation,
 lock ordering and physical-size/vacuum operational thresholds still require implementation/proof.
 
+The dormant G1-only persistence primitive now has an explicit full-lifecycle logical charge:
+one `catalog_mutations` unit plus 3,219,776 `storage_bytes`, derived from all 33 columns and all
+five indexes with both documents restricted to **128 KiB**, one SINGLE signer, and future copy/
+completion/projection fields reserved up front. This is not a price for V14's general 8 MiB
+catalog rows. Other catalog profiles, aggregate reconciliation and production capacity authority
+remain unimplemented; see [the G1 charge contract](COMPLAINT_CATALOG_READBACK_RECONCILIATION.md#g1-specific-full-lifecycle-charge).
+
 Only 22 closed zero-capacity rows and one live control row are seeded. The control row has
 maintenance/creation closed, scan requested, epoch/desired generation/schema 1, lease tokens 0,
 and no writer, configuration hash, catalog or checkpoint. Fixed baseline rows are accounted

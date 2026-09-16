@@ -1,6 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import jakarta.persistence.EntityManagerFactory
+import me.manga.kira.backend.audit.infrastructure.AuditLogEntity
 import me.manga.kira.backend.complaint.infrastructure.transaction.OrdinaryPersistencePhaseExecutor
 import me.manga.kira.backend.security.JdbcSourceGrantCleanupStore
 import me.manga.kira.backend.security.SourceGrantCleanup
@@ -28,13 +29,21 @@ import java.util.concurrent.locks.LockSupport
 import javax.sql.DataSource
 
 /** Reuses the retained PG/owned-pool owner. No second container, fake business table or product switch. */
-internal fun withOrdinarySourceGrantCleanup(database: PgLifecycleDatabaseFixture, test: (OrdinarySourceGrantCleanupFixture) -> Unit) {
-    withOrdinarySourceGrantCleanup(database, SystemPersistenceNanoClock, test)
+internal fun withOrdinarySourceGrantCleanup(
+    database: PgLifecycleDatabaseFixture,
+    maximumPoolSize: Int = 1,
+    test: (OrdinarySourceGrantCleanupFixture) -> Unit,
+) {
+    withOrdinarySourceGrantCleanup(database, SystemPersistenceNanoClock, maximumPoolSize, test = test)
 }
 
 internal fun withOrdinarySourceGrantCleanup(
     database: PgLifecycleDatabaseFixture,
     nanoClock: PersistenceNanoClock,
+    maximumPoolSize: Int = 1,
+    includeAuditEntities: Boolean = false,
+    candidateEndpoint: ResolvedPersistenceEndpoint? = null,
+    companion: OwnedCutPool? = null,
     test: (OrdinarySourceGrantCleanupFixture) -> Unit,
 ) {
     val reader = ordinaryCleanupReader(database)
@@ -44,11 +53,11 @@ internal fun withOrdinarySourceGrantCleanup(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}; " +
             "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}",
     )
-    withOwnedCutPool(database) { owned ->
-        val emf = ordinaryCleanupFactory(owned.pool)
+    withOwnedCutPool(database, companion = companion, maximumPoolSize = maximumPoolSize, candidateEndpoint = candidateEndpoint) { owned ->
+        val emf = ordinaryCleanupFactory(owned.pool, includeAuditEntities)
         try {
             emf.afterPropertiesSet()
-            OrdinarySourceGrantCleanupFixture(owned, requireNotNull(emf.`object`), reader, nanoClock).use(test)
+            OrdinarySourceGrantCleanupFixture(owned, requireNotNull(emf.`object`), reader, nanoClock, maximumPoolSize).use(test)
         } finally {
             emf.destroy() // Before the same existing OwnedCutPool/PG owner verifies real teardown.
         }
@@ -61,12 +70,13 @@ internal class OrdinarySourceGrantCleanupFixture(
     val entityManagerFactory: EntityManagerFactory,
     private val reader: DriverManagerDataSource,
     nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+    maximumPoolSize: Int = 1,
 ) : AutoCloseable {
     val cutoff: Instant = Instant.parse("2026-09-12T12:00:00Z")
     val pool: GuardedDataSource get() = ownedPool.pool
     val jdbc = JdbcTemplate(pool).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
     val sourceStore: SourceGrantCleanup = JdbcSourceGrantCleanupStore(jdbc)
-    val admission = OrdinaryPersistenceAdmission(1)
+    val admission = OrdinaryPersistenceAdmission(maximumPoolSize) // Same P as the actual controlled Hikari pool, never a relabelled P=1.
     val manager = GuardedJpaTransactionManager(entityManagerFactory, pool)
     val ownership = PersistencePhaseOwnership(admission, manager, nanoClock = nanoClock)
     val userId: UUID = UUID.randomUUID()
@@ -243,22 +253,28 @@ internal class CleanupPgSleepObserver(reader: DriverManagerDataSource) : AutoClo
     }
 }
 
-private fun ordinaryCleanupFactory(selected: DataSource): LocalContainerEntityManagerFactoryBean = LocalContainerEntityManagerFactoryBean().apply {
-    dataSource = selected
-    setPackagesToScan(UserEntity::class.java.packageName)
-    jpaVendorAdapter = HibernateJpaVendorAdapter().apply {
-        setDatabasePlatform("org.hibernate.dialect.PostgreSQLDialect")
-        setGenerateDdl(false)
-        setShowSql(false)
+private fun ordinaryCleanupFactory(selected: DataSource, includeAuditEntities: Boolean = false): LocalContainerEntityManagerFactoryBean =
+    LocalContainerEntityManagerFactoryBean().apply {
+        dataSource = selected
+        val packages = if (includeAuditEntities) {
+            arrayOf(UserEntity::class.java.packageName, AuditLogEntity::class.java.packageName)
+        } else {
+            arrayOf(UserEntity::class.java.packageName)
+        }
+        setPackagesToScan(*packages)
+        jpaVendorAdapter = HibernateJpaVendorAdapter().apply {
+            setDatabasePlatform("org.hibernate.dialect.PostgreSQLDialect")
+            setGenerateDdl(false)
+            setShowSql(false)
+        }
+        setJpaPropertyMap(
+            mapOf(
+                "hibernate.hbm2ddl.auto" to "validate",
+                "hibernate.jdbc.time_zone" to "UTC",
+                "hibernate.boot.allow_jdbc_metadata_access" to "false",
+            ),
+        )
     }
-    setJpaPropertyMap(
-        mapOf(
-            "hibernate.hbm2ddl.auto" to "validate",
-            "hibernate.jdbc.time_zone" to "UTC",
-            "hibernate.boot.allow_jdbc_metadata_access" to "false",
-        ),
-    )
-}
 
 private fun ordinaryCleanupReader(database: PgLifecycleDatabaseFixture): DriverManagerDataSource = DriverManagerDataSource().apply {
     setUrl("jdbc:postgresql://${database.host}:${database.port}/${PgLifecycleDatabaseSettings.DATABASE}")

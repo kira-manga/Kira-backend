@@ -1,50 +1,74 @@
 {
-  "schema": 1,
-  "candidate": "app29-native-owned-cut-correction-01-tests-01",
-  "date_utc": "2026-09-10",
-  "status": "UNCOMPILED / UNRUN / NOT ACCEPTED",
+  "schema": 2,
+  "candidate": "app29-owned-driver-packaging-20260915-04",
+  "date_utc": "2026-09-15",
+  "status": "SOURCE-ONLY PACKAGING CANDIDATE / NOT PRODUCTION QUALIFIED",
   "upstream_commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
   "source_tree_relative_to_vendor": "../../../.kira-validation/pgjdbc-owned-cut/upstream",
   "retained_before_images_relative_to_vendor": "../../../review/working/app-29-driver-cut-native/source-before",
   "retained_before_reference": {
     "path_relative_to_vendor": "../../../review/working/app-29-w03-driver-bootstrap-advisory/pgjdbc-42.7.12-sources.jar",
     "sha256": "f3688b6cff20a77fb3fe1a2b2dcd853fbaa5620c5d23a0fb87f49c5919946866",
-    "six_modified_before_images_match": true
+    "six_modified_before_images_match": true,
+    "type_info_cache_before_image_matches": true
   },
   "patch_series": [
     {
       "path": "0001-native-owned-cut.patch",
       "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b",
-      "bytes": 105172
+      "bytes": 105172,
+      "scope": "production"
     },
     {
       "path": "0002-native-lifetime-correction.patch",
       "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9",
-      "bytes": 4616
+      "bytes": 4616,
+      "scope": "production"
     },
     {
       "path": "0003-native-owned-cut-regressions.patch",
       "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
       "bytes": 75780,
-      "scope": "test-only"
+      "scope": "test"
+    },
+    {
+      "path": "0004-native-annotation-correction.patch",
+      "sha256": "c40a13d18f0598e10ce44b964aba932430c416861e9f5ec8dc5b209abae1d231",
+      "bytes": 561,
+      "scope": "production annotation"
+    },
+    {
+      "path": "0005-native-retention-getter-corrections.patch",
+      "sha256": "148c46711689a27c5e1a2a9cb42c081d823eb93347d610806b81475695f98f05",
+      "bytes": 69947,
+      "scope": "reviewed production/test corrections"
+    },
+    {
+      "path": "0006-private-publication.patch",
+      "sha256": "bd1b4f6848ffb3f43a57f8f29a7181bf8feaecf52825e0112307c07314f2e9bf",
+      "bytes": 6084,
+      "scope": "private publication build configuration and root NMCP remote-task gate"
     }
   ],
   "abi": {
     "path": "ABI.md",
-    "sha256": "6c2eefa3504df96d23f4ed07d6a8f9564ec34dde27b61710354f04fadc532112"
+    "sha256": "ffbd51a0593348d28e65a83e56056b8226442838aef61973eb360e8d3bfecfaf",
+    "bytes": 12717
   },
   "license": {
     "path": "LICENSE.pgjdbc",
-    "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53"
+    "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53",
+    "bytes": 1321
   },
+  "production_source_file_count": 9,
   "files": [
     {
       "path": "pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java",
       "change": "added",
       "before": null,
       "after": {
-        "sha256": "8286adcdae88579f4b0f18ead50928c8b34d13a2ee570ebe667a57c6c6f54342",
-        "bytes": 52002
+        "sha256": "65dd03dc64269a1c30a9948265f3041808f36458ad1f8157c6c7c65033f7ed9d",
+        "bytes": 64286
       }
     },
     {
@@ -64,8 +88,8 @@
         "bytes": 63628
       },
       "after": {
-        "sha256": "05b4b69fd8f607b6a9f5310df3d136f8fbc82b231c5d1574d016886eb1440da5",
-        "bytes": 66391
+        "sha256": "486aba8d77f3a38b9b0b16540bf7f62010c438803bf4cc426e05bbb5c3528114",
+        "bytes": 67237
       }
     },
     {
@@ -76,8 +100,8 @@
         "bytes": 44345
       },
       "after": {
-        "sha256": "37ad8d413200d6e1b95c40a53c766bbbbecbfabc36c0a560434bc7668318d80d",
-        "bytes": 47110
+        "sha256": "4aa88581e14fdb6e3691174db1200d4cd102bdc226d33440ebcb6cba08006379",
+        "bytes": 47429
       }
     },
     {
@@ -100,8 +124,8 @@
         "bytes": 143586
       },
       "after": {
-        "sha256": "7d073f7455fa6e855f22b97d219d2fed8ff5abd66c028ce70c3ab2e8fc18fca2",
-        "bytes": 146386
+        "sha256": "c277dd11fb7617986ec4179d6cafc76cbe2658c76b67f40803ca6e849c964768",
+        "bytes": 147057
       }
     },
     {
@@ -127,31 +151,86 @@
         "sha256": "c079613468dcbc2a42014a7ffe48e06a5c6fad7b7d0555f0c9727202b8bf67a6",
         "bytes": 6671
       }
+    },
+    {
+      "path": "pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java",
+      "change": "modified",
+      "before": {
+        "sha256": "6d9c8e839e0f3d35384b7efdd701394705de4c1ed6e8f0fb2a686a466aa9567c",
+        "bytes": 38526
+      },
+      "after": {
+        "sha256": "f48e1f51d2d353adb5ac59b70c8056e9da18bde4eb96e98fd7c691051b06beca",
+        "bytes": 40170
+      }
+    }
+  ],
+  "build_files": [
+    {
+      "path": "pgjdbc/build.gradle.kts",
+      "before": {
+        "sha256": "84dda5914dacb4e247e19699dca47e0655cbede134a078d4b139c1239b7bc912",
+        "bytes": 15983
+      },
+      "after": {
+        "sha256": "23c0d743d465732ec70ad6ca75a28356aa558730365ad0d1b8dcb01642c77cbc",
+        "bytes": 20310
+      },
+      "patch": "0006-private-publication.patch",
+      "compiled_or_evaluated": false
+    },
+    {
+      "path": "build.gradle.kts",
+      "before": {
+        "sha256": "324044b2d80391234d571f767fd7b6acfb04fd3577d6cc492d4a78fbd86d70fb",
+        "bytes": 1882
+      },
+      "after": {
+        "sha256": "3ae30fb2a5098c51ce5eaf8eb29b7aea161277b7a0e474b11b2b97e9d9c9a9a6",
+        "bytes": 2756
+      },
+      "patch": "0006-private-publication.patch",
+      "compiled_or_evaluated": false
+    }
+  ],
+  "test_sources": {
+    "path": "test-source-manifest.json",
+    "sha256": "a7f8ccceafeb801603591684a8a188e9c0c93aaba1b4d8b503d1c3abff04263a",
+    "bytes": 4211,
+    "file_count": 4
+  },
+  "native05_source_reference": {
+    "path_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-build-05/sources-after.json",
+    "sha256": "e3ae4b1579c4e46a7571f7d0c80fd15f9ff946d4056e0089c204a70cbac0d57e",
+    "bytes": 132266,
+    "all_13_relevant_java_postimages_match": true
+  },
+  "reused_reviews": [
+    {
+      "path_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-build-05/execution-inputs/native-independent-review.md",
+      "sha256": "ff066786119c5618cbb593f3ae2bc1723d995b172bac7529ce43d413ad1c1860",
+      "bytes": 11632
+    },
+    {
+      "path_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-build-05/execution-inputs/getter-independent-review.md",
+      "sha256": "4f6b03f4167b12894eac04a41f67609c292803cb7c68a5c3e0ddbd260af34b9a",
+      "bytes": 6898
     }
   ],
   "validation": {
     "performed": [
-      "source inspection",
-      "unified diff generation",
-      "source and delivery SHA-256"
+      "affected source inspection",
+      "patch reconstruction from pinned preimages",
+      "all 13 Java postimage SHA-256 comparisons to native05",
+      "native06 NMCP publication callback bytecode/source correction review"
     ],
-    "compilation": "NOT RUN",
-    "static_checks": "NOT RUN",
-    "tests": "NOT RUN",
-    "artifact_build": "NOT RUN",
-    "independent_review": "PRODUCTION CORRECTION SOURCE REVIEW RETURNED; TEST-ONLY REVIEW PENDING",
-    "acceptance": "NOT ACCEPTED"
-  },
-  "preserved_prior_freeze_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-correction-01",
-  "test_sources": {
-    "path": "test-source-manifest.json",
-    "sha256": "31286dd82c852edfd7d3f0304319de8b2d4e098f7f38a045e559841606b803ef",
-    "bytes": 3826,
-    "file_count": 4
-  },
-  "production_correction_review": {
-    "path_relative_to_vendor": "../../../review/remediation/app-29-driver-cut-native-independent-correction-review.md",
-    "sha256": "e61441206cc78197e2ef96a86c26ee3a9e332b5a58c3da04f97917ad2f64742a",
-    "verdict": "R1/R2 addressed at source level; no runtime acceptance"
+    "new_driver_behavior": false,
+    "compilation": "NOT RUN FOR PACKAGING CANDIDATE",
+    "build_script_evaluation": "NOT RUN FOR PACKAGING04; preceding packaging03 native06 failed during publication registration",
+    "tests": "NOT RUN FOR PACKAGING CANDIDATE",
+    "dependency_resolution": "NOT RUN",
+    "publication": "NOT RUN",
+    "independent_packaging_review": "PACKAGING03 SOURCE-CLEAR; PACKAGING04 CORRECTION PENDING",
+    "acceptance": "NOT PRODUCTION QUALIFIED"
   }
 }

@@ -6,6 +6,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Local slots include acquiring, working and cleanup owners. Phase/readiness/physical checks remain separate. */
 internal class DeletionPersistenceAdmission {
     private val owners = AtomicInteger()
+    internal val ownerLimit: Int get() = TOTAL_LIMIT
 
     fun tryRoutineDeletion(): LocalPersistencePermit? {
         val observed = owners.get()

@@ -78,6 +78,11 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
 
     fun sealedAndEnded(): Boolean = state.get().let { it.sealed && it.foreground == null && it.cancellations == 0L && it.outerTails == 0L }
 
+    /** One current pool-state observation, never unsealed-zero native completion or transfer consent. */
+    internal fun poolIdleForReadiness(): Boolean = installed.get() && original == null && phase == null && state.get().let {
+        !it.sealed && !it.businessStopped && it.poison == null && it.foreground == null && it.cancellations == 0L && it.outerTails == 0L
+    }
+
     /** Necessary scalar fact only, not an unsealed-zero completion receipt or a pool/native authority. */
     internal fun outerTailsEnded(): Boolean = state.get().outerTails == 0L
 

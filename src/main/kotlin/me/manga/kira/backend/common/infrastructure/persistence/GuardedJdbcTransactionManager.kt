@@ -8,6 +8,13 @@ import org.springframework.transaction.TransactionStatus
 
 /** Guard before Spring suspension/propagation callbacks, even for another manager over the same DS. */
 internal class GuardedJdbcTransactionManager(internal val dataSource: GuardedDataSource) : PlatformTransactionManager {
+    private var phaseOwner: PersistencePhaseOwnership? = null
+
+    internal fun bindPhaseOwner(owner: PersistencePhaseOwnership) {
+        check(phaseOwner == null)
+        phaseOwner = owner
+    }
+
     private val dispatch = PersistenceManagerDispatch(
         this,
         JdbcTransactionManager(dataSource).apply {

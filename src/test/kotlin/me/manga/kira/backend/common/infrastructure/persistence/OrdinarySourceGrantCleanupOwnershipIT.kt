@@ -35,6 +35,7 @@ import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import java.sql.Connection
+import java.sql.SQLException
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -42,6 +43,7 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
@@ -49,7 +51,7 @@ import java.util.concurrent.atomic.AtomicReference
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
 class OrdinarySourceGrantCleanupOwnershipIT {
-    private val database = lazy { PgLifecycleDatabaseFixture().also { it.start() } }
+    private val database = lazy { PgLifecycleDatabaseFixture(OrdinarySourceGrantCleanupOwnershipIT::class.java).also { it.start() } }
 
     @AfterAll
     fun closeDatabase() {
@@ -591,6 +593,14 @@ class OrdinarySourceGrantCleanupOwnershipIT {
         }
 
     @Test
+    fun `MODEL raw guard interruption retires a phase before overriding self interrupt while no phase remains nonretiring`() =
+        assertRawGuardInterruptionRetirement(database)
+
+    @Test
+    fun `MODEL foreign cancellation failure after reusable selection publishes retirement before its genuine end and prevents return consent`() =
+        assertForeignCancellationRetirement(database)
+
+    @Test
     fun `a real post consent return tail retains permit past expiry and cannot refund or retire its successor early`() =
         withOrdinarySourceGrantCleanup(database.value) { f ->
             val id = UUID(0, 105)
@@ -668,6 +678,166 @@ class OrdinarySourceGrantCleanupOwnershipIT {
                 barrier.get()?.close()
             }
         }
+}
+
+private fun assertRawGuardInterruptionRetirement(database: Lazy<PgLifecycleDatabaseFixture>) {
+    for (named in listOf(true, false)) {
+        withOrdinarySourceGrantCleanup(database.value) { f ->
+            OwnedCallerTestScope().use { callers ->
+                val restore = callers.gate()
+                val behavior = OwnedCallerTestBehavior().apply { restoreGate = restore }
+                val selected = AtomicReference<PersistenceJdbcLease>()
+                val admitted = AtomicReference<PersistenceJdbcGuardCall>()
+                val samplesBeforeFailure = AtomicInteger()
+                val interruption = InterruptedException("MODEL raw guard interruption, not a native driver failure.")
+                val worker = callers.launch(OwnedCallerTestKind.OVERRIDING, behavior) {
+                    fun failAtGuard(lease: PersistenceJdbcLease): Nothing {
+                        selected.set(lease)
+                        val context = lease.state.context
+                        val call = context.enter(lease.identity, PersistenceJdbcGuardCallKind.BUSINESS)
+                        admitted.set(call)
+                        val owner = ownedCutField(lease, "ownership") as PersistenceOwnership
+                        samplesBeforeFailure.set(behavior.samples.get())
+                        behavior.sampleFailure = AssertionError("Failure notification sampled the overriding interrupt getter.")
+                        try {
+                            // MODEL the dispatcher's separate notification, then the actual raw-failure branch.
+                            // This token has no native Invocation, output or wrapping/preparation failure.
+                            context.phaseJdbcFailure()
+                            assertFalse(owner.retirementRequested(), "Original ordinary notification must leave rollback available.")
+                            val reported = call.failure(interruption)
+                            assertSame(interruption, reported)
+                            throw reported
+                        } finally {
+                            behavior.sampleFailure = null
+                            call.finish()
+                        }
+                    }
+                    try {
+                        if (named) {
+                            val store = cleanupPort { failAtGuard(ownedPoolLease(selectedHolder(f).connection)) }
+                            val failure = assertThrows<PersistencePhaseException> { f.newExecutor(store).cleanupSourceGrants() }
+                            assertEquals(PersistencePhaseFailureCode.WORK_FAILED, failure.code)
+                            assertTrue(failure.cleanupProven && requireNotNull(selected.get()).completion.quiescent())
+                            assertFalse((ownedCutField(requireNotNull(selected.get()), "transfer") as? PersistenceJdbcPoolTransfer)?.consented() == true)
+                            assertEquals(0, f.admission.activeOwners())
+                            requireConnectionFree()
+                            assertTrue(Thread.interrupted(), "The original caller must retain the raw interruption after finalization.")
+                        } else {
+                            f.pool.connection.use { connection ->
+                                assertSame(interruption, assertThrows<InterruptedException> { failAtGuard(ownedPoolLease(connection)) })
+                                assertTrue(Thread.interrupted()) // Test-only flag cleanup before normal unscoped RETURN.
+                            }
+                            val lease = requireNotNull(selected.get())
+                            assertTrue(lease.completion.quiescent())
+                            assertTrue((ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer).consented())
+                            requireConnectionFree()
+                        }
+                        true
+                    } finally {
+                        Thread.interrupted() // Test thread cleanup only; never a product outcome or producer end.
+                    }
+                }
+                restore.awaitEntered()
+                try {
+                    val lease = requireNotNull(selected.get())
+                    val call = requireNotNull(admitted.get())
+                    val owner = ownedCutField(lease, "ownership") as PersistenceOwnership
+                    assertEquals(named, lease.state.context.hasPhase())
+                    assertEquals(named, owner.retirementRequested(), "Retirement must precede the overridable self-interrupt callback.")
+                    assertEquals(samplesBeforeFailure.get(), behavior.samples.get())
+                    assertEquals(1, behavior.restores.get())
+                    assertSame(lease.state.epoch, call.identity.epoch)
+                    assertTrue(lease.state.epoch.foregroundActive())
+                    assertFalse(lease.state.epoch.poisoned())
+                    assertFalse(lease.completion.quiescent())
+                    assertNull(ownedCutField(call, "driver"))
+                    assertEquals(false, ownedCutField(call, "driverPreparationFailure"))
+                    assertEquals(PersistenceJdbcCallOutcome.ORDINARY_FAILURE, ownedCutField(call, "outcome"))
+                    assertEquals(false, ownedCutField(call, "ended"))
+                    assertEquals(false, ownedCutField(call, "finishReturned"))
+                } finally {
+                    restore.release()
+                }
+                assertTrue(worker.value())
+            }
+        }
+    }
+}
+
+private fun assertForeignCancellationRetirement(database: Lazy<PgLifecycleDatabaseFixture>) = withOrdinarySourceGrantCleanup(database.value) { f ->
+    val id = UUID(0, 108)
+    f.seedGrant(id, SOURCE_ADMIN_MUTATION_SCOPE, f.cutoff)
+    OwnedCallerTestScope().use { callers ->
+        val ready = CountDownLatch(1)
+        val behavior = OwnedCallerTestBehavior().apply {
+            sampleFailure = AssertionError("Foreign failure notification sampled the interrupt getter.")
+        }
+        var selected: PersistenceJdbcLease? = null
+        var cancellation: OwnedCallerTestCall<Boolean>? = null
+        val store = cleanupPort { cutoff ->
+            val deleted = f.sourceStore.deleteEligibleSourceGrants(cutoff)
+            val lease = ownedPoolLease(selectedHolder(f).connection)
+            selected = lease
+            val phase = requireNotNull(PersistencePhaseOwnership.current())
+            cancellation = callers.launch(OwnedCallerTestKind.OVERRIDING, behavior) {
+                val context = lease.state.context
+                // MODEL failure on an authentic cancellation token; no native Statement.cancel/error is fabricated.
+                val call = context.enter(lease.identity, PersistenceJdbcGuardCallKind.CANCELLATION)
+                try {
+                    ready.countDown()
+                    awaitLifecycleFact { ownedCutField(creatorEpochState(lease), "sealed") == true }
+                    val returning = ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer
+                    val owner = ownedCutField(lease, "ownership") as PersistenceOwnership
+                    assertEquals(PersistenceJdbcPoolTransfer.Kind.RETURN, returning.kind)
+                    assertSame(lease.state, returning.source)
+                    assertEquals("FINALIZING", ownedCutField(phase, "stage").toString())
+                    assertEquals(PersistenceDatabaseOutcome.COMMITTED, lease.completion.databaseOutcome())
+                    assertFalse((ownedCutField(phase, "jdbcFailureObserved") as AtomicBoolean).get())
+                    assertFalse(owner.retirementRequested())
+                    assertFalse(returning.consented())
+                    assertFalse(returning.actualEnded())
+                    assertEquals(1L, lease.state.epoch.activeCancellations())
+                    assertFalse(lease.state.epoch.sealedAndEnded())
+                    // Production descendants notify here, before failedBeforeBoxing/failure and the genuine finally end.
+                    // The mandatory RETURN drain proves its earlier phase-flag sample already selected reusable completion.
+                    val problem = SQLException("MODEL foreign cancellation failure, not a native wire failure.", "58000")
+                    context.phaseJdbcFailure()
+                    call.failedBeforeBoxing(wrapping = false)
+                    assertSame(problem, call.failure(problem))
+                    assertTrue(owner.retirementRequested())
+                    assertEquals(0, behavior.samples.get())
+                    assertFalse(lease.state.epoch.poisoned())
+                    assertEquals(PersistenceJdbcCallOutcome.ORDINARY_FAILURE, ownedCutField(call, "outcome"))
+                    assertEquals(false, ownedCutField(call, "ended"))
+                    assertEquals(false, ownedCutField(call, "finishReturned"))
+                    assertEquals(1L, lease.state.epoch.activeCancellations())
+                    assertFalse(lease.state.epoch.sealedAndEnded())
+                    assertFalse(returning.consented())
+                    assertFalse(lease.completion.quiescent())
+                } finally {
+                    call.finish() // Only this authentic foreign caller ends its token; no test count is written.
+                }
+                true
+            }
+            assertTrue(ready.await(5, TimeUnit.SECONDS))
+            deleted
+        }
+        val failure = assertThrows<PersistencePhaseException> { f.newExecutor(store).cleanupSourceGrants() }
+        assertTrue(requireNotNull(cancellation).value())
+        val lease = requireNotNull(selected)
+        val returning = ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer
+        assertEquals(PersistencePhaseFailureCode.WORK_FAILED, failure.code)
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, failure.databaseOutcome)
+        assertTrue(failure.cleanupProven && lease.completion.quiescent())
+        assertTrue((ownedCutField(lease, "ownership") as PersistenceOwnership).retirementRequested())
+        assertSame(lease.state, returning.source)
+        assertFalse(returning.consented())
+        assertTrue(returning.actualEnded())
+        assertEquals(0L, lease.state.epoch.activeCancellations())
+        assertEquals(0, f.admission.activeOwners())
+        assertTrue(f.grantIds().isEmpty(), "A late cancellation failure must not relabel a genuine committed result as rollback.")
+        requireConnectionFree()
+    }
 }
 
 private fun cleanupPort(block: (Instant) -> Int): SourceGrantCleanup = object : SourceGrantCleanup {

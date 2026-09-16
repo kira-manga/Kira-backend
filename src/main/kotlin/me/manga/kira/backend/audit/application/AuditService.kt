@@ -5,8 +5,14 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import me.manga.kira.backend.audit.domain.AuditAction
 import me.manga.kira.backend.audit.domain.AuditRepository
+import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
 import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
+import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
+import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
+import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
+import me.manga.kira.backend.audit.domain.scalarDetails
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.security.CurrentUser
 import org.springframework.stereotype.Service
 import java.time.Clock
@@ -59,27 +65,24 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
 
     /** Dormant, I/O-free preparation with explicit time; it cannot write or allocate audit capacity. */
     internal fun prepareComplaintMutation(mutation: ComplaintAuditMutation, at: Instant): PreparedComplaintAudit {
-        val detail: Map<String, Any?> = when (mutation) {
-            is ComplaintAuditMutation.Created,
-            is ComplaintAuditMutation.Replied,
-            is ComplaintAuditMutation.ContentEdited,
-            -> mapOf("version" to mutation.version)
-
-            is ComplaintAuditMutation.StatusChanged -> mapOf(
-                "version" to mutation.version,
-                "fromStatus" to mutation.fromStatus.name,
-                "toStatus" to mutation.toStatus.name,
-            )
-
-            is ComplaintAuditMutation.Closed -> mapOf(
-                "version" to mutation.version,
-                "fromStatus" to mutation.fromStatus.name,
-                "toStatus" to mutation.toStatus.name,
-            )
-        }
-        val detailJson = encode(detail)
+        val detailJson = encode(mutation.scalarDetails())
         requireComplaintAuditPayloadSize(detailJson)
         return PreparedMutationAudit(mutation, detailJson, at)
+    }
+
+    /** Existing-phase write only. The adapter must consume a real allocation for this exact mutation. */
+    internal fun recordComplaintMutation(mutation: ComplaintAuditMutation, allocation: ComplaintAuditAllocation, at: Instant) {
+        val prepared = prepareComplaintMutation(mutation, at)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordComplaint(CountedComplaintAuditEntry(mutation, prepared.detailJson, prepared.createdAt), allocation)
+    }
+
+    /** Scope-only enrollment event; its existing-phase allocation must prove both real paired INSERTs. */
+    internal fun recordInstallationEnrollment(scope: ComplaintDataScope, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(mapOf("version" to 1))
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordInstallationEnrollment(CountedInstallationEnrollmentAuditEntry(scope, detailJson, at), allocation)
     }
 
     private class PreparedMutationAudit(mutation: ComplaintAuditMutation, override val detailJson: String, override val createdAt: Instant) :
@@ -122,6 +125,7 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
         const val ENTITY_SOURCE_DRAFT = "source_draft"
         const val ENTITY_SOURCE_CHANGESET = "source_changeset"
         const val ENTITY_USER = "user"
+        const val ENTITY_LOGIN_IDENTIFIER = "login_identifier"
         const val ENTITY_TUTORIAL = "tutorial"
         const val ENTITY_TUTORIAL_CATEGORY = "tutorial_category"
         const val ENTITY_TUTORIAL_MEDIA = "tutorial_media"

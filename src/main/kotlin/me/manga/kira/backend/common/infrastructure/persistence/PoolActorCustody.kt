@@ -1,6 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import com.zaxxer.hikari.HikariDataSource
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadFactory
 
 /**
@@ -14,13 +15,33 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
     private var retired = 0L
     private var factorySealed = false
     private var firstFailure: PoolActorFault? = null
+    private var ordinaryFactory: ThreadFactory? = null
+    private var scheduledTasks: PoolScheduledTaskCustody? = null
     private val factory = object : ThreadFactory {
         override fun newThread(runnable: Runnable?): Thread? = create(runnable)
     }
 
-    internal fun installOn(pool: HikariDataSource) {
+    internal fun installOn(pool: HikariDataSource, ordinaryCompatibility: Boolean = false) {
+        if (ordinaryCompatibility) {
+            ordinaryFactory = pool.threadFactory
+            pool.scheduledExecutor?.let { external ->
+                val custody = PoolScheduledTaskCustody(owner, this, gate, external, pool.maximumPoolSize)
+                scheduledTasks = custody // Retain before replacing the private Hikari configuration field.
+                pool.scheduledExecutor = custody
+            }
+        }
         pool.threadFactory = factory
     }
+
+    /**
+     * Ordinary callbacks/factory keep their behavior, but never satisfy the strict/native profile.
+     * A supplied scheduler retains its exact executor/Worker ownership. Only Hikari's private
+     * submission identity is adapted; later drift must not bypass task custody.
+     */
+    internal fun ordinaryProfileSupported(pool: HikariDataSource, installed: Boolean): Boolean =
+        pool.javaClass === HikariDataSource::class.java && !pool.isRegisterMbeans && !pool.isAllowPoolSuspension &&
+            (if (installed) pool.scheduledExecutor === scheduledTasks else pool.scheduledExecutor !is PoolScheduledTaskCustody) &&
+            (!installed || pool.threadFactory === factory)
 
     /** These are current-value checks only. Immutable-from-launch provenance is an independent qualification prerequisite. */
     internal fun profileSupported(pool: HikariDataSource, installed: Boolean): Boolean = pool.javaClass === HikariDataSource::class.java &&
@@ -34,6 +55,7 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
         check(Thread.holdsLock(gate))
         if (firstFailure == null) firstFailure = fault
         factorySealed = true // Containment, never a normal-shutdown receipt.
+        scheduledTasks?.sealLocked()
         owner.sealBusinessForActorFaultLocked()
     }
 
@@ -44,6 +66,24 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
         owner.sealBusinessForActorFaultLocked() // Never reopens an earlier hard factory seal.
     }
 
+    /** Scheduled-entry containment must not revoke the close/admitted callback's closer authority. */
+    internal fun recordScheduledIncidentLocked(fault: PoolActorFault) {
+        check(Thread.holdsLock(gate))
+        if (firstFailure == null) firstFailure = fault
+        scheduledTasks?.sealLocked()
+        owner.sealBusinessForActorFaultLocked()
+    }
+
+    internal fun sealScheduledEntriesLocked() = scheduledTasks?.sealLocked()
+
+    internal fun scheduledPublicationPendingLocked(): Boolean = scheduledTasks?.publicationPendingLocked() == true
+
+    internal fun scheduledPopulationReadyLocked(): Boolean = scheduledTasks?.closedPopulationReadyLocked() != false
+
+    internal fun cancelScheduledTasks() {
+        scheduledTasks?.cancelOwnedTasks()
+    }
+
     internal fun failedLocked(): Boolean {
         check(Thread.holdsLock(gate))
         return firstFailure != null
@@ -51,6 +91,8 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
 
     internal fun actualCreatorLocked(): PoolCreatorCompletion? {
         check(Thread.holdsLock(gate))
+        // A present foreign/stale task frame cannot fall back to an enclosing emitted Worker.
+        if (PoolScheduledTaskCustody.currentThreadOwnsTaskFrame()) return scheduledTasks?.actualCreatorLocked()
         val actual = actorFrame.get() ?: return null
         if (actual.owner !== this || actual.thread !== Thread.currentThread() || !actual.entered) return null
         if (actual.completion.hasEnded()) return null
@@ -93,7 +135,10 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
 
     internal fun snapshotLocked(futureEntries: Long, activeOperations: Long): PoolActorSnapshot {
         check(Thread.holdsLock(gate))
-        return PoolActorSnapshot(CAPACITY, cells.count { it != null }, constructing, retired, factorySealed, firstFailure, futureEntries, activeOperations)
+        return PoolActorSnapshot(
+            CAPACITY, cells.count { it != null }, constructing, retired, factorySealed, firstFailure, futureEntries, activeOperations,
+            scheduledTasks?.snapshotLocked(),
+        )
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -108,28 +153,42 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
         } ?: return null
         var published = false
         try {
-            val thread = Thread.ofPlatform()
-                .name("kira-private-pool-actor")
-                .daemon(true)
-                .inheritInheritableThreadLocals(false)
-                .uncaughtExceptionHandler { actual, _ ->
-                    if (actual === generation.thread) refuse(PoolActorFault.WORKER_FAILED)
-                }
-                .unstarted { runWorker(generation) }
+            val thread = if (ordinaryFactory != null) {
+                // Preserve the configured factory's Thread settings; only its supplied Worker is
+                // wrapped. A misbehaving early start cannot enter before exact identity retention.
+                ordinaryFactory!!.newThread { runWorker(generation) }
+                    ?: throw RejectedExecutionException("Private persistence actor construction refused.")
+            } else {
+                Thread.ofPlatform()
+                    .name("kira-private-pool-actor")
+                    .daemon(true)
+                    .inheritInheritableThreadLocals(false)
+                    .uncaughtExceptionHandler { actual, _ ->
+                        if (actual === generation.thread) refuse(PoolActorFault.WORKER_FAILED)
+                    }
+                    .unstarted { runWorker(generation) }
+            }
             synchronized(gate) {
                 // A seal does not erase an already admitted construction. Retain before any return/escape.
                 generation.thread = thread
                 generation.published = true
                 published = true
             }
+            if (thread.state !== Thread.State.NEW || thread.isAlive) {
+                refuse(PoolActorFault.CONSTRUCTION_FAILED)
+                throw RejectedExecutionException("Private persistence actor construction refused.")
+            }
             return thread
         } finally {
             synchronized(gate) {
                 if (!published) {
                     failLocked(PoolActorFault.CONSTRUCTION_FAILED)
-                    // Authentic completed construction, no publication and no external start entitlement.
-                    check(cells[generation.index] === generation)
-                    cells[generation.index] = null
+                    // Only our fixed constructor proves no publication on a failed construction.
+                    // An arbitrary ordinary factory may have retained work before throwing.
+                    if (ordinaryFactory == null) {
+                        check(cells[generation.index] === generation)
+                        cells[generation.index] = null
+                    }
                 }
                 generation.constructionEnded = true
                 constructing--
@@ -235,7 +294,7 @@ internal class PoolActorCustody(private val owner: PoolLifecycle, private val ga
         private const val CAPACITY = 64
         private val actorFrame = ThreadLocal<Generation?>()
 
-        internal fun currentThreadOwnsActorFrame(): Boolean = actorFrame.get() != null
+        internal fun currentThreadOwnsActorFrame(): Boolean = actorFrame.get() != null || PoolScheduledTaskCustody.currentThreadOwnsTaskFrame()
     }
 }
 
@@ -250,6 +309,9 @@ internal enum class PoolActorFault {
     INITIALIZATION_FAILED,
     WORKER_FAILED,
     BOOKKEEPING_FAILED,
+    SCHEDULING_FAILED,
+    CANCELLATION_FAILED,
+    TASK_FAILED,
 }
 
 internal enum class PoolActorObservation {
@@ -269,4 +331,5 @@ internal data class PoolActorSnapshot(
     val firstFailure: PoolActorFault?,
     val futureLeaseEntries: Long,
     val activeOperations: Long,
+    val scheduledTasks: PoolScheduledTaskSnapshot? = null,
 )

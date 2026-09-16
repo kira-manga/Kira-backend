@@ -37,6 +37,12 @@ internal enum class PersistenceLifecycleObservation {
     UNSUPPORTED_OBSERVER,
     PENDING,
     UNKNOWN,
+
+    /** Deletion records/actors/calls ended; the root's shared Timer/scanner and ordinary participant may still be live. */
+    DELETION_LOCAL_ENDED,
+
+    /** Catalog participant only; never shared Timer/root completion or a new physical disposal proof. */
+    CATALOG_COORDINATOR_LOCAL_ENDED,
     TRACKED_LOCAL_ENDED,
     DRIVER_CONTRACT_ONLY_ENDED,
 }
@@ -52,4 +58,7 @@ internal data class PersistenceLifecycleSnapshot(
     val deletionRetained: Int?,
     val weakEvidenceUsed: Boolean,
     val cleanupFailureObserved: Boolean,
+    val catalogCoordinatorRequested: Boolean = false,
+    val catalogCoordinatorReady: Boolean = false,
+    val catalogCoordinatorRetained: Int? = 0,
 )

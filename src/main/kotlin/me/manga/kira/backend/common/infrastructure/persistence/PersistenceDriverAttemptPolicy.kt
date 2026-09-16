@@ -47,5 +47,10 @@ internal class PersistenceDriverAttemptPolicy private constructor(
             PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION,
             PersistenceDriverTransportRoute.APPROVED_DIRECT,
         )
+        val TRACKED_CATALOG_CONJUNCTION = PersistenceDriverAttemptPolicy(
+            PersistenceDriverExecutionRecipe.TRACKED_STANDARD,
+            PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION,
+            PersistenceDriverTransportRoute.APPROVED_DIRECT,
+        )
     }
 }

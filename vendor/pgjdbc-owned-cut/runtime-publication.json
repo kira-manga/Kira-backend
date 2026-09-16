@@ -1,0 +1,184 @@
+{
+  "schema": 1,
+  "candidate": "app29-owned-driver-packaging-20260915-04",
+  "status": "SOURCE-ONLY PROPOSAL; NOT PUBLISHED OR PRODUCTION QUALIFIED",
+  "coordinate": {
+    "group": "me.manga.kira.internal",
+    "artifact": "postgresql-owned-cut",
+    "version": "42.7.12-kira.1",
+    "extension": "jar",
+    "classifier": null
+  },
+  "upstream_commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+  "source_manifest": {
+    "path": "source-manifest.json",
+    "sha256": "8d5ade0eab38beaefa028885a5eda76319cb0a0c1586ce4966d504b3ef16b122",
+    "bytes": 8363
+  },
+  "native_build": {
+    "project_path": ":postgresql",
+    "project_group_must_remain": "org.postgresql",
+    "properties": [
+      "-Ppgjdbc.version=42.7.12-kira.1",
+      "-Prelease",
+      "-Psigning.pgp.enabled=OFF"
+    ],
+    "artifact_task": ":postgresql:osgiJar",
+    "publication": "kiraOwnedCut",
+    "publication_task_if_separately_authorized": ":postgresql:publishKiraOwnedCutPublicationToKiraOwnedPgRepository",
+    "maven_metadata": "artifact plus explicit POM; no shadow-component module variants",
+    "build_configuration_input": {
+      "path": "pgjdbc/build.gradle.kts",
+      "sha256": "84dda5914dacb4e247e19699dca47e0655cbede134a078d4b139c1239b7bc912",
+      "bytes": 15983
+    },
+    "build_configuration_patch": {
+      "path": "0006-private-publication.patch",
+      "sha256": "bd1b4f6848ffb3f43a57f8f29a7181bf8feaecf52825e0112307c07314f2e9bf",
+      "bytes": 6084
+    },
+    "verification_staging_task_if_separately_authorized": ":postgresql:publishKiraOwnedCutPublicationToKiraOwnedPgVerificationRepository",
+    "nmcp_remote_gate": {
+      "path": "build.gradle.kts",
+      "before": {
+        "sha256": "324044b2d80391234d571f767fd7b6acfb04fd3577d6cc492d4a78fbd86d70fb",
+        "bytes": 1882
+      },
+      "after": {
+        "sha256": "3ae30fb2a5098c51ce5eaf8eb29b7aea161277b7a0e474b11b2b97e9d9c9a9a6",
+        "bytes": 2756
+      },
+      "scope": "allprojects including root; exact task-class hierarchy matching includes Gradle decoration",
+      "pinned_plugin": "com.gradleup.nmcp:nmcp:1.4.4",
+      "pinned_plugin_jar_sha256": "667326b37650a20665ffbcd98da7185bac18750aa9d784d39fe95a204f7415e7",
+      "denied_task_types": [
+        "nmcp.internal.task.NmcpPublishWithPublisherApiTask",
+        "nmcp.internal.task.NmcpPublishFileByFileToSnapshotsTask"
+      ],
+      "action": "throwing onlyIf before remote task execution/cache reuse",
+      "unchanged": [
+        "NMCP plugin and aggregation configuration/dependency",
+        "NMCP collection/check/local-file task registration; inherited Maven staging actions remain disabled",
+        "normal private/verification Maven publication route"
+      ],
+      "executed": false
+    },
+    "repository_registration": {
+      "policy": "Preserve upstream repository/task registration; unchanged exact Maven task allowlist still denies inherited publication actions",
+      "nmcp_local_repository": "nmcp -> build/nmcp/m2",
+      "required_callback_task": "publishKiraOwnedCutPublicationToNmcpRepository",
+      "native06_previous_attempt": "FAILED during new publication registration; no new JAR/POM",
+      "packaging04_evaluated": false
+    }
+  },
+  "preserved_runtime": {
+    "driver_provider": "org.postgresql.Driver",
+    "driver_service": "META-INF/services/java.sql.Driver",
+    "control_abi": {
+      "path": "ABI.md",
+      "sha256": "ffbd51a0593348d28e65a83e56056b8226442838aef61973eb360e8d3bfecfaf",
+      "bytes": 12717
+    },
+    "java_base_release": 8,
+    "multi_release": 11,
+    "automatic_module_name": "org.postgresql.jdbc",
+    "shading": "com.ongres -> org.postgresql.shaded.com.ongres",
+    "embedded_dependencies": [
+      "com.ongres.scram:scram-client:3.2",
+      "com.ongres.scram:scram-common:3.2",
+      "com.ongres.stringprep:saslprep:2.2",
+      "com.ongres.stringprep:stringprep:2.2"
+    ],
+    "external_runtime_dependencies": [
+      "org.checkerframework:checker-qual:3.55.1"
+    ],
+    "licenses": [
+      "META-INF/LICENSE",
+      "META-INF/licenses/com.ongres.scram/**",
+      "META-INF/licenses/com.ongres.stringprep/**"
+    ]
+  },
+  "backend_selection": {
+    "declaration": "runtimeOnly(libs.postgresql.owned.cut)",
+    "external_checker_declaration": "runtimeOnly(libs.checker.qual)",
+    "configurations": [
+      "productionRuntimeClasspath",
+      "runtimeClasspath",
+      "testRuntimeClasspath"
+    ],
+    "excluded_stock_module": "org.postgresql:postgresql",
+    "private_only": true,
+    "maven_local_fallback": false,
+    "test_classpath_overlay": false,
+    "boot_jar_uses_normal_runtime_classpath": true,
+    "explicit_local_verification_supported": true
+  },
+  "private_registry": {
+    "url_environment_variable": "KIRA_OWNED_PG_REPOSITORY_URL",
+    "default_url": null,
+    "read_credentials": [
+      "KIRA_PACKAGES_USER",
+      "KIRA_PACKAGES_READ_TOKEN"
+    ],
+    "read_fallback_credentials": [],
+    "publish_credentials": [
+      "KIRA_PACKAGES_USER",
+      "KIRA_PACKAGES_PUBLISH_TOKEN"
+    ],
+    "availability": "UNVERIFIED; NO NETWORK OR PUBLICATION ATTEMPT",
+    "existing_source_engine_repository": "Cannot resolve internal group under current me.manga.kira.source content filter; not probed",
+    "url_requirements": "HTTPS with host, no userInfo/query/fragment; parse errors are sanitized",
+    "explicit_registry_approval": "NOT GRANTED BY THIS SOURCE AMENDMENT"
+  },
+  "lock_amendment": {
+    "file": "../../gradle.lockfile",
+    "status": "SOURCE-AUTHORED; NOT A RESOLVED LOCK CAPTURE",
+    "removed": [
+      "org.postgresql:postgresql:42.7.12"
+    ],
+    "added": [
+      "me.manga.kira.internal:postgresql-owned-cut:42.7.12-kira.1",
+      "org.checkerframework:checker-qual:3.55.1"
+    ],
+    "configurations": [
+      "productionRuntimeClasspath",
+      "runtimeClasspath",
+      "testRuntimeClasspath"
+    ],
+    "unrelated_entries_changed": false
+  },
+  "qualified_publication": null,
+  "historical_evidence_not_for_publication": {
+    "path_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-build-05/artifacts/postgresql-42.7.12-kira.1-osgi.jar",
+    "sha256": "50f7dc4a6314cc5105f4990be26ba8be65ae242e1f7e62652cc60d6a2c0e03df",
+    "bytes": 1200036,
+    "qualified": false,
+    "status": "FOCUSED3_PASS_NEW_CANDIDATE_UNQUALIFIED",
+    "promotion_or_renaming_authorized": false
+  },
+  "remaining_gates": [
+    "Review and primary authorization of frozen native packaging/POM build plus private run-owned verification staging",
+    "One controlled affected runtime resolution verifying the source-authored lock amendment and expected private POM/JAR/checker inputs",
+    "Actual backend bootJar/ordinary checks, exactly one driver provider and the unchanged ABI; verification outputs remain explicitly unqualified",
+    "Production runtime/profile/provenance qualification, private registry/publication availability and any distribution approval remain separate holds",
+    "Primary W03/App29 acceptance remains separate"
+  ],
+  "local_verification": {
+    "status": "SOURCE PROPOSAL ONLY; NOT EXECUTED OR QUALIFIED",
+    "opt_in_gradle_property": "kiraOwnedPgVerificationRepository",
+    "default_path": null,
+    "path_requirement": "existing absolute directory; primary independently proves run ownership",
+    "mutually_exclusive_with_environment_variable": "KIRA_OWNED_PG_REPOSITORY_URL",
+    "native_staging": "fresh frozen-recipe osgiJar plus explicit POM through kiraOwnedCut publication; never a renamed retained test JAR",
+    "same_normal_runtime_coordinate": true,
+    "test_classpath_overlay": false,
+    "maven_local": false,
+    "isolation_required": "run-owned Maven staging, Gradle user homes and project caches",
+    "pom_property": "kira.qualification=UNQUALIFIED_RUN_OWNED_VERIFICATION",
+    "backend_boot_jar_classifier": "unqualified-owned-driver-verification",
+    "backend_boot_jar_manifest": "Kira-Owned-Driver-Provenance: UNQUALIFIED-RUN-OWNED-MAVEN",
+    "backend_distribution_tasks_refuse_mode": true,
+    "grants_production_profile_or_distribution_authority": false,
+    "nonshipping_boot_jar_gate": "kiraOwnedPgAllowNonShippingBootJar=true required; otherwise bootJar fails even if cached/up-to-date"
+  }
+}

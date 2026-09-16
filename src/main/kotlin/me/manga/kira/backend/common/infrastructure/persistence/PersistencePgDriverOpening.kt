@@ -225,7 +225,9 @@ internal class PersistencePgDriverOpening private constructor(
             pathStyle: PersistencePathStyle,
         ): ResolvedPersistenceEndpoint {
             if (policy.recipe === PersistenceDriverExecutionRecipe.ORIGINAL_PROVIDER) return endpoint
-            val assessment = if (policy.route === PersistenceDriverTransportRoute.APPROVED_DIRECT) {
+            val assessment = if (policy === PersistenceDriverAttemptPolicy.TRACKED_CATALOG_CONJUNCTION) {
+                PersistenceNativeSettings.deriveCatalogCoordinator(endpoint, pathStyle)
+            } else if (policy.route === PersistenceDriverTransportRoute.APPROVED_DIRECT) {
                 PersistenceNativeSettings.deriveDeletion(endpoint, pathStyle)
             } else {
                 PersistenceNativeSettings.assessOrdinary(endpoint, pathStyle)

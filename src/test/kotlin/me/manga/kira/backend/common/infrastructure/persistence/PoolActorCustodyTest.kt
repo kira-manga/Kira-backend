@@ -11,11 +11,22 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.ValueSource
+import org.mockito.Mockito.mock
+import org.springframework.jdbc.datasource.AbstractDataSource
+import java.sql.Connection
+import java.util.Collections
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Delayed
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
@@ -41,7 +52,7 @@ class PoolActorCustodyTest {
     }
 
     @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
-    @ValueSource(strings = ["factory", "failFast", "jmx", "suspension"])
+    @ValueSource(strings = ["factory", "failFast", "jmx", "suspension", "scheduler"])
     fun `unsupported actor profile refuses before replacing any extension or starting a pool`(mode: String) = ActorFixture(install = false).use { fixture ->
         val original = ThreadFactory { task -> Thread(task) }
         when (mode) {
@@ -49,7 +60,9 @@ class PoolActorCustodyTest {
             "failFast" -> fixture.pool.initializationFailTimeout = 1
             "jmx" -> fixture.pool.isRegisterMbeans = true
             "suspension" -> fixture.pool.isAllowPoolSuspension = true
+            "scheduler" -> fixture.pool.scheduledExecutor = ModelPoolScheduler().also(fixture::ownExternal)
         }
+        val configuredScheduler = fixture.pool.scheduledExecutor
         assertFalse(fixture.lifecycle.installThreadFactory())
         assertFalse(fixture.lifecycle.installThreadFactory(), "No second actor/factory generation repairs refusal.")
         assertFalse(fixture.pool.isRunning)
@@ -57,6 +70,7 @@ class PoolActorCustodyTest {
         assertEquals(PoolActorFault.UNSUPPORTED_PROFILE, fixture.lifecycle.actorSnapshot().firstFailure)
         assertEquals(0, fixture.lifecycle.actorSnapshot().retainedGenerations)
         if (mode == "factory") assertSame(original, fixture.pool.threadFactory)
+        if (mode == "scheduler") assertSame(configuredScheduler, fixture.pool.scheduledExecutor)
     }
 
     @Test
@@ -402,13 +416,460 @@ class PoolActorCustodyTest {
         }
 }
 
+/** External scheduler registrations and callback extents; MODEL seams do not claim connected/native qualification. */
+class PoolScheduledTaskCustodyTest {
+    @Test
+    fun `ordinary scheduler owns callback not shared Worker or afterExecute and leaves unrelated work alive after close`() {
+        val lifecycle = AtomicReference<PoolLifecycle>()
+        val leakedAuthority = AtomicBoolean()
+        val scheduler = object : ScheduledThreadPoolExecutor(1) {
+            override fun afterExecute(runnable: Runnable, failure: Throwable?) {
+                if (lifecycle.get()?.isAuthenticPoolCaller() == true || PoolActorCustody.currentThreadOwnsActorFrame()) leakedAuthority.set(true)
+                super.afterExecute(runnable, failure)
+            }
+        }.apply { removeOnCancelPolicy = false }
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            lifecycle.set(fixture.lifecycle)
+            val callbackEnded = CountDownLatch(1)
+            val callbackThread = AtomicReference<Thread>()
+            val emitted = AtomicReference<Thread>()
+            val failure = AtomicReference<Throwable>()
+            val acquisition = fixture.creator()
+            try {
+                val scheduled = fixture.pool.scheduledExecutor.scheduleWithFixedDelay(
+                    {
+                        try {
+                            callbackThread.set(Thread.currentThread())
+                            assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
+                            val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+                            assertEquals(PoolShutdownObservation.ACTIVE_POOL_ACTOR, receipt.observe())
+                            assertEquals(PoolShutdownInvocation.ACTIVE_POOL_ACTOR, fixture.lifecycle.closePool())
+                            assertFalse(fixture.lifecycle.actorSnapshot().factorySealed)
+                            emitted.set(requireNotNull(fixture.emit(Runnable { assertTrue(fixture.lifecycle.isAuthenticPoolCaller()) })))
+                            emitted.get().start() // A task's genuine creator extent may emit a Hikari-owned Worker after the business seal.
+                        } catch (problem: Throwable) {
+                            failure.set(problem)
+                            throw problem
+                        } finally {
+                            callbackEnded.countDown()
+                        }
+                    },
+                    0,
+                    1,
+                    TimeUnit.DAYS,
+                )
+                assertTrue(callbackEnded.await(5, TimeUnit.SECONDS))
+                failure.get()?.let { throw it }
+                assertTrue(scheduled.cancel(false))
+                awaitActorTermination(requireNotNull(emitted.get()))
+            } finally {
+                assertTrue(acquisition.end()) // MODEL creator never initialized Hikari: retain that separate UNKNOWN.
+            }
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            val sentinel = scheduler.submit<Thread> {
+                assertFalse(fixture.lifecycle.isAuthenticPoolCaller())
+                assertFalse(PoolActorCustody.currentThreadOwnsActorFrame())
+                Thread.currentThread()
+            }.get(5, TimeUnit.SECONDS)
+            assertSame(callbackThread.get(), sentinel)
+            assertFalse(leakedAuthority.get(), "No task authority may escape into an external Worker's afterExecute.")
+            assertFalse(scheduler.isShutdown)
+            assertFalse(scheduler.removeOnCancelPolicy)
+            assertTrue(scheduler.executeExistingDelayedTasksAfterShutdownPolicy)
+            assertEquals(1, scheduler.corePoolSize)
+            assertEquals(0, requireNotNull(fixture.lifecycle.actorSnapshot().scheduledTasks).retained)
+        }
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @ValueSource(strings = ["before-entry", "body", "finally"])
+    fun `ordinary scheduler cancelled or done Future is not actual callback exit`(mode: String) {
+        val scheduler = ScheduledThreadPoolExecutor(1).apply { removeOnCancelPolicy = false }
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            OwnedCallerTestScope().use { scope ->
+                val held = scope.gate()
+                val calls = AtomicInteger()
+                val failure = AtomicReference<Throwable>()
+                val acquisition = fixture.creator()
+                try {
+                    val scheduled = fixture.pool.scheduledExecutor.schedule(
+                        Runnable {
+                            try {
+                                assertTrue(fixture.lifecycle.isAuthenticPoolCaller())
+                                calls.incrementAndGet()
+                                try {
+                                    if (mode == "body") held.hold()
+                                } finally {
+                                    if (mode == "finally") held.hold()
+                                }
+                            } catch (problem: Throwable) {
+                                failure.set(problem)
+                                throw problem
+                            }
+                        },
+                        if (mode == "before-entry") 1 else 0,
+                        TimeUnit.DAYS,
+                    )
+                    if (mode != "before-entry") held.awaitEntered()
+                    assertTrue(scheduled.cancel(false))
+                    assertTrue(scheduled.isDone)
+                    assertTrue(scheduled.isCancelled)
+                    assertEquals(if (mode == "before-entry") 0L else 1L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.activeInvocations)
+                } finally {
+                    assertTrue(acquisition.end())
+                }
+                val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+                try {
+                    assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+                    if (mode != "before-entry") assertEquals(PoolShutdownObservation.PENDING, receipt.observe())
+                } finally {
+                    held.release()
+                }
+                scheduler.submit { assertFalse(PoolActorCustody.currentThreadOwnsActorFrame()) }.get(5, TimeUnit.SECONDS)
+                failure.get()?.let { throw it }
+                assertEquals(if (mode == "before-entry") 0 else 1, calls.get())
+                assertEquals(0, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+                assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe(), "MODEL startup failure is not erased by task exit.")
+            }
+        }
+    }
+
+    @Test
+    fun `ordinary scheduler callback can publish before schedule returns and late future is retained across close admission`() {
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            OwnedCallerTestScope().use { scope ->
+                val publication = scope.gate()
+                val childRuns = AtomicInteger()
+                val acquisition = fixture.creator()
+                val callback = try {
+                    fixture.pool.scheduledExecutor.schedule(
+                        Runnable { fixture.pool.scheduledExecutor.scheduleWithFixedDelay({ childRuns.incrementAndGet() }, 7, 13, TimeUnit.SECONDS) },
+                        0,
+                        TimeUnit.SECONDS,
+                    )
+                    scheduler.afterRetention = { submitted ->
+                        // A different real caller enters the admitted wrapper before its Future is returned.
+                        assertTrue(
+                            scope.launch {
+                                submitted.command.run()
+                                true
+                            }.value(),
+                        )
+                        publication.hold()
+                    }
+                    val running = scope.launch {
+                        scheduler.submissions[0].command.run()
+                        true
+                    }
+                    publication.awaitEntered()
+                    assertEquals(1, childRuns.get())
+                    assertEquals(1L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.publishing)
+                    assertEquals(1L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.activeInvocations)
+                    running
+                } finally {
+                    assertTrue(acquisition.end())
+                }
+                try {
+                    assertEquals(0L, fixture.lifecycle.activeAcquisitions())
+                    assertEquals(PoolShutdownInvocation.INITIALIZATION_PENDING, fixture.lifecycle.closePool())
+                    assertFalse(fixture.pool.isClosed, "The one close must not be consumed before an admitted late Future is retained.")
+                } finally {
+                    publication.release()
+                }
+                assertTrue(callback.value())
+                assertEquals(0L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.publishing)
+                assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+                val child = scheduler.submissions[1]
+                assertEquals(7L, child.initialDelay)
+                assertEquals(13L, child.delay)
+                assertSame(TimeUnit.SECONDS, child.unit)
+                assertEquals(1, child.future.cancelCalls.get())
+                assertEquals(0, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+                child.command.run() // Retained queued wrapper is inert after cancellation, never a second delegate entry.
+                assertEquals(1, childRuns.get())
+            }
+        }
+    }
+
+    @Test
+    fun `ordinary scheduler retain then throw is sticky UNKNOWN and queued work cannot gain later authority`() {
+        val scheduler = ModelPoolScheduler().apply { afterRetention = { error("MODEL schedule retained before throwing.") } }
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            val calls = AtomicInteger()
+            val acquisition = fixture.creator()
+            try {
+                assertThrows<IllegalStateException> { fixture.pool.scheduledExecutor.schedule(Runnable { calls.incrementAndGet() }, 0, TimeUnit.SECONDS) }
+                assertEquals(PoolActorFault.SCHEDULING_FAILED, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertFalse(fixture.lifecycle.businessAdmissionOpen())
+            } finally {
+                assertTrue(acquisition.end())
+            }
+            val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            scheduler.submissions.single().command.run()
+            assertEquals(0, calls.get())
+            assertEquals(0, scheduler.submissions.single().future.cancelCalls.get(), "An unreturned Future must not be guessed or reflectively recovered.")
+            assertEquals(1, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+            assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+        }
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @ValueSource(strings = ["false", "throw"])
+    fun `ordinary scheduler ambiguous cancellation is not retried by another wrapper call or pool close`(mode: String) {
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            val acquisition = fixture.creator()
+            try {
+                val scheduled = fixture.pool.scheduledExecutor.scheduleWithFixedDelay({ error("Sealed MODEL callback must not enter.") }, 1, 1, TimeUnit.DAYS)
+                scheduler.submissions.single().future.cancelAction = {
+                    if (mode == "throw") error("MODEL external cancellation failure.")
+                    false
+                }
+                if (mode == "throw") assertThrows<IllegalStateException> { scheduled.cancel(false) } else assertFalse(scheduled.cancel(false))
+                assertThrows<RejectedExecutionException> { scheduled.cancel(true) }
+                assertEquals(PoolActorFault.CANCELLATION_FAILED, fixture.lifecycle.actorSnapshot().firstFailure)
+                assertEquals(0L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.activeCancellations)
+            } finally {
+                assertTrue(acquisition.end())
+            }
+            val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            scheduler.submissions.single().command.run()
+            assertEquals(1, scheduler.submissions.single().future.cancelCalls.get())
+            assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+        }
+    }
+
+    @Test
+    fun `ordinary scheduler cancellation call remains owned after Future reports done until its real tail ends`() {
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            OwnedCallerTestScope().use { scope ->
+                val held = scope.gate()
+                val acquisition = fixture.creator()
+                val cancelling = try {
+                    val scheduled = fixture.pool.scheduledExecutor.scheduleWithFixedDelay({ error("MODEL task must remain queued.") }, 1, 1, TimeUnit.DAYS)
+                    val future = scheduler.submissions.single().future
+                    future.cancelAction = {
+                        future.done.set(true)
+                        held.hold()
+                        true
+                    }
+                    val caller = scope.launch { scheduled.cancel(false) }
+                    held.awaitEntered()
+                    assertTrue(scheduled.isDone)
+                    assertEquals(1L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.activeCancellations)
+                    caller
+                } finally {
+                    assertTrue(acquisition.end())
+                }
+                val receipt = requireNotNull(fixture.lifecycle.requestShutdown())
+                try {
+                    assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+                    assertEquals(PoolShutdownObservation.PENDING, receipt.observe())
+                } finally {
+                    held.release()
+                }
+                assertTrue(cancelling.value())
+                assertEquals(1, scheduler.submissions.single().future.cancelCalls.get())
+                assertEquals(0, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+                assertEquals(PoolShutdownObservation.UNKNOWN, receipt.observe())
+            }
+        }
+    }
+
+    @Test
+    fun `ordinary scheduler duplicate or foreign framed entry never executes an extra callback`() {
+        for (mode in listOf("overlap", "foreign-frame")) {
+            assertRejectedScheduledEntry(mode)
+        }
+    }
+
+    private fun assertRejectedScheduledEntry(mode: String) {
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = scheduler).use { fixture ->
+            fixture.ownExternal(scheduler)
+            OwnedCallerTestScope().use { scope ->
+                val held = scope.gate()
+                val calls = AtomicInteger()
+                val acquisition = fixture.creator()
+                try {
+                    fixture.pool.scheduledExecutor.scheduleWithFixedDelay(
+                        {
+                            calls.incrementAndGet()
+                            held.hold()
+                        },
+                        1,
+                        1,
+                        TimeUnit.DAYS,
+                    )
+                    val command = scheduler.submissions.single().command
+                    if (mode == "overlap") {
+                        assertOverlappingScheduledEntry(fixture, scope, held, calls, command)
+                    } else {
+                        assertThrows<RejectedExecutionException> { command.run() }
+                        assertSame(acquisition.frame, PoolCallFrames.current(), "No foreign caller lineage may be erased or borrowed.")
+                        assertEquals(0, calls.get())
+                        assertEquals(PoolActorFault.UNAUTHENTICATED_ENTRY, fixture.lifecycle.actorSnapshot().firstFailure)
+                    }
+                } finally {
+                    held.release()
+                    assertTrue(acquisition.end())
+                }
+            }
+        }
+    }
+
+    private fun assertOverlappingScheduledEntry(
+        fixture: ActorFixture,
+        scope: OwnedCallerTestScope,
+        held: OwnedCallerTestGate,
+        calls: AtomicInteger,
+        command: Runnable,
+    ) {
+        val first = scope.launch {
+            command.run()
+            true
+        }
+        held.awaitEntered()
+        try {
+            assertTrue(
+                scope.launch {
+                    assertThrows<RejectedExecutionException> { command.run() }
+                    true
+                }.value(),
+            )
+            assertEquals(1, calls.get())
+            assertEquals(1L, fixture.lifecycle.actorSnapshot().scheduledTasks!!.activeInvocations)
+            assertEquals(PoolActorFault.DUPLICATE_ENTRY, fixture.lifecycle.actorSnapshot().firstFailure)
+        } finally {
+            held.release()
+        }
+        assertTrue(first.value())
+    }
+
+    @ParameterizedTest(name = "{displayName} [{index}] {argumentsWithNames}")
+    @ValueSource(ints = [1, 65, 512])
+    fun `ordinary scheduler retention scales with P and retires replacement waves rather than storing task history`(size: Int) {
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = scheduler, maximumPoolSize = size).use { fixture ->
+            fixture.ownExternal(scheduler)
+            val acquisition = fixture.creator()
+            try {
+                val population = 1 + 3 * size
+                assertEquals(4L * population, fixture.lifecycle.actorSnapshot().scheduledTasks!!.capacity)
+                val waves = ArrayDeque<List<ScheduledFuture<*>>>()
+                repeat(5) {
+                    waves.addLast(
+                        List(population) {
+                            fixture.pool.scheduledExecutor.scheduleWithFixedDelay({ error("MODEL retained task must remain queued.") }, 1, 1, TimeUnit.DAYS)
+                        },
+                    )
+                    if (waves.size == 3) waves.removeFirst().forEach { assertTrue(it.cancel(false)) }
+                    assertNull(fixture.lifecycle.actorSnapshot().firstFailure)
+                }
+                waves.forEach { wave -> wave.forEach { assertTrue(it.cancel(false)) } }
+                assertEquals(0, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+                assertEquals(5L * population, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retired)
+                assertEquals(size, fixture.pool.maximumPoolSize)
+                assertNull(fixture.lifecycle.actorSnapshot().firstFailure)
+            } finally {
+                assertTrue(acquisition.end())
+            }
+        }
+    }
+
+    @Test
+    fun `ordinary scheduler bounds unresolved overlap without imposing a new maximumPoolSize cap`() {
+        val large = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = large, maximumPoolSize = Int.MAX_VALUE).use { fixture ->
+            fixture.ownExternal(large)
+            assertEquals(4L * (1L + 3L * Int.MAX_VALUE), fixture.lifecycle.actorSnapshot().scheduledTasks!!.capacity)
+            assertEquals(Int.MAX_VALUE, fixture.pool.maximumPoolSize)
+        }
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(ordinary = true, scheduler = scheduler, maximumPoolSize = 1).use { fixture ->
+            fixture.ownExternal(scheduler)
+            val acquisition = fixture.creator()
+            try {
+                val capacity = fixture.lifecycle.actorSnapshot().scheduledTasks!!.capacity.toInt()
+                repeat(capacity) { fixture.pool.scheduledExecutor.schedule(Runnable { error("MODEL queued callback must not enter.") }, 1, TimeUnit.DAYS) }
+                assertThrows<RejectedExecutionException> { fixture.pool.scheduledExecutor.schedule(Runnable {}, 1, TimeUnit.DAYS) }
+                assertEquals(capacity, scheduler.submissions.size)
+                assertEquals(capacity, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+                assertEquals(PoolActorFault.CAPACITY_EXHAUSTED, fixture.lifecycle.actorSnapshot().firstFailure)
+            } finally {
+                assertTrue(acquisition.end())
+            }
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            assertTrue(scheduler.submissions.all { it.future.cancelCalls.get() == 1 })
+            assertEquals(0, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+        }
+    }
+
+    @Test
+    fun `ordinary scheduler retained timers are cancelled after actual Hikari constructor fails before pool publication`() {
+        val scheduler = ModelPoolScheduler()
+        ActorFixture(install = false, ordinary = true, scheduler = scheduler, maximumPoolSize = 1).use { fixture ->
+            fixture.ownExternal(scheduler)
+            fixture.pool.apply {
+                // Actual Hikari constructor, MODEL JDBC only: no connected/native-lifetime claim.
+                dataSource = object : AbstractDataSource() {
+                    override fun getConnection(): Connection = mock(Connection::class.java).apply {
+                        org.mockito.Mockito.`when`(isValid(org.mockito.ArgumentMatchers.anyInt())).thenReturn(true)
+                        org.mockito.Mockito.`when`(autoCommit).thenReturn(true)
+                        org.mockito.Mockito.`when`(transactionIsolation).thenReturn(Connection.TRANSACTION_READ_COMMITTED)
+                    }
+                    override fun getConnection(username: String?, password: String?): Connection = connection
+                }
+                initializationFailTimeout = 1
+                minimumIdle = 1
+                maxLifetime = 60_000
+                keepaliveTime = 30_000
+                metricsTrackerFactory = com.zaxxer.hikari.metrics.MetricsTrackerFactory { _, _ ->
+                    error("MODEL metrics initialization fault after actual Hikari timer publication.")
+                }
+            }
+            assertTrue(fixture.lifecycle.installThreadFactory())
+            val acquisition = fixture.creator()
+            try {
+                assertThrows<IllegalStateException> { fixture.pool.connection }
+                assertFalse(fixture.pool.isRunning)
+                assertEquals(2, scheduler.submissions.size, "Actual fail-fast entry must publish EOL and keepalive before metrics construction fails.")
+                assertTrue(scheduler.submissions.all { it.future.cancelCalls.get() == 0 })
+            } finally {
+                assertTrue(acquisition.end())
+            }
+            assertEquals(PoolShutdownInvocation.RETURNED, fixture.lifecycle.closePool())
+            assertTrue(fixture.pool.isClosed)
+            assertTrue(scheduler.submissions.all { it.future.cancelCalls.get() == 1 })
+            assertEquals(0, fixture.lifecycle.actorSnapshot().scheduledTasks!!.retained)
+            assertFalse(scheduler.isShutdown)
+        }
+    }
+}
+
 /** All cleanup ownership is retained before any explicit fixture start/submit. NEW is never started by cleanup to obtain a receipt. */
-private class ActorFixture(install: Boolean = true) : AutoCloseable {
-    val pool = HikariDataSource().apply { initializationFailTimeout = -1 }
+private class ActorFixture(install: Boolean = true, ordinary: Boolean = false, scheduler: ScheduledExecutorService? = null, maximumPoolSize: Int = 10) :
+    AutoCloseable {
+    val pool = HikariDataSource().apply {
+        initializationFailTimeout = -1
+        if (ordinary) this.maximumPoolSize = maximumPoolSize
+        scheduledExecutor = scheduler
+    }
     val owner = PersistenceJdbcLifecycleOwner(pgProbeEndpoint(1), 1, PersistencePathStyle.POSIX)
-    val lifecycle = PoolLifecycle(pool, owner)
+    val lifecycle = if (ordinary) PoolLifecycle.sourceOnly(pool, owner) else PoolLifecycle(pool, owner)
     private val explicitThreads = CopyOnWriteArrayList<Thread>()
     private val executors = mutableListOf<ThreadPoolExecutor>()
+    private val externalSchedulers = mutableListOf<ScheduledThreadPoolExecutor>()
 
     init {
         if (install) check(lifecycle.installThreadFactory())
@@ -422,6 +883,10 @@ private class ActorFixture(install: Boolean = true) : AutoCloseable {
         executors.add(executor)
     }
 
+    fun ownExternal(executor: ScheduledThreadPoolExecutor) {
+        externalSchedulers.add(executor)
+    }
+
     override fun close() {
         val stopResults = executors.map { runCatching { it.shutdownNow() } }
         val executorResults = executors.map { runCatching { check(it.awaitTermination(5, TimeUnit.SECONDS)) } }
@@ -432,6 +897,9 @@ private class ActorFixture(install: Boolean = true) : AutoCloseable {
             val invocation = lifecycle.closePool()
             check(invocation === PoolShutdownInvocation.RETURNED || invocation === PoolShutdownInvocation.ALREADY_CLAIMED)
         }
+        // Only the TEST owner stops shared schedulers, and only after the guarded pool's teardown.
+        val externalStops = externalSchedulers.map { runCatching { it.shutdownNow() } }
+        val externalEnds = externalSchedulers.map { runCatching { check(it.awaitTermination(5, TimeUnit.SECONDS)) } }
         val ownerResult = runCatching {
             owner.requestShutdown() // Still attempt owned native-shell cleanup if a pool/Thread cleanup failed.
             check(owner.observeShutdown() === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED)
@@ -446,7 +914,8 @@ private class ActorFixture(install: Boolean = true) : AutoCloseable {
                 observation = receipt.observe() // Each product observation still uses the original, never-replenished shutdown budget.
             }
             check(
-                observation === PoolShutdownObservation.TRACKED_LOCAL_ENDED || observation === PoolShutdownObservation.UNKNOWN ||
+                observation === PoolShutdownObservation.TRACKED_LOCAL_ENDED || observation === PoolShutdownObservation.DRIVER_CONTRACT_ONLY_ENDED ||
+                    observation === PoolShutdownObservation.UNKNOWN ||
                     observation === PoolShutdownObservation.POOL_ACTORS_UNPROVEN,
             )
             // Executor termination alone is insufficient: its last Worker/handler tail must have actually terminated too.
@@ -456,9 +925,57 @@ private class ActorFixture(install: Boolean = true) : AutoCloseable {
         executorResults.forEach { it.getOrThrow() }
         threadResults.forEach { it.getOrThrow() }
         poolResult.getOrThrow()
+        externalStops.forEach { it.getOrThrow() }
+        externalEnds.forEach { it.getOrThrow() }
         ownerResult.getOrThrow()
         actorResult.getOrThrow()
     }
+}
+
+/** Synthetic public scheduler/future seam only; no private Hikari/JDK inspection and no automatic task execution. */
+private class ModelPoolScheduler : ScheduledThreadPoolExecutor(1) {
+    val submissions: MutableList<ModelScheduledSubmission> = Collections.synchronizedList(mutableListOf())
+    var afterRetention: (ModelScheduledSubmission) -> Unit = {}
+
+    override fun schedule(command: Runnable, delay: Long, unit: TimeUnit): ScheduledFuture<*> = retain(command, delay, null, unit)
+
+    override fun scheduleWithFixedDelay(command: Runnable, initialDelay: Long, delay: Long, unit: TimeUnit): ScheduledFuture<*> =
+        retain(command, initialDelay, delay, unit)
+
+    private fun retain(command: Runnable, initialDelay: Long, delay: Long?, unit: TimeUnit): ScheduledFuture<*> {
+        val submitted = ModelScheduledSubmission(command, initialDelay, delay, unit)
+        submissions.add(submitted)
+        afterRetention(submitted)
+        return submitted.future
+    }
+}
+
+private class ModelScheduledSubmission(val command: Runnable, val initialDelay: Long, val delay: Long?, val unit: TimeUnit) {
+    val future = ModelScheduledFuture()
+}
+
+private class ModelScheduledFuture : ScheduledFuture<Any?> {
+    val cancelCalls = AtomicInteger()
+    val done = AtomicBoolean()
+    private val cancelled = AtomicBoolean()
+    var cancelAction: (Boolean) -> Boolean = { true }
+
+    override fun cancel(mayInterruptIfRunning: Boolean): Boolean {
+        cancelCalls.incrementAndGet()
+        return cancelAction(mayInterruptIfRunning).also { result ->
+            if (result) {
+                cancelled.set(true)
+                done.set(true)
+            }
+        }
+    }
+
+    override fun isDone(): Boolean = done.get()
+    override fun isCancelled(): Boolean = cancelled.get()
+    override fun get(): Any? = error("The MODEL Future has no completion wait.")
+    override fun get(timeout: Long, unit: TimeUnit): Any? = error("The MODEL Future has no completion wait.")
+    override fun getDelay(unit: TimeUnit): Long = 0
+    override fun compareTo(other: Delayed): Int = 0
 }
 
 private fun awaitActorTermination(thread: Thread) {

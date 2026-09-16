@@ -26,6 +26,31 @@ class ComplaintCapacityChargesTest {
     }
 
     @Test
+    fun `enrollment pays for one permanent identity one lifecycle max credential and one enrolled audit`() {
+        val expected = LongArray(22).also {
+            it[0] = 1
+            it[1] = 1
+            it[7] = 1
+            it[20] = 98304
+        }
+        assertArrayEquals(expected, ComplaintCapacityCharges.INSTALLATION_ENROLLMENT.toLongArray())
+        assertEquals(16384L, ComplaintCapacityCharges.INSTALLATION_ID[ComplaintCapacityCounter.STORAGE_BYTES])
+        assertEquals(16384L, ComplaintCapacityCharges.INSTALLATION_CREDENTIAL[ComplaintCapacityCounter.STORAGE_BYTES])
+        ComplaintCapacityCharges.INSTALLATION_ENROLLMENT.toLongArray().fill(0)
+        assertArrayEquals(expected, ComplaintCapacityCharges.INSTALLATION_ENROLLMENT.toLongArray())
+    }
+
+    @Test
+    fun `future credential physical removal cannot refund the permanent identity or enrolled audit`() {
+        val digest = ByteArray(32) { 1 }
+        val limit = ComplaintCapacityVector.of(LongArray(22) { 1000000 })
+        val initial = ComplaintCapacityLedger(ComplaintCapacityConfiguration.of(digest, false), ComplaintCapacityBalance(limit, limit, limit))
+        val retained = initial.chargeCreation(digest, ComplaintCapacityCharges.INSTALLATION_ENROLLMENT)
+            .refundActual(digest, ComplaintCapacityCharges.INSTALLATION_CREDENTIAL)
+        assertEquals(ComplaintCapacityCharges.INSTALLATION_ID + ComplaintCapacityCharges.AUDIT, retained.balance.actual)
+    }
+
+    @Test
     fun `bounded cleanup batch charges multiply every affected dimension without adding other rows`() {
         val grants = LongArray(22).also {
             it[14] = 50

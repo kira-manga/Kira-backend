@@ -17,6 +17,7 @@ internal class PgLifecycleDatabaseRelay(
     private val database: PgLifecycleDatabaseFixture,
     private val application: String,
     private val case: PgLifecycleDatabaseCase,
+    private val warmControl: PgLifecycleDatabaseWarmControl? = null,
 ) : AutoCloseable {
     init {
         PgLifecycleDatabaseRelayFailure.prepareRuntime()
@@ -24,7 +25,7 @@ internal class PgLifecycleDatabaseRelay(
 
     private val listener = ServerSocket()
     private val sessions = CopyOnWriteArrayList<PgLifecycleDatabaseRelaySession>()
-    private val primaries = AtomicReferenceArray<PgLifecycleDatabaseRelaySession>(case.attempts)
+    private val primaries = AtomicReferenceArray<PgLifecycleDatabaseRelaySession>(warmControl?.primaryLimit ?: case.attempts)
     private val acceptedCount = AtomicInteger()
     private val primaryCount = AtomicInteger()
     private val weakCleanupThrough = AtomicInteger(-1)
@@ -36,6 +37,10 @@ internal class PgLifecycleDatabaseRelay(
 
     init {
         check(case.attempts in 1..2)
+        if (warmControl != null) {
+            check(case.mode === PgLifecycleDatabaseMode.MATRIX && case.recipe === PgLifecycleDatabaseRecipe.DEFAULT)
+            check(case.lane === PgLifecycleDatabaseLane.ORDINARY && case.queryTimeout == 0 && application == warmControl.application)
+        }
     }
 
     fun start() {
@@ -64,7 +69,15 @@ internal class PgLifecycleDatabaseRelay(
     internal fun acceptSession(
         socket: Socket,
         construct: (Int, (PgLifecycleDatabaseRelaySession, ByteArray) -> Unit) -> PgLifecycleDatabaseRelaySession = { index, registration ->
-            PgLifecycleDatabaseRelaySession(socket, database.host, database.port, case, acceptedIndex = index, register = registration)
+            PgLifecycleDatabaseRelaySession(
+                socket,
+                database.host,
+                database.port,
+                case,
+                acceptedIndex = index,
+                register = registration,
+                warmControl = warmControl,
+            )
         },
     ): PgLifecycleDatabaseRelaySession {
         val acceptedIndex = acceptedCount.incrementAndGet() // Immediately after accept, before endpoint lookup/construction/start. Not an attempt ordinal.
@@ -122,10 +135,14 @@ internal class PgLifecycleDatabaseRelay(
                 val ordinal = primaryCount.getAndIncrement()
                 check(ordinal < primaries.length())
                 session.state.ordinal = ordinal
-                session.state.readyFault.bind(ordinal)
+                if (warmControl == null) session.state.readyFault.bind(ordinal)
                 check(primaries.compareAndSet(ordinal, null, session))
                 session.state.publishAssociation(
-                    if (ordinal == 0) PgLifecycleDatabaseRelayAssociation.PRIMARY_0 else PgLifecycleDatabaseRelayAssociation.PRIMARY_1,
+                    when {
+                        warmControl != null -> PgLifecycleDatabaseRelayAssociation.WARMED_PRIMARY
+                        ordinal == 0 -> PgLifecycleDatabaseRelayAssociation.PRIMARY_0
+                        else -> PgLifecycleDatabaseRelayAssociation.PRIMARY_1
+                    },
                 )
             }
 
@@ -136,7 +153,11 @@ internal class PgLifecycleDatabaseRelay(
                 session.state.auxiliary = true
                 check(sessions.count { it.state.auxiliary && it.state.ordinal == primary.state.ordinal } <= 2)
                 session.state.publishAssociation(
-                    if (session.state.ordinal == 0) PgLifecycleDatabaseRelayAssociation.AUX_0 else PgLifecycleDatabaseRelayAssociation.AUX_1,
+                    when {
+                        warmControl != null -> PgLifecycleDatabaseRelayAssociation.WARMED_AUX
+                        session.state.ordinal == 0 -> PgLifecycleDatabaseRelayAssociation.AUX_0
+                        else -> PgLifecycleDatabaseRelayAssociation.AUX_1
+                    },
                 )
             }
 
@@ -151,6 +172,15 @@ internal class PgLifecycleDatabaseRelay(
         check(!closing.get() && actor.isAlive) { "Owned PostgreSQL relay is no longer running." }
     }
 
+    /** Select the already authenticated physical session, never an assumed pool/accept ordinal. */
+    fun warmedSession(pid: Int): PgLifecycleDatabaseRelayState {
+        check(warmControl != null && pid > 0)
+        progress()
+        return (0 until primaries.length()).mapNotNull { primaries.get(it)?.state }.single { it.backendPid.get() == pid }.also {
+            check(it.warmedReady.get() && it.clientEnd.get() == null && !it.fixtureClosing.get())
+        }
+    }
+
     /** No progress assertion, I/O, waits, gate release or cleanup: callable before failure unwinds this relay's use scope. */
     fun diagnostic(ordinal: Int): String {
         val selected = if (ordinal in 0 until primaries.length()) primaries.get(ordinal)?.state else null
@@ -159,12 +189,17 @@ internal class PgLifecycleDatabaseRelay(
         // Insertion precedes the bound check: include the one overflow offender, not only the six legal sessions.
         val limit = bound + 1
         val events = sessions.take(limit).mapNotNull { it.state.failure.get() }.joinToString(";") { it.diagnostic() }.ifEmpty { "NOT_RECORDED" }
+        val wireCounts = if (warmControl == null) {
+            ""
+        } else {
+            " wire_counts=" + sessions.take(limit).joinToString(";") { it.state.wireDiagnostic() }.ifEmpty { "NOT_RECORDED" }
+        }
         return "accepted=${acceptedCount.get()} retained=$count registered=${primaryCount.get()} " +
             "acceptor_state=${actor.state.name} acceptor_alive=${actor.isAlive} " +
             "relay_closing=${closing.get()} acceptor_failure=${failed.get() != null} session_failure=${sessions.any { it.state.failure.get() != null }} " +
             "primary_registered=${selected != null} ${selected?.diagnostic() ?: "gate=UNAVAILABLE"} " +
             "accept_event=${failed.get()?.diagnostic() ?: "NOT_RECORDED"} session_events=$events " +
-            "event_overflow=${count > bound} events_omitted=${(count - limit).coerceAtLeast(0)}"
+            "event_overflow=${count > bound} events_omitted=${(count - limit).coerceAtLeast(0)}" + wireCounts
     }
 
     fun awaitGate(ordinal: Int, deadline: PgLifecycleDatabaseDeadline, childAlive: () -> Unit): PgLifecycleDatabaseRelayState {
@@ -230,6 +265,7 @@ internal class PgLifecycleDatabaseRelay(
     }
 
     fun requireRecipe(case: PgLifecycleDatabaseCase, ordinal: Int) {
+        check(warmControl == null) { "A warmed SQL fixture cannot earn a constructor-only recipe receipt." }
         val state = requireNotNull(primaries.get(ordinal)).state
         if (case.mode === PgLifecycleDatabaseMode.WRONG_PASSWORD) {
             check(state.gate.get() === PgLifecycleDatabaseGate.AUTHENTICATION_REFUSAL && state.errorState.get() == "28P01")

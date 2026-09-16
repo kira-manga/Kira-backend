@@ -92,9 +92,12 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun belongsToPool(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean = epoch === expected && pool.boundTo(lifecycle)
 
-    internal fun phaseJdbcFailure() {
-        if (phase != null) {
-            phase?.jdbcFailure()
+    internal fun phaseJdbcFailure(retireImmediately: Boolean = false) {
+        val owner = phase ?: return
+        owner.jdbcFailure()
+        // Only the original caller can defer to its rollback/finalizer. A foreign cancellation
+        // must publish the return veto before its genuine count ends, even after RETURN starts.
+        if (retireImmediately || !owner.isOriginalCaller()) {
             ownership.requestRetirement(epoch)
         }
     }
@@ -214,6 +217,13 @@ internal class PersistenceJdbcGuardContext private constructor(
     internal fun graphFailed(): Boolean = failedChild.get() || failedOutputs.get() != null || driverFailed.get() || unresolvedDriver.get()
 
     internal fun hasOrdinaryOnlyProvenance(): Boolean = compatibilityOnly.get()
+
+    /** Fixed current-epoch facts under F/G; no native call, graph walk or reuse/terminal certificate. */
+    internal fun poolIdleForReadiness(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean =
+        belongsToPool(expected, lifecycle) && epoch.poolIdleForReadiness() && phase == null && driverRoot.get() != null &&
+            !graphFailed() && !hasOrdinaryOnlyProvenance() && liveChildren() == 0L && transaction.clean() &&
+            driverCustody?.enabled == true && !driverCustody.reuseUncertain() && driverCustody.fixedNativeChildren() == 0L &&
+            !driverCustody.nativeCleanupFailed() && epoch.poolIdleForReadiness()
 
     internal fun hasCurrentFrame(): Boolean = frames.get() != null
 

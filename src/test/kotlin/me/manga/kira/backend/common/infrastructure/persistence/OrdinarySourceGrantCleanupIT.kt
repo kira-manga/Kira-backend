@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicInteger
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
 class OrdinarySourceGrantCleanupIT {
-    private val database = lazy { PgLifecycleDatabaseFixture().also { it.start() } }
+    private val database = lazy { PgLifecycleDatabaseFixture(OrdinarySourceGrantCleanupIT::class.java).also { it.start() } }
 
     @AfterAll
     fun closeDatabase() {

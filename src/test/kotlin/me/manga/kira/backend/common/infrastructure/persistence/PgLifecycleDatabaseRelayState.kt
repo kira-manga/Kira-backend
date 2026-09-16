@@ -24,7 +24,11 @@ private enum class PgLifecycleDatabaseInputOrigin {
 }
 
 /** Detached bounded wire facts. Fixture teardown can never set a candidate-originated close receipt. */
-internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDatabaseCase, val acceptedIndex: Int? = null) {
+internal class PgLifecycleDatabaseRelayState(
+    private val case: PgLifecycleDatabaseCase,
+    val acceptedIndex: Int? = null,
+    private val warmControl: PgLifecycleDatabaseWarmControl? = null,
+) {
     val fixtureClosing = AtomicBoolean()
     val failure = AtomicReference<PgLifecycleDatabaseRelayFailure?>()
     val completed = AtomicBoolean()
@@ -40,6 +44,13 @@ internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDataba
     val outputHalfCloseOrder = AtomicLong()
     val lastServerWriteNanos = AtomicLong()
     val gate = AtomicReference<PgLifecycleDatabaseGate?>()
+    val warmedReady = AtomicBoolean()
+
+    // Warm-profile mixed diagnostic scalars only: count complete reads, including the one frame that may exceed a cap.
+    val clientFramesRead = AtomicInteger()
+    val clientFrameBytesRead = AtomicInteger()
+    val serverFramesRead = AtomicInteger()
+    val serverFrameBytesRead = AtomicInteger()
     val readyFault = PgLifecycleDatabaseReadyFault(case)
     val role = PgLifecycleDatabaseRoleWitness(case)
     private val held = CountDownLatch(1)
@@ -111,6 +122,9 @@ internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDataba
         released.countDown()
     }
 
+    fun wireDiagnostic(): String = "${acceptedIndex ?: "UNAVAILABLE"}/${association.token}/" +
+        "client=${clientFramesRead.get()},${clientFrameBytesRead.get()}/server=${serverFramesRead.get()},${serverFrameBytesRead.get()}"
+
     fun clientOriginatedEnd(kind: PgLifecycleDatabaseClientEnd) {
         if (!inputOrigin.compareAndSet(null, PgLifecycleDatabaseInputOrigin.CLIENT)) {
             check(inputOrigin.get() === PgLifecycleDatabaseInputOrigin.FIXTURE) { "Duplicate independent client-input ending." }
@@ -120,6 +134,7 @@ internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDataba
         clientEndNanos.set(System.nanoTime())
         originOrder.set(sequence.incrementAndGet()) // Publication is strictly before the upstream close invocation.
         readyFault.stop()
+        warmControl?.clientEnded(this)
     }
 
     fun outputHalfCloseInvoked() {
@@ -137,7 +152,7 @@ internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDataba
         check(failure.get() == null && !fixtureClosing.get() && completed.get())
         check(clientEnd.get() != null && clientEndNanos.get() != 0L)
         check(originOrder.get() > 0 && upstreamCloseOrder.get() > originOrder.get())
-        if (primary) check(releasedByParent.get())
+        if (primary) check(if (warmControl == null) releasedByParent.get() else warmedReady.get())
         if (readyFault.outputHalfCloseEntered.get()) check(outputHalfCloseOrder.get() < originOrder.get())
     }
 
@@ -146,5 +161,6 @@ internal class PgLifecycleDatabaseRelayState(private val case: PgLifecycleDataba
         fixtureClosing.set(true)
         released.countDown()
         readyFault.stop()
+        warmControl?.fixtureClosing(this)
     }
 }

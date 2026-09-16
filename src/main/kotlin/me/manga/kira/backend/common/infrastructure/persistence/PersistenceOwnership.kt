@@ -74,6 +74,17 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
 
     internal fun currentPoolState(expected: PersistenceJdbcPoolEpoch): Boolean = poolState.get() === expected && current.get() === expected.epoch
 
+    /** Preparation observation only. Checkout still needs its own authentic sealed/drained transfer. */
+    internal fun poolIdleEligibleLocked(lifecycle: PoolLifecycle): Boolean {
+        requireCurrentLocks()
+        if (!canTransfer() || !composed.get() || poolDelivery.get()?.pool?.boundTo(lifecycle) != true) return false
+        if (poolTransfer.get()?.actualEnded() != true) return false
+        if (entry.control?.receipt?.state() !== PersistenceFactoryProcessing.PROCESSING_ENDED || entry.attempt?.workerSettled != true) return false
+        if (entry.attempt?.unresolved != false || entry.transports == null || entry.transports.liveFailureLocked() != null) return false
+        val state = poolState.get() ?: return false
+        return !state.leased && current.get() === state.epoch && state.context.poolIdleForReadiness(state.epoch, lifecycle)
+    }
+
     internal fun claimPoolTransfer(transfer: PersistenceJdbcPoolTransfer): Boolean {
         val physical = requireNotNull(binding)
         check(!ownershipLockHeld())

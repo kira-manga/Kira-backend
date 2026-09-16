@@ -1,12 +1,58 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 /** Inert construction. The caller retains this owner before start and must request/observe shutdown separately. */
-internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoint, ordinaryCapacity: Int, pathStyle: PersistencePathStyle) {
-    private val root = PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle)
+internal class PersistenceJdbcLifecycleOwner private constructor(
+    endpoint: ResolvedPersistenceEndpoint,
+    ordinaryCapacity: Int,
+    pathStyle: PersistencePathStyle,
+    internal val sourceOnly: Boolean,
+) {
+    constructor(endpoint: ResolvedPersistenceEndpoint, ordinaryCapacity: Int, pathStyle: PersistencePathStyle) :
+        this(endpoint, ordinaryCapacity, pathStyle, sourceOnly = false)
+
+    private val root = PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle, sourceOnly)
+    internal val complaintContainment = PersistenceComplaintContainment()
+    private val catalogBindingClaimed = AtomicBoolean()
+
+    @Volatile private var catalogResources: CatalogCoordinatorPersistence? = null
+
+    /** One inert exact composition on THIS owner. No endpoint/capacity override, replacement or implicit start. */
+    internal fun bindCatalogCoordinator(
+        launchProfile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.UNKNOWN,
+        nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+    ): CatalogCoordinatorPersistence {
+        requireConnectionFree()
+        if (sourceOnly || ownershipLockHeld() || root.shutdown.get()) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (!catalogBindingClaimed.compareAndSet(false, true)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        val prepared = CatalogCoordinatorPersistence.prepare(this, root.endpoint, launchProfile)
+        catalogResources = prepared // Retain before phase/resource binding can fail; never replace a failed composition.
+        prepared.bindOwnership(nanoClock)
+        return prepared
+    }
+
+    internal fun ownsCatalogResources(resources: CatalogCoordinatorPersistence): Boolean = catalogResources === resources
+
+    internal fun ownsCatalogDataSource(dataSource: GuardedDataSource): Boolean = catalogResources?.dataSource === dataSource
+
+    internal fun ownsCatalogLifecycle(lifecycle: PoolLifecycle): Boolean = catalogResources?.dataSource?.ownsLifecycle(lifecycle) == true
+
+    internal fun ownsOrdinaryPoolIdentity(identity: PersistenceJdbcPoolIdentity): Boolean = root.ordinary.ownsPoolIdentity(identity)
+
+    internal fun ownsDeletionPoolIdentity(identity: PersistenceJdbcPoolIdentity): Boolean = root.deletion.ownsPoolIdentity(identity)
+
+    internal fun ownsCatalogPoolIdentity(identity: PersistenceJdbcPoolIdentity): Boolean = root.catalogCoordinator.ownsPoolIdentity(identity)
 
     fun start(): PersistenceLifecycleActivation = root.start()
 
     fun prepareDeletion(): PersistenceLifecycleActivation = root.prepareDeletion()
+
+    internal fun prepareCatalogCoordinator(): PersistenceLifecycleActivation = root.prepareCatalogCoordinator()
 
     internal fun prepareOrdinaryRequest(): PersistenceOwnedFactoryRequest = root.ordinary.prepareRequest()
 
@@ -20,11 +66,43 @@ internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoi
 
     fun requestDeletionPoolConnection(): PersistenceFactoryResult<PhysicalJdbcFacade> = root.deletion.requestPoolConnection()
 
+    internal fun requestCatalogCoordinatorPoolConnection(): PersistenceFactoryResult<PhysicalJdbcFacade> = root.catalogCoordinator.requestPoolConnection()
+
     fun requestShutdown(): Boolean = root.requestShutdown()
+
+    /** Does not release this root's shared Timer pin or stop its ordinary participant/scanner. */
+    internal fun requestDeletionShutdown(): Boolean = root.requestDeletionShutdown()
+
+    internal fun requestCatalogCoordinatorShutdown(): Boolean = root.requestCatalogCoordinatorShutdown()
+
+    internal fun observeCatalogCoordinatorShutdown(): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.CATALOG_COORDINATOR_SHUTDOWN)
+
+    internal fun observeCatalogCoordinatorShutdown(budget: PersistenceTimeBudget): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.CATALOG_COORDINATOR_SHUTDOWN, budget)
+
+    internal fun observeCatalogCoordinatorPreparation(): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.CATALOG_COORDINATOR)
+
+    internal fun observeCatalogCoordinatorPreparation(budget: PersistenceTimeBudget): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.CATALOG_COORDINATOR, budget)
+
+    internal fun catalogCoordinatorPoolIdle(lifecycle: PoolLifecycle): Boolean = root.catalogCoordinator.catalogCoordinatorPoolIdle(lifecycle)
+
+    internal fun observeDeletionShutdown(): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.DELETION_SHUTDOWN)
+
+    internal fun observeDeletionShutdown(budget: PersistenceTimeBudget): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.DELETION_SHUTDOWN, budget)
 
     fun observeOrdinaryPreparation(): PersistenceLifecycleObservation = PersistenceManagedObserver.observe(root, PersistenceManagedObservation.ORDINARY)
 
     fun observeDeletionPreparation(): PersistenceLifecycleObservation = PersistenceManagedObserver.observe(root, PersistenceManagedObservation.DELETION)
+
+    internal fun observeDeletionPreparation(budget: PersistenceTimeBudget): PersistenceLifecycleObservation =
+        PersistenceManagedObserver.observe(root, PersistenceManagedObservation.DELETION, budget)
+
+    internal fun deletionPoolIdle(lifecycle: PoolLifecycle): Boolean = root.deletion.deletionPoolIdle(lifecycle)
 
     fun observeShutdown(): PersistenceLifecycleObservation = PersistenceManagedObserver.observe(root, PersistenceManagedObservation.SHUTDOWN)
 
@@ -36,4 +114,10 @@ internal class PersistenceJdbcLifecycleOwner(endpoint: ResolvedPersistenceEndpoi
     internal fun ownershipLockHeld(): Boolean = root.ownershipLockHeld()
 
     override fun toString(): String = "PersistenceJdbcLifecycleOwner(redacted)"
+
+    companion object {
+        /** Original provider settings, owned-driver accounting, no native eligibility or deletion activation. */
+        internal fun sourceOnly(endpoint: ResolvedPersistenceEndpoint, ordinaryCapacity: Int, pathStyle: PersistencePathStyle): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(endpoint, ordinaryCapacity, pathStyle, sourceOnly = true)
+    }
 }

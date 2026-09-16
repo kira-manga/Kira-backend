@@ -30,6 +30,13 @@ internal class PgLifecycleTestScope(endpoint: ResolvedPersistenceEndpoint, capac
         return binding.ledger.lock.withLock { binding.ledger.entries.filterNotNull() }
     }
 
+    fun catalogBinding(): PersistencePhysicalFactoryBinding = lifecycleField(root.catalogCoordinator, "binding") as PersistencePhysicalFactoryBinding
+
+    fun catalogEntries(): List<PersistencePhysicalEntry> {
+        val binding = catalogBinding()
+        return binding.ledger.lock.withLock { binding.ledger.entries.filterNotNull() }
+    }
+
     fun request(deletion: Boolean = false): PersistenceFactoryResult.Success<PersistenceJdbcCandidate> {
         awaitLifecycleFact { binding(deletion).isOwnedReceiverReady() }
         val result = if (deletion) owner.requestDeletion() else owner.requestOrdinary()
@@ -69,13 +76,15 @@ internal class PgLifecycleTestScope(endpoint: ResolvedPersistenceEndpoint, capac
             lifecycleField(root, "scanner") as PersistenceRetainedPlatformThread,
             lifecycleField(root.timer, "actor") as PersistenceRetainedPlatformThread,
         )
-        return shared + listOf(root.ordinary, root.deletion).flatMap { participant ->
-            val controller = lifecycleField(participant, "controller") as PersistenceRetainedPlatformThread
-            val worker = lifecycleField(participant, "worker") as PersistenceFactoryWorker<*, *>
-            val factory = lifecycleField(worker, "ownedThread") as PersistenceRetainedPlatformThread
-            val terminals = lifecycleField(participant, "runners") as Array<*>
-            listOf(controller, factory) + terminals.map { lifecycleField(requireNotNull(it), "actor") as PersistenceRetainedPlatformThread }
-        }
+        return shared + listOf(root.ordinary, root.deletion, root.catalogCoordinator).flatMap(::actors)
+    }
+
+    fun actors(participant: PersistenceJdbcParticipant): List<PersistenceRetainedPlatformThread> {
+        val controller = lifecycleField(participant, "controller") as PersistenceRetainedPlatformThread
+        val worker = lifecycleField(participant, "worker") as PersistenceFactoryWorker<*, *>
+        val factory = lifecycleField(worker, "ownedThread") as PersistenceRetainedPlatformThread
+        val terminals = lifecycleField(participant, "runners") as Array<*>
+        return listOf(controller, factory) + terminals.map { lifecycleField(requireNotNull(it), "actor") as PersistenceRetainedPlatformThread }
     }
 }
 

@@ -6,7 +6,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /** One retained inert Hikari, its authentic callers/Workers and one shutdown obligation. No second physical registry or waiter. */
-internal class PoolLifecycle(private val pool: HikariDataSource, private val owner: PersistenceJdbcLifecycleOwner) {
+internal class PoolLifecycle private constructor(
+    private val pool: HikariDataSource,
+    private val owner: PersistenceJdbcLifecycleOwner,
+    private val shutdownScope: ShutdownScope,
+    private val ordinaryCompatibility: Boolean = false,
+) {
+    constructor(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner) : this(pool, owner, ShutdownScope.ROOT)
+
     private val issuance = Any()
     private val gate = Any()
     private val actors = PoolActorCustody(this, gate)
@@ -36,7 +43,7 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         var installed = false
         try {
             if (!profileSupported(installed = false) || pool.isRunning || pool.isClosed) return false
-            actors.installOn(pool)
+            actors.installOn(pool, ordinaryCompatibility)
             synchronized(gate) { installation = Installation.INSTALLED }
             installed = true
             return true
@@ -75,7 +82,7 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     private fun profileSupported(installed: Boolean): Boolean {
         var supported = false
         try {
-            supported = actors.profileSupported(pool, installed)
+            supported = if (ordinaryCompatibility) actors.ordinaryProfileSupported(pool, installed) else actors.profileSupported(pool, installed)
             return supported
         } finally {
             if (!supported) synchronized(gate) { actors.failLocked(PoolActorFault.UNSUPPORTED_PROFILE) }
@@ -83,6 +90,13 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     }
 
     /** Positive provenance only. Core MUST reject a nonnull stale lease credential before considering this separate pool authority. */
+    internal fun acceptsPoolIdentity(identity: PersistenceJdbcPoolIdentity): Boolean = when (shutdownScope) {
+        ShutdownScope.ROOT -> owner.ownsOrdinaryPoolIdentity(identity)
+        ShutdownScope.DELETION -> owner.ownsDeletionPoolIdentity(identity)
+        ShutdownScope.CATALOG_COORDINATOR -> owner.ownsCatalogPoolIdentity(identity) && owner.ownsCatalogLifecycle(this)
+    }
+
+    /** Positive provenance only. A role/resource match is still not an actual pool call frame. */
     fun isAuthenticPoolCaller(): Boolean {
         if (owner.ownershipLockHeld()) return false
         return synchronized(gate) {
@@ -112,19 +126,23 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         return shared
     }
 
-    fun requestShutdown(): ShutdownReceipt? = requestShutdownWithBudget(null)
-
-    fun requestShutdown(budget: PersistenceTimeBudget): ShutdownReceipt? = requestShutdownWithBudget(budget)
+    fun requestShutdown(): ShutdownReceipt? = requestShutdown(null)
 
     /** Shutdown admission is not factory sealing: the authentic close still needs its late assassin/inline work. */
-    private fun requestShutdownWithBudget(supplied: PersistenceTimeBudget?): ShutdownReceipt? {
+    fun requestShutdown(budget: PersistenceTimeBudget?): ShutdownReceipt? {
+        if (shutdownScope === ShutdownScope.CATALOG_COORDINATOR && !owner.ownsCatalogLifecycle(this)) return null
         if (owner.ownershipLockHeld()) return null
-        val original = synchronized(gate) { shutdownBudget } ?: supplied ?: PersistenceTimeBudget.start(10_000)
+        val original = synchronized(gate) { shutdownBudget } ?: budget ?: PersistenceTimeBudget.start(10_000)
         synchronized(gate) {
             businessSealed = true
+            actors.sealScheduledEntriesLocked()
             if (shutdownBudget == null) shutdownBudget = original
         }
-        owner.requestShutdown()
+        when (shutdownScope) {
+            ShutdownScope.ROOT -> owner.requestShutdown()
+            ShutdownScope.DELETION -> owner.requestDeletionShutdown()
+            ShutdownScope.CATALOG_COORDINATOR -> owner.requestCatalogCoordinatorShutdown()
+        }
         accepted.set(true)
         return receipt
     }
@@ -140,7 +158,7 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         }
         if (PoolActorCustody.currentThreadOwnsActorFrame()) return PoolShutdownInvocation.ACTIVE_POOL_ACTOR
         if (owner.ownershipLockHeld()) return PoolShutdownInvocation.OWNERSHIP_LOCK_HELD
-        requestShutdown()
+        if (requestShutdown() == null) return PoolShutdownInvocation.RESOURCE_REFUSED
         val budget = synchronized(gate) { requireNotNull(shutdownBudget) }
         val frame = PoolCallFrame.prepare(this, issuance, PoolCallKind.SHUTDOWN, Thread.currentThread(), budget)
         val attempt = CloseAttempt(PersistenceOwnedFactoryCaller.capture(), frame)
@@ -154,7 +172,8 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
                     firstClose.get() != null -> PoolShutdownInvocation.ALREADY_CLAIMED
 
                     // Conservative for all admitted getConnection frames, including the first potentially constructing one.
-                    acquisitions != 0L || startup === Startup.INITIALIZING -> PoolShutdownInvocation.INITIALIZATION_PENDING
+                    acquisitions != 0L || startup === Startup.INITIALIZING || actors.scheduledPublicationPendingLocked() ->
+                        PoolShutdownInvocation.INITIALIZATION_PENDING
 
                     else -> {
                         check(firstClose.compareAndSet(null, attempt))
@@ -196,19 +215,35 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
             }
         } finally {
             try {
-                captureCloseBookkeepingFailure(attempt) {
-                    if (failure is InterruptedException) Thread.currentThread().interrupt()
-                    if (attempt.caller.sampleOutsideLocks() != null) attempt.interrupted.set(true)
-                }?.let { failure = combine(failure, it) }
-            } finally {
-                try {
-                    captureCloseBookkeepingFailure(attempt) { attempt.caller.restoreAfterFailure() }?.let { failure = combine(failure, it) }
-                } finally {
-                    finishCloseFrame(attempt)?.let { failure = combine(failure, it) }
+                // Also owns futures scheduled before a failed lazy HikariPool constructor was
+                // published into HikariDataSource.pool. No second shutdown worker/caller or retry.
+                runCatching { actors.cancelScheduledTasks() }.onFailure { problem ->
+                    attempt.bookkeepingFailed.set(true)
+                    if (problem is InterruptedException) attempt.interrupted.set(true)
+                    failure = combine(failure, problem)
                 }
+            } finally {
+                failure = restoreCloseCallerAndFinishFrame(attempt, failure)
             }
         }
         failure?.let { throw it }
+    }
+
+    private fun restoreCloseCallerAndFinishFrame(attempt: CloseAttempt, original: Throwable?): Throwable? {
+        var failure = original
+        try {
+            captureCloseBookkeepingFailure(attempt) {
+                if (attempt.interrupted.get()) Thread.currentThread().interrupt()
+                if (attempt.caller.sampleOutsideLocks() != null) attempt.interrupted.set(true)
+            }?.let { failure = combine(failure, it) }
+        } finally {
+            try {
+                captureCloseBookkeepingFailure(attempt) { attempt.caller.restoreAfterFailure() }?.let { failure = combine(failure, it) }
+            } finally {
+                finishCloseFrame(attempt)?.let { failure = combine(failure, it) }
+            }
+        }
+        return failure
     }
 
     private fun finishCloseFrame(attempt: CloseAttempt): Throwable? = captureCloseBookkeepingFailure(attempt) {
@@ -261,7 +296,8 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
 
     internal fun closedPopulationReadyLocked(): Boolean {
         check(Thread.holdsLock(gate))
-        return businessSealed && accepted.get() && acquisitions == 0L && operations == 0L && futureEntries == 0L && firstClose.get()?.ended?.get() == true
+        return businessSealed && accepted.get() && acquisitions == 0L && operations == 0L && futureEntries == 0L &&
+            firstClose.get()?.ended?.get() == true && actors.scheduledPopulationReadyLocked()
     }
 
     private fun enterAcquisition(ticket: Acquisition): Boolean {
@@ -470,11 +506,23 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
         val actorState = synchronized(gate) { actors.observationLocked() }
         if (actorState === PoolActorObservation.PENDING) return PoolShutdownObservation.PENDING
         // This existing owner observer may wait, but only outside F/G/T and every counted caller/Worker extent.
-        val native = owner.observeShutdown(budget)
+        val native = when (shutdownScope) {
+            ShutdownScope.ROOT -> owner.observeShutdown(budget)
+            ShutdownScope.DELETION -> owner.observeDeletionShutdown(budget)
+            ShutdownScope.CATALOG_COORDINATOR -> owner.observeCatalogCoordinatorShutdown(budget)
+        }
         if (native === PersistenceLifecycleObservation.PENDING) return PoolShutdownObservation.PENDING
+        val nativeEnded = when (shutdownScope) {
+            ShutdownScope.ROOT ->
+                native === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED ||
+                    native === PersistenceLifecycleObservation.DRIVER_CONTRACT_ONLY_ENDED
+
+            ShutdownScope.DELETION -> native === PersistenceLifecycleObservation.DELETION_LOCAL_ENDED
+
+            ShutdownScope.CATALOG_COORDINATOR -> native === PersistenceLifecycleObservation.CATALOG_COORDINATOR_LOCAL_ENDED
+        }
         return when {
-            native !== PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && native !== PersistenceLifecycleObservation.DRIVER_CONTRACT_ONLY_ENDED ->
-                PoolShutdownObservation.UNKNOWN
+            !nativeEnded -> PoolShutdownObservation.UNKNOWN
 
             attempt.outcome.get() !== PersistenceTerminalCall.RETURNED || attempt.interrupted.get() || attempt.bookkeepingFailed.get() ->
                 PoolShutdownObservation.UNKNOWN
@@ -484,16 +532,14 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
             synchronized(gate) { installation !== Installation.INSTALLED } || actorState === PoolActorObservation.UNPROVEN ->
                 PoolShutdownObservation.POOL_ACTORS_UNPROVEN
 
-            native === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED -> PoolShutdownObservation.TRACKED_LOCAL_ENDED
+            native === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && !ordinaryCompatibility -> PoolShutdownObservation.TRACKED_LOCAL_ENDED
+
+            native === PersistenceLifecycleObservation.DELETION_LOCAL_ENDED -> PoolShutdownObservation.DELETION_LOCAL_ENDED
+
+            native === PersistenceLifecycleObservation.CATALOG_COORDINATOR_LOCAL_ENDED -> PoolShutdownObservation.CATALOG_COORDINATOR_LOCAL_ENDED
 
             else -> PoolShutdownObservation.DRIVER_CONTRACT_ONLY_ENDED
         }
-    }
-
-    private fun combine(original: Throwable?, failure: Throwable): Throwable {
-        if (original == null) return failure
-        if (original !== failure) original.addSuppressed(failure)
-        return original
     }
 
     override fun toString(): String = "PoolLifecycle(redacted)"
@@ -834,6 +880,24 @@ internal class PoolLifecycle(private val pool: HikariDataSource, private val own
     private enum class Startup { NEW, INITIALIZING, READY, FAILED }
 
     private enum class EntitlementPhase { AVAILABLE, CONSUMED, REVOKED }
+
+    private enum class ShutdownScope { ROOT, DELETION, CATALOG_COORDINATOR }
+
+    companion object {
+        private fun combine(original: Throwable?, failure: Throwable): Throwable {
+            if (original == null) return failure
+            if (original !== failure) original.addSuppressed(failure)
+            return original
+        }
+
+        internal fun sourceOnly(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner): PoolLifecycle =
+            PoolLifecycle(pool, owner, ShutdownScope.ROOT, ordinaryCompatibility = true)
+
+        internal fun deletion(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner): PoolLifecycle = PoolLifecycle(pool, owner, ShutdownScope.DELETION)
+
+        internal fun catalogCoordinator(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner): PoolLifecycle =
+            PoolLifecycle(pool, owner, ShutdownScope.CATALOG_COORDINATOR)
+    }
 }
 
 internal enum class PoolAcquisitionDisposition { NOT_ENTERED, CALLER_OWNED, ROOT_PENDING }
@@ -846,6 +910,7 @@ internal enum class PoolShutdownInvocation {
     ACTIVE_POOL_FRAME,
     ACTIVE_POOL_ACTOR,
     OWNERSHIP_LOCK_HELD,
+    RESOURCE_REFUSED,
 }
 
 internal enum class PoolShutdownObservation {
@@ -853,6 +918,12 @@ internal enum class PoolShutdownObservation {
     PENDING,
     UNKNOWN,
     POOL_ACTORS_UNPROVEN,
+
+    /** This pool and its deletion participant only; never shared Timer/root completion. */
+    DELETION_LOCAL_ENDED,
+
+    /** This pool and its coordinator participant only; never shared Timer/root completion. */
+    CATALOG_COORDINATOR_LOCAL_ENDED,
     TRACKED_LOCAL_ENDED,
     DRIVER_CONTRACT_ONLY_ENDED,
     ACTIVE_ACQUISITION,

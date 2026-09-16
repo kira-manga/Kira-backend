@@ -6,41 +6,78 @@
   "files": 1012,
   "source_tree": "../../../.kira-validation/pgjdbc-owned-cut/upstream",
   "builds_run": false,
-  "candidate_status": "UNCOMPILED / UNRUN / NOT ACCEPTED",
+  "candidate_status": "SOURCE-ONLY PACKAGING CANDIDATE / NOT PRODUCTION QUALIFIED",
   "series": {
     "path": "series",
-    "sha256": "9d5c1d038dc867124c1a72318fca1c2e325ec48c08a3659fb8da5fb46a0180ee"
+    "sha256": "1393575be71f675b24ef0c9856631cd6bd86ddae9c75991363defb9c1a833f69",
+    "bytes": 224
   },
   "patches": [
     {
       "path": "0001-native-owned-cut.patch",
-      "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b"
+      "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b",
+      "bytes": 105172,
+      "scope": "production"
     },
     {
       "path": "0002-native-lifetime-correction.patch",
-      "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9"
+      "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9",
+      "bytes": 4616,
+      "scope": "production"
     },
     {
       "path": "0003-native-owned-cut-regressions.patch",
-      "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3"
+      "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
+      "bytes": 75780,
+      "scope": "test"
+    },
+    {
+      "path": "0004-native-annotation-correction.patch",
+      "sha256": "c40a13d18f0598e10ce44b964aba932430c416861e9f5ec8dc5b209abae1d231",
+      "bytes": 561,
+      "scope": "production annotation"
+    },
+    {
+      "path": "0005-native-retention-getter-corrections.patch",
+      "sha256": "148c46711689a27c5e1a2a9cb42c081d823eb93347d610806b81475695f98f05",
+      "bytes": 69947,
+      "scope": "reviewed production/test corrections"
+    },
+    {
+      "path": "0006-private-publication.patch",
+      "sha256": "bd1b4f6848ffb3f43a57f8f29a7181bf8feaecf52825e0112307c07314f2e9bf",
+      "bytes": 6084,
+      "scope": "private publication build configuration and root NMCP remote-task gate"
     }
   ],
   "source_manifest": {
     "path": "source-manifest.json",
-    "sha256": "8b2bda22f7562c22508c5b2b09756824e202db15ba2e1ef47a817c331c6afd8b"
+    "sha256": "8d5ade0eab38beaefa028885a5eda76319cb0a0c1586ce4966d504b3ef16b122",
+    "bytes": 8363
   },
   "abi": {
     "path": "ABI.md",
-    "sha256": "6c2eefa3504df96d23f4ed07d6a8f9564ec34dde27b61710354f04fadc532112"
+    "sha256": "ffbd51a0593348d28e65a83e56056b8226442838aef61973eb360e8d3bfecfaf",
+    "bytes": 12717
   },
   "license": {
     "path": "LICENSE.pgjdbc",
-    "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53"
+    "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53",
+    "bytes": 1321
   },
   "tests_run": false,
   "static_checks_run": false,
   "test_source_manifest": {
     "path": "test-source-manifest.json",
-    "sha256": "31286dd82c852edfd7d3f0304319de8b2d4e098f7f38a045e559841606b803ef"
-  }
+    "sha256": "a7f8ccceafeb801603591684a8a188e9c0c93aaba1b4d8b503d1c3abff04263a",
+    "bytes": 4211
+  },
+  "schema": 2,
+  "runtime_publication": {
+    "path": "runtime-publication.json",
+    "sha256": "8f204a3ffb4851a159b02cd0e5e6b5fa8d8fc728cc98a4f479001d443d1ed800",
+    "bytes": 8179
+  },
+  "scope_of_run_flags": "Packaging04 registration correction only, not executed; native06 preceding attempt FAILED; native05 historical Java evidence reused, not rerun or promoted.",
+  "source_manifest_checks_run": true
 }

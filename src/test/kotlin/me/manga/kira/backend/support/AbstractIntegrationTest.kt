@@ -4,9 +4,15 @@ import me.manga.kira.backend.database.complaint.complaintResource
 import me.manga.kira.backend.security.AuthThrottleService
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.support.MergedBeanDefinitionPostProcessor
+import org.springframework.beans.factory.support.RootBeanDefinition
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Conditional
+import org.springframework.context.annotation.Import
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -42,6 +48,7 @@ import java.util.Base64
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(AbstractIntegrationTest.SharedPostgresConnection::class)
 abstract class AbstractIntegrationTest {
 
     @Autowired
@@ -103,9 +110,34 @@ abstract class AbstractIntegrationTest {
         }
 
         @JvmStatic
-        @ServiceConnection
-        val postgres: PostgreSQLContainer<*> =
+        val postgres: PostgreSQLContainer<*> by lazy {
+            check(System.getenv("KIRA_PG_LIFECYCLE_LOCAL_RUN") == null) // Never construct Docker as fallback for a selected local run.
             PostgreSQLContainer(DockerImageName.parse("postgres:17.6-alpine"))
                 .also { it.start() }
+        }
+    }
+
+    /** Default real @ServiceConnection still uses the original JVM-owned singleton, not a per-context server. */
+    @TestConfiguration(proxyBeanMethods = false)
+    @Conditional(PgLifecycleContainerRunCondition::class)
+    internal class SharedPostgresConnection {
+        @Bean(name = ["sharedIntegrationPostgres"], destroyMethod = "stop")
+        @ServiceConnection
+        fun sharedIntegrationPostgres(): PostgreSQLContainer<*> = postgres
+
+        companion object {
+            @Bean
+            @JvmStatic
+            fun retainSingletonPostgresCustody(): MergedBeanDefinitionPostProcessor = object : MergedBeanDefinitionPostProcessor {
+                override fun postProcessMergedBeanDefinition(definition: RootBeanDefinition, beanType: Class<*>, beanName: String) {
+                    if (beanName == "sharedIntegrationPostgres") {
+                        check(PostgreSQLContainer::class.java.isAssignableFrom(beanType) && definition.destroyMethodName == "stop")
+                        // Spring's explicit external-custody contract, scoped to this one bean. A cached
+                        // context must not stop the JVM/Ryuk-owned singleton used by another context.
+                        definition.registerExternallyManagedDestroyMethod("stop")
+                    }
+                }
+            }
+        }
     }
 }

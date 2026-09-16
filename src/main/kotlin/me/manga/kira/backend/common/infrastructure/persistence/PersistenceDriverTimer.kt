@@ -3,7 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** One pin/controller shared by both participants. It never owns a participant's Connection or releases a foreign pin. */
+/** One pin/controller shared by all fixed participants. It never owns their Connections or releases a foreign pin. */
 internal class PersistenceDriverTimer(private val root: PersistenceJdbcDriverRoot) {
     private val metadata = AtomicReference<PersistencePgTimerAccess?>()
     private val metadataReady = AtomicBoolean()

@@ -123,5 +123,7 @@ class AuditWriteBoundaryTest {
         assertEquals(entry.detailJson, saved.detail)
         assertEquals(entry.createdAt, saved.createdAt)
         assertEquals(null, saved.id)
+        assertEquals(null, saved.complaintDataScopeId)
+        assertEquals(null, saved.complaintActorKind)
     }
 }

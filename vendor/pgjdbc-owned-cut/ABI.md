@@ -1,6 +1,8 @@
 # Owned cut ABI 1 — native/core author handshake
 
-Source-only author freeze; **UNCOMPILED / NOT ACCEPTED**. Java8 source; all methods below are public static on
+Native/core integration contract; **NOT PRODUCTION QUALIFIED**. The packaging recipe
+carries these signatures forward unchanged from the retained native05 sources.
+Java8 source; all methods below are public static on
 `org.postgresql.jdbc.KiraOwnedJdbcCut`. Nested cell types are public final with
 private constructors. No raw getter or generic invocation API. This document is an
 author integration contract, not tested artifact acceptance.
@@ -143,11 +145,11 @@ Hidden PgArray.getResultSet plain-parent Statements are **not** a third allowed 
 they require genuine first close or conservative physical retirement. Other hidden/error-path
 children remain physically owned for terminal disposal, not forgotten after return refusal.
 
-This amendment is uncompiled/unexecuted source, not qualification of the retained old final JAR
-(which lacks method23). Successor source/delta manifests are in
-`review/working/app-29-real-pool-native-retention-02/` at workspace root; the previous01 packet
-and its pause/before manifests remain historical. Historical vendor
-manifests/patches, qualified artifacts and consumer artifact pins are not replaced by this edit.
+The historical method23 source/delta manifests are in
+`review/working/app-29-real-pool-native-retention-02/` at workspace root. The current
+vendor series also includes the retained native05 getter correction. Native05 remains
+an unqualified candidate, not a production distribution; updating the recipe does not
+promote its JAR or change any ABI meaning. Historical packets and binaries remain untouched.
 
 ## Existing invocation contract (unchanged)
 

@@ -3,6 +3,11 @@ package me.manga.kira.backend.audit.infrastructure
 import me.manga.kira.backend.audit.domain.AuditEntry
 import me.manga.kira.backend.audit.domain.AuditPage
 import me.manga.kira.backend.audit.domain.AuditRepository
+import me.manga.kira.backend.audit.domain.ComplaintAuditActorKind
+import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
+import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
+import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
+import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
@@ -14,7 +19,14 @@ import org.springframework.stereotype.Repository
  * log-hygiene — identifiers/numbers/checksums only — in one place, PLAN §6).
  */
 @Repository
-class JpaAuditRepositoryAdapter(private val jpa: SpringDataAuditLogRepository) : AuditRepository {
+internal class JpaAuditRepositoryAdapter(private val jpa: SpringDataAuditLogRepository) :
+    AuditRepository,
+    CountedComplaintAuditRepository {
+
+    override fun recordComplaint(entry: CountedComplaintAuditEntry, allocation: ComplaintAuditAllocation) = ComplaintAuditInsertion.insert(entry, allocation)
+
+    override fun recordInstallationEnrollment(entry: CountedInstallationEnrollmentAuditEntry, allocation: ComplaintAuditAllocation) =
+        ComplaintInstallationEnrollmentAuditInsertion.insert(entry, allocation)
 
     override fun record(entry: NewAuditEntry) {
         // Fail closed for the entire raw namespace, including unknown and W06-excluded identities.
@@ -47,6 +59,8 @@ class JpaAuditRepositoryAdapter(private val jpa: SpringDataAuditLogRepository) :
                     entityId = it.entityId,
                     detailJson = it.detail,
                     createdAt = it.createdAt,
+                    complaintDataScopeId = it.complaintDataScopeId,
+                    complaintActorKind = it.complaintActorKind?.let { kind -> ComplaintAuditActorKind.valueOf(kind) },
                 )
             },
             total = result.totalElements,

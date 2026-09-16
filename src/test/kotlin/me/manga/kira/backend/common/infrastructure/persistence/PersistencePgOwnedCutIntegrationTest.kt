@@ -36,9 +36,12 @@ import java.sql.SQLException
 import java.sql.Statement
 import java.util.UUID
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
@@ -48,7 +51,7 @@ import java.util.concurrent.locks.ReentrantLock
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
 class PersistencePgOwnedCutIntegrationTest {
-    private val database = lazy { PgLifecycleDatabaseFixture().also { it.start() } }
+    private val database = lazy { PgLifecycleDatabaseFixture(PersistencePgOwnedCutIntegrationTest::class.java).also { it.start() } }
 
     @TempDir
     lateinit var pendingProbeRoot: Path
@@ -411,6 +414,17 @@ class PersistencePgOwnedCutIntegrationTest {
     }
 
     @Test
+    fun `real residual Blob transaction fails native read only reset before unsafe auto commit`() = ResetAndAbortCases(database.value).readOnlyReset()
+
+    @Test
+    fun `real accepted public abort request retains its physical entry until the supplied command actually ends`() =
+        ResetAndAbortCases(database.value).acceptedAbort()
+
+    @Test
+    fun `real rejected public abort request preserves failure while its original native terminal disposes the entry`() =
+        ResetAndAbortCases(database.value).rejectedAbort()
+
+    @Test
     fun `real lease return expiry before actor entry revokes only its unused future right and retains physical retirement`() =
         withOwnedCutPool(database.value) { f ->
             val connection = f.pool.connection
@@ -655,6 +669,251 @@ class PersistencePgOwnedCutIntegrationTest {
             assertEquals(1L, (ownedCutField(f.entry.driverCut, "facadeChildren") as AtomicLong).get())
             assertFalse(f.entry.driverCut.hasCleanupFailure())
         }
+}
+
+/** Three real-PG cases over existing helpers. Executor faults test request custody, not a failing native abort or close. */
+private class ResetAndAbortCases(private val database: PgLifecycleDatabaseFixture) {
+    fun readOnlyReset() = withOwnedCutPool(database) { f ->
+        database.observer().use { observer -> readOnlyReset(f, observer) }
+    }
+
+    private fun readOnlyReset(f: OwnedCutPool, observer: PgLifecycleDatabaseObserver) = f.pool.connection.use { connection ->
+        val lease = ownedPoolLease(connection)
+        val entry = f.entry(connection)
+        val raw = requireNotNull(entry.raw.get())
+        val (application, session) = witness(connection, observer)
+        connection.autoCommit = false
+        val oid = ownedPoolScalar(connection, "SELECT lo_create(0)")
+        val blob = connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT $oid::oid").use { result ->
+                assertTrue(result.next())
+                result.getBlob(1).also { assertFalse(result.next()) }
+            }
+        }
+        try {
+            connection.commit()
+            assertTrue(lease.state.context.transaction.clean())
+            assertEquals(PersistenceDatabaseOutcome.COMMITTED, lease.state.context.transaction.databaseOutcome())
+            connection.isReadOnly = true // Dirty Hikari's first reset bit while the real transaction is idle.
+            assertEquals(0L, blob.length()) // Actual native fastpath opens residual work without Hikari's Statement dirty bit.
+            blob.free()
+            assertFalse(lease.state.context.transaction.clean())
+            assertEquals(true, ownedCutField(raw, "readOnly"))
+            NativeReadOnlyResetObservation(lease).use { native ->
+                val failure = assertThrows<SQLException> { connection.close() }
+                assertEquals("25001", failure.sqlState)
+                native.requireFailedReset()
+            }
+            assertEquals(PersistenceDatabaseOutcome.COMMITTED, lease.state.context.transaction.databaseOutcome())
+            assertEquals(false, ownedCutField(raw, "autoCommit"))
+            assertTrue(lease.state.epoch.poisoned() && entry.retirementRequested.get())
+            assertFalse((ownedCutField(lease, "transfer") as PersistenceJdbcPoolTransfer).consented())
+            observer.awaitAbsent(application, session, PgLifecycleDatabaseDeadline(2_000)) {}
+            awaitLifecycleFact { f.scope.entries().none { it === entry } }
+            assertTrue(entry.driverCut.canReclaim() && lease.completion.quiescent())
+            f.pool.connection.use { replacement ->
+                try {
+                    assertNotSame(entry, f.entry(replacement))
+                    assertTrue(session.pid != ownedPoolScalar(replacement, "SELECT pg_backend_pid()"))
+                    assertFalse(replacement.isReadOnly)
+                    assertEquals(0, ownedPoolScalar(replacement, "SELECT octet_length(lo_get($oid))"))
+                } finally {
+                    assertEquals(1, ownedPoolScalar(replacement, "SELECT lo_unlink($oid)"))
+                }
+            }
+        } finally {
+            blob.free()
+        }
+    }
+
+    fun acceptedAbort() = withOwnedCutConnection(database) { f ->
+        database.observer().use { observer ->
+            val (application, session) = witness(f.connection, observer)
+            val command = AtomicReference<Runnable?>()
+            val submissions = AtomicInteger()
+            OwnedCallerTestScope().use { callers ->
+                callers.beforeClose { command.get()?.run() } // Failure cleanup executes only the original counted command, never fabricates its end.
+                f.connection.abort(
+                    Executor { selected ->
+                        assertEquals(1, submissions.incrementAndGet())
+                        assertTrue(command.compareAndSet(null, selected))
+                    },
+                )
+                awaitLifecycleFact { abortState(f.work) === PersistenceTerminalCall.RETURNED }
+                requirePendingAbort(f)
+                observer.awaitAbsent(application, session, PgLifecycleDatabaseDeadline(2_000)) { requirePendingAbort(f) }
+                f.connection.close()
+                f.connection.abort(Executor { error("A duplicate public abort must not resubmit.") })
+                requirePendingAbort(f)
+                assertTrue(
+                    callers.launch {
+                        val original = checkNotNull(command.get())
+                        original.run()
+                        original.run() // The supplied executor's duplicate delivery cannot create a second actual request.
+                        true
+                    }.value(),
+                )
+                assertEquals(1, submissions.get())
+                assertEquals(0L, f.epoch.activeCancellations())
+                assertEquals(PersistenceJdbcCallOutcome.RETURNED, requestCall(checkNotNull(command.get())).outcome())
+                f.retire()
+                requireDisposedAbort(f)
+            }
+        }
+    }
+
+    fun rejectedAbort() = withOwnedCutConnection(database) { f ->
+        database.observer().use { observer ->
+            val (application, session) = witness(f.connection, observer)
+            val command = AtomicReference<Runnable?>()
+            val submissions = AtomicInteger()
+            val failure = assertThrows<SQLException> {
+                f.connection.abort(
+                    Executor { selected ->
+                        assertEquals(1, submissions.incrementAndGet())
+                        assertTrue(command.compareAndSet(null, selected))
+                        throw RejectedExecutionException("Controlled public abort request rejection before command entry.")
+                    },
+                )
+            }
+            assertNull(failure.cause)
+            assertTrue(f.epoch.poisoned() && f.entry.retirementRequested.get())
+            assertEquals(0L, f.epoch.activeCancellations())
+            val original = checkNotNull(command.get())
+            assertEquals(PersistenceJdbcCallOutcome.CLEANUP_FAILURE, requestCall(original).outcome())
+            original.run() // Rejection claimed this exact command; a late executor delivery is a no-op, not healing.
+            f.connection.abort(Executor { error("A rejected public abort must not retry submission.") })
+            assertEquals(1, submissions.get())
+            assertEquals(0L, f.epoch.activeCancellations())
+            assertEquals(PersistenceJdbcCallOutcome.CLEANUP_FAILURE, requestCall(original).outcome())
+            observer.awaitAbsent(application, session, PgLifecycleDatabaseDeadline(2_000)) {}
+            f.retire()
+            requireDisposedAbort(f)
+        }
+    }
+
+    private fun witness(connection: Connection, observer: PgLifecycleDatabaseObserver): Pair<String, PgLifecycleDatabaseSession> {
+        val application = checkNotNull(connection.getClientInfo("ApplicationName"))
+        val pid = ownedPoolScalar(connection, "SELECT pg_backend_pid()")
+        val session = observer.requireNew(emptySet(), observer.sample(application))
+        assertEquals(pid, session.pid)
+        return application to session
+    }
+
+    private fun requirePendingAbort(f: OwnedCutConnection) {
+        assertSame(f.entry, f.scope.entries().single())
+        assertTrue(f.entry.retirementRequested.get() && f.entry.retiring)
+        assertEquals(1L, f.epoch.activeCancellations())
+        assertFalse(f.epoch.foregroundActive() || f.epoch.sealedAndEnded())
+        assertFalse(f.entry.jdbc.postOpeningCallsEnded() || f.work.producerDrainProven() || f.work.bodyExited())
+        assertEquals(PersistenceTerminalDisposition.PENDING, f.work.disposition())
+        assertEquals(PersistenceTerminalCall.NOT_INVOKED, f.work.closeState())
+        assertFalse(f.scope.binding().completion.scanReclamation(f.entry.record.slotHint))
+    }
+
+    private fun requireDisposedAbort(f: OwnedCutConnection) {
+        assertEquals(0L, f.epoch.activeCancellations())
+        assertTrue(f.epoch.sealedAndEnded() && f.entry.jdbc.postOpeningCallsEnded())
+        assertEquals(PersistenceTerminalCall.RETURNED, abortState(f.work))
+        assertEquals(PersistenceTerminalCall.RETURNED, f.work.closeState())
+        assertTrue(f.work.producerDrainProven() && f.work.bodyExited())
+        assertEquals(PersistenceTerminalDisposition.TRACKED_DISPOSED, f.work.disposition())
+        assertTrue(f.entry.driverCut.canReclaim() && f.scope.entries().isEmpty())
+        assertTrue(f.raw.isClosed)
+    }
+
+    private fun abortState(work: PersistenceTerminalWork): Any? = (ownedCutField(work, "abort") as AtomicReference<*>).get()
+
+    private fun requestCall(command: Runnable): PersistenceProducerEpoch.Call = ownedCutField(command, "call") as PersistenceProducerEpoch.Call
+}
+
+/** Passive exact RETURN observation, following the existing CoreLastCountBarrier's own-instance ThreadLocal seam. */
+private class NativeReadOnlyResetObservation(lease: PersistenceJdbcLease) :
+    ThreadLocal<PersistenceJdbcGuardCall?>(),
+    AutoCloseable {
+    private val caller = Thread.currentThread()
+    private val context = lease.state.context
+    private val root = ownedPoolRoot(lease)
+    private val field = context.javaClass.getDeclaredField("frames").apply { check(trySetAccessible()) }
+
+    @Suppress("UNCHECKED_CAST")
+    private val delegate = field.get(context) as ThreadLocal<PersistenceJdbcGuardCall?>
+    private val driver = PersistenceJdbcGuardCall::class.java.getDeclaredField("driver").apply { check(trySetAccessible()) }
+    private var selected: PersistenceJdbcGuardCall? = null
+    private var invocation: PersistencePgOwnedCutAccess.Invocation? = null
+    private var preparedBeforeArm = false
+    private var failedWhileArmed = false
+    private var additionalReset = false
+    private var autoCommitDispatched = false
+    private var observationFailure: Throwable? = null
+
+    init {
+        assertNull(delegate.get())
+        field.set(context, this)
+    }
+
+    override fun get(): PersistenceJdbcGuardCall? = delegate.get().also { call ->
+        if (Thread.currentThread() === caller && call != null) {
+            try {
+                observe(call)
+            } catch (failure: Throwable) {
+                observationFailure = observationFailure ?: failure // Never manufacture the native reset exception under test.
+            }
+        }
+    }
+
+    private fun observe(call: PersistenceJdbcGuardCall) {
+        val native = driver.get(call) as? PersistencePgOwnedCutAccess.Invocation ?: return
+        val operation = ownedCutField(native.cell, "operation")
+        val armed = ownedCutField(native.cell, "armed") == true
+        if (operation == "setAutoCommit" && armed) autoCommitDispatched = true
+        if (operation != "setReadOnly") return
+        assertTrue(PersistenceJdbcDispatch.current()?.returning() == true)
+        if (selected == null) {
+            selected = call
+            invocation = native
+            assertEquals(listOf(false), (ownedCutField(native.cell, "arguments") as Array<*>).toList())
+        } else if (selected !== call) {
+            additionalReset = true
+            return
+        }
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, context.transaction.databaseOutcome())
+        if (!armed) preparedBeforeArm = true
+        val nativePending = armed && ownedCutField(native.cell, "ended") == false
+        val invokedNativePending = nativePending && ownedCutField(call, "driverPreparationFailure") == false
+        if (invokedNativePending && ownedCutField(call, "outcome") === PersistenceJdbcCallOutcome.CLEANUP_FAILURE) {
+            failedWhileArmed = true
+        }
+    }
+
+    override fun set(value: PersistenceJdbcGuardCall?) = delegate.set(value)
+    override fun remove() = delegate.remove()
+
+    fun requireFailedReset() {
+        assertNull(observationFailure)
+        assertTrue(preparedBeforeArm && failedWhileArmed)
+        assertFalse(additionalReset || autoCommitDispatched)
+        val call = checkNotNull(selected)
+        val native = checkNotNull(invocation)
+        assertSame(root, native.owner.root)
+        assertSame(call, native.callKey)
+        assertSame(caller, ownedCutField(native.cell, "actual"))
+        assertEquals("setReadOnly", ownedCutField(native.cell, "operation"))
+        assertEquals(PersistenceJdbcGuardCallKind.CLEANUP, ownedCutField(call, "kind"))
+        assertEquals(PersistenceJdbcCallOutcome.CLEANUP_FAILURE, ownedCutField(call, "outcome"))
+        assertEquals(true, ownedCutField(call, "driverArmAttempted"))
+        assertEquals(false, ownedCutField(call, "driverPreparationFailure"))
+        assertEquals(true, ownedCutField(call, "ended"))
+        assertEquals(true, ownedCutField(native.cell, "armed"))
+        assertEquals(true, ownedCutField(native.cell, "disarmed"))
+        assertEquals(true, ownedCutField(native.cell, "ended"))
+    }
+
+    override fun close() {
+        assertSame(this, field.get(context))
+        field.set(context, delegate)
+        assertNull(delegate.get())
+    }
 }
 
 private fun assertRequiredOwnedCutDescriptors(testInstance: PersistencePgOwnedCutIntegrationTest, registeredDrivers: () -> List<Driver>) {
@@ -1367,18 +1626,26 @@ internal fun withOwnedCutConnection(database: PgLifecycleDatabaseFixture, origin
 }
 
 /** Same retained driver/physical fixture, now through the actual private lower -> stock Hikari -> lease path. */
-internal fun withOwnedCutPool(database: PgLifecycleDatabaseFixture, companion: OwnedCutPool? = null, test: (OwnedCutPool) -> Unit) {
+internal fun withOwnedCutPool(
+    database: PgLifecycleDatabaseFixture,
+    companion: OwnedCutPool? = null,
+    maximumPoolSize: Int = 1,
+    candidateEndpoint: ResolvedPersistenceEndpoint? = null,
+    test: (OwnedCutPool) -> Unit,
+) {
     val case = PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.DEFAULT, 0, PgLifecycleDatabaseLane.ORDINARY, PgLifecycleDatabaseMode.MATRIX)
     val base = PgLifecycleDatabaseSettings.endpoint(case, database.port, "w03c_${UUID.randomUUID()}")
     val properties = base.driverProperties().stringPropertyNames().associateWith { base.driverProperties().getProperty(it) } +
         ("PGHOST" to database.host)
-    val endpoint = ResolvedPersistenceEndpoint(properties, base.loginPolicy)
-    // One Hikari slot, with a second physical custody cell for retirement/replacement overlap.
-    PgLifecycleTestScope(endpoint, capacity = 2).use { scope ->
+    // Only candidate traffic may take an owned loopback relay; the verified database/observer endpoint never changes.
+    val endpoint = candidateEndpoint ?: ResolvedPersistenceEndpoint(properties, base.loginPolicy)
+    // P actual Hikari slots plus one ordinary physical custody cell for retirement/replacement overlap.
+    // The existing separate deletion participant is unchanged; P=1 remains the source-only default.
+    PgLifecycleTestScope(endpoint, capacity = Math.addExact(maximumPoolSize, 1)).use { scope ->
         var fixture: OwnedCutPool? = null
         // Register the companion before construction/start/readiness can fail, not only after entering the test body.
         AutoCloseable { closeOwnedCutPool(fixture, companion) }.use {
-            val pool = GuardedDataSource(scope.owner, endpoint, 1, PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY)
+            val pool = GuardedDataSource(scope.owner, endpoint, maximumPoolSize, PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY)
             val owned = OwnedCutPool(scope, pool)
             fixture = owned
             assertEquals(PersistenceLifecycleActivation.STARTED, pool.start())

@@ -8,15 +8,32 @@ import java.util.logging.Logger
 import javax.sql.DataSource
 
 /** Exact typed participant route only. Retained privately by the real Hikari configuration. */
-internal class PrivateJdbcDataSource(
+internal class PrivateJdbcDataSource private constructor(
     private val owner: PersistenceJdbcLifecycleOwner,
     private val endpoint: ResolvedPersistenceEndpoint,
     private val lifecycle: PoolLifecycle,
+    private val route: Route,
 ) : DataSource {
+    constructor(
+        owner: PersistenceJdbcLifecycleOwner,
+        endpoint: ResolvedPersistenceEndpoint,
+        lifecycle: PoolLifecycle,
+    ) : this(owner, endpoint, lifecycle, Route.ORDINARY)
+
+    private val loginPolicy = when (route) {
+        Route.ORDINARY -> endpoint.loginPolicy
+        Route.DELETION -> PersistenceNativeSettings.deletionLoginPolicy
+        Route.CATALOG_COORDINATOR -> PersistenceNativeSettings.catalogCoordinatorLoginPolicy
+    }
+
     override fun getConnection(): Connection {
-        val budget = PersistenceTimeBudget.start(endpoint.loginPolicy.durationMillis)
+        val budget = PersistenceTimeBudget.start(loginPolicy.durationMillis)
         if (!lifecycle.isAuthenticPoolCaller()) PersistenceJdbcGuardContext.refuse()
-        val result = owner.requestOrdinaryPoolConnection()
+        val result = when (route) {
+            Route.ORDINARY -> owner.requestOrdinaryPoolConnection()
+            Route.DELETION -> owner.requestDeletionPoolConnection()
+            Route.CATALOG_COORDINATOR -> owner.requestCatalogCoordinatorPoolConnection()
+        }
         val facade = when (result) {
             is PersistenceFactoryResult.Success -> result.value
             is PersistenceFactoryResult.Failed, is PersistenceFactoryResult.Refused -> PersistenceJdbcGuardContext.refuse()
@@ -37,9 +54,9 @@ internal class PrivateJdbcDataSource(
         return connection
     }
 
-    override fun getLoginTimeout(): Int = endpoint.loginPolicy.jdbcSeconds
+    override fun getLoginTimeout(): Int = loginPolicy.jdbcSeconds
     override fun setLoginTimeout(seconds: Int) {
-        if (!endpoint.loginPolicy.acceptsJdbcSeconds(seconds)) throw SQLFeatureNotSupportedException("Private persistence settings are immutable.")
+        if (!loginPolicy.acceptsJdbcSeconds(seconds)) throw SQLFeatureNotSupportedException("Private persistence settings are immutable.")
     }
     override fun getLogWriter(): PrintWriter? = null
     override fun setLogWriter(out: PrintWriter?) {
@@ -52,4 +69,17 @@ internal class PrivateJdbcDataSource(
         throw SQLException("Private persistence unwrap refused.")
     }
     override fun toString(): String = "PrivateJdbcDataSource(redacted)"
+
+    private enum class Route { ORDINARY, DELETION, CATALOG_COORDINATOR }
+
+    companion object {
+        internal fun deletion(owner: PersistenceJdbcLifecycleOwner, endpoint: ResolvedPersistenceEndpoint, lifecycle: PoolLifecycle): PrivateJdbcDataSource =
+            PrivateJdbcDataSource(owner, endpoint, lifecycle, Route.DELETION)
+
+        internal fun catalogCoordinator(
+            owner: PersistenceJdbcLifecycleOwner,
+            endpoint: ResolvedPersistenceEndpoint,
+            lifecycle: PoolLifecycle,
+        ): PrivateJdbcDataSource = PrivateJdbcDataSource(owner, endpoint, lifecycle, Route.CATALOG_COORDINATOR)
+    }
 }

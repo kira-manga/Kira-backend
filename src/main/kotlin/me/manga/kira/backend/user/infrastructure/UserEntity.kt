@@ -21,8 +21,9 @@ import java.util.UUID
  *
  * The id is generated **client-side** by Hibernate ([GenerationType.UUID]) so a `save` is a plain
  * INSERT (no pre-select) and the generated id is available immediately; the column's
- * `DEFAULT gen_random_uuid()` is a belt-and-braces fallback for manual inserts. `created_at` /
- * `updated_at` are stamped by [PrePersist]/[PreUpdate] so application and DB time cannot diverge.
+ * `DEFAULT gen_random_uuid()` is a belt-and-braces fallback for manual inserts. [PrePersist]/[PreUpdate]
+ * stamp entity writes; the targeted bulk mutations explicitly stamp `updated_at` because callbacks
+ * do not run for them. `credential_version` (V13.1) is a password generation, not JPA `@Version`.
  */
 @Entity
 @Table(name = "users")
@@ -44,6 +45,8 @@ class UserEntity(
     var createdAt: Instant = Instant.EPOCH,
     @Column(name = "updated_at", nullable = false)
     var updatedAt: Instant = Instant.EPOCH,
+    @Column(name = "credential_version", nullable = false)
+    var credentialVersion: Long = 0,
 ) {
     @PrePersist
     fun onCreate() {

@@ -50,7 +50,10 @@ internal class PersistenceJdbcGuardCall private constructor(
         }
         if (!outcome.poisons) outcome = observed
         check(token.observeFailure(outcome)) // Sticky state precedes even failure-envelope construction.
-        if (failure is InterruptedException) Thread.currentThread().interrupt()
+        if (failure is InterruptedException) {
+            context.phaseJdbcFailure(retireImmediately = true)
+            Thread.currentThread().interrupt()
+        }
         // An independently observed hidden cleanup failure poisons the epoch, not an unrelated
         // native business exception's identity/SQLState. Existing local cleanup/wrapping policy stays.
         return if (observed.poisons || driverPreparationFailure) context.adaptFailure(failure) else failure

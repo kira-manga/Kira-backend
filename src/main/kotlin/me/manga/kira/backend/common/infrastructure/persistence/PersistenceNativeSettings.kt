@@ -5,6 +5,7 @@ import java.util.Properties
 /** Unused cold prerequisite. Never register as a bean or substitute settings support for runtime approval. */
 internal object PersistenceNativeSettings {
     val deletionLoginPolicy: PersistenceLoginPolicy = PersistenceLoginPolicy.resolve("2", 2000)
+    val catalogCoordinatorLoginPolicy: PersistenceLoginPolicy = PersistenceLoginPolicy.resolve("2", 2000)
     private val SSL_FACTORIES = setOf(null, "org.postgresql.ssl.LibPQFactory", "org.postgresql.ssl.jdbc4.LibPQFactory")
     private val HOSTNAME_VERIFIERS = setOf(null, "org.postgresql.ssl.PGjdbcHostnameVerifier")
     private val TIMEOUT_CAPS = mapOf("connectTimeout" to 1, "socketTimeout" to 2, "cancelSignalTimeout" to 1)
@@ -15,7 +16,15 @@ internal object PersistenceNativeSettings {
     fun deriveDeletion(endpoint: ResolvedPersistenceEndpoint, pathStyle: PersistencePathStyle): PersistenceNativeSettingsResult =
         assess(endpoint, pathStyle, deletion = true)
 
-    private fun assess(endpoint: ResolvedPersistenceEndpoint, pathStyle: PersistencePathStyle, deletion: Boolean): PersistenceNativeSettingsResult {
+    fun deriveCatalogCoordinator(endpoint: ResolvedPersistenceEndpoint, pathStyle: PersistencePathStyle): PersistenceNativeSettingsResult =
+        assess(endpoint, pathStyle, deletion = true, loginPolicy = catalogCoordinatorLoginPolicy)
+
+    private fun assess(
+        endpoint: ResolvedPersistenceEndpoint,
+        pathStyle: PersistencePathStyle,
+        deletion: Boolean,
+        loginPolicy: PersistenceLoginPolicy = deletionLoginPolicy,
+    ): PersistenceNativeSettingsResult {
         val properties = endpoint.driverProperties()
         val shapeFailure = shapeFailure(properties)
         if (shapeFailure != null) return PersistenceNativeSettingsResult.Unsupported(shapeFailure)
@@ -26,7 +35,7 @@ internal object PersistenceNativeSettings {
         val tlsFailure = PersistenceTlsSettings.failure(properties, pathStyle)
         if (tlsFailure != null) return PersistenceNativeSettingsResult.Unsupported(tlsFailure)
         if (!deletion) return PersistenceNativeSettingsResult.Supported(endpoint)
-        return deletionSettings(properties, auth)
+        return strictSettings(properties, auth, loginPolicy)
     }
 
     private fun shapeFailure(properties: Properties): PersistenceNativeSettingsReason? = when {
@@ -52,7 +61,11 @@ internal object PersistenceNativeSettings {
         return hosts.size in 1..8 && hosts.none { it.isEmpty() }
     }
 
-    private fun deletionSettings(properties: Properties, auth: PersistenceAuthenticationSettings.Decision.Selected): PersistenceNativeSettingsResult {
+    private fun strictSettings(
+        properties: Properties,
+        auth: PersistenceAuthenticationSettings.Decision.Selected,
+        loginPolicy: PersistenceLoginPolicy,
+    ): PersistenceNativeSettingsResult {
         val selected = properties.stringPropertyNames().associateWith { properties.getProperty(it) }.toMutableMap()
         for ((name, cap) in TIMEOUT_CAPS) {
             val raw = selected[name]
@@ -65,7 +78,7 @@ internal object PersistenceNativeSettings {
         selected["scramMaxIterations"] = auth.scramLimit.toString()
         selected["loginTimeout"] = "0"
         return PersistenceNativeSettingsResult.Supported(
-            ResolvedPersistenceEndpoint(selected, deletionLoginPolicy),
+            ResolvedPersistenceEndpoint(selected, loginPolicy),
         )
     }
 }

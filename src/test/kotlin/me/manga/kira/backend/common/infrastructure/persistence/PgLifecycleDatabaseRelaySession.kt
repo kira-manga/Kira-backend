@@ -23,9 +23,24 @@ internal class PgLifecycleDatabaseRelaySession(
     case: PgLifecycleDatabaseCase,
     acceptedIndex: Int? = null,
     upstreamSocket: Socket? = null,
+    private val warmControl: PgLifecycleDatabaseWarmControl?,
     private val register: (PgLifecycleDatabaseRelaySession, ByteArray) -> Unit,
 ) : AutoCloseable {
-    val state = PgLifecycleDatabaseRelayState(case, acceptedIndex)
+    /** Preserve both the original positional and trailing-lambda constructor calls. */
+    constructor(
+        client: Socket,
+        host: String,
+        port: Int,
+        case: PgLifecycleDatabaseCase,
+        acceptedIndex: Int? = null,
+        upstreamSocket: Socket? = null,
+        register: (PgLifecycleDatabaseRelaySession, ByteArray) -> Unit,
+    ) : this(client, host, port, case, acceptedIndex, upstreamSocket, null, register)
+
+    val state = PgLifecycleDatabaseRelayState(case, acceptedIndex, warmControl)
+
+    // Required Hibernate schema metadata gets a finite warm-only frame allowance; byte, per-frame and time caps are unchanged.
+    private val messageLimit = if (warmControl == null) 256 else 4_096
 
     // Only local capture controls supply an inert socket. The real relay constructs Socket at the original point.
     private val upstream = upstreamSocket ?: Socket()
@@ -102,11 +117,17 @@ internal class PgLifecycleDatabaseRelaySession(
         while (!state.fixtureClosing.get()) {
             val message = readClient(input) ?: return
             bytes += message.bytes.size + 5
-            check(++messages <= 256 && bytes <= 1_048_576)
-            PgLifecycleDatabaseWire.sqlFingerprint(message)?.let { fingerprint ->
-                check(state.statements.size < 4)
-                state.statements.add(fingerprint)
-                if (fingerprint === PgLifecycleDatabaseSql.ROLE) state.role.request(message)
+            if (warmControl != null) {
+                state.clientFramesRead.set(messages + 1)
+                state.clientFrameBytesRead.set(bytes)
+            }
+            check(++messages <= messageLimit && bytes <= 1_048_576)
+            if (warmControl == null) {
+                PgLifecycleDatabaseWire.sqlFingerprint(message)?.let { fingerprint ->
+                    check(state.statements.size < 4)
+                    state.statements.add(fingerprint)
+                    if (fingerprint === PgLifecycleDatabaseSql.ROLE) state.role.request(message)
+                }
             }
             if (message.type == 'X'.code) {
                 check(message.bytes.isEmpty() && state.frontendTerminate.compareAndSet(false, true))
@@ -171,15 +192,21 @@ internal class PgLifecycleDatabaseRelaySession(
                 return
             }
             bytes += message.bytes.size + 5
-            check(++messages <= 256 && bytes <= 1_048_576)
+            if (warmControl != null) {
+                state.serverFramesRead.set(messages + 1)
+                state.serverFrameBytesRead.set(bytes)
+            }
+            check(++messages <= messageLimit && bytes <= 1_048_576)
             val firstReady = message.type == 'Z'.code && state.gate.get() == null
             if (!beforeServerMessage(message)) return
-            if (firstReady) {
+            if (firstReady && warmControl == null) {
                 if (!forwardFirstReady(output, message)) return
             } else {
+                if (warmControl?.forward(state, message) == false) return
                 PgLifecycleDatabaseWire.write(output, message)
                 state.lastServerWriteNanos.set(System.nanoTime())
-                state.role.response(message) // Only a successfully forwarded complete role response earns its wire receipt.
+                if (firstReady) check(state.warmedReady.compareAndSet(false, true))
+                if (warmControl == null) state.role.response(message) // Only a complete forwarded role response earns its receipt.
             }
         }
     }
@@ -198,8 +225,11 @@ internal class PgLifecycleDatabaseRelaySession(
             'Z' -> if (state.gate.get() == null) {
                 check(message.bytes.contentEquals(byteArrayOf('I'.code.toByte())))
                 check(state.authentication == listOf(10, 11, 12, 0) && state.backendPid.get() > 0)
-                state.readyFault.observeReady(state.lastServerWriteNanos.get())
-                return state.hold(PgLifecycleDatabaseGate.AUTHENTICATED_READY)
+                if (warmControl == null) {
+                    state.readyFault.observeReady(state.lastServerWriteNanos.get())
+                    return state.hold(PgLifecycleDatabaseGate.AUTHENTICATED_READY)
+                }
+                check(state.gate.compareAndSet(null, PgLifecycleDatabaseGate.AUTHENTICATED_READY))
             }
 
             'E' -> {

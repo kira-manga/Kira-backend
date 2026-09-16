@@ -1,6 +1,7 @@
 package me.manga.kira.backend.config
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.common.web.RequestBodySizeLimitFilter
 import me.manga.kira.backend.common.web.RequestDiagnosticsFilter
 import me.manga.kira.backend.security.AuthenticatedMdcFilter
@@ -31,10 +32,17 @@ class WebDiagnosticsConfig {
     }
 
     @Bean
+    fun disabledComplaintRoutesFilter(): FilterRegistrationBean<DisabledComplaintRoutesFilter> = FilterRegistrationBean(DisabledComplaintRoutesFilter()).apply {
+        // Closed complaint composition: no body buffering, user JWT or user DB work on these routes.
+        order = Ordered.HIGHEST_PRECEDENCE + 1
+        addUrlPatterns("/*")
+    }
+
+    @Bean
     fun requestBodySizeLimitFilter(objectMapper: ObjectMapper): FilterRegistrationBean<RequestBodySizeLimitFilter> =
         FilterRegistrationBean(RequestBodySizeLimitFilter(objectMapper)).apply {
-            // Keep request-id/access logging outermost, then reject oversized bodies before security/MVC.
-            order = Ordered.HIGHEST_PRECEDENCE + 1
+            // Diagnostics and the closed complaint boundary precede body buffering; security/MVC stay downstream.
+            order = Ordered.HIGHEST_PRECEDENCE + 2
             addUrlPatterns("/*")
         }
 

@@ -1,17 +1,15 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.UnauthorizedException
-import me.manga.kira.backend.config.KiraAdminStudioProperties
-import me.manga.kira.backend.user.domain.Role
-import me.manga.kira.backend.user.domain.UserRepository
-import org.springframework.security.crypto.password.PasswordEncoder
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.security.SecureRandom
 import java.time.Clock
 import java.time.Instant
-import java.util.Base64
 import java.util.UUID
 
 /**
@@ -21,51 +19,33 @@ import java.util.UUID
  * hash. Proofs are scoped, short-lived, and atomically one-time-use.
  */
 @Service
-class AdminStepUpService(
-    private val users: UserRepository,
-    private val passwords: PasswordEncoder,
+class AdminStepUpService internal constructor(
+    private val issuer: ScopedAdminStepUpIssuer,
     private val grants: AdminStepUpGrantRepository,
-    private val throttle: AuthThrottle,
-    private val properties: KiraAdminStudioProperties,
     private val clock: Clock,
 ) {
-    @Transactional
+    // Deliberately no enclosing transaction: the existing named phases release every holder,
+    // lease and permit before password/throttle calls, then lock and recheck fresh Admin state.
+    @Suppress("SwallowedException") // The public problem must not expose a persistence failure graph.
     fun issue(userId: UUID, rawPassword: String, clientIp: String): IssuedAdminStepUp {
-        val user = users.findById(userId)
-        val identity = user?.email ?: userId.toString()
-        throttle.checkLoginAllowed(identity, clientIp)
-        val accepted =
-            user != null &&
-                user.enabled &&
-                user.role == Role.ADMIN &&
-                passwords.matches(rawPassword, user.passwordHash)
-        if (!accepted) {
-            throttle.recordLoginFailure(identity, clientIp)
-            throw UnauthorizedException(
-                "Password verification failed.",
-                code = "INVALID_STEP_UP_CREDENTIALS",
-            )
+        try {
+            val issued = issuer.issueSource(userId, rawPassword, clientIp)
+            return IssuedAdminStepUp(issued.token, issued.expiresAt)
+        } catch (_: PersistencePhaseException) {
+            // No proof, automatic retry or guessed rollback after an unresolved/unknown phase.
+            throw ServiceUnavailableException("Password verification is temporarily unavailable.", code = "ADMIN_STEP_UP_UNAVAILABLE")
         }
-        throttle.recordLoginSuccess(identity, clientIp)
-        val now = clock.instant()
-        val expiresAt = now.plus(properties.stepUpTtl)
-        val token = ByteArray(TOKEN_BYTES).also(random::nextBytes).let(encoder::encodeToString)
-        grants.deleteExpiredOrUsed(now)
-        grants.create(
-            NewAdminStepUpGrant(
-                id = UUID.randomUUID(),
-                userId = userId,
-                tokenHash = Sha256.hexUtf8(token),
-                scope = SOURCE_ADMIN_MUTATION_SCOPE,
-                createdAt = now,
-                expiresAt = expiresAt,
-            ),
-        )
-        return IssuedAdminStepUp(token, expiresAt)
     }
 
     @Transactional
     fun requireSourceMutation(userId: UUID, token: String?) {
+        // Ordinary source controllers may participate in their existing transaction. This
+        // standalone wrapper is never a consumer inside a counted complaint/short phase.
+        PersistencePhaseOwnership.current()?.let { phase ->
+            val refusal = PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            phase.recordFailure(refusal)
+            throw refusal
+        }
         val accepted =
             !token.isNullOrBlank() &&
                 token.length <= MAX_TOKEN_CHARS &&
@@ -86,11 +66,10 @@ class AdminStepUpService(
     companion object {
         const val SOURCE_ADMIN_MUTATION_SCOPE = "source-admin-mutation"
         const val HEADER = "X-Kira-Admin-Step-Up"
-        private const val TOKEN_BYTES = 32
         private const val MAX_TOKEN_CHARS = 128
-        private val random = SecureRandom()
-        private val encoder = Base64.getUrlEncoder().withoutPadding()
     }
 }
 
-data class IssuedAdminStepUp(val token: String, val expiresAt: Instant)
+class IssuedAdminStepUp(val token: String, val expiresAt: Instant) {
+    override fun toString(): String = "IssuedAdminStepUp(redacted)"
+}

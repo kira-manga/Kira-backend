@@ -8,7 +8,7 @@ internal class PersistenceJdbcPoolIdentity private constructor(private val bindi
     internal fun matches(candidate: PersistencePhysicalFactoryBinding?): Boolean = binding === candidate
 
     internal fun bind(owner: PoolLifecycle): Boolean {
-        if (!owner.isAuthenticPoolCaller()) return false
+        if (!owner.acceptsPoolIdentity(this) || !owner.isAuthenticPoolCaller()) return false
         return lifecycle.get() === owner || lifecycle.compareAndSet(null, owner)
     }
 

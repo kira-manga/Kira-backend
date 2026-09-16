@@ -20,6 +20,9 @@ internal object PersistenceManagedObserver {
                 val observed = when (target) {
                     PersistenceManagedObservation.ORDINARY -> root.preparationObservation(deleting = false)
                     PersistenceManagedObservation.DELETION -> root.preparationObservation(deleting = true)
+                    PersistenceManagedObservation.DELETION_SHUTDOWN -> root.deletionShutdownObservation()
+                    PersistenceManagedObservation.CATALOG_COORDINATOR -> root.catalogCoordinatorPreparationObservation()
+                    PersistenceManagedObservation.CATALOG_COORDINATOR_SHUTDOWN -> root.catalogCoordinatorShutdownObservation()
                     PersistenceManagedObservation.SHUTDOWN -> root.shutdownObservation()
                 }
                 if (persistenceFactoryRemainingMillis(budget) == 0L) return PersistenceLifecycleObservation.PENDING
@@ -45,6 +48,9 @@ internal object PersistenceManagedObserver {
 internal enum class PersistenceManagedObservation {
     ORDINARY,
     DELETION,
+    DELETION_SHUTDOWN,
+    CATALOG_COORDINATOR,
+    CATALOG_COORDINATOR_SHUTDOWN,
     SHUTDOWN,
 }
 
