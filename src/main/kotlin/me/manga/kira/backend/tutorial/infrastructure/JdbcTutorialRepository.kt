@@ -1,7 +1,5 @@
 package me.manga.kira.backend.tutorial.infrastructure
 
-import me.manga.kira.backend.config.KiraTutorialProperties
-import me.manga.kira.backend.tutorial.domain.MediaTransaction
 import me.manga.kira.backend.tutorial.domain.StoredCategory
 import me.manga.kira.backend.tutorial.domain.StoredMedia
 import me.manga.kira.backend.tutorial.domain.StoredRevision
@@ -10,10 +8,7 @@ import me.manga.kira.backend.tutorial.domain.TutorialLifecycle
 import me.manga.kira.backend.tutorial.domain.TutorialRepository
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
-import org.springframework.jdbc.datasource.ConnectionHolder
-import org.springframework.jdbc.datasource.DataSourceUtils
 import org.springframework.stereotype.Repository
-import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.ResultSet
 import java.time.Instant
 import java.time.OffsetDateTime
@@ -21,7 +16,7 @@ import java.time.ZoneOffset
 import java.util.UUID
 
 @Repository
-class JdbcTutorialRepository(private val jdbc: JdbcTemplate, private val properties: KiraTutorialProperties) : TutorialRepository {
+class JdbcTutorialRepository(private val jdbc: JdbcTemplate) : TutorialRepository {
     override fun tutorialCount(): Int = jdbc.queryForObject("SELECT count(*) FROM tutorials", Int::class.java) ?: 0
     override fun categoryCount(): Int = jdbc.queryForObject("SELECT count(*) FROM tutorial_categories", Int::class.java) ?: 0
 
@@ -260,37 +255,6 @@ class JdbcTutorialRepository(private val jdbc: JdbcTemplate, private val propert
 
     override fun findMedia(id: UUID): StoredMedia? = jdbc.query("SELECT * FROM tutorial_media WHERE id = ?", MEDIA_MAPPER, id).firstOrNull()
 
-    override fun acquireMediaLock(): MediaTransaction {
-        require(properties.mediaLockTimeoutMillis in 1L..30_000L) { "tutorial media lock timeout must be bounded" }
-        val original = mediaTransactionState()
-        jdbc.queryForObject(
-            "SELECT set_config('lock_timeout', ?, true)",
-            String::class.java,
-            "${properties.mediaLockTimeoutMillis}ms",
-        )
-        // Keep acquisition separate from every decision read: READ_COMMITTED takes a new snapshot
-        // only at the next statement, not when an advisory-lock function finishes waiting.
-        jdbc.query("SELECT pg_advisory_xact_lock(?, ?)", RowMapper { _, _ -> true }, MEDIA_LOCK_NAMESPACE, MEDIA_LOCK_KEY)
-        // A failed acquisition aborts the transaction; do not mask it with a second failing SQL.
-        // On success restore the caller's local setting immediately, not at pool/global scope.
-        jdbc.queryForObject("SELECT set_config('lock_timeout', ?, true)", String::class.java, original.lockTimeout)
-        verifyMediaLock(original.transaction)
-        return original.transaction
-    }
-
-    override fun verifyMediaLock(transaction: MediaTransaction) {
-        check(mediaTransactionState().transaction == transaction) { "tutorial media transaction identity changed" }
-        val held = jdbc.queryForObject(
-            "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND pid = pg_backend_pid() " +
-                "AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) " +
-                "AND classid = ?::oid AND objid = ?::oid AND objsubid = 2 AND granted AND mode = 'ExclusiveLock')",
-            Boolean::class.java,
-            MEDIA_LOCK_NAMESPACE,
-            MEDIA_LOCK_KEY,
-        )
-        check(held == true) { "tutorial media transaction lock is no longer held" }
-    }
-
     override fun findMedia(ids: Set<UUID>): List<StoredMedia> {
         if (ids.isEmpty()) return emptyList()
         val placeholders = ids.joinToString(",") { "?" }
@@ -298,17 +262,6 @@ class JdbcTutorialRepository(private val jdbc: JdbcTemplate, private val propert
     }
 
     override fun listMedia(): List<StoredMedia> = jdbc.query("SELECT * FROM tutorial_media ORDER BY created_at DESC, id", MEDIA_MAPPER)
-
-    override fun findMediaByChecksum(checksum: String): StoredMedia? = jdbc.query(
-        "SELECT * FROM tutorial_media WHERE sha256 = ? ORDER BY created_at DESC, id LIMIT 1",
-        MEDIA_MAPPER,
-        checksum,
-    ).firstOrNull()
-
-    override fun listMedia(limit: Int): List<StoredMedia> {
-        require(limit in 1..100_001)
-        return jdbc.query("SELECT * FROM tutorial_media ORDER BY created_at DESC, id LIMIT ?", MEDIA_MAPPER, limit)
-    }
 
     override fun mediaReferenceCount(id: UUID): Int = jdbc.queryForObject(
         "SELECT count(*) FROM tutorial_revision_media WHERE media_id = ?",
@@ -318,59 +271,9 @@ class JdbcTutorialRepository(private val jdbc: JdbcTemplate, private val propert
 
     override fun deleteMedia(id: UUID): Boolean = jdbc.update("DELETE FROM tutorial_media WHERE id = ?", id) == 1
 
-    override fun countInvalidPublishedTutorialReferences(): Int = jdbc.queryForObject(
-        "SELECT " +
-            "(SELECT count(*) FROM tutorial_categories WHERE status = 'PUBLISHED' AND published_revision_id IS NULL) + " +
-            "(SELECT count(*) FROM tutorials WHERE status = 'PUBLISHED' AND published_revision_id IS NULL) + " +
-            "(SELECT count(*) FROM tutorials t JOIN tutorial_revisions r ON r.id = t.published_revision_id " +
-            " JOIN tutorial_categories c ON c.id = r.category_id WHERE t.status = 'PUBLISHED' " +
-            " AND (c.status NOT IN ('PUBLISHED', 'ARCHIVED') OR c.published_revision_id IS NULL)) + " +
-            "(SELECT count(*) FROM tutorials t JOIN tutorial_revision_media rm ON rm.revision_id = t.published_revision_id " +
-            " JOIN tutorial_media m ON m.id = rm.media_id WHERE t.status = 'PUBLISHED' AND NOT m.published)",
-        Int::class.java,
-    ) ?: 0
-
-    private fun mediaTransactionState(): MediaTransactionState {
-        check(TransactionSynchronizationManager.isActualTransactionActive() && TransactionSynchronizationManager.isSynchronizationActive()) {
-            "tutorial media requires an active physical transaction"
-        }
-        check(!TransactionSynchronizationManager.isCurrentTransactionReadOnly()) { "tutorial media requires a writable transaction" }
-        val dataSource = checkNotNull(jdbc.dataSource)
-        // Never get a new connection in order to pass this check. JpaTransactionManager must have
-        // exposed its JDBC connection under the SAME DataSource used by this JdbcTemplate.
-        val holder = TransactionSynchronizationManager.getResource(dataSource) as? ConnectionHolder
-            ?: error("tutorial media requires the transaction-bound JDBC connection")
-        val connection = holder.connection
-        check(!connection.isClosed && !connection.autoCommit && DataSourceUtils.isConnectionTransactional(connection, dataSource)) {
-            "tutorial media requires the transaction-bound writable JDBC connection"
-        }
-        val state = checkNotNull(
-            jdbc.queryForObject(
-                "SELECT pg_backend_pid(), txid_current(), current_setting('transaction_isolation'), " +
-                    "current_setting('transaction_read_only'), current_setting('lock_timeout')",
-                RowMapper { rs, _ ->
-                    check(rs.getString(3) == "read committed" && rs.getString(4) == "off") {
-                        "tutorial media requires effective writable READ_COMMITTED isolation"
-                    }
-                    MediaTransactionState(MediaTransaction(rs.getInt(1), rs.getLong(2)), rs.getString(5))
-                },
-            ),
-        )
-        check(TransactionSynchronizationManager.getResource(dataSource) === holder && holder.connection === connection && !connection.autoCommit) {
-            "tutorial media JDBC connection changed"
-        }
-        return state
-    }
-
-    private data class MediaTransactionState(val transaction: MediaTransaction, val lockTimeout: String)
-
     private fun at(value: Instant): OffsetDateTime = OffsetDateTime.ofInstant(value, ZoneOffset.UTC)
 
     companion object {
-        // PostgreSQL's two-int advisory namespace: ASCII KIRA / TMED. Every cooperating media
-        // writer takes this transaction-scoped key BEFORE tutorial/category row or table locks.
-        private const val MEDIA_LOCK_NAMESPACE = 0x4b495241
-        private const val MEDIA_LOCK_KEY = 0x544d4544
         private val CATEGORY_MAPPER = RowMapper { rs: ResultSet, _: Int ->
             StoredCategory(
                 rs.uuid("id"),

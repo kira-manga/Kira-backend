@@ -4,8 +4,8 @@ import java.time.Instant
 import java.util.UUID
 
 interface AdminStepUpGrantRepository {
-    /** Bound storage by removing proofs that can no longer be accepted. */
-    fun deleteExpiredOrUsed(at: Instant)
+    /** Remove at most 50 expired/used source proofs; complaint grants require their counted cleanup. */
+    fun deleteEligibleSourceGrants(at: Instant): Int
 
     fun create(grant: NewAdminStepUpGrant)
 

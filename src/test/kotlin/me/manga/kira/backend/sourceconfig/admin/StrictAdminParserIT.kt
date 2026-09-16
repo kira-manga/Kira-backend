@@ -63,7 +63,6 @@ class StrictAdminParserIT : AbstractAdminSourceIT() {
 
     @Test
     fun `the compatibility import parser accepts an unknown field and surfaces a warning`() {
-        bootstrapInitialCatalog()
         // A complete, valid generic stanza carrying the unknown typo key — imports fine, but visibly.
         val docWithUnknownKey =
             """
@@ -89,7 +88,6 @@ class StrictAdminParserIT : AbstractAdminSourceIT() {
 
     @Test
     fun `the compatibility import parser rejects genuinely malformed json`() {
-        bootstrapInitialCatalog()
         importBundled("{ not json").andExpect { status { isBadRequest() } }
     }
 }

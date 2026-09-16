@@ -1,0 +1,475 @@
+package me.manga.kira.backend.common.infrastructure.persistence
+
+import jakarta.persistence.EntityManagerFactory
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
+import org.springframework.transaction.PlatformTransactionManager
+import org.springframework.transaction.TransactionDefinition
+import org.springframework.transaction.TransactionStatus
+import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicReferenceArray
+import java.util.concurrent.locks.ReentrantLock
+
+/** Dormant closed resource composition of existing permit budgets, never another pool/physical owner. */
+internal class PersistencePhaseOwnership private constructor(
+    private val selection: Selection,
+    internal val nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+) {
+    constructor(
+        admission: OrdinaryPersistenceAdmission,
+        manager: GuardedJpaTransactionManager,
+        otherManager: GuardedJdbcTransactionManager? = null,
+        nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+    ) : this(Selection.Ordinary(admission, manager, otherManager), nanoClock)
+
+    internal val manager: PlatformTransactionManager get() = selection.manager
+    internal val dataSource: GuardedDataSource get() = selection.dataSource
+    internal val entityManagerFactory: EntityManagerFactory? get() = (selection as? Selection.Ordinary)?.manager?.entityManagerFactory
+    internal val otherManager: GuardedJdbcTransactionManager? get() = (selection as? Selection.Ordinary)?.otherManager
+    internal val installationSessionIdentity = Any() // Bounded continuation identity, not a retained phase/resource or admission grant.
+    private val admissionCut = ReentrantLock()
+
+    // Exactly the existing bounded permits. Resolved slots are removed, never kept as a history.
+    private val phases = AtomicReferenceArray<PersistencePhaseContext?>(selection.ownerLimit)
+
+    init {
+        selection.requireResources()
+        selection.bind(this)
+    }
+
+    internal fun enterSourceGrantCleanup(): PersistencePhaseContext = enter(PersistencePhasePath.SOURCE_GRANT_CLEANUP)
+
+    internal fun enterComplaintGrantCleanup(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_GRANT_CLEANUP)
+
+    internal fun enterSourceStepUpSnapshot(): PersistencePhaseContext = enter(PersistencePhasePath.SOURCE_STEP_UP_SNAPSHOT)
+
+    internal fun enterComplaintStepUpSnapshot(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT)
+
+    internal fun enterSourceStepUpIssuance(): PersistencePhaseContext = enter(PersistencePhasePath.SOURCE_STEP_UP_ISSUANCE)
+
+    internal fun enterComplaintStepUpIssuance(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE)
+
+    /** Infrastructure composition only; no production receipt, abuse-admission or domain writer is provided here. */
+    internal fun enterComplaintAdminAudit(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_AUDIT)
+
+    /** Existing deletion holder only; receipt-before-grant and W04 domain authority remain unavailable. */
+    internal fun enterComplaintDeletionAdminAudit(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT)
+
+    /** Dormant accounting composition only; no production policy/event/unused-work authority. */
+    internal fun enterComplaintRecoverySettlement(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT)
+
+    /** Dormant ACTIVE-run spending only; no production allocation or terminal/catalog authority. */
+    internal fun enterComplaintTestReserveSpend(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND)
+
+    /** Dormant LIVE-only paired enrollment; authenticated runtime mode/configuration remains separate. */
+    internal fun enterComplaintInstallationEnrollment(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT)
+
+    /** Separate dormant comparison/refresh phases. No request admission is inferred between them. */
+    internal fun enterComplaintInstallationSessionPreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT)
+
+    internal fun enterComplaintInstallationSessionRefresh(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH)
+
+    /** Read-only diagnostics, never current-mode, catalog, restore or TEST admission authority. */
+    internal fun enterComplaintInstallationCurrentState(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
+
+    /** Lower dormant mutation composition only; W04 fence/control/publication and provenance authority are unavailable. */
+    internal fun enterComplaintDeletionMutation(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_DELETION_MUTATION)
+
+    /** Fence-only dormant prefix; it supplies no controls, receipt, writer authority or domain operation. */
+    internal fun enterComplaintDeletionFencePrefix(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX)
+
+    /** Locked observations only. Syntactic scope is not run membership or authenticated writer/catalog authority. */
+    internal fun enterComplaintDeletionControlSnapshot(scope: ComplaintDataScope): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT, scope)
+
+    /** One read-only coordinator phase. Its observations confer neither catalog mutation nor complaint admission. */
+    internal fun enterComplaintCatalogSnapshot(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT)
+
+    /** Dedicated fenced G1 write phases, sharing the snapshot coordinator's one existing slot. */
+    internal fun enterComplaintCatalogGenesisPrepare(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE)
+
+    internal fun enterComplaintCatalogGenesisSignature(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE)
+
+    internal fun enterComplaintCatalogGenesisComplete(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE)
+
+    internal fun enterComplaintCatalogGenesisProject(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT)
+
+    // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
+    @Suppress("ThrowsCount", "TooGenericExceptionCaught")
+    private fun enter(path: PersistencePhasePath, deletionScope: ComplaintDataScope? = null): PersistencePhaseContext {
+        try {
+            requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
+        } catch (failure: Throwable) {
+            current.get()?.recordNestedEntryFailure(path, failure)
+            throw failure
+        }
+        selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
+        // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
+        val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
+        val caller = PersistenceOwnedFactoryCaller.capture()
+        if (caller.sampleOutsideLocks() != null) {
+            caller.restoreAfterFailure()
+            throw PersistencePhaseException(PersistencePhaseFailureCode.INTERRUPTED)
+        }
+        if (!admissionCut.tryLock()) throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+        var phase: PersistencePhaseContext? = null
+        try {
+            if ((0 until phases.length()).any { phases.get(it)?.blocksEntry(path) == true }) {
+                throw PersistencePhaseException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
+            }
+            val slot = (0 until phases.length()).firstOrNull { phases.get(it) == null }
+                ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            val prepared = PersistencePhaseContext(this, slot, caller, path, deletionScope, enrollmentOwnerReference)
+            phase = prepared
+            check(phases.compareAndSet(slot, null, prepared))
+            current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
+            if (!path.source) prepared.reserveComplaintClaim()
+            prepared.retainEntryPermit(selection.acquire(path) ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED))
+            prepared.publishEntry()
+            return prepared
+        } catch (failure: Throwable) {
+            try {
+                phase?.entryPublicationFailed()
+            } catch (_: Throwable) {
+                throw PersistencePhaseException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED, cleanupProven = false)
+            }
+            // Only the genuinely unused entry was cleaned here; preserve an already bounded reason.
+            throw failure as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+        } finally {
+            admissionCut.unlock()
+        }
+    }
+
+    internal fun detach(phase: PersistencePhaseContext, slot: Int) {
+        check(phases.compareAndSet(slot, phase, null)) // A late old completion cannot erase a new permit.
+    }
+
+    internal fun clearCaller(phase: PersistencePhaseContext) {
+        check(current.get() === phase)
+        current.remove()
+    }
+
+    internal fun retainCallerForRecovery(phase: PersistencePhaseContext) {
+        check(current.get() == null || current.get() === phase)
+        current.set(phase)
+    }
+
+    override fun toString(): String = "PersistencePhaseOwnership(redacted)"
+
+    /** Private closed composition, not caller-selected resource/lock flags or an alternate finalizer. */
+    private sealed interface Selection {
+        val manager: PlatformTransactionManager
+        val dataSource: GuardedDataSource
+        val ownerLimit: Int
+        fun bind(owner: PersistencePhaseOwnership)
+        fun requireResources()
+        fun acquire(path: PersistencePhasePath): LocalPersistencePermit?
+
+        class Ordinary(
+            private val admission: OrdinaryPersistenceAdmission,
+            override val manager: GuardedJpaTransactionManager,
+            val otherManager: GuardedJdbcTransactionManager?,
+        ) : Selection {
+            override val dataSource: GuardedDataSource get() = manager.dataSource
+            override val ownerLimit: Int get() = admission.ownerLimit
+            override fun bind(owner: PersistencePhaseOwnership) = manager.bindPhaseOwner(owner)
+
+            override fun requireResources() {
+                dataSource.requireOrdinaryPhaseResource()
+                manager.requireResourcePair()
+            }
+
+            override fun acquire(path: PersistencePhasePath): LocalPersistencePermit? = when (path) {
+                PersistencePhasePath.SOURCE_GRANT_CLEANUP,
+                PersistencePhasePath.SOURCE_STEP_UP_SNAPSHOT,
+                PersistencePhasePath.SOURCE_STEP_UP_ISSUANCE,
+                -> admission.trySourceBoundary()
+
+                PersistencePhasePath.COMPLAINT_GRANT_CLEANUP,
+                PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT,
+                PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE,
+                PersistencePhasePath.COMPLAINT_ADMIN_AUDIT,
+                PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT,
+                PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
+                -> admission.tryComplaintBoundary()
+
+                PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
+                PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
+                PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
+                PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
+                PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+                PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+                PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+                PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+                PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+                -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+        }
+
+        class Deletion(private val admission: DeletionPersistenceAdmission, override val manager: GuardedJdbcTransactionManager) : Selection {
+            override val dataSource: GuardedDataSource get() = manager.dataSource
+            override val ownerLimit: Int get() = admission.ownerLimit
+            override fun bind(owner: PersistencePhaseOwnership) = manager.bindPhaseOwner(owner)
+            override fun requireResources() = dataSource.requireDeletionPhaseResource()
+
+            override fun acquire(path: PersistencePhasePath): LocalPersistencePermit? {
+                if (path !in DELETION_PATHS) {
+                    throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                }
+                return admission.tryRoutineDeletion()
+            }
+        }
+
+        class CatalogCoordinator(private val resources: CatalogCoordinatorPersistence) : Selection {
+            override val dataSource: GuardedDataSource get() = resources.dataSource
+            override val manager: GuardedJdbcTransactionManager get() = resources.manager
+            override val ownerLimit: Int get() = 1
+            override fun bind(owner: PersistencePhaseOwnership) = manager.bindPhaseOwner(owner)
+            override fun requireResources() = resources.requireResources()
+
+            override fun acquire(path: PersistencePhasePath): LocalPersistencePermit? {
+                if (path !in CATALOG_PATHS) {
+                    throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                }
+                return resources.tryPhaseAdmission()
+            }
+        }
+    }
+
+    companion object {
+        private val CATALOG_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+        )
+        private val DELETION_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
+            PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
+            PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
+            PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
+        )
+        private val current = ThreadLocal<PersistencePhaseContext?>()
+        private val loans = ThreadLocal<PersistenceLeaseCompletion?>()
+
+        internal fun deletion(
+            admission: DeletionPersistenceAdmission,
+            manager: GuardedJdbcTransactionManager,
+            nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+        ): PersistencePhaseOwnership = PersistencePhaseOwnership(Selection.Deletion(admission, manager), nanoClock)
+
+        internal fun catalogCoordinator(
+            resources: CatalogCoordinatorPersistence,
+            nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+        ): PersistencePhaseOwnership = PersistencePhaseOwnership(Selection.CatalogCoordinator(resources), nanoClock)
+
+        internal fun current(): PersistencePhaseContext? = current.get()
+
+        internal fun prepareAcquisition(dataSource: GuardedDataSource, acquisition: PoolLifecycle.Acquisition): PersistenceLeaseCompletion {
+            val phase = current.get()
+            phase?.authorizeAcquisition(dataSource)
+            val completion = PersistenceLeaseCompletion.prepare(dataSource, acquisition, phase)
+            completion.nextOutstanding = loans.get()
+            loans.set(completion) // Retained before acquisition.enter(), Hikari or any lazy-manager callback.
+            phase?.retainAcquisition(completion)
+            return completion
+        }
+
+        /** Prunes only exact ended identities. No resource lookup, counts, close retry or remote callback. */
+        internal fun reconcileLoans() {
+            var selected = loans.get()
+            var previous: PersistenceLeaseCompletion? = null
+            while (selected != null) {
+                val next = selected.nextOutstanding
+                if (selected.quiescent()) {
+                    if (previous == null) {
+                        if (next == null) loans.remove() else loans.set(next)
+                    } else {
+                        previous.nextOutstanding = next
+                    }
+                    selected.nextOutstanding = null
+                } else {
+                    previous = selected
+                }
+                selected = next
+            }
+        }
+
+        internal fun connectionFree() {
+            current.get()?.reconcileQuarantine()
+            reconcileLoans()
+            val callerRetainsPersistence = current.get() != null || loans.get() != null || LocalPersistencePermit.callerHasOutstandingPermit()
+            if (callerRetainsPersistence || !springConnectionFree()) {
+                throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            }
+        }
+
+        internal fun springConnectionFree(): Boolean = !TransactionSynchronizationManager.isActualTransactionActive() &&
+            !TransactionSynchronizationManager.isSynchronizationActive() && TransactionSynchronizationManager.getResourceMap().isEmpty()
+    }
+}
+
+/** Necessary gate only; its existence does not certify any unwritten password/network caller. */
+internal fun requireConnectionFree() = PersistencePhaseOwnership.connectionFree()
+
+/** Only named entry methods select a path; no caller resource, SQL, callback or transaction flag. */
+internal enum class PersistencePhasePath {
+    SOURCE_GRANT_CLEANUP,
+    COMPLAINT_GRANT_CLEANUP,
+    SOURCE_STEP_UP_SNAPSHOT,
+    COMPLAINT_STEP_UP_SNAPSHOT,
+    SOURCE_STEP_UP_ISSUANCE,
+    COMPLAINT_STEP_UP_ISSUANCE,
+    COMPLAINT_ADMIN_AUDIT,
+    COMPLAINT_DELETION_ADMIN_AUDIT,
+    COMPLAINT_RECOVERY_SETTLEMENT,
+    COMPLAINT_TEST_RESERVE_SPEND,
+    COMPLAINT_INSTALLATION_ENROLLMENT,
+    COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+    COMPLAINT_INSTALLATION_SESSION_REFRESH,
+    COMPLAINT_INSTALLATION_CURRENT_STATE,
+    COMPLAINT_DELETION_MUTATION,
+    COMPLAINT_DELETION_FENCE_PREFIX,
+    COMPLAINT_DELETION_CONTROL_SNAPSHOT,
+    COMPLAINT_CATALOG_SNAPSHOT,
+    COMPLAINT_CATALOG_GENESIS_PREPARE,
+    COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+    COMPLAINT_CATALOG_GENESIS_COMPLETE,
+    COMPLAINT_CATALOG_GENESIS_PROJECT,
+    ;
+
+    internal val source: Boolean
+        get() = this === SOURCE_GRANT_CLEANUP || this === SOURCE_STEP_UP_SNAPSHOT || this === SOURCE_STEP_UP_ISSUANCE
+}
+
+/** Bounded, value-free result. A DB fact is deliberately separate from local cleanup/refund. */
+internal class PersistencePhaseException(
+    val code: PersistencePhaseFailureCode,
+    val databaseOutcome: PersistenceDatabaseOutcome = PersistenceDatabaseOutcome.NONE,
+    val cleanupProven: Boolean = true,
+) : RuntimeException("Persistence phase refused.", null, false, false)
+
+internal enum class PersistencePhaseFailureCode {
+    ENTRY_REFUSED,
+    MANAGER_REFUSED,
+    RESOURCE_REFUSED,
+    TIME_BUDGET_EXHAUSTED,
+    INTERRUPTED,
+    WORK_FAILED,
+    COMPLETION_FAILED,
+    CLEANUP_UNRESOLVED,
+}
+
+/** Public Spring dispatch is guarded by composition: APTM's final methods cannot be overridden. */
+internal class PersistenceManagerDispatch(private val identity: PlatformTransactionManager, private val delegate: PlatformTransactionManager) {
+    // Any scoped begin/validation failure belongs to this retained status; unscoped failures are rethrown unchanged.
+    @Suppress("TooGenericExceptionCaught")
+    fun getTransaction(definition: TransactionDefinition?): TransactionStatus {
+        val phase = PersistencePhaseOwnership.current()
+        val root = phase?.beforeGetTransaction(identity, definition) == true
+        val status = PersistenceManagedStatus(identity, phase, root)
+        phase?.prepareStatus(status)
+        try {
+            status.attach(delegate.getTransaction(definition)) // Retain the returned status before validation/allocation.
+            phase?.statusReturned(status)
+            return status
+        } catch (failure: Throwable) {
+            if (phase == null) throw failure
+            phase.managerFailure(failure)
+            throw phase.failureException(PersistencePhaseFailureCode.COMPLETION_FAILED)
+        } finally {
+            phase?.getTransactionEnded(status)
+        }
+    }
+
+    // Retain scoped failure/interrupt state before the dispatch finally; never replace the separately observed DB outcome.
+    @Suppress("TooGenericExceptionCaught")
+    fun complete(candidate: TransactionStatus, commit: Boolean) {
+        val status = candidate as? PersistenceManagedStatus ?: throw PersistencePhaseException(PersistencePhaseFailureCode.MANAGER_REFUSED)
+        status.requireOwner(identity)
+        val phase = status.phase
+        phase?.beforeCompletion(identity, status, commit)
+        try {
+            if (commit) delegate.commit(status.native()) else delegate.rollback(status.native())
+        } catch (failure: Throwable) {
+            if (phase == null) throw failure
+            phase.managerFailure(failure)
+            throw phase.failureException(PersistencePhaseFailureCode.COMPLETION_FAILED)
+        } finally {
+            phase?.completionDispatchEnded(status)
+        }
+    }
+}
+
+/** A status cannot carry another manager's delegate, escape its original owner, or mint scoped savepoints. */
+internal class PersistenceManagedStatus(
+    private val manager: PlatformTransactionManager,
+    internal val phase: PersistencePhaseContext?,
+    internal val root: Boolean,
+) : TransactionStatus {
+    private val caller = Thread.currentThread()
+    private var value: TransactionStatus? = null
+
+    internal fun attach(status: TransactionStatus) {
+        check(value == null)
+        value = status
+    }
+
+    internal fun hasReturnedStatus(): Boolean = value != null
+    internal fun native(): TransactionStatus = requireNotNull(value)
+
+    internal fun requireOwner(expected: PlatformTransactionManager = manager) {
+        if (expected !== manager || caller !== Thread.currentThread() || phase !== PersistencePhaseOwnership.current()) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.MANAGER_REFUSED)
+        }
+    }
+
+    override fun isNewTransaction(): Boolean = native().isNewTransaction
+    override fun getTransactionName(): String = native().transactionName
+    override fun hasTransaction(): Boolean = native().hasTransaction()
+    override fun isNested(): Boolean = native().isNested
+    override fun isReadOnly(): Boolean = native().isReadOnly
+    override fun hasSavepoint(): Boolean = native().hasSavepoint()
+    override fun isRollbackOnly(): Boolean = native().isRollbackOnly
+    override fun isCompleted(): Boolean = native().isCompleted
+
+    override fun setRollbackOnly() {
+        requireOwner()
+        phase?.requireParticipation()
+        native().setRollbackOnly()
+    }
+
+    override fun flush() {
+        requireOwner()
+        phase?.requireParticipation()
+        native().flush()
+    }
+
+    override fun createSavepoint(): Any {
+        requireUnscopedSavepoint()
+        return native().createSavepoint()
+    }
+
+    override fun rollbackToSavepoint(savepoint: Any) {
+        requireUnscopedSavepoint()
+        native().rollbackToSavepoint(savepoint)
+    }
+
+    override fun releaseSavepoint(savepoint: Any) {
+        requireUnscopedSavepoint()
+        native().releaseSavepoint(savepoint)
+    }
+
+    private fun requireUnscopedSavepoint() {
+        requireOwner()
+        if (phase != null) throw phase.failureException(PersistencePhaseFailureCode.MANAGER_REFUSED)
+    }
+
+    override fun toString(): String = "PersistenceManagedStatus(redacted)"
+}

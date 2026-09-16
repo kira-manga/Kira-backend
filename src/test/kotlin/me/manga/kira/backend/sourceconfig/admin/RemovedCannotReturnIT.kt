@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test
  * Phase 8.)
  */
 class RemovedCannotReturnIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `a removed source refuses every transition and never reappears`() {
@@ -35,6 +34,6 @@ class RemovedCannotReturnIT : AbstractAdminSourceIT() {
         val laterDoc = docRevisionOf(publish("Other", 1).andExpect { status { isOk() } })
         val document = servedDocument(laterDoc)
         assertNull(document.sources.firstOrNull { it.api == api }, "a removed stanza must never reappear")
-        assertEquals(initialGenericApis + "Other", document.sources.map { it.api })
+        assertEquals(listOf("Other"), document.sources.map { it.api })
     }
 }

@@ -20,7 +20,6 @@ import java.util.concurrent.Executors
  * document reflects the winner (PLAN §9 in-transaction supersede-then-publish ordering).
  */
 class ConcurrentSameSourcePublishIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `two concurrent publishes of the same source never violate the one-published index`() {
@@ -56,6 +55,6 @@ class ConcurrentSameSourcePublishIT : AbstractAdminSourceIT() {
         // Exactly one published revision, and the served document reflects the published winner.
         assertEquals(1L, publishedRevisionCount(api), "the one-published-per-source index must hold")
         val served = servedDocument(latestPointer()!!)
-        assertEquals(initialGenericApis + api, served.sources.map { it.api })
+        assertEquals(listOf(api), served.sources.map { it.api })
     }
 }

@@ -1,0 +1,23 @@
+{
+  "commit": "ed184165ebd3ee7f0d1db533cc40ca5a0868fdda",
+  "modules": [
+    "source-contract",
+    "source-engine"
+  ],
+  "protected_sha256": {
+    "build.gradle.kts": "609cef402ddba6ebf083cd3cbbc89c202171a4dd3749fece8bcd46cf3abe5b28",
+    "gradle/libs.versions.toml": "cebe923affad01ff26806e9dad867d69d155e0bc67afc3466e9ac293116bad5b",
+    "gradle/wrapper/gradle-wrapper.jar": "9687bf4e8beb2c293cfd1393cbf2854ef68f921757302116033f476289abf7b0",
+    "gradle/wrapper/gradle-wrapper.properties": "1d126b2f29d1a87825e57ae7a7a1b1cc06f8dcbc89dd614dc6a5b493244ba2cc",
+    "settings.gradle.kts": "314080eaa2dbc822fe3cce39b5e86c4412f5b3f373b0f970959958221768b6a9",
+    "source-contract/build.gradle.kts": "28f5ee3121fc228093bc316d7d517ebfca861e7a956bb4eee99f37eed31c9334",
+    "source-engine/build.gradle.kts": "f134f850e25b2508c9914c04f5f7e1917c546c667467969c01b21c8497a952a4",
+    "source-testkit/build.gradle.kts": "2a7c1aca30b226c7e9481c2489768b9618fcfb19cffc64eb38b4d72c6b1ba9cb"
+  },
+  "repository": "kira-manga/kira-source-engine",
+  "scope": "Four ordinary KMP root/JVM file-Maven publications built from exact source; no remote or platform publication.",
+  "tree": "14e46a1ead24b5757d612fd55031e440f5304661",
+  "version": "0.1.0",
+  "wrapper_provenance_limitation": "The pinned source wrapper does not commit distributionSha256Sum. No released-binary or reproducible-toolchain claim.",
+  "wrapper_version": "9.6.1"
+}

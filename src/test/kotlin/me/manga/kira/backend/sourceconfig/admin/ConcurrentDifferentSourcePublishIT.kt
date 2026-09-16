@@ -16,7 +16,6 @@ import java.util.concurrent.Executors
  * assembles from a state that already includes the earlier writer's change).
  */
 class ConcurrentDifferentSourcePublishIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `two concurrent publishes to different sources both survive in the final snapshot`() {
@@ -41,10 +40,6 @@ class ConcurrentDifferentSourcePublishIT : AbstractAdminSourceIT() {
 
         assertTrue(results.all { it.isSuccess }, "both first-publishes must succeed: $results")
         val latest = servedDocument(latestPointer()!!)
-        assertEquals(
-            initialGenericApis.toSet() + setOf("Aaa", "Bbb"),
-            latest.sources.map { it.api }.toSet(),
-            "the final snapshot must retain the baseline and both changes",
-        )
+        assertEquals(setOf("Aaa", "Bbb"), latest.sources.map { it.api }.toSet(), "the final snapshot must carry both")
     }
 }

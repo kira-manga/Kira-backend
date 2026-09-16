@@ -1,0 +1,135 @@
+{
+  "schema": 1,
+  "scope": "Fresh public-source, run-owned verification publication; not a production release.",
+  "upstream": {
+    "commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+    "archive_url": "https://codeload.github.com/pgjdbc/pgjdbc/tar.gz/77df98e4e66c12936ded3478a0954f6f580bad99",
+    "archive_sha256": "615e15e573ba34241ad6fe395a0148e2c4d529ece9738814bc22e8b0dad57d7e",
+    "archive_bytes": 2378289,
+    "files": 1012
+  },
+  "archive_root": "pgjdbc-77df98e4e66c12936ded3478a0954f6f580bad99",
+  "patched_files": 1018,
+  "vendor_files": {
+    "series": {
+      "sha256": "1393575be71f675b24ef0c9856631cd6bd86ddae9c75991363defb9c1a833f69",
+      "bytes": 224
+    },
+    "0001-native-owned-cut.patch": {
+      "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b",
+      "bytes": 105172
+    },
+    "0002-native-lifetime-correction.patch": {
+      "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9",
+      "bytes": 4616
+    },
+    "0003-native-owned-cut-regressions.patch": {
+      "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
+      "bytes": 75780
+    },
+    "0004-native-annotation-correction.patch": {
+      "sha256": "c40a13d18f0598e10ce44b964aba932430c416861e9f5ec8dc5b209abae1d231",
+      "bytes": 561
+    },
+    "0005-native-retention-getter-corrections.patch": {
+      "sha256": "148c46711689a27c5e1a2a9cb42c081d823eb93347d610806b81475695f98f05",
+      "bytes": 69947
+    },
+    "0006-private-publication.patch": {
+      "sha256": "bd1b4f6848ffb3f43a57f8f29a7181bf8feaecf52825e0112307c07314f2e9bf",
+      "bytes": 6084
+    },
+    "LICENSE.pgjdbc": {
+      "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53",
+      "bytes": 1321
+    }
+  },
+  "series": [
+    "0001-native-owned-cut.patch",
+    "0002-native-lifetime-correction.patch",
+    "0003-native-owned-cut-regressions.patch",
+    "0004-native-annotation-correction.patch",
+    "0005-native-retention-getter-corrections.patch",
+    "0006-private-publication.patch"
+  ],
+  "postimages": {
+    "pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java": {
+      "sha256": "65dd03dc64269a1c30a9948265f3041808f36458ad1f8157c6c7c65033f7ed9d",
+      "bytes": 64286
+    },
+    "pgjdbc/src/main/java/org/postgresql/core/v3/KiraOwnedParameterBridge.java": {
+      "sha256": "1dcfebd88907b3a1d546f45f93993025d53e3f2ecdcafa9f9df5a6b43e041cf0",
+      "bytes": 8589
+    },
+    "pgjdbc/src/main/java/org/postgresql/jdbc/PgConnection.java": {
+      "sha256": "486aba8d77f3a38b9b0b16540bf7f62010c438803bf4cc426e05bbb5c3528114",
+      "bytes": 67237
+    },
+    "pgjdbc/src/main/java/org/postgresql/jdbc/PgStatement.java": {
+      "sha256": "4aa88581e14fdb6e3691174db1200d4cd102bdc226d33440ebcb6cba08006379",
+      "bytes": 47429
+    },
+    "pgjdbc/src/main/java/org/postgresql/jdbc/PgPreparedStatement.java": {
+      "sha256": "f11e047549389f54f7841fbe5370545eac88cae169be8d332737085dd8ba9cb8",
+      "bytes": 65038
+    },
+    "pgjdbc/src/main/java/org/postgresql/jdbc/PgResultSet.java": {
+      "sha256": "c277dd11fb7617986ec4179d6cafc76cbe2658c76b67f40803ca6e849c964768",
+      "bytes": 147057
+    },
+    "pgjdbc/src/main/java/org/postgresql/core/v3/SimpleParameterList.java": {
+      "sha256": "27cfb57d5c15b88bdf8651a72afeb00c40cdd2e23dd430904bf4f15b3d53076d",
+      "bytes": 20698
+    },
+    "pgjdbc/src/main/java/org/postgresql/core/v3/CompositeParameterList.java": {
+      "sha256": "c079613468dcbc2a42014a7ffe48e06a5c6fad7b7d0555f0c9727202b8bf67a6",
+      "bytes": 6671
+    },
+    "pgjdbc/src/main/java/org/postgresql/jdbc/TypeInfoCache.java": {
+      "sha256": "f48e1f51d2d353adb5ac59b70c8056e9da18bde4eb96e98fd7c691051b06beca",
+      "bytes": 40170
+    },
+    "pgjdbc/build.gradle.kts": {
+      "sha256": "23c0d743d465732ec70ad6ca75a28356aa558730365ad0d1b8dcb01642c77cbc",
+      "bytes": 20310
+    },
+    "build.gradle.kts": {
+      "sha256": "3ae30fb2a5098c51ce5eaf8eb29b7aea161277b7a0e474b11b2b97e9d9c9a9a6",
+      "bytes": 2756
+    },
+    "pgjdbc/src/test/java/org/postgresql/core/v3/KiraOwnedParameterBridgeTest.java": {
+      "sha256": "79d25dbee07e20d785d8d54be2a0bf6a79f5b66e87fba82427304eb36d59fe55",
+      "bytes": 6337
+    },
+    "pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutBatchTest.java": {
+      "sha256": "bb30acf058ae10f88e8f20bb753a202a288e31c33a6df619f31269a41064491e",
+      "bytes": 18053
+    },
+    "pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java": {
+      "sha256": "3e3b00b1275151e1d44536c6496fbec1dbcbd3a9c6ffa5ddb6c2c89c4607e168",
+      "bytes": 38435
+    },
+    "pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java": {
+      "sha256": "d8f8ba511272279f05c785beac89238836cb96f1bb374bcff17a73bbabb0242b",
+      "bytes": 52877
+    }
+  },
+  "wrapper": {
+    "version": "9.4.1",
+    "distribution_sha256": "2ab2958f2a1e51120c326cad6f385153bb11ee93b3c216c5fccebfdfbb7ec6cb",
+    "files": {
+      "gradlew": "aed171fb114f82e6eaea4970a245a200e0582a7dcc8ec0891ca41b6e4a62b754",
+      "gradle/wrapper/gradle-wrapper.jar": "55243ef57851f12b070ad14f7f5bb8302daceeebc5bce5ece5fa6edb23e1145c",
+      "gradle/wrapper/gradle-wrapper.properties": "032a71c92fc7f3c1cadf8880f0554b71aa6beb411f97ac253aa93932cb3784d5"
+    }
+  },
+  "checker": {
+    "gav": "org.checkerframework:checker-qual:3.55.1",
+    "sha256": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288"
+  },
+  "publication": {
+    "gav": "me.manga.kira.internal:postgresql-owned-cut:42.7.12-kira.1",
+    "task": ":postgresql:publishKiraOwnedCutPublicationToKiraOwnedPgVerificationRepository",
+    "qualification": "UNQUALIFIED_RUN_OWNED_VERIFICATION"
+  }
+}

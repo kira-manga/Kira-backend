@@ -1,0 +1,231 @@
+package me.manga.kira.backend.common.infrastructure.persistence
+
+import org.testcontainers.containers.PostgreSQLContainer
+import org.testcontainers.utility.DockerImageName
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.Path
+import java.sql.Connection
+import java.sql.DriverManager
+import java.sql.Statement
+import java.time.Instant
+import java.util.Properties
+import java.util.UUID
+
+/** JUnit owns its container; an explicitly bound local server remains controller-owned. No arbitrary external datasource. */
+internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : AutoCloseable {
+    private val local = PgLifecycleControllerOwnedServer.load(fixtureClass)
+    private val postgres = if (local == null) newPostgres() else null
+    private lateinit var generation: Instant
+    private var localVerified = false
+
+    val host: String
+        get() = postgres?.host ?: run {
+            check(localVerified)
+            "127.0.0.1"
+        }
+    val port: Int
+        get() = postgres?.firstMappedPort ?: run {
+            check(localVerified)
+            requireNotNull(local).port
+        }
+
+    fun start() {
+        try {
+            postgres?.start()
+            connection("w03o_bootstrap").use { connection ->
+                connection.createStatement().use { statement ->
+                    statement.queryTimeout = 2
+                    statement.executeQuery(
+                        "SELECT pg_postmaster_start_time(), current_setting('server_version_num'), current_setting('server_encoding'), pg_is_in_recovery()",
+                    ).use { result ->
+                        check(result.next())
+                        generation = result.getTimestamp(1).toInstant()
+                        check(result.getString(2) == "170006" && result.getString(3) == "UTF8")
+                        check(!result.getBoolean(4) && !result.wasNull()) { "Synthetic PostgreSQL was not positively witnessed as primary." }
+                        check(!result.next())
+                    }
+                    local?.verify(statement, generation)
+                    statement.execute(
+                        "CREATE ROLE ${PgLifecycleDatabaseSettings.CANDIDATE} LOGIN PASSWORD '${PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD}'",
+                    )
+                }
+            }
+            localVerified = local != null
+        } catch (failure: Throwable) {
+            runCatching { close() }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        }
+    }
+
+    fun observer(nonce: String = UUID.randomUUID().toString()): PgLifecycleDatabaseObserver {
+        check(local == null || localVerified)
+        check(UUID.fromString(nonce).toString() == nonce)
+        return PgLifecycleDatabaseObserver(connection("w03o_$nonce"), generation)
+    }
+
+    private fun connection(application: String): Connection {
+        val properties = Properties().apply {
+            setProperty("user", PgLifecycleDatabaseSettings.OBSERVER)
+            setProperty("password", PgLifecycleDatabaseSettings.OBSERVER_PASSWORD)
+            setProperty("ApplicationName", application)
+            setProperty("assumeMinServerVersion", "17")
+            setProperty("sslmode", "disable")
+            setProperty("gssEncMode", "disable")
+            setProperty("requireAuth", "scram-sha-256")
+            setProperty("channelBinding", "disable")
+            setProperty("loginTimeout", "4")
+            setProperty("connectTimeout", "2")
+            setProperty("socketTimeout", "2")
+            setProperty("queryTimeout", "0") // Constructor control; observer statement timeouts are set only after actual connection return.
+        }
+        val url = postgres?.jdbcUrl ?: "jdbc:postgresql://127.0.0.1:${requireNotNull(local).port}/${PgLifecycleDatabaseSettings.DATABASE}"
+        val connection = DriverManager.getConnection(url, properties)
+        try {
+            connection.autoCommit = true
+            connection.setNetworkTimeout({ command -> command.run() }, 2_000)
+            return connection
+        } catch (failure: Throwable) {
+            runCatching { connection.close() }.exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        }
+    }
+
+    override fun close() {
+        localVerified = false
+        postgres?.stop() // Local close revokes this fixture's endpoint; only the controller stops/deletes its server.
+    }
+
+    private fun newPostgres(): PostgreSQLContainer<*> = PostgreSQLContainer(DockerImageName.parse("postgres:17.6-alpine"))
+        .withDatabaseName(PgLifecycleDatabaseSettings.DATABASE)
+        .withUsername(PgLifecycleDatabaseSettings.OBSERVER)
+        .withPassword(PgLifecycleDatabaseSettings.OBSERVER_PASSWORD)
+        .withEnv("POSTGRES_INITDB_ARGS", "--encoding=UTF8 --locale=C --auth-host=scram-sha-256")
+        .withEnv("POSTGRES_HOST_AUTH_METHOD", "scram-sha-256")
+        .withCommand("postgres", "-c", "max_connections=35", "-c", "shared_buffers=64MB", "-c", "password_encryption=scram-sha-256")
+        .withReuse(false)
+}
+
+/** Private Linux gate input, not an endpoint configuration API or a server lifecycle implementation. */
+private class PgLifecycleControllerOwnedServer(
+    val port: Int,
+    private val run: String,
+    private val className: String,
+    private val nonce: String,
+    private val pid: Long,
+    private val start: Long,
+    private val generation: Instant,
+    private val data: Path,
+) {
+    fun verify(statement: Statement, actualGeneration: Instant) {
+        check(actualGeneration == generation)
+        requireOwnedPath(data.parent, 1_000, directory = true)
+        requireOwnedPath(data, 1_000, directory = true)
+        requireOwnedPath(data.parent.resolve("sockets"), 1_000, directory = true)
+        val postmaster = readOwnedFile(data.resolve("postmaster.pid"), 1_000)
+        val lines = postmaster.removeSuffix("\n").split('\n')
+        check(lines.size == 8)
+        check(lines[0] == pid.toString() && lines[1] == data.toString())
+        check(lines[2] == start.toString() && lines[3] == port.toString())
+        check(lines[4] == data.parent.resolve("sockets").toString() && lines[5] == "127.0.0.1" && lines[7].trim() == "ready")
+        statement.executeQuery(WITNESS_QUERY).use { result ->
+            check(result.next())
+            check(result.getString(1) == run && result.getString(2) == className && result.getString(3) == nonce)
+            check(result.getString(4) == data.toString() && result.getInt(5) == port)
+            check(result.getString(6) == "127.0.0.1")
+            check(result.getString(7) == PgLifecycleDatabaseSettings.DATABASE && result.getString(8) == PgLifecycleDatabaseSettings.OBSERVER)
+            check(result.getString(9) == "scram-sha-256")
+            check(result.getBoolean(10) && !result.wasNull())
+            check(result.getString(11) == postmaster)
+            check(!result.next())
+        }
+    }
+
+    companion object {
+        fun load(fixtureClass: Class<*>?): PgLifecycleControllerOwnedServer? {
+            val run = System.getenv("KIRA_PG_LIFECYCLE_LOCAL_RUN") ?: return null
+            check(run.matches(Regex("[0-9a-f]{32}")))
+            val selected = requireNotNull(fixtureClass)
+            check(
+                selected.name in setOf(
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintGrantCleanupIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OrdinarySourceGrantCleanupIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OrdinarySourceGrantCleanupOwnershipIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintAuditIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.SourceStepUpCleanupIT",
+                    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintRecoveryIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintTestReserveIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintInstallationEnrollmentIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintSessionAdmissionIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintEnrollmentAdmissionIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationCurrentStateIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.DeletionPoolPreparationIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.DeletionComplaintAuditIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.DeletionFencePrefixIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.DeletionControlSnapshotIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorResourcesIT",
+                    "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgOwnedCutIntegrationTest",
+                    "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgNativePhysicalCloseIT",
+                ),
+            )
+            val root = Path.of("/tmp/kcg-$run")
+            requireOwnedPath(root, 0, directory = true)
+            val keys = listOf("format", "run", "class", "nonce", "port", "pid", "start", "generation", "data")
+            val lines = readOwnedFile(root.resolve("${selected.simpleName}.descriptor"), 0).removeSuffix("\n").split('\n')
+            check(lines.size == keys.size)
+            val values = lines.mapIndexed { index, line ->
+                val prefix = "${keys[index]}="
+                check(line.startsWith(prefix))
+                line.removePrefix(prefix)
+            }
+            check(values[0] == "kira-pg-lifecycle-local-1" && values[1] == run && values[2] == selected.name)
+            check(values[3].matches(Regex("[0-9a-f]{64}")))
+            val port = positiveLong(values[4])
+            check(port <= 65_535)
+            val pid = positiveLong(values[5])
+            check(pid <= Int.MAX_VALUE)
+            val start = positiveLong(values[6])
+            val micros = positiveLong(values[7])
+            val generation = Instant.ofEpochSecond(micros / 1_000_000, (micros % 1_000_000) * 1_000)
+            val data = Path.of("/tmp/kcg-$run-${selected.simpleName}/data")
+            check(values[8] == data.toString())
+            requireOwnedPath(data.parent, 1_000, directory = true)
+            requireOwnedPath(data, 1_000, directory = true)
+            return PgLifecycleControllerOwnedServer(port.toInt(), run, selected.name, values[3], pid, start, generation, data)
+        }
+
+        private fun positiveLong(value: String): Long {
+            val number = requireNotNull(value.toLongOrNull())
+            check(number > 0 && number.toString() == value)
+            return number
+        }
+
+        private fun requireOwnedPath(path: Path, uid: Int, directory: Boolean) {
+            check(path.isAbsolute && path.normalize() == path && path.toRealPath() == path)
+            check(if (directory) Files.isDirectory(path, NOFOLLOW_LINKS) else Files.isRegularFile(path, NOFOLLOW_LINKS))
+            val attributes = Files.readAttributes(path, "unix:uid,gid,mode,nlink", NOFOLLOW_LINKS)
+            check(attributes["uid"] == uid && attributes["gid"] == uid)
+            check(((attributes.getValue("mode") as Int) and 0xFFF) == if (directory) 448 else 384)
+            if (!directory) check(attributes["nlink"] == 1)
+        }
+
+        private fun readOwnedFile(path: Path, uid: Int): String {
+            requireOwnedPath(path, uid, directory = false)
+            val bytes = Files.newInputStream(path, NOFOLLOW_LINKS).use { it.readNBytes(2_049) }
+            check(bytes.size in 1..2_048 && bytes.last() == 10.toByte())
+            check(bytes.all { it == 10.toByte() || it.toInt() in 32..126 })
+            return bytes.toString(Charsets.US_ASCII)
+        }
+
+        private val WITNESS_QUERY = """
+            SELECT current_setting('kira_fixture.run', true), current_setting('kira_fixture.class', true),
+                   current_setting('kira_fixture.nonce', true), current_setting('data_directory'), inet_server_port(),
+                   host(inet_server_addr()), current_database(), current_user, current_setting('password_encryption'),
+                   (SELECT rolpassword LIKE 'SCRAM-SHA-256${'$'}%' FROM pg_authid WHERE rolname = current_user),
+                   pg_read_file('postmaster.pid', 0, 2048)
+        """.trimIndent()
+    }
+}

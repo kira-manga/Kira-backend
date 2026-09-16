@@ -1,0 +1,128 @@
+diff --git a/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java b/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
+--- a/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
++++ b/pgjdbc/src/main/java/org/postgresql/jdbc/KiraOwnedJdbcCut.java
+@@ -165,7 +165,7 @@
+         }
+         c.terminalCleanup = true;
+         try {
+-          cleanupConstructions(c);
++          cleanupChildren(c);
+           compact(c);
+         } finally {
+           c.terminalCleanup = false;
+@@ -657,6 +657,7 @@
+     volatile boolean ended;
+     boolean cleaned;
+     boolean cleanupFailed;
++    boolean cleanupAttempted;
+ 
+     Construction(NativeConnection connection, int kind, ResultCursor cursor) {
+       this.connection = connection;
+@@ -668,6 +669,10 @@
+ 
+   static Construction reserve(NativeConnection c, int kind, @Nullable ResultCursor cursor) {
+     Construction record = new Construction(c, kind, cursor);
++    if (c.opening == null) {
++      // Ordinary JDBC must not acquire a connection-owned child/history graph.
++      return record;
++    }
+     long count = Math.addExact(c.nativeChildren, 1L);
+     record.parent = c.construction;
+     record.next = c.constructions;
+@@ -684,11 +689,15 @@
+ 
+   static void constructionEnded(Construction record, boolean returned) {
+     NativeConnection c = record.connection;
++    if (c.opening == null) {
++      return;
++    }
+     c.construction = record.parent;
+     record.parent = null;
+     record.returned = returned;
+     if (returned) {
+       if (record.nativeState != null) {
++        record.nativeState.factoryReturned = true;
+         record.nativeState.available = true;
+       }
+       record.borrows = null;
+@@ -726,6 +735,7 @@
+     Object receiver;
+     Native next;
+     boolean available;
++    boolean factoryReturned;
+     boolean counted = true;
+     boolean partialDisposed;
+     @Nullable Node queries;
+@@ -750,6 +760,12 @@
+   }
+ 
+   private static Native nativeStarted(NativeConnection c, Object receiver, int kind, Life parent) {
++    if (c.opening == null) {
++      Native n = new Native(c, receiver, kind, parent);
++      n.available = true;
++      n.counted = false;
++      return n;
++    }
+     Construction record = c.construction;
+     if (record != null && record.thread == Thread.currentThread() && !record.ended) {
+       record.receiver = receiver; // Retain this before allocating any child bookkeeping.
+@@ -792,9 +808,10 @@
+ 
+   private static void cleanupConstructions(NativeConnection c) {
+     for (Construction record = c.constructions; record != null; record = record.next) {
+-      if (!record.ended || record.returned || record.cleaned) {
++      if (!record.ended || record.returned || record.cleaned || record.cleanupAttempted) {
+         continue;
+       }
++      record.cleanupAttempted = true;
+       boolean completed = false;
+       try {
+         if (record.receiverComplete && record.receiver instanceof PgStatement) {
+@@ -840,6 +857,47 @@
+     }
+   }
+ 
++  /** Invoked only by the authentic post-producer, pre-timer opening cleanup. */
++  private static void cleanupChildren(NativeConnection c) {
++    Native scannedHead = null;
++    for (;;) {
++      // A native close can itself create/fail another internal factory.
++      cleanupConstructions(c);
++      Native head = c.children;
++      if (head == scannedHead) {
++        return;
++      }
++      for (Native n = head; n != scannedHead; n = n.next) {
++        if (n == null) {
++          c.uncertain = true;
++          return;
++        }
++        // Only a real successful factory receipt authorizes this disposal route.
++        // Failed factories use the phase-specific path above, never a partial close.
++        if (!n.factoryReturned || n.life.first != 0) {
++          continue;
++        }
++        try {
++          if (n.receiver instanceof PgStatement) {
++            ((PgStatement) n.receiver).close();
++          } else if (n.receiver instanceof PgResultSet) {
++            ((PgResultSet) n.receiver).close();
++          } else {
++            c.uncertain = true;
++          }
++        } catch (Throwable failure) {
++          if (failure instanceof InterruptedException) {
++            Thread.currentThread().interrupt();
++          }
++          cleanupFailure(c, null);
++        }
++      }
++      // Nested/implicit closes change receipts, not links. Compact only after this
++      // traversal; visit any newly prepended children once on the next pass.
++      scannedHead = head;
++    }
++  }
++
+   private static void compact(NativeConnection c) {
+     Construction previous = null;
+     Construction record = c.constructions;

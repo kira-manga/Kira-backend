@@ -39,4 +39,8 @@ class AuditLogEntity(
     var detail: String = "{}",
     @Column(name = "created_at", nullable = false, updatable = false)
     var createdAt: Instant = Instant.EPOCH,
+    @Column(name = "complaint_data_scope_id", updatable = false)
+    var complaintDataScopeId: UUID? = null,
+    @Column(name = "complaint_actor_kind", updatable = false)
+    var complaintActorKind: String? = null,
 )

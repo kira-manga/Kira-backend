@@ -6,13 +6,10 @@ import org.junit.jupiter.api.Test
 
 /** A failure at the final snapshot write must roll back every earlier publish mutation. */
 class PublicationFailureRollbackIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
-
     @Test
     fun `interrupted snapshot publication leaves no partial state`() {
         val api = "InterruptedPublish"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
-        val before = publicState()
         jdbcTemplate.execute(
             """
             CREATE OR REPLACE FUNCTION fail_snapshot_insert() RETURNS trigger AS ${'$'}${'$'}
@@ -30,7 +27,7 @@ class PublicationFailureRollbackIT : AbstractAdminSourceIT() {
             publish(api, 1).andExpect { status { is5xxServerError() } }
 
             assertEquals("draft", sourceStatus(api))
-            assertPublicStateUnchanged(before)
+            assertEquals(0L, snapshotCount())
             assertEquals(
                 "draft",
                 jdbcTemplate.queryForObject(

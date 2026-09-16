@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test
  * lifecycle-mapping half is Phase 8.)
  */
 class ServerManagedLifecycleIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `authoring a non-neutral lifecycle is 400 on create and on revision`() {

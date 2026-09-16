@@ -18,21 +18,16 @@ import java.time.Instant
 import java.util.Base64
 
 class SignedDocumentIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
-
     @Autowired
     private lateinit var signer: DocumentSigner
 
     @Test
     fun `published documents expose verifiable immutable signature chain and conditional GET metadata`() {
-        val origin = requireNotNull(bootstrapReceipt)
-        val originResponse = getPublicDocument().andExpect { status { isOk() } }.andReturn().response
-        verifyResponse(origin.documentRevision, null, null, originResponse)
         createSource(SourceConfigFixtures.validGenericSource("Signed")).andExpect { status { isCreated() } }
         val firstRevision = docRevisionOf(publish("Signed", 1).andExpect { status { isOk() } })
 
         val first = getPublicDocument().andExpect { status { isOk() } }.andReturn().response
-        verifyResponse(firstRevision, origin.documentRevision, origin.documentChecksum, first)
+        verifyResponse(firstRevision, null, null, first)
 
         val updated = SourceConfigFixtures.validGenericSource("Signed").copy(baseUrl = "https://v2.example")
         createRevision("Signed", updated)

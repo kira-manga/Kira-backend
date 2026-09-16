@@ -1,0 +1,84 @@
+name: Auth30 focused source verification
+
+on:
+  push:
+    branches: [remediation/auth30-hosted-20260916-01]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: auth30-focused-source-verification
+  cancel-in-progress: false
+
+jobs:
+  auth30:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.full_name == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/remediation/auth30-hosted-20260916-01' &&
+      github.run_attempt == '1'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Read only this public product carrier
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          ref: ${{ github.sha }}
+          path: backend
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Supply Java 21
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        timeout-minutes: 3
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Allocate run-owned resources
+        id: setup
+        timeout-minutes: 1
+        run: bash backend/ci/auth30/gate.sh setup
+      - name: Read exact baseline engine source, not binary archives
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        timeout-minutes: 2
+        with:
+          repository: kira-manga/kira-source-engine
+          ref: ed184165ebd3ee7f0d1db533cc40ca5a0868fdda
+          path: auth30-inputs/engine
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Bind sources and normal PostgreSQL/Redis prerequisites
+        timeout-minutes: 6
+        run: bash backend/ci/auth30/gate.sh prerequisites
+      - name: Build owned pgjdbc from exact upstream and six source patches
+        timeout-minutes: 16
+        run: bash backend/ci/auth30/build-pgjdbc.sh
+      - name: Build four genuine baseline root/JVM file publications
+        timeout-minutes: 14
+        run: bash backend/ci/auth30/gate.sh engine
+      - name: Immediately stop and reclaim the engine supplier
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 3
+        run: bash backend/ci/auth30/gate.sh engine-close
+      - name: Whole-source compile, static10 and exact normal-Docker33
+        timeout-minutes: 17
+        run: bash backend/ci/auth30/gate.sh backend
+      - name: Always stop owned tasks, retain reports and remove generated artifacts
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        timeout-minutes: 4
+        run: bash backend/ci/auth30/gate.sh finish
+      - name: Retain only short-lived verification evidence, never supplier binaries
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        timeout-minutes: 3
+        with:
+          name: auth30-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/auth30-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+          retention-days: 1
+          if-no-files-found: error

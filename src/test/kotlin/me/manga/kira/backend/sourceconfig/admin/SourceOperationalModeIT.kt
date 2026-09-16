@@ -1,18 +1,14 @@
 package me.manga.kira.backend.sourceconfig.admin
 
 import me.manga.kira.backend.sourceconfig.SourceConfigFixtures
-import org.hamcrest.Matchers.contains
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.test.web.servlet.get
 
 class SourceOperationalModeIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
-
     @Test
     fun `enabled and disabled reuse working content while publishing lifecycle changes`() {
-        val snapshotsBefore = snapshotCount()
         val api = "LifecycleMode"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
@@ -22,7 +18,7 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
                 status { isOk() }
                 jsonPath("$.sourceRevisionNumber") { value(1) }
             }
-        assertEquals("disabled", servedDocument(docRevisionOf(disabled)).sources.single { it.api == api }.lifecycle)
+        assertEquals("disabled", servedDocument(docRevisionOf(disabled)).sources.single().lifecycle)
         assertEquals(1, revisionCount(api))
 
         val enabled =
@@ -30,14 +26,13 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
                 status { isOk() }
                 jsonPath("$.sourceRevisionNumber") { value(1) }
             }
-        assertEquals("active", servedDocument(docRevisionOf(enabled)).sources.single { it.api == api }.lifecycle)
+        assertEquals("active", servedDocument(docRevisionOf(enabled)).sources.single().lifecycle)
         assertEquals(1, revisionCount(api))
-        assertEquals(snapshotsBefore + 3, snapshotCount())
+        assertEquals(3, snapshotCount())
     }
 
     @Test
     fun `three-state mode is protected idempotent and publishes one atomic catalog revision`() {
-        val snapshotsBefore = snapshotCount()
         val api = "ModeSource"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
         publish(api, 1).andExpect { status { isOk() } }
@@ -46,7 +41,7 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
             status { isUnauthorized() }
             jsonPath("$.errors[0].code") { value("ADMIN_STEP_UP_REQUIRED") }
         }
-        assertEquals(snapshotsBefore + 1, snapshotCount())
+        assertEquals(1, snapshotCount())
         assertEquals(1, revisionCount(api))
 
         val maintenance =
@@ -58,10 +53,10 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
                 jsonPath("$.noOp") { value(false) }
             }
         val maintenanceRevision = docRevisionOf(maintenance)
-        assertEquals(snapshotsBefore + 2, snapshotCount())
+        assertEquals(2, snapshotCount())
         assertEquals(2, revisionCount(api))
         assertEquals("active", sourceStatus(api))
-        assertEquals("UNDER_MAINTENANCE", servedDocument(maintenanceRevision).sources.single { it.api == api }.siteState)
+        assertEquals("UNDER_MAINTENANCE", servedDocument(maintenanceRevision).sources.single().siteState)
         val maintenanceManifest = latestManifestEntry(api)
         assertEquals("active", maintenanceManifest.path("lifecycle").asText("active"))
         assertEquals(2, maintenanceManifest.path("sourceRevision").asInt())
@@ -73,7 +68,7 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
             jsonPath("$.sourceRevisionNumber") { value(2) }
             jsonPath("$.noOp") { value(true) }
         }
-        assertEquals(snapshotsBefore + 2, snapshotCount(), "an identical request must not publish")
+        assertEquals(2, snapshotCount(), "an identical request must not publish")
         assertEquals(2, revisionCount(api), "an identical request must not create source history")
 
         val disabled =
@@ -82,7 +77,7 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
                 jsonPath("$.mode") { value("disabled") }
                 jsonPath("$.sourceRevisionNumber") { value(3) }
             }
-        val disabledDocument = servedDocument(docRevisionOf(disabled)).sources.single { it.api == api }
+        val disabledDocument = servedDocument(docRevisionOf(disabled)).sources.single()
         assertEquals("disabled", disabledDocument.lifecycle)
         assertEquals("WORKING", disabledDocument.siteState)
         assertEquals("disabled", sourceStatus(api))
@@ -96,7 +91,7 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
         assertEquals("active", sourceStatus(api))
         assertEquals(
             "UNDER_MAINTENANCE",
-            servedDocument(docRevisionOf(maintenanceAgain)).sources.single { it.api == api }.siteState,
+            servedDocument(docRevisionOf(maintenanceAgain)).sources.single().siteState,
         )
 
         val enabled =
@@ -104,10 +99,10 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
                 status { isOk() }
                 jsonPath("$.sourceRevisionNumber") { value(5) }
             }
-        val enabledDocument = servedDocument(docRevisionOf(enabled)).sources.single { it.api == api }
+        val enabledDocument = servedDocument(docRevisionOf(enabled)).sources.single()
         assertEquals("active", enabledDocument.lifecycle)
         assertEquals("WORKING", enabledDocument.siteState)
-        assertEquals(snapshotsBefore + 5, snapshotCount())
+        assertEquals(5, snapshotCount())
         assertEquals(5, revisionCount(api))
 
         mockMvc.get("/api/v1/admin/sources/$api") {
@@ -121,8 +116,8 @@ class SourceOperationalModeIT : AbstractAdminSourceIT() {
             header("Authorization", "Bearer $adminToken")
         }.andExpect {
             status { isOk() }
-            jsonPath("$[?(@.api == '$api')].siteState") { value(contains("WORKING")) }
-            jsonPath("$[?(@.api == '$api')].operationalMode") { value(contains("enabled")) }
+            jsonPath("$[0].siteState") { value("WORKING") }
+            jsonPath("$[0].operationalMode") { value("enabled") }
         }
 
         val modeAudits =

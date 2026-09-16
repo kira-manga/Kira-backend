@@ -1,0 +1,192 @@
+// Ordinary whole-source compilation and Test.classpath; only test/static selection is focused.
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import java.util.jar.JarFile
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedArtifactResult
+import org.gradle.api.tasks.testing.Test
+import org.gradle.maven.MavenModule
+import org.gradle.maven.MavenPomArtifact
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+
+def root = new File(System.getenv('AUTH30_RUN_ROOT') ?: '').canonicalFile
+def repo = new File(root, 'maven')
+def evidence = new File(root, 'evidence')
+def control = new File(gradle.startParameter.currentDir, 'ci/auth30')
+def selection = new JsonSlurper().parse(new File(control, 'selection.json'))
+def publications = ['engine', 'pgjdbc'].collectEntries { supplier ->
+    [(supplier): new JsonSlurper().parse(new File(evidence, "${supplier}-publications.json"))]
+}
+def sha = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+def written = { name, object -> new File(evidence, name).text = JsonOutput.prettyPrint(JsonOutput.toJson(object)) + '\n' }
+def inputs = new JsonSlurper().parse(new File(control, 'backend-source.json')).files
+def verifyInputs = { p ->
+    if (!inputs.every { name, expected ->
+        def f = p.file(name)
+        f.isFile() && f.length() == expected.bytes && sha(f) == expected.sha256
+    }) throw new GradleException('Backend source/build inputs changed')
+}
+if (!new File(root, '.owner').isFile() || !repo.isDirectory() ||
+        System.getenv('KIRA_PG_LIFECYCLE_LOCAL_RUN') != null ||
+        System.getenv('KIRA_OWNED_PG_REPOSITORY_URL') != null ||
+        gradle.startParameter.projectProperties.kiraOwnedPgVerificationRepository != repo.path ||
+        gradle.startParameter.projectProperties.kiraUseMavenLocal != 'false' ||
+        gradle.startParameter.continueOnFailure ||
+        gradle.startParameter.excludedTaskNames != (['jacocoTestReport'] as Set) ||
+        selection.expected_total != 33 || selection.selectors.size() != 33 ||
+        selection.selectors.toSet().size() != 33 || selection.static_paths.size() != 10) {
+    throw new GradleException('Exact Auth30 Docker/source-supplier scope required')
+}
+gradle.beforeProject { p ->
+    // Preserve 0.1.0 and all original locks. No forced versions, metadata rewriting or MavenLocal.
+    p.repositories.exclusiveContent {
+        forRepository {
+            p.repositories.maven {
+                name = 'Auth30Source'
+                url = repo.toURI()
+                metadataSources { gradleMetadata() }
+            }
+        }
+        filter { includeGroup('me.manga.kira.source') }
+    }
+}
+gradle.projectsEvaluated {
+    def p = gradle.rootProject
+    verifyInputs(p)
+    def test = p.tasks.named('test').get()
+    def staticTasks = [
+        detekt: p.tasks.named('detekt').get(),
+        main: p.tasks.named('runKtlintCheckOverMainSourceSet').get(),
+        test: p.tasks.named('runKtlintCheckOverTestSourceSet').get()
+    ]
+    def staticPaths = [detekt: selection.static_paths,
+                       main: selection.static_paths.findAll { it.startsWith('src/main/') },
+                       test: selection.static_paths.findAll { it.startsWith('src/test/') }]
+    staticTasks.each { kind, task -> task.setSource(p.files(staticPaths[kind])) }
+    test.maxParallelForks = 1
+    test.forkEvery = 0
+    test.maxHeapSize = '768m'
+    test.ignoreFailures = false
+    test.filter.setIncludePatterns(selection.selectors as String[])
+    test.filter.failOnNoMatchingTests = true
+    test.systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+    test.systemProperty('java.io.tmpdir', new File(root, 'tmp').path)
+    test.systemProperty('user.home', new File(root, 'home').path)
+    test.extensions.getByType(JacocoTaskExtension).enabled = false
+    def policies = {
+        def lint = p.extensions.getByName('ktlint')
+        def detekt = p.extensions.getByName('detekt')
+        if (lint.version.get() != '1.8.0' || lint.ignoreFailures.get() ||
+                detekt.toolVersion != '1.23.8' || detekt.ignoreFailures ||
+                !detekt.buildUponDefaultConfig || detekt.allRules || staticTasks.detekt.ignoreFailures ||
+                staticTasks.detekt.config.files.collect { it.canonicalFile } != [p.file('config/detekt/detekt.yml').canonicalFile] ||
+                !test.enabled || test.ignoreFailures || test.maxParallelForks != 1 || test.forkEvery != 0 ||
+                (test.filter.commandLineIncludePatterns as Set) != (selection.selectors as Set) ||
+                (test.filter.includePatterns as Set) != (selection.selectors as Set) ||
+                !test.filter.excludePatterns.empty || !test.filter.failOnNoMatchingTests ||
+                test.environment.containsKey('KIRA_PG_LIFECYCLE_LOCAL_RUN')) {
+            throw new GradleException('Static/test fail-closed policies or normal Docker identities changed')
+        }
+        staticTasks.each { kind, task ->
+            if (!task.enabled || (task.source.files.collect { it.canonicalFile } as Set) !=
+                    (staticPaths[kind].collect { p.file(it).canonicalFile } as Set)) {
+                throw new GradleException('Unexpected static input expansion or omission')
+            }
+        }
+    }
+    staticTasks.each { kind, task ->
+        task.doFirst {
+            policies()
+            verifyInputs(p)
+            written("static-${kind}-scope.json", [task: task.path, files: staticPaths[kind], ignore_failures: false])
+        }
+    }
+    def checkPublished = { supplier, relative, File actual ->
+        def pin = publications[supplier].files[relative]
+        def fresh = new File(repo, relative)
+        if (!pin || !actual.isFile() || !fresh.isFile() || sha(actual) != pin.sha256 || sha(fresh) != pin.sha256) {
+            throw new GradleException('Normal resolution does not match the fresh source-built publication')
+        }
+    }
+    test.doFirst {
+        policies()
+        verifyInputs(p)
+        def normal = p.extensions.getByName('sourceSets').getByName('test').runtimeClasspath.files.collect { it.canonicalFile }
+        if (test.classpath.files.collect { it.canonicalFile } != normal) {
+            throw new GradleException('Test.classpath must remain ordinary and unchanged')
+        }
+        def ownedRepo = p.repositories.findByName('KiraOwnedPgVerification')
+        if (!ownedRepo || ownedRepo.url != repo.toURI()) throw new GradleException('Normal owned-driver repository required')
+        def resolutions = [:]
+        ['productionRuntimeClasspath', 'runtimeClasspath', 'testRuntimeClasspath'].each { name ->
+            def conf = p.configurations.getByName(name)
+            def artifacts = conf.incoming.artifacts.artifacts
+            def module = { group, artifact -> artifacts.findAll {
+                def id = it.id.componentIdentifier
+                id instanceof ModuleComponentIdentifier && id.group == group && id.module == artifact
+            } }
+            if (!module('org.postgresql', 'postgresql').empty) throw new GradleException('Stock-driver fallback is forbidden')
+            def driver = module('me.manga.kira.internal', 'postgresql-owned-cut')
+            def checker = module('org.checkerframework', 'checker-qual')
+            if (driver.size() != 1 || driver[0].id.componentIdentifier.version != '42.7.12-kira.1' ||
+                    checker.size() != 1 || checker[0].id.componentIdentifier.version != '3.55.1' ||
+                    sha(checker[0].file) != publications.pgjdbc.checker.sha256) {
+                throw new GradleException('Expected one normal owned driver and Checker dependency')
+            }
+            def driverBase = 'me/manga/kira/internal/postgresql-owned-cut/42.7.12-kira.1/postgresql-owned-cut-42.7.12-kira.1'
+            checkPublished('pgjdbc', driverBase + '.jar', driver[0].file)
+            def query = p.dependencies.createArtifactResolutionQuery().forComponents(driver[0].id.componentIdentifier)
+                .withArtifacts(MavenModule, MavenPomArtifact).execute()
+            if (query.components.size() != 1 || query.resolvedComponents.size() != 1) throw new GradleException('One actual Maven POM required')
+            def poms = query.resolvedComponents.first().getArtifacts(MavenPomArtifact)
+            if (poms.size() != 1 || !(poms.first() instanceof ResolvedArtifactResult)) throw new GradleException('Actual Maven POM unresolved')
+            checkPublished('pgjdbc', driverBase + '.pom', poms.first().file)
+            def source = artifacts.findAll {
+                def id = it.id.componentIdentifier
+                id instanceof ModuleComponentIdentifier && id.group == 'me.manga.kira.source'
+            }
+            if (source.size() != 2 || source.any { it.id.componentIdentifier.version != '0.1.0' }) {
+                throw new GradleException('Exactly baseline contract/engine JVM artifacts required')
+            }
+            ['source-contract-jvm', 'source-engine-jvm'].each { id ->
+                def found = source.findAll { it.id.componentIdentifier.module == id }
+                if (found.size() != 1) throw new GradleException('Missing or duplicate baseline source artifact')
+                checkPublished('engine', "me/manga/kira/source/${id}/0.1.0/${id}-0.1.0.jar".toString(), found[0].file)
+            }
+            resolutions[name] = artifacts.collect { [component: it.id.componentIdentifier.displayName, file: it.file.name, sha256: sha(it.file)] }
+        }
+        // Check the files supplied to the actual worker, not only dependency declarations.
+        def driverProviders = []
+        test.classpath.files.findAll { it.isFile() && it.name.endsWith('.jar') }.each { file ->
+            new JarFile(file).withCloseable { jar ->
+                if (jar.getEntry('org/postgresql/Driver.class')) driverProviders.add([file: file.name, sha256: sha(file)])
+            }
+        }
+        if (driverProviders.size() != 1) throw new GradleException('Actual test worker must see exactly one PostgreSQL driver')
+        written('normal-runtime.json', [configurations: resolutions, actual_driver_providers: driverProviders,
+                                       test_classpath_mutated: false, local_run_environment_present: false,
+                                       selectors: selection.selectors, expected_tests: 33])
+    }
+    def allowed = [
+        ':checkKotlinGradlePluginConfigurationErrors', ':compileKotlin', ':compileJava', ':processResources', ':classes',
+        ':jar', ':compileTestKotlin', ':compileTestJava', ':processTestResources', ':testClasses', ':test',
+        ':loadKtlintReporters', ':runKtlintCheckOverMainSourceSet', ':ktlintMainSourceSetCheck',
+        ':runKtlintCheckOverTestSourceSet', ':ktlintTestSourceSetCheck', ':detekt'
+    ] as Set
+    def required = [':compileKotlin', ':compileTestKotlin', ':test', ':detekt',
+                    ':runKtlintCheckOverMainSourceSet', ':runKtlintCheckOverTestSourceSet'] as Set
+    gradle.taskGraph.whenReady { graph ->
+        def actual = graph.allTasks*.path
+        written('backend-task-graph.json', actual)
+        if (!allowed.containsAll(actual) || !actual.containsAll(required) ||
+                graph.allTasks.findAll { it instanceof Test }*.path != [':test'] || p.tasks.named('jar').get().enabled) {
+            throw new GradleException('Only whole-source compile, static10 and normal exact33 test graph allowed')
+        }
+        policies()
+    }
+}
+gradle.taskGraph.afterTask { task, state ->
+    def outcome = state.failure != null ? 'FAILED' : state.noSource ? 'NO-SOURCE' : state.skipped ? state.skipMessage : 'SUCCESS'
+    new File(evidence, 'backend-task-outcomes.tsv').append("${task.path}\t${outcome}\n")
+}

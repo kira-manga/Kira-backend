@@ -1,0 +1,193 @@
+{
+  "class_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT": 10,
+    "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest": 3,
+    "me.manga.kira.backend.security.AuthAttemptCallerTest": 7,
+    "me.manga.kira.backend.security.RedisCoordinationIT": 3,
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest": 6,
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT": 3,
+    "me.manga.kira.backend.user.LoginAuditIdentifierIT": 1
+  },
+  "expected_total": 33,
+  "runtime_methods": [
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "ordinary rejection completes failure before audit and does not suppress unavailable behind 401"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "successful credentials cannot issue JWT or grant without completion acknowledgement"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "an already finalized reservation cannot authorize a caller even with correct credentials"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "expired and unknown success completions from real memory adapter cannot issue"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "exception and cancellation exits close real reservations as one failure"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "unexpected cleanup failure is suppressed behind original verifier exception and is once-only"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAttemptCallerTest",
+      "method": "login never promotes the verified password snapshot after reset or throttle completion"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest",
+      "method": "same identity wave is bounded before any real login verifier is released"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest",
+      "method": "distinct unknown email wave is bounded by IP before any decoy verifier is released"
+    },
+    {
+      "class": "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest",
+      "method": "admin step-up wave is bounded before any password verifier is released"
+    },
+    {
+      "class": "me.manga.kira.backend.security.TrustedIngressIdentityTest",
+      "method": "numeric spellings agree with the BFF contract and normalize direct peers too"
+    },
+    {
+      "class": "me.manga.kira.backend.security.TrustedIngressIdentityTest",
+      "method": "present malformed ambiguous or all-trusted XFF never falls through to caller Forwarded"
+    },
+    {
+      "class": "me.manga.kira.backend.security.TrustedIngressIdentityTest",
+      "method": "absent XFF alone permits a fully valid Forwarded chain and documented port forms"
+    },
+    {
+      "class": "me.manga.kira.backend.security.TrustedIngressIdentityTest",
+      "method": "trust entries are numeric and CIDR matching remains family and prefix bounded"
+    },
+    {
+      "class": "me.manga.kira.backend.security.TrustedIngressIdentityTest",
+      "method": "real login and step-up controllers share the resolved aggregate bucket without blocking a distinct client"
+    },
+    {
+      "class": "me.manga.kira.backend.security.TrustedIngressIdentityTest",
+      "method": "missing metadata remains a degraded shared peer bucket not client isolation"
+    },
+    {
+      "class": "me.manga.kira.backend.security.RedisCoordinationIT",
+      "method": "two instances bound the real same-identity login wave before releasing hashes"
+    },
+    {
+      "class": "me.manga.kira.backend.security.RedisCoordinationIT",
+      "method": "two instances bound the real decoy IP spray wave before releasing hashes"
+    },
+    {
+      "class": "me.manga.kira.backend.security.RedisCoordinationIT",
+      "method": "two instances bound the real admin step-up wave before releasing hashes"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "complaint issuance locks and charges the exact vector before its current Admin and releases before proof"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "invalid password and missing user preserve failure throttling with no cleanup or insert in either scope"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "independent hash enabled role and deletion changes after verification prevent a grant and roll back its charge"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "post-call verification guards refuse an unbound loan on normal and throwing dependency exits"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "all verification failure sites remain connection free and discard raw dependency messages"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "existing throttle outage code retry and invalid-password surface are not replaced with proof success"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "unexpected password and close failures preserve bounded failure and make one failure completion in either scope"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "interrupted verification does not call attempt cleanup across a refused boundary or issue a grant"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "an already completed attempt cannot issue a proof even with a genuine released snapshot and correct password"
+    },
+    {
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "method": "real memory attempt expiry and unknown completion cannot reach cleanup or issuance in either scope"
+    },
+    {
+      "class": "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
+      "method": "password step-up stores only a hash and proof is one-time"
+    },
+    {
+      "class": "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
+      "method": "wrong password and expired proof fail closed"
+    },
+    {
+      "class": "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
+      "method": "lost real throttle acknowledgement refuses HTTP proof before cleanup or issuance"
+    },
+    {
+      "class": "me.manga.kira.backend.user.LoginAuditIdentifierIT",
+      "method": "legacy raw identifiers remain unchanged even when their text matches a new fingerprint"
+    }
+  ],
+  "selectors": [
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.ordinary rejection completes failure before audit and does not suppress unavailable behind 401",
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.successful credentials cannot issue JWT or grant without completion acknowledgement",
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.an already finalized reservation cannot authorize a caller even with correct credentials",
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.expired and unknown success completions from real memory adapter cannot issue",
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.exception and cancellation exits close real reservations as one failure",
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.unexpected cleanup failure is suppressed behind original verifier exception and is once-only",
+    "me.manga.kira.backend.security.AuthAttemptCallerTest.login never promotes the verified password snapshot after reset or throttle completion",
+    "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest.same identity wave is bounded before any real login verifier is released",
+    "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest.distinct unknown email wave is bounded by IP before any decoy verifier is released",
+    "me.manga.kira.backend.security.AuthAdmissionConcurrencyTest.admin step-up wave is bounded before any password verifier is released",
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest.numeric spellings agree with the BFF contract and normalize direct peers too",
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest.present malformed ambiguous or all-trusted XFF never falls through to caller Forwarded",
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest.absent XFF alone permits a fully valid Forwarded chain and documented port forms",
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest.trust entries are numeric and CIDR matching remains family and prefix bounded",
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest.real login and step-up controllers share the resolved aggregate bucket without blocking a distinct client",
+    "me.manga.kira.backend.security.TrustedIngressIdentityTest.missing metadata remains a degraded shared peer bucket not client isolation",
+    "me.manga.kira.backend.security.RedisCoordinationIT.two instances bound the real same-identity login wave before releasing hashes",
+    "me.manga.kira.backend.security.RedisCoordinationIT.two instances bound the real decoy IP spray wave before releasing hashes",
+    "me.manga.kira.backend.security.RedisCoordinationIT.two instances bound the real admin step-up wave before releasing hashes",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.complaint issuance locks and charges the exact vector before its current Admin and releases before proof",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.invalid password and missing user preserve failure throttling with no cleanup or insert in either scope",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.independent hash enabled role and deletion changes after verification prevent a grant and roll back its charge",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.post-call verification guards refuse an unbound loan on normal and throwing dependency exits",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.all verification failure sites remain connection free and discard raw dependency messages",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.existing throttle outage code retry and invalid-password surface are not replaced with proof success",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.unexpected password and close failures preserve bounded failure and make one failure completion in either scope",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.interrupted verification does not call attempt cleanup across a refused boundary or issue a grant",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.an already completed attempt cannot issue a proof even with a genuine released snapshot and correct password",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.real memory attempt expiry and unknown completion cannot reach cleanup or issuance in either scope",
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT.password step-up stores only a hash and proof is one-time",
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT.wrong password and expired proof fail closed",
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT.lost real throttle acknowledgement refuses HTTP proof before cleanup or issuance",
+    "me.manga.kira.backend.user.LoginAuditIdentifierIT.legacy raw identifiers remain unchanged even when their text matches a new fingerprint"
+  ],
+  "static_paths": [
+    "src/main/kotlin/me/manga/kira/backend/audit/application/AuditService.kt",
+    "src/main/kotlin/me/manga/kira/backend/security/VerifiedScopedAdminStepUp.kt",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpFixture.kt",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpIT.kt",
+    "src/test/kotlin/me/manga/kira/backend/security/AuthAdmissionConcurrencyTest.kt",
+    "src/test/kotlin/me/manga/kira/backend/security/AuthAttemptCallerTest.kt",
+    "src/test/kotlin/me/manga/kira/backend/security/RedisCoordinationFailureTest.kt",
+    "src/test/kotlin/me/manga/kira/backend/security/RedisCoordinationIT.kt",
+    "src/test/kotlin/me/manga/kira/backend/security/TrustedIngressIdentityTest.kt",
+    "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AdminStepUpIT.kt"
+  ]
+}

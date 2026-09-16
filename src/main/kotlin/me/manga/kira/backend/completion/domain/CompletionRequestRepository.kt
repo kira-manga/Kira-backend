@@ -12,11 +12,8 @@ interface CompletionRequestRepository {
     /** Insert a new `PENDING` row and return its generated id. */
     fun insertPending(userId: UUID, provider: String, model: String, prompt: String, now: Instant): UUID
 
-    /** Claim PENDING → RUNNING; a lost claim changes nothing. */
-    fun tryMarkRunning(id: UUID, now: Instant): Boolean
-
-    /** RUNNING → SUCCEEDED or PENDING/RUNNING → FAILED. Terminal rows never change. */
-    fun tryFinish(id: UUID, status: CompletionStatus, now: Instant): Boolean
+    /** Move a request to [status], stamping `updated_at` = [now]. */
+    fun updateStatus(id: UUID, status: CompletionStatus, now: Instant)
 
     fun findById(id: UUID): CompletionRequestRecord?
 

@@ -1,0 +1,132 @@
+diff --git a/build.gradle.kts b/build.gradle.kts
+--- a/build.gradle.kts
++++ b/build.gradle.kts
+@@ -60,6 +60,27 @@
+     version = buildVersion
+ }
+ 
++// The private recipe retains NMCP's collection/aggregation configuration, but never
++// permits its remote publish actions. These two implementation types are pinned by
++// nmcp 1.4.4; walk superclasses so Gradle-decorated tasks are covered as well.
++val kiraNmcpRemoteTaskTypes = setOf(
++    "nmcp.internal.task.NmcpPublishWithPublisherApiTask",
++    "nmcp.internal.task.NmcpPublishFileByFileToSnapshotsTask"
++)
++allprojects {
++    tasks.configureEach {
++        var taskType: Class<*>? = javaClass
++        while (taskType != null && taskType.name !in kiraNmcpRemoteTaskTypes) {
++            taskType = taskType.superclass
++        }
++        if (taskType != null) {
++            onlyIf("Kira's private owned-cut recipe prohibits NMCP remote publication") {
++                error("NMCP remote publication is disabled for the private owned-cut recipe")
++            }
++        }
++    }
++}
++
+ val parameters by tasks.registering {
+     group = HelpTasksPlugin.HELP_GROUP
+     description = "Displays build parameters (i.e. -P flags) that can be used to customize the build"
+diff --git a/pgjdbc/build.gradle.kts b/pgjdbc/build.gradle.kts
+--- a/pgjdbc/build.gradle.kts
++++ b/pgjdbc/build.gradle.kts
+@@ -14,6 +14,12 @@
+ import com.github.vlsi.gradle.properties.dsl.props
+ import com.github.vlsi.gradle.release.dsl.dependencyLicenses
+ import com.github.vlsi.gradle.release.dsl.licensesCopySpec
++import java.io.File
++import java.net.URI
++import org.gradle.api.publish.PublishingExtension
++import org.gradle.api.publish.maven.MavenPublication
++import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
++import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+ 
+ plugins {
+     id("build-logic.java-shaded-published-library")
+@@ -461,3 +467,84 @@
+         classifier = "features"
+     }
+ }
++
++// Kira private distribution: keep project.group == org.postgresql. The upstream shadow
++// relocation uses that group, while the Maven publication alone gets a distinct identity.
++val kiraOwnedCutVersion = "42.7.12-kira.1"
++check(project.group.toString() == "org.postgresql")
++check(project.version.toString() == kiraOwnedCutVersion) {
++    "Owned cut requires -Ppgjdbc.version=42.7.12-kira.1 -Prelease -Psigning.pgp.enabled=OFF"
++}
++
++// This is an explicit run-owned verification repository, not ~/.m2 or a shipping fallback.
++val kiraOwnedVerificationRepository = providers.gradleProperty("kiraOwnedPgVerificationRepository")
++    .orNull?.takeIf { it.isNotBlank() }
++
++extensions.configure<PublishingExtension> {
++    // Keep upstream repository/task registration: NMCP configures each new publication
++    // through its local Maven task. The exact task allowlist below, not repository
++    // removal, prohibits stock, temporary, Central and Maven-local publication.
++    val ownedRepositoryUrl = providers.environmentVariable("KIRA_OWNED_PG_REPOSITORY_URL")
++        .orNull?.takeIf { it.isNotBlank() }
++    require(ownedRepositoryUrl == null || kiraOwnedVerificationRepository == null) {
++        "Select either private publication or explicit unqualified verification staging, not both"
++    }
++    if (kiraOwnedVerificationRepository != null) {
++        val staging = File(kiraOwnedVerificationRepository)
++        require(staging.isAbsolute && staging.isDirectory) {
++            "kiraOwnedPgVerificationRepository must name an existing absolute run-owned Maven staging directory"
++        }
++        repositories.maven {
++            name = "KiraOwnedPgVerification"
++            url = staging.toURI()
++        }
++    } else if (ownedRepositoryUrl != null) {
++        val repositoryUri = runCatching { URI(ownedRepositoryUrl) }.getOrElse {
++            error("KIRA_OWNED_PG_REPOSITORY_URL must be a valid HTTPS Maven repository URL")
++        }
++        require(
++            repositoryUri.scheme == "https" && repositoryUri.host != null && repositoryUri.userInfo == null &&
++                repositoryUri.query == null && repositoryUri.fragment == null
++        ) {
++            "KIRA_OWNED_PG_REPOSITORY_URL must be HTTPS without embedded credentials, query or fragment"
++        }
++        repositories.maven {
++            name = "KiraOwnedPg"
++            url = repositoryUri
++            credentials {
++                username = providers.environmentVariable("KIRA_PACKAGES_USER").orNull
++                password = providers.environmentVariable("KIRA_PACKAGES_PUBLISH_TOKEN").orNull
++            }
++        }
++    }
++    publications.register<MavenPublication>("kiraOwnedCut") {
++        groupId = "me.manga.kira.internal"
++        artifactId = "postgresql-owned-cut"
++        version = kiraOwnedCutVersion
++        // Publish the upstream OSGi output as the default JAR, not the thin/shadow JAR.
++        // No component means no misleading shadow-variant Gradle module metadata.
++        artifact(osgiJar) { classifier = null }
++        pom {
++            name.set("Kira private PostgreSQL owned cut")
++            if (kiraOwnedVerificationRepository != null) {
++                properties.put("kira.qualification", "UNQUALIFIED_RUN_OWNED_VERIFICATION")
++            }
++            description.set("Private pgjdbc owned cut; upstream OSGi/shading and BSD-2-Clause notices retained")
++            withXml {
++                val dependency = asNode().appendNode("dependencies").appendNode("dependency")
++                dependency.appendNode("groupId", "org.checkerframework")
++                dependency.appendNode("artifactId", "checker-qual")
++                dependency.appendNode("version", "3.55.1")
++                dependency.appendNode("scope", "runtime")
++            }
++        }
++    }
++}
++
++tasks.withType<PublishToMavenRepository>().configureEach {
++    enabled = name == "publishKiraOwnedCutPublicationToKiraOwnedPgRepository" ||
++        name == "publishKiraOwnedCutPublicationToKiraOwnedPgVerificationRepository"
++}
++tasks.withType<PublishToMavenLocal>().configureEach {
++    enabled = false
++}

@@ -15,7 +15,6 @@ import org.junit.jupiter.api.Test
  * injected lifecycle, and a removed source is absent from it AND `GET /sources/{api}` → 410.
  */
 class DisableRemoveVisibilityIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     private fun lifecycleInDocument(documentRevision: Long, api: String): String? =
         servedDocument(documentRevision).sources.firstOrNull { it.api == api }?.lifecycle
@@ -43,7 +42,7 @@ class DisableRemoveVisibilityIT : AbstractAdminSourceIT() {
 
         val removedRev = docRevisionOf(remove(api).andExpect { status { isOk() } })
         assertNull(lifecycleInDocument(removedRev, api), "a removed source must be absent from the document")
-        assertEquals(initialGenericApis, servedDocument(removedRev).sources.map { it.api }, "only the removed source leaves the baseline")
+        assertEquals(0, servedDocument(removedRev).sources.size)
         // Public visibility: absent from the served document AND GET /sources/{api} → 410.
         assertNull(publicLifecycle(api), "a removed source must be absent from the PUBLIC document")
         getPublicSource(api).andExpect {

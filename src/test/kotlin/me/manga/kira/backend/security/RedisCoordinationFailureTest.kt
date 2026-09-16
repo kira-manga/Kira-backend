@@ -1,6 +1,5 @@
 package me.manga.kira.backend.security
 
-import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.completion.application.RedisCompletionAdmission
 import me.manga.kira.backend.config.KiraCompletionProperties
@@ -123,7 +122,7 @@ class RedisCoordinationFailureTest {
                 KiraCompletionProperties(coordinationBackend = "redis", instanceCount = 2),
             )
 
-        val error = assertThrows<ServiceUnavailableException> { admission.acquire(UUID.randomUUID()) }
+        val error = assertThrows<TooManyRequestsException> { admission.acquire(UUID.randomUUID()) }
 
         assertEquals("COMPLETION_COORDINATION_UNAVAILABLE", error.code)
     }

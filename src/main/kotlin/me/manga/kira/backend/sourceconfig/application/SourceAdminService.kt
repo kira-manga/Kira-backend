@@ -7,7 +7,6 @@ import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.exception.InvalidLifecycleTransitionException
 import me.manga.kira.backend.common.exception.ValidationFailedException
 import me.manga.kira.backend.observability.KiraMetrics
-import me.manga.kira.backend.sourceconfig.domain.HistoryWindow
 import me.manga.kira.backend.sourceconfig.domain.IllegalLifecycleTransitionException
 import me.manga.kira.backend.sourceconfig.domain.LifecycleAction
 import me.manga.kira.backend.sourceconfig.domain.LifecycleStateMachine
@@ -16,7 +15,6 @@ import me.manga.kira.backend.sourceconfig.domain.NewSourceConfig
 import me.manga.kira.backend.sourceconfig.domain.NewValidationResult
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocument
 import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentRepository
-import me.manga.kira.backend.sourceconfig.domain.PublishedDocumentSummary
 import me.manga.kira.backend.sourceconfig.domain.RevisionRepository
 import me.manga.kira.backend.sourceconfig.domain.RevisionStatus
 import me.manga.kira.backend.sourceconfig.domain.SourceConfigHead
@@ -24,7 +22,6 @@ import me.manga.kira.backend.sourceconfig.domain.SourceConfigRepository
 import me.manga.kira.backend.sourceconfig.domain.SourceLifecycleStatus
 import me.manga.kira.backend.sourceconfig.domain.SourceOperationalMode
 import me.manga.kira.backend.sourceconfig.domain.SourceRevision
-import me.manga.kira.backend.sourceconfig.domain.SourceRevisionSummary
 import me.manga.kira.backend.sourceconfig.domain.UnretireNotAllowedForEngineException
 import me.manga.kira.backend.sourceconfig.domain.ValidationResultRepository
 import me.manga.kira.backend.sourceconfig.domain.model.SourceConfig
@@ -74,8 +71,6 @@ class SourceAdminService(
     fun createSource(rawJson: String, actorId: UUID): SourceMutationResult {
         val model = SourceConfigParser.parseStrictSource(rawJson)
         StructuralAuthoringGate.check(model, pathApi = null)
-        // New heads change the complete inventory; serialize before checking identity or allocating position.
-        publishedDocuments.lockPublicationState()
         if (sources.existsByApi(model.api)) throw SourceAlreadyExistsException(model.api)
 
         val head =
@@ -156,11 +151,9 @@ class SourceAdminService(
     }
 
     @Transactional(readOnly = true)
-    fun listRevisions(api: String, size: Int = HistoryWindow.DEFAULT_SIZE, beforeRevision: Int? = null): HistoryWindow<SourceRevisionSummary> {
-        val limit = HistoryWindow.fetchLimit(size)
-        require(beforeRevision == null || beforeRevision > 0)
+    fun listRevisions(api: String): List<RevisionView> {
         val head = sources.findByApi(api) ?: throw SourceNotFoundException(api)
-        return HistoryWindow.fromDescending(revisions.findSummaryWindow(head.id, beforeRevision, limit), size) { it.revisionNumber.toLong() }
+        return revisions.findAllForSource(head.id).map { RevisionView(it, latestValid(it.id)) }
     }
 
     @Transactional(readOnly = true)
@@ -401,11 +394,7 @@ class SourceAdminService(
     // --- Documents ----------------------------------------------------------------------------------
 
     @Transactional(readOnly = true)
-    fun listDocuments(size: Int = HistoryWindow.DEFAULT_SIZE, beforeRevision: Long? = null): HistoryWindow<PublishedDocumentSummary> {
-        val limit = HistoryWindow.fetchLimit(size)
-        require(beforeRevision == null || beforeRevision > 0)
-        return HistoryWindow.fromDescending(publishedDocuments.findSummaryWindow(beforeRevision, limit), size) { it.documentRevision }
-    }
+    fun listDocuments(): List<PublishedDocument> = publishedDocuments.findAllOrderedByRevision()
 
     @Transactional(readOnly = true)
     fun getDocument(revision: Long): PublishedDocument = publishedDocuments.findByRevision(revision) ?: throw DocumentNotFoundException(revision)
@@ -694,7 +683,7 @@ data class SourceAdminView(
     val operationalMode: SourceOperationalMode?,
 )
 
-/** A full revision plus its latest stored validity flag (PLAN §4.3 detail view). */
+/** A revision plus its latest stored validity flag (PLAN §4.3 revision list). */
 data class RevisionView(val revision: SourceRevision, val valid: Boolean?)
 
 data class EditorContentPublishOutcome(val revision: SourceMutationResult, val publication: PublishOutcome)

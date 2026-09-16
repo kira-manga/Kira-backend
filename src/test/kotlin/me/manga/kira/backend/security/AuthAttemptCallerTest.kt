@@ -2,7 +2,13 @@ package me.manga.kira.backend.security
 
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.exception.TooManyRequestsException
-import me.manga.kira.backend.config.KiraAdminStudioProperties
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
+import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseFixture
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedStepUpFixture
+import me.manga.kira.backend.common.infrastructure.persistence.SyntheticComplaintCounters
+import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.common.infrastructure.persistence.withOrdinarySourceGrantCleanup
 import me.manga.kira.backend.config.KiraAuthProperties
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.support.JwtTestSupport
@@ -14,8 +20,11 @@ import me.manga.kira.backend.user.application.UserService
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
 import me.manga.kira.backend.user.domain.UserRepository
+import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.doAnswer
@@ -25,6 +34,7 @@ import org.mockito.Mockito.verify
 import org.mockito.Mockito.verifyNoInteractions
 import org.mockito.Mockito.verifyNoMoreInteractions
 import org.mockito.Mockito.`when`
+import org.springframework.security.crypto.factory.PasswordEncoderFactories
 import org.springframework.security.crypto.password.PasswordEncoder
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
@@ -36,18 +46,25 @@ import java.util.UUID
 import java.util.concurrent.CancellationException
 
 class AuthAttemptCallerTest {
+    private val database = lazy { PgLifecycleDatabaseFixture(AuthAttemptCallerTest::class.java).also { it.start() } }
     private val clock = MutableClock()
     private val users = mock(UserRepository::class.java)
     private val encoder = mock(PasswordEncoder::class.java)
     private val tokens = mock(JwtService::class.java)
     private val grants = mock(AdminStepUpGrantRepository::class.java)
     private val audit = mock(AuditService::class.java)
-    private val user = User(UUID.randomUUID(), EMAIL, "eligible-hash", Role.ADMIN, true, Instant.EPOCH, Instant.EPOCH)
+    private val passwordHash = PasswordEncoderFactories.createDelegatingPasswordEncoder().encode(PASSWORD)
+    private val user = User(UUID.randomUUID(), EMAIL, passwordHash, Role.ADMIN, true, Instant.EPOCH, Instant.EPOCH)
 
     init {
         `when`(users.findByEmail(EMAIL)).thenReturn(user)
         `when`(users.findById(user.id)).thenReturn(user)
         `when`(encoder.encode("kira-login-decoy-password-not-an-account")).thenReturn("decoy-hash")
+    }
+
+    @AfterEach
+    fun closeDatabase() {
+        if (database.isInitialized()) database.value.close()
     }
 
     @Test
@@ -123,7 +140,8 @@ class AuthAttemptCallerTest {
             listOf(IllegalStateException("injected verifier failure"), CancellationException("injected cancellation")).forEach { original ->
                 val throttle = memory()
                 doAnswer { throw original }.`when`(encoder).matches(PASSWORD, user.passwordHash)
-                assertSame(original, assertThrows<RuntimeException> { call(throttle, stepUp) })
+                val failure = assertThrows<RuntimeException> { call(throttle, stepUp) }
+                if (stepUp) assertStepUpFailure(failure) else assertSame(original, failure)
                 assertThrows<TooManyRequestsException> { throttle.beginLoginAttempt(EMAIL, IP) }
             }
         }
@@ -145,9 +163,14 @@ class AuthAttemptCallerTest {
                 override fun checkRegistrationAllowed(clientIp: String) = Unit
             }
             doAnswer { throw original }.`when`(encoder).matches(PASSWORD, user.passwordHash)
-            assertSame(original, assertThrows<CancellationException> { call(throttle, stepUp) })
-            assertEquals(1, original.suppressed.size)
-            assertUnavailable(original.suppressed.single() as TooManyRequestsException)
+            if (stepUp) {
+                assertStepUpFailure(assertThrows<PersistencePhaseException> { call(throttle, stepUp) })
+                assertTrue(original.suppressed.isEmpty()) // Step-up never restores the raw verifier/cleanup failure graph.
+            } else {
+                assertSame(original, assertThrows<CancellationException> { call(throttle, stepUp) })
+                assertEquals(1, original.suppressed.size)
+                assertUnavailable(original.suppressed.single() as TooManyRequestsException)
+            }
             attempt.close()
             assertThrows<TooManyRequestsException> { attempt.complete(true) }
             assertEquals(1, completions)
@@ -196,11 +219,42 @@ class AuthAttemptCallerTest {
 
     private fun call(throttle: AuthThrottle, stepUp: Boolean) {
         if (stepUp) {
-            AdminStepUpService(users, encoder, grants, throttle, KiraAdminStudioProperties(), clock).issue(user.id, PASSWORD, IP)
+            callStepUp(throttle)
         } else {
             val userService = UserService(users, encoder, mock(PasswordPolicy::class.java))
             AuthService(users, userService, CredentialVerifier(encoder), tokens, throttle, KiraAuthProperties(), audit).login(EMAIL, PASSWORD, IP)
         }
+    }
+
+    private fun callStepUp(throttle: AuthThrottle) {
+        withOrdinarySourceGrantCleanup(database.value, maximumPoolSize = 2) { ordinary ->
+            assertEquals(
+                1,
+                ordinary.foreignTemplate().update("UPDATE users SET email = ?, password_hash = ? WHERE id = ?", EMAIL, user.passwordHash, ordinary.userId),
+            )
+            SyntheticComplaintCounters(ordinary.foreignTemplate(), ordinary.cutoff).use { counters ->
+                val fixture = ScopedStepUpFixture(ordinary, counters)
+                try {
+                    // Actual snapshot/cleanup/issuance path; no old constructor or fabricated released snapshot.
+                    ScopedAdminStepUpIssuer(fixture.phases, encoder, throttle).issueSource(ordinary.userId, PASSWORD, IP)
+                } finally {
+                    assertTrue(fixture.jdbc.snapshots.single().lease.completion.quiescent())
+                    assertTrue(fixture.cleanups.isEmpty())
+                    assertEquals(0, fixture.jdbc.insertAttempts)
+                    assertTrue(ordinary.grantIds().isEmpty(), "A refused attempt must not reach the real grant store.")
+                    assertEquals(0, ordinary.admission.activeOwners())
+                    requireConnectionFree()
+                }
+            }
+        }
+    }
+
+    private fun assertStepUpFailure(failure: RuntimeException) {
+        assertTrue(failure is PersistencePhaseException)
+        assertEquals(PersistencePhaseFailureCode.WORK_FAILED, (failure as PersistencePhaseException).code)
+        assertNull(failure.cause)
+        assertTrue(failure.suppressed.isEmpty())
+        assertEquals("Persistence phase refused.", failure.message)
     }
 
     private fun memory() = AuthThrottleService(

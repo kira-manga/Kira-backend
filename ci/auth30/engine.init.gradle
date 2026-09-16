@@ -1,0 +1,79 @@
+// Source-bound supplier only: unchanged native publications, no test/package/release claim.
+import groovy.json.JsonOutput
+import org.gradle.api.publish.PublishingExtension
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+
+def root = new File(System.getenv('AUTH30_RUN_ROOT') ?: '').canonicalFile
+def repo = new File(root, 'maven')
+def evidence = new File(root, 'evidence')
+def modules = ['source-contract', 'source-engine']
+def requested = modules.collectMany { module ->
+    [":${module}:publishKotlinMultiplatformPublicationToW01OnlyRepository".toString(),
+     ":${module}:publishJvmPublicationToW01OnlyRepository".toString()]
+}
+if (!new File(root, '.owner').isFile() || !repo.isDirectory() || !evidence.isDirectory() ||
+        gradle.startParameter.projectProperties.VERSION_NAME != '0.1.0' ||
+        gradle.startParameter.taskNames.toSet() != requested.toSet() ||
+        gradle.startParameter.continueOnFailure || !gradle.startParameter.excludedTaskNames.empty) {
+    throw new GradleException('Only the four fixed source-bound file publications are admitted')
+}
+gradle.beforeProject { p ->
+    p.pluginManager.withPlugin('maven-publish') {
+        p.extensions.getByType(PublishingExtension).repositories.maven {
+            name = 'W01Only'
+            url = repo.toURI()
+        }
+        p.tasks.withType(PublishToMavenRepository).configureEach { t ->
+            doFirst {
+                if (!modules.contains(p.name) || !['jvm', 'kotlinMultiplatform'].contains(t.publication.name) ||
+                        t.repository.name != 'W01Only' || t.repository.url.scheme != 'file' ||
+                        new File(t.repository.url).canonicalFile != repo ||
+                        t.publication.groupId != 'me.manga.kira.source' || t.publication.version != '0.1.0') {
+                    throw new GradleException('Remote/default/unexpected publication is forbidden')
+                }
+            }
+        }
+    }
+}
+// The existing KMP build stays intact, including genuine common metadata prerequisites.
+// These are the bounded task families already used by the public JVM supplier lane.
+def metadataCompiles = ['compileNativeMainKotlinMetadata', 'compileAppleMainKotlinMetadata', 'compileIosMainKotlinMetadata']
+def names = [
+    'kmpPartiallyResolvedDependenciesChecker', 'checkKotlinGradlePluginConfigurationErrors',
+    'compileKotlinJvm', 'compileJvmMainJava', 'jvmProcessResources', 'processJvmMainResources',
+    'jvmMainClasses', 'jvmJar', 'jvmSourcesJar', 'sourcesJar',
+    'transformCommonMainDependenciesMetadata', 'compileCommonMainKotlinMetadata',
+    'generateProjectStructureMetadata', 'metadataCommonMainProcessResources', 'metadataCommonMainClasses',
+    'allMetadataJar', 'buildKotlinToolingMetadata',
+    'generateMetadataFileForKotlinMultiplatformPublication', 'generatePomFileForKotlinMultiplatformPublication',
+    'generateMetadataFileForJvmPublication', 'generatePomFileForJvmPublication',
+    'publishJvmPublicationToW01OnlyRepository', 'publishKotlinMultiplatformPublicationToW01OnlyRepository',
+    'exportCommonSourceSetsMetadataLocationsForMetadataApiElements', 'exportRootPublicationCoordinatesForMetadataApiElements',
+    'exportTargetPublicationCoordinatesForJvmApiElements', 'exportTargetPublicationCoordinatesForJvmRuntimeElements',
+    'commonizeNativeDistribution', 'downloadKotlinNativeDistribution',
+    'iosArm64MetadataElements', 'iosSimulatorArm64MetadataElements'
+] + metadataCompiles
+['Native', 'Apple', 'Ios'].each { part ->
+    names += ["transform${part}MainDependenciesMetadata".toString(),
+              "metadata${part}MainProcessResources".toString(), "metadata${part}MainClasses".toString()]
+}
+gradle.taskGraph.whenReady { graph ->
+    new File(evidence, 'engine-task-graph.json').text = JsonOutput.toJson(graph.allTasks*.path) + '\n'
+    if (!graph.allTasks*.path.containsAll(requested) || graph.allTasks.any { t ->
+        !modules.collect { ':' + it }.contains(t.project.path) || !names.contains(t.name)
+    }) {
+        throw new GradleException('Unexpected supplier graph; do not strip targets or build Android/Apple binaries')
+    }
+}
+gradle.taskGraph.beforeTask { task ->
+    if (metadataCompiles.contains(task.name) && (!task.inputs.hasSourceFiles || !task.inputs.sourceFiles.isEmpty())) {
+        throw new GradleException('Nonempty native metadata inputs are outside this JVM supplier gate')
+    }
+}
+gradle.taskGraph.afterTask { task, state ->
+    def outcome = state.failure != null ? 'FAILED' : state.noSource ? 'NO-SOURCE' : state.skipped ? state.skipMessage : 'SUCCESS'
+    new File(evidence, 'engine-task-outcomes.tsv').append("${task.path}\t${outcome}\n")
+    if (metadataCompiles.contains(task.name) && !state.noSource) {
+        throw new GradleException('Native metadata did not remain naturally NO-SOURCE')
+    }
+}

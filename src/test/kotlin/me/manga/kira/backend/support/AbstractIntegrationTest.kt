@@ -1,11 +1,18 @@
 package me.manga.kira.backend.support
 
+import me.manga.kira.backend.database.complaint.complaintResource
 import me.manga.kira.backend.security.AuthThrottleService
 import org.junit.jupiter.api.BeforeEach
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.beans.factory.support.MergedBeanDefinitionPostProcessor
+import org.springframework.beans.factory.support.RootBeanDefinition
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
+import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection
+import org.springframework.context.annotation.Bean
+import org.springframework.context.annotation.Conditional
+import org.springframework.context.annotation.Import
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.test.context.ActiveProfiles
 import org.springframework.test.context.DynamicPropertyRegistry
@@ -31,18 +38,17 @@ import java.util.Base64
  *
  * Because the container is shared across test classes, [resetState] clears every mutable table between
  * test methods. Since Phase 5 the source-config + published-document tables are cleared too, in
- * **FK-safe order** (all FKs are `ON DELETE RESTRICT`, PLAN §5): the self/pointer references
+ * **FK-safe order** (all FKs are `ON DELETE RESTRICT`, PLAN §5): the two self/pointer references
  * (`source_configs.current_published_revision_id`, `document_publication_state.latest_document_revision`)
- * and the bootstrap origin receipt are cleared first, then children are deleted before
- * parents, and `users` last (revisions/snapshots/receipt reference it). The `seq_document_revision`
- * sequence is restarted so every test sees the fresh seed
+ * are nulled first, then children are deleted before parents, and `users` last (revisions/snapshots
+ * reference it). The `seq_document_revision` sequence is restarted so every test sees the fresh seed
  * state (`StartupConsistencyIT` manipulates it). The seeded singletons (`security_state`,
- * `document_publication_state`) are kept, with the catalog reset to genuinely PENDING, never a
- * fabricated COMPLETE fixture.
+ * `document_publication_state`) are kept — only their mutable pointer is reset.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
+@Import(AbstractIntegrationTest.SharedPostgresConnection::class)
 abstract class AbstractIntegrationTest {
 
     @Autowired
@@ -53,19 +59,11 @@ abstract class AbstractIntegrationTest {
 
     @BeforeEach
     fun resetState() {
+        // Disposable fixtures only: release complaint closure/user and scoped bookkeeping FKs first.
+        // Reinstates exact closed V14 seeds; this is not a production erasure implementation.
+        jdbcTemplate.execute(complaintResource("fixtures/complaint/reset.sql"))
         // 1) Break the pointer/self references that would block RESTRICT deletes.
-        jdbcTemplate.update(
-            """
-            UPDATE document_publication_state
-            SET latest_document_revision = NULL, bootstrap_phase = 'pending',
-                bootstrap_policy_id = NULL, bootstrap_reference_sha256 = NULL,
-                bootstrap_payload_sha256 = NULL, bootstrap_document_revision = NULL,
-                bootstrap_document_checksum = NULL, bootstrap_catalog_revision = NULL,
-                bootstrap_catalog_checksum = NULL, bootstrap_completed_at = NULL,
-                bootstrap_actor_id = NULL
-            WHERE id = 1
-            """.trimIndent(),
-        )
+        jdbcTemplate.update("UPDATE document_publication_state SET latest_document_revision = NULL WHERE id = 1")
         jdbcTemplate.update("UPDATE source_configs SET current_published_revision_id = NULL")
         jdbcTemplate.update("UPDATE tutorials SET published_revision_id = NULL")
         jdbcTemplate.update("UPDATE tutorial_categories SET published_revision_id = NULL")
@@ -112,9 +110,34 @@ abstract class AbstractIntegrationTest {
         }
 
         @JvmStatic
-        @ServiceConnection
-        val postgres: PostgreSQLContainer<*> =
+        val postgres: PostgreSQLContainer<*> by lazy {
+            check(System.getenv("KIRA_PG_LIFECYCLE_LOCAL_RUN") == null) // Never construct Docker as fallback for a selected local run.
             PostgreSQLContainer(DockerImageName.parse("postgres:17.6-alpine"))
                 .also { it.start() }
+        }
+    }
+
+    /** Default real @ServiceConnection still uses the original JVM-owned singleton, not a per-context server. */
+    @TestConfiguration(proxyBeanMethods = false)
+    @Conditional(PgLifecycleContainerRunCondition::class)
+    internal class SharedPostgresConnection {
+        @Bean(name = ["sharedIntegrationPostgres"], destroyMethod = "stop")
+        @ServiceConnection
+        fun sharedIntegrationPostgres(): PostgreSQLContainer<*> = postgres
+
+        companion object {
+            @Bean
+            @JvmStatic
+            fun retainSingletonPostgresCustody(): MergedBeanDefinitionPostProcessor = object : MergedBeanDefinitionPostProcessor {
+                override fun postProcessMergedBeanDefinition(definition: RootBeanDefinition, beanType: Class<*>, beanName: String) {
+                    if (beanName == "sharedIntegrationPostgres") {
+                        check(PostgreSQLContainer::class.java.isAssignableFrom(beanType) && definition.destroyMethodName == "stop")
+                        // Spring's explicit external-custody contract, scoped to this one bean. A cached
+                        // context must not stop the JVM/Ryuk-owned singleton used by another context.
+                        definition.registerExternallyManagedDestroyMethod("stop")
+                    }
+                }
+            }
+        }
     }
 }

@@ -11,7 +11,6 @@ import org.junit.jupiter.api.Test
  * no new snapshot). The server re-validates live inside the publish transaction (PLAN §4.3/§9).
  */
 class PublishInvalidFailsIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `publishing an invalid revision is 422 and leaves the document unchanged`() {

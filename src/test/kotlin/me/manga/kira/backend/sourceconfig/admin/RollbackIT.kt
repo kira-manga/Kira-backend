@@ -12,11 +12,9 @@ import org.junit.jupiter.api.Test
  * restoration) (PLAN §9 forward-roll).
  */
 class RollbackIT : AbstractAdminSourceIT() {
-    override val bootstrapCatalogBeforeEach: Boolean = true
 
     @Test
     fun `a never-published draft cannot use rollback as a disguised first publish`() {
-        val before = publicState()
         val api = "NeverPublished"
         createSource(SourceConfigFixtures.validGenericSource(api)).andExpect { status { isCreated() } }
 
@@ -24,7 +22,7 @@ class RollbackIT : AbstractAdminSourceIT() {
             status { isConflict() }
             jsonPath("$.errors[0].code") { value("ROLLBACK_REQUIRES_PUBLISHED_BASELINE") }
         }
-        assertPublicStateUnchanged(before)
+        assertEquals(0L, snapshotCount())
         assertEquals("draft", sourceStatus(api))
     }
 

@@ -36,7 +36,7 @@ class TutorialService(
 
     @Transactional
     fun createCategory(slug: String, position: Int? = null): AdminCategoryView {
-        validator.categorySlug(slug)
+        validator.slug(slug)
         if (position != null && position < 0) throw BadRequestException("position must be non-negative.")
         val id = UUID.randomUUID()
         val created = repository.createCategory(id, slug, position ?: repository.nextCategoryPosition(), clock.instant())
@@ -148,7 +148,7 @@ class TutorialService(
 
     @Transactional
     fun createTutorial(slug: String, position: Int? = null, featuredPosition: Int? = null): AdminTutorialView {
-        validator.tutorialSlug(slug)
+        validator.slug(slug)
         if (position != null && position < 0) throw BadRequestException("position must be non-negative.")
         if (featuredPosition != null && featuredPosition < 0) throw BadRequestException("featuredPosition must be non-negative.")
         val id = UUID.randomUUID()
@@ -162,9 +162,8 @@ class TutorialService(
         AdminTutorialView(tutorial, tutorial.publishedRevisionId?.let { publishedTutorial(tutorial) })
     }
 
-    @Transactional(rollbackFor = [Exception::class])
+    @Transactional
     fun createTutorialRevision(tutorialId: UUID, categoryId: UUID, content: TutorialContent): TutorialRevisionView {
-        repository.acquireMediaLock()
         requireTutorial(tutorialId, lock = true)
         requireCategory(categoryId)
         val referenced = content.mediaReferences().values.toSet()
@@ -194,14 +193,12 @@ class TutorialService(
         return repository.listTutorialRevisions(tutorialId).map(::tutorialRevision)
     }
 
-    @Transactional(rollbackFor = [Exception::class])
+    @Transactional
     fun publishTutorial(tutorialId: UUID, revisionNumber: Int): AdminTutorialView {
-        repository.acquireMediaLock()
         val tutorial = requireTutorial(tutorialId, lock = true)
         val revision = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
         ensureNewerTutorialRevision(tutorial, revision)
-        // Serialize the lifecycle check with category archive/restore through transaction commit.
-        val category = requireCategory(requireNotNull(revision.categoryId), lock = true)
+        val category = requireCategory(requireNotNull(revision.categoryId))
         if (category.status != TutorialLifecycle.PUBLISHED || category.publishedRevisionId == null) {
             throw TutorialConflictException("the referenced category must be published before the tutorial.", "TUTORIAL_CATEGORY_NOT_PUBLISHED")
         }
@@ -216,13 +213,12 @@ class TutorialService(
         return AdminTutorialView(requireTutorial(tutorialId), TutorialRevisionView(revision, content))
     }
 
-    @Transactional(rollbackFor = [Exception::class])
+    @Transactional
     fun rollbackTutorial(tutorialId: UUID, revisionNumber: Int): AdminTutorialView {
-        repository.acquireMediaLock()
         requireTutorial(tutorialId, lock = true)
         val historical = repository.findTutorialRevision(tutorialId, revisionNumber) ?: throw TutorialRevisionNotFoundException()
-        val category = requireCategory(requireNotNull(historical.categoryId), lock = true)
-        if (category.status != TutorialLifecycle.PUBLISHED || category.publishedRevisionId == null) {
+        val category = requireCategory(requireNotNull(historical.categoryId))
+        if (category.status != TutorialLifecycle.PUBLISHED) {
             throw TutorialConflictException("the historical revision's category is not published.", "TUTORIAL_CATEGORY_NOT_PUBLISHED")
         }
         val content = tutorialRevision(historical).content
