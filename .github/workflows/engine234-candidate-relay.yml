@@ -1,0 +1,85 @@
+name: Preserve exact Engine234 candidate
+
+on:
+  push:
+    branches: [verification/engine234-candidate-relay-20260916-01]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: engine234-candidate-storage-10416542685
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.repository_id == '1304735394' &&
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/verification/engine234-candidate-relay-20260916-01' &&
+      github.event.deleted == false && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    env:
+      RELAY_ROOT: ${{ runner.temp }}/engine234-relay-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Download only the original immutable artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$GITHUB_WORKFLOW_SHA" = "$GITHUB_SHA"
+          mkdir -- "$RELAY_ROOT"
+          # Curl drops Authorization on cross-host redirects; never use location-trusted.
+          # Disable curlrc/proxies; no retry, fallback artifact, or signed-URL logging.
+          if ! curl --disable --silent --fail --location --noproxy '*' \
+            --proto '=https' --proto-redir '=https' --max-redirs 3 \
+            --connect-timeout 10 --max-time 90 --max-filesize 1694426 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "$RELAY_ROOT/original.zip" \
+            'https://api.github.com/repos/kira-manga/Kira-backend/actions/artifacts/10416542685/zip'; then
+            echo 'Original artifact download failed; no retry or replacement.' >&2
+            exit 1
+          fi
+      - name: Verify ZIP and copy the unchanged candidate only
+        run: python3 -B .github/scripts/relay_engine234_candidate.py "$RELAY_ROOT"
+      - name: Retain candidate bytes and sanitized origin for seven days
+        id: storage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine234-candidate-storage-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.RELAY_ROOT }}/public/candidate-maven.tar.gz
+            ${{ env.RELAY_ROOT }}/public/origin.json
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: false
+          retention-days: 7
+      - name: Record storage identity, not new producer provenance
+        env:
+          STORAGE_ID: ${{ steps.storage.outputs.artifact-id }}
+          STORAGE_DIGEST: ${{ steps.storage.outputs.artifact-digest }}
+        run: |
+          printf 'Storage artifact: %s\nStorage ZIP digest: %s\nOriginal producer remains run 35018546402/1. No package publication or release.\n' \
+            "$STORAGE_ID" "$STORAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+      - name: Remove only this job's relay files
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d "$RELAY_ROOT" ]; then
+            rm -f -- "$RELAY_ROOT/original.zip" "$RELAY_ROOT/public/candidate-maven.tar.gz" "$RELAY_ROOT/public/origin.json"
+            if [ -d "$RELAY_ROOT/public" ]; then rmdir -- "$RELAY_ROOT/public"; fi
+            rmdir -- "$RELAY_ROOT"
+          fi
