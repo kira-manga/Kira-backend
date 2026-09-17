@@ -1,6 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
+import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
 import org.junit.jupiter.api.AfterAll
@@ -165,6 +166,22 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `process bound G1 final reread rejects D drift and commit or completion failure never releases a projection receipt`() =
         withFixture { tls -> withProcessBoundCatalogGenesis(tls) { ProcessBoundCatalogGenesisCases(it).currentDriftAndCommitReleaseFailures() } }
+
+    @Test
+    fun `owned G1 refresh joins real SDK readback to prepared completion projection and exact retry`() =
+        withFixture { tls -> withCurrentAcceptedCatalogRefresh(tls) { it.preparedRefreshCompletesProjectsAndRetries() } }
+
+    @Test
+    fun `owned G1 refresh rejects substituted process settings and stale desired configuration`() =
+        withFixture { tls -> withCurrentAcceptedCatalogRefresh(tls) { it.wrongBindingAndStaleHistoryAreRejected() } }
+
+    @Test
+    fun `owned G1 refresh closes late construction and readback before deadline refusal with exact recovery`() =
+        withFixture { tls -> withCurrentAcceptedCatalogRefresh(tls) { it.expiredRefreshClosesBeforePersistence() } }
+
+    @Test
+    fun `owned G1 refresh cleanup failure retains original coordinator custody against replacement`() =
+        withFixture { tls -> withCurrentAcceptedCatalogRefresh(tls) { it.failedProviderCleanupPoisonsOriginalCoordinator() } }
 
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
