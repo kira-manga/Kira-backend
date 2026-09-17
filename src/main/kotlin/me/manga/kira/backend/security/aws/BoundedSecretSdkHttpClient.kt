@@ -171,17 +171,21 @@ internal class BoundedSecretSdkHttpClient(
         val bytes = ByteArray(declared?.toInt() ?: maximum)
         try {
             var offset = 0
+            var eofSeen = false
             while (offset < bytes.size) {
                 check()
                 val permitted = minOf(8192, bytes.size - offset)
                 val count = stream.read(bytes, offset, permitted)
                 check()
-                if (count == -1) break
+                if (count == -1) {
+                    eofSeen = true
+                    break
+                }
                 requireSecretVersion(count in 1..permitted, SecretVersionFailure.RESOLVER_FAILURE)
                 offset += count
             }
             check()
-            val eof = stream.read()
+            val eof = if (eofSeen) -1 else stream.read()
             check()
             requireSecretVersion(eof == -1 && offset > 0 && (declared == null || offset.toLong() == declared), SecretVersionFailure.RESOLVER_FAILURE)
             return if (offset == bytes.size) bytes else bytes.copyOf(offset).also { bytes.fill(0) }
