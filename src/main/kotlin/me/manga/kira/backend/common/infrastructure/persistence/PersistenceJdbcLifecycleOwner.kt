@@ -9,6 +9,7 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
 
     internal val sourceOnly: Boolean get() = root.sourceOnly
     internal val versionBoundPools: VersionBoundPersistencePools? get() = root.versionBoundPools
+    internal val epochRotation: EpochRotationPersistence? get() = root.epochRotation
     internal val complaintContainment = PersistenceComplaintContainment()
     private val catalogBindingClaimed = AtomicBoolean()
 
@@ -132,5 +133,8 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
 
         internal fun versionBound(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
             PersistenceJdbcLifecycleOwner(configuration.createRoot())
+
+        internal fun versionBoundWithEpochRotation(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createRootWithEpochRotation())
     }
 }

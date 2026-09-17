@@ -16,6 +16,7 @@ internal class PersistenceTimeBudget private constructor(
     private val clock: PersistenceNanoClock,
     private val startedAtNanos: Long,
     private val allowanceNanos: Long,
+    private val parent: PersistenceTimeBudget? = null,
 ) {
     /** Floor, never round up into extra work or return the zero that many timeout APIs treat as unlimited. */
     fun remainingMillis(ceilingMillis: Long): Long {
@@ -25,7 +26,26 @@ internal class PersistenceTimeBudget private constructor(
         if (elapsed < 0 || elapsed >= allowanceNanos) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED)
         val remainingMillis = (allowanceNanos - elapsed) / NANOS_PER_MILLISECOND
         if (remainingMillis <= 0) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED)
-        return minOf(remainingMillis, ceilingMillis)
+        val local = minOf(remainingMillis, ceilingMillis)
+        return parent?.let { minOf(local, it.remainingMillis(ceilingMillis)) } ?: local
+    }
+
+    /** A stricter stage cap retains the original total deadline; no retry receives a restarted allowance. */
+    internal fun capped(ceilingMillis: Long): PersistenceTimeBudget {
+        remainingMillis(ceilingMillis)
+        if (ceilingMillis > Long.MAX_VALUE / NANOS_PER_MILLISECOND) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_TIME_BUDGET)
+        return PersistenceTimeBudget(clock, clock.nanoTime(), ceilingMillis * NANOS_PER_MILLISECOND, this)
+    }
+
+    /**
+     * Called outside F/G/T. The factory's protected predicates may read only the fixed system clock,
+     * never a supplied parent clock. Sampling system time first conservatively charges this copy's
+     * own construction time; callers still recheck the original budget outside the protected cut.
+     */
+    internal fun systemCappedSnapshot(ceilingMillis: Long): PersistenceTimeBudget {
+        val started = System.nanoTime()
+        val remaining = remainingMillis(ceilingMillis)
+        return PersistenceTimeBudget(SystemPersistenceNanoClock, started, remaining * NANOS_PER_MILLISECOND)
     }
 
     override fun toString(): String = "PersistenceTimeBudget(redacted)"

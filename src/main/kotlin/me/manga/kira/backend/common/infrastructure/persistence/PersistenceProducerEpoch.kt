@@ -12,16 +12,22 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     private val cleanup = PersistenceJdbcCleanup.prepare(this, issuance)
 
     @Volatile private var phase: PersistencePhaseContext? = null
+    @Volatile private var session: PersistenceEpochRotationSession? = null
 
     internal fun attachPhase(owner: PersistencePhaseContext) {
-        check(preparedFor(ownership) && phase == null && !ownership.ownershipLockHeld())
+        check(preparedFor(ownership) && phase == null && session == null && !ownership.ownershipLockHeld())
         phase = owner
+    }
+
+    internal fun attachSession(owner: PersistenceEpochRotationSession) {
+        check(preparedFor(ownership) && phase == null && session == null && !ownership.ownershipLockHeld())
+        session = owner
     }
 
     /** Existing scanner association only. Clock sampling is forbidden under F/G/T. */
     internal fun phaseDeadlineExpired(): Boolean {
         check(!ownership.ownershipLockHeld())
-        return phase?.deadlineExpired() == true
+        return phase?.deadlineExpired() == true || session?.deadlineExpired() == true
     }
 
     fun enterForeground(budget: PersistenceTimeBudget? = null): Call? = enter(Kind.FOREGROUND, budget)

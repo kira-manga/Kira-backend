@@ -23,6 +23,8 @@ internal object PersistenceManagedObserver {
                     PersistenceManagedObservation.DELETION_SHUTDOWN -> root.deletionShutdownObservation()
                     PersistenceManagedObservation.CATALOG_COORDINATOR -> root.catalogCoordinatorPreparationObservation()
                     PersistenceManagedObservation.CATALOG_COORDINATOR_SHUTDOWN -> root.catalogCoordinatorShutdownObservation()
+                    PersistenceManagedObservation.EPOCH_ROTATION -> root.epochRotationPreparationObservation()
+                    PersistenceManagedObservation.EPOCH_ROTATION_SHUTDOWN -> root.epochRotationShutdownObservation()
                     PersistenceManagedObservation.SHUTDOWN -> root.shutdownObservation()
                 }
                 if (persistenceFactoryRemainingMillis(budget) == 0L) return PersistenceLifecycleObservation.PENDING
@@ -51,6 +53,8 @@ internal enum class PersistenceManagedObservation {
     DELETION_SHUTDOWN,
     CATALOG_COORDINATOR,
     CATALOG_COORDINATOR_SHUTDOWN,
+    EPOCH_ROTATION,
+    EPOCH_ROTATION_SHUTDOWN,
     SHUTDOWN,
 }
 

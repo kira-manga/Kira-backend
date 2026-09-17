@@ -59,7 +59,7 @@ internal class PersistenceJdbcGuardIdentity private constructor(
 @Suppress("TooManyFunctions")
 internal class PersistenceJdbcGuardContext private constructor(
     private val ownership: PersistenceOwnership,
-    private val pool: PersistenceJdbcPoolIdentity,
+    private val lineage: Lineage,
     private val epoch: PersistenceProducerEpoch,
     private val failures: SafeJdbcFailure,
     private val driverCustody: PersistencePgOwnedCutCustody?,
@@ -84,7 +84,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     @Volatile private var phase: PersistencePhaseContext? = null
 
     internal fun attachPhase(owner: PersistencePhaseContext) {
-        check(phase == null && !ownership.ownershipLockHeld())
+        check(lineage is Lineage.Pool && phase == null && !ownership.ownershipLockHeld())
         phase = owner
     }
 
@@ -95,9 +95,11 @@ internal class PersistenceJdbcGuardContext private constructor(
         phase?.ownerDeleteAllApply?.observeFailure(failure)
     }
 
-    internal fun belongsToPool(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean = epoch === expected && pool.boundTo(lifecycle)
+    internal fun belongsToPool(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean =
+        epoch === expected && (lineage as? Lineage.Pool)?.identity?.boundTo(lifecycle) == true
 
     internal fun phaseJdbcFailure(retireImmediately: Boolean = false) {
+        (lineage as? Lineage.Rotation)?.session?.jdbcFailure()
         val owner = phase ?: return
         owner.jdbcFailure()
         // Only the original caller can defer to its rollback/finalizer. A foreign cancellation
@@ -112,7 +114,9 @@ internal class PersistenceJdbcGuardContext private constructor(
         if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION && !identity.originalCaller()) refuse()
         reconcileAncestors(this, frames) // Observe genuine ancestor failure before granting a nested business token.
         if (!ownership.permitsCleanup(identity.epoch)) refuse()
-        val budget = phase?.callBudget(kind)
+        val rotation = (lineage as? Lineage.Rotation)?.session
+        rotation?.beforeJdbcCall(kind)
+        val budget = phase?.callBudget(kind) ?: rotation?.callBudget(kind)
         val token = when (kind) {
             PersistenceJdbcGuardCallKind.BUSINESS -> identity.epoch.enterForeground(budget)
             PersistenceJdbcGuardCallKind.CLEANUP -> identity.epoch.enterCleanup(identity.cleanup, budget)
@@ -151,7 +155,7 @@ internal class PersistenceJdbcGuardContext private constructor(
     fun ordinaryCompatibilityOnly() = compatibilityOnly.set(true)
 
     internal fun enterRoot(kind: PersistenceJdbcGuardCallKind): PersistenceJdbcGuardCall {
-        if (ownership.poolEpoch(pool) !== epoch) refuse()
+        requireRootLineage()
         val cleanup = epoch.prepareCleanup() ?: refuse()
         val identity = PersistenceJdbcGuardIdentity.prepare(this, epoch, cleanup)
         return enter(identity, kind)
@@ -159,7 +163,7 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     /** The lower physical close/abort are closed terminal requests, not foreign foreground business. */
     internal fun enterTerminal(): PersistenceJdbcGuardCall {
-        if (ownership.poolEpoch(pool) !== epoch) refuse()
+        requireRootLineage()
         reconcileAncestors(this, frames)
         val cleanup = epoch.cancellationCleanup() ?: refuse()
         val identity = PersistenceJdbcGuardIdentity.prepare(this, epoch, cleanup)
@@ -472,13 +476,32 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     override fun toString(): String = "PersistenceJdbcGuardContext(redacted)"
 
+    private fun requireRootLineage() {
+        when (val selected = lineage) {
+            is Lineage.Pool -> if (ownership.poolEpoch(selected.identity) !== epoch) refuse()
+            is Lineage.Rotation -> if (!ownership.currentSession(selected.session, epoch)) refuse()
+        }
+    }
+
+    private sealed interface Lineage {
+        class Pool(val identity: PersistenceJdbcPoolIdentity) : Lineage
+        class Rotation(val session: PersistenceEpochRotationSession) : Lineage
+    }
+
     companion object {
         internal fun prepare(
             ownership: PersistenceOwnership,
             pool: PersistenceJdbcPoolIdentity,
             epoch: PersistenceProducerEpoch,
             driverCustody: PersistencePgOwnedCutCustody? = null,
-        ): PersistenceJdbcGuardContext = PersistenceJdbcGuardContext(ownership, pool, epoch, SafeJdbcFailure.prepare(), driverCustody)
+        ): PersistenceJdbcGuardContext = PersistenceJdbcGuardContext(ownership, Lineage.Pool(pool), epoch, SafeJdbcFailure.prepare(), driverCustody)
+
+        internal fun forEpochRotation(
+            ownership: PersistenceOwnership,
+            epoch: PersistenceProducerEpoch,
+            session: PersistenceEpochRotationSession,
+            driverCustody: PersistencePgOwnedCutCustody,
+        ): PersistenceJdbcGuardContext = PersistenceJdbcGuardContext(ownership, Lineage.Rotation(session), epoch, SafeJdbcFailure.prepare(), driverCustody)
 
         internal fun refuse(): Nothing = throw SQLException("Persistence JDBC operation refused.")
     }

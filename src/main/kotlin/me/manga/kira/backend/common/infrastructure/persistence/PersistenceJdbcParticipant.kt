@@ -9,17 +9,20 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
         this(root, capacity, if (deletion) PersistenceJdbcParticipantRole.DELETION else PersistenceJdbcParticipantRole.ORDINARY)
 
     private val binding = PersistencePhysicalFactoryBinding(capacity, root.shutdown, this)
-    private val versionBoundMaterial = root.versionBoundPools?.material(role)
-    private val loginPolicy = versionBoundMaterial?.loginPolicy ?: when (role) {
+    private val versionBoundMaterial = if (role === PersistenceJdbcParticipantRole.EPOCH_ROTATION) null else root.versionBoundPools?.material(role)
+    private val rotationMaterial = if (role === PersistenceJdbcParticipantRole.EPOCH_ROTATION) root.epochRotationMaterial else null
+    private val loginPolicy = rotationMaterial?.opening?.loginPolicy ?: versionBoundMaterial?.loginPolicy ?: when (role) {
         PersistenceJdbcParticipantRole.ORDINARY -> root.endpoint.loginPolicy
         PersistenceJdbcParticipantRole.DELETION -> PersistenceNativeSettings.deletionLoginPolicy
         PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> PersistenceNativeSettings.catalogCoordinatorLoginPolicy
+        PersistenceJdbcParticipantRole.EPOCH_ROTATION -> PersistenceNativeSettings.epochRotationLoginPolicy
     }
     private val strict = role !== PersistenceJdbcParticipantRole.ORDINARY
     private val strictPolicy = when (role) {
         PersistenceJdbcParticipantRole.ORDINARY -> null
         PersistenceJdbcParticipantRole.DELETION -> PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION
         PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> PersistenceDriverAttemptPolicy.TRACKED_CATALOG_CONJUNCTION
+        PersistenceJdbcParticipantRole.EPOCH_ROTATION -> PersistenceDriverAttemptPolicy.TRACKED_EPOCH_ROTATION_CONJUNCTION
     }
     private val worker = PersistenceFactoryWorker.owned(binding, PersistenceJdbcFactoryOperations(binding), loginPolicy)
     private val runners = Array(capacity) { PersistenceTerminalRunner(it) }
@@ -71,7 +74,20 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     fun preparationFinished(): Boolean = preparationEnded.get() || controller.termination() === PersistenceThreadTermination.INERT
 
     /** Inert handle only: the executing original caller creates its control/budget before selecting an opening. */
-    internal fun prepareRequest(): PersistenceOwnedFactoryRequest = PersistenceOwnedFactoryRequest(binding, loginPolicy.durationMillis, this)
+    internal fun prepareRequest(): PersistenceOwnedFactoryRequest {
+        check(role !== PersistenceJdbcParticipantRole.EPOCH_ROTATION)
+        return PersistenceOwnedFactoryRequest(binding, loginPolicy.durationMillis, this)
+    }
+
+    internal fun isEpochRotation(): Boolean = role === PersistenceJdbcParticipantRole.EPOCH_ROTATION
+
+    internal fun ownsEpochRotation(resource: EpochRotationPersistence): Boolean = isEpochRotation() && root.epochRotation === resource
+
+    internal fun prepareEpochRotationRequest(resource: EpochRotationPersistence, attempt: me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1):
+        PersistenceEpochRotationFactoryRequest {
+        check(ownsEpochRotation(resource))
+        return PersistenceEpochRotationFactoryRequest(binding, this, resource, attempt, loginPolicy.durationMillis)
+    }
 
     fun request(): PersistenceFactoryResult<PersistenceJdbcCandidate> = prepareRequest().execute()
 
@@ -218,7 +234,7 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
 
     private fun opening(policy: PersistenceDriverAttemptPolicy): PersistencePgDriverOpening {
         val timer = if (policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) root.timer else null
-        val configured = versionBoundMaterial?.opening(policy)
+        val configured = rotationMaterial?.opening?.also { check(it.policy === policy) } ?: versionBoundMaterial?.opening(policy)
         return if (configured == null) {
             PersistencePgDriverOpening.prepareRetained(root.retainedDriver, root.endpoint, policy, root.pathStyle, timer)
         } else {
@@ -235,4 +251,4 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     override fun toString(): String = "PersistenceJdbcParticipant(redacted)"
 }
 
-internal enum class PersistenceJdbcParticipantRole { ORDINARY, DELETION, CATALOG_COORDINATOR }
+internal enum class PersistenceJdbcParticipantRole { ORDINARY, DELETION, CATALOG_COORDINATOR, EPOCH_ROTATION }

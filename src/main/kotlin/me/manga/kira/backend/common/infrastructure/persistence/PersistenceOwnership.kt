@@ -8,6 +8,8 @@ import java.util.concurrent.locks.LockSupport
 internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry, private val binding: PersistencePhysicalFactoryBinding?) {
     private val current = AtomicReference<PersistenceProducerEpoch?>()
     private val poolDelivery = AtomicReference<PreparedPoolConnection?>()
+    private val sessionDelivery = AtomicReference<PreparedEpochRotationSession?>()
+    private val unusedReleased = AtomicBoolean()
     private val terminalSealed = AtomicBoolean()
     private val poolState = AtomicReference<PersistenceJdbcPoolEpoch?>()
     private val poolTransfer = AtomicReference<PersistenceJdbcPoolTransfer?>()
@@ -16,6 +18,16 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
     private var delivery = Delivery.UNEXPOSED // Only the exact entry's F/G owner changes delivery.
 
     internal fun terminalCompletion(): PersistenceTerminalReclamation = terminalCompletion
+
+    /** Exact never-dispatched removal, deliberately separate from physical terminal reclamation. */
+    internal fun unusedReleaseProven(): Boolean = unusedReleased.get()
+
+    internal fun unusedReleasedLocked() {
+        val physical = requireNotNull(binding)
+        check(physical.ledger.lock.isHeldByCurrentThread && physical.ledger.current(entry.record) === entry)
+        check(!entry.dispatched && entry.raw.get() == null && current.get() == null)
+        unusedReleased.set(true)
+    }
 
     internal fun phaseEpoch(): PersistenceProducerEpoch? = current.get()
 
@@ -56,6 +68,22 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         poolState.set(prepared.state)
         delivery = Delivery.POOL
     }
+
+    internal fun canDeliverSessionLocked(prepared: PreparedEpochRotationSession): Boolean {
+        requireCurrentLocks()
+        return delivery === Delivery.UNEXPOSED && current.get() == null && sessionDelivery.get() == null &&
+            !terminalSealed.get() && prepared.matches(entry, binding) && prepared.epoch.preparedFor(this) && entry.control?.caller?.isCurrent() == true
+    }
+
+    internal fun deliveredSessionLocked(prepared: PreparedEpochRotationSession) {
+        prepared.epoch.publishInstallation()
+        current.set(prepared.epoch)
+        sessionDelivery.set(prepared)
+        delivery = Delivery.SESSION
+    }
+
+    internal fun currentSession(session: PersistenceEpochRotationSession, epoch: PersistenceProducerEpoch): Boolean =
+        sessionDelivery.get()?.session === session && current.get() === epoch
 
     /** Pool identity is physical/binding authority, not the factory caller's thread identity. */
     internal fun poolEpoch(pool: PersistenceJdbcPoolIdentity): PersistenceProducerEpoch? {
@@ -288,6 +316,7 @@ internal class PersistenceOwnership(private val entry: PersistencePhysicalEntry,
         OPAQUE,
         EPOCH,
         POOL,
+        SESSION,
     }
 
     companion object {

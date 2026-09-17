@@ -23,6 +23,9 @@ internal class VersionBoundPersistencePools private constructor(
     val ordinary: GuardedDataSource get() = completed { ordinaryBinding.dataSource() }
     val deletion: GuardedDataSource get() = completed { deletionBinding.dataSource() }
     val catalogCoordinator: CatalogCoordinatorPersistence get() = completed { checkNotNull(catalog) }
+    val epochRotation: EpochRotationPersistence? get() = root.epochRotation
+
+    internal fun ownsEpochRotation(resource: EpochRotationPersistence): Boolean = root.epochRotation === resource
 
     internal fun bind(
         owner: PersistenceJdbcLifecycleOwner,
@@ -64,6 +67,7 @@ internal class VersionBoundPersistencePools private constructor(
         PersistenceJdbcParticipantRole.ORDINARY -> ordinaryBinding.material
         PersistenceJdbcParticipantRole.DELETION -> deletionBinding.material
         PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> catalogBinding.material
+        PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a pool.")
     }
 
     fun descriptors(): List<VersionBoundPersistencePoolDescriptor> = completed { bindings.map { it.descriptor() } }

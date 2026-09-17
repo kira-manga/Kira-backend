@@ -125,7 +125,7 @@ internal class GuardedDataSource private constructor(
         catalogPreparation?.observation() ?: deletionPreparation?.observation() ?: owner.observeOrdinaryPreparation()
 
     override fun getConnection(): Connection {
-        val budget = PersistenceTimeBudget.start(checkoutMillis)
+        val budget = PersistencePhaseOwnership.current()?.epochRotationCheckoutBudget(checkoutMillis) ?: PersistenceTimeBudget.start(checkoutMillis)
         if (!businessReady()) PersistenceJdbcGuardContext.refuse()
         val acquisition = lifecycle.prepareAcquisition(budget)
         val completion = PersistencePhaseOwnership.prepareAcquisition(this, acquisition)
@@ -282,6 +282,7 @@ internal class GuardedDataSource private constructor(
                 PersistenceJdbcParticipantRole.ORDINARY -> Route.ORDINARY
                 PersistenceJdbcParticipantRole.DELETION -> Route.DELETION
                 PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> Route.CATALOG_COORDINATOR
+                PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a DataSource.")
             }
             return GuardedDataSource(owner, endpoint, capacity, launchProfile, route, versionBound = binding)
         }

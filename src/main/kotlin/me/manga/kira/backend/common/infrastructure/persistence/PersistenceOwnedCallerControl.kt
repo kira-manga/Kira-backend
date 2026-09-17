@@ -75,6 +75,14 @@ internal class PersistenceOwnedCallerControl private constructor(val budget: Per
     override fun toString(): String = "PersistenceOwnedCallerControl"
 
     companion object {
+        internal fun forEpochRotation(
+            attempt: me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1,
+            loginMillis: Long,
+        ): PersistenceOwnedCallerControl = PersistenceOwnedCallerControl(
+            attempt.budget.systemCappedSnapshot(loginMillis),
+            PersistenceOwnedFactoryCaller.capture(),
+        )
+
         fun prepare(allowanceMillis: Long): PersistenceOwnedCallerControl {
             // The same original system budget covers metadata, reservation, admission, packaging and claim.
             val budget = PersistenceTimeBudget.start(allowanceMillis, SystemPersistenceNanoClock)

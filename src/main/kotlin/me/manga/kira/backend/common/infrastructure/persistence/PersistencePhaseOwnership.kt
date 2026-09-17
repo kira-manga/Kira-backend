@@ -4,6 +4,7 @@ import jakarta.persistence.EntityManagerFactory
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import org.springframework.transaction.PlatformTransactionManager
@@ -156,9 +157,19 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintCoordinatorLeaseRelinquish(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH)
 
+    internal fun enterComplaintEpochRotationRequest(attempt: CatalogEpochRotationAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST, rotationAttempt = attempt)
+
+    internal fun enterComplaintEpochRotationResume(attempt: CatalogEpochRotationAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME, rotationAttempt = attempt)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught")
-    private fun enter(path: PersistencePhasePath, deletionScope: ComplaintDataScope? = null): PersistencePhaseContext {
+    private fun enter(
+        path: PersistencePhasePath,
+        deletionScope: ComplaintDataScope? = null,
+        rotationAttempt: CatalogEpochRotationAttemptV1? = null,
+    ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
         } catch (failure: Throwable) {
@@ -166,6 +177,7 @@ internal class PersistencePhaseOwnership private constructor(
             throw failure
         }
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
+        rotationAttempt?.budget?.remainingMillis(EpochRotationLimits.MAXIMUM_ROTATION_MILLIS)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -181,7 +193,7 @@ internal class PersistencePhaseOwnership private constructor(
             }
             val slot = (0 until phases.length()).firstOrNull { phases.get(it) == null }
                 ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
-            val prepared = PersistencePhaseContext(this, slot, caller, path, deletionScope, enrollmentOwnerReference)
+            val prepared = PersistencePhaseContext(this, slot, caller, path, deletionScope, enrollmentOwnerReference, rotationAttempt)
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
             current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
@@ -336,6 +348,8 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+            PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
+            PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
         )
         private val DELETION_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
@@ -396,7 +410,8 @@ internal class PersistencePhaseOwnership private constructor(
         internal fun connectionFree() {
             current.get()?.reconcileQuarantine()
             reconcileLoans()
-            val callerRetainsPersistence = current.get() != null || loans.get() != null || LocalPersistencePermit.callerHasOutstandingPermit()
+            val callerRetainsPersistence = current.get() != null || loans.get() != null || LocalPersistencePermit.callerHasOutstandingPermit() ||
+                EpochRotationPersistence.callerHasOutstanding()
             if (callerRetainsPersistence || !springConnectionFree()) {
                 throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             }
@@ -448,6 +463,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
     COMPLAINT_COORDINATOR_LEASE_RENEW,
     COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+    COMPLAINT_EPOCH_ROTATION_REQUEST,
+    COMPLAINT_EPOCH_ROTATION_RESUME,
     ;
 
     internal val source: Boolean
