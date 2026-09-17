@@ -68,14 +68,16 @@ private fun lostVerificationCommit(f: OwnerDeleteAllVerificationFixture, relay: 
                 selected.set(observation)
                 // Await the foreign observation on its own connection-free caller before arming
                 // the unchanged relay boundary; VERIFY still holds its original sole resource.
-                assertTrue(callers.launch {
-                    requireConnectionFree()
-                    val backend = checkNotNull(f.auth.base.ordinary.session(observation.identity.first))
-                    assertTrue(backend.inTransaction)
-                    session.set(PgLifecycleDatabaseSession(observation.identity.first, backend.backendStart))
-                    requireConnectionFree()
-                    true
-                }.value())
+                assertTrue(
+                    callers.launch {
+                        requireConnectionFree()
+                        val backend = checkNotNull(f.auth.base.ordinary.session(observation.identity.first))
+                        assertTrue(backend.inTransaction)
+                        session.set(PgLifecycleDatabaseSession(observation.identity.first, backend.backendStart))
+                        requireConnectionFree()
+                        true
+                    }.value(),
+                )
                 // UPDATE RETURNING and its last business SQL have returned. No parser/provider SQL follows.
                 warm.armCommit(relay.warmedSession(observation.identity.first))
                 start.release()

@@ -45,31 +45,37 @@ internal fun assertOwnerDeleteAllVerificationLocks(f: OwnerDeleteAllVerification
                     val observation = f.observations.last().second
                     // Bounded actor completion holds this SQL checkpoint. Only one observer actor
                     // uses the preopened raw connection at a time; no foreign holder binds here.
-                    assertTrue(callers.launch {
-                        requireConnectionFree()
-                        f.assertNoForbiddenLocks(observation)
-                        assertRowLock(
-                            observer,
-                            "SELECT installation_id FROM installation_deletion_receipts WHERE installation_id = ? FOR UPDATE NOWAIT",
-                            f.candidate.installation.id,
-                            blocked = true,
-                        )
-                        assertRowLock(
-                            observer,
-                            "SELECT event_id FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE NOWAIT",
-                            readback.event.route.eventId,
-                            blocked = step != VerificationStep.RECEIPT,
-                        )
-                        requireConnectionFree()
-                        true
-                    }.value())
+                    assertTrue(
+                        callers.launch {
+                            requireConnectionFree()
+                            f.assertNoForbiddenLocks(observation)
+                            assertRowLock(
+                                observer,
+                                "SELECT installation_id FROM installation_deletion_receipts WHERE installation_id = ? FOR UPDATE NOWAIT",
+                                f.candidate.installation.id,
+                                blocked = true,
+                            )
+                            assertRowLock(
+                                observer,
+                                "SELECT event_id FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE NOWAIT",
+                                readback.event.route.eventId,
+                                blocked = step != VerificationStep.RECEIPT,
+                            )
+                            requireConnectionFree()
+                            true
+                        }.value(),
+                    )
                 }
                 f.auth.transaction { blockers ->
                     // Genuine concurrent locks on every omitted class. Any forbidden reach-back blocks
                     // or fails the short phase; merely claiming an unfenced enum would not pass this.
                     blockers.execute("SELECT pg_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))")
                     holdRows(blockers, "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE", ComplaintDataScope.LIVE.id)
-                    holdRows(blockers, "SELECT event_id FROM complaint_recovery_capacity_reservations WHERE event_id = ? FOR UPDATE", readback.event.route.eventId)
+                    holdRows(
+                        blockers,
+                        "SELECT event_id FROM complaint_recovery_capacity_reservations WHERE event_id = ? FOR UPDATE",
+                        readback.event.route.eventId,
+                    )
                     holdRows(blockers, "SELECT name FROM complaint_capacity_counters ORDER BY name COLLATE \"C\" FOR UPDATE")
                     holdRows(blockers, "SELECT id FROM complaint_installation_ids WHERE id = ? FOR UPDATE", f.candidate.installation.id)
                     holdRows(blockers, "SELECT id FROM app_installations WHERE id = ? FOR UPDATE", f.candidate.installation.id)
@@ -121,12 +127,14 @@ internal fun assertOwnerDeleteAllVerificationFailures(f: OwnerDeleteAllVerificat
 
                 "SERVER_LOSS" -> OwnedCallerTestScope().use { faults ->
                     val pid = f.observations.last().second.identity.first
-                    assertTrue(faults.launch {
-                        requireConnectionFree()
-                        f.auth.base.ordinary.terminateSession(pid)
-                        requireConnectionFree()
-                        true
-                    }.value())
+                    assertTrue(
+                        faults.launch {
+                            requireConnectionFree()
+                            f.auth.base.ordinary.terminateSession(pid)
+                            requireConnectionFree()
+                            true
+                        }.value(),
+                    )
                 }
 
                 "INTERRUPT" -> Thread.currentThread().interrupt()

@@ -59,13 +59,15 @@ class OwnerDeleteAllVerificationIT {
                         val observation = f.observations.last().second
                         // The SQL caller waits at this exact result boundary; foreign JdbcTemplate
                         // observations run only on an actor with no Spring/phase/permit ownership.
-                        assertTrue(observers.launch {
-                            requireConnectionFree()
-                            f.assertNoForbiddenLocks(observation)
-                            if (step == VerificationStep.VERIFIED) assertEquals(before, f.auth.state()) // Uncommitted proof is invisible to independent PG.
-                            requireConnectionFree()
-                            true
-                        }.value())
+                        assertTrue(
+                            observers.launch {
+                                requireConnectionFree()
+                                f.assertNoForbiddenLocks(observation)
+                                if (step == VerificationStep.VERIFIED) assertEquals(before, f.auth.state()) // Uncommitted proof is invisible to independent PG.
+                                requireConnectionFree()
+                                true
+                            }.value(),
+                        )
                     }
                     val phase = f.auth.ownership.enterComplaintOwnerDeleteAllVerify()
                     try {
@@ -119,8 +121,11 @@ class OwnerDeleteAllVerificationIT {
         f.publisher.stored = winner
         val first = AtomicBoolean(true)
         f.publisher.respond = { request ->
-            if (request.kind == "LIST" && first.compareAndSet(true, false)) f.publisher.listReply(emptyList())
-            else f.publisher.statefulReply(request)
+            if (request.kind == "LIST" && first.compareAndSet(true, false)) {
+                f.publisher.listReply(emptyList())
+            } else {
+                f.publisher.statefulReply(request)
+            }
         }
         val readback = f.readback()
         val losingPut = f.publisher.requests.single { it.kind == "PUT" }
@@ -256,7 +261,10 @@ class OwnerDeleteAllVerificationIT {
                         waiting.setInt(2, secondPid.get())
                         val deadline = PgLifecycleDatabaseDeadline(800)
                         while (true) {
-                            val blocked = waiting.executeQuery().use { row -> assertTrue(row.next()); row.getBoolean(1) }
+                            val blocked = waiting.executeQuery().use { row ->
+                                assertTrue(row.next())
+                                row.getBoolean(1)
+                            }
                             if (blocked) break
                             deadline.pause()
                         }
@@ -289,8 +297,7 @@ class OwnerDeleteAllVerificationIT {
         withFixture(1, ::assertOwnerDeleteAllVerificationCorruption)
 
     @Test
-    fun `receipt tuple and frozen publication corruption are refused before promotion`() =
-        withFixture(1, ::assertOwnerDeleteAllVerificationFrozenIdentity)
+    fun `receipt tuple and frozen publication corruption are refused before promotion`() = withFixture(1, ::assertOwnerDeleteAllVerificationFrozenIdentity)
 
     @Test
     fun `receipt publication update rollback commit rejection completion failure server loss and interruption never release failed results`() =

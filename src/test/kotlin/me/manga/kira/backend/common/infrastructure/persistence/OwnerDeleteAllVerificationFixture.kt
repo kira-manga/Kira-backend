@@ -75,8 +75,15 @@ internal class OwnerDeleteAllVerificationFixture(
 
     fun assertOnlyVerificationStatements(write: Boolean) {
         assertEquals(
-            if (write) listOf(OwnerDeleteAllVerificationSql.LOCK_RECEIPTS, OwnerDeleteAllVerificationSql.LOCK_PUBLICATION, OwnerDeleteAllVerificationSql.RECORD_VERIFIED)
-            else listOf(OwnerDeleteAllVerificationSql.LOCK_RECEIPTS, OwnerDeleteAllVerificationSql.LOCK_PUBLICATION),
+            if (write) {
+                listOf(
+                    OwnerDeleteAllVerificationSql.LOCK_RECEIPTS,
+                    OwnerDeleteAllVerificationSql.LOCK_PUBLICATION,
+                    OwnerDeleteAllVerificationSql.RECORD_VERIFIED,
+                )
+            } else {
+                listOf(OwnerDeleteAllVerificationSql.LOCK_RECEIPTS, OwnerDeleteAllVerificationSql.LOCK_PUBLICATION)
+            },
             statements.toList(),
         )
     }
