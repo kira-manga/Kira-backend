@@ -30,7 +30,7 @@ internal class BoundedJournalSdkHttpClientV1(
     sessionToken: String,
     httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
 ) : SdkHttpClient {
-    private val expected = AtomicReference<JournalS3CallV1?>()
+    private val expected = AtomicReference<JournalS3RequestV1?>()
     private val active = AtomicReference<Exchange?>()
     private val closed = AtomicBoolean()
     private val delegateCloseIssued = AtomicBoolean()
@@ -38,7 +38,7 @@ internal class BoundedJournalSdkHttpClientV1(
     private val wire = JournalS3HttpWireV1(endpoint, accessKeyId, sessionToken)
     private val delegate = journalPublicationCall { httpFactory(::remainingConnectionMillis) }
 
-    fun begin(call: JournalS3CallV1) {
+    fun begin(call: JournalS3RequestV1) {
         call.check()
         requireJournalPublication(!closed.get() && active.get() == null && expected.compareAndSet(null, call))
         checkCall(call)
@@ -55,14 +55,14 @@ internal class BoundedJournalSdkHttpClientV1(
         exchange
     }
 
-    fun observation(call: JournalS3CallV1): JournalS3HttpObservationV1? {
+    fun observation(call: JournalS3RequestV1): JournalS3HttpObservationV1? {
         checkCall(call)
         val exchange = active.get()
         requireJournalPublication(exchange != null && exchange.nativeWorkReturned())
         return checkNotNull(exchange).observation
     }
 
-    fun dispatched(call: JournalS3CallV1): Boolean {
+    fun dispatched(call: JournalS3RequestV1): Boolean {
         checkCall(call)
         return active.get()?.wasDispatched() == true
     }
@@ -90,7 +90,7 @@ internal class BoundedJournalSdkHttpClientV1(
         closeFailure.get()?.let { throw it }
     }
 
-    private fun checkCall(call: JournalS3CallV1) {
+    private fun checkCall(call: JournalS3RequestV1) {
         call.check()
         requireJournalPublication(!closed.get() && expected.get() === call)
         closeFailure.get()?.let { throw it }
@@ -104,9 +104,9 @@ internal class BoundedJournalSdkHttpClientV1(
     }
 
     override fun clientName(): String = "KiraBoundedOrdinaryJournalUrlConnectionSync"
-    override fun toString(): String = "BoundedJournalSdkHttpClientV1(released-ordinary-key-only,redacted)"
+    override fun toString(): String = "BoundedJournalSdkHttpClientV1(closed-ordinary-or-seal-request,redacted)"
 
-    private inner class Exchange(private val call: JournalS3CallV1) : ExecutableHttpRequest {
+    private inner class Exchange(private val call: JournalS3RequestV1) : ExecutableHttpRequest {
         private val prepared = AtomicBoolean()
         private val dispatched = AtomicBoolean()
         private val returned = AtomicBoolean()

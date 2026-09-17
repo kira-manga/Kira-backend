@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.journal
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.security.EpochSealExceptionV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalException
 import software.amazon.awssdk.core.exception.SdkException
 import java.util.concurrent.CancellationException
@@ -45,6 +46,7 @@ internal fun <T> journalPublicationSdkCall(
         if (causes.any { it is CancellationException }) throw CancellationException()
         if (Thread.currentThread().isInterrupted || causes.any { it is InterruptedException }) throw InterruptedException()
         causes.filterIsInstance<JournalPublicationExceptionV1>().firstOrNull()?.let { throw it }
+        causes.filterIsInstance<EpochSealExceptionV1>().firstOrNull()?.let { throw it }
         causes.filterIsInstance<OwnerDeleteAllJournalException>().firstOrNull()?.let { throw it }
         causes.filterIsInstance<PersistencePhaseException>().firstOrNull()?.let { throw it }
         throw JournalPublicationExceptionV1(code)
@@ -60,6 +62,8 @@ internal fun <T> journalPublicationCall(
     if (checkInterrupted && Thread.currentThread().isInterrupted) throw InterruptedException()
     action()
 } catch (failure: JournalPublicationExceptionV1) {
+    throw failure
+} catch (failure: EpochSealExceptionV1) {
     throw failure
 } catch (failure: OwnerDeleteAllJournalException) {
     throw failure
