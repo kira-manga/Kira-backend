@@ -6,12 +6,16 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
+import me.manga.kira.backend.complaint.domain.ComplaintDeleteAllFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryPosition
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRejected
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.InitialLiveJournalTestFixture
+import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
+import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.config.KiraSecurityProperties
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -98,7 +102,7 @@ class VersionBoundComplaintConsumerConfigurationTest {
     }
 
     @Test
-    fun `same retained P derives both actual policies while explicit global hourly quotas remain outside P and drive the actual guard`() {
+    fun `same retained P derives all actual policies while explicit global hourly quotas remain outside P and drive the actual guard`() {
         val fixture = BoundComplaintConsumerFixture()
         val originalP = fixture.capacity.canonicalBytes()
         val daily = ComplaintDailyAdmission(null, 0, fixture.capacity.dailyEnrollmentLimit)
@@ -109,23 +113,76 @@ class VersionBoundComplaintConsumerConfigurationTest {
         )
         for (quota in 1..2) {
             // Independent cold owners for this test, not replacement of live quota state or a rotation procedure.
-            val owner = fixture.configuration(settings = boundConsumerTestSettings(enrollmentGlobal = quota, createGlobal = quota))
+            val owner = fixture.configuration(
+                settings = boundConsumerTestSettings(
+                    enrollmentGlobal = quota,
+                    createGlobal = quota,
+                    ownerCreateMemberLimit = 16,
+                    ownerCreatePruneBatch = 3,
+                ),
+            )
             assertSame(fixture.capacity, owner.capacityPolicy)
             assertArrayEquals(originalP, owner.capacityPolicy.canonicalBytes())
             assertSame(owner.enrollmentPolicy, owner.admissionPolicy.enrollment)
             assertEquals(quota, owner.enrollmentPolicy.globalPerHour)
             assertEquals(quota, owner.ownerCreatePolicy.globalPerHour)
+            assertEquals(16, owner.ownerDeleteAllPolicy.memberLimit)
+            assertEquals(3, owner.ownerDeleteAllPolicy.pruneBatch)
+            assertEquals(owner.ownerCreatePolicy.memberLimit, owner.ownerDeleteAllPolicy.memberLimit)
+            assertEquals(owner.ownerCreatePolicy.pruneBatch, owner.ownerDeleteAllPolicy.pruneBatch)
             assertEquals("memory", owner.coordinationMode)
             assertEquals(1, owner.declaredInstances)
             assertTrue(owner.enrollmentPolicy.matchesLocked(ledger(fixture.capacity), daily))
             assertTrue(owner.ownerCreatePolicy.matchesLocked(ledger(fixture.capacity)))
+            assertTrue(owner.ownerDeleteAllPolicy.matchesLocked(ledger(fixture.capacity)))
             assertFalse(owner.enrollmentPolicy.matchesLocked(ledger(differentP), daily))
             assertFalse(owner.ownerCreatePolicy.matchesLocked(ledger(differentP)))
+            assertFalse(owner.ownerDeleteAllPolicy.matchesLocked(ledger(differentP)))
             repeat(quota) { enrollment(owner, it + 1) }
             admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { enrollment(owner, quota + 1) }
             repeat(quota) { create(owner, it + 1) }
             admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { create(owner, quota + 1) }
         }
+    }
+
+    @Test
+    fun `actual acquired owner enforces five fresh delete-all tuples per installation without recharging exact retries`() {
+        val fixture = BoundComplaintConsumerFixture()
+        val owner = fixture.configuration()
+        val actor = admissionTestActor(1)
+        val first = deleteAllTuple(actor)
+        deleteAll(owner, first)
+        // A new comparison view of the same tuple must deduplicate, not just the original object.
+        repeat(3) { deleteAll(owner, deleteAllTuple(actor, first.operationKey)) }
+        repeat(4) { deleteAll(owner, deleteAllTuple(actor)) }
+        val failure = admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { deleteAll(owner, deleteAllTuple(actor)) }
+        assertTrue(requireNotNull(failure.retryAfterSeconds) in 1L..86400L)
+        deleteAll(owner, deleteAllTuple(actor, first.operationKey))
+        deleteAll(owner, deleteAllTuple(admissionTestActor(2)))
+        assertEquals(9, fixture.lookups)
+    }
+
+    @Test
+    fun `actual acquired create and delete use distinct tuples in one shared retained-key member budget`() {
+        val fixture = BoundComplaintConsumerFixture()
+        val owner = fixture.configuration(settings = boundConsumerTestSettings(ownerCreateMemberLimit = 4, ownerCreatePruneBatch = 1))
+        val deleted = deleteAllTuple(admissionTestActor(1))
+        val created = ComplaintOwnerOperationTuple(deleted.installation, deleted.operationKey, UUID.randomUUID(), deleted.fingerprint.bytes())
+        assertEquals(fixture.current.descriptor.logicalKeyId, owner.admissionCurrentKeyId)
+        assertEquals(fixture.previous.descriptor.logicalKeyId, owner.admissionPreviousKeyId)
+
+        // Same actor/key/digest, different operations: each registers both retained HMAC generations.
+        create(owner, created)
+        deleteAll(owner, deleted)
+        create(owner, created)
+        deleteAll(owner, deleted)
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { deleteAll(owner, deleteAllTuple(deleted.installation)) }
+        val nextCreate = ComplaintOwnerOperationTuple(created.installation, UUID.randomUUID(), UUID.randomUUID(), created.fingerprintBytes())
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { create(owner, nextCreate) }
+        // Refused fresh work neither evicts either operation's original member nor spends a retry.
+        create(owner, created)
+        deleteAll(owner, deleted)
+        assertEquals(9, fixture.lookups)
     }
 
     private fun enrollment(owner: VersionBoundComplaintConsumerConfiguration, number: Int) {
@@ -136,10 +193,33 @@ class VersionBoundComplaintConsumerConfigurationTest {
 
     private fun create(owner: VersionBoundComplaintConsumerConfiguration, number: Int) {
         val tuple = ComplaintOwnerOperationTuple(admissionTestActor(number), UUID.randomUUID(), UUID.randomUUID(), ByteArray(32) { 43 })
-        owner.ingressAdmission.withIngress(historyTestRequest(ip = "198.51.100.$number")) { context ->
+        create(owner, tuple, "198.51.100.$number")
+    }
+
+    private fun create(owner: VersionBoundComplaintConsumerConfiguration, tuple: ComplaintOwnerOperationTuple, ip: String = "198.51.100.1") {
+        owner.ingressAdmission.withIngress(historyTestRequest(ip = ip)) { context ->
             owner.ingressAdmission.startOwnerCreate(context)
             // The actual handoff path rejects any clock other than SystemComplaintAdmissionNanoClock.
             owner.ingressAdmission.admitOwnerCreate(context, tuple)
+        }
+    }
+
+    private fun deleteAll(owner: VersionBoundComplaintConsumerConfiguration, tuple: InstallationDeletionPreflightTuple) {
+        owner.ingressAdmission.withIngress(historyTestRequest()) { context ->
+            owner.ingressAdmission.startOwnerDeleteAll(context)
+            val admitted = owner.ingressAdmission.admitOwnerDeleteAll(context, tuple)
+            ComplaintIngressAdmission.requireOwnerDeleteAllEntry(admitted, tuple)
+        }
+    }
+
+    /** Synthetic comparison data for local composition only; cannot pass real SQL preflight custody. */
+    private fun deleteAllTuple(actor: ScopedInstallationId, key: UUID = UUID.randomUUID()): InstallationDeletionPreflightTuple {
+        val candidate = InstallationDeletionCandidate(InstallationEnrollmentCredentials.prepareSession(actor, ByteArray(32) { 7 }), 1, key)
+        return object : InstallationDeletionPreflightTuple {
+            override val installation = actor
+            override val submittedCredentialVersion = 1L
+            override val operationKey = key
+            override val fingerprint = ComplaintDeleteAllFingerprint.of(candidate)
         }
     }
 
@@ -236,8 +316,23 @@ internal fun boundConsumerTestSettings(
     trustedProxies: List<String> = emptyList(),
     coordinationMode: String = "memory",
     declaredInstances: Int = 1,
+    ownerCreateMemberLimit: Int = 64,
+    ownerCreatePruneBatch: Int = 8,
 ): VersionBoundComplaintConsumerSettings = VersionBoundComplaintConsumerSettings(
-    coordinationMode, declaredInstances, 2, 64, ingressRate, 128, 4096, 8, enrollmentGlobal, createGlobal, 64, 8, trustForwardedHeaders, trustedProxies,
+    coordinationMode,
+    declaredInstances,
+    2,
+    64,
+    ingressRate,
+    128,
+    4096,
+    8,
+    enrollmentGlobal,
+    createGlobal,
+    ownerCreateMemberLimit,
+    ownerCreatePruneBatch,
+    trustForwardedHeaders,
+    trustedProxies,
 )
 
 private fun boundConsumerTestVersion(number: Int): ImmutableSecretVersion = ImmutableSecretVersion.awsSecretsManager(
