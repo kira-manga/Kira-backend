@@ -68,7 +68,11 @@ internal class CoordinatorLeaseBoundaryCases(private val f: CoordinatorLeaseTest
         val holder = identity(observer)
         assertEquals(
             listOf(ComplaintDataScope.LIVE.id),
-            observer.queryForList("SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE", java.util.UUID::class.java, ComplaintDataScope.LIVE.id),
+            observer.queryForList(
+                "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE",
+                java.util.UUID::class.java,
+                ComplaintDataScope.LIVE.id,
+            ),
         )
         OwnedCallerTestScope().use { callers ->
             val entered = callers.gate()
@@ -132,7 +136,8 @@ internal class CoordinatorLeaseBoundaryCases(private val f: CoordinatorLeaseTest
                                 observer.queryForObject(
                                     "SELECT count(*) FROM pg_locks l LEFT JOIN pg_class c ON c.oid = l.relation " +
                                         "WHERE l.pid = ? AND (l.locktype = 'advisory' OR c.relname IN " +
-                                        "('complaint_catalog_mutations','complaint_capacity_counters','complaint_journal_scan_runs','complaint_journal_scan_entries'))",
+                                        "('complaint_catalog_mutations','complaint_capacity_counters'," +
+                                        "'complaint_journal_scan_runs','complaint_journal_scan_entries'))",
                                     Long::class.java,
                                     owned.first,
                                 ),
