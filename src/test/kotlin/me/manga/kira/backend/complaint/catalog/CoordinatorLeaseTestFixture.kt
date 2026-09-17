@@ -26,35 +26,34 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
 /** The same original TLS/root fixture and genuine owned SDK -> G1 result; never a supplied head or lease success. */
-internal fun withCoordinatorLease(tls: VersionBoundPersistenceConnectedFixture, test: (CoordinatorLeaseTestFixture) -> Unit) =
-    withProcessBoundCatalogGenesis(
-        tls,
-        bindProcess = { consumers, pools ->
-            val writer = consumers.journalConfiguration.declaration().writer
-            VersionBoundComplaintProcessConfiguration.fromRetained(
-                consumers,
-                pools,
-                1,
-                7,
-                UUID.fromString(writer.databaseIdentity),
-                UUID.fromString(writer.restoreIdentity),
-                VersionBoundCatalogReadbackTestFixture.settings(),
-            )
-        },
-    ) { genesis ->
-        genesis.stageSigned()
-        val wire = CurrentAcceptedCatalogRefreshHttpFixture(genesis)
-        val refresh = wire.owner().use { it.refresh() }
-        wire.assertFullReadback()
-        val fixture = CoordinatorLeaseTestFixture(genesis, refresh)
-        try {
-            test(fixture)
-        } finally {
-            fixture.jdbc.beforeSql = {}
-            fixture.jdbc.afterSql = {}
-            fixture.released()
-        }
+internal fun withCoordinatorLease(tls: VersionBoundPersistenceConnectedFixture, test: (CoordinatorLeaseTestFixture) -> Unit) = withProcessBoundCatalogGenesis(
+    tls,
+    bindProcess = { consumers, pools ->
+        val writer = consumers.journalConfiguration.declaration().writer
+        VersionBoundComplaintProcessConfiguration.fromRetained(
+            consumers,
+            pools,
+            1,
+            7,
+            UUID.fromString(writer.databaseIdentity),
+            UUID.fromString(writer.restoreIdentity),
+            VersionBoundCatalogReadbackTestFixture.settings(),
+        )
+    },
+) { genesis ->
+    genesis.stageSigned()
+    val wire = CurrentAcceptedCatalogRefreshHttpFixture(genesis)
+    val refresh = wire.owner().use { it.refresh() }
+    wire.assertFullReadback()
+    val fixture = CoordinatorLeaseTestFixture(genesis, refresh)
+    try {
+        test(fixture)
+    } finally {
+        fixture.jdbc.beforeSql = {}
+        fixture.jdbc.afterSql = {}
+        fixture.released()
     }
+}
 
 /** Probe callbacks surround real JDBC only. Outer G1/counter fixtures retain their original exact-row cleanup. */
 internal class CoordinatorLeaseTestFixture(val genesis: ProcessBoundCatalogGenesisFixture, val refresh: CurrentAcceptedCatalogRefreshV1.Result) {
@@ -131,8 +130,7 @@ internal class CoordinatorLeaseProbeJdbc(private val genesis: ProcessBoundCatalo
 
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>): List<T> = observed(sql) { super.query(sql, rowMapper) }
 
-    override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> =
-        observed(sql) { super.query(sql, rowMapper, *args) }
+    override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql) { super.query(sql, rowMapper, *args) }
 
     override fun update(sql: String, vararg args: Any?): Int = observed(sql) { super.update(sql, *args) }
 
