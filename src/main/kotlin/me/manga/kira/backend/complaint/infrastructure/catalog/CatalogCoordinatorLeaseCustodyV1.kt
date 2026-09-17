@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinato
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.UUID
@@ -219,6 +220,37 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
         val current = window.get() ?: refuse(PersistencePhaseFailureCode.WORK_FAILED)
         requireSameWindow(current)
         return current
+    }
+
+    /**
+     * Rotation observes continuity of this exact campaign, not a frozen renewal Window identity.
+     * Every retry consumes the same original J; this cannot extend a rotation or resurrect a stop.
+     * Renewal itself still uses its unchanged expected-window/CAS protocol below.
+     */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun requireRotationContinuity(originalBudget: PersistenceTimeBudget) {
+        try {
+            while (true) {
+                originalBudget.remainingMillis(10_000)
+                val observed = window.get() ?: refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                if (!custody.isActive(this)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                if (Thread.currentThread().isInterrupted) refuse(PersistencePhaseFailureCode.INTERRUPTED)
+                val elapsed = clock.nanoTime() - observed.startedAtNanos
+                originalBudget.remainingMillis(10_000) // Includes potentially delayed caller/clock readbacks.
+                if (window.get() !== observed) continue // A genuine renewal may have won while time was sampled.
+                if (elapsed !in 0 until COORDINATOR_LEASE_NANOS) {
+                    if (!window.compareAndSet(observed, null)) continue // Never close a renewal that already replaced this observation.
+                    custody.stop(this)
+                    refuse(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+                }
+                // A healthy same-campaign replacement is allowed; an irreversible close/inactive campaign is not.
+                if (!custody.isActive(this) || window.get() == null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                return
+            }
+        } catch (problem: Throwable) {
+            close()
+            throw boundedEpochRotationFailure(problem)
+        }
     }
 
     @Suppress("TooGenericExceptionCaught")

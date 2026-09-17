@@ -49,7 +49,7 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
         if (!caller.isCurrent() || failed.get() || !custody.ownsCall(this)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
         if (caller.sampleActualFlag() != null) refuse(PersistencePhaseFailureCode.INTERRUPTED)
         requireDeadline()
-        campaign.requireLocalWindow() // A genuine same-campaign renewal may advance its window, never this attempt's J budget.
+        campaign.requireRotationContinuity(budget) // Genuine concurrent renewal changes the Window, never this campaign or original J.
         binding.requirePersistence(ownership, jdbc)
         binding.requireEpochRotation(resource)
         // Charge readbacks too; a late/interrupting caller override must not escape the final return check.
