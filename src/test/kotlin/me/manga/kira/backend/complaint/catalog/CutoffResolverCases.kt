@@ -122,19 +122,24 @@ internal class CutoffResolverCases(val f: EpochRotationTestFixture, val publicat
 
     fun unsupportedFamilyRefusesWholeRange() {
         val unsupported = publications.cutoffEvents.maxBy { it.route.eventId }
+        val supported = publications.cutoffEvents.filterNot { it === unsupported }
         publications.unsupportedFamilyForTest(unsupported)
         val before = publications.row(unsupported)
         val outside = f.outsideRotationAndLease()
         val first = capture()
         val captured = f.row()
         assertFailure(assertThrows<PersistencePhaseException> { resolve(first.campaign) })
+        assertTrue(supported.all { publications.state(it) == "VERIFIED" }, "The preceding supported rows must reach genuine persisted readback proof.")
+        assertEquals(supported.map { it.route.objectKey }.toSet(), publications.objects.keys)
         assertEquals(before, publications.row(unsupported))
         assertFalse(publications.objects.containsKey(unsupported.route.objectKey))
         assertTrue(wire.requests.none { publications.key(it) == unsupported.route.objectKey })
         val proofs = publications.events.associate { it.route.eventId to publications.row(it) }
+        val traffic = wire.requests.size to wire.kms.requests.size
         val successor = f.successor(first.campaign)
         assertFailure(assertThrows<PersistencePhaseException> { resolve(successor.campaign) })
         assertEquals(proofs, publications.events.associate { it.route.eventId to publications.row(it) })
+        assertEquals(traffic, wire.requests.size to wire.kms.requests.size, "The successor retains actual supported proofs without republishing them.")
         assertEquals(captured, f.row())
         assertEquals(outside, f.outsideRotationAndLease(), "Supported rows cannot authorize a partial seal that silently filters an unsupported LIVE family.")
         assertReleased()
