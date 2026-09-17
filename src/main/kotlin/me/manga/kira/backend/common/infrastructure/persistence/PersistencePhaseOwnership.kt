@@ -73,6 +73,11 @@ internal class PersistencePhaseOwnership private constructor(
     /** Read-only diagnostics, never current-mode, catalog, restore or TEST admission authority. */
     internal fun enterComplaintInstallationCurrentState(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
 
+    /** Dormant TEST-only token-state and owner-page reads; neither entry supplies enabled-mode authority. */
+    internal fun enterComplaintOwnerHistoryAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION)
+
+    internal fun enterComplaintOwnerHistoryPage(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE)
+
     /** Lower dormant mutation composition only; W04 fence/control/publication and provenance authority are unavailable. */
     internal fun enterComplaintDeletionMutation(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_DELETION_MUTATION)
 
@@ -196,6 +201,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
                 PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
+                PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
+                PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
                 -> admission.tryComplaintBoundary()
 
                 PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
@@ -334,6 +341,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
     COMPLAINT_INSTALLATION_SESSION_REFRESH,
     COMPLAINT_INSTALLATION_CURRENT_STATE,
+    COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
+    COMPLAINT_OWNER_HISTORY_PAGE,
     COMPLAINT_DELETION_MUTATION,
     COMPLAINT_DELETION_FENCE_PREFIX,
     COMPLAINT_DELETION_CONTROL_SNAPSHOT,

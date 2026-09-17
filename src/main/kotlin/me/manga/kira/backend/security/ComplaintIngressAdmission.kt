@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -12,7 +13,7 @@ import java.security.ProviderException
 import java.util.IdentityHashMap
 
 /** Identity alone grants nothing: only the owning live registry can recognize this view. */
-internal class ComplaintIngressContext {
+internal class ComplaintIngressContext : ComplaintOwnerHistoryRequestContext {
     override fun toString(): String = "ComplaintIngressContext(redacted)"
 }
 
@@ -51,6 +52,14 @@ internal class ComplaintIngressAdmission(
         policy.pruneBatch,
         ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS,
         ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS,
+    )
+    // Separately bounded minute store: never reinterpret the existing hourly session/enrollment budget.
+    private val ownerReads = ComplaintAdmissionWindowStore(
+        policy.semanticBucketLimit,
+        policy.semanticEventLimit,
+        policy.pruneBatch,
+        ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS,
+        ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS,
     )
     private var reservations = 0
     private var lastRawTime = clock.now()
@@ -95,6 +104,36 @@ internal class ComplaintIngressAdmission(
                 contexts.remove(context)
                 reservations -= 1
             }
+        }
+    }
+
+    internal fun startOwnerHistory(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.OWNER_HISTORY) }
+    }
+
+    /** Lower counter primitive: only the concrete history adapter calls after a real, released token-state read. */
+    internal fun chargeOwnerHistory(context: ComplaintIngressContext, installation: ScopedInstallationId, identity: Any) {
+        requireConnectionFree()
+        locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.OWNER_HISTORY || state.admission != null) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val now = time()
+            ownerReads.charge(ComplaintAdmissionPseudonyms.ownerReadActor(keys.keys(), installation).map { ComplaintAdmissionCharge(it, 120) }, now)
+            state.admission = identity
+            state.admittedAt = now
+        }
+    }
+
+    /** Consumption is connection-free and one-use; it never renews the five-second admission. */
+    internal fun consumeOwnerHistory(context: ComplaintIngressContext, identity: Any) {
+        requireConnectionFree()
+        locked {
+            val state = unconsumedAdmission(context, identity)
+            if (state.operation !== SemanticOperation.OWNER_HISTORY) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            state.consumed = true
         }
     }
 
@@ -250,6 +289,7 @@ internal class ComplaintIngressAdmission(
             val generation = keys.retirePrevious(time())
             ingress.removeGeneration(generation)
             semantics.removeGeneration(generation)
+            ownerReads.removeGeneration(generation)
         }
     }
 
@@ -319,7 +359,7 @@ internal class ComplaintIngressAdmission(
         var enrollmentIdentity: Any? = null
     }
 
-    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT }
+    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY }
 
     private class AdmittedEnrollment(
         val owner: ComplaintIngressAdmission,

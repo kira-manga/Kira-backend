@@ -27,6 +27,9 @@ internal object ComplaintAdmissionPseudonyms {
     fun sessionActor(keys: List<ComplaintAdmissionKey>, installation: ScopedInstallationId): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("ACTOR"), ascii("INSTALLATION"), ascii("SESSION"), uuid(installation.id), uuid(installation.scope.id)))
 
+    fun ownerReadActor(keys: List<ComplaintAdmissionKey>, installation: ScopedInstallationId): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("INSTALLATION"), ascii("OWNER_READ"), uuid(installation.id), uuid(installation.scope.id)))
+
     fun bootstrapIp(keys: List<ComplaintAdmissionKey>, canonicalIp: ByteArray): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("IP"), ascii("BOOTSTRAP"), canonicalIp))
 

@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.SessionPreflightResult
 import me.manga.kira.backend.complaint.domain.SessionRefreshResult
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurrentStateReadOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintRecoverySettlementOperation
@@ -100,6 +101,7 @@ internal class PersistencePhaseContext(
     internal val installationEnrollment: PersistenceInstallationEnrollment = InstallationEnrollmentBoundary()
     internal val installationSession: PersistenceInstallationSession = InstallationSessionBoundary()
     internal val installationCurrentState: PersistenceInstallationCurrentState = InstallationCurrentStateBoundary()
+    internal val ownerHistory: PersistenceOwnerHistory = OwnerHistoryBoundary()
     internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
     internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
     internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
@@ -126,9 +128,16 @@ internal class PersistencePhaseContext(
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
             setName(path.name)
             timeout = 2
-            isReadOnly = path === PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT ||
-                path === PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE ||
-                path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT
+            isReadOnly = when (path) {
+                PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
+                PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
+                PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
+                PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+                -> true
+
+                else -> false
+            }
         }
         manager.getTransaction(definition)
         // The wrapper retained TransactionStatus before this validation. A failure here still has rollback custody.
@@ -449,6 +458,10 @@ internal class PersistencePhaseContext(
             -> installationSession.completed()
 
             PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE -> installationCurrentState.completed()
+
+            PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
+            PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
+            -> ownerHistory.completed()
 
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
 
@@ -1036,6 +1049,48 @@ internal class PersistencePhaseContext(
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
     }
 
+    /** Two named read paths, each recognizing only its own retained concrete SQL operation. */
+    private inner class OwnerHistoryBoundary : PersistenceOwnerHistory {
+        private var issued = false
+        private var retained: ComplaintOwnerHistoryReadOperation? = null
+
+        override fun requireAuthentication(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION)
+        override fun requirePage(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE)
+
+        private fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            requireStepUpResource(jdbc, expected)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun connection(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintOwnerHistoryReadOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext, path)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true
+    }
+
     /** A concrete read, not a caller-supplied diagnostic enum, owns completion and the result-release seal. */
     private inner class InstallationCurrentStateBoundary : PersistenceInstallationCurrentState {
         private var issued = false
@@ -1551,4 +1606,15 @@ internal interface PersistenceComplaintDeletion {
 internal fun requireSourceGrantCleanup(jdbc: JdbcTemplate) {
     val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
     phase.requireSourceCleanup(jdbc)
+}
+
+/** The phase's private boundary owns retention; a replacement implementation is never accepted. */
+internal interface PersistenceOwnerHistory {
+    fun requireAuthentication(jdbc: JdbcTemplate)
+    fun requirePage(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate)
+    fun connection(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate): Connection
+    fun requireCommitted(operation: ComplaintOwnerHistoryReadOperation)
+    fun completed(): Boolean
 }
