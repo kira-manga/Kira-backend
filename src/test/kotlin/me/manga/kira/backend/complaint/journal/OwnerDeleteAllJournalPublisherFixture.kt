@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAl
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionTupleV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapter
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
@@ -45,15 +46,23 @@ import javax.crypto.spec.SecretKeySpec
  * are synthetic. The expected canonical event below is fixture data, never a Prepared substitute.
  * No listener, AWS call, alternate launcher or new persistence harness is involved.
  */
-internal class OwnerDeleteAllJournalPublisherFixture(
-    val auth: OwnerDeleteAllAuthorizationFixture,
-    val candidate: InstallationDeletionCandidate,
+internal class OwnerDeleteAllJournalPublisherFixture private constructor(
+    private val authorization: OwnerDeleteAllAuthorizationFixture?,
+    private val authorizedCandidate: InstallationDeletionCandidate?,
     val targets: List<UUID>,
-    selectedRoutingKeyId: String? = null,
+    val routing: VersionBoundComplaintJournalRouting,
+    val event: OwnerDeleteAllJournalEventV1,
 ) {
-    val routing = auth.routing
+    constructor(
+        auth: OwnerDeleteAllAuthorizationFixture,
+        candidate: InstallationDeletionCandidate,
+        targets: List<UUID>,
+        selectedRoutingKeyId: String? = null,
+    ) : this(auth, candidate, targets, auth.routing, auth.codec.canonicalize(auth.journalTuple(candidate), targets, selectedRoutingKeyId))
+
+    val auth: OwnerDeleteAllAuthorizationFixture get() = checkNotNull(authorization)
+    val candidate: InstallationDeletionCandidate get() = checkNotNull(authorizedCandidate)
     val journal = routing.journalConfiguration
-    val event = auth.codec.canonicalize(auth.journalTuple(candidate), targets, selectedRoutingKeyId)
     val kms = AwsJournalKmsFixture(journal)
     val requests = mutableListOf<JournalPublisherHttpRequest>()
     val keys = HashMap<String, SyntheticKey>()
@@ -160,11 +169,12 @@ internal class OwnerDeleteAllJournalPublisherFixture(
         }
     }
 
-    fun listReply(versions: List<JournalPublisherObject> = listOfNotNull(stored)): S3CatalogReply = xmlReply(listDocument(versions))
+    fun listReply(versions: List<JournalPublisherObject> = listOfNotNull(stored), exactKey: String = event.route.objectKey): S3CatalogReply =
+        xmlReply(listDocument(versions, exactKey))
 
-    fun listDocument(versions: List<JournalPublisherObject> = listOfNotNull(stored)): String = buildString {
+    fun listDocument(versions: List<JournalPublisherObject> = listOfNotNull(stored), exactKey: String = event.route.objectKey): String = buildString {
         append("<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">")
-        append("<Name>${journal.declaration().journalLocation.bucket}</Name><Prefix>${encoded(event.route.objectKey)}</Prefix>")
+        append("<Name>${journal.declaration().journalLocation.bucket}</Name><Prefix>${encoded(exactKey)}</Prefix>")
         append("<KeyMarker></KeyMarker><VersionIdMarker></VersionIdMarker><MaxKeys>2</MaxKeys><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType>")
         versions.forEach {
             append("<Version><Key>${encoded(it.key)}</Key><VersionId>${xml(it.version)}</VersionId><IsLatest>true</IsLatest>")
@@ -300,6 +310,12 @@ internal class OwnerDeleteAllJournalPublisherFixture(
     internal class SyntheticKey(val bytes: ByteArray, val context: JsonNode)
 
     companion object {
+        /** Raw HTTP/key material only. This path cannot manufacture API work, a SQL issuer or readback evidence. */
+        fun historical(routing: VersionBoundComplaintJournalRouting, event: OwnerDeleteAllJournalEventV1): OwnerDeleteAllJournalPublisherFixture {
+            require(event.belongsTo(routing))
+            return OwnerDeleteAllJournalPublisherFixture(null, null, event.complaintIds(), routing, event)
+        }
+
         const val VERSION = "ordinary-%2F+&=version-1"
         const val PRIVATE_TEXT = "synthetic-private-journal-publication-provider-text"
         val CREDENTIALS: AwsSessionCredentials = AwsSessionCredentials.create(
