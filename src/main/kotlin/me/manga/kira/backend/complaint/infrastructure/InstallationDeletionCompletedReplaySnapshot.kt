@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintIdentifiers
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteAllResponse
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightResult
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.security.ComplaintJournalActorKindV1
@@ -24,7 +25,7 @@ import java.util.UUID
  * observation, HTTP status or current-mode/restore authority. Only the preflight's private producer
  * can implement it; the later consumer still owns full-D/current authority and HTTP gating.
  */
-internal sealed interface BoundOwnerDeleteAllReplayV1 : OwnerDeleteAllOutcome {
+internal sealed interface BoundOwnerDeleteAllReplayV1 : OwnerDeleteAllOutcome, ComplaintOwnerDeleteAllResponse.Completed {
     val completedAt: Instant
     val expiresAt: Instant
 }
