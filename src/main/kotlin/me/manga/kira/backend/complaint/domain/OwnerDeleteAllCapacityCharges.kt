@@ -23,8 +23,12 @@ internal object OwnerDeleteAllCapacityCharges {
     val AUTHORIZATION = RECEIPT + PUBLICATION + RESERVATION + ComplaintCapacityCharges.AUDIT
 
     // Conservative 100-target snapshot and the protocol's maximum four retained routing candidates.
+    // Audits: 100 resource outcomes + one installation outcome, then recovery-summary, retirement
+    // authorization and retirement completion per retained candidate. Separate catalog mutations
+    // still require their own producer's prepaid row/audit lifecycle; none is silently free here.
     // Existing IDs are already paid: apply/recovery must convert only genuinely new evidence once,
-    // never claim future terminal obligations unused merely because no terminal row exists yet.
+    // preserving future promises rather than precharging nonexistent actual rows or claiming a
+    // retirement/audit obligation unused merely because its later row does not exist at apply.
     val RECOVERY = ComplaintCapacityCharges.INSTALLATION_ID + ComplaintCapacityCharges.RESOURCE_ID.scaled(100) +
-        ComplaintCapacityCharges.AUDIT.scaled(101) + (APPLIED + RETIREMENT).scaled(4)
+        ComplaintCapacityCharges.AUDIT.scaled(113) + (APPLIED + RETIREMENT).scaled(4)
 }

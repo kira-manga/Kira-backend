@@ -47,6 +47,8 @@ internal class OwnerDeleteAllControlBinding(
         val now = checkNotNull(jdbc.queryForObject("SELECT clock_timestamp()", { row, _ -> row.getTimestamp(1).toInstant() }))
         check(!selected.scanRequested && (!authorizingPath || !selected.maintenanceClosed))
         check(!selected.checkpointCompleted.isAfter(now) && !selected.checkpointStarted.isAfter(selected.checkpointCompleted))
+        // Necessary local interval only; neither timestamps nor stored seal bytes prove provider retention.
+        check(!selected.sealVerified.isAfter(now) && selected.sealRetainUntil.isAfter(now))
         if (authorizingPath) check(Duration.between(selected.checkpointCompleted, now).toMillis() <= journal.limits.deadlines.checkpointMaxAgeMillis)
         return Locked(selected.epoch, selected.sealedEpoch)
     }
@@ -59,6 +61,7 @@ internal class OwnerDeleteAllControlBinding(
         return Observation(
             epoch, seal, requiredBoolean(row, "maintenance_closed"), requiredBoolean(row, "scan_requested"),
             row.getTimestamp("checkpoint_started_at").toInstant(), row.getTimestamp("checkpoint_completed_at").toInstant(),
+            row.getTimestamp("seal_verified_at").toInstant(), row.getTimestamp("seal_retain_until").toInstant(),
         )
     }
 
@@ -80,6 +83,8 @@ internal class OwnerDeleteAllControlBinding(
         val scanRequested: Boolean,
         val checkpointStarted: Instant,
         val checkpointCompleted: Instant,
+        val sealVerified: Instant,
+        val sealRetainUntil: Instant,
     )
 
     override fun toString(): String = "OwnerDeleteAllControlBinding(comparison-only,redacted)"
@@ -95,7 +100,7 @@ internal class OwnerDeleteAllControlBinding(
 
         private val CONTROL_SQL = """
             SELECT publication_epoch, maintenance_closed, scan_requested, seal_epoch,
-                checkpoint_cutoff_epoch, checkpoint_started_at, checkpoint_completed_at,
+                checkpoint_cutoff_epoch, checkpoint_started_at, checkpoint_completed_at, seal_verified_at, seal_retain_until,
                 COALESCE(NOT test_only AND implementation_schema = ? AND desired_generation = ?
                     AND desired_configuration_hash = ? AND database_identity = ? AND restore_identity = ?
                     AND event_writer_generation = ? AND accepted_catalog_generation = ? AND accepted_catalog_hash = ?
