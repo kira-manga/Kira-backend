@@ -43,6 +43,14 @@ exact dual-copy/version/retention agreement, local signature validation, fixed r
 decoder semantics, and the initial empty accepted-inventory restriction. Changing behavior must
 version this inventory and its independent golden; an immutable image is separate rollout evidence.
 
+Specifically, the SDK profile is pinned regional HTTPS/path-style/SigV4 with explicit session
+credentials, exact expected-account binding, no ambient credential profile, maximum one SDK attempt,
+no redirect/fallback, strict scalar/Boolean LIST XML decoding and the existing fixed structural
+parser/request bounds. `protocolVersion:1` denotes that closed behavior, not permission to swap a
+client/transport or enable SDK retries while keeping D. UTC `plusYears` clips February29 to the
+last valid day in a non-leap target year; checked time range/arithmetic and ceiling overflow fail
+closed, with no saturation or fallback date.
+
 Session secret/token/expiry, clock samples, derived retain-until, remaining budget, provider versions,
 accepted head/projection/checkpoint or restored control do not enter D. The current code has no
 acquired catalog-role/STS owner; the fixed explicit-input mode is **not** an invented role ARN,
