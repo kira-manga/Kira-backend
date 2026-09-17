@@ -69,6 +69,18 @@ internal class JdbcComplaintOwnerDeleteAllStore(
         return ComplaintOwnerDeleteAllOperation.preparedEvent(work, issuer, routing)
     }
 
+    /** Exact private reload custody; the fixed VERIFY consumer must still strictly validate its retained proof. */
+    fun recordedEvent(work: CommittedOwnerDeleteAllWork.RecordedVerified): OwnerDeleteAllJournalEventV1 {
+        requireConnectionFree()
+        return ComplaintOwnerDeleteAllOperation.recordedEvent(work, issuer, routing)
+    }
+
+    /** Private committed authentication custody, never an external event field or a verifier inferred from the APPLY row. */
+    fun authenticatedVerifier(work: CommittedOwnerDeleteAllWork, event: OwnerDeleteAllJournalEventV1): ByteArray {
+        requireConnectionFree()
+        return ComplaintOwnerDeleteAllOperation.authenticatedVerifier(work, issuer, routing, event)
+    }
+
     override fun toString(): String = "JdbcComplaintOwnerDeleteAllStore(dormant,no-runtime-authority)"
 }
 
@@ -78,8 +90,16 @@ internal sealed interface CommittedOwnerDeleteAllWork {
 
     sealed interface Prepared : CommittedOwnerDeleteAllWork
 
-    /** A local VERIFIED row was reloaded; a future apply consumer still requires genuine exact object evidence. */
-    sealed interface RecordedVerified : CommittedOwnerDeleteAllWork
+    /** Known committed local VERIFIED reload, not a new provider readback or refreshed retention. */
+    sealed interface RecordedVerified : CommittedOwnerDeleteAllWork {
+        val objectVersion: String
+        val ciphertextSha256: String
+        val objectCreatedAt: Instant
+        val retainUntil: Instant
+        val verifiedAt: Instant
+        fun verificationBytes(): ByteArray
+        fun verificationHash(): ByteArray
+    }
 }
 
 /** One exact retained JDBC holder, fixed lock order and result issuer; no caller-driven mutation cursor. */
@@ -101,11 +121,12 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
     private var canonical: OwnerDeleteAllJournalEventV1? = null
     private var authorizationTime: Instant? = null
     private var prepared = false
+    private var recordedProof: RecordedProof? = null
     private var released: CommittedOwnerDeleteAllWork? = null
 
     fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
     fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) &&
-        stage === Stage.COMPLETE && canonical != null && allocation?.completedFor(this) == true
+        stage === Stage.COMPLETE && canonical != null && (prepared || recordedProof != null) && allocation?.completedFor(this) == true
 
     val result: CommittedOwnerDeleteAllWork
         get() {
@@ -113,9 +134,9 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
             requireConnectionFree()
             return released ?: (
                 if (prepared) {
-                    ReleasedPrepared(issuer, routing, checkNotNull(canonical))
+                    ReleasedPrepared(issuer, routing, checkNotNull(canonical), candidate.credential.verifierBytes())
                 } else {
-                    ReleasedVerified(issuer, routing, checkNotNull(canonical))
+                    ReleasedVerified(issuer, routing, checkNotNull(canonical), candidate.credential.verifierBytes(), checkNotNull(recordedProof))
                 }
                 ).also { released = it }
         }
@@ -237,6 +258,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         check(publication.targetCount == targets.size && publication.bytes.contentEquals(event.canonicalBytes()))
         check(MessageDigest.isEqual(publication.semanticHash, HexFormat.of().parseHex(event.semanticSha256)))
         prepared = publication.prepared
+        recordedProof = publication.verification
         control.requireContinuation(publication.epoch, prepared)
         canonical = event
         stage = Stage.RELOAD_RESERVATION
@@ -385,14 +407,28 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         val bytes: ByteArray,
         val semanticHash: ByteArray,
         val prepared: Boolean,
+        val verification: RecordedProof?,
+    )
+
+    private class RecordedProof(
+        val objectVersion: String,
+        val ciphertextSha256: String,
+        val objectCreatedAt: Instant,
+        val retainUntil: Instant,
+        val verifiedAt: Instant,
+        val bytes: ByteArray,
+        val hash: ByteArray,
     )
 
     private abstract class Released(
         private val issuer: Any,
         private val routing: VersionBoundComplaintJournalRouting,
         private val event: OwnerDeleteAllJournalEventV1,
+        verifier: ByteArray,
     ) : CommittedOwnerDeleteAllWork {
+        private val verifier = verifier.copyOf()
         override fun canonicalBytes(): ByteArray = event.canonicalBytes()
+        fun verifierBytes(): ByteArray = verifier.copyOf()
         fun requireOwned(selectedIssuer: Any, selectedRouting: VersionBoundComplaintJournalRouting): OwnerDeleteAllJournalEventV1 {
             check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(selectedRouting))
             return event
@@ -400,12 +436,33 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
 
         override fun toString(): String = "CommittedOwnerDeleteAllWork(custody-only,redacted)"
     }
-    private class ReleasedPrepared(issuer: Any, routing: VersionBoundComplaintJournalRouting, event: OwnerDeleteAllJournalEventV1) :
-        Released(issuer, routing, event),
+    private class ReleasedPrepared(
+        issuer: Any,
+        routing: VersionBoundComplaintJournalRouting,
+        event: OwnerDeleteAllJournalEventV1,
+        verifier: ByteArray,
+    ) :
+        Released(issuer, routing, event, verifier),
         CommittedOwnerDeleteAllWork.Prepared
-    private class ReleasedVerified(issuer: Any, routing: VersionBoundComplaintJournalRouting, event: OwnerDeleteAllJournalEventV1) :
-        Released(issuer, routing, event),
-        CommittedOwnerDeleteAllWork.RecordedVerified
+    private class ReleasedVerified(
+        issuer: Any,
+        routing: VersionBoundComplaintJournalRouting,
+        event: OwnerDeleteAllJournalEventV1,
+        verifier: ByteArray,
+        proof: RecordedProof,
+    ) :
+        Released(issuer, routing, event, verifier),
+        CommittedOwnerDeleteAllWork.RecordedVerified {
+        override val objectVersion = proof.objectVersion
+        override val ciphertextSha256 = proof.ciphertextSha256
+        override val objectCreatedAt = proof.objectCreatedAt
+        override val retainUntil = proof.retainUntil
+        override val verifiedAt = proof.verifiedAt
+        private val bytes = proof.bytes.copyOf()
+        private val hash = proof.hash.copyOf()
+        override fun verificationBytes(): ByteArray = bytes.copyOf()
+        override fun verificationHash(): ByteArray = hash.copyOf()
+    }
 
     companion object {
         @Suppress("TooGenericExceptionCaught")
@@ -442,6 +499,28 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
             return retained.requireOwned(issuer, routing)
         }
 
+        fun recordedEvent(
+            work: CommittedOwnerDeleteAllWork.RecordedVerified,
+            issuer: Any,
+            routing: VersionBoundComplaintJournalRouting,
+        ): OwnerDeleteAllJournalEventV1 {
+            val retained = work as? ReleasedVerified ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+            return retained.requireOwned(issuer, routing)
+        }
+
+        fun authenticatedVerifier(
+            work: CommittedOwnerDeleteAllWork,
+            issuer: Any,
+            routing: VersionBoundComplaintJournalRouting,
+            expected: OwnerDeleteAllJournalEventV1,
+        ): ByteArray {
+            val retained = work as? Released ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            val event = retained.requireOwned(issuer, routing)
+            check(expected.belongsTo(routing) && event.route == expected.route && event.semanticSha256 == expected.semanticSha256)
+            check(MessageDigest.isEqual(event.canonicalBytes(), expected.canonicalBytes()))
+            return retained.verifierBytes()
+        }
+
         fun requireTuple(candidate: InstallationDeletionCandidate, tuple: InstallationDeletionPreflightTuple) {
             check(candidate.installation.scope == ComplaintDataScope.LIVE && tuple.installation == candidate.installation)
             check(tuple.submittedCredentialVersion == candidate.credentialVersion && tuple.operationKey == candidate.operationKey)
@@ -472,6 +551,19 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
                 checkNotNull(row.getBytes("event_bytes")),
                 checkNotNull(row.getBytes("semantic_hash")),
                 state == "PREPARED",
+                if (state == "VERIFIED") {
+                    RecordedProof(
+                        checkNotNull(row.getString("object_version")),
+                        HexFormat.of().formatHex(checkNotNull(row.getBytes("ciphertext_hash"))),
+                        checkNotNull(row.getTimestamp("object_created_at")).toInstant(),
+                        checkNotNull(row.getTimestamp("retain_until")).toInstant(),
+                        checkNotNull(row.getTimestamp("verified_at")).toInstant(),
+                        checkNotNull(row.getBytes("verification_bytes")),
+                        checkNotNull(row.getBytes("verification_hash")),
+                    )
+                } else {
+                    null
+                },
             )
         }
 

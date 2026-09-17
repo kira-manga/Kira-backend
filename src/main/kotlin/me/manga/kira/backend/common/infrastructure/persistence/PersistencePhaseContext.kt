@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.domain.SessionRefreshResult
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationDeletionPreflightOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
@@ -114,6 +115,7 @@ internal class PersistencePhaseContext(
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerDeleteAll: PersistenceOwnerDeleteAll = OwnerDeleteAllBoundary()
     internal val ownerDeleteAllVerification: PersistenceOwnerDeleteAllVerification = OwnerDeleteAllVerificationBoundary()
+    internal val ownerDeleteAllApply: PersistenceOwnerDeleteAllApply = OwnerDeleteAllApplyBoundary()
     internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
     internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
     internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
@@ -467,6 +469,8 @@ internal class PersistencePhaseContext(
             -> ownerDeleteAll.completed()
 
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY -> ownerDeleteAllVerification.completed()
+
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY -> ownerDeleteAllApply.completed()
 
             PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE -> installationCurrentState.completed()
 
@@ -910,6 +914,7 @@ internal class PersistencePhaseContext(
             PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -1238,6 +1243,55 @@ internal class PersistencePhaseContext(
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true && boundsChecked &&
             (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD || claimed)
+    }
+
+    /** Fixed fenced privacy continuation; its operation must prove every mutation and remaining promise. */
+    private inner class OwnerDeleteAllApplyBoundary : PersistenceOwnerDeleteAllApply {
+        private var issued = false
+        private var boundsChecked = false
+        private var retained: ComplaintOwnerDeleteAllApplyOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
+            if (issued || entityManagerFactory != null || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
+            if (retained !== operation || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun checkCapacity(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            boundsChecked = true
+        }
+
+        override fun checkWrite(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (!boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun connection(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate): Connection {
+            checkWrite(operation, jdbc)
+            return this@PersistencePhaseContext.connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintOwnerDeleteAllApplyOperation) {
+            if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true && boundsChecked
     }
 
     /** VERIFY is a distinct unfenced receipt -> publication path, not a weakened authorizer/apply. */
@@ -1927,5 +1981,17 @@ internal interface PersistenceOwnerDeleteAllVerification {
     fun retain(operation: ComplaintOwnerDeleteAllVerificationOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: ComplaintOwnerDeleteAllVerificationOperation, jdbc: JdbcTemplate)
     fun requireCommitted(operation: ComplaintOwnerDeleteAllVerificationOperation)
+    fun completed(): Boolean
+}
+
+/** No generic callback, second holder, repeated authorization or caller-selected locking policy. */
+internal interface PersistenceOwnerDeleteAllApply {
+    fun requireOperation(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)
+    fun checkCapacity(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)
+    fun checkWrite(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)
+    fun connection(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate): Connection
+    fun requireCommitted(operation: ComplaintOwnerDeleteAllApplyOperation)
     fun completed(): Boolean
 }

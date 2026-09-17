@@ -216,6 +216,9 @@ class OwnerDeleteAllJournalPublisherV1IT {
             "oversized UTF8 version" to fixture.listDocument(listOf(value.copy(version = "\u20ac".repeat(342)))),
             "control in version" to scalar(single, "VersionId", "line&#10;break"),
             "truncated" to scalar(empty, "IsTruncated", "true"),
+            "comment splits truncated true" to scalar(empty, "IsTruncated", "tr<!--split--><![CDATA[ue]]>"),
+            "processing instruction splits truncated true" to scalar(empty, "IsTruncated", "tr<?split?>ue"),
+            "comment splits latest true" to scalar(single, "IsLatest", "tr<!--split--><![CDATA[ue]]>"),
             "not latest" to scalar(single, "IsLatest", "false"),
             "foreign bucket" to scalar(empty, "Name", "other-bucket"),
             "foreign prefix" to scalar(empty, "Prefix", "other-prefix"),
@@ -233,10 +236,14 @@ class OwnerDeleteAllJournalPublisherV1IT {
         for (field in listOf("Name", "Prefix", "KeyMarker", "VersionIdMarker", "MaxKeys", "IsTruncated", "EncodingType")) {
             documents += "missing $field" to empty.replace(Regex("<$field>[^<]*</$field>"), "")
             documents += "duplicate $field" to empty.replace("</ListVersionsResult>", "<$field/></ListVersionsResult>")
+            documents += "comment splits $field" to empty.replace("<$field>", "<$field>ignored<!--split-->")
+            documents += "processing instruction splits $field" to empty.replace("<$field>", "<$field>ignored<?split?>")
         }
         for (field in listOf("Key", "VersionId", "IsLatest", "LastModified", "Size")) {
             documents += "missing $field" to single.replace(Regex("<$field>[^<]*</$field>"), "")
             documents += "duplicate $field" to single.replace("</Version>", "<$field/></Version>")
+            documents += "comment splits $field" to single.replace("<$field>", "<$field>ignored<!--split-->")
+            documents += "processing instruction splits $field" to single.replace("<$field>", "<$field>ignored<?split?>")
         }
         for (text in listOf("", "garbage", "TRUE", "False", "FALSE", " false", "false ", "\ttrue", "true\n")) {
             documents += "truncation boolean [$text]" to scalar(empty, "IsTruncated", text)
@@ -257,6 +264,7 @@ class OwnerDeleteAllJournalPublisherV1IT {
             assertEquals(decrypted, fixture.decrypted(), name)
             fixture.assertClosedExchanges()
         }
+        // Adjacent text/CDATA is lossless in SDK XML decoding; markup-separated scalar runs are not.
         for (version in listOf(VERSION, "v".repeat(1024))) {
             fixture.reset()
             fixture.stored = value.copy(version = version)
@@ -264,7 +272,8 @@ class OwnerDeleteAllJournalPublisherV1IT {
                 if (request.kind == "LIST") {
                     xmlReply(
                         fixture.listDocument().replace("false</IsTruncated>", "fa<![CDATA[lse]]></IsTruncated>")
-                            .replace("true</IsLatest>", "tr<!--split--><![CDATA[ue]]></IsLatest>"),
+                            .replace("true</IsLatest>", "tr<![CDATA[ue]]></IsLatest>")
+                            .replace("<Version>", "<Version><!--container--><?container?>"),
                     )
                 } else {
                     fixture.statefulReply(request)

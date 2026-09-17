@@ -203,14 +203,14 @@ class OwnerDeleteAllVerificationIT {
         val before = f.auth.state()
         val otherRouting = ownerDeleteAllTestRouting()
         assertEquals(f.auth.routing.journalConfiguration.sha256, otherRouting.journalConfiguration.sha256)
-        val otherJ = JdbcComplaintOwnerDeleteAllVerificationStore(f.jdbc, otherRouting)
+        val otherJ = JdbcComplaintOwnerDeleteAllVerificationStore(f.jdbc, otherRouting, f.auth.store)
         assertThrows<OwnerDeleteAllVerificationExceptionV1> { otherJ.capture(readback) }
         assertThrows<PersistencePhaseException> {
             ComplaintOwnerDeleteAllVerificationPhaseExecutor(f.auth.base.ordinary.ownership, f.store).verify(readback)
         }
         val capture = f.store.capture(readback)
         assertEquals(PersistencePhaseFailureCode.ENTRY_REFUSED, assertThrows<PersistencePhaseException> { f.store.verify(capture) }.code)
-        val foreignStore = JdbcComplaintOwnerDeleteAllVerificationStore(f.jdbc, f.auth.routing)
+        val foreignStore = JdbcComplaintOwnerDeleteAllVerificationStore(f.jdbc, f.auth.routing, f.auth.store)
         val phase = f.auth.ownership.enterComplaintOwnerDeleteAllVerify()
         try {
             phase.begin()

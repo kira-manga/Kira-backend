@@ -208,6 +208,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintInstallationEnrollmentIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.InstallationDeletionPreflightIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllVerificationIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintTestInstallationIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintSessionAdmissionIT",
