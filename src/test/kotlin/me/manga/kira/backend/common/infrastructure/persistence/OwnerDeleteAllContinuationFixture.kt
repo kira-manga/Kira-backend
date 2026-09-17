@@ -92,14 +92,18 @@ internal class OwnerDeleteAllContinuationFixture(
         store: JdbcComplaintOwnerDeleteAllStore = auth.store,
         routing: VersionBoundComplaintJournalRouting = auth.routing,
     ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1.withHttpFixture(
-        store, routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
+        store,
+        routing,
+        OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
         {
             requireConnectionFree()
             // Sample only after the real authorization/reload, never before publication.created_at.
             publisher.wall = checkNotNull(auth.observer.queryForObject("SELECT clock_timestamp()", Timestamp::class.java)).toInstant()
             publisher.httpClient()
         },
-        publisher.kms::httpClient, publisher.clock, { publisher.nanos },
+        publisher.kms::httpClient,
+        publisher.clock,
+        { publisher.nanos },
     )
 
     fun continuation(
@@ -107,8 +111,12 @@ internal class OwnerDeleteAllContinuationFixture(
         publishers: OwnerDeleteAllJournalPublisherFactoryV1 = publishers(),
         selectedVerification: JdbcComplaintOwnerDeleteAllVerificationStore = verificationStore,
     ): ComplaintOwnerDeleteAllContinuation = ComplaintOwnerDeleteAllContinuation(
-        ingress, ComplaintOwnerDeleteAllCoordinator(ingress, auth.preflights, auth.phases), publishers,
-        selectedVerification, ComplaintOwnerDeleteAllVerificationPhaseExecutor(auth.ownership, selectedVerification), application,
+        ingress,
+        ComplaintOwnerDeleteAllCoordinator(ingress, auth.preflights, auth.phases),
+        publishers,
+        selectedVerification,
+        ComplaintOwnerDeleteAllVerificationPhaseExecutor(auth.ownership, selectedVerification),
+        application,
     )
 
     fun complete(
@@ -187,26 +195,36 @@ internal class OwnerDeleteAllContinuationFixture(
     }
 
     fun receiptState(): String? = auth.observer.query(
-        "SELECT state FROM installation_deletion_receipts WHERE installation_id = ?", { row, _ -> row.getString(1) }, candidate.installation.id,
+        "SELECT state FROM installation_deletion_receipts WHERE installation_id = ?",
+        { row, _ -> row.getString(1) },
+        candidate.installation.id,
     ).singleOrNull()
 
     fun publicationState(): String? = auth.observer.query(
-        "SELECT state FROM complaint_journal_publications WHERE event_id = ?", { row, _ -> row.getString(1) }, publisher.event.route.eventId,
+        "SELECT state FROM complaint_journal_publications WHERE event_id = ?",
+        { row, _ -> row.getString(1) },
+        publisher.event.route.eventId,
     ).singleOrNull()
 
-    fun eventSnapshot(): String = checkNotNull(auth.observer.queryForObject(
-        "SELECT jsonb_build_array(event_id, writer_generation, journal_epoch, routing_key_id, object_key, canonicalizer, " +
-            "encode(event_bytes, 'hex'), encode(semantic_hash, 'hex'), created_at)::text " +
-            "FROM complaint_journal_publications WHERE event_id = ?",
-        String::class.java, publisher.event.route.eventId,
-    ))
+    fun eventSnapshot(): String = checkNotNull(
+        auth.observer.queryForObject(
+            "SELECT jsonb_build_array(event_id, writer_generation, journal_epoch, routing_key_id, object_key, canonicalizer, " +
+                "encode(event_bytes, 'hex'), encode(semantic_hash, 'hex'), created_at)::text " +
+                "FROM complaint_journal_publications WHERE event_id = ?",
+            String::class.java,
+            publisher.event.route.eventId,
+        ),
+    )
 
-    fun proofSnapshot(): String = checkNotNull(auth.observer.queryForObject(
-        "SELECT jsonb_build_array(encode(verification_bytes, 'hex'), encode(verification_hash, 'hex'), object_version, " +
-            "encode(ciphertext_hash, 'hex'), object_created_at, retain_until, verified_at)::text " +
-            "FROM complaint_journal_publications WHERE event_id = ?",
-        String::class.java, publisher.event.route.eventId,
-    ))
+    fun proofSnapshot(): String = checkNotNull(
+        auth.observer.queryForObject(
+            "SELECT jsonb_build_array(encode(verification_bytes, 'hex'), encode(verification_hash, 'hex'), object_version, " +
+                "encode(ciphertext_hash, 'hex'), object_created_at, retain_until, verified_at)::text " +
+                "FROM complaint_journal_publications WHERE event_id = ?",
+            String::class.java,
+            publisher.event.route.eventId,
+        ),
+    )
 
     fun assertAccounting(before: Map<ComplaintCapacityCounter, DeleteAllCounter>, newAuthorization: Boolean) {
         val authCharge = if (newAuthorization) OwnerDeleteAllCapacityCharges.AUTHORIZATION else ComplaintCapacityVector.ZERO
@@ -222,7 +240,8 @@ internal class OwnerDeleteAllContinuationFixture(
                     actual = old.actual + authCharge[counter] + use[counter] - refund[counter],
                     recovery = old.recovery + reserve[counter] - use[counter],
                 ),
-                after.getValue(counter), counter.name,
+                after.getValue(counter),
+                counter.name,
             )
         }
     }
@@ -239,14 +258,24 @@ internal class OwnerDeleteAllContinuationFixture(
                 "SELECT i.state = 'DELETED' AND c.state = 'DELETED' AND c.version = ? AND c.credential_version = ? " +
                     "AND c.secret_verifier = ? AND i.terminal_at = ? AND c.deleted_at = i.terminal_at AND c.verifier_expires_at = ? " +
                     "FROM complaint_installation_ids i JOIN app_installations c ON c.id = i.id WHERE i.id = ?",
-                Boolean::class.java, Math.addExact(checkNotNull(pendingRowVersion), 1L), Math.addExact(candidate.credentialVersion, 1L),
-                candidate.credential.verifierBytes(), Timestamp.from(result.completedAt), Timestamp.from(result.expiresAt), candidate.installation.id,
+                Boolean::class.java,
+                Math.addExact(checkNotNull(pendingRowVersion), 1L),
+                Math.addExact(candidate.credentialVersion, 1L),
+                candidate.credential.verifierBytes(),
+                Timestamp.from(result.completedAt),
+                Timestamp.from(result.expiresAt),
+                candidate.installation.id,
             ),
         )
         assertEquals(targets.size + 1, auditIds.size)
-        assertEquals(1L, auth.observer.queryForObject(
-            "SELECT count(*) FROM complaint_deletion_journal_applied WHERE event_id = ?", Long::class.java, publisher.event.route.eventId,
-        ))
+        assertEquals(
+            1L,
+            auth.observer.queryForObject(
+                "SELECT count(*) FROM complaint_deletion_journal_applied WHERE event_id = ?",
+                Long::class.java,
+                publisher.event.route.eventId,
+            ),
+        )
     }
 
     fun assertReleased() {

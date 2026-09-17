@@ -71,30 +71,32 @@ class OwnerDeleteAllContinuationIT {
 
     @Test
     fun `Prepared and RecordedVerified restart bypass disabled semantic admission and keep the frozen event and proof`() {
-        for (recorded in listOf(false, true)) withFixture { f ->
-            if (recorded) f.prepareVerified() else f.auth.prepared(f.candidate)
-            val before = f.auth.counters()
-            val publication = f.eventSnapshot()
-            val originalProof = if (recorded) f.proofSnapshot() else null
-            val clients = f.publisher.s3ClientsCreated
-            val calls = f.publisher.requests.size to f.publisher.kms.requests.size
-            f.statements.clear()
-            val disabled = ownerCreateTestIngress() // Real delete-all policy Disabled; any second semantic admission fails.
-            val result = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.complete(disabled))
-            assertEquals(publication, f.eventSnapshot())
-            if (recorded) {
-                assertEquals(clients, f.publisher.s3ClientsCreated)
-                assertEquals(calls, f.publisher.requests.size to f.publisher.kms.requests.size)
-                assertEquals(originalProof, f.proofSnapshot())
-                assertFalse(f.verifyWasEntered())
-            } else {
-                assertEquals(clients + 1, f.publisher.s3ClientsCreated)
-                assertEquals(f.publisher.event.route.objectKey, checkNotNull(f.publisher.stored).key)
-                assertTrue(f.verifyWasEntered())
+        for (recorded in listOf(false, true)) {
+            withFixture { f ->
+                if (recorded) f.prepareVerified() else f.auth.prepared(f.candidate)
+                val before = f.auth.counters()
+                val publication = f.eventSnapshot()
+                val originalProof = if (recorded) f.proofSnapshot() else null
+                val clients = f.publisher.s3ClientsCreated
+                val calls = f.publisher.requests.size to f.publisher.kms.requests.size
+                f.statements.clear()
+                val disabled = ownerCreateTestIngress() // Real delete-all policy Disabled; any second semantic admission fails.
+                val result = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.complete(disabled))
+                assertEquals(publication, f.eventSnapshot())
+                if (recorded) {
+                    assertEquals(clients, f.publisher.s3ClientsCreated)
+                    assertEquals(calls, f.publisher.requests.size to f.publisher.kms.requests.size)
+                    assertEquals(originalProof, f.proofSnapshot())
+                    assertFalse(f.verifyWasEntered())
+                } else {
+                    assertEquals(clients + 1, f.publisher.s3ClientsCreated)
+                    assertEquals(f.publisher.event.route.objectKey, checkNotNull(f.publisher.stored).key)
+                    assertTrue(f.verifyWasEntered())
+                }
+                f.assertAccounting(before, newAuthorization = false)
+                f.assertCompleted(result)
+                f.assertReleased()
             }
-            f.assertAccounting(before, newAuthorization = false)
-            f.assertCompleted(result)
-            f.assertReleased()
         }
     }
 
@@ -107,8 +109,13 @@ class OwnerDeleteAllContinuationIT {
         val clients = f.publisher.s3ClientsCreated
         val disabled = ownerCreateTestIngress()
         val forbidden = OwnerDeleteAllJournalPublisherFactoryV1.withHttpFixture(
-            f.auth.store, f.auth.routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
-            { error("Replay must not open S3.") }, { error("Replay must not open KMS.") }, f.publisher.clock, { f.publisher.nanos },
+            f.auth.store,
+            f.auth.routing,
+            OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
+            { error("Replay must not open S3.") },
+            { error("Replay must not open KMS.") },
+            f.publisher.clock,
+            { f.publisher.nanos },
         )
         val connected = f.continuation(disabled, forbidden)
         f.statements.clear()
@@ -150,39 +157,43 @@ class OwnerDeleteAllContinuationIT {
 
     @Test
     fun `authorization cleanup provider and publisher-close failures stop the chain with fatal cleanup precedence and no false proof`() {
-        for (point in listOf("AUTHORIZATION", "PROVIDER", "CLOSE", "BOTH_FATAL")) withFixture { f ->
-            if (point == "AUTHORIZATION") {
-                f.auth.afterStep = { step ->
-                    if (step == DeleteAllStep.AUDIT) TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
-                        override fun afterCommit() = throw IllegalStateException("Synthetic authorization completion failure.")
-                    })
+        for (point in listOf("AUTHORIZATION", "PROVIDER", "CLOSE", "BOTH_FATAL")) {
+            withFixture { f ->
+                if (point == "AUTHORIZATION") {
+                    f.auth.afterStep = { step ->
+                        if (step == DeleteAllStep.AUDIT) {
+                            TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                                override fun afterCommit() = error("Synthetic authorization completion failure.")
+                            })
+                        }
+                    }
                 }
+                if (point in setOf("PROVIDER", "BOTH_FATAL")) f.publisher.respond = { error("Synthetic raw provider failure.") }
+                if (point == "CLOSE") f.publisher.onClientClose = { error("Synthetic publisher close failure.") }
+                if (point == "BOTH_FATAL") f.publisher.onClientClose = { throw SyntheticContinuationFatal() }
+                val failure = assertThrows<Throwable> { f.complete() }
+                if (point == "AUTHORIZATION") {
+                    val persistence = assertInstanceOf(PersistencePhaseException::class.java, failure)
+                    assertEquals(PersistenceDatabaseOutcome.COMMITTED, persistence.databaseOutcome)
+                    assertTrue(persistence.cleanupProven)
+                    assertEquals(0, f.publisher.s3ClientsCreated)
+                }
+                if (point == "BOTH_FATAL") assertInstanceOf(JournalPublicationFatalV1::class.java, failure)
+                assertNull(failure.cause)
+                assertTrue(failure.suppressed.isEmpty())
+                assertEquals("AUTHORIZED_DELETE", f.receiptState())
+                assertEquals("PREPARED", f.publicationState())
+                assertTrue(f.statements.isEmpty())
+                f.assertReleased()
+                f.auth.afterStep = {}
+                f.publisher.respond = f.publisher::statefulReply
+                f.publisher.onClientClose = {}
+                val before = f.auth.counters()
+                val result = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.complete())
+                f.assertAccounting(before, newAuthorization = false)
+                f.assertCompleted(result)
+                f.assertReleased()
             }
-            if (point in setOf("PROVIDER", "BOTH_FATAL")) f.publisher.respond = { error("Synthetic raw provider failure.") }
-            if (point == "CLOSE") f.publisher.onClientClose = { error("Synthetic publisher close failure.") }
-            if (point == "BOTH_FATAL") f.publisher.onClientClose = { throw SyntheticContinuationFatal() }
-            val failure = assertThrows<Throwable> { f.complete() }
-            if (point == "AUTHORIZATION") {
-                val persistence = assertInstanceOf(PersistencePhaseException::class.java, failure)
-                assertEquals(PersistenceDatabaseOutcome.COMMITTED, persistence.databaseOutcome)
-                assertTrue(persistence.cleanupProven)
-                assertEquals(0, f.publisher.s3ClientsCreated)
-            }
-            if (point == "BOTH_FATAL") assertInstanceOf(JournalPublicationFatalV1::class.java, failure)
-            assertNull(failure.cause)
-            assertTrue(failure.suppressed.isEmpty())
-            assertEquals("AUTHORIZED_DELETE", f.receiptState())
-            assertEquals("PREPARED", f.publicationState())
-            assertTrue(f.statements.isEmpty())
-            f.assertReleased()
-            f.auth.afterStep = {}
-            f.publisher.respond = f.publisher::statefulReply
-            f.publisher.onClientClose = {}
-            val before = f.auth.counters()
-            val result = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.complete())
-            f.assertAccounting(before, newAuthorization = false)
-            f.assertCompleted(result)
-            f.assertReleased()
         }
     }
 
