@@ -125,6 +125,8 @@ internal class OwnerDeleteAllContinuationFixture(
         selectedVerification,
         ComplaintOwnerDeleteAllVerificationPhaseExecutor(auth.ownership, selectedVerification),
         application,
+        auth.routing,
+        auth.codec,
     )
 
     fun complete(

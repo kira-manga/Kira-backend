@@ -10,6 +10,8 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwner
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllVerificationPhaseExecutor
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
+import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
+import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 
 /**
  * One synchronous dormant authenticated attempt, not an HTTP handler or background recovery worker.
@@ -24,6 +26,8 @@ internal class ComplaintOwnerDeleteAllContinuation(
     private val verificationStore: JdbcComplaintOwnerDeleteAllVerificationStore,
     private val verification: ComplaintOwnerDeleteAllVerificationPhaseExecutor,
     private val application: ComplaintOwnerDeleteAllApplyPhaseExecutor,
+    private val replayRouting: VersionBoundComplaintJournalRouting,
+    private val replayCodec: OwnerDeleteAllJournalCodecV1,
 ) {
     fun complete(context: ComplaintIngressContext, candidate: InstallationDeletionCandidate): OwnerDeleteAllOutcome {
         ingress.requireLiveContext(context)
@@ -34,7 +38,7 @@ internal class ComplaintOwnerDeleteAllContinuation(
                 { prepared.publication?.close() },
             )
 
-            is OwnerDeleteAllPreparation.Replay -> prepared
+            is OwnerDeleteAllPreparation.Replay -> preparation.bindReplay(context, prepared, replayRouting, replayCodec)
 
             is OwnerDeleteAllPreparation.Rejected -> prepared
         }
@@ -47,7 +51,7 @@ internal class ComplaintOwnerDeleteAllContinuation(
         context: ComplaintIngressContext,
         work: CommittedOwnerDeleteAllWork,
         publication: OwnerDeleteAllReservation?,
-    ): CommittedOwnerDeleteAllApplyV1 {
+    ): OwnerDeleteAllApplyOutcomeV1 {
         ingress.requireLiveContext(context)
         val proof = when (work) {
             is CommittedOwnerDeleteAllWork.Prepared -> {
@@ -63,7 +67,7 @@ internal class ComplaintOwnerDeleteAllContinuation(
             else -> throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
         }
         ingress.requireLiveContext(context)
-        return application.apply(work, proof)
+        return application.applyForContinuation(work, proof)
     }
 
     override fun toString(): String = "ComplaintOwnerDeleteAllContinuation(dormant,no-runtime-authority)"
