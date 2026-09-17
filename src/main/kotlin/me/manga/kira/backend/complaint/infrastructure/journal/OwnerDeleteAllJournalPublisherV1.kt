@@ -179,7 +179,14 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
             routing: VersionBoundComplaintJournalRouting,
             ordinaryCredentials: AwsSessionCredentials,
         ): OwnerDeleteAllJournalPublisherV1 = Construction().open(
-            store, routing, ordinaryCredentials, ::journalS3UrlConnectionClient, ::journalKmsUrlConnectionClient, Clock.systemUTC(), System::nanoTime, null,
+            store,
+            routing,
+            ordinaryCredentials,
+            ::journalS3UrlConnectionClient,
+            ::journalKmsUrlConnectionClient,
+            Clock.systemUTC(),
+            System::nanoTime,
+            null,
         )
 
         /** Only raw HTTP SPI substitution. The same genuine SQL handoff, S3 SDK, codec and KMS SDK are retained. */
@@ -192,7 +199,14 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
             clock: Clock,
             nanoTime: () -> Long,
         ): OwnerDeleteAllJournalPublisherV1 = Construction().open(
-            store, routing, ordinaryCredentials, { s3HttpFactory() }, { kmsHttpFactory() }, clock, nanoTime, null,
+            store,
+            routing,
+            ordinaryCredentials,
+            { s3HttpFactory() },
+            { kmsHttpFactory() },
+            clock,
+            nanoTime,
+            null,
         )
 
         internal fun openOwned(

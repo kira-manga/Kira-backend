@@ -16,9 +16,11 @@ class JournalPublicationLanesV1Test {
     fun `large validated limits allocate only actual owners and snapshot addition widens before summing`() {
         val declared = InitialLiveJournalTestFixture.declaration()
         val journal = ComplaintJournalConfigurationV1.of(
-            declared.copy(limits = declared.limits.copy(
-                capacity = declared.limits.capacity.copy(maximumPublicationLanes = Int.MAX_VALUE, routinePublicationLanes = Int.MAX_VALUE - 1),
-            )),
+            declared.copy(
+                limits = declared.limits.copy(
+                    capacity = declared.limits.capacity.copy(maximumPublicationLanes = Int.MAX_VALUE, routinePublicationLanes = Int.MAX_VALUE - 1),
+                ),
+            ),
         )
         JournalPublicationLanesV1(journal).use { lanes ->
             assertEquals(0L, lanes.activeOwners().totalOwners)

@@ -33,7 +33,9 @@ internal class ComplaintOwnerDeleteAllContinuation(
                 { continueDurable(context, prepared.work, prepared.publication) },
                 { prepared.publication?.close() },
             )
+
             is OwnerDeleteAllPreparation.Replay -> prepared
+
             is OwnerDeleteAllPreparation.Rejected -> prepared
         }
         ingress.requireLiveContext(context)
@@ -57,6 +59,7 @@ internal class ComplaintOwnerDeleteAllContinuation(
             }
 
             is CommittedOwnerDeleteAllWork.RecordedVerified -> verificationStore.resume(work)
+
             else -> throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
         }
         ingress.requireLiveContext(context)

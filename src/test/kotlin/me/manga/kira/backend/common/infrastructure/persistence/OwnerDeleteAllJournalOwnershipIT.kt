@@ -115,70 +115,74 @@ class OwnerDeleteAllJournalOwnershipIT {
 
     @Test
     fun `completed rejection and RecordedVerified continuation bypass fully occupied shared J without network or semantic recharge`() {
-        for (recorded in listOf(false, true)) withFixture { f ->
-            if (recorded) f.prepareVerified() else f.complete()
-            val clients = f.publisher.s3ClientsCreated to f.publisher.kms.createdClients
-            val requests = f.publisher.requests.size to f.publisher.kms.requests.size
-            val forbidden = factory(f, s3 = { error("Bypass opened S3.") }, kms = { error("Bypass opened KMS.") })
-            val held = List(f.publisher.journal.declaration().limits.capacity.maximumPublicationLanes) { forbidden.reserve() }
-            val disabled = ownerCreateTestIngress()
-            val connected = f.continuation(disabled, forbidden)
-            f.statements.clear()
-            try {
-                val result = f.complete(disabled, connected)
-                if (recorded) {
-                    f.assertCompleted(assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, result))
-                    assertFalse(f.verifyWasEntered())
-                } else {
-                    assertInstanceOf(OwnerDeleteAllPreparation.Replay::class.java, result)
-                    val wrong = f.auth.request(f.candidate.installation, key = f.candidate.operationKey, secret = ByteArray(32) { 99 })
-                    assertInstanceOf(OwnerDeleteAllPreparation.Rejected::class.java, f.complete(disabled, connected, wrong))
-                    assertTrue(f.statements.isEmpty())
+        for (recorded in listOf(false, true)) {
+            withFixture { f ->
+                if (recorded) f.prepareVerified() else f.complete()
+                val clients = f.publisher.s3ClientsCreated to f.publisher.kms.createdClients
+                val requests = f.publisher.requests.size to f.publisher.kms.requests.size
+                val forbidden = factory(f, s3 = { error("Bypass opened S3.") }, kms = { error("Bypass opened KMS.") })
+                val held = List(f.publisher.journal.declaration().limits.capacity.maximumPublicationLanes) { forbidden.reserve() }
+                val disabled = ownerCreateTestIngress()
+                val connected = f.continuation(disabled, forbidden)
+                f.statements.clear()
+                try {
+                    val result = f.complete(disabled, connected)
+                    if (recorded) {
+                        f.assertCompleted(assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, result))
+                        assertFalse(f.verifyWasEntered())
+                    } else {
+                        assertInstanceOf(OwnerDeleteAllPreparation.Replay::class.java, result)
+                        val wrong = f.auth.request(f.candidate.installation, key = f.candidate.operationKey, secret = ByteArray(32) { 99 })
+                        assertInstanceOf(OwnerDeleteAllPreparation.Rejected::class.java, f.complete(disabled, connected, wrong))
+                        assertTrue(f.statements.isEmpty())
+                    }
+                    assertEquals(held.size.toLong(), f.journalLanes.activeOwners().totalOwners)
+                    assertEquals(clients, f.publisher.s3ClientsCreated to f.publisher.kms.createdClients)
+                    assertEquals(requests, f.publisher.requests.size to f.publisher.kms.requests.size)
+                } finally {
+                    held.forEach { it.close() }
                 }
-                assertEquals(held.size.toLong(), f.journalLanes.activeOwners().totalOwners)
-                assertEquals(clients, f.publisher.s3ClientsCreated to f.publisher.kms.createdClients)
-                assertEquals(requests, f.publisher.requests.size to f.publisher.kms.requests.size)
-            } finally {
-                held.forEach { it.close() }
+                f.assertReleased()
             }
-            f.assertReleased()
         }
     }
 
     @Test
     fun `failed raw construction retains the original attempt and returned KMS cleanup across factory replacement and shutdown`() {
-        for (point in listOf("KMS_CANCELLED", "S3_UNRETURNED", "KMS_CLOSE_FATAL")) withFixture { f ->
-            if (point == "KMS_CLOSE_FATAL") f.publisher.kms.onClientClose = { throw SyntheticJournalOwnershipFatal() }
-            val failed = factory(
-                f,
-                s3 = { error("Synthetic raw S3 construction failure before return.") },
-                kms = {
-                    if (point == "KMS_CANCELLED") throw CancellationException("Synthetic raw KMS factory cancellation.")
-                    f.publisher.kms.httpClient()
-                },
-            )
-            val other = f.publishers()
-            val held = List(f.publisher.journal.declaration().limits.capacity.maximumPublicationLanes - 1) { other.reserve() }
-            val failure = assertThrows<Throwable> { f.complete(selected = f.continuation(publishers = failed)) }
-            if (point == "KMS_CANCELLED") assertInstanceOf(CancellationException::class.java, failure)
-            if (point == "KMS_CLOSE_FATAL") assertInstanceOf(JournalPublicationFatalV1::class.java, failure)
-            assertNull(failure.cause)
-            assertTrue(failure.suppressed.isEmpty())
-            assertEquals("PREPARED", f.publicationState())
-            assertTrue(f.statements.isEmpty() && f.publisher.requests.isEmpty() && f.publisher.kms.requests.isEmpty())
-            assertEquals(if (point == "KMS_CANCELLED") 0 else 1, f.publisher.kms.closedClients)
-            assertEquals(0, f.publisher.s3ClientsCreated)
-            assertEquals((held.size + 1).toLong(), f.journalLanes.activeOwners().totalOwners)
-            assertNull(f.publishers().tryReserve()) // A fresh factory has no fresh budget.
-            assertThrows<Throwable> { failed.close() }
-            assertNull(f.publishers().tryReserve())
-            assertThrows<Throwable> { f.journalLanes.close() }
-            assertEquals(JournalPublicationLaneSnapshotV1(0, 1), f.journalLanes.activeOwners())
-            held.forEach { it.close() }
-            assertThrows<Throwable> { f.journalLanes.close() }
-            assertEquals(if (point == "KMS_CANCELLED") 0 else 1, f.publisher.kms.closedClients) // Original raw close is never reissued.
-            assertNull(f.publishers().tryReserve())
-            f.auth.assertReleased()
+        for (point in listOf("KMS_CANCELLED", "S3_UNRETURNED", "KMS_CLOSE_FATAL")) {
+            withFixture { f ->
+                if (point == "KMS_CLOSE_FATAL") f.publisher.kms.onClientClose = { throw SyntheticJournalOwnershipFatal() }
+                val failed = factory(
+                    f,
+                    s3 = { error("Synthetic raw S3 construction failure before return.") },
+                    kms = {
+                        if (point == "KMS_CANCELLED") throw CancellationException("Synthetic raw KMS factory cancellation.")
+                        f.publisher.kms.httpClient()
+                    },
+                )
+                val other = f.publishers()
+                val held = List(f.publisher.journal.declaration().limits.capacity.maximumPublicationLanes - 1) { other.reserve() }
+                val failure = assertThrows<Throwable> { f.complete(selected = f.continuation(publishers = failed)) }
+                if (point == "KMS_CANCELLED") assertInstanceOf(CancellationException::class.java, failure)
+                if (point == "KMS_CLOSE_FATAL") assertInstanceOf(JournalPublicationFatalV1::class.java, failure)
+                assertNull(failure.cause)
+                assertTrue(failure.suppressed.isEmpty())
+                assertEquals("PREPARED", f.publicationState())
+                assertTrue(f.statements.isEmpty() && f.publisher.requests.isEmpty() && f.publisher.kms.requests.isEmpty())
+                assertEquals(if (point == "KMS_CANCELLED") 0 else 1, f.publisher.kms.closedClients)
+                assertEquals(0, f.publisher.s3ClientsCreated)
+                assertEquals((held.size + 1).toLong(), f.journalLanes.activeOwners().totalOwners)
+                assertNull(f.publishers().tryReserve()) // A fresh factory has no fresh budget.
+                assertThrows<Throwable> { failed.close() }
+                assertNull(f.publishers().tryReserve())
+                assertThrows<Throwable> { f.journalLanes.close() }
+                assertEquals(JournalPublicationLaneSnapshotV1(0, 1), f.journalLanes.activeOwners())
+                held.forEach { it.close() }
+                assertThrows<Throwable> { f.journalLanes.close() }
+                assertEquals(if (point == "KMS_CANCELLED") 0 else 1, f.publisher.kms.closedClients) // Original raw close is never reissued.
+                assertNull(f.publishers().tryReserve())
+                f.auth.assertReleased()
+            }
         }
     }
 
@@ -194,95 +198,111 @@ class OwnerDeleteAllJournalOwnershipIT {
             assertEquals(0, f.publisher.s3ClientsCreated + f.publisher.kms.createdClients)
             assertNull(f.publishers().tryReserve())
         }
-        for (point in listOf("CONSTRUCTION", "NATIVE_RETURN", "FINAL_CLOSE")) withFixture { f ->
-            OwnedCallerTestScope().use { callers ->
-                val gate = callers.gate()
-                val raw = f.publisher::httpClient
-                val selected = if (point == "CONSTRUCTION") factory(f, s3 = { raw().also { gate.hold() } }) else f.publishers()
-                if (point == "NATIVE_RETURN") f.publisher.respond = { request ->
-                    f.publisher.statefulReply(request).also { if (f.publisher.requests.size == 1) it.beforeCall = gate::hold }
-                }
-                if (point == "FINAL_CLOSE") {
-                    val closeBoundary = f.publisher.onClientClose
-                    f.publisher.onClientClose = { closeBoundary(); gate.hold() }
-                }
-                val other = f.publishers()
-                val held = MutableList(f.publisher.journal.declaration().limits.capacity.maximumPublicationLanes - 1) { other.reserve() }
-                val running = callers.launch { f.complete(selected = f.continuation(publishers = selected)) }
-                gate.awaitEntered()
-                try {
-                    assertEquals((held.size + 1).toLong(), f.journalLanes.activeOwners().totalOwners)
-                    assertNull(other.tryReserve())
-                    assertNull(f.journalLanes.tryRoutinePublication())
+        for (point in listOf("CONSTRUCTION", "NATIVE_RETURN", "FINAL_CLOSE")) {
+            withFixture { f ->
+                OwnedCallerTestScope().use { callers ->
+                    val gate = callers.gate()
+                    val raw = f.publisher::httpClient
+                    val selected = if (point == "CONSTRUCTION") factory(f, s3 = { raw().also { gate.hold() } }) else f.publishers()
                     if (point == "NATIVE_RETURN") {
-                        assertThrows<JournalPublicationExceptionV1> { f.journalLanes.close() }
-                        assertEquals(JournalPublicationLaneSnapshotV1(0, 1), f.journalLanes.activeOwners())
-                    } else {
-                        assertThrows<JournalPublicationExceptionV1> { selected.close() }
-                        assertNull(other.tryReserve())
-                        if (point == "FINAL_CLOSE") {
-                            held.forEach { it.close() }
-                            assertEquals(JournalPublicationLaneSnapshotV1(0, 1), f.journalLanes.activeOwners())
-                            assertNull(f.journalLanes.tryRoutinePublication()) // Only the actually blocked cleanup owner remains.
-                            held.indices.forEach { held[it] = other.reserve() }
+                        f.publisher.respond = { request ->
+                            f.publisher.statefulReply(request).also { if (f.publisher.requests.size == 1) it.beforeCall = gate::hold }
                         }
                     }
-                    assertTrue(f.statements.isEmpty()) // Even a buffered readback cannot enter VERIFY while its owner is held.
-                } finally {
-                    gate.release()
-                }
-                assertTrue(running.problem() != null)
-                assertTrue(f.statements.isEmpty())
-                assertEquals("PREPARED", f.publicationState())
-                f.assertReleased() // The original synchronous call and all its returned resources actually finished.
-                if (point == "NATIVE_RETURN") {
+                    if (point == "FINAL_CLOSE") {
+                        val closeBoundary = f.publisher.onClientClose
+                        f.publisher.onClientClose = {
+                            closeBoundary()
+                            gate.hold()
+                        }
+                    }
+                    val other = f.publishers()
+                    val held = MutableList(f.publisher.journal.declaration().limits.capacity.maximumPublicationLanes - 1) { other.reserve() }
+                    val running = callers.launch { f.complete(selected = f.continuation(publishers = selected)) }
+                    gate.awaitEntered()
+                    try {
+                        assertEquals((held.size + 1).toLong(), f.journalLanes.activeOwners().totalOwners)
+                        assertNull(other.tryReserve())
+                        assertNull(f.journalLanes.tryRoutinePublication())
+                        if (point == "NATIVE_RETURN") {
+                            assertThrows<JournalPublicationExceptionV1> { f.journalLanes.close() }
+                            assertEquals(JournalPublicationLaneSnapshotV1(0, 1), f.journalLanes.activeOwners())
+                        } else {
+                            assertThrows<JournalPublicationExceptionV1> { selected.close() }
+                            assertNull(other.tryReserve())
+                            if (point == "FINAL_CLOSE") {
+                                held.forEach { it.close() }
+                                assertEquals(JournalPublicationLaneSnapshotV1(0, 1), f.journalLanes.activeOwners())
+                                assertNull(f.journalLanes.tryRoutinePublication()) // Only the actually blocked cleanup owner remains.
+                                held.indices.forEach { held[it] = other.reserve() }
+                            }
+                        }
+                        assertTrue(f.statements.isEmpty()) // Even a buffered readback cannot enter VERIFY while its owner is held.
+                    } finally {
+                        gate.release()
+                    }
+                    assertTrue(running.problem() != null)
+                    assertTrue(f.statements.isEmpty())
+                    assertEquals("PREPARED", f.publicationState())
+                    f.assertReleased() // The original synchronous call and all its returned resources actually finished.
+                    if (point == "NATIVE_RETURN") {
+                        assertEquals(0L, f.journalLanes.activeOwners().totalOwners)
+                        assertNull(f.publishers().tryReserve()) // Shared shutdown is permanent, not a drained-new-owner reset.
+                    } else {
+                        assertEquals(held.size.toLong(), f.journalLanes.activeOwners().totalOwners)
+                        val replacement = other.reserve()
+                        selected.close()
+                        assertEquals((held.size + 1).toLong(), f.journalLanes.activeOwners().totalOwners)
+                        replacement.close()
+                    }
+                    held.forEach { it.close() }
                     assertEquals(0L, f.journalLanes.activeOwners().totalOwners)
-                    assertNull(f.publishers().tryReserve()) // Shared shutdown is permanent, not a drained-new-owner reset.
-                } else {
-                    assertEquals(held.size.toLong(), f.journalLanes.activeOwners().totalOwners)
-                    val replacement = other.reserve()
-                    selected.close()
-                    assertEquals((held.size + 1).toLong(), f.journalLanes.activeOwners().totalOwners)
-                    replacement.close()
                 }
-                held.forEach { it.close() }
-                assertEquals(0L, f.journalLanes.activeOwners().totalOwners)
             }
         }
     }
 
     @Test
     fun `construction and final cleanup consume the same publication clock without renewal or skipped actual close`() {
-        for (point in listOf("RAW_RETURN", "FIRST_LIST", "FINAL_CLOSE")) withFixture { f ->
-            val originalClose = f.publisher.onClientClose
-            if (point == "FINAL_CLOSE") f.publisher.onClientClose = { originalClose(); f.publisher.nanos = 5_100_000_000L }
-            if (point == "FIRST_LIST") f.publisher.respond = { request ->
-                f.publisher.statefulReply(request).also { it.beforeCall = { f.publisher.nanos += 700_000_000L } }
+        for (point in listOf("RAW_RETURN", "FIRST_LIST", "FINAL_CLOSE")) {
+            withFixture { f ->
+                val originalClose = f.publisher.onClientClose
+                if (point == "FINAL_CLOSE") {
+                    f.publisher.onClientClose = {
+                        originalClose()
+                        f.publisher.nanos = 5_100_000_000L
+                    }
+                }
+                if (point == "FIRST_LIST") {
+                    f.publisher.respond = { request ->
+                        f.publisher.statefulReply(request).also { it.beforeCall = { f.publisher.nanos += 700_000_000L } }
+                    }
+                }
+                val selected = factory(
+                    f,
+                    s3 = { f.publisher.httpClient().also { if (point == "RAW_RETURN") f.publisher.nanos = 5_100_000_000L } },
+                    kms = { f.publisher.kms.httpClient().also { if (point == "FIRST_LIST") f.publisher.nanos = 4_400_000_000L } },
+                )
+                val failure = assertThrows<Throwable> { f.complete(selected = f.continuation(publishers = selected)) }
+                when (failure) {
+                    is JournalPublicationExceptionV1 -> assertEquals(JournalPublicationFailureV1.DEADLINE_EXHAUSTED, failure.code)
+                    is OwnerDeleteAllJournalException -> assertEquals(OwnerDeleteAllJournalFailure.DEADLINE_EXHAUSTED, failure.code)
+                    else -> throw AssertionError("Unexpected publication deadline classification.")
+                }
+                assertEquals("PREPARED", f.publicationState())
+                assertTrue(f.statements.isEmpty())
+                assertEquals(1, f.publisher.s3ClientsCreated)
+                assertEquals(1, f.publisher.s3ClientsClosed)
+                assertEquals(1, f.publisher.kms.closedClients)
+                if (point == "RAW_RETURN") assertTrue(f.publisher.requests.isEmpty() && f.publisher.kms.requests.isEmpty())
+                if (point == "FIRST_LIST") {
+                    assertEquals(listOf("LIST"), f.publisher.requests.map { it.kind })
+                    assertTrue(f.publisher.kms.requests.isEmpty())
+                }
+                if (point == "FINAL_CLOSE") assertTrue(f.publisher.kms.requests.isNotEmpty())
+                assertEquals(0L, f.journalLanes.activeOwners().totalOwners) // Expiry is not proof; actual successful original close above is.
+                f.assertReleased()
             }
-            val selected = factory(
-                f,
-                s3 = { f.publisher.httpClient().also { if (point == "RAW_RETURN") f.publisher.nanos = 5_100_000_000L } },
-                kms = { f.publisher.kms.httpClient().also { if (point == "FIRST_LIST") f.publisher.nanos = 4_400_000_000L } },
-            )
-            val failure = assertThrows<Throwable> { f.complete(selected = f.continuation(publishers = selected)) }
-            when (failure) {
-                is JournalPublicationExceptionV1 -> assertEquals(JournalPublicationFailureV1.DEADLINE_EXHAUSTED, failure.code)
-                is OwnerDeleteAllJournalException -> assertEquals(OwnerDeleteAllJournalFailure.DEADLINE_EXHAUSTED, failure.code)
-                else -> throw AssertionError("Unexpected publication deadline classification.")
-            }
-            assertEquals("PREPARED", f.publicationState())
-            assertTrue(f.statements.isEmpty())
-            assertEquals(1, f.publisher.s3ClientsCreated)
-            assertEquals(1, f.publisher.s3ClientsClosed)
-            assertEquals(1, f.publisher.kms.closedClients)
-            if (point == "RAW_RETURN") assertTrue(f.publisher.requests.isEmpty() && f.publisher.kms.requests.isEmpty())
-            if (point == "FIRST_LIST") {
-                assertEquals(listOf("LIST"), f.publisher.requests.map { it.kind })
-                assertTrue(f.publisher.kms.requests.isEmpty())
-            }
-            if (point == "FINAL_CLOSE") assertTrue(f.publisher.kms.requests.isNotEmpty())
-            assertEquals(0L, f.journalLanes.activeOwners().totalOwners) // Expiry is not proof; actual successful original close above is.
-            f.assertReleased()
         }
     }
 

@@ -75,7 +75,14 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
             routing: VersionBoundComplaintJournalRouting,
             credentials: AwsSessionCredentials,
         ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1(
-            lanes, store, routing, credentials, ::journalS3UrlConnectionClient, ::journalKmsUrlConnectionClient, Clock.systemUTC(), System::nanoTime,
+            lanes,
+            store,
+            routing,
+            credentials,
+            ::journalS3UrlConnectionClient,
+            ::journalKmsUrlConnectionClient,
+            Clock.systemUTC(),
+            System::nanoTime,
         )
 
         /** Raw HTTP SPI substitution only; no substitute publisher, arbitrary mutation or result callback. */
@@ -89,7 +96,14 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
             clock: Clock,
             nanoTime: () -> Long,
         ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1(
-            lanes, store, routing, credentials, { s3HttpFactory() }, { kmsHttpFactory() }, clock, nanoTime,
+            lanes,
+            store,
+            routing,
+            credentials,
+            { s3HttpFactory() },
+            { kmsHttpFactory() },
+            clock,
+            nanoTime,
         )
     }
 }

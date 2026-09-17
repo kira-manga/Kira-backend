@@ -170,8 +170,11 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
                     state = PublicationOwnerStateV1.CLOSED
                     release(this)
                 }
+
                 PublicationOwnerStateV1.CLOSED -> Unit
+
                 PublicationOwnerStateV1.RETAINED -> throw checkNotNull(closeFailure)
+
                 PublicationOwnerStateV1.RUNNING, PublicationOwnerStateV1.CLEANING -> {
                     // The original synchronous caller owns cleanup. No cancel/timeout is a native return.
                     throw JournalPublicationExceptionV1(JournalPublicationFailureV1.CLEANUP_FAILURE)

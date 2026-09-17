@@ -318,10 +318,14 @@ internal class S3OrdinaryJournalClientV1 private constructor(
                         withJournalPublicationCleanup(
                             {
                                 val wrapper = transport
-                                if (wrapper != null) wrapper.close() else raw?.let {
-                                    if (!rawCloseIssued) {
-                                        rawCloseIssued = true
-                                        journalPublicationClose(it::close)
+                                if (wrapper != null) {
+                                    wrapper.close()
+                                } else {
+                                    raw?.let {
+                                        if (!rawCloseIssued) {
+                                            rawCloseIssued = true
+                                            journalPublicationClose(it::close)
+                                        }
                                     }
                                 }
                             },

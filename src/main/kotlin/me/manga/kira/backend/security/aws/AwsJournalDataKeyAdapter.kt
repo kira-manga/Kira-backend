@@ -260,7 +260,10 @@ internal class AwsJournalDataKeyAdapter private constructor(
                     val endpoint = regionalEndpoint(checkNotNull(region), emptyProfile)
                     attempt?.remainingMillis(1)
                     val transport = BoundedJournalKmsSdkHttpClient(
-                        profile.region, endpoint, credentials.accessKeyId(), credentials.sessionToken(),
+                        profile.region,
+                        endpoint,
+                        credentials.accessKeyId(),
+                        credentials.sessionToken(),
                     ) { remaining ->
                         stage = ConstructionStage.OPENING_HTTP
                         httpFactory(remaining).also {
@@ -301,10 +304,14 @@ internal class AwsJournalDataKeyAdapter private constructor(
                         withJournalKmsCleanup(
                             {
                                 val wrapper = transport
-                                if (wrapper != null) wrapper.close() else raw?.let {
-                                    if (!rawCloseIssued) {
-                                        rawCloseIssued = true
-                                        journalKmsClose(it::close)
+                                if (wrapper != null) {
+                                    wrapper.close()
+                                } else {
+                                    raw?.let {
+                                        if (!rawCloseIssued) {
+                                            rawCloseIssued = true
+                                            journalKmsClose(it::close)
+                                        }
                                     }
                                 }
                             },
