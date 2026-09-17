@@ -502,9 +502,11 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
         -> ownerHistory.completed()
 
-        PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> ownerOperation.completed()
-
-        PersistencePhasePath.COMPLAINT_OWNER_CREATE, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS -> ownerOperation.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
+        PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
+        PersistencePhasePath.COMPLAINT_OWNER_CREATE,
+        PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
+        -> ownerOperation.completed()
 
         PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
 
@@ -1172,7 +1174,7 @@ internal class PersistencePhaseContext(
 
         override fun retain(operation: CatalogEpochRotationControlOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (!issued || retained != null || operation.attempt !== rotationAttempt || !operation.belongsTo(this@PersistencePhaseContext, path)) {
+            if (!issued || retained != null || !belongsToAttempt(operation)) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             retained = operation
@@ -1180,13 +1182,11 @@ internal class PersistencePhaseContext(
 
         override fun requireRetained(operation: CatalogEpochRotationControlOperation, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (retained !== operation || operation.attempt !== rotationAttempt) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!retainsOperation(operation)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
         }
 
         override fun requireCommitted(operation: CatalogEpochRotationControlOperation) {
-            if (!caller.isCurrent() || retained !== operation || operation.attempt !== rotationAttempt ||
-                !operation.completedFor(this@PersistencePhaseContext)
-            ) {
+            if (!caller.isCurrent() || !retainsOperation(operation) || !operation.completedFor(this@PersistencePhaseContext)) {
                 failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireSuccessfulResult() // Actual same-phase commit, holder release and completed permit refund.
@@ -1196,6 +1196,11 @@ internal class PersistencePhaseContext(
             if (rotationAttempt !== attempt) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             attempt.requirePersistence(ownership, jdbc)
         }
+
+        private fun belongsToAttempt(operation: CatalogEpochRotationControlOperation): Boolean =
+            operation.attempt === rotationAttempt && operation.belongsTo(this@PersistencePhaseContext, path)
+
+        private fun retainsOperation(operation: CatalogEpochRotationControlOperation): Boolean = retained === operation && operation.attempt === rotationAttempt
 
         override fun completed(): Boolean = retained?.let { it.attempt === rotationAttempt && it.completedFor(this@PersistencePhaseContext) } == true
     }

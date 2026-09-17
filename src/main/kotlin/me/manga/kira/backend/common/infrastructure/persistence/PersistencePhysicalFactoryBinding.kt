@@ -455,14 +455,10 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
     private fun sessionClaimFailure(entry: PersistencePhysicalEntry, prepared: PreparedEpochRotationSession): PersistenceFactoryFailure? {
         val attempt = requireNotNull(entry.attempt)
         val control = requireNotNull(entry.control)
-        if (ledger.current(entry.record) !== entry || rendezvous.current !== attempt || !control.matchesRecord(entry.record)) {
-            return PersistenceFactoryFailure.COORDINATION_FAILED
-        }
-        if (attempt.ownedControl !== control || attempt.budget !== control.budget || !prepared.matches(entry, this)) {
+        if (!sessionClaimIdentityMatches(entry, prepared, attempt, control)) {
             return PersistenceFactoryFailure.COORDINATION_FAILED
         }
         return when {
-            managed?.ownsEpochRotation(prepared.resource) != true -> PersistenceFactoryFailure.COORDINATION_FAILED
             isClosed() || ledger.sealed || entry.retiring || entry.retirementRequested.get() -> PersistenceFactoryFailure.CLOSED
             !entry.jdbc.canDeliverSessionLocked(prepared) -> PersistenceFactoryFailure.COORDINATION_FAILED
             managed?.permits(entry) != true -> PersistenceFactoryFailure.NOT_READY
@@ -476,6 +472,16 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
             else -> entry.transports?.liveFailureLocked() ?: if (entry.transports == null) PersistenceFactoryFailure.CREATE_FAILED else null
         }
     }
+
+    /** Same ordered fixed comparisons under F→G; no clock, callback, packaging or resource construction. */
+    private fun sessionClaimIdentityMatches(
+        entry: PersistencePhysicalEntry,
+        prepared: PreparedEpochRotationSession,
+        attempt: PersistenceFactoryAttempt<PersistencePhysicalRecord, PersistenceJdbcCandidate>,
+        control: PersistenceOwnedCallerControl,
+    ): Boolean = ledger.current(entry.record) === entry && rendezvous.current === attempt && control.matchesRecord(entry.record) &&
+        attempt.ownedControl === control && attempt.budget === control.budget && prepared.matches(entry, this) &&
+        managed?.ownsEpochRotation(prepared.resource) == true
 
     override fun toString(): String = "PersistencePhysicalFactoryBinding(redacted)"
 }

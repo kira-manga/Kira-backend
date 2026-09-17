@@ -40,9 +40,11 @@ internal class PersistenceEpochRotationFactoryRequest(
             } finally {
                 caller.fail(PersistenceFactoryFailure.COORDINATION_FAILED)
             }
-        } catch (problem: Throwable) {
+        } catch (problem: Error) {
             control?.fail(PersistenceFactoryFailure.COORDINATION_FAILED)
-            if (problem is Error) throw problem
+            throw problem
+        } catch (_: Throwable) {
+            control?.fail(PersistenceFactoryFailure.COORDINATION_FAILED)
             return control?.failureResult() ?: PersistenceFactoryResult.Refused(PersistenceFactoryFailure.COORDINATION_FAILED)
         } finally {
             try {
