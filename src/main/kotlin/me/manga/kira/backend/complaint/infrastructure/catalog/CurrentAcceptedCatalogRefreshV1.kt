@@ -89,10 +89,12 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     override fun toString(): String = "CurrentAcceptedCatalogRefreshV1(G1-only,partial-provenance,no-capability)"
 
     /** Cannot be constructed from a diagnostic projection, supplied evidence or a direct supplied-port SQL handle. */
-    class Result private constructor(private val producer: CurrentAcceptedCatalogRefreshV1, private val product: Product) {
+    class Result private constructor(producer: CurrentAcceptedCatalogRefreshV1, private val product: Product) {
+        private val process = producer.process
+        private val settings = producer.settings
         internal fun catalogFor(selected: VersionBoundComplaintProcessConfiguration): CatalogCommonHeadEvidence {
             requireConnectionFree()
-            requireCatalogReadback(selected === producer.process && selected.catalogReadback === producer.settings, CatalogReadbackFailure.INVALID_POLICY)
+            requireCatalogReadback(selected === process && selected.catalogReadback === settings, CatalogReadbackFailure.INVALID_POLICY)
             selected.requireUnchangedConfiguration()
             product.projection.requireBinding(selected, product.readback)
             return product.readback.commonHeadEvidence()
