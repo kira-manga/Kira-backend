@@ -194,7 +194,7 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     }
 
     companion object {
-        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "14", "15", "16", "17")
+        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "14", "15", "16", "17", "18")
         private const val V14 = "V14__backend_owned_complaints.sql"
         private const val SYNTHETIC_BCRYPT = "{bcrypt}\$2a\$10\$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
         private val historicalInputs = complaintResource("fixtures/complaint/migration-sha256.txt")
