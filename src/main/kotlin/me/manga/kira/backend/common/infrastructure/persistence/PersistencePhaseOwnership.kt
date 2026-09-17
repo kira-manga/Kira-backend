@@ -34,16 +34,13 @@ internal class PersistencePhaseOwnership private constructor(
     internal val installationDeletionIdentity = Any() // Same-owner read-only comparisons, never deletion admission or writer authority.
 
     /** Fixed supported process profile only; the same pool cannot hide source-only or differently sized admission. */
-    internal fun requireBoundComplaintOrdinary(pools: VersionBoundPersistencePools) {
+    internal fun requireBoundComplaintComposition(pools: VersionBoundPersistencePools, deletion: PersistencePhaseOwnership) {
         val ordinary = selection as? Selection.Ordinary ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         val size = pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.ORDINARY }.hikari.sizing.maximumPoolSize
         if (dataSource !== pools.ordinary || !ordinary.matchesComplaintPool(size)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
-    }
-
-    internal fun requireBoundComplaintDeletion(pools: VersionBoundPersistencePools) {
-        if (selection !is Selection.Deletion || dataSource !== pools.deletion) {
+        if (deletion.selection !is Selection.Deletion || deletion.dataSource !== pools.deletion) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
