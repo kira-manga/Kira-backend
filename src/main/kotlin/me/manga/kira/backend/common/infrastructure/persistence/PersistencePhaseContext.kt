@@ -5,6 +5,7 @@ import me.manga.kira.backend.audit.infrastructure.ComplaintAuditSelectedHolder
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.ComplaintRecoverySettlementResult
 import me.manga.kira.backend.complaint.domain.ComplaintTestReserveSpendResult
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
@@ -15,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.SessionPreflightResult
 import me.manga.kira.backend.complaint.domain.SessionRefreshResult
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurrentStateReadOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
@@ -24,6 +26,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMuta
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintAdmittedEnrollmentWrite
+import me.manga.kira.backend.security.ComplaintAdmittedOwnerCreate
 import me.manga.kira.backend.security.ComplaintAdmittedSessionRefresh
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
@@ -102,6 +105,7 @@ internal class PersistencePhaseContext(
     internal val installationSession: PersistenceInstallationSession = InstallationSessionBoundary()
     internal val installationCurrentState: PersistenceInstallationCurrentState = InstallationCurrentStateBoundary()
     internal val ownerHistory: PersistenceOwnerHistory = OwnerHistoryBoundary()
+    internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
     internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
     internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
@@ -133,6 +137,9 @@ internal class PersistencePhaseContext(
                 PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
+                PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
+                PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
                 -> true
 
@@ -462,6 +469,10 @@ internal class PersistencePhaseContext(
             PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
             PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
             -> ownerHistory.completed()
+
+            PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> ownerOperation.completed()
+
+            PersistencePhasePath.COMPLAINT_OWNER_CREATE, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS -> ownerOperation.completed()
 
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
 
@@ -1049,6 +1060,88 @@ internal class PersistencePhaseContext(
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
     }
 
+    /** Four fixed operations; a write has a mandatory one-use ingress handoff, never a raw bypass. */
+    private inner class OwnerOperationBoundary : PersistenceOwnerOperation {
+        private var issued = false
+        private var retained: ComplaintOwnerCreateOperation? = null
+        private val admissionIdentity = Any()
+        private var admission: ComplaintAdmittedOwnerCreate? = null
+        private var claimed = false
+        private var boundsChecked = false
+
+        override fun bindCreate(handoff: ComplaintAdmittedOwnerCreate) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || path !== PersistencePhasePath.COMPLAINT_OWNER_CREATE ||
+                admission != null
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            admission = handoff
+            ComplaintIngressAdmission.bindOwnerCreate(handoff, admissionIdentity)
+        }
+
+        override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            if (expected !in setOf(
+                    PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
+                    PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
+                    PersistencePhasePath.COMPLAINT_OWNER_CREATE,
+                    PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
+                )
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, expected)
+            if (issued || (path === PersistencePhasePath.COMPLAINT_OWNER_CREATE && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun claimCreate(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerOperationTuple) {
+            requireRetained(operation, jdbc)
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_CREATE || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.claimOwnerCreate(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, tuple)
+            claimed = true
+        }
+
+        override fun checkCreateBounds(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger) {
+            requireRetained(operation, jdbc)
+            if (!claimed || boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkOwnerCreateBounds(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, ledger)
+            boundsChecked = true
+        }
+
+        override fun checkCreateWrite(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (!claimed || !boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkOwnerCreateWrite(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity)
+        }
+
+        override fun entityManager(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate): EntityManager {
+            checkCreateWrite(operation, jdbc)
+            return createdEntityManager ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintOwnerCreateOperation) {
+            if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true &&
+            (path !== PersistencePhasePath.COMPLAINT_OWNER_CREATE || claimed)
+    }
+
     /** Two named read paths, each recognizing only its own retained concrete SQL operation. */
     private inner class OwnerHistoryBoundary : PersistenceOwnerHistory {
         private var issued = false
@@ -1616,5 +1709,19 @@ internal interface PersistenceOwnerHistory {
     fun requireRetained(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate)
     fun connection(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate): Connection
     fun requireCommitted(operation: ComplaintOwnerHistoryReadOperation)
+    fun completed(): Boolean
+}
+
+/** The exact phase owns this view and accepts only its own concrete retained SQL operation. */
+internal interface PersistenceOwnerOperation {
+    fun bindCreate(handoff: ComplaintAdmittedOwnerCreate)
+    fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath)
+    fun retain(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)
+    fun claimCreate(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerOperationTuple)
+    fun checkCreateBounds(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger)
+    fun checkCreateWrite(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)
+    fun entityManager(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate): EntityManager
+    fun requireCommitted(operation: ComplaintOwnerCreateOperation)
     fun completed(): Boolean
 }

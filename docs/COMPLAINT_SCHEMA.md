@@ -1,5 +1,22 @@
 # Backend-Owned Complaint Schema — V14
 
+## V15 dormant OWNER_CREATE receipt extension
+
+`V15__owner_create_resource_id_rejection.sql` changes only `chk_complaint_receipt_result`:
+`COMPLAINT_RESOURCE_ID_REUSED` is legal only for `OWNER_CREATE` / `REJECTED` / 409. Any occupied
+resource UUID has that same content-free result, after current locked authentication and after
+exact completed receipt replay. V14 and the remaining phase, expiry, acknowledgement and external
+evidence constraints are unchanged. This does not enable any route or a production writer.
+
+The dormant TEST-only create/status composition uses one ordinary transaction for a new claim,
+ordered capacity/run/owner locks, resource/report, counted audit and completion. Successful create
+pays one 128 KiB normal receipt, one 16 KiB permanent resource ID, one 256 KiB installation-report
+lifecycle envelope and the existing 64 KiB audit (464 KiB logical storage total). A terminal
+business rejection retains only the maximum receipt charge. These are conservative logical charges,
+not measured disk/MVCC usage. Status is read-only, shares history's owner-read quota, and hides
+expired receipts by database time. Physical receipt expiry/refund, shared-mode qualification and
+all activation/restore/cutover authority remain absent; handlers are not registered.
+
 ## Status and boundaries
 
 [`V14__backend_owned_complaints.sql`](../src/main/resources/db/migration/V14__backend_owned_complaints.sql)

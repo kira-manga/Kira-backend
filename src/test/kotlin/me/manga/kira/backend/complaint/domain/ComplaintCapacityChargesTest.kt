@@ -7,6 +7,36 @@ import org.junit.jupiter.api.Test
 
 class ComplaintCapacityChargesTest {
     @Test
+    fun `owner create pays normal receipt resource report and audit from actual capacity not test reserve`() {
+        val expected = LongArray(22).also {
+            it[ComplaintCapacityCounter.NORMAL_RECEIPTS.storedOrdinal - 1] = 1
+            it[ComplaintCapacityCounter.RESOURCE_IDS.storedOrdinal - 1] = 1
+            it[ComplaintCapacityCounter.COMPLAINT_ROWS.storedOrdinal - 1] = 1
+            it[ComplaintCapacityCounter.AUDIT_ROWS.storedOrdinal - 1] = 1
+            it[ComplaintCapacityCounter.STORAGE_BYTES.storedOrdinal - 1] = 475136
+        }
+        assertArrayEquals(expected, ComplaintCapacityCharges.OWNER_CREATE.toLongArray())
+        assertEquals(131072L, ComplaintCapacityCharges.NORMAL_RECEIPT[ComplaintCapacityCounter.STORAGE_BYTES])
+        assertEquals(16384L, ComplaintCapacityCharges.RESOURCE_ID[ComplaintCapacityCounter.STORAGE_BYTES])
+        assertEquals(262144L, ComplaintCapacityCharges.REPORT_CONTENT[ComplaintCapacityCounter.STORAGE_BYTES])
+        ComplaintCapacityCharges.OWNER_CREATE.toLongArray().fill(0)
+        assertArrayEquals(expected, ComplaintCapacityCharges.OWNER_CREATE.toLongArray())
+    }
+
+    @Test
+    fun `terminal create rejection retains only the same maximum normal receipt charge`() {
+        val digest = ByteArray(32) { 7 }
+        val limit = ComplaintCapacityVector.of(LongArray(22) { 1000000 })
+        val initial = ComplaintCapacityLedger(ComplaintCapacityConfiguration.of(digest, false), ComplaintCapacityBalance(limit, limit, limit))
+        val retained = initial.chargeCreation(digest, ComplaintCapacityCharges.OWNER_CREATE)
+            .refundActual(digest, ComplaintCapacityCharges.OWNER_CREATE - ComplaintCapacityCharges.NORMAL_RECEIPT)
+        assertEquals(ComplaintCapacityCharges.NORMAL_RECEIPT, retained.balance.actual)
+        assertEquals(initial.balance.testReserved, retained.balance.testReserved)
+        assertEquals(initial.balance.recoveryReserved, retained.balance.recoveryReserved)
+        assertEquals(initial.balance, retained.refundActual(digest, ComplaintCapacityCharges.NORMAL_RECEIPT).balance)
+    }
+
+    @Test
     fun `version one grant charges exactly one moderation row and sixteen KiB`() {
         val expected = LongArray(22).also {
             it[14] = 1

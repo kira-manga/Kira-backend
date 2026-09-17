@@ -32,8 +32,8 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     fun `fresh UTF8 PostgreSQL 17 6 installs all objects with closed seeds and no trusted head`() = database.schema { schema ->
         assertEquals(listOf("170006"), schema.strings("SHOW server_version_num"))
         assertEquals(listOf("UTF8"), schema.strings("SHOW server_encoding"))
-        assertEquals(14, schema.flyway().migrate().migrationsExecuted)
-        assertEquals((1..14).map(Int::toString), schema.history())
+        assertEquals(15, schema.flyway().migrate().migrationsExecuted)
+        assertEquals((1..15).map(Int::toString), schema.history())
         schema.connection().use { connection ->
             connection.assertClosedComplaintSeeds()
             val actual = connection.strings(
@@ -60,8 +60,8 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
         )
         val before = upgraded.connection().use { it.tableSnapshots() }
         val sequences = upgraded.connection().use { it.sequenceValues() }
-        assertEquals(14 - version, upgraded.flyway().migrate().migrationsExecuted)
-        assertEquals((1..14).map(Int::toString), upgraded.history())
+        assertEquals(15 - version, upgraded.flyway().migrate().migrationsExecuted)
+        assertEquals((1..15).map(Int::toString), upgraded.history())
         upgraded.connection().use { it.assertPreserved(before) }
         upgraded.connection().use { after ->
             for ((name, value) in sequences) assertEquals(value, after.sequenceValues()[name], "Sequence $name")
@@ -113,7 +113,7 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
             assertEquals(structure, it.schemaSnapshot())
             assertEquals(sequences, it.sequenceValues())
         }
-        assertEquals(1, schema.flyway().migrate().migrationsExecuted)
+        assertEquals(1, schema.flyway(14).migrate().migrationsExecuted)
         schema.connection().use { it.assertPreserved(before) }
         assertTrue(schema.flyway().validateWithResult().validationSuccessful)
     }

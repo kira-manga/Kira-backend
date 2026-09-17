@@ -6,6 +6,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -16,6 +18,7 @@ import java.util.IdentityHashMap
 /** Identity alone grants nothing: only the owning live registry can recognize this view. */
 internal class ComplaintIngressContext :
     ComplaintOwnerHistoryRequestContext,
+    ComplaintOwnerOperationContext,
     ComplaintInstallationRequestContext {
     override fun toString(): String = "ComplaintIngressContext(redacted)"
 }
@@ -36,6 +39,7 @@ internal class ComplaintIngressAdmission(
     private val policy: ComplaintAdmissionPolicy,
     configuration: ComplaintAdmissionKeyConfiguration,
     private val clock: ComplaintAdmissionNanoClock,
+    private val createPolicy: ComplaintOwnerCreateAdmissionPolicy = ComplaintOwnerCreateAdmissionPolicy.Disabled,
 ) {
     private val lock = Any()
     private val keys = ComplaintAdmissionKeyRing(configuration)
@@ -65,6 +69,7 @@ internal class ComplaintIngressAdmission(
         ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS,
         ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS,
     )
+    private val creates = (createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded)?.let(::ComplaintOwnerCreateAdmissionStore)
     private var reservations = 0
     private var lastRawTime = clock.now()
     private var elapsedTime = 0L
@@ -140,6 +145,75 @@ internal class ComplaintIngressAdmission(
             state.consumed = true
         }
     }
+
+    internal fun startOwnerStatus(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.OWNER_STATUS) }
+    }
+
+    /** Same physical owner-read bucket and limit as history, not an additional status allowance. */
+    internal fun chargeOwnerStatus(context: ComplaintIngressContext, installation: ScopedInstallationId, identity: Any) {
+        requireConnectionFree()
+        locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.OWNER_STATUS ||
+                state.admission != null
+            ) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val now = time()
+            ownerReads.charge(ComplaintAdmissionPseudonyms.ownerReadActor(keys.keys(), installation).map { ComplaintAdmissionCharge(it, 120) }, now)
+            state.admission = identity
+            state.admittedAt = now
+        }
+    }
+
+    internal fun consumeOwnerStatus(context: ComplaintIngressContext, identity: Any) {
+        requireConnectionFree()
+        locked {
+            val state = unconsumedAdmission(context, identity)
+            if (state.operation !== SemanticOperation.OWNER_STATUS) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            state.consumed = true
+        }
+    }
+
+    internal fun startOwnerCreate(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.OWNER_CREATE) }
+    }
+
+    /** Concrete adapter only, after the authenticated receipt preflight actually released its connection. */
+    internal fun admitOwnerCreate(context: ComplaintIngressContext, tuple: ComplaintOwnerOperationTuple): ComplaintAdmittedOwnerCreate {
+        requireConnectionFree()
+        if (clock !== SystemComplaintAdmissionNanoClock) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        return locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.OWNER_CREATE ||
+                state.admission != null
+            ) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val limits = createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
+            val handoff = AdmittedCreate(this, context, tuple, limits)
+            val now = time()
+            val activeKeys = keys.keys()
+            checkNotNull(creates).admit(
+                ComplaintAdmissionPseudonyms.ownerCreateMember(activeKeys, tuple),
+                ComplaintAdmissionPseudonyms.ownerCreateActor(activeKeys, tuple.installation),
+                ComplaintAdmissionPseudonyms.ownerCreateGlobal(activeKeys),
+                semantics,
+                now,
+            )
+            state.admission = handoff.identity
+            state.ownerCreateIdentity = handoff.identity
+            state.admittedAt = now
+            state.consumed = true
+            handoff
+        }
+    }
+
+    /** Even a failure response cannot run while an unresolved database lease remains owned. */
+    internal fun requireResponseReady() = requireConnectionFree()
 
     /** The coordinator invokes this once, before its concrete database preflight. */
     internal fun startSession(context: ComplaintIngressContext) {
@@ -272,6 +346,17 @@ internal class ComplaintIngressAdmission(
         requireLifetime(state, advanceTime(System.nanoTime()))
     }
 
+    private fun requireCreateState(handoff: AdmittedCreate) {
+        val state = state(handoff.context)
+        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_CREATE || !state.consumed) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        if (state.ownerCreateIdentity !== handoff.identity || state.admission !== handoff.identity) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        requireLifetime(state, advanceTime(System.nanoTime()))
+    }
+
     private fun requireLifetime(state: ContextState, now: Long) {
         if (now - state.admittedAt >= ComplaintAdmissionPolicy.ADMISSION_LIFETIME_NANOS) {
             refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
@@ -294,6 +379,7 @@ internal class ComplaintIngressAdmission(
             ingress.removeGeneration(generation)
             semantics.removeGeneration(generation)
             ownerReads.removeGeneration(generation)
+            creates?.removeGeneration(generation)
         }
     }
 
@@ -361,9 +447,24 @@ internal class ComplaintIngressAdmission(
         var sessionActor: List<ComplaintAdmissionBucketKey>? = null
         var refreshIdentity: Any? = null
         var enrollmentIdentity: Any? = null
+        var ownerCreateIdentity: Any? = null
     }
 
-    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY }
+    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE }
+
+    private class AdmittedCreate(
+        val owner: ComplaintIngressAdmission,
+        val context: ComplaintIngressContext,
+        val tuple: ComplaintOwnerOperationTuple,
+        val limits: ComplaintOwnerCreateAdmissionPolicy.Bounded,
+    ) : ComplaintAdmittedOwnerCreate {
+        val identity = Any()
+        var phaseIdentity: Any? = null
+        var stage = CreateStage.MINTED
+        override fun toString(): String = "ComplaintAdmittedOwnerCreate(redacted)"
+    }
+
+    private enum class CreateStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
 
     private class AdmittedEnrollment(
         val owner: ComplaintIngressAdmission,
@@ -405,6 +506,55 @@ internal class ComplaintIngressAdmission(
 
     companion object {
         private val current = ThreadLocal<ComplaintIngressContext?>()
+
+        internal fun bindOwnerCreate(handoff: ComplaintAdmittedOwnerCreate, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireCreateState(selected)
+                if (selected.stage !== CreateStage.MINTED || selected.phaseIdentity != null) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                selected.phaseIdentity = phaseIdentity
+                selected.stage = CreateStage.BOUND
+            }
+        }
+
+        internal fun claimOwnerCreate(handoff: ComplaintAdmittedOwnerCreate, phaseIdentity: Any, tuple: ComplaintOwnerOperationTuple) {
+            val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireCreateState(selected)
+                if (selected.stage !== CreateStage.BOUND || selected.phaseIdentity !== phaseIdentity || selected.tuple !== tuple) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = CreateStage.CLAIMED
+            }
+        }
+
+        internal fun checkOwnerCreateBounds(handoff: ComplaintAdmittedOwnerCreate, phaseIdentity: Any, ledger: ComplaintCapacityLedger) {
+            val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireCreateState(selected)
+                if (selected.stage !== CreateStage.CLAIMED ||
+                    selected.phaseIdentity !== phaseIdentity
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                if (!selected.limits.matchesLocked(ledger)) refuseComplaintAdmission()
+                selected.stage = CreateStage.BOUNDS_CHECKED
+            }
+        }
+
+        /** Intrinsic time and immutable comparison only: no store, provider, callback or resource acquisition. */
+        internal fun checkOwnerCreateWrite(handoff: ComplaintAdmittedOwnerCreate, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireCreateState(selected)
+                if (selected.phaseIdentity !== phaseIdentity ||
+                    (selected.stage !== CreateStage.BOUNDS_CHECKED && selected.stage !== CreateStage.WRITING)
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = CreateStage.WRITING
+            }
+        }
 
         /** Dormant lower-core tests may enroll without ingress; request composition cannot fall back to that seam. */
         internal fun requireRawEnrollmentContext() {

@@ -78,6 +78,15 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintOwnerHistoryPage(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE)
 
+    /** TEST-dormant create/status share only the existing ordinary owner; no activation is inferred. */
+    internal fun enterComplaintOwnerOperationAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION)
+
+    internal fun enterComplaintOwnerCreatePreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT)
+
+    internal fun enterComplaintOwnerCreate(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_CREATE)
+
+    internal fun enterComplaintOwnerOperationStatus(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS)
+
     /** Lower dormant mutation composition only; W04 fence/control/publication and provenance authority are unavailable. */
     internal fun enterComplaintDeletionMutation(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_DELETION_MUTATION)
 
@@ -203,6 +212,10 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
+                PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
+                PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_OWNER_CREATE,
+                PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
                 -> admission.tryComplaintBoundary()
 
                 PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
@@ -343,6 +356,10 @@ internal enum class PersistencePhasePath {
     COMPLAINT_INSTALLATION_CURRENT_STATE,
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,
+    COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
+    COMPLAINT_OWNER_CREATE_PREFLIGHT,
+    COMPLAINT_OWNER_CREATE,
+    COMPLAINT_OWNER_OPERATION_STATUS,
     COMPLAINT_DELETION_MUTATION,
     COMPLAINT_DELETION_FENCE_PREFIX,
     COMPLAINT_DELETION_CONTROL_SNAPSHOT,

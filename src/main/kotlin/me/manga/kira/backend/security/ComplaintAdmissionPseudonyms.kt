@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import java.nio.ByteBuffer
 import java.util.UUID
@@ -29,6 +30,26 @@ internal object ComplaintAdmissionPseudonyms {
 
     fun ownerReadActor(keys: List<ComplaintAdmissionKey>, installation: ScopedInstallationId): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("ACTOR"), ascii("INSTALLATION"), ascii("OWNER_READ"), uuid(installation.id), uuid(installation.scope.id)))
+
+    fun ownerCreateActor(keys: List<ComplaintAdmissionKey>, installation: ScopedInstallationId): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("INSTALLATION"), uuid(installation.id), uuid(installation.scope.id), ascii("OWNER_CREATE")))
+
+    fun ownerCreateGlobal(keys: List<ComplaintAdmissionKey>): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("GLOBAL"), ascii("OWNER_CREATE")))
+
+    fun ownerCreateMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintOwnerOperationTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(),
+            ascii("MEMBER"),
+            ascii("INSTALLATION"),
+            uuid(tuple.installation.id),
+            uuid(tuple.installation.scope.id),
+            ascii("OWNER_CREATE"),
+            uuid(tuple.key),
+            tuple.fingerprintBytes(),
+        ),
+    )
 
     fun bootstrapIp(keys: List<ComplaintAdmissionKey>, canonicalIp: ByteArray): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("IP"), ascii("BOOTSTRAP"), canonicalIp))
