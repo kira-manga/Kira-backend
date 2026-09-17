@@ -30,6 +30,33 @@ internal class VersionBoundComplaintJournalRouting private constructor(
         return ComplaintJournalDeletionRoutesV1(candidates.single { it.routingKeyId == activeKeyId }, candidates)
     }
 
+    /** Separate fixed actor-free family on these SAME acquired keys; a route is never seal authorization. */
+    fun deriveEpochSeal(tuple: EpochSealRoutingTupleV1): EpochSealRoutesV1 {
+        val prefix = OfflineBootstrapGrammar.sealTerminalPrefix(writerGeneration)
+        val epoch = tuple.range.epochEndInclusive.toString().padStart(19, '0')
+        val candidates = keys.map { key ->
+            val fields = tuple.framedValues(writerGeneration, prefix, key.binding.logicalKeyId)
+            val keyMac = deriveSealMac(key, "key", fields)
+            val sealId = deriveSealMac(key, "id", fields)
+            val objectKey = "${prefix}writer/$writerGeneration/epoch/$epoch/${key.binding.logicalKeyId}/$keyMac"
+            EpochSealRoutingCandidateV1(key.binding.logicalKeyId, objectKey, sealId)
+        }
+        return EpochSealRoutesV1(candidates.single { it.routingKeyId == activeKeyId }, candidates)
+    }
+
+    private fun deriveSealMac(key: RoutingKey, purpose: String, fields: List<String>): String {
+        val frame = EpochSealFramesV1.frame(listOf(EpochSealFramesV1.DOMAIN, "1", purpose) + fields)
+        return try {
+            val digest = Mac.getInstance("HmacSHA256").run {
+                init(key.secretKey)
+                doFinal(frame)
+            }
+            Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+        } finally {
+            frame.fill(0)
+        }
+    }
+
     /** Fixed-family comparison tags from these actual HMAC keys, never a caller's second retained-material list. */
     fun admissionForbiddenFamily(): ComplaintAdmissionForbiddenFamily {
         val copies = keys.map { it.secretKey.encoded }
