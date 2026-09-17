@@ -16,6 +16,10 @@ internal class OrdinaryPersistenceAdmission private constructor(configuredPoolSi
 
     fun activeOwners(): Int = owners.get()
 
+    /** Local composition comparison, not a permit or an assertion of current complaint authority. */
+    internal fun matchesComplaintPool(configuredPoolSize: Int): Boolean =
+        configuredPoolSize > 1 && complaintsAllowed && ownerLimit == ownerLimit(configuredPoolSize)
+
     private fun tryAcquire(): LocalPersistencePermit? {
         val observed = owners.get()
         if (observed >= ownerLimit) return null

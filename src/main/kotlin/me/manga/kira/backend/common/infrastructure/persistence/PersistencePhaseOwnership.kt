@@ -32,6 +32,21 @@ internal class PersistencePhaseOwnership private constructor(
     internal val otherManager: GuardedJdbcTransactionManager? get() = (selection as? Selection.Ordinary)?.otherManager
     internal val installationSessionIdentity = Any() // Bounded continuation identity, not a retained phase/resource or admission grant.
     internal val installationDeletionIdentity = Any() // Same-owner read-only comparisons, never deletion admission or writer authority.
+
+    /** Fixed supported process profile only; the same pool cannot hide source-only or differently sized admission. */
+    internal fun requireBoundComplaintOrdinary(pools: VersionBoundPersistencePools) {
+        val ordinary = selection as? Selection.Ordinary ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        val size = pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.ORDINARY }.hikari.sizing.maximumPoolSize
+        if (dataSource !== pools.ordinary || !ordinary.matchesComplaintPool(size)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
+
+    internal fun requireBoundComplaintDeletion(pools: VersionBoundPersistencePools) {
+        if (selection !is Selection.Deletion || dataSource !== pools.deletion) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
     private val admissionCut = ReentrantLock()
 
     // Exactly the existing bounded permits. Resolved slots are removed, never kept as a history.
@@ -212,6 +227,8 @@ internal class PersistencePhaseOwnership private constructor(
             override val dataSource: GuardedDataSource get() = manager.dataSource
             override val ownerLimit: Int get() = admission.ownerLimit
             override fun bind(owner: PersistencePhaseOwnership) = manager.bindPhaseOwner(owner)
+
+            fun matchesComplaintPool(size: Int): Boolean = admission.matchesComplaintPool(size)
 
             override fun requireResources() {
                 dataSource.requireOrdinaryPhaseResource()
