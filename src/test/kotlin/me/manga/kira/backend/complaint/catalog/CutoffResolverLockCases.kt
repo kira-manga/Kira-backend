@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSession
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSettings
@@ -87,17 +88,19 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
         val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
         OwnedCallerTestScope().use { callers ->
             val worker = callers.launch { runCatching { cases.resolve(campaign) } }
-            try {
-                val waiting = awaiting(selected, holder, "complaint_journal_control", "complaint_journal_publications")
-                assertWait(waiting)
-                assertTrue(wire.requests.isEmpty() && wire.kms.requests.isEmpty())
-                change(selected)
-                assertPromptRelease(waiting, selected)
-                blocker.commit()
-            } finally {
-                blocker.rollback()
+            val observation = runCatching {
+                try {
+                    val waiting = awaiting(selected, holder, "complaint_journal_control", "complaint_journal_publications")
+                    assertWait(waiting)
+                    assertTrue(wire.requests.isEmpty() && wire.kms.requests.isEmpty())
+                    change(selected)
+                    assertPromptRelease(waiting, selected)
+                    blocker.commit()
+                } finally {
+                    blocker.rollback()
+                }
             }
-            cases.assertFailure(assertInstanceOf(PersistencePhaseException::class.java, worker.value().exceptionOrNull()))
+            assertObservedRefusal(observation, worker.value())
             cases.assertReleased()
         }
     }
@@ -115,21 +118,41 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
         val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
         OwnedCallerTestScope().use { callers ->
             val worker = callers.launch { runCatching { cases.resolve(campaign) } }
-            try {
-                val waiting = awaiting(selected, holder, "complaint_journal_publications", "complaint_journal_control")
-                assertWait(waiting)
-                // This independent control UPDATE must not be blocked by a backward control lock in VERIFY.
-                expire(selected)
-                assertPromptRelease(waiting, selected)
-                blocker.commit()
-            } finally {
-                blocker.rollback()
+            val observation = runCatching {
+                try {
+                    val waiting = awaiting(selected, holder, "complaint_journal_publications", "complaint_journal_control")
+                    assertWait(waiting)
+                    // This independent control UPDATE must not be blocked by a backward control lock in VERIFY.
+                    expire(selected)
+                    assertPromptRelease(waiting, selected)
+                    blocker.commit()
+                } finally {
+                    blocker.rollback()
+                }
             }
-            cases.assertFailure(assertInstanceOf(PersistencePhaseException::class.java, worker.value().exceptionOrNull()))
+            assertObservedRefusal(observation, worker.value())
             assertTrue(wire.requests.any { it.kind == "GET" }, "The real readback preceded the publication-only CAS wait.")
             assertEquals(1, wire.generated())
             cases.assertReleased()
         }
+    }
+
+    /** Always consume the joined caller outcome, including when the independent witness failed. No raw provider/SQL message is logged. */
+    private fun assertObservedRefusal(observation: Result<Unit>, caller: Result<*>) {
+        if (observation.isFailure) {
+            val outcome = when (val failure = caller.exceptionOrNull()) {
+                is PersistencePhaseException -> "${failure.code}/${failure.databaseOutcome}/cleanup=${failure.cleanupProven}"
+                is PersistenceBoundaryException -> failure.code.name
+                null -> "RETURNED"
+                else -> failure.javaClass.simpleName
+            }
+            val traffic = wire.requests.groupingBy { it.kind }.eachCount()
+            throw AssertionError(
+                "Actual lock witness/release failed; joined caller=$outcome; S3=$traffic; KMS generate=${wire.generated()}, decrypt=${wire.decrypted()}.",
+                observation.exceptionOrNull(),
+            )
+        }
+        cases.assertFailure(assertInstanceOf(PersistencePhaseException::class.java, caller.exceptionOrNull()))
     }
 
     private fun expire(selected: JdbcTemplate) {
@@ -155,8 +178,14 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
                     "'complaint_test_runs','complaint_installation_ids','app_installations','complaint_resource_ids','complaints','audit_log'," +
                     "'complaint_deletion_journal_applied'))) AS only_selected " +
                     "FROM pg_stat_activity a JOIN pg_stat_ssl s USING (pid) WHERE a.datname = current_database() AND a.usename = ? " +
-                    "AND ? = ANY(pg_blocking_pids(a.pid)) AND position(? IN a.query) > 0 AND position('FOR UPDATE' IN a.query) > 0 " +
-                    "AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND NOT l.granted AND l.locktype = 'transactionid')",
+                    "AND ? = ANY(pg_blocking_pids(a.pid)) AND a.query LIKE 'SELECT%' " +
+                    // The long publication projection's table/FOR UPDATE suffix can exceed track_activity_query_size.
+                    // Witness the actual selected relation + holder's blocking XID, never an unavailable SQL suffix.
+                    "AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.granted AND l.locktype = 'relation' " +
+                    "AND l.mode = 'RowShareLock' AND l.relation = ?::regclass) " +
+                    "AND EXISTS (SELECT 1 FROM pg_locks l JOIN pg_locks h ON h.transactionid = l.transactionid " +
+                    "WHERE l.pid = a.pid AND NOT l.granted AND l.locktype = 'transactionid' " +
+                    "AND h.pid = ? AND h.granted AND h.locktype = 'transactionid')",
                 { row, _ ->
                     LockObservation(
                         PgLifecycleDatabaseSession(row.getInt("pid"), row.getTimestamp("backend_start").toInstant()),
@@ -169,6 +198,7 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
                 PgLifecycleDatabaseSettings.CANDIDATE,
                 holder,
                 table,
+                holder,
             ).singleOrNull()
             observation != null
         }
