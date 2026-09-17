@@ -1,9 +1,11 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import java.util.concurrent.atomic.AtomicBoolean
@@ -15,15 +17,18 @@ internal class CatalogCoordinatorPersistence private constructor(
 ) : AutoCloseable {
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
+    internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
     private val admitted = AtomicBoolean()
     private val bindingClaimed = AtomicBoolean()
     private var phaseOwner: PersistencePhaseOwnership? = null
     private var executor: ComplaintCatalogSnapshotPhaseExecutor? = null
     private var genesisExecutor: ComplaintCatalogGenesisPersistencePhaseExecutor? = null
+    private var leaseExecutor: ComplaintCoordinatorLeasePersistencePhaseExecutor? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
     internal val genesis: ComplaintCatalogGenesisPersistencePhaseExecutor get() = checkNotNull(genesisExecutor)
+    internal val lease: ComplaintCoordinatorLeasePersistencePhaseExecutor get() = checkNotNull(leaseExecutor)
 
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
@@ -33,6 +38,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         val jdbc = JdbcTemplate(dataSource).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
+        leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
     }
 
     internal fun requireResources() {
@@ -48,7 +54,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         return LocalPersistencePermit { check(admitted.compareAndSet(true, false)) }
     }
 
-    /** Same sole slot for snapshot and both G1 writes; an empty permit is never a physical/native or shutdown receipt. */
+    /** Same sole slot for snapshot, G1 and row-only lease phases; never a physical/native or shutdown receipt. */
     internal fun activeSnapshotOwners(): Int = if (admitted.get()) 1 else 0
 
     fun prepare(): PersistenceLifecycleObservation {

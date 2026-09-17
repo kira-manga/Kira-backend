@@ -145,6 +145,13 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintCatalogGenesisProject(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT)
 
+    /** Fixed control-row lease transitions only, deliberately without the G1/deletion epoch fence. */
+    internal fun enterComplaintCoordinatorLeaseAcquire(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE)
+
+    internal fun enterComplaintCoordinatorLeaseRenew(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW)
+
+    internal fun enterComplaintCoordinatorLeaseRelinquish(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught")
     private fun enter(path: PersistencePhasePath, deletionScope: ComplaintDataScope? = null): PersistencePhaseContext {
@@ -270,6 +277,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+                PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+                PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
+                PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
                 -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
         }
@@ -319,6 +329,9 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
         )
         private val DELETION_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
@@ -428,6 +441,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_GENESIS_SIGNATURE,
     COMPLAINT_CATALOG_GENESIS_COMPLETE,
     COMPLAINT_CATALOG_GENESIS_PROJECT,
+    COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+    COMPLAINT_COORDINATOR_LEASE_RENEW,
+    COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
     ;
 
     internal val source: Boolean
