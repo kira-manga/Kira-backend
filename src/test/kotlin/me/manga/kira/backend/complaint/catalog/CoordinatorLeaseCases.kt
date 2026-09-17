@@ -3,7 +3,7 @@ package me.manga.kira.backend.complaint.catalog
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
-import me.manga.kira.backend.common.infrastructure.persistence.actualPool
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
@@ -230,7 +230,7 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
         f.expireForTest()
         val recovered = f.phases.acquire(f.binding)
         f.assertReceipt(f.phases.relinquish(recovered.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
-        configurationFailureStopsBeforeEntry()
+        resourceSubstitutionStopsBeforeEntry()
         missingLiveNeverFallsBackToTest()
         f.released()
     }
@@ -264,19 +264,31 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
         }
     }
 
-    private fun configurationFailureStopsBeforeEntry() {
+    /**
+     * Reversible real executor-resource drift, not a live Hikari profile mutation: a detected Hikari mismatch
+     * permanently seals that pool's actor custody. Restoring its scalar cannot restore the root or prove TLS cleanup.
+     */
+    private fun resourceSubstitutionStopsBeforeEntry() {
         val acquired = f.phases.acquire(f.binding)
-        val actual = actualPool(f.process.pools.deletion)
-        val original = actual.maximumPoolSize
+        val original = checkNotNull(f.jdbc.dataSource)
+        assertSame(f.coordinator.dataSource, original)
         try {
-            actual.maximumPoolSize = original + 1
-            f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+            f.jdbc.dataSource = f.process.pools.ordinary
+            val failure = f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+            assertEquals(PersistencePhaseFailureCode.RESOURCE_REFUSED, failure.code)
         } finally {
-            actual.maximumPoolSize = original
+            f.jdbc.dataSource = original
         }
-        // The original resources are exact again, but a pre-entry configuration failure has already stopped this campaign.
+        assertSame(original, f.jdbc.dataSource)
+        // This same template and root are valid again, but the whole failed renewal permanently stopped its campaign.
         f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
         f.assertReceipt(f.phases.relinquish(acquired.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
+        val successor = f.phases.acquire(f.binding)
+        f.assertReceipt(successor.receipt, CatalogCoordinatorLeaseTransitionV1.ACQUIRED)
+        assertEquals(acquired.receipt.token + 1, successor.receipt.token)
+        assertNotEquals(acquired.receipt.owner, successor.receipt.owner)
+        f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+        f.assertReceipt(f.phases.relinquish(successor.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
     }
 }
 
