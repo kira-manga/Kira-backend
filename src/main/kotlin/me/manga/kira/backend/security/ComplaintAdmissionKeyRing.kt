@@ -72,6 +72,8 @@ internal class ComplaintAdmissionKeyConfiguration private constructor(
     private val current = current.snapshot()
     private val previous = previous?.snapshot()
     private val forbidden = boundedAdmissionCopy(forbiddenFamilies) { it.snapshot() }
+    internal val currentKeyId: String get() = current.id
+    internal val previousKeyId: String? get() = previous?.id
 
     init {
         require(forbidden.map { it.name }.distinct().size == forbidden.size) { INVALID_ADMISSION_CONFIGURATION }
