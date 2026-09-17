@@ -32,6 +32,8 @@ internal object ComplaintEffectiveConfigurationV1 {
         require(CanonicalJson.CANON_VERSION == "kcj-1") { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         val descriptors = pools.descriptors()
         require(descriptors.map { it.role } == POOL_ROLES) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        val ordinaryCapacity = descriptors.first().hikari.sizing.maximumPoolSize
+        require(ordinaryCapacity > 1) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         val password = descriptors.first().authenticationPassword
         require(
             password.family == SecretMaterialFamily.DATABASE && password.purpose == SecretMaterialPurpose.AUTHENTICATION_PASSWORD &&
@@ -62,6 +64,16 @@ internal object ComplaintEffectiveConfigurationV1 {
                 "persistence",
                 buildJsonObject {
                     put("profileVersion", 1)
+                    put(
+                        "admission",
+                        buildJsonObject {
+                            put("ordinaryOwnerLimitRule", "MIN_4_POOL_MINUS_ONE")
+                            put("ordinaryOwnerLimit", minOf(4, ordinaryCapacity - 1))
+                            put("deletionTotalOwners", 4)
+                            put("deletionRoutineOwners", 3)
+                            put("catalogOwners", 1)
+                        },
+                    )
                     put("pools", JsonArray(descriptors.map(::pool)))
                 },
             )
