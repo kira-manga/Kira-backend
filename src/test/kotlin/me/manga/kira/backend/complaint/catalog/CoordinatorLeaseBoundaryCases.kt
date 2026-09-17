@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFac
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseAcquisitionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseReceiptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseTransitionV1
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -58,6 +59,7 @@ internal class CoordinatorLeaseBoundaryCases(private val f: CoordinatorLeaseTest
                 }
             }
         }
+        stoppedRenewalTailCannotRevive()
         deferredCommitFailure()
         committedCompletionFailure()
         unresolvedOriginalCleanup()
@@ -215,6 +217,58 @@ internal class CoordinatorLeaseBoundaryCases(private val f: CoordinatorLeaseTest
         )
         f.assertReceipt(f.phases.relinquish(acquired.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
         return steps
+    }
+
+    private fun stoppedRenewalTailCannotRevive() {
+        val acquired = f.phases.acquire(f.binding)
+        val returned = AtomicReference<CatalogCoordinatorLeaseReceiptV1?>()
+        val failure = OwnedCallerTestScope().use { callers ->
+            val held = callers.gate()
+            f.jdbc.afterSql = { step ->
+                if (step === CoordinatorLeaseSqlStep.READ_CONTROL) {
+                    TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                        override fun afterCommit() = held.hold()
+                    })
+                }
+            }
+            val worker = callers.launch {
+                val stopped = assertThrows<PersistencePhaseException> { f.phases.renew(acquired.campaign).also(returned::set) }
+                // Same original renewal caller: refusal cannot be explained merely by crossing a thread boundary.
+                val original = f.retainedOperation()
+                val late = assertThrows<PersistencePhaseException> { original.receipt }
+                assertEquals(PersistenceDatabaseOutcome.COMMITTED, late.databaseOutcome)
+                assertTrue(late.cleanupProven)
+                stopped
+            }
+            try {
+                held.awaitEntered()
+                val observed = checkNotNull(f.jdbc.observation)
+                assertEquals(PersistenceDatabaseOutcome.COMMITTED, observed.lease.completion.databaseOutcome())
+                assertFalse(observed.lease.completion.quiescent())
+                assertEquals(1, f.coordinator.activeSnapshotOwners())
+                assertEquals(acquired.receipt.owner, f.row().owner)
+                assertEquals(acquired.receipt.token, f.row().token)
+                acquired.campaign.close() // A concurrent local stop while the actual committed renewal tail is retained.
+                assertNull(returned.get())
+            } finally {
+                held.release()
+                f.jdbc.afterSql = {}
+            }
+            worker.value()
+        }
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, failure.databaseOutcome)
+        assertTrue(failure.cleanupProven)
+        assertNull(returned.get())
+        f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+        f.expireForTest()
+        val successor = f.phases.acquire(f.binding)
+        f.assertReceipt(successor.receipt, CatalogCoordinatorLeaseTransitionV1.ACQUIRED)
+        assertEquals(acquired.receipt.token + 1, successor.receipt.token)
+        assertNotEquals(acquired.receipt.owner, successor.receipt.owner)
+        acquired.campaign.close()
+        f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+        f.assertReceipt(f.phases.renew(successor.campaign), CatalogCoordinatorLeaseTransitionV1.RENEWED)
+        f.assertReceipt(f.phases.relinquish(successor.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
     }
 
     private fun deferredCommitFailure() {

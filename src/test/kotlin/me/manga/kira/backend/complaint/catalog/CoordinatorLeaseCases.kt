@@ -1,8 +1,10 @@
 package me.manga.kira.backend.complaint.catalog
 
+import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.actualPool
+import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
@@ -63,7 +65,8 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
         assertEquals(outside, f.unchangedOutsideLease(), "An expired own lease may be cleared without resetting its high-water token.")
     }
 
-    fun contendersExpiryStaleHandlesAndOverflow() {
+    fun contendersExpiryStaleHandlesAndOverflow(peer: CoordinatorLeaseTestFixture) {
+        pairedAcquireHasOneReleasedWinner(peer)
         val otherBinding = CatalogCoordinatorLeaseBindingV1.fromRetained(f.process, f.refresh)
         val other = ComplaintCoordinatorLeasePersistencePhaseExecutor(f.coordinator, f.jdbc)
         val acquired = f.phases.acquire(f.binding)
@@ -97,6 +100,64 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
         f.refused(PersistenceDatabaseOutcome.ROLLED_BACK) { f.phases.acquire(f.binding) }
         assertEquals(Long.MAX_VALUE, f.row().token)
         assertNull(f.row().owner)
+    }
+
+    private fun pairedAcquireHasOneReleasedWinner(peer: CoordinatorLeaseTestFixture) {
+        val outside = f.unchangedOutsideLease()
+        val initialToken = f.row().token
+        f.jdbc.steps.clear()
+        peer.jdbc.steps.clear()
+        OwnedCallerTestScope().use { callers ->
+            val locked = callers.gate()
+            val entered = callers.gate()
+            f.jdbc.afterSql = { if (it === CoordinatorLeaseSqlStep.LOCK_CONTROL) locked.hold() }
+            peer.jdbc.beforeSql = { if (it === CoordinatorLeaseSqlStep.LOCK_CONTROL) entered.hold() }
+            val first = callers.launch { runCatching { f.phases.acquire(f.binding) } }
+            try {
+                locked.awaitEntered() // The original root has really acquired the control-row lock.
+                val second = callers.launch { runCatching { peer.phases.acquire(peer.binding) } }
+                try {
+                    entered.awaitEntered()
+                    val holder = checkNotNull(f.jdbc.observation).identity
+                    val waiter = checkNotNull(peer.jdbc.observation).identity
+                    assertNotEquals(holder.first, waiter.first)
+                    assertNotEquals(holder.second, waiter.second)
+                    entered.release()
+                    awaitLifecycleFact(50) {
+                        f.observer.queryForObject(
+                            "SELECT ? = ANY(pg_blocking_pids(?)) AND EXISTS " +
+                                "(SELECT 1 FROM pg_locks WHERE pid = ? AND NOT granted AND locktype = 'transactionid')",
+                            Boolean::class.java,
+                            holder.first,
+                            waiter.first,
+                            waiter.first,
+                        ) == true
+                    }
+                } finally {
+                    entered.release()
+                    locked.release()
+                }
+                val results = listOf(first.value(), second.value())
+                assertEquals(1, results.count { it.isSuccess })
+                val winner = results.first().getOrThrow()
+                val loser = assertThrows<PersistencePhaseException> { results.last().getOrThrow() }
+                assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, loser.databaseOutcome)
+                assertTrue(loser.cleanupProven)
+                assertNull(loser.cause)
+                assertTrue(loser.suppressed.isEmpty())
+                assertEquals(listOf(CoordinatorLeaseSqlStep.LOCK_CONTROL, CoordinatorLeaseSqlStep.WRITE_CONTROL), peer.jdbc.steps)
+                peer.released()
+                f.assertReceipt(winner.receipt, CatalogCoordinatorLeaseTransitionV1.ACQUIRED)
+                assertEquals(initialToken + 1, winner.receipt.token)
+                f.assertReceipt(f.phases.relinquish(winner.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
+            } finally {
+                entered.release()
+                locked.release()
+                f.jdbc.afterSql = {}
+                peer.jdbc.beforeSql = {}
+            }
+        }
+        assertEquals(outside, f.unchangedOutsideLease())
     }
 
     fun exactBindingAndFailedRenewalCannotRevive() {

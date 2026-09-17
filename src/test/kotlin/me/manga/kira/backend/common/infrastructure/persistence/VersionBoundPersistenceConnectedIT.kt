@@ -4,6 +4,7 @@ import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
+import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
@@ -192,7 +193,11 @@ class VersionBoundPersistenceConnectedIT {
 
     @Test
     fun `owned coordinator lease separates local contention from DB expiry takeover and stale handles cannot change successors or wrap tokens`() =
-        withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseCases(it).contendersExpiryStaleHandlesAndOverflow() } }
+        withPairedFixture { tls, peer ->
+            withCoordinatorLease(tls) { original ->
+                withCoordinatorLeasePeer(original, peer) { CoordinatorLeaseCases(original).contendersExpiryStaleHandlesAndOverflow(it) }
+            }
+        }
 
     @Test
     fun `owned coordinator lease rechecks every retained LIVE binding field and failed or substituted campaigns cannot revive`() =
@@ -205,6 +210,19 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `owned coordinator lease releases no receipt before actual commit and cleanup or after SQL commit completion and quarantine failures`() =
         withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseBoundaryCases(it).sealedResultsCommitAndReleaseFailures() } }
+
+    /** A test-only contention pair, not a supported multi-instance deployment or another database lifecycle. */
+    private fun withPairedFixture(test: (VersionBoundPersistenceConnectedFixture, VersionBoundPersistenceConnectedFixture) -> Unit) {
+        val first = VersionBoundPersistenceConnectedFixture(database.value)
+        var second: VersionBoundPersistenceConnectedFixture? = null
+        AutoCloseable { second?.let(first::closeWith) ?: first.close() }.use {
+            val peer = VersionBoundPersistenceConnectedFixture(database.value)
+            second = peer // Cleanup owns both roots before either can bind or start.
+            first.bind()
+            peer.bind()
+            test(first, peer)
+        }
+    }
 
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
