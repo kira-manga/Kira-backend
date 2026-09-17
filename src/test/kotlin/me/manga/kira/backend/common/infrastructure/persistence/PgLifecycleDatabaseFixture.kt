@@ -151,13 +151,13 @@ private class PgLifecycleControllerOwnedServer(
     private val generation: Instant,
     private val data: Path,
 ) {
-    fun tlsRoot(): Path? = if (className == PgLifecycleDatabaseTls.CLASS_NAME) {
-        Path.of("/tmp/kcg-$run/VersionBoundPersistenceConnectedIT-tls")
+    fun tlsRoot(): Path? = if (className in PgLifecycleDatabaseTls.CLASS_NAMES) {
+        Path.of("/tmp/kcg-$run/${className.substringAfterLast('.')}-tls")
     } else {
         null
     }
 
-    fun tlsData(): Path? = if (className == PgLifecycleDatabaseTls.CLASS_NAME) data else null
+    fun tlsData(): Path? = if (className in PgLifecycleDatabaseTls.CLASS_NAMES) data else null
 
     fun verify(statement: Statement, actualGeneration: Instant) {
         check(actualGeneration == generation)
@@ -229,7 +229,9 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.DeletionControlSnapshotIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorResourcesIT",
                     "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
+                    "me.manga.kira.backend.complaint.journal.LiveJournalCoverageV1IT",
                     "me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherV1IT",
+                    "me.manga.kira.backend.complaint.journal.OwnerDeleteAllLiveJournalPublisherV1IT",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgOwnedCutIntegrationTest",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgNativePhysicalCloseIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,

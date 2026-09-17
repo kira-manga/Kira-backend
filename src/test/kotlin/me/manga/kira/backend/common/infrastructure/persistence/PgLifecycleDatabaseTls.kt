@@ -108,12 +108,17 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
     companion object {
         const val CLASS_NAME = "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT"
         const val LISTEN_ADDRESSES = "127.0.0.1,127.0.0.2"
+        val CLASS_NAMES = setOf(
+            CLASS_NAME,
+            "me.manga.kira.backend.complaint.journal.LiveJournalCoverageV1IT",
+            "me.manga.kira.backend.complaint.journal.OwnerDeleteAllLiveJournalPublisherV1IT",
+        )
         private const val CONTAINER_CERTIFICATE = "/tmp/kira-versionbound-pg/server.crt"
         private const val CONTAINER_KEY = "/tmp/kira-versionbound-pg/server.key"
         private val DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
 
         fun forFixture(fixtureClass: Class<*>?, controllerRoot: Path?): PgLifecycleDatabaseTls? {
-            if (fixtureClass?.name != CLASS_NAME) return null
+            if (fixtureClass?.name !in CLASS_NAMES) return null
             val root = controllerRoot ?: Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath()
                 .resolve("kira-versionbound-pg-tls-${UUID.randomUUID()}")
             return PgLifecycleDatabaseTls(root, controllerRoot != null)
