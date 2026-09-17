@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import me.manga.kira.backend.database.complaint.assertCutoffManifestMigration
 import me.manga.kira.backend.database.complaint.assertPartialRecoveryMigration
 import me.manga.kira.backend.database.complaint.assertRotationSlotMigration
+import me.manga.kira.backend.database.complaint.assertSealIntentMigration
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -43,5 +44,15 @@ class ComplaintPartialRecoveryMigrationIT {
     @Test
     fun `populated V17 to V18 preserves all values and pending verified and applied manifest members`() {
         assertCutoffManifestMigration(ordinaryCleanupReader(database.value), populated = true)
+    }
+
+    @Test
+    fun `fresh V19 links only complete canonical seal intent to the initial captured LIVE range`() {
+        assertSealIntentMigration(ordinaryCleanupReader(database.value), populated = false)
+    }
+
+    @Test
+    fun `populated V18 to V19 preserves every old value without authenticating unlinked seals`() {
+        assertSealIntentMigration(ordinaryCleanupReader(database.value), populated = true)
     }
 }
