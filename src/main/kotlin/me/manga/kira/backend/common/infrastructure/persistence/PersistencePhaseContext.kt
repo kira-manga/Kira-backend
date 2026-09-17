@@ -534,12 +534,23 @@ internal class PersistencePhaseContext(
 
         PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
         PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
+        PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
+        PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
+        PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
+        -> completedRotationOrCutoff()
+    }
+
+    private fun completedRotationOrCutoff(): Boolean = when (path) {
+        PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
+        PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
         -> epochRotation.completed()
 
         PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
         PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
         PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
         -> cutoffPublications.completed()
+
+        else -> false
     }
 
     // Root completion must match its commit/rollback stage with no overlapping completion dispatch.
@@ -1234,7 +1245,7 @@ internal class PersistencePhaseContext(
 
         override fun retain(operation: CatalogCutoffPersistenceOperationV1, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (!issued || retained != null || operation.attempt !== cutoffAttempt || !operation.belongsTo(this@PersistencePhaseContext, path)) {
+            if (!issued || retained != null || !belongsToAttempt(operation)) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             retained = operation
@@ -1252,6 +1263,9 @@ internal class PersistencePhaseContext(
             }
             requireSuccessfulResult() // BOTH actual COMMITTED and released/refunded original holder, never a supplied boolean.
         }
+
+        private fun belongsToAttempt(operation: CatalogCutoffPersistenceOperationV1): Boolean =
+            operation.attempt === cutoffAttempt && operation.belongsTo(this@PersistencePhaseContext, path)
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
     }
