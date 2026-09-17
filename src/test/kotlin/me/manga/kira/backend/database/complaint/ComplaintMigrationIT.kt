@@ -1,6 +1,7 @@
 package me.manga.kira.backend.database.complaint
 
 import org.flywaydb.core.api.FlywayException
+import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
@@ -32,8 +33,8 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     fun `fresh UTF8 PostgreSQL 17 6 installs all objects with closed seeds and no trusted head`() = database.schema { schema ->
         assertEquals(listOf("170006"), schema.strings("SHOW server_version_num"))
         assertEquals(listOf("UTF8"), schema.strings("SHOW server_encoding"))
-        assertEquals(17, schema.flyway().migrate().migrationsExecuted)
-        assertEquals((1..17).map(Int::toString), schema.history())
+        assertEquals(latestVersions.size, schema.flyway().migrate().migrationsExecuted)
+        assertEquals(latestVersions, schema.history())
         schema.connection().use { connection ->
             connection.assertClosedComplaintSeeds()
             val actual = connection.strings(
@@ -60,8 +61,10 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
         )
         val before = upgraded.connection().use { it.tableSnapshots() }
         val sequences = upgraded.connection().use { it.sequenceValues() }
-        assertEquals(17 - version, upgraded.flyway().migrate().migrationsExecuted)
-        assertEquals((1..17).map(Int::toString), upgraded.history())
+        val target = MigrationVersion.fromVersion(version.toString())
+        val pending = latestVersions.count { MigrationVersion.fromVersion(it) > target }
+        assertEquals(pending, upgraded.flyway().migrate().migrationsExecuted)
+        assertEquals(latestVersions, upgraded.history())
         upgraded.connection().use { it.assertPreserved(before) }
         upgraded.connection().use { after ->
             for ((name, value) in sequences) assertEquals(value, after.sequenceValues()[name], "Sequence $name")
@@ -190,6 +193,7 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     }
 
     companion object {
+        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "14", "15", "16", "17")
         private const val V14 = "V14__backend_owned_complaints.sql"
         private const val SYNTHETIC_BCRYPT = "{bcrypt}\$2a\$10\$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
         private val historicalInputs = complaintResource("fixtures/complaint/migration-sha256.txt")
