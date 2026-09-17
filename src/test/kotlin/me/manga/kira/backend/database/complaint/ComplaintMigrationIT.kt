@@ -116,9 +116,10 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
             assertEquals(structure, it.schemaSnapshot())
             assertEquals(sequences, it.sequenceValues())
         }
-        assertEquals(1, schema.flyway(14).migrate().migrationsExecuted)
+        // The private failed directory omitted 13.1; the real retry installs 13.1 and 14.
+        assertEquals(2, schema.flyway(14).migrate().migrationsExecuted)
         schema.connection().use { it.assertPreserved(before) }
-        assertTrue(schema.flyway().validateWithResult().validationSuccessful)
+        assertTrue(schema.flyway(14).validateWithResult().validationSuccessful)
     }
 
     @Test
