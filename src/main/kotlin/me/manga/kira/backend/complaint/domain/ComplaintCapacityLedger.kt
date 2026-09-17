@@ -46,6 +46,18 @@ class ComplaintCapacityLedger(val configuration: ComplaintCapacityConfiguration,
         )
     }
 
+    /**
+     * Materialize only this locked event's new rows, keeping its later obligations reserved.
+     * Remaining is the immutable original promise minus its already committed cumulative use.
+     * The caller must persist that progress with the row changes; this helper proves no authority or replay.
+     */
+    fun spendRecovery(expectedDigest: ByteArray, remaining: ComplaintCapacityVector, actualUse: ComplaintCapacityVector): ComplaintCapacityLedger {
+        configuration.requireMatching(expectedDigest)
+        if (!actualUse.fitsWithin(remaining)) rejectCapacity(ComplaintCapacityFailureCode.RESERVATION_EXCEEDED)
+        if (!remaining.fitsWithin(balance.recoveryReserved)) rejectCapacity(ComplaintCapacityFailureCode.INSUFFICIENT_UNITS)
+        return next(balance.copy(actual = balance.actual + actualUse, recoveryReserved = balance.recoveryReserved - actualUse))
+    }
+
     /** Only an authenticated completed terminal transition can prove a still-reserved slice unused. */
     fun releaseRecovery(expectedDigest: ByteArray, provedUnused: ComplaintCapacityVector): ComplaintCapacityLedger {
         configuration.requireMatching(expectedDigest)

@@ -203,6 +203,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.SourceStepUpCleanupIT",
                     "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintRecoveryIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintPartialRecoveryMigrationIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintTestReserveIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintInstallationEnrollmentIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.InstallationDeletionPreflightIT",
