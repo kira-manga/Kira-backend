@@ -14,8 +14,7 @@ internal class ComplaintOwnerDeleteAllApplyPhaseExecutor(
     private val ownership: PersistencePhaseOwnership,
     private val store: JdbcComplaintOwnerDeleteAllApplyStore,
 ) {
-    fun apply(work: CommittedOwnerDeleteAllWork, proof: CommittedOwnerDeleteAllVerificationV1): CommittedOwnerDeleteAllApplyV1 =
-        execute(work, proof).result
+    fun apply(work: CommittedOwnerDeleteAllWork, proof: CommittedOwnerDeleteAllVerificationV1): CommittedOwnerDeleteAllApplyV1 = execute(work, proof).result
 
     /** Fixed proof-backed continuation, not an exception-to-success adapter or an in-process retry. */
     fun applyForContinuation(work: CommittedOwnerDeleteAllWork, proof: CommittedOwnerDeleteAllVerificationV1): OwnerDeleteAllApplyOutcomeV1 =
