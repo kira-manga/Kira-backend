@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalo
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogProjectedHeadPhaseExecutor
 import me.manga.kira.backend.security.BoundComplaintConsumerFixture
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.jdbc.core.JdbcTemplate
@@ -166,6 +167,27 @@ internal class CurrentProjectedCatalogRefreshFixture(
             selected.queryForObject("SELECT successor_generation FROM complaint_catalog_mutations WHERE successor_generation = 1 FOR UPDATE", Long::class.java),
         )
         action()
+    }
+
+    /** Open before the phase; raw JDBC must not enlist this independent observer in Spring synchronization. */
+    fun withEpochFenceObserver(action: (() -> Unit) -> Unit) {
+        released()
+        checkNotNull(observer.dataSource).connection.use { connection ->
+            assertTrue(connection.autoCommit)
+            connection.createStatement().use { statement ->
+                statement.queryTimeout = 1
+                action {
+                    assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
+                    statement.executeQuery("SELECT pg_try_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))").use { row ->
+                        assertTrue(row.next())
+                        assertFalse(row.getBoolean(1), "The actual history phase must already own the shared epoch fence.")
+                        assertFalse(row.wasNull())
+                        assertFalse(row.next())
+                    }
+                    assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
+                }
+            }
+        }
     }
 
     fun state(): List<String> =

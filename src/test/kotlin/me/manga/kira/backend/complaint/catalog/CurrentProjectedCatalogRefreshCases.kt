@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
@@ -36,6 +37,50 @@ internal class CurrentProjectedCatalogRefreshCases(private val f: CurrentProject
     fun nonemptyExactProjectedReplay() {
         val before = f.state()
         val wire = CurrentProjectedCatalogRefreshHttpFixture(f)
+        wire.owner().use { owner ->
+            foreignObserverRefused(owner, wire)
+            assertEquals(before, f.state(), "The original observer defect must roll back without changing durable state.")
+            f.jdbc.steps.clear()
+            f.withEpochFenceObserver { assertEpochFenceHeld ->
+                f.jdbc.beforeSql = { step ->
+                    wire.assertProviderClosed()
+                    if (step == ProjectedHeadSqlStep.LOCK_CONTROL) assertEpochFenceHeld()
+                }
+                try {
+                    lateinit var result: CurrentProjectedCatalogRefreshV1.Result
+                    f.withUnrelatedHistoryLock { result = owner.refresh() }
+                    assertHead(result.catalogFor(f.process))
+                    assertFalse(result.catalogFor(f.process).chain.inventory.sources.isEmpty())
+                    wire.assertFullReadback(attempts = 2)
+                    assertEquals(ProjectedHeadSqlStep.entries, f.jdbc.steps)
+                    assertEquals(before, f.state(), "Multi-generation history, epoch 7, gates, counters and timestamps must remain byte-for-byte unchanged.")
+                    val exact = f.recompose(checkNotNull(f.process.catalogReadback))
+                    assertArrayEquals(f.process.configurationHashBytes(), exact.configurationHashBytes())
+                    rejected(CatalogReadbackFailure.INVALID_POLICY) { result.catalogFor(exact) }
+                    rejected(CatalogReadbackFailure.INVALID_POLICY) { result.catalogFor(f.recompose(f.chain.settings(pageSize = 7))) }
+                    assertEquals(f.chain.generation, f.jdbc.controlArguments[5])
+                    assertEquals(f.token, f.jdbc.mutationArguments[0])
+                    assertEquals(f.chain.generation, f.jdbc.mutationArguments[4])
+                    assertArrayEquals(f.chain.bytes.last(), f.jdbc.mutationArguments[17] as ByteArray)
+                    assertNull(f.jdbc.mutationArguments[14])
+                    assertNull(f.jdbc.mutationArguments[15])
+                    assertNull(f.jdbc.mutationArguments[16])
+                    val retained = f.jdbc.retainedOperation()
+                    retained.requireReleased(retained.input)
+                    wire.clock.advance(Duration.ofMinutes(1))
+                    assertHead(owner.refresh().catalogFor(f.process))
+                    wire.assertFullReadback(attempts = 3)
+                    assertEquals(before, f.state())
+                } finally {
+                    f.jdbc.beforeSql = {}
+                }
+            }
+        }
+    }
+
+    /** Reproduce the former observer's real extra Spring holder; never inject a synthetic phase failure. */
+    private fun foreignObserverRefused(owner: CurrentProjectedCatalogRefreshV1, wire: CurrentProjectedCatalogRefreshHttpFixture) {
+        var foreignHolderObserved = false
         f.jdbc.beforeSql = { step ->
             wire.assertProviderClosed()
             if (step == ProjectedHeadSqlStep.LOCK_CONTROL) {
@@ -45,33 +90,26 @@ internal class CurrentProjectedCatalogRefreshCases(private val f: CurrentProject
                     ),
                     "The actual history phase must already own the shared epoch fence.",
                 )
+                assertEquals(
+                    setOf(f.coordinator.dataSource, checkNotNull(f.observer.dataSource)),
+                    TransactionSynchronizationManager.getResourceMap().keys,
+                )
+                foreignHolderObserved = true
             }
         }
-        wire.owner().use { owner ->
-            lateinit var result: CurrentProjectedCatalogRefreshV1.Result
-            f.withUnrelatedHistoryLock { result = owner.refresh() }
-            assertHead(result.catalogFor(f.process))
-            assertFalse(result.catalogFor(f.process).chain.inventory.sources.isEmpty())
+        try {
+            val failure = assertThrows<PersistencePhaseException> { owner.refresh() }
+            f.jdbc.assertNoLostAssertions()
+            assertTrue(foreignHolderObserved)
+            assertEquals(PersistencePhaseFailureCode.RESOURCE_REFUSED, failure.code)
+            assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, failure.databaseOutcome)
+            assertTrue(failure.cleanupProven)
+            assertEquals(listOf(ProjectedHeadSqlStep.LOCK_CONTROL), f.jdbc.steps)
             wire.assertFullReadback()
-            assertEquals(ProjectedHeadSqlStep.entries, f.jdbc.steps)
-            assertEquals(before, f.state(), "Multi-generation history, epoch 7, gates, counters and timestamps must remain byte-for-byte unchanged.")
-            val exact = f.recompose(checkNotNull(f.process.catalogReadback))
-            assertArrayEquals(f.process.configurationHashBytes(), exact.configurationHashBytes())
-            rejected(CatalogReadbackFailure.INVALID_POLICY) { result.catalogFor(exact) }
-            rejected(CatalogReadbackFailure.INVALID_POLICY) { result.catalogFor(f.recompose(f.chain.settings(pageSize = 7))) }
-            assertEquals(f.chain.generation, f.jdbc.controlArguments[5])
-            assertEquals(f.token, f.jdbc.mutationArguments[0])
-            assertEquals(f.chain.generation, f.jdbc.mutationArguments[4])
-            assertArrayEquals(f.chain.bytes.last(), f.jdbc.mutationArguments[17] as ByteArray)
-            assertNull(f.jdbc.mutationArguments[14])
-            assertNull(f.jdbc.mutationArguments[15])
-            assertNull(f.jdbc.mutationArguments[16])
             val retained = f.jdbc.retainedOperation()
-            retained.requireReleased(retained.input)
-            wire.clock.advance(Duration.ofMinutes(1))
-            assertHead(owner.refresh().catalogFor(f.process))
-            wire.assertFullReadback(attempts = 2)
-            assertEquals(before, f.state())
+            assertThrows<PersistencePhaseException> { retained.requireReleased(retained.input) }
+        } finally {
+            f.jdbc.beforeSql = {}
         }
     }
 
