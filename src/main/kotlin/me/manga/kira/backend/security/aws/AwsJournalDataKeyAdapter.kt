@@ -34,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
 
 /**
- * Dormant actual SDK adapter for the retained J's ordinary OWNER_DELETE_ALL profile only. No key
+ * Dormant actual SDK adapter for one retained J's fixed ordinary OR seal profile. No key
  * discovery, arbitrary context, retry/cache, bean or activation/publication authority. Each successful
  * lease keeps exclusive HTTP custody until close; owned arrays are wiped, not all SDK/JVM copies.
  * Timeouts are finite application/I/O limits, not hard native/DNS/cancellation-completion guarantees.
@@ -241,6 +241,23 @@ internal class AwsJournalDataKeyAdapter private constructor(
             httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
             nanoTime: () -> Long,
             attempt: JournalCodecAttemptV1?,
+        ): AwsJournalDataKeyAdapter = openProfile(journal, credentials, httpFactory, nanoTime, attempt, epochSeal = false)
+
+        /** Fixed seal context only; supplied credentials are NOT verified sealer-role/policy provenance. */
+        internal fun openEpochSeal(
+            journal: ComplaintJournalConfigurationV1,
+            credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): AwsJournalDataKeyAdapter = openProfile(journal, credentials, httpFactory, nanoTime, null, epochSeal = true)
+
+        private fun openProfile(
+            journal: ComplaintJournalConfigurationV1,
+            credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long,
+            attempt: JournalCodecAttemptV1?,
+            epochSeal: Boolean,
         ): AwsJournalDataKeyAdapter {
             requireConnectionFree()
             return journalKmsSdkCall {
@@ -248,7 +265,7 @@ internal class AwsJournalDataKeyAdapter private constructor(
                 opened = true
                 val result = runCatching {
                     attempt?.remainingMillis(1)
-                    val profile = JournalKmsRequestProfile(journal)
+                    val profile = if (epochSeal) JournalKmsRequestProfile.epochSeal(journal) else JournalKmsRequestProfile(journal)
                     validateCredentials(credentials)
                     requireJournalKms(
                         System.getProperty(SdkSystemSetting.AWS_PARTITIONS_FILE.property()) == null &&
@@ -343,6 +360,10 @@ internal class AwsJournalDataKeyAdapter private constructor(
         fun open(journal: ComplaintJournalConfigurationV1, credentials: AwsSessionCredentials): AwsJournalDataKeyAdapter =
             Construction().open(journal, credentials, ::journalKmsUrlConnectionClient, System::nanoTime, null)
 
+        /** No runtime binding, actual role-policy proof or LIVE retention authority is inferred. */
+        fun openEpochSeal(journal: ComplaintJournalConfigurationV1, credentials: AwsSessionCredentials): AwsJournalDataKeyAdapter =
+            Construction().openEpochSeal(journal, credentials, ::journalKmsUrlConnectionClient, System::nanoTime)
+
         /** The only substitution is the public HTTP SPI; the genuine KmsClient still signs, marshals and decodes. */
         fun withHttpFixture(
             journal: ComplaintJournalConfigurationV1,
@@ -350,6 +371,13 @@ internal class AwsJournalDataKeyAdapter private constructor(
             httpFactory: () -> SdkHttpClient,
             nanoTime: () -> Long = System::nanoTime,
         ): AwsJournalDataKeyAdapter = Construction().open(journal, credentials, { httpFactory() }, nanoTime, null)
+
+        fun withEpochSealHttpFixture(
+            journal: ComplaintJournalConfigurationV1,
+            credentials: AwsSessionCredentials,
+            httpFactory: () -> SdkHttpClient,
+            nanoTime: () -> Long = System::nanoTime,
+        ): AwsJournalDataKeyAdapter = Construction().openEpochSeal(journal, credentials, { httpFactory() }, nanoTime)
 
         private fun regionalEndpoint(region: Region, emptyProfile: ProfileFile): URI {
             val metadata = KmsClient.serviceMetadata().reconfigure(
