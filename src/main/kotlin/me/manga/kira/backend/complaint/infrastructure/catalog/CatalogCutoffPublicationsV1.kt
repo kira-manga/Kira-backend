@@ -10,9 +10,9 @@ import org.springframework.jdbc.core.JdbcTemplate
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Dormant fixed cutoff resolution and optional canonical-only SEAL_PREPARED continuation.
+ * Dormant fixed cutoff resolution, canonical-only PREPARED or an actual held STS/KMS continuation.
  * Genuine CAPTURED/full-B discovery, final validation and canonical storage use the original coordinator.
- * No seal encryption, dispatch, verification, scan, checkpoint, activation or W06/legacy import. No slot is cleared or advanced.
+ * No durable wire, dispatch, verification, scan, checkpoint, activation or W06/legacy import. No slot is cleared or advanced.
  */
 internal class CatalogCutoffPublicationsV1 internal constructor(private val coordinator: CatalogCoordinatorPersistence, private val jdbc: JdbcTemplate) {
     private val ownership = coordinator.ownership
@@ -30,6 +30,12 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
         campaign: CatalogCoordinatorLeaseCampaignV1,
         ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1,
     ): PreparedEpochSealV1 = checkNotNull(run(campaign, ordinaryFactory, CatalogCutoffCompletionV1.CANONICAL_PREPARED).prepared)
+
+    /** The returned operation is still charged to this issuer and the original caller/J until actual close. */
+    internal fun openPreparedSeal(
+        campaign: CatalogCoordinatorLeaseCampaignV1,
+        ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1,
+    ): CatalogEpochSealCustodyV1 = checkNotNull(run(campaign, ordinaryFactory, CatalogCutoffCompletionV1.OWNED_SEAL).custody)
 
     @Suppress("TooGenericExceptionCaught")
     private fun run(
@@ -64,32 +70,52 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
             val final = persistence.control(retained)
             retained.acceptControl(final)
             val manifest = CapturedCutoffManifestV1.fromReleased(final)
-            val prepared = if (completion === CatalogCutoffCompletionV1.CANONICAL_PREPARED) {
+            val prepared = if (completion !== CatalogCutoffCompletionV1.MANIFEST) {
                 retained.captureCanonical(final) // Uses retained manifest/codec attempt, NEVER the historical DTO above.
                 renew(retained)
                 val preparation = persistence.prepare(retained)
                 retained.acceptPrepared(preparation)
-                PreparedEpochSealV1.fromReleased(preparation)
+                if (completion === CatalogCutoffCompletionV1.CANONICAL_PREPARED) PreparedEpochSealV1.fromReleased(preparation) else null
             } else {
                 null
             }
-            result = Outcome(manifest, prepared)
+            val custody = if (completion === CatalogCutoffCompletionV1.OWNED_SEAL) {
+                retained.beginSealCustody(this, shared).also { it.acquireAndEncode() }
+            } else {
+                null
+            }
+            result = Outcome(manifest, prepared, custody)
         } catch (problem: Throwable) {
             campaign.close()
             attempt?.abort()
             failure = boundedEpochRotationFailure(problem)
         } finally {
-            attempt?.let {
-                val finishing = runCatching(it::finish).exceptionOrNull()
-                if (finishing != null) {
-                    it.abort()
-                    if (failure == null) failure = boundedEpochRotationFailure(finishing)
-                } // Always stop on failed cleanup, but never mask the original bounded failure/outcome.
-                active.compareAndSet(it, null)
-            }
+            attempt?.let { failure = finishRun(it, result?.custody, failure) }
         }
         failure?.let { throw it }
         return checkNotNull(result)
+    }
+
+    private fun finishRun(
+        attempt: CatalogCutoffAttemptV1,
+        handoff: CatalogEpochSealCustodyV1?,
+        priorFailure: PersistencePhaseException?,
+    ): PersistencePhaseException? {
+        var failure = priorFailure
+        if (failure == null && handoff != null) {
+            val checked = runCatching(handoff::requireHeld).exceptionOrNull()
+            if (checked != null) failure = boundedEpochRotationFailure(checked)
+        }
+        if (failure != null || handoff == null) {
+            val finishing = runCatching(attempt::finish).exceptionOrNull()
+            if (finishing != null) {
+                attempt.abort()
+                if (failure == null) failure = boundedEpochRotationFailure(finishing)
+            }
+            // A retained seal owner releases this registration ONLY after its actual native close returns.
+            if (!attempt.retainsSealCustody) active.compareAndSet(attempt, null)
+        }
+        return failure
     }
 
     private fun resolveRows(attempt: CatalogCutoffAttemptV1, factory: OwnerDeleteAllJournalPublisherFactoryV1) {
@@ -131,6 +157,11 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
 
     internal fun owns(attempt: CatalogCutoffAttemptV1): Boolean = active.get() === attempt && coordinator.cutoffPublications === this
 
+    internal fun releaseClosedSeal(attempt: CatalogCutoffAttemptV1, custody: CatalogEpochSealCustodyV1) {
+        custody.requireClosed(attempt)
+        check(active.compareAndSet(attempt, null))
+    }
+
     private fun requireResources() {
         requireConnectionFree()
         coordinator.requireResources()
@@ -142,9 +173,9 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
     private fun hasOriginalCoordinatorResources(): Boolean =
         coordinator.ownership === ownership && coordinator.manager === manager && coordinator.dataSource === source
 
-    override fun toString(): String = "CatalogCutoffPublicationsV1(dormant,bounded-canonical-only,NO-wire-dispatch-checkpoint-or-activation)"
+    override fun toString(): String = "CatalogCutoffPublicationsV1(dormant,original-held-custody,NO-wire-dispatch-checkpoint-or-activation)"
 
-    private class Outcome(val manifest: CapturedCutoffManifestV1, val prepared: PreparedEpochSealV1?)
+    private class Outcome(val manifest: CapturedCutoffManifestV1, val prepared: PreparedEpochSealV1?, val custody: CatalogEpochSealCustodyV1?)
 }
 
 /** Historical completed manifest only. It cannot supply current fencing, seal evidence or slot-replacement permission. */

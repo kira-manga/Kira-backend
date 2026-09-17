@@ -3,6 +3,7 @@ package me.manga.kira.backend.security.aws
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
+import me.manga.kira.backend.security.EpochSealAttemptV1
 import me.manga.kira.backend.security.JournalDataKeyRequestV1
 import java.nio.ByteBuffer
 import java.util.Base64
@@ -23,7 +24,15 @@ internal class JournalKmsRequestProfile private constructor(val journal: Complai
     }
     private val routingIds = declaration.routing.keys.map { it.keyId }.toSet()
 
-    fun prepare(request: JournalDataKeyRequestV1, operation: JournalKmsOperation, wrapped: ByteArray?, started: Long, nanoTime: () -> Long): JournalKmsCall {
+    fun prepare(
+        request: JournalDataKeyRequestV1,
+        operation: JournalKmsOperation,
+        wrapped: ByteArray?,
+        started: Long,
+        nanoTime: () -> Long,
+        sealAttempt: EpochSealAttemptV1? = null,
+    ): JournalKmsCall {
+        requireJournalKms(epochSeal || sealAttempt == null)
         requireJournalKms(request.keyArn == keyArn && request.dataKeyBytes == 32)
         requireJournalKms(request.timeoutMillis in 1..callLimitMillis)
         requireJournalKms(request.maximumWrappedKeyBytes in 1..wrappedLimit)
@@ -43,7 +52,7 @@ internal class JournalKmsRequestProfile private constructor(val journal: Complai
         }
         val copied = wrapped?.copyOf()
         return runCatching {
-            JournalKmsCall(operation, keyArn, value, maximum, request.timeoutMillis, copied, started, nanoTime)
+            JournalKmsCall(operation, keyArn, value, maximum, request.timeoutMillis, copied, started, nanoTime, sealAttempt)
         }.getOrElse { failure ->
             copied?.fill(0)
             throw failure
@@ -166,6 +175,7 @@ internal class JournalKmsCall(
     val wrapped: ByteArray?,
     private val started: Long,
     private val nanoTime: () -> Long,
+    private val sealAttempt: EpochSealAttemptV1? = null,
 ) {
     val context: Map<String, String> = mapOf(JournalKmsRequestProfile.CONTEXT_KEY to contextValue)
     val encodedWrapped: String? = wrapped?.let { Base64.getEncoder().encodeToString(it) }
@@ -180,7 +190,9 @@ internal class JournalKmsCall(
         val elapsed = nanoTime() - started
         val maximum = timeoutMillis.toLong() * 1_000_000
         requireJournalKms(elapsed >= 0 && elapsed < maximum)
-        return maximum - elapsed
+        val local = maximum - elapsed
+        val current = sealAttempt?.remainingProviderMillis(timeoutMillis)?.toLong()?.times(1_000_000L) ?: local
+        return minOf(local, current)
     }
 
     fun clearInput() {

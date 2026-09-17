@@ -4,7 +4,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochSealCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.security.JournalCodecAttemptV1
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -20,6 +22,7 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
     private val routine = HashSet<RoutineReservation>()
     private val privacy = HashSet<OwnerDeleteAllReservation>()
     private val cutoff = HashSet<OwnerDeleteAllReservation>()
+    private val seals = HashSet<CatalogEpochSealCustodyV1>()
     private var stopping = false
 
     internal fun requireJournal(expected: ComplaintJournalConfigurationV1) = requireJournalPublication(journal === expected)
@@ -28,7 +31,7 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
     fun tryRoutinePublication(): RoutineReservation? {
         if (!lock.tryLock()) return null
         try {
-            if (stopping || privacy.isNotEmpty() || routine.size.toLong() + cutoff.size >= limits.routinePublicationLanes) return null
+            if (stopping || privacy.isNotEmpty() || routineCount() >= limits.routinePublicationLanes) return null
             return RoutineReservation().also { routine.add(it) }
         } finally {
             lock.unlock()
@@ -39,7 +42,7 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
         if (!lock.tryLock()) return null
         try {
             // Widen BEFORE addition: the validated J permits limits up to Int.MAX_VALUE.
-            if (stopping || factory.isClosed() || routine.size.toLong() + cutoff.size + privacy.size >= limits.maximumPublicationLanes.toLong()) return null
+            if (stopping || factory.isClosed() || routineCount() + privacy.size >= limits.maximumPublicationLanes.toLong()) return null
             factory.requireLane(this)
             factory.requireJournal(journal)
             return OwnerDeleteAllReservation(factory, routineOwner = false).also { privacy.add(it) }
@@ -52,7 +55,7 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
         if (!lock.tryLock()) return null
         try {
             if (stopping || factory.isClosed() || privacy.isNotEmpty()) return null
-            if (routine.size.toLong() + cutoff.size >= limits.routinePublicationLanes) return null
+            if (routineCount() >= limits.routinePublicationLanes) return null
             factory.requireLane(this)
             factory.requireJournal(journal)
             return OwnerDeleteAllReservation(factory, routineOwner = true).also { cutoff.add(it) }
@@ -61,7 +64,36 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
         }
     }
 
-    fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routine.size + cutoff.size, privacy.size) }
+    internal fun tryEpochSeal(owner: CatalogEpochSealCustodyV1): Boolean {
+        if (!lock.tryLock()) return false
+        try {
+            if (stopping || owner.acquisitionStopped() || privacy.isNotEmpty()) return false
+            if (routineCount() >= limits.routinePublicationLanes) return false
+            owner.requireLane(this)
+            return seals.add(owner)
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    internal fun requireEpochSealRunning(owner: CatalogEpochSealCustodyV1) = lock.withLock {
+        requireJournalPublication(!stopping && !owner.acquisitionStopped() && owner in seals)
+    }
+
+    internal fun releaseEpochSeal(owner: CatalogEpochSealCustodyV1) {
+        owner.requireClosedLane(this) // Native close already returned; no owner monitor while holding the registry lock.
+        lock.withLock { seals.remove(owner) }
+    }
+
+    internal fun closeEpochSealAcquisition(acquisition: VersionBoundEpochSealAcquisitionV1) {
+        val owned = lock.withLock { seals.filter { it.belongsTo(acquisition) } }
+        closeOwners(owned)
+    }
+
+    // Call only under the registry lock. Widen before every addition, including held/failed seal owners.
+    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size
+
+    fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routineCount().toInt(), privacy.size) }
 
     private fun requireRunning(owner: OwnerDeleteAllReservation) = lock.withLock {
         requireJournalPublication(!stopping && !owner.factory.isClosed() && (if (owner.routineOwner) owner in cutoff else owner in privacy))
@@ -82,12 +114,16 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
         val owned = lock.withLock {
             stopping = true
             routine.clear() // Routine reservations have no remote entry and can never start one later.
-            (privacy + cutoff).toList()
+            buildList<AutoCloseable> {
+                addAll(privacy)
+                addAll(cutoff)
+                addAll(seals)
+            }
         }
         closeOwners(owned)
     }
 
-    private fun closeOwners(owned: List<OwnerDeleteAllReservation>) {
+    private fun closeOwners(owned: List<AutoCloseable>) {
         var failure: Throwable? = null
         owned.forEach { owner ->
             val closing = runCatching(owner::close).exceptionOrNull()

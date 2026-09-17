@@ -4,6 +4,15 @@ import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochRotationCases
+import me.manga.kira.backend.complaint.catalog.HeldEpochSealBudgetCases
+import me.manga.kira.backend.complaint.catalog.HeldEpochSealCases
+import me.manga.kira.backend.complaint.catalog.HeldEpochSealCleanupCases
+import me.manga.kira.backend.complaint.catalog.HeldEpochSealClock
+import me.manga.kira.backend.complaint.catalog.HeldSealBudgetCut
+import me.manga.kira.backend.complaint.catalog.HeldSealCurrentCut
+import me.manga.kira.backend.complaint.catalog.HeldSealPartialCut
+import me.manga.kira.backend.complaint.catalog.HeldSealPreparationCut
+import me.manga.kira.backend.complaint.catalog.HeldSealStopCut
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
@@ -11,6 +20,7 @@ import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
 import me.manga.kira.backend.complaint.catalog.withCutoffResolverHistory
 import me.manga.kira.backend.complaint.catalog.withEpochRotation
+import me.manga.kira.backend.complaint.catalog.withHeldEpochSeal
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
 import org.junit.jupiter.api.AfterAll
@@ -280,6 +290,72 @@ class VersionBoundPersistenceConnectedIT {
             }
         }
 
+    @Test
+    fun `owned held seal commits and releases canonical intent before three STS calls and KMS while retaining lane and original issuer`() {
+        val clock = HeldEpochSealClock()
+        withFixture(epochRotation = true, nanoClock = clock) { tls ->
+            withHeldEpochSeal(tls, clock, cutoffCount = 2) { HeldEpochSealCases(it).committedHeldAndFreshSuccessor() }
+        }
+    }
+
+    @Test
+    fun `owned held seal refuses rollback unknown commit and unreleased canonical completion before any sealer construction`() {
+        HeldSealPreparationCut.entries.forEach { cut ->
+            val clock = HeldEpochSealClock()
+            withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                withHeldEpochSeal(tls, clock) { HeldEpochSealCases(it).prepareFailure(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `owned held seal rejects missing D4 replacement lanes and real current campaign or binding loss across STS and KMS`() {
+        HeldSealCurrentCut.entries.forEach { cut ->
+            val clock = HeldEpochSealClock()
+            withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                withHeldEpochSeal(tls, clock, d4 = cut != HeldSealCurrentCut.MISSING_D4) { HeldEpochSealCases(it).currentOwnerRefusal(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `owned held seal preserves original J full session expiry and actual renewal dispatch limits through STS KMS and held cleanup`() {
+        HeldSealBudgetCut.entries.forEach { cut ->
+            val clock = HeldEpochSealClock()
+            withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                withHeldEpochSeal(tls, clock) { HeldEpochSealBudgetCases(it).exhausted(cut) }
+            }
+        }
+        val clock = HeldEpochSealClock()
+        withFixture(epochRotation = true, nanoClock = clock) { tls ->
+            withHeldEpochSeal(tls, clock) { HeldEpochSealBudgetCases(it).heldExpiryStillCloses() }
+        }
+    }
+
+    @Test
+    fun `owned held seal closes every arrived partial STS KMS resource and retains sticky unreturned construction or native close custody`() {
+        HeldSealPartialCut.entries.forEach { cut ->
+            val clock = HeldEpochSealClock()
+            withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                withHeldEpochSeal(tls, clock) { HeldEpochSealCleanupCases(it).partial(cut) }
+            }
+        }
+        val clock = HeldEpochSealClock()
+        withFixture(epochRotation = true, nanoClock = clock) { tls ->
+            withHeldEpochSeal(tls, clock) { HeldEpochSealCleanupCases(it).stickyNativeClose() }
+        }
+    }
+
+    @Test
+    fun `owned held seal foreign close shutdown and interruption leave native cleanup to the original caller without closing borrowed lanes`() {
+        HeldSealStopCut.entries.forEach { cut ->
+            val clock = HeldEpochSealClock()
+            withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                withHeldEpochSeal(tls, clock) { HeldEpochSealCleanupCases(it).foreignStop(cut) }
+            }
+        }
+    }
+
     /** A test-only contention pair, not a supported multi-instance deployment or another database lifecycle. */
     private fun withPairedFixture(
         epochRotation: Boolean = false,
@@ -300,9 +376,10 @@ class VersionBoundPersistenceConnectedIT {
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
         profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,
         epochRotation: Boolean = false,
+        nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
         test: (VersionBoundPersistenceConnectedFixture) -> Unit,
     ) = VersionBoundPersistenceConnectedFixture(database.value, client, epochRotation).use { fixture ->
-        fixture.bind(profile)
+        fixture.bind(profile, nanoClock)
         test(fixture)
     }
 }

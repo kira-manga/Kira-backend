@@ -4,16 +4,20 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialCatalogPrincipalV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
+import me.manga.kira.backend.security.aws.AwsEpochSealStsAdapter
 import me.manga.kira.backend.security.aws.AwsEpochSealStsBinding
 import me.manga.kira.backend.security.aws.AwsEpochSealStsLimits
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.core.SdkSystemSetting
+import software.amazon.awssdk.http.SdkHttpClient
 import software.amazon.awssdk.profiles.ProfileFile
 import software.amazon.awssdk.regions.PartitionMetadata
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.regions.ServiceMetadataConfiguration
 import software.amazon.awssdk.services.sts.StsClient
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -22,9 +26,8 @@ import java.util.concurrent.atomic.AtomicReference
  * transport material; usable sealer credentials still require the three fixed actual STS calls.
  * Independent deployment acceptance/installed-policy qualification is NOT manufactured here.
  *
- * This increment intentionally exposes no acquire, adapter or credential accessor. Only the future
- * genuine retained post-PREPARED commit/release continuation may add that entry, under concrete
- * shared-lane custody. Neither a historical DTO nor this descriptor is acquisition authority.
+ * Only the genuine original post-PREPARED commit/release continuation can construct a fresh lower
+ * under concrete shared-lane custody. Neither a historical DTO nor this descriptor is authority.
  */
 internal class VersionBoundEpochSealAcquisitionV1 private constructor(
     private val routing: VersionBoundComplaintJournalRouting,
@@ -71,10 +74,19 @@ internal class VersionBoundEpochSealAcquisitionV1 private constructor(
         }
     }
 
+    internal fun isClosed(): Boolean = stopped.get()
+
+    internal fun construct(owner: CatalogEpochSealCustodyV1): AwsEpochSealStsAdapter {
+        requireConnectionFree()
+        owner.requireAcquisition(this)
+        requireUnchangedConfiguration()
+        return construction.open() // Cold only; the reservation retains it before any actual acquisition.
+    }
+
     override fun close() {
         requireConnectionFree()
         stopped.set(true)
-        construction.close()
+        withJournalPublicationCleanup({ publicationLanes.closeEpochSealAcquisition(this) }, construction::close)
         // The shared J lane owner is borrowed, never closed/replaced by this component.
     }
 
@@ -93,6 +105,46 @@ internal class VersionBoundEpochSealAcquisitionV1 private constructor(
             bootstrapCredentials: AwsSessionCredentials,
             bootstrapSessionName: String?,
             sdkLimits: AwsEpochSealStsLimits = AwsEpochSealStsLimits(),
+        ): VersionBoundEpochSealAcquisitionV1 = create(
+            routing,
+            publicationLanes,
+            deployment,
+            bootstrapCredentials,
+            bootstrapSessionName,
+            sdkLimits,
+            null,
+        )
+
+        /** Raw HTTP SPI/clocks only: all current-owner, STS identity and KMS codec paths remain the real implementations. */
+        fun withHttpFixture(
+            routing: VersionBoundComplaintJournalRouting,
+            publicationLanes: JournalPublicationLanesV1,
+            deployment: EpochSealDeploymentMappingV1,
+            bootstrapCredentials: AwsSessionCredentials,
+            bootstrapSessionName: String?,
+            stsHttpFactory: () -> SdkHttpClient,
+            kmsHttpFactory: () -> SdkHttpClient,
+            sdkLimits: AwsEpochSealStsLimits = AwsEpochSealStsLimits(),
+            nanoTime: () -> Long = System::nanoTime,
+            wallClock: () -> Instant = Instant::now,
+        ): VersionBoundEpochSealAcquisitionV1 = create(
+            routing,
+            publicationLanes,
+            deployment,
+            bootstrapCredentials,
+            bootstrapSessionName,
+            sdkLimits,
+            HttpFixture(stsHttpFactory, kmsHttpFactory, nanoTime, wallClock),
+        )
+
+        private fun create(
+            routing: VersionBoundComplaintJournalRouting,
+            publicationLanes: JournalPublicationLanesV1,
+            deployment: EpochSealDeploymentMappingV1,
+            bootstrapCredentials: AwsSessionCredentials,
+            bootstrapSessionName: String?,
+            sdkLimits: AwsEpochSealStsLimits,
+            fixture: HttpFixture?,
         ): VersionBoundEpochSealAcquisitionV1 {
             requireConnectionFree()
             val journal = routing.journalConfiguration
@@ -112,7 +164,7 @@ internal class VersionBoundEpochSealAcquisitionV1 private constructor(
                 sdkLimits.maxResponseBytes,
                 sdkLimits.clockUncertaintyMillis,
             )
-            val construction = RetainedStsConstruction(routing, deployment, bootstrapCredentials, bootstrapSessionName, limits)
+            val construction = RetainedStsConstruction(routing, deployment, bootstrapCredentials, bootstrapSessionName, limits, fixture)
             // Only immutable inputs/material exist here; no lower adapter or provider resource has been constructed.
             return VersionBoundEpochSealAcquisitionV1(routing, publicationLanes, deployment, limits, construction)
         }
@@ -133,9 +185,8 @@ internal class VersionBoundEpochSealAcquisitionV1 private constructor(
     }
 
     /**
-     * Fixed real STS construction inputs, not a callback or caller-supplied adapter. A future genuine
-     * reservation must construct/retain a NEW one-shot AwsEpochSealStsAdapter from these inputs for
-     * each attempt. Retaining one lower here would incorrectly consume the whole process after one seal.
+     * Fixed real STS construction inputs, not a caller-supplied adapter. Every genuine reservation
+     * constructs/retains a NEW one-shot lower; one used adapter must not consume the whole process.
      */
     private class RetainedStsConstruction(
         private val routing: VersionBoundComplaintJournalRouting,
@@ -143,6 +194,7 @@ internal class VersionBoundEpochSealAcquisitionV1 private constructor(
         bootstrapCredentials: AwsSessionCredentials,
         bootstrapSessionName: String?,
         private val limits: AwsEpochSealStsLimits,
+        private val fixture: HttpFixture?,
     ) : AutoCloseable {
         private val credentials = AtomicReference<AwsSessionCredentials?>(bootstrapCredentials)
         private val source = deployment.bootstrap.principal
@@ -179,11 +231,32 @@ internal class VersionBoundEpochSealAcquisitionV1 private constructor(
             ) { INVALID_EPOCH_SEAL_ACQUISITION }
         }
 
+        fun open(): AwsEpochSealStsAdapter {
+            val material = checkNotNull(credentials.get()) { INVALID_EPOCH_SEAL_ACQUISITION }
+            val http = fixture
+            return if (http == null) {
+                AwsEpochSealStsAdapter.open(routing, material, binding, limits)
+            } else {
+                AwsEpochSealStsAdapter.withHttpFixture(
+                    routing,
+                    material,
+                    binding,
+                    limits,
+                    http.sts,
+                    http.nanoTime,
+                    http.wallClock,
+                    kmsHttpFactory = { http.kms() },
+                )
+            }
+        }
+
         override fun close() {
             credentials.set(null) // SDK/String copies are not zeroized; this is not session revocation.
         }
         override fun toString(): String = "RetainedEpochSealStsConstruction(cold,redacted)"
     }
+
+    private class HttpFixture(val sts: () -> SdkHttpClient, val kms: () -> SdkHttpClient, val nanoTime: () -> Long, val wallClock: () -> Instant)
 }
 
 /** Immutable stable configuration projection only. No session, access key, expiration, custody state or verification boolean. */

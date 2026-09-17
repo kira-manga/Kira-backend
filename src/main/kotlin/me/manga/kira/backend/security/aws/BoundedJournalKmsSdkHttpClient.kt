@@ -94,6 +94,7 @@ internal class BoundedJournalKmsSdkHttpClient(
 
     private inner class Exchange(private val call: JournalKmsCall) : ExecutableHttpRequest {
         private val prepared = AtomicBoolean()
+        private val prepareInvoked = AtomicBoolean()
         private val dispatched = AtomicBoolean()
         private val returned = AtomicBoolean()
         private val stopped = AtomicBoolean()
@@ -124,6 +125,7 @@ internal class BoundedJournalKmsSdkHttpClient(
                     }
                     .metricCollector(request.metricCollector().orElse(null)).build()
                 checkRead()
+                prepareInvoked.set(true)
                 nativeRequest = delegate.prepareRequest(bounded)
                 checkRead()
             } catch (failure: Throwable) {
@@ -165,7 +167,8 @@ internal class BoundedJournalKmsSdkHttpClient(
             return checkNotNull(observed)
         }
 
-        fun nativeWorkReturned(): Boolean = prepared.get() && (!dispatched.get() || returned.get())
+        // A thrown prepare with no returned request cannot prove its partial native construction quiesced.
+        fun nativeWorkReturned(): Boolean = prepared.get() && (!prepareInvoked.get() || nativeRequest != null) && (!dispatched.get() || returned.get())
 
         private fun checkRead() {
             cleanupFailure.get()?.let { throw it }

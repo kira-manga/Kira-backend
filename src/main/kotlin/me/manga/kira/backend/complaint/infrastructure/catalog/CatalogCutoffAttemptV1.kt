@@ -8,6 +8,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseP
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.EpochSealAttemptV1
 import me.manga.kira.backend.security.EpochSealCanonicalV1
 import me.manga.kira.backend.security.EpochSealContentV1
@@ -15,7 +16,11 @@ import me.manga.kira.backend.security.EpochSealManifestV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.UUID
 
-/** Actual original-coordinator attempt, one caller and one original same-J seal budget through every subcall. */
+/**
+ * Actual original-coordinator attempt, one caller and one original same-J seal budget through every subcall.
+ * Fixed phase checks stay on this concrete owner rather than splitting caller, budget or custody authority.
+ */
+@Suppress("TooManyFunctions")
 internal class CatalogCutoffAttemptV1 internal constructor(
     private val issuer: CatalogCutoffPublicationsV1,
     internal val campaign: CatalogCoordinatorLeaseCampaignV1,
@@ -51,7 +56,10 @@ internal class CatalogCutoffAttemptV1 internal constructor(
     private var discoveredSeal: CatalogSealCanonicalRowV1? = null
     private var restoredSeal: EpochSealContentV1? = null
     private var canonical: CatalogSealCanonicalRowV1? = null
+    private var canonicalContent: EpochSealContentV1? = null
     private var canonicalHandoff: CatalogCutoffPersistenceOperationV1? = null
+    private var preparedHandoff: CatalogCutoffPersistenceOperationV1? = null
+    private var sealCustody: CatalogEpochSealCustodyV1? = null
 
     internal fun requireEvidenceRunning() {
         if (!caller.isCurrent() || failed || !issuer.owns(this)) refuse()
@@ -250,7 +258,7 @@ internal class CatalogCutoffAttemptV1 internal constructor(
     /** Fixed private continuation before this original attempt finishes; historical result DTOs are never inputs. */
     internal fun captureCanonical(operation: CatalogCutoffPersistenceOperationV1) {
         requireConnectionFree()
-        check(completion === CatalogCutoffCompletionV1.CANONICAL_PREPARED && stage === Stage.RESOLVED)
+        check(completion !== CatalogCutoffCompletionV1.MANIFEST && stage === Stage.RESOLVED)
         val (selectedSlot, selectedManifest) = result(operation)
         val prior = discoveredSeal
         val content = if (prior == null) {
@@ -267,6 +275,7 @@ internal class CatalogCutoffAttemptV1 internal constructor(
         check(payload.precedingSealSha256 == selectedManifest.range.precedingSealSha256)
         check(payload.eventCount == selectedManifest.eventCount && payload.eventManifestSha256 == selectedManifest.eventManifestSha256)
         canonical = prior ?: CatalogSealCanonicalRowV1.fresh(content, selectedSlot)
+        canonicalContent = content
         checkNotNull(canonical).requireSlot(selectedSlot)
         canonicalHandoff = operation
         stage = Stage.PREPARING
@@ -303,7 +312,52 @@ internal class CatalogCutoffAttemptV1 internal constructor(
     internal fun acceptPrepared(operation: CatalogCutoffPersistenceOperationV1) {
         operation.requireReleased()
         checkPrepared(operation, operation.controlRow())
-        stage = Stage.COMPLETE
+        preparedHandoff = operation
+        stage = if (completion === CatalogCutoffCompletionV1.OWNED_SEAL) Stage.PREPARED else Stage.COMPLETE
+    }
+
+    internal fun beginSealCustody(expected: CatalogCutoffPublicationsV1, lanes: JournalPublicationLanesV1): CatalogEpochSealCustodyV1 {
+        requireRunning()
+        check(issuer === expected && completion === CatalogCutoffCompletionV1.OWNED_SEAL && stage === Stage.PREPARED && sealCustody == null)
+        val selected = CatalogEpochSealCustodyV1.fromPrepared(this, lanes, codecAttempt, checkNotNull(canonicalContent))
+        sealCustody = selected
+        stage = Stage.ACQUIRING
+        return selected
+    }
+
+    internal fun requireSealCustody(selected: CatalogEpochSealCustodyV1, time: EpochSealAttemptV1, content: EpochSealContentV1) {
+        requireRunning()
+        check(sealCustody === selected && codecAttempt === time && canonicalContent === content)
+        check(completion === CatalogCutoffCompletionV1.OWNED_SEAL && (stage === Stage.ACQUIRING || stage === Stage.HELD))
+        val preparation = checkNotNull(preparedHandoff)
+        check(preparation.attempt === this && preparation.path === PersistencePhasePath.COMPLAINT_SEAL_PREPARE)
+        preparation.requireReleased() // This is the actual retained operation, not the later mutable phase slot or a DTO.
+    }
+
+    internal fun renewSealCustody(selected: CatalogEpochSealCustodyV1) {
+        requireRunning()
+        check(sealCustody === selected && stage === Stage.ACQUIRING)
+        binding.coordinator.lease.renewForCutoff(this)
+        requireRenewalCadence()
+    }
+
+    internal fun holdSealCustody(selected: CatalogEpochSealCustodyV1) {
+        requireRunning()
+        check(sealCustody === selected && stage === Stage.ACQUIRING)
+        stage = Stage.HELD // Deliberately unfinished: no durable wire, retention or S3 evidence exists.
+    }
+
+    internal val retainsSealCustody: Boolean get() = sealCustody != null
+
+    internal fun releaseClosedSealCustody(selected: CatalogEpochSealCustodyV1) {
+        check(sealCustody === selected && caller.isCurrent())
+        selected.requireClosed(this)
+        issuer.releaseClosedSeal(this, selected)
+    }
+
+    internal fun restoreSealCaller(selected: CatalogEpochSealCustodyV1) {
+        check(sealCustody === selected && caller.isCurrent())
+        caller.restoreAfterFailure()
     }
 
     internal fun preparedResult(operation: CatalogCutoffPersistenceOperationV1): Pair<CatalogSealCanonicalRowV1, EpochSealManifestV1> {
@@ -322,6 +376,10 @@ internal class CatalogCutoffAttemptV1 internal constructor(
     }
 
     internal fun finish() {
+        sealCustody?.let {
+            it.close() // Its actual native cleanup owns release of the original issuer registration.
+            return
+        }
         try {
             if (failed || stage !== Stage.COMPLETE) abort() else requireRunning()
         } finally {
@@ -329,10 +387,10 @@ internal class CatalogCutoffAttemptV1 internal constructor(
         }
     }
 
-    override fun toString(): String = "CatalogCutoffAttemptV1(original-J,retained-current-campaign,NO-wire-or-dispatch)"
+    override fun toString(): String = "CatalogCutoffAttemptV1(original-J,retained-current-campaign,NO-durable-wire-or-dispatch)"
 
-    private enum class Stage { DISCOVER, RESOLVE, COUNT, DIGEST, FINAL, RESOLVED, PREPARING, COMPLETE }
+    private enum class Stage { DISCOVER, RESOLVE, COUNT, DIGEST, FINAL, RESOLVED, PREPARING, PREPARED, ACQUIRING, HELD, COMPLETE }
     private fun refuse(): Nothing = throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
 }
 
-internal enum class CatalogCutoffCompletionV1 { MANIFEST, CANONICAL_PREPARED }
+internal enum class CatalogCutoffCompletionV1 { MANIFEST, CANONICAL_PREPARED, OWNED_SEAL }

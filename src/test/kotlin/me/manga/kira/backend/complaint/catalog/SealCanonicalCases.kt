@@ -76,7 +76,7 @@ internal class SealCanonicalCases(private val cases: CutoffResolverCases) {
         val emptyIntent = sealRow()
         assertTrue(emptyIntent.values.all { it === JsonNull })
         val returned = AtomicReference<PreparedEpochSealV1?>()
-        val failure = deferredSealCommitRefusal {
+        val failure = f.deferredSealCommitRefusal {
             assertThrows<PersistencePhaseException> { returned.set(cases.prepareCapturedLive(leader.campaign)) }
         }
         assertNull(returned.get(), "An unknown control COMMIT must not emit even a historical canonical PREPARED result.")
@@ -191,26 +191,6 @@ internal class SealCanonicalCases(private val cases: CutoffResolverCases) {
         return stored
     }
 
-    /** Tiny seal-specific analogue of the existing rotation deferred-FK fixture; actual PG commit, original production JDBC. */
-    private fun <T> deferredSealCommitRefusal(action: () -> T): T {
-        val nonce = UUID.randomUUID().toString().replace("-", "")
-        val table = "kira_seal_cut_$nonce"
-        val constraint = "kira_seal_fk_$nonce"
-        assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM pg_class WHERE relname = ?", Long::class.java, table))
-        assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM pg_constraint WHERE conname = ?", Long::class.java, constraint))
-        try {
-            f.observer.execute("CREATE TABLE $table (state text PRIMARY KEY)")
-            f.observer.execute(
-                "ALTER TABLE complaint_journal_control ADD CONSTRAINT $constraint FOREIGN KEY (seal_state) " +
-                    "REFERENCES $table(state) DEFERRABLE INITIALLY DEFERRED",
-            )
-            return action()
-        } finally {
-            f.observer.execute("ALTER TABLE complaint_journal_control DROP CONSTRAINT IF EXISTS $constraint")
-            f.observer.execute("DROP TABLE IF EXISTS $table")
-        }
-    }
-
     private fun sealRow(): JsonObject = JsonObject(Json.parseToJsonElement(f.genesis.controlRow()).jsonObject.filterKeys { it.startsWith("seal_") })
 
     private fun withoutSeal(row: String): JsonObject = JsonObject(Json.parseToJsonElement(row).jsonObject.filterKeys { !it.startsWith("seal_") })
@@ -218,4 +198,24 @@ internal class SealCanonicalCases(private val cases: CutoffResolverCases) {
     private fun outsideCanonicalAndLease(): List<JsonObject> = f.outsideRotationAndLease().map(::withoutSeal)
 
     private fun providerTraffic(): List<Int> = listOf(wire.requests.size, wire.kms.requests.size, wire.s3ClientsCreated, wire.kms.createdClients)
+}
+
+/** Shared canonical/held-sealer cut: actual deferred PG COMMIT refusal, never a supplied driver result or release flag. */
+internal fun <T> EpochRotationTestFixture.deferredSealCommitRefusal(action: () -> T): T {
+    val nonce = UUID.randomUUID().toString().replace("-", "")
+    val table = "kira_seal_cut_$nonce"
+    val constraint = "kira_seal_fk_$nonce"
+    assertEquals(0L, observer.queryForObject("SELECT count(*) FROM pg_class WHERE relname = ?", Long::class.java, table))
+    assertEquals(0L, observer.queryForObject("SELECT count(*) FROM pg_constraint WHERE conname = ?", Long::class.java, constraint))
+    try {
+        observer.execute("CREATE TABLE $table (state text PRIMARY KEY)")
+        observer.execute(
+            "ALTER TABLE complaint_journal_control ADD CONSTRAINT $constraint FOREIGN KEY (seal_state) " +
+                "REFERENCES $table(state) DEFERRABLE INITIALLY DEFERRED",
+        )
+        return action()
+    } finally {
+        observer.execute("ALTER TABLE complaint_journal_control DROP CONSTRAINT IF EXISTS $constraint")
+        observer.execute("DROP TABLE IF EXISTS $table")
+    }
 }

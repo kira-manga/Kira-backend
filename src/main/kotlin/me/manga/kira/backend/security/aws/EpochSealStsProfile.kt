@@ -148,7 +148,7 @@ internal class EpochSealStsAcquisition(val original: EpochSealAttemptV1, private
         lastElapsed = elapsed
         val remaining = ((9_000_000_000L - elapsed) / 1_000_000).toInt()
         requireEpochSealSts(remaining > 0, EpochSealStsFailure.DEADLINE_EXHAUSTED)
-        return original.remainingMillis(minOf(ceiling, remaining))
+        return original.remainingProviderMillis(minOf(ceiling, remaining))
     }
 
     override fun toString(): String = "EpochSealStsAcquisition(original-budget,no-lease-authority)"

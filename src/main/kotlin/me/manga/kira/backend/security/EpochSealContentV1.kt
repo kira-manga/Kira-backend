@@ -20,11 +20,22 @@ internal class EpochSealContentV1 internal constructor(
 }
 
 /** Randomized candidate only. No S3 dispatch is allowed until an actual wire-freeze commit AND release. */
-internal class EpochSealEnvelopeV1 internal constructor(val content: EpochSealContentV1, wire: ByteArray) {
+internal class EpochSealEnvelopeV1 internal constructor(val content: EpochSealContentV1, wire: ByteArray) : AutoCloseable {
     private val storedWire = wire.copyOf()
+    private var closed = false
     val wireSha256: String = Sha256.hex(storedWire)
 
-    fun wireBytes(): ByteArray = storedWire.copyOf()
+    @Synchronized
+    fun wireBytes(): ByteArray {
+        requireEpochSeal(!closed)
+        return storedWire.copyOf()
+    }
+
+    @Synchronized
+    override fun close() {
+        closed = true
+        storedWire.fill(0)
+    }
 
     override fun toString(): String = "EpochSealEnvelopeV1(redacted,no-authority)"
 }

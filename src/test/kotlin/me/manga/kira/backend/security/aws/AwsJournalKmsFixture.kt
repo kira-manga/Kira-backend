@@ -26,6 +26,7 @@ internal class AwsJournalKmsFixture(val journal: ComplaintJournalConfigurationV1
     val replies = mutableListOf<JournalKmsHttpReply>()
     var createdClients = 0
     var closedClients = 0
+    var returnedClientCloses = 0
     var now = 0L
     var clockReads = 0
     var onClockRead: (Int) -> Unit = {}
@@ -78,6 +79,7 @@ internal class AwsJournalKmsFixture(val journal: ComplaintJournalConfigurationV1
             override fun close() {
                 closedClients++
                 onClientClose()
+                returnedClientCloses++
             }
 
             override fun clientName(): String = "SyntheticJournalKmsSync"

@@ -3,6 +3,7 @@ package me.manga.kira.backend.security.aws
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
+import me.manga.kira.backend.security.EpochSealAttemptV1
 import me.manga.kira.backend.security.JournalCodecAttemptV1
 import me.manga.kira.backend.security.JournalDataKeyPortV1
 import me.manga.kira.backend.security.JournalDataKeyRequestV1
@@ -46,6 +47,7 @@ internal class AwsJournalDataKeyAdapter private constructor(
     private val sdk: KmsClient,
     private val transport: BoundedJournalKmsSdkHttpClient,
     private val nanoTime: () -> Long,
+    private val sealAttempt: EpochSealAttemptV1?,
 ) : JournalDataKeyPortV1,
     AutoCloseable {
     private val lifecycle = Any()
@@ -73,7 +75,7 @@ internal class AwsJournalDataKeyAdapter private constructor(
         var ownedLease: T? = null
         val result = runCatching {
             journalKmsSdkCall {
-                val call = profile.prepare(request, operation, wrapped, started, nanoTime).also { ownedCall = it }
+                val call = profile.prepare(request, operation, wrapped, started, nanoTime, sealAttempt).also { ownedCall = it }
                 call.check()
                 transport.begin(call)
                 val lease = invoke(call).also { ownedLease = it }
@@ -251,7 +253,8 @@ internal class AwsJournalDataKeyAdapter private constructor(
             httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
             nanoTime: () -> Long,
             enclosingBudget: PersistenceTimeBudget? = null,
-        ): AwsJournalDataKeyAdapter = openProfile(journal, credentials, httpFactory, nanoTime, null, epochSeal = true, enclosingBudget)
+            sealAttempt: EpochSealAttemptV1? = null,
+        ): AwsJournalDataKeyAdapter = openProfile(journal, credentials, httpFactory, nanoTime, null, epochSeal = true, enclosingBudget, sealAttempt)
 
         private fun openProfile(
             journal: ComplaintJournalConfigurationV1,
@@ -261,13 +264,15 @@ internal class AwsJournalDataKeyAdapter private constructor(
             attempt: JournalCodecAttemptV1?,
             epochSeal: Boolean,
             enclosingBudget: PersistenceTimeBudget?,
+            sealAttempt: EpochSealAttemptV1? = null,
         ): AwsJournalDataKeyAdapter {
             requireConnectionFree()
             return journalKmsSdkCall {
                 requireJournalKms(!opened && !closed)
                 opened = true
                 val result = runCatching {
-                    requireConstructionBudget(attempt, enclosingBudget)
+                    requireJournalKms(epochSeal || sealAttempt == null)
+                    requireConstructionBudget(attempt, enclosingBudget, sealAttempt)
                     val profile = if (epochSeal) JournalKmsRequestProfile.epochSeal(journal) else JournalKmsRequestProfile(journal)
                     validateCredentials(credentials)
                     requireJournalKms(
@@ -278,7 +283,7 @@ internal class AwsJournalDataKeyAdapter private constructor(
                     requireJournalKms(region != null)
                     val emptyProfile = ProfileFile.aggregator().build()
                     val endpoint = regionalEndpoint(checkNotNull(region), emptyProfile)
-                    requireConstructionBudget(attempt, enclosingBudget)
+                    requireConstructionBudget(attempt, enclosingBudget, sealAttempt)
                     val transport = BoundedJournalKmsSdkHttpClient(
                         profile.region,
                         endpoint,
@@ -291,7 +296,7 @@ internal class AwsJournalDataKeyAdapter private constructor(
                             stage = ConstructionStage.HTTP_RETURNED
                         }
                     }.also { this.transport = it }
-                    requireConstructionBudget(attempt, enclosingBudget)
+                    requireConstructionBudget(attempt, enclosingBudget, sealAttempt)
                     stage = ConstructionStage.OPENING_SDK
                     val sdk = KmsClient.builder().region(region).credentialsProvider(StaticCredentialsProvider.create(credentials))
                         .defaultsMode(DefaultsMode.STANDARD).dualstackEnabled(false).fipsEnabled(false).endpointOverride(endpoint)
@@ -304,17 +309,18 @@ internal class AwsJournalDataKeyAdapter private constructor(
                             this.sdk = it
                             stage = ConstructionStage.SDK_RETURNED
                         }
-                    requireConstructionBudget(attempt, enclosingBudget)
-                    AwsJournalDataKeyAdapter(journal, profile, sdk, transport, nanoTime).also { owner = it }
+                    requireConstructionBudget(attempt, enclosingBudget, sealAttempt)
+                    AwsJournalDataKeyAdapter(journal, profile, sdk, transport, nanoTime, sealAttempt).also { owner = it }
                 }
                 if (result.isFailure) return@journalKmsSdkCall withJournalKmsCleanup({ result.getOrThrow() }, ::close)
                 result.getOrThrow()
             }
         }
 
-        private fun requireConstructionBudget(attempt: JournalCodecAttemptV1?, enclosingBudget: PersistenceTimeBudget?) {
+        private fun requireConstructionBudget(attempt: JournalCodecAttemptV1?, enclosingBudget: PersistenceTimeBudget?, sealAttempt: EpochSealAttemptV1?) {
             attempt?.remainingMillis(1)
             enclosingBudget?.remainingMillis(1)
+            sealAttempt?.remainingProviderMillis(1)
         }
 
         @Synchronized

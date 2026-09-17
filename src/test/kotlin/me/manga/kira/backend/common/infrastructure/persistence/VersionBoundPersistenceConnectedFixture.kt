@@ -60,8 +60,11 @@ internal class VersionBoundPersistenceConnectedFixture(
         suppliedPassword.fill(0) // The connected path must use its captured acquisition, never a later caller buffer.
     }
 
-    fun bind(profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) {
-        pools = owner.bindVersionBoundPools(profile) // The owner already retains partial-shell custody if this throws.
+    fun bind(
+        profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,
+        nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+    ) {
+        pools = owner.bindVersionBoundPools(profile, nanoClock) // The original owner retains partial-shell custody if this throws.
         Files.createDirectory(trustParent, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
         parentCreated = true
         assertEquals(PersistencePublicTrustPreparation.READY, owner.preparePublicTrust())

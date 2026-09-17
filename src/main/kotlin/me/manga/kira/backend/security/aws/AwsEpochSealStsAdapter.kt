@@ -1,7 +1,11 @@
 package me.manga.kira.backend.security.aws
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochSealCustodyV1
 import me.manga.kira.backend.security.EpochSealAttemptV1
+import me.manga.kira.backend.security.EpochSealCodecV1
+import me.manga.kira.backend.security.EpochSealContentV1
+import me.manga.kira.backend.security.EpochSealEnvelopeV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
@@ -31,14 +35,14 @@ import javax.net.ssl.HttpsURLConnection
 
 /**
  * Cold, one-shot lower STS protocol owner. Three real signed SDK requests, no default credentials,
- * arbitrary policies/tags, refresh, retries or authority/activation wiring. The actual retained
- * current-owner/D4/post-commit acquisition entry is a separate unfinished integration requirement.
+ * arbitrary policies/tags, refresh or retries. The closed consumer checks actual retained post-commit
+ * custody; standalone observation remains a lower fixture, never current or activation authority.
  *
  * Expectations/identity do not prove installed trust, effective principal isolation or policies.
  * PutObjectRetention is needed for an initial locked PUT; this session profile cannot attest that
  * standalone retention extension is impossible. The exact LIST prefix may lexically match siblings;
  * a future fixed readback must still reject any key other than the committed key. KMS context is
- * unchanged and opaque. No raw credential accessor or S3/KMS client factory is exposed by this slice.
+ * unchanged and opaque. No raw credential accessor or caller-selected S3/KMS client factory exists.
  */
 internal class AwsEpochSealStsAdapter private constructor(
     private val routing: VersionBoundComplaintJournalRouting,
@@ -46,6 +50,7 @@ internal class AwsEpochSealStsAdapter private constructor(
     private val binding: AwsEpochSealStsBinding,
     private val limits: AwsEpochSealStsLimits,
     private val httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+    private val kmsHttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
     private val nanoTime: () -> Long,
     private val wallClock: () -> Instant,
 ) : AutoCloseable {
@@ -53,6 +58,7 @@ internal class AwsEpochSealStsAdapter private constructor(
     private val used = AtomicBoolean()
     private val closed = AtomicBoolean()
     private val closeFailure = AtomicReference<Throwable?>()
+    private val kmsConstruction = AwsJournalDataKeyAdapter.Construction()
 
     @Volatile private var source: EpochSealStsClientOwner? = null
 
@@ -83,13 +89,30 @@ internal class AwsEpochSealStsAdapter private constructor(
                 synchronized(lifecycle) {
                     acquisition.remainingMillis(1)
                     requireEpochSealSts(!closed.get(), EpochSealStsFailure.ACQUISITION_FAILED)
-                    Session(exactSealObjectKey, assumed, identity, timing).also { session = it }
+                    Session(exactSealObjectKey, attempt, assumed, identity, timing).also { session = it }
                 }
             }
             if (result.isFailure) return@epochSealStsCall withEpochSealStsCleanup({ result.getOrThrow() }, ::close)
             result.getOrThrow()
         }
     }
+
+    /** No observation escapes: only this exact registered original operation can use the acquired private session. */
+    internal fun acquireOwned(custody: CatalogEpochSealCustodyV1, attempt: EpochSealAttemptV1, content: EpochSealContentV1) {
+        custody.requireSts(this, attempt, content)
+        acquire(content.route.objectKey, attempt)
+        custody.requireSts(this, attempt, content)
+    }
+
+    internal fun sealOwned(custody: CatalogEpochSealCustodyV1, attempt: EpochSealAttemptV1, content: EpochSealContentV1): EpochSealEnvelopeV1 =
+        epochSealStsCall {
+            custody.requireSts(this, attempt, content)
+            val selected = synchronized(lifecycle) {
+                requireEpochSealSts(!closed.get() && session != null)
+                checkNotNull(session)
+            }
+            selected.seal(custody, attempt, content)
+        }
 
     private fun newClient(
         credentials: AwsSessionCredentials,
@@ -187,13 +210,15 @@ internal class AwsEpochSealStsAdapter private constructor(
     }
 
     private inner class Session(
-        @Suppress("unused", "UnusedPrivateProperty") private val objectKey: String,
+        private val objectKey: String,
+        private val original: EpochSealAttemptV1,
         assumed: Assumed,
         observed: Identity,
         private val timing: EpochSealStsSessionTiming,
     ) : ObservedSession {
-        // Keep custody private. Future current-owner integration must add a closed consumer, not a raw accessor.
+        // SDK/credentials never leave the closed same-key/J/attempt consumer.
         private var credentials: AwsSessionCredentials? = assumed.credentials
+        private val encoded = AtomicBoolean()
         override val expiration: Instant = assumed.expiration
         override val accountId: String = observed.accountId
         override val arn: String = observed.arn
@@ -206,6 +231,31 @@ internal class AwsEpochSealStsAdapter private constructor(
                 requireEpochSealSts(!closed.get() && credentials != null && session === this, EpochSealStsFailure.SESSION_EXPIRED)
                 timing.requireUsable(expiration)
             }
+        }
+
+        fun seal(custody: CatalogEpochSealCustodyV1, attempt: EpochSealAttemptV1, content: EpochSealContentV1): EpochSealEnvelopeV1 {
+            custody.requireSts(this@AwsEpochSealStsAdapter, attempt, content)
+            requireEpochSealSts(original === attempt && objectKey == content.route.objectKey && content.belongsTo(routing))
+            checkUsable()
+            requireEpochSealSts(encoded.compareAndSet(false, true), EpochSealStsFailure.INVALID_INPUT)
+            val material = synchronized(lifecycle) { checkNotNull(credentials) }
+            val keys = kmsConstruction.openEpochSeal(
+                routing.journalConfiguration,
+                material,
+                kmsHttpFactory,
+                nanoTime,
+                sealAttempt = original,
+            )
+            custody.requireSts(this@AwsEpochSealStsAdapter, original, content)
+            checkUsable()
+            val candidate = EpochSealCodecV1(routing, keys, nanoTime = nanoTime).seal(content, original)
+            val checked = runCatching {
+                custody.requireSts(this@AwsEpochSealStsAdapter, original, content)
+                checkUsable()
+                candidate
+            }
+            if (checked.isFailure) return withEpochSealStsCleanup({ checked.getOrThrow() }, candidate::close)
+            return checked.getOrThrow()
         }
 
         fun discard() {
@@ -222,7 +272,10 @@ internal class AwsEpochSealStsAdapter private constructor(
             session?.discard()
         }
         val failure = runCatching {
-            withEpochSealStsCleanup({ target?.close() }, { source?.close() })
+            withEpochSealStsCleanup(
+                { epochSealStsClose { kmsConstruction.close() } },
+                { withEpochSealStsCleanup({ target?.close() }, { source?.close() }) },
+            )
         }.exceptionOrNull()
         if (failure != null) closeFailure.updateAndGet { prior -> if (replaceEpochSealStsFailure(prior, failure)) failure else prior }
         closeFailure.get()?.let { throw it }
@@ -262,8 +315,16 @@ internal class AwsEpochSealStsAdapter private constructor(
             sourceCredentials: AwsSessionCredentials,
             binding: AwsEpochSealStsBinding,
             limits: AwsEpochSealStsLimits = AwsEpochSealStsLimits(),
-        ): AwsEpochSealStsAdapter =
-            create(routing, sourceCredentials, binding, limits, { remaining -> urlClient(limits, remaining) }, System::nanoTime, Instant::now)
+        ): AwsEpochSealStsAdapter = create(
+            routing,
+            sourceCredentials,
+            binding,
+            limits,
+            { remaining -> urlClient(limits, remaining) },
+            ::journalKmsUrlConnectionClient,
+            System::nanoTime,
+            Instant::now,
+        )
 
         /** Actual StsClient signing/Query/XML behavior; only its public HTTP SPI and clocks are substituted. */
         fun withHttpFixture(
@@ -274,7 +335,8 @@ internal class AwsEpochSealStsAdapter private constructor(
             httpFactory: () -> SdkHttpClient,
             nanoTime: () -> Long = System::nanoTime,
             wallClock: () -> Instant = Instant::now,
-        ): AwsEpochSealStsAdapter = create(routing, sourceCredentials, binding, limits, { httpFactory() }, nanoTime, wallClock)
+            kmsHttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient = ::journalKmsUrlConnectionClient,
+        ): AwsEpochSealStsAdapter = create(routing, sourceCredentials, binding, limits, { httpFactory() }, kmsHttpFactory, nanoTime, wallClock)
 
         private fun create(
             routing: VersionBoundComplaintJournalRouting,
@@ -282,6 +344,7 @@ internal class AwsEpochSealStsAdapter private constructor(
             binding: AwsEpochSealStsBinding,
             limits: AwsEpochSealStsLimits,
             factory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            kmsFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
             nanoTime: () -> Long,
             wallClock: () -> Instant,
         ): AwsEpochSealStsAdapter {
@@ -292,7 +355,7 @@ internal class AwsEpochSealStsAdapter private constructor(
                     binding.targetAccountId == routing.journalConfiguration.declaration().journalLocation.accountId,
                     EpochSealStsFailure.INVALID_INPUT,
                 )
-                AwsEpochSealStsAdapter(routing, credentials, binding, limits, factory, nanoTime, wallClock)
+                AwsEpochSealStsAdapter(routing, credentials, binding, limits, factory, kmsFactory, nanoTime, wallClock)
             }
         }
 

@@ -228,13 +228,30 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
      * Every retry consumes the same original J; this cannot extend a rotation or resurrect a stop.
      * Renewal itself still uses its unchanged expected-window/CAS protocol below.
      */
-    internal fun requireRotationContinuity(originalBudget: PersistenceTimeBudget) = requireContinuity(originalBudget, COORDINATOR_LEASE_NANOS)
+    internal fun requireRotationContinuity(originalBudget: PersistenceTimeBudget) {
+        requireContinuity(originalBudget, COORDINATOR_LEASE_NANOS)
+    }
 
     /** Resolution stops if real locked renewal did not recur within ten seconds; no local clock reset. */
-    internal fun requireSealContinuity(originalBudget: PersistenceTimeBudget) = requireContinuity(originalBudget, 10_000_000_000L)
+    internal fun requireSealContinuity(originalBudget: PersistenceTimeBudget) {
+        requireContinuity(originalBudget, 10_000_000_000L)
+    }
+
+    /** Floor the ACTUAL last renewal-dispatch window; provider slices never manufacture a new cadence allowance. */
+    @Suppress("TooGenericExceptionCaught")
+    internal fun remainingSealContinuityMillis(originalBudget: PersistenceTimeBudget, ceilingMillis: Int): Int {
+        try {
+            val remaining = requireContinuity(originalBudget, 10_000_000_000L) / 1_000_000L
+            if (remaining <= 0) refuse(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+            return minOf(remaining, originalBudget.remainingMillis(ceilingMillis.toLong())).toInt()
+        } catch (problem: Throwable) {
+            close()
+            throw boundedEpochRotationFailure(problem)
+        }
+    }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun requireContinuity(originalBudget: PersistenceTimeBudget, maximumElapsedNanos: Long) {
+    private fun requireContinuity(originalBudget: PersistenceTimeBudget, maximumElapsedNanos: Long): Long {
         try {
             while (true) {
                 originalBudget.remainingMillis(10_000)
@@ -251,7 +268,7 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
                 }
                 // A healthy same-campaign replacement is allowed; an irreversible close/inactive campaign is not.
                 if (!custody.isActive(this) || window.get() == null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-                return
+                return maximumElapsedNanos - elapsed
             }
         } catch (problem: Throwable) {
             close()

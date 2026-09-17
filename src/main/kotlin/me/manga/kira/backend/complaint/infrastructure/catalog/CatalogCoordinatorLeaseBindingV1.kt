@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.HexFormat
@@ -107,6 +108,14 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     internal fun cutoffRouting(): VersionBoundComplaintJournalRouting {
         requireUnchangedConfiguration()
         return process.consumers.journalRouting.also { check(it.journalConfiguration === journal) }
+    }
+
+    /** Only the actual cold owner retained before this process's D4/G1; never a caller-selected replacement. */
+    internal fun epochSealAcquisition(expectedLanes: JournalPublicationLanesV1): VersionBoundEpochSealAcquisitionV1 {
+        requireUnchangedConfiguration()
+        val selected = process.epochSealAcquisition ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        selected.requireRetained(cutoffRouting(), expectedLanes)
+        return selected
     }
 
     /** Only the actual retained D3 resource; a fourth pool or independently assembled descriptor is not accepted. */
