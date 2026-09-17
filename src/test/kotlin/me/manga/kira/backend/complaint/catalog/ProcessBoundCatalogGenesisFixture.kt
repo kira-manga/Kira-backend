@@ -138,6 +138,7 @@ internal class ProcessBoundCatalogGenesisFixture(val process: VersionBoundCompla
             -> step
 
             null -> "NONE"
+
             else -> "OTHER"
         }
         // The probe is not used by built-in snapshot/SDK calls: these are explicitly last observations, not a failing-phase claim.
