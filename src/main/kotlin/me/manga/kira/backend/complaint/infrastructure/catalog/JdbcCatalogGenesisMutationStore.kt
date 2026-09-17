@@ -8,7 +8,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseP
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenMutation
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenSignatureSlot
+import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.domain.catalog.UnverifiedGenesisPreparation
+import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
@@ -59,8 +61,26 @@ internal class CatalogGenesisMutationOperation private constructor(
         get() {
             phase.catalogGenesis.requireCommitted(this)
             requireConnectionFree()
+            requireProcessBinding()
             return checkNotNull(input.finalization).observation(checkNotNull(finalizationState))
         }
+
+    val processBoundProjection: ProcessBoundCatalogGenesisProjection
+        get() = ProcessBoundCatalogGenesisProjection.issuedBy(this)
+
+    /** Only this actual retained PROJECT operation can issue the private handle, after known commit AND release. */
+    internal fun requireReleasedProcessProjection(): Pair<CatalogGenesisFinalizationInput, CatalogGenesisFinalizationState> {
+        phase.catalogGenesis.requireCommitted(this)
+        requireConnectionFree()
+        val finalization = checkNotNull(input.finalization)
+        requireCatalogReadback(
+            input.path === PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT && finalization.binding.process != null &&
+                finalizationState in setOf(CatalogGenesisFinalizationState.PROJECTED, CatalogGenesisFinalizationState.ALREADY_PROJECTED),
+            CatalogReadbackFailure.INVALID_LOCAL_STATE,
+        )
+        requireProcessBinding()
+        return finalization to checkNotNull(finalizationState)
+    }
 
     @Suppress("TooGenericExceptionCaught")
     private fun execute(capacity: JdbcComplaintCapacityStore) {
@@ -69,7 +89,7 @@ internal class CatalogGenesisMutationOperation private constructor(
             if (input.finalization == null) {
                 check(jdbc.query(LOCK_GENESIS_CONTROL, { row, _ -> row.requiredBoolean("genesis_closed") }).single())
             } else {
-                control = readControl(lock = true).also { check(it.initialMatches) }
+                control = readControl(lock = true).also(::requireControl)
             }
             requireAt(Stage.RETAINED, jdbc)
             stage = Stage.CONTROL_LOCKED
@@ -192,7 +212,7 @@ internal class CatalogGenesisMutationOperation private constructor(
     }
 
     private fun checkFinalizationReread(row: StoredGenesisMutation, head: StoredGenesisControl) {
-        check(head.initialMatches)
+        requireControl(head)
         val before = checkNotNull(checkNotNull(original).finalization)
         val after = checkNotNull(row.finalization)
         finalizationState = when (input.path) {
@@ -212,6 +232,13 @@ internal class CatalogGenesisMutationOperation private constructor(
             }
 
             else -> error("Unsupported G1 finalization phase.")
+        }
+    }
+
+    private fun requireControl(control: StoredGenesisControl) {
+        check(control.initialMatches)
+        if (input.path === PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT && input.finalization?.binding?.process != null) {
+            check(control.currentProcessMatches) // Same locked SELECT and final reread; NULL is never bound D.
         }
     }
 
@@ -242,6 +269,11 @@ internal class CatalogGenesisMutationOperation private constructor(
     private fun requireAt(expected: Stage, selected: JdbcTemplate) {
         phase.catalogGenesis.requireRetained(this, selected)
         check(stage === expected && selected === jdbc)
+        requireProcessBinding()
+    }
+
+    private fun requireProcessBinding() {
+        input.finalization?.let { phase.catalogGenesis.requireProcessBinding(it.binding, jdbc) }
     }
 
     override fun toString(): String = "CatalogGenesisMutationOperation(sealed-G1-observation,no-publication-authority)"
@@ -369,6 +401,7 @@ private class StoredGenesisFinalization(
 
 private class StoredGenesisControl(
     val initialMatches: Boolean,
+    val currentProcessMatches: Boolean,
     val absent: Boolean,
     val pending: Boolean,
     val projected: Boolean,
@@ -377,6 +410,7 @@ private class StoredGenesisControl(
     companion object {
         fun copy(row: ResultSet): StoredGenesisControl = StoredGenesisControl(
             row.requiredBoolean("initial_matches"),
+            row.requiredBoolean("current_process_matches"),
             row.requiredBoolean("head_absent"),
             row.requiredBoolean("head_pending"),
             row.requiredBoolean("head_projected"),

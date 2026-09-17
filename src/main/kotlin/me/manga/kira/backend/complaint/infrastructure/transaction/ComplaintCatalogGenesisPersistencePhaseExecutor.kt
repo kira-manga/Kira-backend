@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMuta
 import me.manga.kira.backend.complaint.infrastructure.catalog.GenesisResume
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogGenesisMutationStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
+import me.manga.kira.backend.complaint.infrastructure.catalog.ProcessBoundCatalogGenesisProjection
 import org.springframework.jdbc.core.JdbcTemplate
 
 /** Dormant G1-only composition. No publication, pin production, credential issuance, runtime opening or restore clearance. */
@@ -35,6 +36,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
         expected: CatalogGenesisInitialLiveBinding,
     ): CatalogGenesisFinalizationObservation {
         requireConnectionFree()
+        expected.requirePersistence(ownership, jdbc)
         val initial = copyBundle(initialBundleBytes)
         val current = copyBundle(currentBundleBytes)
         val local = snapshot.load(initial, current, policy) // A committed AND released observation, not authority.
@@ -57,6 +59,16 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
     ): CatalogGenesisFinalizationObservation {
         requireConnectionFree()
         return persist(CatalogGenesisMutationInput.project(readback, expected), expected.capacityPolicyDigestBytes()).finalizationObservation
+    }
+
+    /** Same closed PROJECT/no-op phase, but only its actual committed+released process binding can produce this partial receipt. */
+    fun projectGenesisForProcess(
+        readback: CatalogDualLocationVerifier.GenesisReadback,
+        expected: CatalogGenesisInitialLiveBinding,
+    ): ProcessBoundCatalogGenesisProjection {
+        requireConnectionFree()
+        requireCatalogReadback(expected.process != null, CatalogReadbackFailure.INVALID_POLICY)
+        return persist(CatalogGenesisMutationInput.project(readback, expected), expected.capacityPolicyDigestBytes()).processBoundProjection
     }
 
     fun prepareGenesis(
@@ -89,6 +101,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
     private fun persist(input: CatalogGenesisMutationInput, expectedCapacityPolicyDigest: ByteArray): CatalogGenesisMutationOperation {
         requireConnectionFree()
         requireCatalogReadback(expectedCapacityPolicyDigest.size == 32, CatalogReadbackFailure.INVALID_POLICY)
+        input.finalization?.binding?.requirePersistence(ownership, jdbc)
         val capacity = JdbcComplaintCapacityStore(jdbc, expectedCapacityPolicyDigest)
         val store = JdbcCatalogGenesisMutationStore(jdbc)
         val phase = when (input.path) {
@@ -108,6 +121,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT -> store.project(input, capacity)
                 else -> error("Unsupported G1 phase.")
             }
+            input.finalization?.binding?.requirePersistence(ownership, jdbc)
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)

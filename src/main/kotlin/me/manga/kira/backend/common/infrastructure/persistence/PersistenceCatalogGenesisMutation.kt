@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import org.springframework.jdbc.core.JdbcTemplate
 
@@ -9,5 +10,6 @@ internal interface PersistenceCatalogGenesisMutation {
     fun retain(operation: CatalogGenesisMutationOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: CatalogGenesisMutationOperation, jdbc: JdbcTemplate)
     fun requireCommitted(operation: CatalogGenesisMutationOperation)
+    fun requireProcessBinding(binding: CatalogGenesisInitialLiveBinding, jdbc: JdbcTemplate)
     fun completed(): Boolean
 }
