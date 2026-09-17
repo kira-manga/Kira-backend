@@ -235,6 +235,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
         val SQL = """
             WITH deletion_time AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
             SELECT t.observed_at, isfinite(t.observed_at) AS finite_observed_at,
+                ${OwnerDeleteAllProcessBinding.columns},
                 i.id AS identity_id, i.data_scope_id AS identity_scope, i.state AS identity_state, i.terminal_at AS identity_terminal_at,
                 (complaint_is_v4(i.id) AND complaint_scope_valid(i.data_scope_id, i.test_only) AND i.created_at IS NOT NULL
                     AND ((i.state IN ('ACTIVE','DELETION_PENDING','RECOVERY_RESERVED') AND i.terminal_at IS NULL)
@@ -322,6 +323,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
                     IS TRUE AS run_terminal_shape
             FROM (VALUES (?::uuid, ?::uuid)) AS requested(id, data_scope_id)
             CROSS JOIN deletion_time t
+            LEFT JOIN complaint_journal_control j ON j.data_scope_id = requested.data_scope_id
             LEFT JOIN complaint_installation_ids i ON i.id = requested.id
             LEFT JOIN app_installations c ON c.id = requested.id
             LEFT JOIN LATERAL (SELECT d.* FROM installation_deletion_receipts d WHERE d.installation_id = requested.id LIMIT 2) d ON true

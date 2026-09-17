@@ -21,7 +21,8 @@ internal sealed interface ComplaintInstallationDesiredSettings {
     /**
      * The caller supplies the expected complete-configuration digest from validated deployment settings,
      * never from observed control/run rows. This type validates its width, not its preimage or provenance.
-     * The complete authoritative configuration document is not defined here; no substitute hash is invented.
+     * The retained-process factory derives this value from its complete supported-profile configuration.
+     * Direct construction remains diagnostic/legacy input and cannot establish that same-owner binding.
      */
     class Configured(
         override val mode: ComplaintInstallationMode,

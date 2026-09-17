@@ -41,7 +41,7 @@ internal class JdbcComplaintOwnerDeleteAllVerificationStore(
     }
 
     fun verify(input: OwnerDeleteAllVerificationInputV1): ComplaintOwnerDeleteAllVerificationOperation =
-        ComplaintOwnerDeleteAllVerificationOperation.capture(jdbc, routing, codec, issuer, input)
+        ComplaintOwnerDeleteAllVerificationOperation.capture(jdbc, routing, codec, issuer, input, authorization)
 
     /** Recover the first strictly bound local proof; never fabricate Prepared, a provider readback or new timestamps. */
     fun resume(work: CommittedOwnerDeleteAllWork.RecordedVerified): CommittedOwnerDeleteAllVerificationV1 {
@@ -123,6 +123,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
     private val observed: CapturedOwnerDeleteAllVerification,
     private val issuer: Any,
     private val routing: VersionBoundComplaintJournalRouting,
+    private val authorization: JdbcComplaintOwnerDeleteAllStore,
 ) {
     private var stage = Stage.RETAINED
     private var proof: StoredVerification? = null
@@ -143,6 +144,8 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
     private fun execute() {
         requireRetained()
         check(stage === Stage.RETAINED)
+        authorization.lockBoundVerification(jdbc)
+        requireRetained()
         stage = Stage.RECEIPT
         val receipts = jdbc.query(OwnerDeleteAllVerificationSql.LOCK_RECEIPTS, { row, _ -> receipt(row) }, observed.event.tuple.actorId)
         requireRetained()
@@ -272,6 +275,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
             codec: OwnerDeleteAllVerificationCodecV1,
             issuer: Any,
             input: OwnerDeleteAllVerificationInputV1,
+            authorization: JdbcComplaintOwnerDeleteAllStore,
         ): ComplaintOwnerDeleteAllVerificationOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             var operation: ComplaintOwnerDeleteAllVerificationOperation? = null
@@ -279,7 +283,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
                 phase.ownerDeleteAllVerification.requireOperation(jdbc)
                 val observed = input as? CapturedOwnerDeleteAllVerification ?: error("Private publisher readback capture required")
                 observed.requireOwned(issuer, routing)
-                operation = ComplaintOwnerDeleteAllVerificationOperation(phase, jdbc, codec, observed, issuer, routing)
+                operation = ComplaintOwnerDeleteAllVerificationOperation(phase, jdbc, codec, observed, issuer, routing, authorization)
                 phase.ownerDeleteAllVerification.retain(operation, jdbc)
                 operation.execute()
                 return operation

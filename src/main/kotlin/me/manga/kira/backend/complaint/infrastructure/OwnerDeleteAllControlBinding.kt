@@ -13,14 +13,15 @@ import java.util.HexFormat
 import java.util.UUID
 
 /**
- * Necessary comparisons inside the retained fixed operation only. Supplied D/catalog evidence and
- * matching rows are NOT a full-D producer, restore acceptance, runtime capability or a permission to
- * dispatch. No bean/route consumes this dormant writer. Its private snapshot never leaves the phase.
+ * Necessary comparisons inside the retained fixed operation only. The bound path requires the
+ * actual process owner; legacy supplied D/catalog evidence remains diagnostic. Neither equality
+ * nor computed D grants restore/runtime authority. Its private snapshot never leaves the phase.
  */
 internal class OwnerDeleteAllControlBinding(
     private val desired: ComplaintInstallationDesiredSettings.Configured,
     routing: VersionBoundComplaintJournalRouting,
     catalog: CatalogCommonHeadEvidence,
+    private val process: OwnerDeleteAllProcessBinding? = null,
 ) {
     private val journal = routing.journalConfiguration.declaration()
     val writer: UUID = UUID.fromString(journal.writer.generationId)
@@ -30,6 +31,7 @@ internal class OwnerDeleteAllControlBinding(
     private val catalogWriter = UUID.fromString(catalog.chain.tail.catalogWriterGenerationId)
 
     init {
+        process?.requireInputs(desired, routing)
         require(desired.mode === ComplaintInstallationMode.LIVE && desired.scope == ComplaintDataScope.LIVE)
         require(desired.databaseIdentity.toString() == journal.writer.databaseIdentity && desired.restoreIdentity.toString() == journal.writer.restoreIdentity)
         require(catalogGeneration in 1..65536 && catalogGeneration >= catalog.chain.trust.minimumHeadGeneration)
@@ -37,6 +39,7 @@ internal class OwnerDeleteAllControlBinding(
     }
 
     fun lock(jdbc: JdbcTemplate, authorizingPath: Boolean): Locked {
+        process?.requireDeletion(jdbc)
         val selected = jdbc.query(
             CONTROL_SQL,
             { row, _ -> read(row) },
@@ -50,6 +53,7 @@ internal class OwnerDeleteAllControlBinding(
         // Necessary local interval only; neither timestamps nor stored seal bytes prove provider retention.
         check(!selected.sealVerified.isAfter(now) && selected.sealRetainUntil.isAfter(now))
         if (authorizingPath) check(Duration.between(selected.checkpointCompleted, now).toMillis() <= journal.limits.deadlines.checkpointMaxAgeMillis)
+        process?.requireDeletion(jdbc)
         return Locked(selected.epoch, selected.sealedEpoch)
     }
 

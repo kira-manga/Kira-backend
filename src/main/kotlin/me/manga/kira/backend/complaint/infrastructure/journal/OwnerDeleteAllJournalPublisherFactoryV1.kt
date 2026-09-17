@@ -36,6 +36,11 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
 
     fun tryReserve(): OwnerDeleteAllReservation? = lanes.tryOwnerDeleteAll(this)
 
+    /** A bound process graph cannot adopt a same-J publisher whose private work issuer is different. */
+    internal fun requireBinding(selectedStore: JdbcComplaintOwnerDeleteAllStore, selectedRouting: VersionBoundComplaintJournalRouting) {
+        requireJournalPublication(store === selectedStore && routing === selectedRouting)
+    }
+
     internal fun isClosed(): Boolean = closed.get()
 
     internal fun requireLane(expected: JournalPublicationLanesV1) = requireJournalPublication(lanes === expected)

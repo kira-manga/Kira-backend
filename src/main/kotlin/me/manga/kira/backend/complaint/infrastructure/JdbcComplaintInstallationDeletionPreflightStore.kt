@@ -16,21 +16,29 @@ import org.springframework.jdbc.core.JdbcTemplate
 import java.time.Instant
 
 /** Fixed read-only comparison producer. No session refresh, enabled bean, admission or deletion writer. */
-internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc: JdbcTemplate) {
+internal class JdbcComplaintInstallationDeletionPreflightStore(
+    private val jdbc: JdbcTemplate,
+    private val process: OwnerDeleteAllProcessBinding? = null,
+) {
     private val issuer = Any()
 
     fun read(candidate: InstallationDeletionCandidate): ComplaintInstallationDeletionPreflightOperation =
-        ComplaintInstallationDeletionPreflightOperation.capture(jdbc, issuer, candidate)
+        ComplaintInstallationDeletionPreflightOperation.capture(jdbc, issuer, candidate, process)
 
-    fun requireOwned(comparison: InstallationDeletionPreflightTuple, ownerIdentity: Any) =
+    fun requireOwned(comparison: InstallationDeletionPreflightTuple, ownerIdentity: Any) {
+        process?.requireOrdinary(jdbc)
         ComplaintInstallationDeletionPreflightOperation.requireOwned(comparison, issuer, ownerIdentity)
+    }
 
     fun bindReplay(
         comparison: InstallationDeletionPreflightResult.Completed,
         ownerIdentity: Any,
         routing: VersionBoundComplaintJournalRouting,
         codec: OwnerDeleteAllJournalCodecV1,
-    ): BoundOwnerDeleteAllReplayV1 = ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing, codec)
+    ): BoundOwnerDeleteAllReplayV1 {
+        process?.requireOrdinary(jdbc)
+        return ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing, codec)
+    }
 
     override fun toString(): String = "JdbcComplaintInstallationDeletionPreflightStore(read-only)"
 }
@@ -41,6 +49,7 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
     private val jdbc: JdbcTemplate,
     private val issuer: Any,
     private val candidate: InstallationDeletionCandidate,
+    private val process: OwnerDeleteAllProcessBinding?,
 ) {
     private var stage = Stage.PREPARED
     private var ownerIdentity: Any? = null
@@ -55,6 +64,7 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         get() {
             phase.installationDeletionPreflight.requireCommitted(this)
             requireConnectionFree()
+            process?.requireOrdinary(jdbc)
             // Private continuation objects do not even exist before known commit + actual owned release.
             return released ?: release(checkNotNull(comparison), checkNotNull(ownerIdentity)).also { released = it }
         }
@@ -63,14 +73,19 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         requireRetained()
         check(stage === Stage.PREPARED)
         ownerIdentity = phase.installationDeletionPreflight.ownerIdentity(this, jdbc)
+        process?.requireOrdinary(jdbc)
         stage = Stage.READING
         val snapshot = jdbc.query(
             InstallationDeletionPreflightSnapshot.SQL,
-            { row, _ -> InstallationDeletionPreflightSnapshot.read(row, candidate.installation) },
+            { row, _ ->
+                process?.requireSnapshot(row)
+                InstallationDeletionPreflightSnapshot.read(row, candidate.installation)
+            },
             candidate.installation.id,
             candidate.installation.scope.id,
         ).single() // The bounded two-row sentinel refuses multiple receipts/applied versions; it never chooses one.
         requireRetained()
+        process?.requireOrdinary(jdbc)
         comparison = snapshot.compare(candidate)
         requireRetained()
         stage = Stage.COMPLETE
@@ -162,12 +177,17 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
 
     companion object {
         @Suppress("TooGenericExceptionCaught")
-        fun capture(jdbc: JdbcTemplate, issuer: Any, candidate: InstallationDeletionCandidate): ComplaintInstallationDeletionPreflightOperation {
+        fun capture(
+            jdbc: JdbcTemplate,
+            issuer: Any,
+            candidate: InstallationDeletionCandidate,
+            process: OwnerDeleteAllProcessBinding?,
+        ): ComplaintInstallationDeletionPreflightOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             var operation: ComplaintInstallationDeletionPreflightOperation? = null
             try {
                 phase.installationDeletionPreflight.requireOperation(jdbc)
-                operation = ComplaintInstallationDeletionPreflightOperation(phase, jdbc, issuer, candidate)
+                operation = ComplaintInstallationDeletionPreflightOperation(phase, jdbc, issuer, candidate, process)
                 phase.installationDeletionPreflight.retain(operation, jdbc)
                 operation.read()
                 return operation
