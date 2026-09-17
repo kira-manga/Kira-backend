@@ -32,8 +32,8 @@ internal class VersionBoundOwnerDeleteAllConfiguration(
     init {
         requireConnectionFree()
         process.requireUnchangedConfiguration()
-        require(ordinaryOwnership.dataSource === process.pools.ordinary)
-        require(deletionOwnership.dataSource === process.pools.deletion)
+        ordinaryOwnership.requireBoundComplaintOrdinary(process.pools)
+        deletionOwnership.requireBoundComplaintDeletion(process.pools)
     }
 
     private val bound = OwnerDeleteAllProcessBinding(process)
