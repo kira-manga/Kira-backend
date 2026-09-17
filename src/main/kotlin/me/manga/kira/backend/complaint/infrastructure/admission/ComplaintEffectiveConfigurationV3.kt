@@ -26,18 +26,7 @@ internal object ComplaintEffectiveConfigurationV3 {
         catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
         rotation: EpochRotationPersistence,
     ): ByteArray {
-        require(pools.epochRotation === rotation && rotation.belongsTo(pools)) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
-        rotation.requireUnchangedConfiguration()
-        val descriptor = rotation.descriptor()
-        val ordinary = pools.descriptors().first()
-        require(descriptor.authenticationPassword === ordinary.authenticationPassword) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
-        require(
-            descriptor.publicTrustSha256 == ordinary.publicTrustSha256 &&
-                descriptor.publicTrustByteCount == ordinary.publicTrustByteCount &&
-                descriptor.publicTrustCertificateCount == ordinary.publicTrustCertificateCount,
-        ) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
-        val allowance = consumers.journalConfiguration.declaration().limits.deadlines.epochRotationMillis
-        require(allowance.toLong() in 1..descriptor.maximumRotationMillis) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        val rotationConfiguration = rotationInventory(consumers, pools, rotation)
         val previous = ComplaintEffectiveConfigurationV2.encodeInventory(
             consumers,
             pools,
@@ -52,10 +41,31 @@ internal object ComplaintEffectiveConfigurationV3 {
             base + mapOf(
                 "schemaVersion" to JsonPrimitive(3),
                 "profile" to JsonPrimitive("INITIAL_LIVE_MEMORY_SINGLE_INSTANCE_G1_EPOCH_ROTATION"),
-                "epochRotation" to resource(descriptor, allowance),
+                "epochRotation" to rotationConfiguration,
             ),
         )
         return CanonicalJson.canonicalize(document).toByteArray(Charsets.UTF_8)
+    }
+
+    /** Same actual resource validation and exact declaration, reused by the explicit larger D5 profile. */
+    internal fun rotationInventory(
+        consumers: VersionBoundComplaintConsumerConfiguration,
+        pools: VersionBoundPersistencePools,
+        rotation: EpochRotationPersistence,
+    ): JsonObject {
+        require(pools.epochRotation === rotation && rotation.belongsTo(pools)) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        rotation.requireUnchangedConfiguration()
+        val descriptor = rotation.descriptor()
+        val ordinary = pools.descriptors().first()
+        require(descriptor.authenticationPassword === ordinary.authenticationPassword) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        require(
+            descriptor.publicTrustSha256 == ordinary.publicTrustSha256 &&
+                descriptor.publicTrustByteCount == ordinary.publicTrustByteCount &&
+                descriptor.publicTrustCertificateCount == ordinary.publicTrustCertificateCount,
+        ) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        val allowance = consumers.journalConfiguration.declaration().limits.deadlines.epochRotationMillis
+        require(allowance.toLong() in 1..descriptor.maximumRotationMillis) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        return resource(descriptor, allowance)
     }
 
     private fun resource(descriptor: VersionBoundEpochRotationDescriptor, allowance: Int): JsonObject {

@@ -18,6 +18,7 @@ import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
+import me.manga.kira.backend.complaint.catalog.withCurrentProjectedCatalogRefresh
 import me.manga.kira.backend.complaint.catalog.withCutoffResolverHistory
 import me.manga.kira.backend.complaint.catalog.withEpochRotation
 import me.manga.kira.backend.complaint.catalog.withHeldEpochSeal
@@ -201,6 +202,42 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `owned G1 refresh cleanup failure retains original coordinator custody against replacement`() =
         withFixture { tls -> withCurrentAcceptedCatalogRefresh(tls) { it.failedProviderCleanupPoisonsOriginalCoordinator() } }
+
+    @Test
+    fun `projected nonempty current refresh uses real SDK and exact released point history without mutation effects`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.nonemptyExactProjectedReplay() } }
+
+    @Test
+    fun `projected current history refuses mismatched frozen copies and fresh reread drift`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.exactHistoricalTupleAndFreshRereads() } }
+
+    @Test
+    fun `projected current refresh revalidates every full binding field after provider close`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.fullBindingRevalidatedAfterRawReadback() } }
+
+    @Test
+    fun `projected current refresh refuses pending G1 unexplained tails and current trust floor rollback`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.pendingUnexplainedTailAndIndependentFloor() } }
+
+    @Test
+    fun `projected current refresh shares the original G1 slot and total deadline through provider close`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.originalBudgetAndCrossProfileSlot() } }
+
+    @Test
+    fun `projected current provider close failure keeps original custody against factory replacement`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.providerCloseFailureKeepsOriginalSlot() } }
+
+    @Test
+    fun `projected current result needs known commit and actual release and failed originals never revive`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.realCommitAndReleaseFailuresStaySealed() } }
+
+    @Test
+    fun `projected overlap current head revalidates both genuine signature slots`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls, overlap = true) { it.genuineOverlapUsesBothExactSignatureSlots() } }
+
+    @Test
+    fun `joined genuine projected refresh admits exact generation lease transitions and refuses generation only drift`() =
+        withFixture { tls -> withCurrentProjectedCatalogRefresh(tls) { it.joinedLeaseLifecycleAndGenerationFence() } }
 
     @Test
     fun `owned coordinator lease uses exact thirty second DB intervals and preserves nonlease state through renew release and reacquire`() =

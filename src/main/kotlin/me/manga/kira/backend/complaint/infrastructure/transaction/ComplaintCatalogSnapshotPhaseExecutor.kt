@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainReaderP
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.domain.catalog.UnverifiedGenesisPreparation
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotRows
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
@@ -25,6 +26,21 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         return capture().validate(initial, trust, policy)
     }
 
+    /** Same snapshot operation/resource, bounded by the already-running projected refresh rather than a restarted attempt. */
+    internal fun loadProjected(
+        initialBundleBytes: ByteArray,
+        currentBundleBytes: ByteArray,
+        policy: CatalogReadbackPolicy,
+        attempt: CatalogReadbackRefreshCustodyV1.Attempt,
+    ): LocalCatalogSnapshot {
+        requireConnectionFree()
+        attempt.requireProjectedPersistence(ownership)
+        val initial = copyBundle(initialBundleBytes)
+        val current = copyBundle(currentBundleBytes)
+        val trust = OfflineTrustBundleVerifier.verify(current, policy.chain.trustBundlePolicy)
+        return capture(attempt).validate(initial, trust, policy)
+    }
+
     /** No future PSS-envelope pin is needed to observe PREPARED bytes. Their presence is not signing/publication authority. */
     fun loadGenesisPreparation(currentBundleBytes: ByteArray, policy: OfflineCatalogChainReaderPolicy): UnverifiedGenesisPreparation {
         requireConnectionFree()
@@ -34,9 +50,9 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
     }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun capture(): CatalogSnapshotRows {
+    private fun capture(attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null): CatalogSnapshotRows {
         requireConnectionFree()
-        val phase = ownership.enterComplaintCatalogSnapshot()
+        val phase = attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
         var captured: CatalogSnapshotReadOperation? = null
         try {
             phase.begin()

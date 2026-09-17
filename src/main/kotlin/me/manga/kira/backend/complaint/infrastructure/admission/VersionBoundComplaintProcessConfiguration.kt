@@ -45,7 +45,20 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         retainedPools = pools.descriptors()
         retainedRotation = epochRotation?.descriptor()
         retainedEpochSealAcquisition = epochSealAcquisition?.descriptor()
-        canonical = if (epochSealAcquisition != null) {
+        canonical = if (catalogReadback?.projectedCurrent == true) {
+            ComplaintEffectiveConfigurationV5.encode(
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                catalogReadback,
+                epochRotation,
+                publicationLanes,
+                epochSealAcquisition,
+            )
+        } else if (epochSealAcquisition != null) {
             ComplaintEffectiveConfigurationV4.encode(
                 consumers,
                 pools,

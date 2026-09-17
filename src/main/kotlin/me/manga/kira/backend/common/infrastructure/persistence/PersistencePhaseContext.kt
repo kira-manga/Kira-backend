@@ -35,6 +35,9 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotati
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationControlOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadInputV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadReadOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintAdmittedEnrollmentWrite
@@ -80,6 +83,8 @@ internal class PersistencePhaseContext(
     private val rotationWork: PersistenceTimeBudget? = null,
     private val cutoffAttempt: CatalogCutoffAttemptV1? = null,
     private val cutoffWork: PersistenceTimeBudget? = null,
+    private val catalogRefresh: CatalogReadbackRefreshCustodyV1.Attempt? = null,
+    private val catalogRefreshWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -133,6 +138,7 @@ internal class PersistencePhaseContext(
     internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
     internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
     internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
+    internal val catalogProjectedHead: PersistenceCatalogProjectedHead = CatalogProjectedHeadBoundary()
     internal val coordinatorLease: PersistenceCoordinatorLease = CoordinatorLeaseBoundary()
     internal val epochRotation: PersistenceEpochRotationControl = EpochRotationBoundary()
     internal val cutoffPublications: PersistenceCutoffPublications = CutoffPublicationsBoundary()
@@ -273,12 +279,12 @@ internal class PersistencePhaseContext(
         requireCaller()
         check(acquisition === completion && work == null)
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
-        work = rotationWork ?: cutoffWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
+        work = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
-        return (rotationWork ?: cutoffWork)?.systemCappedSnapshot(ceilingMillis)
+        return (rotationWork ?: cutoffWork ?: catalogRefreshWork)?.systemCappedSnapshot(ceilingMillis)
     }
 
     internal fun requireAcceptedLease() = requireWork()
@@ -519,7 +525,9 @@ internal class PersistencePhaseContext(
 
         PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT -> selectedHolder.controlSnapshotCaptured()
 
-        PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> catalogSnapshot.completed()
+        PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+        PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
+        -> completedCatalogRead()
 
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
@@ -539,6 +547,12 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
         PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
         -> completedRotationOrCutoff()
+    }
+
+    private fun completedCatalogRead(): Boolean = when (path) {
+        PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> catalogSnapshot.completed()
+        PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD -> catalogProjectedHead.completed()
+        else -> false
     }
 
     private fun completedRotationOrCutoff(): Boolean = when (path) {
@@ -798,7 +812,7 @@ internal class PersistencePhaseContext(
 
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
-        val selected = work ?: rotationWork ?: cutoffWork ?: return false
+        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -824,13 +838,13 @@ internal class PersistencePhaseContext(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        return if (rotationAttempt == null && cutoffAttempt == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
+        return if (rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
     }
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
-        val selected = (rotationAttempt?.budget ?: cutoffAttempt?.budget)?.capped(EMERGENCY_MILLIS)
+        val selected = (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget)?.capped(EMERGENCY_MILLIS)
             ?: PersistenceTimeBudget.start(EMERGENCY_MILLIS, ownership.nanoClock)
         emergency = selected
         return selected
@@ -979,6 +993,7 @@ internal class PersistencePhaseContext(
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+            PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             -> PersistenceDeletionFence(this@PersistencePhaseContext, ownership.nanoClock)
 
             else -> null
@@ -1132,6 +1147,45 @@ internal class PersistencePhaseContext(
         override fun requireProcessBinding(binding: CatalogGenesisInitialLiveBinding, jdbc: JdbcTemplate) = binding.requirePersistence(ownership, jdbc)
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** Fixed projected-head history read: same original refresh, shared fence, phase and released transaction product. */
+    private inner class CatalogProjectedHeadBoundary : PersistenceCatalogProjectedHead {
+        private var issued = false
+        private var retained: CatalogProjectedHeadReadOperationV1? = null
+
+        override fun requireOperation(input: CatalogProjectedHeadInputV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD)
+            if (issued || input.attempt !== catalogRefresh || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            input.requirePersistence(ownership, jdbc)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: CatalogProjectedHeadReadOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD)
+            if (!issued || retained != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (operation.input.attempt !== catalogRefresh || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            retained = operation
+        }
+
+        override fun requireRetained(operation: CatalogProjectedHeadReadOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD)
+            if (retained !== operation || operation.input.attempt !== catalogRefresh) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            operation.input.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: CatalogProjectedHeadReadOperationV1) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.input.attempt === catalogRefresh && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     /** Row-only lease phases: no fence is acquired or required, so renewal remains independent of epoch rotation. */

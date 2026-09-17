@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotati
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogProjectedHeadPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import org.springframework.jdbc.core.JdbcTemplate
@@ -27,6 +28,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var phaseOwner: PersistencePhaseOwnership? = null
     private var executor: ComplaintCatalogSnapshotPhaseExecutor? = null
     private var genesisExecutor: ComplaintCatalogGenesisPersistencePhaseExecutor? = null
+    private var projectedHeadExecutor: ComplaintCatalogProjectedHeadPhaseExecutor? = null
     private var leaseExecutor: ComplaintCoordinatorLeasePersistencePhaseExecutor? = null
     private var rotationExecutor: CatalogEpochRotationV1? = null
     private var cutoffExecutor: CatalogCutoffPublicationsV1? = null
@@ -34,6 +36,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
     internal val genesis: ComplaintCatalogGenesisPersistencePhaseExecutor get() = checkNotNull(genesisExecutor)
+    internal val projectedHead: ComplaintCatalogProjectedHeadPhaseExecutor get() = checkNotNull(projectedHeadExecutor)
     internal val lease: ComplaintCoordinatorLeasePersistencePhaseExecutor get() = checkNotNull(leaseExecutor)
     internal val epochRotation: CatalogEpochRotationV1 get() = checkNotNull(rotationExecutor)
     internal val cutoffPublications: CatalogCutoffPublicationsV1 get() = checkNotNull(cutoffExecutor)
@@ -46,6 +49,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         val jdbc = JdbcTemplate(dataSource).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
+        projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
         rotationExecutor = CatalogEpochRotationV1(this, jdbc)
         cutoffExecutor = CatalogCutoffPublicationsV1(this, jdbc)

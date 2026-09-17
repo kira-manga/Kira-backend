@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.ComplaintIngressAdmission
@@ -142,6 +143,12 @@ internal class PersistencePhaseOwnership private constructor(
     /** One read-only coordinator phase. Its observations confer neither catalog mutation nor complaint admission. */
     internal fun enterComplaintCatalogSnapshot(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT)
 
+    internal fun enterComplaintCatalogSnapshot(attempt: CatalogReadbackRefreshCustodyV1.Attempt): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, catalogRefresh = attempt)
+
+    internal fun enterComplaintCatalogProjectedHead(attempt: CatalogReadbackRefreshCustodyV1.Attempt): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD, catalogRefresh = attempt)
+
     /** Dedicated fenced G1 write phases, sharing the snapshot coordinator's one existing slot. */
     internal fun enterComplaintCatalogGenesisPrepare(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE)
 
@@ -188,6 +195,7 @@ internal class PersistencePhaseOwnership private constructor(
         deletionScope: ComplaintDataScope? = null,
         rotationAttempt: CatalogEpochRotationAttemptV1? = null,
         cutoffAttempt: CatalogCutoffAttemptV1? = null,
+        catalogRefresh: CatalogReadbackRefreshCustodyV1.Attempt? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -196,9 +204,11 @@ internal class PersistencePhaseOwnership private constructor(
             throw failure
         }
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
+        catalogRefresh?.requireProjectedPersistence(this)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
+        val catalogRefreshWork = catalogRefresh?.let { checkNotNull(it.projectedBudget).capped(2_000) }
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -225,6 +235,8 @@ internal class PersistencePhaseOwnership private constructor(
                 rotationWork,
                 cutoffAttempt,
                 cutoffWork,
+                catalogRefresh,
+                catalogRefreshWork,
             )
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
@@ -321,6 +333,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+                PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -379,6 +392,7 @@ internal class PersistencePhaseOwnership private constructor(
     companion object {
         private val CATALOG_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -498,6 +512,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_DELETION_FENCE_PREFIX,
     COMPLAINT_DELETION_CONTROL_SNAPSHOT,
     COMPLAINT_CATALOG_SNAPSHOT,
+    COMPLAINT_CATALOG_PROJECTED_HEAD,
     COMPLAINT_CATALOG_GENESIS_PREPARE,
     COMPLAINT_CATALOG_GENESIS_SIGNATURE,
     COMPLAINT_CATALOG_GENESIS_COMPLETE,

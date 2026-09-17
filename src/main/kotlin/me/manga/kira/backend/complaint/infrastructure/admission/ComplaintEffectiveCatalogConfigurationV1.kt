@@ -11,9 +11,19 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalo
 
 /** Output of the retained immutable reader, not a configuration map accepted from a caller or a capability. */
 internal object ComplaintEffectiveCatalogConfigurationV1 {
-    fun encode(owner: VersionBoundCatalogReadbackConfigurationV1): JsonObject = buildJsonObject {
-        put("profileVersion", 1)
-        put("profile", "G1_EMPTY_ACCEPTED_INVENTORY")
+    fun encode(owner: VersionBoundCatalogReadbackConfigurationV1): JsonObject {
+        require(!owner.projectedCurrent) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        return encodeInputs(owner)
+    }
+
+    internal fun encodeProjectedCurrent(owner: VersionBoundCatalogReadbackConfigurationV1): JsonObject {
+        require(owner.projectedCurrent) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        return encodeInputs(owner)
+    }
+
+    private fun encodeInputs(owner: VersionBoundCatalogReadbackConfigurationV1): JsonObject = buildJsonObject {
+        put("profileVersion", if (owner.projectedCurrent) 2 else 1)
+        put("profile", if (owner.projectedCurrent) "ALREADY_PROJECTED_CURRENT_HEAD" else "G1_EMPTY_ACCEPTED_INVENTORY")
         put("initialTrustBundle", artifact(owner.initialTrustBundleSha256, owner.initialTrustBundleByteCount))
         put("currentTrustBundle", artifact(owner.currentTrustBundleSha256, owner.currentTrustBundleByteCount))
         put("trust", trust(owner))
@@ -29,7 +39,7 @@ internal object ComplaintEffectiveCatalogConfigurationV1 {
                 put("protocolVersion", 1)
                 put("calendar", "UTC")
                 put("rounding", "CEILING_WHOLE_SECOND")
-                put("creationAnchor", "SIGNED_G1_CREATION")
+                put("creationAnchor", if (owner.projectedCurrent) "SIGNED_CURRENT_HEAD_CREATION" else "SIGNED_G1_CREATION")
                 put("creationMinimumYears", VersionBoundCatalogReadbackConfigurationV1.CREATION_MINIMUM_YEARS)
                 put("remainingAnchor", "EVALUATION_PLUS_ATTEMPT")
                 put("remainingMinimumYears", VersionBoundCatalogReadbackConfigurationV1.REMAINING_MINIMUM_YEARS)

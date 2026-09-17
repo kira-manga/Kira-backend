@@ -79,6 +79,64 @@ internal object CatalogDualLocationVerifier {
         return bytes.copyOf()
     }
 
+    /** Actual raw Accepted>1 fold only. This is neither supplied-result promotion nor proof of a historical DB projection. */
+    class ProjectedHeadReadback private constructor(
+        private val commonHead: CatalogCommonHeadEvidence,
+        private val envelope: ByteArray,
+        private val policy: CatalogReadbackPolicy,
+        val initialTrustBundleSha256: String,
+        val currentTrustBundleSha256: String,
+        primary: CatalogObjectMetadata,
+        replica: CatalogObjectMetadata,
+    ) {
+        val envelopeSha256: String = Sha256.hex(envelope)
+        val objectVersion: String = primary.requestBinding.versionId
+        val retainUntilEpochSecond: Long = checkNotNull(primary.retainUntilEpochSecond)
+        val evaluatedAtEpochSecond: Long = policy.evaluatedAtEpochSecond
+        val requiredRetainUntilEpochSecond: Long = policy.requiredRetainUntilEpochSecond
+        private val primaryBytes = copyEvidence(primary, envelopeSha256)
+        private val replicaBytes = copyEvidence(replica, envelopeSha256)
+
+        internal fun commonHeadEvidence(): CatalogCommonHeadEvidence = commonHead
+
+        internal fun generation(): FrozenCatalogGeneration {
+            requireConnectionFree()
+            return CatalogFrozenManifestParser.signed(envelope.copyOf(), policy.chain.limits)
+        }
+
+        internal fun primaryEvidenceBytes(): ByteArray = primaryBytes.copyOf()
+        internal fun replicaEvidenceBytes(): ByteArray = replicaBytes.copyOf()
+
+        override fun toString(): String = "ProjectedHeadReadback(private-raw-fold,no-projection-or-current-authority)"
+
+        companion object {
+            fun verify(
+                provider: CatalogReadbackPort,
+                initialBundleBytes: ByteArray,
+                currentBundleBytes: ByteArray,
+                policy: CatalogReadbackPolicy,
+                local: LocalCatalogSnapshot,
+            ): ProjectedHeadReadback {
+                requireConnectionFree()
+                requireCatalogReadback(local is LocalCatalogSnapshot.Accepted && local.head.generation > 1, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                val verified = verifyRaw(provider, initialBundleBytes, currentBundleBytes, policy, local)
+                val observed = verified.result as? CatalogReadbackResult.CurrentHeadObserved
+                    ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                val pair = verified.pair ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                val read = verified.read ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                return ProjectedHeadReadback(
+                    observed.evidence,
+                    read.bytes.copyOf(),
+                    policy,
+                    verified.initialHash,
+                    verified.currentHash,
+                    pair.primary,
+                    pair.replica,
+                )
+            }
+        }
+    }
+
     /**
      * The only constructor is owned by this raw-verification path. No factory accepts a checked
      * wrapper, result, metadata, Boolean, callback or caller-selected SQL. This is G1-only local

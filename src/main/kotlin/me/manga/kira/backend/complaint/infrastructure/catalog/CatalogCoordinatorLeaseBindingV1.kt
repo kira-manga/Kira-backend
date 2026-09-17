@@ -8,6 +8,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
+import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
@@ -18,13 +19,13 @@ import java.util.HexFormat
 import java.util.UUID
 
 /**
- * Exact retained INITIAL_LIVE process plus genuine released G1 refresh. This immutable comparison
+ * Exact retained LIVE process plus genuine released G1 or already-projected current refresh. This comparison
  * is not current DB leadership, catalog freshness, a checkpoint or deployment/restore authority.
  * No opaque-D, raw tuple or supplied CatalogCommonHeadEvidence factory exists.
  */
 internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val process: VersionBoundComplaintProcessConfiguration,
-    private val refresh: CurrentAcceptedCatalogRefreshV1.Result,
+    private val catalog: CatalogCommonHeadEvidence,
 ) {
     internal val coordinator = process.pools.catalogCoordinator
     private val ownership = coordinator.ownership
@@ -35,7 +36,6 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val journal = process.consumers.journalConfiguration
     private val writer = UUID.fromString(journal.declaration().writer.generationId)
     private val epochRotationMillis = journal.declaration().limits.deadlines.epochRotationMillis
-    private val catalog = refresh.catalogFor(process)
     private val catalogGeneration = catalog.chain.tail.generation
     private val catalogHash = digest(catalog.chain.tail.envelopeSha256)
     private val trustHash = digest(catalog.chain.trust.currentBundleEnvelopeSha256)
@@ -48,7 +48,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
                 desired.implementationSchema == 1 && desired.desiredGeneration > 0 &&
                 desired.configurationHashBytes().contentEquals(desiredHash) && desiredHash.size == 32 &&
                 writer.version() == 4 && writer.variant() == 2 && catalogWriter.version() == 4 && catalogWriter.variant() == 2 &&
-                catalogGeneration == 1L && catalog.chain.trust.minimumHeadGeneration <= 1L,
+                catalogGeneration >= 1L && catalog.chain.trust.minimumHeadGeneration <= catalogGeneration,
             CatalogReadbackFailure.INVALID_POLICY,
         )
         requireUnchangedConfiguration()
@@ -139,7 +139,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private fun hasOriginalCoordinatorResources(): Boolean =
         hasOriginalCoordinatorOwnership() && coordinator.manager === manager && coordinator.dataSource === source
 
-    override fun toString(): String = "CatalogCoordinatorLeaseBindingV1(retained-initial-LIVE-G1,no-current-authority)"
+    override fun toString(): String = "CatalogCoordinatorLeaseBindingV1(retained-LIVE-projected-catalog,no-current-authority)"
 
     companion object {
         fun fromRetained(
@@ -147,7 +147,23 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentAcceptedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
-            return CatalogCoordinatorLeaseBindingV1(process, refresh)
+            val catalog = refresh.catalogFor(process)
+            requireCatalogReadback(catalog.chain.tail.generation == 1L, CatalogReadbackFailure.INVALID_POLICY)
+            return CatalogCoordinatorLeaseBindingV1(process, catalog)
+        }
+
+        /** Only the actual closed-provider and committed/released historical revalidation producer admits a later head. */
+        fun fromProjectedRetained(
+            process: VersionBoundComplaintProcessConfiguration,
+            refresh: CurrentProjectedCatalogRefreshV1.Result,
+        ): CatalogCoordinatorLeaseBindingV1 {
+            requireConnectionFree()
+            val catalog = refresh.catalogFor(process)
+            requireCatalogReadback(
+                process.catalogReadback?.projectedCurrent == true && catalog.chain.tail.generation > 1L,
+                CatalogReadbackFailure.INVALID_POLICY,
+            )
+            return CatalogCoordinatorLeaseBindingV1(process, catalog)
         }
 
         private fun digest(value: String): ByteArray {

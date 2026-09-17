@@ -1,12 +1,12 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
-import me.manga.kira.backend.complaint.domain.catalog.CatalogGetRequest
-import me.manga.kira.backend.complaint.domain.catalog.CatalogListRequest
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
-import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPort
-import me.manga.kira.backend.complaint.domain.catalog.CatalogVersionBody
+import me.manga.kira.backend.complaint.domain.catalog.LocalCatalogSnapshot
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackAdapter
@@ -18,10 +18,10 @@ import java.time.Clock
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Fixed closed G1 refresh: real pinned SDK -> raw verifier -> exact committed/released projection.
- * Not a checkpoint, effective backup horizon, current authorization, restored-deployment clearance or bean.
+ * Already accepted/projected non-G1 observation only: real raw copies, closed providers, exact released historical revalidation.
+ * No mutation advancement, projection effect, desired installer, lease, activation or backup/restore qualification.
  */
-internal class CurrentAcceptedCatalogRefreshV1 private constructor(
+internal class CurrentProjectedCatalogRefreshV1 private constructor(
     private val process: VersionBoundComplaintProcessConfiguration,
     private val primaryCredentials: AwsSessionCredentials,
     private val replicaCredentials: AwsSessionCredentials,
@@ -36,7 +36,7 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     init {
         requireConnectionFree()
         process.requireUnchangedConfiguration()
-        requireCatalogReadback(!settings.projectedCurrent, CatalogReadbackFailure.INVALID_POLICY)
+        requireCatalogReadback(settings.projectedCurrent, CatalogReadbackFailure.INVALID_POLICY)
     }
 
     fun refresh(): Result = Result.perform(this)
@@ -53,8 +53,8 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
                 val policy = settings.policyAt(evaluatedAt)
                 val initial = settings.initialBundleBytes()
                 val current = settings.currentBundleBytes()
-                val expected = CatalogGenesisInitialLiveBinding.fromRetained(process)
-                val local = coordinator.snapshot.load(initial, current, policy)
+                val local = coordinator.snapshot.loadProjected(initial, current, policy, attempt)
+                requireCatalogReadback(local is LocalCatalogSnapshot.Accepted && local.head.generation > 1, CatalogReadbackFailure.INVALID_LOCAL_STATE)
                 attempt.requireRunning()
                 val readback = withS3Cleanup(
                     {
@@ -68,21 +68,25 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
                             httpFactory,
                             nanoTime,
                         )
-                        val provider = TimedCatalogReadbackV1(adapter, attempt)
-                        CatalogDualLocationVerifier.GenesisReadback.verify(provider, initial, current, policy, local)
+                        CatalogDualLocationVerifier.ProjectedHeadReadback.verify(
+                            TimedCatalogReadbackV1(adapter, attempt),
+                            initial,
+                            current,
+                            policy,
+                            local,
+                        )
                     },
                     attempt::closeProvider,
-                ) // No body/client/native construction owner can escape into the persistence handoff.
-                attempt.requireRunning()
+                )
+                attempt.requireProviderClosed()
                 process.requireUnchangedConfiguration()
-                settings.verifyGenesis(readback, evaluatedAt)
+                settings.verifyProjected(readback, evaluatedAt)
                 requireCatalogReadback(!clock.instant().isBefore(evaluatedAt), CatalogReadbackFailure.INVALID_POLICY)
-                if (readback.resume == GenesisResume.PREPARED) coordinator.genesis.completeGenesis(readback, expected)
-                attempt.requireRunning()
-                val projection = coordinator.genesis.projectGenesisForProcess(readback, expected)
+                val input = CatalogProjectedHeadInputV1.fromRetained(process, readback, attempt)
+                coordinator.projectedHead.revalidate(input).requireReleased(input)
                 attempt.requireRunning()
                 process.requireUnchangedConfiguration()
-                Product(readback, projection)
+                Product(readback.commonHeadEvidence())
             },
             attempt::finish,
         )
@@ -90,42 +94,56 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
 
     internal fun isClosed(): Boolean = closed.get()
 
-    /** Cooperative stop only. The original synchronous caller still owns cleanup and its retained slot. */
+    internal fun belongsTo(selected: VersionBoundComplaintProcessConfiguration): Boolean = process === selected
+
+    internal fun requirePersistence(ownership: PersistencePhaseOwnership) {
+        process.requireUnchangedConfiguration()
+        coordinator.requireResources()
+        if (process.pools.catalogCoordinator !== coordinator || coordinator.ownership !== ownership) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
+
+    /** Cooperative stop only; the original synchronous caller still owns cleanup and the coordinator's shared refresh slot. */
     override fun close() {
         closed.set(true)
     }
 
-    override fun toString(): String = "CurrentAcceptedCatalogRefreshV1(G1-only,partial-provenance,no-capability)"
+    override fun toString(): String = "CurrentProjectedCatalogRefreshV1(observe-already-projected,no-current-authority)"
 
-    /** Cannot be constructed from a diagnostic projection, supplied evidence or a direct supplied-port SQL handle. */
-    class Result private constructor(producer: CurrentAcceptedCatalogRefreshV1, private val product: Product) {
+    class Result private constructor(producer: CurrentProjectedCatalogRefreshV1, private val product: Product) {
         private val process = producer.process
         private val settings = producer.settings
+        private val coordinator = producer.coordinator
+
         internal fun catalogFor(selected: VersionBoundComplaintProcessConfiguration): CatalogCommonHeadEvidence {
             requireConnectionFree()
             requireCatalogReadback(selected === process && selected.catalogReadback === settings, CatalogReadbackFailure.INVALID_POLICY)
-            selected.requireUnchangedConfiguration()
-            product.projection.requireBinding(selected, product.readback)
-            return product.readback.commonHeadEvidence()
+            process.requireUnchangedConfiguration()
+            coordinator.requireResources()
+            requireCatalogReadback(selected.pools.catalogCoordinator === coordinator, CatalogReadbackFailure.INVALID_POLICY)
+            return product.catalog
         }
 
-        override fun toString(): String = "CatalogRefreshResultV1(historical-source-and-projection,no-current-capability)"
+        override fun toString(): String = "ProjectedCatalogRefreshResultV1(historical-source-and-projection,no-current-authority)"
 
         companion object {
-            internal fun perform(producer: CurrentAcceptedCatalogRefreshV1): Result = Result(producer, producer.performRefresh())
+            internal fun perform(producer: CurrentProjectedCatalogRefreshV1): Result = Result(producer, producer.performRefresh())
         }
     }
 
-    private class Product(val readback: CatalogDualLocationVerifier.GenesisReadback, val projection: ProcessBoundCatalogGenesisProjection)
+    // The result retains neither the attempt/provider credentials nor the large detached SQL buffers.
+    // Only this factory's successful raw -> closed-provider -> committed/released path can create it.
+    private class Product(val catalog: CatalogCommonHeadEvidence)
 
     companion object {
         fun ordinary(
             process: VersionBoundComplaintProcessConfiguration,
             primaryCredentials: AwsSessionCredentials,
             replicaCredentials: AwsSessionCredentials,
-        ): CurrentAcceptedCatalogRefreshV1 {
+        ): CurrentProjectedCatalogRefreshV1 {
             val settings = requireNotNull(process.catalogReadback)
-            return CurrentAcceptedCatalogRefreshV1(
+            return CurrentProjectedCatalogRefreshV1(
                 process,
                 primaryCredentials,
                 replicaCredentials,
@@ -135,7 +153,7 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
             )
         }
 
-        /** Only raw HTTP/time fixture inputs: the same SDK, snapshot, verifier, SQL and cleanup execute. */
+        /** Raw HTTP/time inputs only; no supplied row, evidence, predicate, JDBC handle or success callback. */
         fun withHttpFixture(
             process: VersionBoundComplaintProcessConfiguration,
             primaryCredentials: AwsSessionCredentials,
@@ -143,29 +161,6 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
             httpFactory: () -> SdkHttpClient,
             clock: Clock,
             nanoTime: () -> Long = System::nanoTime,
-        ): CurrentAcceptedCatalogRefreshV1 = CurrentAcceptedCatalogRefreshV1(process, primaryCredentials, replicaCredentials, httpFactory, clock, nanoTime)
-    }
-}
-
-/** Attempt deadline checks supplement, never claim to replace, native per-call completion/cancellation qualification. */
-internal class TimedCatalogReadbackV1(private val actual: S3CatalogReadbackAdapter, private val attempt: CatalogReadbackRefreshCustodyV1.Attempt) :
-    CatalogReadbackPort {
-    override fun listVersions(request: CatalogListRequest) = checked { actual.listVersions(request) }
-
-    override fun openVersion(request: CatalogGetRequest): CatalogVersionBody {
-        attempt.requireRunning()
-        val body = actual.openVersion(request)
-        val admitted = runCatching { attempt.requireRunning() }
-        if (admitted.isFailure) return withS3Cleanup({ throw checkNotNull(admitted.exceptionOrNull()) }, body::close)
-        return object : CatalogVersionBody {
-            override fun metadata() = checked { body.metadata() }
-            override fun read(destination: ByteArray, offset: Int, length: Int): Int = checked { body.read(destination, offset, length) }
-            override fun close() = body.close() // Never skip cleanup because the deadline expired or the caller was interrupted.
-        }
-    }
-
-    private fun <T> checked(action: () -> T): T {
-        attempt.requireRunning()
-        return action().also { attempt.requireRunning() }
+        ): CurrentProjectedCatalogRefreshV1 = CurrentProjectedCatalogRefreshV1(process, primaryCredentials, replicaCredentials, httpFactory, clock, nanoTime)
     }
 }

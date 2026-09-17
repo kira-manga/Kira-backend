@@ -30,6 +30,37 @@ import java.util.UUID
 /** Actual cold owners only: no STS request, G1 acceptance, current lease, installed policy or deployment authority. */
 class VersionBoundEpochSealAcquisitionTest {
     @Test
+    fun `D5 projected reader retains every selected D4 rotation and sealer input without changing D4 bytes`() =
+        ComplaintProcessPoolFixture(epochRotation = true).use { database ->
+            val consumers = BoundComplaintConsumerFixture().configuration()
+            val pools = database.bind()
+            val writer = consumers.journalConfiguration.declaration().writer
+            val g1 = VersionBoundCatalogReadbackTestFixture.settings()
+            val lanes = JournalPublicationLanesV1(consumers.journalConfiguration)
+            owner(consumers, lanes).use { acquisition ->
+                val original = VersionBoundComplaintProcessConfiguration.fromRetainedWithEpochSealAcquisition(
+                    consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), g1, lanes, acquisition,
+                )
+                val before = original.canonicalBytes()
+                val projected = VersionBoundComplaintProcessConfiguration.fromRetainedWithEpochSealAcquisition(
+                    consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
+                    projectedSettings(g1), lanes, acquisition,
+                )
+                assertD5ReaderOnlyChange(
+                    Json.parseToJsonElement(before.decodeToString()).jsonObject,
+                    Json.parseToJsonElement(projected.canonicalBytes().decodeToString()).jsonObject,
+                )
+                requireCatalogPrincipalBinding(projected)
+                assertSame(acquisition, projected.epochSealAcquisition)
+                assertSame(original.epochRotation, projected.epochRotation)
+                assertArrayEquals(before, original.canonicalBytes())
+                assertFalse(original.configurationHashBytes().contentEquals(projected.configurationHashBytes()))
+                assertEquals(0L, lanes.activeOwners().totalOwners)
+                listOf(pools.ordinary, pools.deletion, pools.catalogCoordinator.dataSource).forEach { assertFalse(actualPool(it).isRunning) }
+            }
+        }
+
+    @Test
     fun `D4 retains the real cold graph without changing D3 or encoding session credentials`() =
         ComplaintProcessPoolFixture(epochRotation = true).use { database ->
             val consumers = BoundComplaintConsumerFixture().configuration()

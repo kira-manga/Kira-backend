@@ -23,8 +23,9 @@ import java.time.Instant
 import java.time.ZoneOffset
 
 /**
- * Immutable independent G1 reader inputs, not provider custody, installed trust or a horizon authority.
+ * Immutable independent reader inputs, not provider custody, installed trust or a horizon authority.
  * The real refresh must retain this exact owner and construct its SDK source from these settings.
+ * G1 and already-projected current heads have separate explicit factories and effective-D profiles.
  * No session material, observed catalog/DB tuple, evaluation time or caller retention floor is retained.
  */
 internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
@@ -36,6 +37,7 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
     val totalAttemptMillis: Long,
     val pageSize: Int,
     val maximumPagesPerLocation: Int,
+    internal val projectedCurrent: Boolean,
 ) {
     private val initial = copyBundle(initialBundleBytes)
     private val current = copyBundle(currentBundleBytes)
@@ -66,7 +68,7 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
                 if (failure.code == OfflineTrustBundleFailure.LIMIT_EXCEEDED) CatalogReadbackFailure.LIMIT_EXCEEDED else CatalogReadbackFailure.INVALID_POLICY,
             )
         }
-        requireCatalogReadback(checked.body.minimumCatalogHeadGeneration == 1L, CatalogReadbackFailure.INVALID_POLICY)
+        if (!projectedCurrent) requireCatalogReadback(checked.body.minimumCatalogHeadGeneration == 1L, CatalogReadbackFailure.INVALID_POLICY)
         // Historical T0 is authenticated only together with raw G1/current Tn by the existing closed verifier.
     }
 
@@ -92,6 +94,7 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
      */
     fun verifyGenesis(readback: CatalogDualLocationVerifier.GenesisReadback, evaluatedAt: Instant) {
         requireConnectionFree()
+        requireCatalogReadback(!projectedCurrent, CatalogReadbackFailure.INVALID_POLICY)
         val policy = policyAt(evaluatedAt)
         requireCatalogReadback(
             readback.initialTrustBundleSha256 == initialTrustBundleSha256 && readback.currentTrustBundleSha256 == currentTrustBundleSha256 &&
@@ -108,19 +111,47 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
                 manifest.approvals.all { it.approverId in chainPolicy.currentApproverIds },
             CatalogReadbackFailure.HEAD_CONFLICT,
         )
+        verifyCreationRetention(manifest.creation.createdAtEpochSecond, readback.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
+    }
+
+    /** Catalog-copy policy only: a nonempty logical inventory still supplies no capture/backup or LIVE journal horizon authority. */
+    fun verifyProjected(readback: CatalogDualLocationVerifier.ProjectedHeadReadback, evaluatedAt: Instant) {
+        requireConnectionFree()
+        val policy = policyAt(evaluatedAt)
+        requireCatalogReadback(
+            projectedCurrent && readback.initialTrustBundleSha256 == initialTrustBundleSha256 &&
+                readback.currentTrustBundleSha256 == currentTrustBundleSha256 &&
+                readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
+                readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond,
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
+        val claims = readback.generation().claims
+        requireCatalogReadback(
+            claims.generation > 1 && claims.catalogWriterGenerationId in chainPolicy.currentWriterGenerationIds &&
+                claims.approvals.all { it.approverId in chainPolicy.currentApproverIds },
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
+        verifyCreationRetention(claims.creation.createdAtEpochSecond, readback.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
+    }
+
+    private fun verifyCreationRetention(createdAt: Long, retainUntil: Long, evaluatedAt: Instant, requiredRetainUntil: Long) {
         calendarCheck {
-            val created = Instant.ofEpochSecond(manifest.creation.createdAtEpochSecond)
+            val created = Instant.ofEpochSecond(createdAt)
             requireInstant(created)
             requireCatalogReadback(!created.isAfter(evaluatedAt), CatalogReadbackFailure.RETENTION_MISMATCH)
             val creationFloor = ceilingSecond(created.atOffset(ZoneOffset.UTC).plusYears(CREATION_MINIMUM_YEARS).toInstant())
             requireCatalogReadback(
-                readback.retainUntilEpochSecond >= maxOf(creationFloor, policy.requiredRetainUntilEpochSecond),
+                retainUntil >= maxOf(creationFloor, requiredRetainUntil),
                 CatalogReadbackFailure.RETENTION_MISMATCH,
             )
         }
     }
 
-    override fun toString(): String = "VersionBoundCatalogReadbackConfigurationV1(G1-only,redacted,no-authority)"
+    override fun toString(): String = if (projectedCurrent) {
+        "VersionBoundCatalogReadbackConfigurationV1(projected-current,redacted,no-authority)"
+    } else {
+        "VersionBoundCatalogReadbackConfigurationV1(G1-only,redacted,no-authority)"
+    }
 
     companion object {
         const val MAXIMUM_ATTEMPT_MILLIS = 600_000L
@@ -147,6 +178,32 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
                 totalAttemptMillis,
                 pageSize,
                 maximumPagesPerLocation,
+                false,
+            )
+        }
+
+        /** A separate D5 input profile. It never lowers the independent current trust bundle's minimum head to fit G1. */
+        fun fromIndependentProjectedInputs(
+            initialBundleBytes: ByteArray,
+            currentBundleBytes: ByteArray,
+            chainPolicy: OfflineCatalogChainReaderPolicy,
+            expectedGenesisEnvelopeSha256: String,
+            sdkLimits: S3CatalogReadbackLimits,
+            totalAttemptMillis: Long,
+            pageSize: Int = CatalogReadbackProtocol.MAX_PAGE_ENTRIES,
+            maximumPagesPerLocation: Int = OfflineCatalogChainProtocol.MAX_GENERATIONS,
+        ): VersionBoundCatalogReadbackConfigurationV1 {
+            requireConnectionFree()
+            return VersionBoundCatalogReadbackConfigurationV1(
+                initialBundleBytes,
+                currentBundleBytes,
+                chainPolicy,
+                expectedGenesisEnvelopeSha256,
+                sdkLimits,
+                totalAttemptMillis,
+                pageSize,
+                maximumPagesPerLocation,
+                true,
             )
         }
 
