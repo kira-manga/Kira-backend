@@ -74,10 +74,27 @@ internal class CurrentAcceptedCatalogRefreshCases(private val f: ProcessBoundCat
             wire.assertFullReadback()
             assertEquals(prepared, f.state(), "A stale explicit D must not complete or project genuine PREPARED G1.")
             assertPrepared()
+            f.setDesired(null)
+            rejectedPersistence { owner.refresh() }
+            wire.assertFullReadback(attempts = 2)
+            val pending = assertInstanceOf(
+                LocalCatalogSnapshot.ProjectionPending::class.java, f.coordinator.snapshot.load(f.initial, f.current, f.policy),
+            )
+            assertEquals(f.token.toString(), pending.projection.operationToken)
+            assertArrayEquals(f.genesisBytes, pending.projection.signedEnvelopeBytes)
+            val completed = mutation()
+            assertEquals("COMPLETED", completed["state"])
+            assertNotNull(completed["completed_at"])
+            assertNull(completed["projected_at"])
+            val pendingControl = f.observer.queryForMap("SELECT * FROM complaint_journal_control WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id)
+            assertNull(pendingControl["desired_configuration_hash"], "Completion must not synthesize D or grant a bound projection.")
+            assertEquals(f.token, pendingControl["pending_projection_token"])
             f.setDesired(desired)
             val result = owner.refresh()
+            wire.assertFullReadback(attempts = 3)
             assertHead(result.catalogFor(f.process))
             assertProjected()
+            assertEquals(completed["completed_at"], mutation()["completed_at"], "Pending resume must project, never repeat completion.")
             val exact = recompose(checkNotNull(f.process.catalogReadback))
             assertArrayEquals(desired, exact.configurationHashBytes())
             val changed = recompose(VersionBoundCatalogReadbackTestFixture.settings(pageSize = 2))
@@ -94,11 +111,11 @@ internal class CurrentAcceptedCatalogRefreshCases(private val f: ProcessBoundCat
             f.setDesired(stale)
             val conflict = f.state()
             rejectedPersistence { owner.refresh() }
-            wire.assertFullReadback(attempts = 3)
+            wire.assertFullReadback(attempts = 4)
             assertEquals(conflict, f.state(), "Projected retry must recheck current D rather than trust the previous result.")
             f.setDesired(desired)
             assertHead(owner.refresh().catalogFor(f.process))
-            wire.assertFullReadback(attempts = 4)
+            wire.assertFullReadback(attempts = 5)
             assertEquals(projected, f.state())
         }
     }
