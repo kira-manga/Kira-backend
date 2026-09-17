@@ -49,10 +49,11 @@ internal class OwnerDeleteAllJournalPublisherFixture(
     val auth: OwnerDeleteAllAuthorizationFixture,
     val candidate: InstallationDeletionCandidate,
     val targets: List<UUID>,
+    selectedRoutingKeyId: String? = null,
 ) {
     val routing = auth.routing
     val journal = routing.journalConfiguration
-    val event = auth.codec.canonicalize(auth.journalTuple(candidate), targets)
+    val event = auth.codec.canonicalize(auth.journalTuple(candidate), targets, selectedRoutingKeyId)
     val kms = AwsJournalKmsFixture(journal)
     val requests = mutableListOf<JournalPublisherHttpRequest>()
     val keys = HashMap<String, SyntheticKey>()
