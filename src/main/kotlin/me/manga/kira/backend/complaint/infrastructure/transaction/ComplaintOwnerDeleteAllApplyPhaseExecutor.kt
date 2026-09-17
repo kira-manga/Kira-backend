@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllApplyV1
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllVerificationV1
+import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllApplyStore
 
@@ -13,8 +14,8 @@ internal class ComplaintOwnerDeleteAllApplyPhaseExecutor(
     private val store: JdbcComplaintOwnerDeleteAllApplyStore,
 ) {
     @Suppress("TooGenericExceptionCaught")
-    fun apply(proof: CommittedOwnerDeleteAllVerificationV1): CommittedOwnerDeleteAllApplyV1 {
-        val captured = store.capture(proof)
+    fun apply(work: CommittedOwnerDeleteAllWork, proof: CommittedOwnerDeleteAllVerificationV1): CommittedOwnerDeleteAllApplyV1 {
+        val captured = store.capture(work, proof)
         val phase = ownership.enterComplaintOwnerDeleteAllApply()
         var operation: ComplaintOwnerDeleteAllApplyOperation? = null
         try {

@@ -65,6 +65,12 @@ internal class JdbcComplaintOwnerDeleteAllVerificationStore(
         return retained.requireOwned(issuer, routing)
     }
 
+    /** Fixed APPLY consumer authenticates both private issuers and their exact original event before capturing any verifier. */
+    fun authenticatedVerifier(work: CommittedOwnerDeleteAllWork, proof: CommittedOwnerDeleteAllVerificationV1): ByteArray {
+        requireConnectionFree()
+        return authorization.authenticatedVerifier(work, verifiedEvent(proof))
+    }
+
     override fun toString(): String = "JdbcComplaintOwnerDeleteAllVerificationStore(dormant,redacted,no-apply-authority)"
 }
 

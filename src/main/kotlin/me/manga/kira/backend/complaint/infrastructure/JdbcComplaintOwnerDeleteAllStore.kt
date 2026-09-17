@@ -75,6 +75,12 @@ internal class JdbcComplaintOwnerDeleteAllStore(
         return ComplaintOwnerDeleteAllOperation.recordedEvent(work, issuer, routing)
     }
 
+    /** Private committed authentication custody, never an external event field or a verifier inferred from the APPLY row. */
+    fun authenticatedVerifier(work: CommittedOwnerDeleteAllWork, event: OwnerDeleteAllJournalEventV1): ByteArray {
+        requireConnectionFree()
+        return ComplaintOwnerDeleteAllOperation.authenticatedVerifier(work, issuer, routing, event)
+    }
+
     override fun toString(): String = "JdbcComplaintOwnerDeleteAllStore(dormant,no-runtime-authority)"
 }
 
@@ -128,9 +134,9 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
             requireConnectionFree()
             return released ?: (
                 if (prepared) {
-                    ReleasedPrepared(issuer, routing, checkNotNull(canonical))
+                    ReleasedPrepared(issuer, routing, checkNotNull(canonical), candidate.credential.verifierBytes())
                 } else {
-                    ReleasedVerified(issuer, routing, checkNotNull(canonical), checkNotNull(recordedProof))
+                    ReleasedVerified(issuer, routing, checkNotNull(canonical), candidate.credential.verifierBytes(), checkNotNull(recordedProof))
                 }
                 ).also { released = it }
         }
@@ -418,8 +424,11 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         private val issuer: Any,
         private val routing: VersionBoundComplaintJournalRouting,
         private val event: OwnerDeleteAllJournalEventV1,
+        verifier: ByteArray,
     ) : CommittedOwnerDeleteAllWork {
+        private val verifier = verifier.copyOf()
         override fun canonicalBytes(): ByteArray = event.canonicalBytes()
+        fun verifierBytes(): ByteArray = verifier.copyOf()
         fun requireOwned(selectedIssuer: Any, selectedRouting: VersionBoundComplaintJournalRouting): OwnerDeleteAllJournalEventV1 {
             check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(selectedRouting))
             return event
@@ -427,16 +436,22 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
 
         override fun toString(): String = "CommittedOwnerDeleteAllWork(custody-only,redacted)"
     }
-    private class ReleasedPrepared(issuer: Any, routing: VersionBoundComplaintJournalRouting, event: OwnerDeleteAllJournalEventV1) :
-        Released(issuer, routing, event),
+    private class ReleasedPrepared(
+        issuer: Any,
+        routing: VersionBoundComplaintJournalRouting,
+        event: OwnerDeleteAllJournalEventV1,
+        verifier: ByteArray,
+    ) :
+        Released(issuer, routing, event, verifier),
         CommittedOwnerDeleteAllWork.Prepared
     private class ReleasedVerified(
         issuer: Any,
         routing: VersionBoundComplaintJournalRouting,
         event: OwnerDeleteAllJournalEventV1,
+        verifier: ByteArray,
         proof: RecordedProof,
     ) :
-        Released(issuer, routing, event),
+        Released(issuer, routing, event, verifier),
         CommittedOwnerDeleteAllWork.RecordedVerified {
         override val objectVersion = proof.objectVersion
         override val ciphertextSha256 = proof.ciphertextSha256
@@ -491,6 +506,19 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         ): OwnerDeleteAllJournalEventV1 {
             val retained = work as? ReleasedVerified ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
             return retained.requireOwned(issuer, routing)
+        }
+
+        fun authenticatedVerifier(
+            work: CommittedOwnerDeleteAllWork,
+            issuer: Any,
+            routing: VersionBoundComplaintJournalRouting,
+            expected: OwnerDeleteAllJournalEventV1,
+        ): ByteArray {
+            val retained = work as? Released ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            val event = retained.requireOwned(issuer, routing)
+            check(expected.belongsTo(routing) && event.route == expected.route && event.semanticSha256 == expected.semanticSha256)
+            check(MessageDigest.isEqual(event.canonicalBytes(), expected.canonicalBytes()))
+            return retained.verifierBytes()
         }
 
         fun requireTuple(candidate: InstallationDeletionCandidate, tuple: InstallationDeletionPreflightTuple) {
