@@ -25,7 +25,7 @@ internal class CatalogReadbackRefreshCustodyV1 {
         budgetMillis: Long,
         private val nanoTime: () -> Long,
     ) {
-        internal val construction = S3CatalogReadbackAdapter.Construction()
+        internal val construction = S3CatalogReadbackAdapter.Construction(this)
         private val caller = Thread.currentThread()
         private val started = nanoTime()
         private val budgetNanos = Math.multiplyExact(budgetMillis, 1_000_000L)

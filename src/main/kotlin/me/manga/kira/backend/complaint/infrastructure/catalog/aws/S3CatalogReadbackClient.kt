@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogVersionBody
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainProtocol
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogLocationV1
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.catalogProviderCall
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
@@ -146,7 +147,7 @@ internal class S3CatalogReadbackClient private constructor(
     override fun toString(): String = "S3CatalogReadbackClient(read-only,redacted)"
 
     /** Concrete per-location construction custody, retained before any HTTP/SDK constructor is invoked. */
-    internal class Construction : AutoCloseable {
+    internal class Construction(private val attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null) : AutoCloseable {
         private var stage = Stage.NEW
         private var opened = false
         private var closed = false
@@ -185,9 +186,12 @@ internal class S3CatalogReadbackClient private constructor(
                 ?: throw CatalogReadbackException(CatalogReadbackFailure.INVALID_POLICY)
             val emptyProfile = ProfileFile.aggregator().build()
             val endpoint = catalogProviderCall(CatalogReadbackFailure.INVALID_POLICY) { regionalEndpoint(region, emptyProfile) }
+            attempt?.requireRunning()
             stage = Stage.OPENING_HTTP
             val raw = catalogProviderCall { httpFactory() }.also { this.raw = it; stage = Stage.HTTP_RETURNED }
+            attempt?.requireRunning() // Record the returned owner before checking deadline/stop; cleanup must still close it.
             val transport = BoundedCatalogSdkHttpClient(raw, location, endpoint, limits, nanoTime).also { this.transport = it }
+            attempt?.requireRunning()
             stage = Stage.OPENING_SDK
             val sdk = sdkReadbackCall {
                     S3Client.builder()
@@ -214,6 +218,7 @@ internal class S3CatalogReadbackClient private constructor(
                         )
                         .build()
             }.also { this.sdk = it; stage = Stage.SDK_RETURNED }
+            attempt?.requireRunning()
             return S3CatalogReadbackClient(location, sdk, transport)
         }
 
