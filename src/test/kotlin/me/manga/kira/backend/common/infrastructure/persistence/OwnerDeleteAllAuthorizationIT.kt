@@ -69,17 +69,28 @@ class OwnerDeleteAllAuthorizationIT {
                 var operation: ComplaintOwnerDeleteAllOperation? = null
                 f.afterStep = { step ->
                     if (step == DeleteAllStep.AUDIT) {
-                        assertEquals(before, f.state()) // Independent PG connection cannot see any portion before commit.
                         val held = f.observations.last().second
+                        val holders = TransactionSynchronizationManager.getResourceMap()
+                        assertEquals(setOf(f.pool), holders.keys)
+                        // Observer JdbcTemplate work must not bind a second holder to the synchronized phase caller.
+                        OwnedCallerTestScope().use { observers ->
+                            observers.launch {
+                                requireConnectionFree()
+                                assertEquals(before, f.state()) // Independent PG connection cannot see any portion before commit.
+                                assertEquals(
+                                    true,
+                                    f.observer.queryForObject(
+                                        "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory' " +
+                                            "AND mode = 'ShareLock' AND granted)",
+                                        Boolean::class.java,
+                                        held.identity.first,
+                                    ),
+                                )
+                                requireConnectionFree()
+                            }.value()
+                        }
+                        assertEquals(holders, TransactionSynchronizationManager.getResourceMap())
                         assertEquals(held.identity.second, f.jdbc.queryForObject("SELECT txid_current()", Long::class.java))
-                        assertEquals(
-                            true,
-                            f.observer.queryForObject(
-                                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory' AND mode = 'ShareLock' AND granted)",
-                                Boolean::class.java,
-                                held.identity.first,
-                            ),
-                        )
                         assertEquals(1, f.admission.activeOwners().privacyOwners)
                     }
                 }

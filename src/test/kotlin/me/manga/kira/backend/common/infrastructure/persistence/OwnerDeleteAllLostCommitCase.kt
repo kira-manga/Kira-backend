@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
 import java.sql.Timestamp
 import java.util.concurrent.atomic.AtomicBoolean
@@ -59,7 +60,14 @@ private fun lostCommit(f: OwnerDeleteAllAuthorizationFixture, relay: PgLifecycle
             if (step == DeleteAllStep.AUDIT) {
                 val observation = f.observations.last().second
                 selected.set(observation)
-                val backend = checkNotNull(f.base.ordinary.session(observation.identity.first))
+                val holders = TransactionSynchronizationManager.getResourceMap()
+                assertEquals(setOf(f.pool), holders.keys)
+                // Independent JdbcTemplate observation belongs to a connection-free actor, not this phase caller.
+                val backend = callers.launch {
+                    requireConnectionFree()
+                    checkNotNull(f.base.ordinary.session(observation.identity.first)).also { requireConnectionFree() }
+                }.value()
+                assertEquals(holders, TransactionSynchronizationManager.getResourceMap())
                 assertTrue(backend.inTransaction)
                 session.set(PgLifecycleDatabaseSession(observation.identity.first, backend.backendStart))
                 // Last business SQL reply has fully returned. The relay insists its next held CommandComplete is COMMIT.
