@@ -98,7 +98,7 @@ internal class CatalogEpochRotationBindingRowV1 private constructor(private val 
                 requiredUuid(row, prefix + "database_identity"),
                 requiredUuid(row, prefix + "restore_identity"),
                 requiredUuid(row, prefix + "event_writer_generation"),
-                requiredLong(row, prefix + "accepted_catalog_generation").also { check(it in 1..65_536) },
+                requiredLong(row, prefix + "accepted_catalog_generation").also { check(it in 1L..65_536L) },
                 requiredDigest(row, prefix + "accepted_catalog_hash"),
                 requiredDigest(row, prefix + "trust_bundle_hash"),
                 requiredUuid(row, prefix + "catalog_writer_generation"),

@@ -219,7 +219,7 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
     @Suppress("TooGenericExceptionCaught")
     internal fun finishCall() {
         try {
-            if (!callSucceeded) abort() else requireRunning() // Charge final result construction/return delay to original J/window.
+            if (!callSucceeded || failed.get()) abort() else requireRunning() // Charge final result construction/return delay to original J/window.
         } catch (problem: Throwable) {
             abort()
             throw problem
