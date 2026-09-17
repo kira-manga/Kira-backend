@@ -94,7 +94,8 @@ internal object JournalS3XmlPreflightV1 {
                     else -> emptySet()
                 }
                 requireJournalPublication(name in allowed, JournalPublicationFailureV1.INVALID_LISTING)
-                val repeating = parent.name == "ListVersionsResult" && name == "Version" || parent.name == "Version" && name == "ChecksumAlgorithm"
+                val repeating = (parent.name == "ListVersionsResult" && name == "Version") ||
+                    (parent.name == "Version" && name == "ChecksumAlgorithm")
                 requireJournalPublication(parent.children.add(name) || repeating, JournalPublicationFailureV1.INVALID_LISTING)
                 if (parent.name == "ListVersionsResult" && name == "Version") {
                     requireJournalPublication(++versions <= 2, JournalPublicationFailureV1.INVALID_LISTING)

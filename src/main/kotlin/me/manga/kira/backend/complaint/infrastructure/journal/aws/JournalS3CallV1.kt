@@ -64,7 +64,8 @@ internal class JournalS3CallV1 private constructor(
         val total = binding.attempt.remainingMillis(declaration.limits.deadlines.s3CallMillis)
         val elapsed = nanoTime() - started
         val remaining = (allowance - elapsed) / 1_000_000L
-        if (expired || elapsed < 0 || elapsed < lastElapsed || remaining <= 0) {
+        val clockRegressed = elapsed < 0 || elapsed < lastElapsed
+        if (expired || clockRegressed || remaining <= 0) {
             expired = true
             requireJournalPublication(false, JournalPublicationFailureV1.DEADLINE_EXHAUSTED)
         }
@@ -72,13 +73,14 @@ internal class JournalS3CallV1 private constructor(
         return minOf(total.toLong(), remaining).toInt()
     }
 
-    fun check() { remainingMillis() }
+    fun check() {
+        remainingMillis()
+    }
 
     override fun toString(): String = "JournalS3CallV1(one-shrinking-attempt,redacted)"
 
     companion object {
-        fun list(binding: JournalS3BindingV1, nanoTime: () -> Long): JournalS3CallV1 =
-            JournalS3CallV1(binding, JournalS3OperationV1.LIST, null, null, nanoTime)
+        fun list(binding: JournalS3BindingV1, nanoTime: () -> Long): JournalS3CallV1 = JournalS3CallV1(binding, JournalS3OperationV1.LIST, null, null, nanoTime)
 
         fun get(binding: JournalS3BindingV1, versionId: String, nanoTime: () -> Long): JournalS3CallV1 {
             requireJournalVersion(versionId)
@@ -93,11 +95,8 @@ internal class JournalS3CallV1 private constructor(
 }
 
 /** One in-memory randomized candidate, reused byte-for-byte (including retention metadata) for the sole optional retry. */
-internal class JournalS3CandidateV1 private constructor(
-    val event: OwnerDeleteAllJournalEventV1,
-    private val wire: ByteArray,
-    val retainUntil: Instant,
-) : AutoCloseable {
+internal class JournalS3CandidateV1 private constructor(val event: OwnerDeleteAllJournalEventV1, private val wire: ByteArray, val retainUntil: Instant) :
+    AutoCloseable {
     val wireSha256: String = Sha256.hex(wire)
     val checksum: String = Base64.getEncoder().encodeToString(HexFormat.of().parseHex(wireSha256))
     val size: Int get() = wire.size

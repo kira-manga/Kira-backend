@@ -163,7 +163,8 @@ internal class BoundedJournalSdkHttpClientV1(
                     requireJournalPublication(body != null && declared != null && declared > 0, JournalPublicationFailureV1.INVALID_READBACK)
                 }
                 val bytes = JournalS3HttpWireV1.read(body, declared, maximum, ::checkRead).also { inbound = it }
-                if (success && call.operation == JournalS3OperationV1.LIST || !success && bytes.isNotEmpty()) {
+                val inspectXml = if (success) call.operation == JournalS3OperationV1.LIST else bytes.isNotEmpty()
+                if (inspectXml) {
                     JournalS3XmlPreflightV1.inspect(bytes, success, ::checkRead)
                 }
                 checkRead()
@@ -182,7 +183,10 @@ internal class BoundedJournalSdkHttpClientV1(
         } else {
             when (call.operation) {
                 JournalS3OperationV1.LIST -> JournalS3HttpWireV1.MAX_LIST_BYTES
-                JournalS3OperationV1.PUT -> 0 // A PutObject success has no body; an embedded error cannot masquerade as it.
+
+                // A PutObject success has no body; an embedded error cannot masquerade as it.
+                JournalS3OperationV1.PUT -> 0
+
                 JournalS3OperationV1.GET -> call.declaration.limits.decoder.maximumEnvelopeBytes
             }
         }
