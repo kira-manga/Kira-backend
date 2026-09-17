@@ -178,14 +178,20 @@ class OwnerDeleteAllContinuationIT {
         assertEquals("APPLIED", f.publicationState())
         assertEquals(0L, f.journalLanes.activeOwners().totalOwners)
         f.assertReleased()
-        val completedAt = checkNotNull(f.auth.observer.queryForObject(
-            "SELECT completed_at FROM installation_deletion_receipts WHERE installation_id = ?",
-            java.sql.Timestamp::class.java, f.candidate.installation.id,
-        )).toInstant()
-        val expiresAt = checkNotNull(f.auth.observer.queryForObject(
-            "SELECT expires_at FROM installation_deletion_receipts WHERE installation_id = ?",
-            java.sql.Timestamp::class.java, f.candidate.installation.id,
-        )).toInstant()
+        val completedAt = checkNotNull(
+            f.auth.observer.queryForObject(
+                "SELECT completed_at FROM installation_deletion_receipts WHERE installation_id = ?",
+                java.sql.Timestamp::class.java,
+                f.candidate.installation.id,
+            ),
+        ).toInstant()
+        val expiresAt = checkNotNull(
+            f.auth.observer.queryForObject(
+                "SELECT expires_at FROM installation_deletion_receipts WHERE installation_id = ?",
+                java.sql.Timestamp::class.java,
+                f.candidate.installation.id,
+            ),
+        ).toInstant()
         val before = f.auth.state()
         val proof = f.proofSnapshot()
         val requests = f.publisher.requests.size to f.publisher.kms.requests.size

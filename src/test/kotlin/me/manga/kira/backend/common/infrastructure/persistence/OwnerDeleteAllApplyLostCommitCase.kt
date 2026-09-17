@@ -44,12 +44,7 @@ private fun ownerDeleteAllApplyLostCommitResponse(database: PgLifecycleDatabaseF
     }
 }
 
-private fun lostApplyCommit(
-    f: OwnerDeleteAllApplyFixture,
-    relay: PgLifecycleDatabaseRelay,
-    warm: PgLifecycleDatabaseWarmControl,
-    continuation: Boolean,
-) {
+private fun lostApplyCommit(f: OwnerDeleteAllApplyFixture, relay: PgLifecycleDatabaseRelay, warm: PgLifecycleDatabaseWarmControl, continuation: Boolean) {
     val counters = f.auth.counters()
     val selected = AtomicReference<StepUpPhaseObservation?>()
     val session = AtomicReference<PgLifecycleDatabaseSession?>()
