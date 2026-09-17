@@ -207,7 +207,7 @@ class OwnerDeleteAllApplyOutcomeIT {
                         // never a made-up cleanup flag, substitute phase or fake database outcome.
                         TransactionSynchronizationManager.bindResource(sentinelKey, sentinel)
                         sentinelBound = true
-                        throw IllegalStateException("Synthetic completion failure with unresolved Spring cleanup.")
+                        error("Synthetic completion failure with unresolved Spring cleanup.")
                     }
                 })
                 phase.commit()
