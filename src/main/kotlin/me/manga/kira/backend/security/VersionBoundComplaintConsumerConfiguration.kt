@@ -17,6 +17,7 @@ internal class VersionBoundComplaintConsumerConfiguration private constructor(
     private val settings: VersionBoundComplaintConsumerSettings,
     val admissionPolicy: ComplaintAdmissionPolicy,
     val ownerCreatePolicy: ComplaintOwnerCreateAdmissionPolicy.Bounded,
+    val ownerDeleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy.Bounded,
     private val admissionKeys: ComplaintAdmissionKeyConfiguration,
     val ownerCursorCodec: ComplaintOwnerCursorCodec,
     val ingressAdmission: ComplaintIngressAdmission,
@@ -59,6 +60,7 @@ internal class VersionBoundComplaintConsumerConfiguration private constructor(
 
             val policy = settings.admissionPolicy(capacityPolicy)
             val createPolicy = settings.ownerCreatePolicy(capacityPolicy)
+            val deleteAllPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(capacityPolicy, createPolicy.memberLimit, createPolicy.pruneBatch)
             val resolver = settings.clientIpResolver()
             val copies = ArrayList<ByteArray>(descriptors.size)
             val admissionCopies = ArrayList<ComplaintAdmissionKey>(admissions.size)
@@ -92,9 +94,9 @@ internal class VersionBoundComplaintConsumerConfiguration private constructor(
                     (jwtMaterials + admissionMaterials).map { it.bytes },
                     Clock.systemUTC(),
                 )
-                val ingress = ComplaintIngressAdmission(resolver, policy, fixedKeys, SystemComplaintAdmissionNanoClock, createPolicy)
+                val ingress = ComplaintIngressAdmission(resolver, policy, fixedKeys, SystemComplaintAdmissionNanoClock, createPolicy, deleteAllPolicy)
                 return VersionBoundComplaintConsumerConfiguration(
-                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, createPolicy, fixedKeys, codec, ingress, descriptors,
+                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, createPolicy, deleteAllPolicy, fixedKeys, codec, ingress, descriptors,
                 )
             } finally {
                 admissionCopies.forEach { it.destroy() }
