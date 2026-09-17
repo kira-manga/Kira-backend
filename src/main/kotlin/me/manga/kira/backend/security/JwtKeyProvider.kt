@@ -102,7 +102,13 @@ class JwtKeyProvider private constructor(val secretKey: SecretKey, private val v
         private val ttl = properties.accessTokenTtl
         private val skew = properties.clockSkew
 
-        fun matches(properties: KiraSecurityProperties): Boolean = issuer == properties.issuer && audience == properties.audience &&
-            ttl == properties.accessTokenTtl && skew == properties.clockSkew
+        init {
+            // @NotBlank is Spring binding validation, not a guard on this explicit non-Spring path.
+            require(issuer.isNotBlank() && audience.isNotBlank()) { INVALID_VERSION_BOUND_CONFIGURATION }
+        }
+
+        fun matches(properties: KiraSecurityProperties): Boolean =
+            issuer == properties.issuer && audience == properties.audience &&
+                ttl == properties.accessTokenTtl && skew == properties.clockSkew && properties.jwtSecret == null
     }
 }

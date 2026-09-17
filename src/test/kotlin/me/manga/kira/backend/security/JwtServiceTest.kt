@@ -7,14 +7,10 @@ import me.manga.kira.backend.user.domain.User
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
-import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator
-import org.springframework.security.oauth2.jose.jws.MacAlgorithm
+import org.springframework.mock.env.MockEnvironment
 import org.springframework.security.oauth2.jwt.JwtClaimNames
-import org.springframework.security.oauth2.jwt.JwtClaimValidator
+import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.JwtException
-import org.springframework.security.oauth2.jwt.JwtIssuerValidator
-import org.springframework.security.oauth2.jwt.JwtTimestampValidator
-import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import java.time.Clock
 import java.time.Duration
 import java.time.Instant
@@ -23,7 +19,7 @@ import java.util.UUID
 /**
  * Test 6 (PLAN §11) — `JwtServiceTest`: issue→decode round-trip; expired token rejected; tampered
  * signature rejected; role claim mapped. A pure unit test — no Spring context. The decoder is built
- * exactly as [SecurityConfig] builds it (HS256 + timestamp/issuer/audience validators).
+ * by the actual [SecurityConfig] path (HS256 + timestamp/issuer/audience validators).
  */
 class JwtServiceTest {
 
@@ -42,17 +38,7 @@ class JwtServiceTest {
         updatedAt = Instant.parse("2026-01-01T00:00:00Z"),
     )
 
-    private fun buildDecoder(): NimbusJwtDecoder {
-        val d = NimbusJwtDecoder.withSecretKey(keyProvider.secretKey).macAlgorithm(MacAlgorithm.HS256).build()
-        d.setJwtValidator(
-            DelegatingOAuth2TokenValidator(
-                JwtTimestampValidator(properties.clockSkew),
-                JwtIssuerValidator(properties.issuer),
-                JwtClaimValidator<List<String>?>(JwtClaimNames.AUD) { it?.contains(properties.audience) == true },
-            ),
-        )
-        return d
-    }
+    private fun buildDecoder(): JwtDecoder = SecurityConfig(MockEnvironment()).jwtDecoder(keyProvider, properties)
 
     @Test
     fun `issue then decode round-trips subject, email, issuer, audience`() {

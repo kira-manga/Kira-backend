@@ -178,9 +178,12 @@ directly into its actual HS256 key; no Base64/text conversion or relookup occurs
 
 The owner retains the immutable version binding and frozen issuer, audience, TTL
 and skew scalars, not the raw property secret or a replaceable caller key list.
+It explicitly requires nonblank issuer/audience on this non-Spring construction
+path; the properties constructor already validates TTL, skew and distinct claims.
 The actual `JwtService` and `SecurityConfig.jwtDecoder` constructors check those
-same four effective scalars before constructing their encoder/decoder. The
-existing signing headers, claims, timestamp/issuer/audience/type validators and
+same four effective scalars and refuse any parallel property secret before
+constructing their encoder/decoder. The existing signing headers, claims,
+timestamp/issuer/audience/type validators and
 DB-backed authorization remain unchanged. Unrelated security properties are not
 part of this JWT input check. The explicitly annotated public Spring constructor
 still exclusively selects the original environment/Base64 path, with its existing
