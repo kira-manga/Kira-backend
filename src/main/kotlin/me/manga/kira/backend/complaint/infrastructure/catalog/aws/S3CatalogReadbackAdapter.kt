@@ -23,7 +23,11 @@ import software.amazon.awssdk.services.s3.model.ListObjectVersionsResponse
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Dormant read-only adapter. Verified trust pins routes; neither construction nor SDK responses grant catalog authority. */
-internal class S3CatalogReadbackAdapter private constructor(private val primary: S3CatalogReadbackClient, private val replica: S3CatalogReadbackClient) :
+internal class S3CatalogReadbackAdapter private constructor(
+    private val primary: S3CatalogReadbackClient,
+    private val replica: S3CatalogReadbackClient,
+    private val construction: Construction,
+) :
     CatalogReadbackPort,
     AutoCloseable {
     private val closed = AtomicBoolean()
@@ -98,10 +102,50 @@ internal class S3CatalogReadbackAdapter private constructor(private val primary:
 
     override fun close() {
         closed.set(true)
-        withS3Cleanup(primary::close, replica::close)
+        construction.close()
     }
 
     override fun toString(): String = "S3CatalogReadbackAdapter(read-only,redacted,no-admission-authority)"
+
+    /** Two concrete location owners retained by the refresh lane BEFORE constructing either client. */
+    internal class Construction : AutoCloseable {
+        private val primary = S3CatalogReadbackClient.Construction()
+        private val replica = S3CatalogReadbackClient.Construction()
+        private var opened = false
+        private var closed = false
+        private var closeFailure: Throwable? = null
+
+        internal fun open(
+            bytes: ByteArray,
+            policy: OfflineTrustBundlePolicy,
+            primaryCredentials: AwsSessionCredentials,
+            replicaCredentials: AwsSessionCredentials,
+            limits: S3CatalogReadbackLimits,
+            httpFactory: () -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): S3CatalogReadbackAdapter {
+            requireConnectionFree()
+            requireCatalogReadback(!opened && !closed, CatalogReadbackFailure.INVALID_POLICY)
+            opened = true
+            val result = runCatching {
+                val locations = OfflineTrustBundleVerifier.verify(bytes, policy).body.catalogLocations
+                val first = primary.open(locations[0], primaryCredentials, limits, httpFactory, nanoTime)
+                val second = replica.open(locations[1], replicaCredentials, limits, httpFactory, nanoTime)
+                S3CatalogReadbackAdapter(first, second, this)
+            }
+            if (result.isFailure) return withS3Cleanup({ result.getOrThrow() }, ::close)
+            return result.getOrThrow()
+        }
+
+        override fun close() {
+            closed = true
+            val failure = runCatching { withS3Cleanup(primary::close, replica::close) }.exceptionOrNull()
+            if (failure != null && replaceS3Failure(closeFailure, failure)) closeFailure = failure
+            closeFailure?.let { throw it }
+        }
+
+        override fun toString(): String = "CatalogReadbackConstructionV1(retained-two-locations,redacted)"
+    }
 
     companion object {
         fun open(
@@ -131,6 +175,18 @@ internal class S3CatalogReadbackAdapter private constructor(private val primary:
             nanoTime: () -> Long = System::nanoTime,
         ): S3CatalogReadbackAdapter = create(currentBundleBytes, trustPolicy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
 
+        internal fun openOwned(
+            construction: Construction,
+            currentBundleBytes: ByteArray,
+            trustPolicy: OfflineTrustBundlePolicy,
+            primaryCredentials: AwsSessionCredentials,
+            replicaCredentials: AwsSessionCredentials,
+            limits: S3CatalogReadbackLimits,
+            httpFactory: () -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): S3CatalogReadbackAdapter =
+            construction.open(currentBundleBytes, trustPolicy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
+
         private fun create(
             bytes: ByteArray,
             policy: OfflineTrustBundlePolicy,
@@ -140,12 +196,7 @@ internal class S3CatalogReadbackAdapter private constructor(private val primary:
             httpFactory: () -> SdkHttpClient,
             nanoTime: () -> Long,
         ): S3CatalogReadbackAdapter {
-            requireConnectionFree()
-            val locations = OfflineTrustBundleVerifier.verify(bytes, policy).body.catalogLocations
-            val primary = S3CatalogReadbackClient.create(locations[0], primaryCredentials, limits, httpFactory, nanoTime)
-            val replica = runCatching { S3CatalogReadbackClient.create(locations[1], replicaCredentials, limits, httpFactory, nanoTime) }
-            replica.exceptionOrNull()?.let { failure -> return withS3Cleanup({ throw failure }, primary::close) }
-            return S3CatalogReadbackAdapter(primary, replica.getOrThrow())
+            return Construction().open(bytes, policy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
         }
     }
 }

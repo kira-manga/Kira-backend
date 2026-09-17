@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
@@ -13,6 +14,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val dataSource: GuardedDataSource,
 ) : AutoCloseable {
     internal val manager = GuardedJdbcTransactionManager(dataSource)
+    internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     private val admitted = AtomicBoolean()
     private val bindingClaimed = AtomicBoolean()
     private var phaseOwner: PersistencePhaseOwnership? = null
