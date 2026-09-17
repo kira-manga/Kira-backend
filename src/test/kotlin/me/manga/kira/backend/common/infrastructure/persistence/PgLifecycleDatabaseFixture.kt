@@ -220,6 +220,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.DeletionControlSnapshotIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorResourcesIT",
                     "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
+                    "me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherV1IT",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgOwnedCutIntegrationTest",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgNativePhysicalCloseIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,
