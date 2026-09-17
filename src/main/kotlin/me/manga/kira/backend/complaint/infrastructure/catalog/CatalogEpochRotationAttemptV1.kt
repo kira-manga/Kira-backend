@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinato
 import me.manga.kira.backend.common.infrastructure.persistence.EpochRotationPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryFailureCode
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceOwnedFactoryCaller
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -26,7 +27,7 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
     initialPath: PersistencePhasePath,
     internal val budget: PersistenceTimeBudget,
 ) {
-    private val caller = Thread.currentThread()
+    private val caller = PersistenceOwnedFactoryCaller.capture()
     private val ownership = coordinator.ownership
     private val binding = campaign.binding
     private val window = campaign.requireLocalWindow()
@@ -46,8 +47,8 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
     private var callSucceeded = false
 
     internal fun requireRunning() {
-        if (caller !== Thread.currentThread() || failed.get() || !custody.ownsCall(this)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
-        if (Thread.currentThread().isInterrupted) refuse(PersistencePhaseFailureCode.INTERRUPTED)
+        if (!caller.isCurrent() || failed.get() || !custody.ownsCall(this)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        if (caller.sampleActualFlag() != null) refuse(PersistencePhaseFailureCode.INTERRUPTED)
         try {
             budget.remainingMillis(10_000)
         } catch (problem: PersistenceBoundaryException) {
@@ -223,7 +224,11 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
             abort()
             throw problem
         } finally {
-            custody.endCall(this)
+            try {
+                caller.restoreAfterFailure() // Only after definitive refusal; never under F/G/T or a JDBC dispatch.
+            } finally {
+                custody.endCall(this)
+            }
         }
     }
 

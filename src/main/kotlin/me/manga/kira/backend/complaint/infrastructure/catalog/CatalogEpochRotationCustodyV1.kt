@@ -29,7 +29,7 @@ internal class CatalogEpochRotationCustodyV1(private val coordinator: CatalogCoo
                     return prior
                 } catch (problem: Throwable) {
                     prior.abort()
-                    endCall(prior)
+                    prior.finishCall()
                     throw problem
                 }
             }
@@ -56,7 +56,7 @@ internal class CatalogEpochRotationCustodyV1(private val coordinator: CatalogCoo
                 return attempt
             } catch (problem: Throwable) {
                 attempt.abort()
-                endCall(attempt)
+                attempt.finishCall()
                 throw problem
             }
         } catch (problem: Throwable) {
@@ -75,7 +75,7 @@ internal class CatalogEpochRotationCustodyV1(private val coordinator: CatalogCoo
                 attempt.beginCapture()
             } catch (problem: Throwable) {
                 attempt.abort()
-                endCall(attempt)
+                attempt.finishCall()
                 throw problem
             }
         } catch (problem: Throwable) {
