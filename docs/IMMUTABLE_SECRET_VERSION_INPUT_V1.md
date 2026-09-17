@@ -94,8 +94,11 @@ Before SDK unmarshalling, a fixed allocation bounds the response to at most
 131,072 wire bytes (including framing whitespace and JSON escapes). Only a 200
 response with AWS JSON content type and no compression/range/redirect metadata
 is read; error and redirect bodies are not handed to any SDK decoder. Content
-length, progress, EOF and actual byte ceilings are checked. Header limits apply
-**after** stock URLConnection header parsing, not before its allocations.
+length, progress, EOF and actual byte ceilings are checked. Header checks apply to
+the SDK's case-insensitive response map **after** stock URLConnection header
+parsing, not before its allocations. The SDK builder can collapse case-distinct
+names into one entry; original wire-name uniqueness is not proved. Multiple values
+still present for required singleton headers are rejected.
 
 A bounded JDK UTF-8 decoder rejects malformed, overlong, surrogate and out-of-range
 wire sequences without constructing a whole-document String. A bounded streaming

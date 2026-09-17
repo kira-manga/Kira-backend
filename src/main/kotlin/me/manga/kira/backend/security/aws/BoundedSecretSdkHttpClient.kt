@@ -18,7 +18,10 @@ import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
-/** One retained exchange through SDK decoding. Headers are bounded after stock URLConnection parses them. */
+/**
+ * One retained exchange through SDK decoding. Header checks see the stock client's normalized SDK
+ * map after URLConnection parsing; original case-distinct duplicate names may already be collapsed.
+ */
 internal class BoundedSecretSdkHttpClient(
     private val delegate: SdkHttpClient,
     private val region: String,
@@ -205,7 +208,9 @@ internal class BoundedSecretSdkHttpClient(
         private val cleanupFailure = AtomicReference<Throwable?>()
 
         @Volatile private var body: AbortableInputStream? = null
+
         @Volatile private var wire: ByteArray? = null
+
         @Volatile private var report: SecretVersionWireReport? = null
 
         @Suppress("TooGenericExceptionCaught")

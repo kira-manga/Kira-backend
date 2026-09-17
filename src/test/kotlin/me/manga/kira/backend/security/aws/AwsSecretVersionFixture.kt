@@ -74,7 +74,9 @@ internal class AwsSecretVersionFixture {
         const val VERSION = "64000000-0000-4000-8000-000000000001"
         const val PRIVATE_TEXT = "synthetic-private-secret-provider-text"
         val CREDENTIALS: AwsSessionCredentials = AwsSessionCredentials.create(
-            "SYNTHETICACCESSKEY", "synthetic-secret-not-a-real-credential", "synthetic-session",
+            "SYNTHETICACCESSKEY",
+            "synthetic-secret-not-a-real-credential",
+            "synthetic-session",
         )
 
         fun reference(number: Int = 1, arn: String = ARN): ImmutableSecretVersion =

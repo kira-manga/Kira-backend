@@ -53,10 +53,15 @@ internal object SecretVersionJsonPreflight {
                 next(parser, check)
                 when (name) {
                     "ARN" -> arn = string(parser, 640)
+
                     "VersionId" -> version = string(parser, 36)
+
                     "SecretBinary" -> materialSize = binarySize(string(parser, MAX_ENCODED_CHARACTERS), maximumMaterialBytes, check)
+
                     "Name" -> string(parser, 256)
+
                     "VersionStages" -> stages(parser, check)
+
                     "CreatedDate" -> requireSecretVersion(
                         parser.currentToken()?.isNumeric == true && parser.text.length <= 32,
                         SecretVersionFailure.RESOLVER_FAILURE,

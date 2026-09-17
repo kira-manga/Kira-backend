@@ -29,6 +29,7 @@ import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.core.SdkSystemSetting
 import software.amazon.awssdk.core.exception.SdkClientException
 import software.amazon.awssdk.http.SdkHttpMethod
+import software.amazon.awssdk.http.SdkHttpResponse
 import java.io.IOException
 import java.util.Base64
 import java.util.concurrent.CancellationException
@@ -222,7 +223,7 @@ class AwsSecretsManagerVersionResolverTest {
             "Content-Encoding" to listOf("gzip"),
             "Content-Range" to listOf("bytes 0-4/8"),
             "Content-Type" to listOf("text/plain"),
-            "content-type" to listOf("application/x-amz-json-1.1"),
+            "content-type" to listOf("application/x-amz-json-1.1", "application/x-amz-json-1.1"),
             "Content-Type" to listOf("application/x-amz-json-1.1", "application/x-amz-json-1.1"),
             "Transfer-Encoding" to listOf("chunked"),
             "X-Bad" to listOf("$PRIVATE_TEXT\n"),
@@ -232,6 +233,20 @@ class AwsSecretsManagerVersionResolverTest {
             rejectReply(response)
             assertEquals(0, response.reads)
         }
+
+        // The actual SDK builder replaces case-equivalent map entries, rather than appending their values.
+        // A singleton after that normalization is not observable duplicate-wire-name evidence.
+        val normalized = reply().apply { headers = headers + ("content-type" to listOf("application/x-amz-json-1.1")) }
+        assertEquals(3, normalized.headers.size)
+        val delivered = SdkHttpResponse.builder().statusCode(normalized.status).headers(normalized.headers).build()
+        assertEquals(2, delivered.headers().size)
+        assertEquals(listOf("application/x-amz-json-1.1"), delivered.matchingHeaders("Content-Type"))
+        val fixture = AwsSecretVersionFixture().apply { respond = { normalized } }
+        fixture.resolver().use { resolver -> assertEquals(reference(), resolver.resolve(reference()).version) }
+        assertTrue(normalized.reads > 0)
+        assertReleased(normalized)
+        assertEquals(1, fixture.requests.size)
+        assertEquals(1, fixture.closedClients)
     }
 
     @Test

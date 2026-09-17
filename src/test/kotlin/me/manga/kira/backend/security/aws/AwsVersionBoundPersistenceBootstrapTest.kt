@@ -164,7 +164,13 @@ class AwsVersionBoundPersistenceBootstrapTest {
         AwsSecretVersionFixture().apply { respond = { reply(VersionBoundPersistenceTestInputs.binding().version, material) } }
 
     private fun bind(bootstrap: AwsVersionBoundPersistenceBootstrap): PersistenceJdbcLifecycleOwner = bootstrap.bind(
-        "db.invalid", 5432, "fixture_db", "fixture_user", 2, VersionBoundPersistenceTestInputs.pem(), Path.of("/deliberately-not-created/secret-bootstrap"),
+        "db.invalid",
+        5432,
+        "fixture_db",
+        "fixture_user",
+        2,
+        VersionBoundPersistenceTestInputs.pem(),
+        Path.of("/deliberately-not-created/secret-bootstrap"),
     )
 
     private fun closeOwner(owner: PersistenceJdbcLifecycleOwner, retained: Boolean = false) {

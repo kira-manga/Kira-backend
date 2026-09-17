@@ -21,8 +21,10 @@ internal class AwsVersionBoundPersistenceBootstrap(private val binding: Versione
 
     @Volatile var acquired: AcquiredVersionedSecret? = null
         private set
+
     @Volatile var configuration: VersionBoundPersistenceConfiguration? = null
         private set
+
     @Volatile var owner: PersistenceJdbcLifecycleOwner? = null
         private set
 
@@ -48,7 +50,14 @@ internal class AwsVersionBoundPersistenceBootstrap(private val binding: Versione
         val captured = AcquiredVersionedSecret.acquire(binding, resolver)
         acquired = captured
         val configured = VersionBoundPersistenceConfiguration.fromAcquired(
-            captured, host, port, database, username, ordinaryCapacity, publicTrustPem, protectedTrustParent,
+            captured,
+            host,
+            port,
+            database,
+            username,
+            ordinaryCapacity,
+            publicTrustPem,
+            protectedTrustParent,
         )
         configuration = configured
         val bound = configured.bindLifecycleOwner()
