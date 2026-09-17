@@ -112,7 +112,7 @@ internal class CoordinatorLeaseTestFixture(val genesis: ProcessBoundCatalogGenes
 
 internal data class CoordinatorLeaseRow(val owner: UUID?, val token: Long, val expiresAt: Instant?, val updatedAt: Instant)
 
-internal enum class CoordinatorLeaseSqlStep { LOCK_CONTROL, SAMPLE_CLOCK, WRITE_CONTROL, READ_CONTROL }
+internal enum class CoordinatorLeaseSqlStep { LOCK_CONTROL, WRITE_CONTROL, READ_CONTROL }
 
 /** Observes the actual original holder; expected sanitized refusals cannot hide an assertion made in a SQL cut. */
 internal class CoordinatorLeaseProbeJdbc(private val genesis: ProcessBoundCatalogGenesisFixture) : JdbcTemplate(genesis.coordinator.dataSource) {
@@ -140,7 +140,14 @@ internal class CoordinatorLeaseProbeJdbc(private val genesis: ProcessBoundCatalo
         assertionFailure.get()?.let { throw it }
     }
 
-    private fun <T> observed(sql: String, action: () -> T): T = try {
+    fun <T> preserveAssertions(action: () -> T): T = try {
+        action()
+    } catch (failure: AssertionError) {
+        assertionFailure.compareAndSet(null, failure)
+        throw failure
+    }
+
+    private fun <T> observed(sql: String, action: () -> T): T = preserveAssertions {
         val current = checkNotNull(PersistencePhaseOwnership.current())
         val holder = TransactionSynchronizationManager.getResource(genesis.coordinator.dataSource) as ConnectionHolder
         assertEquals(setOf(genesis.coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
@@ -162,15 +169,11 @@ internal class CoordinatorLeaseProbeJdbc(private val genesis: ProcessBoundCatalo
         val step = when {
             sql.contains("FOR UPDATE") -> CoordinatorLeaseSqlStep.LOCK_CONTROL
             sql.contains("UPDATE complaint_journal_control") -> CoordinatorLeaseSqlStep.WRITE_CONTROL
-            sql.contains("clock_timestamp()") -> CoordinatorLeaseSqlStep.SAMPLE_CLOCK
             sql.contains("FROM complaint_journal_control") -> CoordinatorLeaseSqlStep.READ_CONTROL
             else -> error("Unexpected coordinator lease statement.")
         }
         steps.add(step)
         beforeSql(step)
         action().also { afterSql(step) }
-    } catch (failure: AssertionError) {
-        assertionFailure.compareAndSet(null, failure)
-        throw failure
     }
 }
