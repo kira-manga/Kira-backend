@@ -14,6 +14,8 @@ internal interface CountedComplaintAuditRepository {
     fun recordComplaint(entry: CountedComplaintAuditEntry, allocation: ComplaintAuditAllocation)
 
     fun recordInstallationEnrollment(entry: CountedInstallationEnrollmentAuditEntry, allocation: ComplaintAuditAllocation)
+
+    fun recordInstallationDeleteAuthorization(entry: CountedInstallationDeleteAuthorizationAuditEntry, allocation: ComplaintAuditAllocation)
 }
 
 /** Typed, bounded encoder output. Even a direct port caller cannot substitute an arbitrary JSON payload. */

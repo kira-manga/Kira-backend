@@ -1,6 +1,7 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
+import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import java.nio.ByteBuffer
 import java.util.UUID
@@ -48,6 +49,26 @@ internal object ComplaintAdmissionPseudonyms {
             ascii("OWNER_CREATE"),
             uuid(tuple.key),
             tuple.fingerprintBytes(),
+        ),
+    )
+
+    fun ownerDeleteAllIp(keys: List<ComplaintAdmissionKey>, canonicalIp: ByteArray): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("IP"), ascii("OWNER_DELETE_ALL"), canonicalIp))
+
+    fun ownerDeleteAllActor(keys: List<ComplaintAdmissionKey>, installation: ScopedInstallationId): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("INSTALLATION"), uuid(installation.id), uuid(installation.scope.id), ascii("OWNER_DELETE_ALL")))
+
+    fun ownerDeleteAllMember(keys: List<ComplaintAdmissionKey>, tuple: InstallationDeletionPreflightTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(),
+            ascii("MEMBER"),
+            ascii("INSTALLATION"),
+            uuid(tuple.installation.id),
+            uuid(tuple.installation.scope.id),
+            ascii("OWNER_DELETE_ALL"),
+            uuid(tuple.operationKey),
+            ByteBuffer.allocate(40).putLong(tuple.submittedCredentialVersion).put(tuple.fingerprint.bytes()).array(),
         ),
     )
 

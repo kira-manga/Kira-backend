@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContex
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
+import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -40,6 +41,7 @@ internal class ComplaintIngressAdmission(
     configuration: ComplaintAdmissionKeyConfiguration,
     private val clock: ComplaintAdmissionNanoClock,
     private val createPolicy: ComplaintOwnerCreateAdmissionPolicy = ComplaintOwnerCreateAdmissionPolicy.Disabled,
+    private val deleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Disabled,
 ) {
     private val lock = Any()
     private val keys = ComplaintAdmissionKeyRing(configuration)
@@ -52,7 +54,7 @@ internal class ComplaintIngressAdmission(
         ComplaintAdmissionPolicy.INGRESS_IDLE_NANOS,
     )
 
-    // One physical bucket/event budget for ALL hourly semantic operations, including key overlap.
+    // One physical bucket/event budget for hourly semantics AND the fixed delete-all daily dimension, including key overlap.
     private val semantics = ComplaintAdmissionWindowStore(
         policy.semanticBucketLimit,
         policy.semanticEventLimit,
@@ -69,7 +71,13 @@ internal class ComplaintIngressAdmission(
         ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS,
         ComplaintAdmissionPolicy.INGRESS_WINDOW_NANOS,
     )
-    private val creates = (createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded)?.let(::ComplaintOwnerCreateAdmissionStore)
+    private val mutationMembers = mutationMembers()
+    private val creates = (createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded)?.let {
+        ComplaintOwnerCreateAdmissionStore(it, checkNotNull(mutationMembers))
+    }
+    private val deletions = (deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded)?.let {
+        ComplaintOwnerDeleteAllAdmissionStore(it, checkNotNull(mutationMembers))
+    }
     private var reservations = 0
     private var lastRawTime = clock.now()
     private var elapsedTime = 0L
@@ -97,8 +105,9 @@ internal class ComplaintIngressAdmission(
                     val sessionKeys = ComplaintAdmissionPseudonyms.sessionIp(activeKeys, address)
                     val bootstrapKeys = ComplaintAdmissionPseudonyms.bootstrapIp(activeKeys, address)
                     val enrollmentKeys = ComplaintAdmissionPseudonyms.enrollmentIp(activeKeys, address)
+                    val deletionKeys = ComplaintAdmissionPseudonyms.ownerDeleteAllIp(activeKeys, address)
                     ingress.charge(ingressKeys.map { ComplaintAdmissionCharge(it, policy.ingressPerMinute) }, now)
-                    contexts[context] = ContextState(Thread.currentThread(), keys.generation, sessionKeys, bootstrapKeys, enrollmentKeys)
+                    contexts[context] = ContextState(Thread.currentThread(), keys.generation, sessionKeys, bootstrapKeys, enrollmentKeys, deletionKeys)
                 }
             } finally {
                 address.fill(0)
@@ -212,6 +221,45 @@ internal class ComplaintIngressAdmission(
             )
             state.admission = handoff.identity
             state.ownerCreateIdentity = handoff.identity
+            state.admittedAt = now
+            state.consumed = true
+            handoff
+        }
+    }
+
+    internal fun startOwnerDeleteAll(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.OWNER_DELETE_ALL) }
+    }
+
+    /** The concrete coordinator has just verified custody of a genuinely released preflight. */
+    internal fun admitOwnerDeleteAll(context: ComplaintIngressContext, tuple: InstallationDeletionPreflightTuple): ComplaintAdmittedOwnerDeleteAll {
+        requireConnectionFree()
+        if (clock !== SystemComplaintAdmissionNanoClock ||
+            tuple.installation.scope.testOnly
+        ) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        return locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.OWNER_DELETE_ALL ||
+                state.admission != null
+            ) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val limits = deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
+            val handoff = AdmittedDeleteAll(this, context, tuple, limits)
+            val now = time()
+            val activeKeys = keys.keys()
+            checkNotNull(deletions).admit(
+                ComplaintAdmissionPseudonyms.ownerDeleteAllMember(activeKeys, tuple),
+                ComplaintAdmissionPseudonyms.ownerDeleteAllActor(activeKeys, tuple.installation),
+                state.deleteAllIp,
+                semantics,
+                now,
+            )
+            state.admission = handoff.identity
+            state.ownerDeleteAllIdentity = handoff.identity
             state.admittedAt = now
             state.consumed = true
             handoff
@@ -363,6 +411,30 @@ internal class ComplaintIngressAdmission(
         requireLifetime(state, advanceTime(System.nanoTime()))
     }
 
+    private fun requireDeleteAllState(handoff: AdmittedDeleteAll) {
+        val state = state(handoff.context)
+        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_DELETE_ALL || !state.consumed) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        if (state.ownerDeleteAllIdentity !== handoff.identity || state.admission !== handoff.identity) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        requireLifetime(state, advanceTime(System.nanoTime()))
+    }
+
+    private fun mutationMembers(): ComplaintMutationAdmissionMembers? {
+        val create = createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded
+        val deletion = deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded
+        if (create != null && deletion != null) {
+            require(create.memberLimit == deletion.memberLimit && create.pruneBatch == deletion.pruneBatch) { INVALID_ADMISSION_CONFIGURATION }
+        }
+        return when {
+            create != null -> ComplaintMutationAdmissionMembers(create.memberLimit, create.pruneBatch)
+            deletion != null -> ComplaintMutationAdmissionMembers(deletion.memberLimit, deletion.pruneBatch)
+            else -> null
+        }
+    }
+
     private fun requireLifetime(state: ContextState, now: Long) {
         if (now - state.admittedAt >= ComplaintAdmissionPolicy.ADMISSION_LIFETIME_NANOS) {
             refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
@@ -385,7 +457,7 @@ internal class ComplaintIngressAdmission(
             ingress.removeGeneration(generation)
             semantics.removeGeneration(generation)
             ownerReads.removeGeneration(generation)
-            creates?.removeGeneration(generation)
+            mutationMembers?.removeGeneration(generation)
         }
     }
 
@@ -445,6 +517,7 @@ internal class ComplaintIngressAdmission(
         val sessionIp: List<ComplaintAdmissionBucketKey>,
         val bootstrapIp: List<ComplaintAdmissionBucketKey>,
         val enrollmentIp: List<ComplaintAdmissionBucketKey>,
+        val deleteAllIp: List<ComplaintAdmissionBucketKey>,
     ) {
         var operation: SemanticOperation? = null
         var admission: Any? = null
@@ -454,9 +527,24 @@ internal class ComplaintIngressAdmission(
         var refreshIdentity: Any? = null
         var enrollmentIdentity: Any? = null
         var ownerCreateIdentity: Any? = null
+        var ownerDeleteAllIdentity: Any? = null
     }
 
-    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE }
+    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE, OWNER_DELETE_ALL }
+
+    private class AdmittedDeleteAll(
+        val owner: ComplaintIngressAdmission,
+        val context: ComplaintIngressContext,
+        val tuple: InstallationDeletionPreflightTuple,
+        val limits: ComplaintOwnerDeleteAllAdmissionPolicy.Bounded,
+    ) : ComplaintAdmittedOwnerDeleteAll {
+        val identity = Any()
+        var phaseIdentity: Any? = null
+        var stage = DeleteAllStage.MINTED
+        override fun toString(): String = "ComplaintAdmittedOwnerDeleteAll(redacted)"
+    }
+
+    private enum class DeleteAllStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
 
     private class AdmittedCreate(
         val owner: ComplaintIngressAdmission,
@@ -512,6 +600,76 @@ internal class ComplaintIngressAdmission(
 
     companion object {
         private val current = ThreadLocal<ComplaintIngressContext?>()
+
+        /** Before even a deletion permit: no forged, spent, expired or foreign-context admission. */
+        internal fun requireOwnerDeleteAllEntry(handoff: ComplaintAdmittedOwnerDeleteAll, tuple: InstallationDeletionPreflightTuple) {
+            requireConnectionFree()
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteAllState(selected)
+                if (selected.stage !== DeleteAllStage.MINTED || selected.phaseIdentity != null || selected.tuple !== tuple) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+            }
+        }
+
+        internal fun bindOwnerDeleteAll(handoff: ComplaintAdmittedOwnerDeleteAll, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteAllState(selected)
+                if (selected.stage !== DeleteAllStage.MINTED ||
+                    selected.phaseIdentity != null
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.phaseIdentity = phaseIdentity
+                selected.stage = DeleteAllStage.BOUND
+            }
+        }
+
+        internal fun claimOwnerDeleteAll(handoff: ComplaintAdmittedOwnerDeleteAll, phaseIdentity: Any, tuple: InstallationDeletionPreflightTuple) {
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteAllState(selected)
+                if (selected.stage !== DeleteAllStage.BOUND || selected.phaseIdentity !== phaseIdentity || selected.tuple !== tuple) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = DeleteAllStage.CLAIMED
+            }
+        }
+
+        internal fun checkOwnerDeleteAllBounds(handoff: ComplaintAdmittedOwnerDeleteAll, phaseIdentity: Any, ledger: ComplaintCapacityLedger) {
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteAllState(selected)
+                if (selected.stage !== DeleteAllStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                if (!selected.limits.matchesLocked(ledger)) refuseComplaintAdmission()
+                selected.stage = DeleteAllStage.BOUNDS_CHECKED
+            }
+        }
+
+        internal fun checkOwnerDeleteAllReceipt(handoff: ComplaintAdmittedOwnerDeleteAll, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteAllState(selected)
+                if (selected.phaseIdentity !== phaseIdentity || selected.stage !== DeleteAllStage.CLAIMED) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+            }
+        }
+
+        internal fun checkOwnerDeleteAllWrite(handoff: ComplaintAdmittedOwnerDeleteAll, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteAllState(selected)
+                if (selected.phaseIdentity !== phaseIdentity || selected.stage !in setOf(DeleteAllStage.BOUNDS_CHECKED, DeleteAllStage.WRITING)) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = DeleteAllStage.WRITING
+            }
+        }
 
         internal fun bindOwnerCreate(handoff: ComplaintAdmittedOwnerCreate, phaseIdentity: Any) {
             val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)

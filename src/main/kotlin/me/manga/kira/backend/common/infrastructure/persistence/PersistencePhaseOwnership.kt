@@ -2,7 +2,10 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import jakarta.persistence.EntityManagerFactory
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
+import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
+import me.manga.kira.backend.security.ComplaintIngressAdmission
 import org.springframework.transaction.PlatformTransactionManager
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.TransactionStatus
@@ -73,6 +76,17 @@ internal class PersistencePhaseOwnership private constructor(
 
     /** Receipt-first read only: no deletion bulkhead/fence and no authority to refresh or publish. */
     internal fun enterComplaintInstallationDeletionPreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+
+    /** Actual semantic admission precedes even the privacy permit; this remains dormant and grants no runtime capability. */
+    internal fun enterComplaintOwnerDeleteAllAuthorize(
+        admission: ComplaintAdmittedOwnerDeleteAll,
+        tuple: InstallationDeletionPreflightTuple,
+    ): PersistencePhaseContext {
+        ComplaintIngressAdmission.requireOwnerDeleteAllEntry(admission, tuple)
+        return enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE)
+    }
+
+    internal fun enterComplaintOwnerDeleteAllReload(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD)
 
     /** Read-only diagnostics, never current-mode, catalog, restore or TEST admission authority. */
     internal fun enterComplaintInstallationCurrentState(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
@@ -227,6 +241,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
                 PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
                 PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
@@ -246,7 +262,13 @@ internal class PersistencePhaseOwnership private constructor(
                 if (path !in DELETION_PATHS) {
                     throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
                 }
-                return admission.tryRoutineDeletion()
+                return when (path) {
+                    PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
+                    PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
+                    -> admission.tryPrivacyDeletion()
+
+                    else -> admission.tryRoutineDeletion()
+                }
             }
         }
 
@@ -279,6 +301,8 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
             PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
             PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
         )
         private val current = ThreadLocal<PersistencePhaseContext?>()
         private val loans = ThreadLocal<PersistenceLeaseCompletion?>()
@@ -359,6 +383,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
     COMPLAINT_INSTALLATION_SESSION_REFRESH,
     COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
+    COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
+    COMPLAINT_OWNER_DELETE_ALL_RELOAD,
     COMPLAINT_INSTALLATION_CURRENT_STATE,
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,
