@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.InstallationSessionResult
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.SessionPreflightResult
 import me.manga.kira.backend.complaint.domain.SessionRefreshResult
+import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationDeletionPreflightOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
@@ -103,6 +104,7 @@ internal class PersistencePhaseContext(
     private val jdbcCapabilities = JdbcCapabilityBoundary()
     internal val installationEnrollment: PersistenceInstallationEnrollment = InstallationEnrollmentBoundary()
     internal val installationSession: PersistenceInstallationSession = InstallationSessionBoundary()
+    internal val installationDeletionPreflight: PersistenceInstallationDeletionPreflight = InstallationDeletionPreflightBoundary()
     internal val installationCurrentState: PersistenceInstallationCurrentState = InstallationCurrentStateBoundary()
     internal val ownerHistory: PersistenceOwnerHistory = OwnerHistoryBoundary()
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
@@ -134,6 +136,7 @@ internal class PersistencePhaseContext(
             timeout = 2
             isReadOnly = when (path) {
                 PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
@@ -463,6 +466,8 @@ internal class PersistencePhaseContext(
             PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
             PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
             -> installationSession.completed()
+
+            PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT -> installationDeletionPreflight.completed()
 
             PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE -> installationCurrentState.completed()
 
@@ -1493,6 +1498,47 @@ internal class PersistencePhaseContext(
         }
     }
 
+    /** Fixed delete-all snapshot only. Its result cannot be released by a caller flag or another retained operation. */
+    private inner class InstallationDeletionPreflightBoundary : PersistenceInstallationDeletionPreflight {
+        private var issued = false
+        private var retained: ComplaintInstallationDeletionPreflightOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintInstallationDeletionPreflightOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintInstallationDeletionPreflightOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun ownerIdentity(operation: ComplaintInstallationDeletionPreflightOperation, jdbc: JdbcTemplate): Any {
+            requireRetained(operation, jdbc)
+            return ownership.installationDeletionIdentity
+        }
+
+        override fun requireCommitted(operation: ComplaintInstallationDeletionPreflightOperation) {
+            if (!caller.isCurrent() || path !== PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT ||
+                retained !== operation || !operation.completedFor(this@PersistencePhaseContext)
+            ) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
     /** Exact read/refresh operation and result custody; a normal rejection still needs real completion and release. */
     private inner class InstallationSessionBoundary : PersistenceInstallationSession {
         private var issued = false
@@ -1682,6 +1728,16 @@ internal interface PersistenceInstallationSession {
     fun checkWork(result: InstallationSessionResult)
     fun preflightResult(result: SessionPreflightResult?): SessionPreflightResult
     fun refreshResult(result: SessionRefreshResult?): SessionRefreshResult
+    fun completed(): Boolean
+}
+
+/** Fixed snapshot operation on the existing owner; implementing this interface cannot replace its private boundary. */
+internal interface PersistenceInstallationDeletionPreflight {
+    fun requireOperation(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintInstallationDeletionPreflightOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintInstallationDeletionPreflightOperation, jdbc: JdbcTemplate)
+    fun ownerIdentity(operation: ComplaintInstallationDeletionPreflightOperation, jdbc: JdbcTemplate): Any
+    fun requireCommitted(operation: ComplaintInstallationDeletionPreflightOperation)
     fun completed(): Boolean
 }
 

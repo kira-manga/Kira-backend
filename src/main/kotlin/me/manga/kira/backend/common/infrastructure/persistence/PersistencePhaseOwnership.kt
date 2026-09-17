@@ -28,6 +28,7 @@ internal class PersistencePhaseOwnership private constructor(
     internal val entityManagerFactory: EntityManagerFactory? get() = (selection as? Selection.Ordinary)?.manager?.entityManagerFactory
     internal val otherManager: GuardedJdbcTransactionManager? get() = (selection as? Selection.Ordinary)?.otherManager
     internal val installationSessionIdentity = Any() // Bounded continuation identity, not a retained phase/resource or admission grant.
+    internal val installationDeletionIdentity = Any() // Same-owner read-only comparisons, never deletion admission or writer authority.
     private val admissionCut = ReentrantLock()
 
     // Exactly the existing bounded permits. Resolved slots are removed, never kept as a history.
@@ -69,6 +70,10 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintInstallationSessionPreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT)
 
     internal fun enterComplaintInstallationSessionRefresh(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH)
+
+    /** Receipt-first read only: no deletion bulkhead/fence and no authority to refresh or publish. */
+    internal fun enterComplaintInstallationDeletionPreflight(): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT)
 
     /** Read-only diagnostics, never current-mode, catalog, restore or TEST admission authority. */
     internal fun enterComplaintInstallationCurrentState(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
@@ -209,6 +214,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT,
                 PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
+                PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
@@ -353,6 +359,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_INSTALLATION_ENROLLMENT,
     COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
     COMPLAINT_INSTALLATION_SESSION_REFRESH,
+    COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
     COMPLAINT_INSTALLATION_CURRENT_STATE,
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,
