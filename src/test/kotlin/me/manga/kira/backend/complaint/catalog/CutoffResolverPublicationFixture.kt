@@ -213,6 +213,7 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
     /** Independent bounded fixture oracle. The producer never receives this count, list, ordering or digest. */
     fun expectedManifestSha256(): String {
         val journal = routing.journalConfiguration.declaration()
+        val prefix = "complaints/journal/v1/${journal.writer.generationId}/live/${ComplaintDataScope.LIVE.id}/ordinary/"
         val selected = cutoffEvents.map { event ->
             val observed = objects.getValue(event.route.objectKey)
             val hash = OwnerDeleteAllJournalPublisherFixture.hash(observed.bytes)
@@ -236,7 +237,7 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
             digest.update(bytes)
         }
         listOf(
-            "kira-complaint-journal-epoch-seal-v1", "1", "manifest", journal.writer.generationId, journal.ordinaryPrefix,
+            "kira-complaint-journal-epoch-seal-v1", "1", "manifest", journal.writer.generationId, prefix,
             "LIVE", ComplaintDataScope.LIVE.id.toString(), "1", "1", selected.size.toString(),
         ).forEach(::field)
         selected.forEach { triple -> triple.forEach(::field) }
