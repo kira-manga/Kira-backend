@@ -1,19 +1,25 @@
 package me.manga.kira.backend.complaint.catalog
 
+import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPersistence
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
+import me.manga.kira.backend.common.infrastructure.persistence.PoolLifecycle
 import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObservation
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
+import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentAcceptedCatalogRefreshV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.jdbc.core.JdbcTemplate
@@ -55,13 +61,55 @@ internal fun withCoordinatorLease(tls: VersionBoundPersistenceConnectedFixture, 
     }
 }
 
+/** Test-only second retained root against the same genuine G1; no second genesis/counter initializer or cleanup owner. */
+internal fun withCoordinatorLeasePeer(
+    original: CoordinatorLeaseTestFixture,
+    tls: VersionBoundPersistenceConnectedFixture,
+    test: (CoordinatorLeaseTestFixture) -> Unit,
+) {
+    tls.start()
+    assertEquals(PersistenceLifecycleObservation.READY, tls.pools.deletion.prepareDeletion())
+    assertEquals(PersistenceLifecycleObservation.READY, tls.pools.catalogCoordinator.prepare())
+    assertEquals(3, listOf(tls.pools.ordinary, tls.pools.deletion, tls.pools.catalogCoordinator.dataSource).map(tls::tlsPid).toSet().size)
+    val desired = original.process.desiredSettings()
+    val process = VersionBoundComplaintProcessConfiguration.fromRetained(
+        original.process.consumers,
+        tls.pools,
+        desired.implementationSchema,
+        desired.desiredGeneration,
+        desired.databaseIdentity,
+        desired.restoreIdentity,
+        original.process.catalogReadback,
+    )
+    assertNotSame(original.process, process)
+    assertNotSame(original.coordinator, process.pools.catalogCoordinator)
+    assertArrayEquals(original.process.configurationHashBytes(), process.configurationHashBytes())
+    val before = original.state()
+    val wire = CurrentAcceptedCatalogRefreshHttpFixture(original.genesis)
+    val refresh = wire.owner(process).use { it.refresh() }
+    wire.assertFullReadback()
+    assertEquals(before, original.state(), "The peer must replay the existing real G1, never initialize a replacement head.")
+    val peer = CoordinatorLeaseTestFixture(original.genesis, refresh, process)
+    try {
+        peer.released()
+        test(peer)
+    } finally {
+        peer.jdbc.beforeSql = {}
+        peer.jdbc.afterSql = {}
+        peer.released()
+    }
+}
+
 /** Probe callbacks surround real JDBC only. Outer G1/counter fixtures retain their original exact-row cleanup. */
-internal class CoordinatorLeaseTestFixture(val genesis: ProcessBoundCatalogGenesisFixture, val refresh: CurrentAcceptedCatalogRefreshV1.Result) {
-    val process = genesis.process
-    val coordinator = genesis.coordinator
+internal class CoordinatorLeaseTestFixture(
+    val genesis: ProcessBoundCatalogGenesisFixture,
+    val refresh: CurrentAcceptedCatalogRefreshV1.Result,
+    val process: VersionBoundComplaintProcessConfiguration = genesis.process,
+) {
+    val coordinator = process.pools.catalogCoordinator
     val observer = genesis.observer
     val binding = CatalogCoordinatorLeaseBindingV1.fromRetained(process, refresh)
-    val jdbc = CoordinatorLeaseProbeJdbc(genesis)
+    val jdbc = CoordinatorLeaseProbeJdbc(coordinator)
     val phases = ComplaintCoordinatorLeasePersistencePhaseExecutor(coordinator, jdbc)
 
     fun retainedOperation(): CatalogCoordinatorLeaseOperation =
@@ -105,6 +153,8 @@ internal class CoordinatorLeaseTestFixture(val genesis: ProcessBoundCatalogGenes
 
     fun released() {
         jdbc.assertNoLostAssertions()
+        assertEquals(0, coordinator.activeSnapshotOwners())
+        assertEquals(0L, poolTestField<PoolLifecycle>(coordinator.dataSource, "lifecycle").activeAcquisitions())
         genesis.released()
     }
 }
@@ -114,7 +164,7 @@ internal data class CoordinatorLeaseRow(val owner: UUID?, val token: Long, val e
 internal enum class CoordinatorLeaseSqlStep { LOCK_CONTROL, WRITE_CONTROL, READ_CONTROL }
 
 /** Observes the actual original holder; expected sanitized refusals cannot hide an assertion made in a SQL cut. */
-internal class CoordinatorLeaseProbeJdbc(private val genesis: ProcessBoundCatalogGenesisFixture) : JdbcTemplate(genesis.coordinator.dataSource) {
+internal class CoordinatorLeaseProbeJdbc(private val coordinator: CatalogCoordinatorPersistence) : JdbcTemplate(coordinator.dataSource) {
     var phase: PersistencePhaseContext? = null
         private set
     var observation: StepUpPhaseObservation? = null
@@ -147,10 +197,10 @@ internal class CoordinatorLeaseProbeJdbc(private val genesis: ProcessBoundCatalo
 
     private fun <T> observed(sql: String, action: () -> T): T = preserveAssertions {
         val current = checkNotNull(PersistencePhaseOwnership.current())
-        val holder = TransactionSynchronizationManager.getResource(genesis.coordinator.dataSource) as ConnectionHolder
-        assertEquals(setOf(genesis.coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
-        assertSame(genesis.coordinator.dataSource, dataSource)
-        assertEquals(1, genesis.coordinator.activeSnapshotOwners())
+        val holder = TransactionSynchronizationManager.getResource(coordinator.dataSource) as ConnectionHolder
+        assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
+        assertSame(coordinator.dataSource, dataSource)
+        assertEquals(1, coordinator.activeSnapshotOwners())
         assertFalse(holder.connection.isReadOnly)
         if (phase !== current) {
             val identity = holder.connection.createStatement().use { statement ->

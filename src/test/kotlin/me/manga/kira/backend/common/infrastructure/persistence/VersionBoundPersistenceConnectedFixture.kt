@@ -120,17 +120,15 @@ internal class VersionBoundPersistenceConnectedFixture(
         return Path.of(endpoint.driverProperties().getProperty("sslrootcert"))
     }
 
-    override fun close() {
-        if (closed) return
-        owner.requestShutdown()
-        val beforeClose = runCatching {
-            if (trustPrepared) assertEquals(PersistencePublicTrustRelease.RETAINED, owner.releasePublicTrustAfterShutdown())
-        }
-        val poolsClosed = runCatching { checkNotNull(owner.versionBoundPools).close() }
-        val rootClosed = runCatching { scope.close() }
-        beforeClose.getOrThrow()
-        poolsClosed.getOrThrow()
-        rootClosed.getOrThrow()
+    override fun close() = closeSelected(listOf(this))
+
+    /** Both independent roots stop before either shared driver Timer wait or database-wide session assertion. */
+    fun closeWith(peer: VersionBoundPersistenceConnectedFixture) {
+        check(peer !== this && peer.database === database)
+        closeSelected(listOf(this, peer))
+    }
+
+    private fun completeClose() {
         assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, owner.observeShutdown())
         assertEquals(PersistencePublicTrustRelease.RELEASED, owner.releasePublicTrustAfterShutdown())
         assertFalse(Files.exists(trustPath().parent))
@@ -138,6 +136,31 @@ internal class VersionBoundPersistenceConnectedFixture(
         assertSessionsEnded()
         requireConnectionFree()
         closed = true
+    }
+
+    private fun closeSelected(fixtures: List<VersionBoundPersistenceConnectedFixture>) {
+        val selected = fixtures.filterNot { it.closed }
+        val shutdown = selected.map { runCatching { it.owner.requestShutdown() } }
+        val beforeClose = selected.map { fixture ->
+            runCatching {
+                if (fixture.trustPrepared) {
+                    assertEquals(PersistencePublicTrustRelease.RETAINED, fixture.owner.releasePublicTrustAfterShutdown())
+                }
+            }
+        }
+        val poolsClosed = selected.map { runCatching { checkNotNull(it.owner.versionBoundPools).close() } }
+        val rootsClosed = selected.map { runCatching { it.scope.close() } }
+        requireCleanup(shutdown + beforeClose + poolsClosed + rootsClosed)
+        // All roots have actually ended before either retains its unchanged global candidate-session proof.
+        requireCleanup(selected.map { runCatching { it.completeClose() } })
+    }
+
+    private fun requireCleanup(results: List<Result<*>>) {
+        val failures = results.mapNotNull { it.exceptionOrNull() }
+        failures.firstOrNull()?.let { first ->
+            failures.drop(1).filterNot { it === first }.forEach(first::addSuppressed)
+            throw first
+        }
     }
 
     private fun assertSessionsEnded() {
@@ -158,7 +181,7 @@ internal class VersionBoundPersistenceConnectedFixture(
                     }
                 }
             }
-            // This SAME_THREAD class owns the only candidate roots for this database. Include unborrowed warm pool sessions.
+            // This SAME_THREAD class owns the only candidate roots; paired close ends BOTH before this unchanged proof.
             val allCandidates = "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND usename = ?)"
             observer.prepareStatement(allCandidates).use { statement ->
                 statement.queryTimeout = 2
