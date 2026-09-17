@@ -88,7 +88,7 @@ internal class PersistenceJdbcGuardContext private constructor(
         phase = owner
     }
 
-    internal fun hasPhase(): Boolean = phase != null
+    internal fun requiresClosedInputs(): Boolean = phase != null || lineage is Lineage.Rotation
 
     /** Only a sticky APPLY outcome veto; the attached original phase still owns all release facts. */
     internal fun observeOwnerDeleteAllApplyFailure(failure: Throwable) {

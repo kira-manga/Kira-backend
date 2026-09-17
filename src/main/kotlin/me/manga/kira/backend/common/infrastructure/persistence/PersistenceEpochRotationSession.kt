@@ -14,6 +14,7 @@ import java.sql.Connection
 import java.sql.Wrapper
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.LockSupport
 
 /** The distinct original first-delivery owner. Only these fixed operations expose detached rows, never JDBC or arbitrary SQL. */
@@ -23,13 +24,13 @@ internal class PersistenceEpochRotationSession private constructor(
     private val resource: EpochRotationPersistence,
     private val attempt: CatalogEpochRotationAttemptV1,
 ) {
-    private val caller = Thread.currentThread()
+    private val caller = checkNotNull(entry.control).caller
     private val total = attempt.budget
-    private val problem = AtomicBoolean()
+    private val problem = AtomicReference<PersistencePhaseFailureCode?>()
     private val retired = AtomicBoolean()
     private val context = PersistenceJdbcGuardContext.forEpochRotation(entry.jdbc, epoch, this, entry.driverCut)
     private val connection = EpochRotationConnectionCalls(entry, context).proxy
-    private var work: PersistenceTimeBudget? = null
+    @Volatile private var work: PersistenceTimeBudget? = null
     private var retained: CatalogEpochRotationCaptureOperation? = null
     private var stage = Stage.PREPARED
     private var clippingRead = false
@@ -68,7 +69,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun captureControl(operation: CatalogEpochRotationCaptureOperation): CatalogEpochRotationRowV1 {
         requireOperation(operation)
-        check(stage === Stage.LOCKED)
+        check(stage === Stage.SAMPLED)
         installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
         val result = query(CAPTURE_EPOCH_ROTATION_CONTROL, operation.captureArguments())
         stage = Stage.WRITTEN
@@ -77,10 +78,11 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun readControl(operation: CatalogEpochRotationCaptureOperation): CatalogEpochRotationRowV1 {
         requireOperation(operation)
-        check(stage === Stage.LOCKED || stage === Stage.WRITTEN)
+        val initial = stage === Stage.LOCKED
+        check(initial || stage === Stage.WRITTEN || stage === Stage.SAMPLED)
         installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
         val result = query(READ_EPOCH_ROTATION_CONTROL, operation.readArguments())
-        stage = Stage.REREAD
+        stage = if (initial) Stage.SAMPLED else Stage.REREAD
         return result
     }
 
@@ -111,28 +113,34 @@ internal class PersistenceEpochRotationSession private constructor(
 
     /** Early/between-commit-and-release probes refuse without upgrading or poisoning an otherwise active operation. */
     internal fun requireReleased(operation: CatalogEpochRotationCaptureOperation) {
-        if (caller !== Thread.currentThread() || retained !== operation || !operation.completedFor(this)) throw failure()
-        if (stage !== Stage.RELEASED || problem.get() || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
+        if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this)) throw failure()
+        if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
         if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
+        requireWork() // A later receipt probe cannot turn a timed-out original attempt into on-time success.
     }
 
     internal fun failed() {
-        problem.set(true)
+        problem.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
         finish()
     }
 
     internal fun failure(): PersistencePhaseException = PersistencePhaseException(
-        if (problem.get()) PersistencePhaseFailureCode.WORK_FAILED else PersistencePhaseFailureCode.COMPLETION_FAILED,
+        problem.get() ?: PersistencePhaseFailureCode.COMPLETION_FAILED,
         context.transaction.databaseOutcome(),
         entry.jdbc.terminalCompletion().reclaimed(),
     )
 
     internal fun jdbcFailure() = failed()
 
+    /** Same caller that may have consumed an overriding platform flag; no replacement caller is captured. */
+    internal fun restoreAfterFailure() {
+        if (problem.get() != null) caller.restoreAfterFailure()
+    }
+
     /** Data-only deadline attachment survives the factory's TAKEN state; the existing scanner owns physical retirement. */
     internal fun deadlineExpired(): Boolean {
         val expired = persistenceFactoryRemainingMillis(total) == 0L || work?.let { persistenceFactoryRemainingMillis(it) == 0L } == true
-        if (expired) problem.set(true)
+        if (expired) problem.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
     }
 
@@ -163,16 +171,17 @@ internal class PersistenceEpochRotationSession private constructor(
     }
 
     private fun requireCaller() {
-        if (caller !== Thread.currentThread()) throw failure()
-        if (Thread.currentThread().isInterrupted) {
-            failed()
-            throw PersistencePhaseException(PersistencePhaseFailureCode.INTERRUPTED, context.transaction.databaseOutcome(), false)
+        if (!caller.isCurrent()) throw failure()
+        if (caller.sampleOutsideLocks() != null) {
+            problem.compareAndSet(null, PersistencePhaseFailureCode.INTERRUPTED)
+            finish()
+            throw failure()
         }
     }
 
     private fun requireWork() {
         requireCaller()
-        if (deadlineExpired() || problem.get()) throw failure()
+        if (deadlineExpired() || problem.get() != null) throw failure()
     }
 
     private fun query(sql: String, arguments: Array<Any?>): CatalogEpochRotationRowV1 {
@@ -202,7 +211,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     override fun toString(): String = "PersistenceEpochRotationSession(original-first-delivery,non-pooled,no-work-capability)"
 
-    private enum class Stage { PREPARED, STARTING, EXCLUSIVE, LOCKED, WRITTEN, REREAD, COMMITTED, RELEASED }
+    private enum class Stage { PREPARED, STARTING, EXCLUSIVE, LOCKED, SAMPLED, WRITTEN, REREAD, COMMITTED, RELEASED }
 
     companion object {
         private val INLINE = Executor { it.run() }

@@ -679,7 +679,7 @@ internal class PersistencePhaseContext(
                         } finally {
                             restoringReadCap = false
                         }
-                        selected.finishScoped(this, cleanupBudget())
+                        selected.finishScoped(this, transferCleanupBudget())
                     } catch (problem: Throwable) {
                         recordFailure(problem)
                         selected.retireScoped(this)
@@ -793,6 +793,12 @@ internal class PersistencePhaseContext(
         emergency?.let { return it }
         val normal = work
         return if (normal != null && persistenceFactoryRemainingMillis(normal) > 0L) normal else emergencyBudget()
+    }
+
+    /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
+    internal fun transferCleanupBudget(): PersistenceTimeBudget {
+        val budget = cleanupBudget()
+        return if (rotationAttempt == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
     }
 
     private fun emergencyBudget(): PersistenceTimeBudget {

@@ -24,7 +24,7 @@ internal class PersistenceEpochRotationFactoryRequest(
         try {
             attempt.requireCore(resource)
             check(participant.ownsEpochRotation(resource))
-            val caller = PersistenceOwnedCallerControl.forEpochRotation(attempt, loginMillis)
+            val caller = PersistenceOwnedCallerControl.forEpochRotation(resource, attempt, loginMillis)
             control = caller
             try {
                 outsideFailure(caller)?.let { caller.fail(it) }
@@ -102,6 +102,8 @@ internal class PersistenceEpochRotationFactoryRequest(
 internal class PreparedEpochRotationSession private constructor(
     private val entry: PersistencePhysicalEntry,
     private val binding: PersistencePhysicalFactoryBinding,
+    private val attempt: CatalogEpochRotationAttemptV1,
+    private val total: PersistenceTimeBudget,
     internal val resource: EpochRotationPersistence,
     internal val epoch: PersistenceProducerEpoch,
     internal val session: PersistenceEpochRotationSession,
@@ -109,6 +111,7 @@ internal class PreparedEpochRotationSession private constructor(
 ) {
     internal fun matches(candidate: PersistencePhysicalEntry, selected: PersistencePhysicalFactoryBinding?): Boolean =
         entry === candidate && binding === selected && result.value === session && result.receipt === entry.control?.receipt &&
+            entry.control?.matchesEpochRotation(resource, attempt, total) == true &&
             entry.policy === PersistenceDriverAttemptPolicy.TRACKED_EPOCH_ROTATION_CONJUNCTION
 
     internal fun matchesOffer(candidate: PersistenceJdbcCandidate?): Boolean = entry.candidate === candidate
@@ -122,11 +125,13 @@ internal class PreparedEpochRotationSession private constructor(
         ): PreparedEpochRotationSession {
             check(!binding.ownershipLockHeld())
             attempt.requireCore(resource)
+            val total = attempt.budget
+            check(entry.control?.matchesEpochRotation(resource, attempt, total) == true)
             val epoch = entry.jdbc.prepareEpoch()
             val session = PersistenceEpochRotationSession.prepare(entry, epoch, resource, attempt)
             epoch.attachSession(session)
             val result = PersistenceFactoryResult.Success(session, checkNotNull(entry.control).receipt)
-            return PreparedEpochRotationSession(entry, binding, resource, epoch, session, result)
+            return PreparedEpochRotationSession(entry, binding, attempt, total, resource, epoch, session, result)
         }
     }
 }
