@@ -5,6 +5,8 @@ import jakarta.servlet.FilterChain
 import jakarta.servlet.ServletInputStream
 import jakarta.servlet.ServletOutputStream
 import jakarta.servlet.WriteListener
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -19,6 +21,7 @@ import me.manga.kira.backend.complaint.domain.InstallationEnrollmentDisposition
 import me.manga.kira.backend.complaint.domain.InstallationSessionCandidate
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
+import me.manga.kira.backend.security.ComplaintHttpIngressBridge
 import me.manga.kira.backend.security.historyTestIngress
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -40,6 +43,22 @@ class ComplaintInstallationHttpTest {
     private val id = UUID.randomUUID()
     private val scope = ComplaintDataScope.of(UUID.randomUUID())
     private val secret = Base64.getUrlEncoder().withoutPadding().encodeToString(ByteArray(32) { it.toByte() })
+
+    @Test
+    fun `admitted installation entry shares the outer ingress for both body secret routes`() {
+        for ((path, status) in listOf(ENROLLMENT to 201, SESSION to 200)) {
+            val fixture = Fixture()
+            val bridge = ComplaintHttpIngressBridge(fixture.ingress)
+            val response = MockHttpServletResponse()
+            bridge.doFilter(request(path), response) { admitted, target ->
+                val http = admitted as HttpServletRequest
+                fixture.handler.handleWithinIngress(http, target as HttpServletResponse, bridge.claimHandler(http))
+            }
+            assertEquals(status, response.status)
+            assertEquals(1, fixture.calls.size)
+            assertHeaders(response, "application/json")
+        }
+    }
 
     @Test
     fun `two POST responses have exactly seven fields with enrollment-only creation location`() {

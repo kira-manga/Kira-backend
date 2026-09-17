@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRejected
 import me.manga.kira.backend.complaint.domain.rejectOwnerHistory
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.ComplaintIngressAdmission
+import me.manga.kira.backend.security.ComplaintIngressContext
 import org.springframework.web.HttpRequestHandler
 import java.io.IOException
 
@@ -18,24 +19,21 @@ internal class ComplaintOwnerHistoryHttpHandler(
     private val ingress: ComplaintIngressAdmission,
     private val responses: ComplaintOwnerHistoryResponses = ComplaintOwnerHistoryResponses(),
 ) : HttpRequestHandler {
+    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) = responseBoundary(request, response) {
+        ingress.withIngress(request) { context -> exchangeHttp(request, response, context) }
+    }
+
+    /** The concrete outer bridge already owns ingress; validation never starts or renews it. */
+    internal fun handleWithinIngress(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) =
+        responseBoundary(request, response) {
+            ingress.requireLiveContext(context)
+            exchangeHttp(request, response, context)
+        }
+
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
-    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) {
+    private fun responseBoundary(request: HttpServletRequest, response: HttpServletResponse, operation: () -> Unit) {
         try {
-            ingress.withIngress(request) { context ->
-                if (request.method != "GET" || request.requestURI != request.contextPath + PATH) rejectOwnerHistory(ComplaintOwnerHistoryFailure.NOT_FOUND)
-                val bearer = bearer(request)
-                val query = query(request)
-                val permit = responses.acquire() ?: rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAVAILABLE)
-                permit.use {
-                    val body = responses.encode(permit, service.list(context, bearer, query))
-                    try {
-                        if (!responses.isOpen()) rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAVAILABLE)
-                        deliver(response, body)
-                    } finally {
-                        body.destroy()
-                    }
-                }
-            }
+            operation()
         } catch (failure: ComplaintOwnerHistoryRejected) {
             if (failure.failure == ComplaintOwnerHistoryFailure.INTERNAL) responses.failClosed()
             problem(request, response, failure.failure)
@@ -51,6 +49,22 @@ internal class ComplaintOwnerHistoryHttpHandler(
         } catch (failure: OutOfMemoryError) {
             responses.failClosed()
             problem(request, response, ComplaintOwnerHistoryFailure.INTERNAL)
+        }
+    }
+
+    private fun exchangeHttp(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) {
+        if (request.method != "GET" || request.requestURI != request.contextPath + PATH) rejectOwnerHistory(ComplaintOwnerHistoryFailure.NOT_FOUND)
+        val bearer = bearer(request)
+        val query = query(request)
+        val permit = responses.acquire() ?: rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAVAILABLE)
+        permit.use {
+            val body = responses.encode(permit, service.list(context, bearer, query))
+            try {
+                if (!responses.isOpen()) rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAVAILABLE)
+                deliver(response, body)
+            } finally {
+                body.destroy()
+            }
         }
     }
 

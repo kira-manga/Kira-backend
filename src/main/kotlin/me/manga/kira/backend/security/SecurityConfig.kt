@@ -2,8 +2,10 @@ package me.manga.kira.backend.security
 
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.user.domain.UserRepository
+import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.annotation.Order
 import org.springframework.core.env.Environment
 import org.springframework.http.HttpMethod
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity
@@ -73,9 +75,11 @@ class SecurityConfig(private val environment: Environment) {
     }
 
     @Bean
+    @Order(2)
     @Suppress("LongMethod")
     fun securityFilterChain(
         http: HttpSecurity,
+        @Qualifier("jwtDecoder") userDecoder: JwtDecoder,
         users: UserRepository,
         entryPoint: ProblemAuthenticationEntryPoint,
         deniedHandler: ProblemAccessDeniedHandler,
@@ -138,7 +142,10 @@ class SecurityConfig(private val environment: Environment) {
 
             oauth2ResourceServer {
                 authenticationEntryPoint = entryPoint
-                jwt { jwtAuthenticationConverter = converter }
+                jwt {
+                    jwtDecoder = userDecoder
+                    jwtAuthenticationConverter = converter
+                }
             }
 
             exceptionHandling {

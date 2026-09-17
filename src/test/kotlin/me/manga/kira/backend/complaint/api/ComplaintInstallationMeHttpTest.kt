@@ -6,6 +6,8 @@ import jakarta.servlet.ReadListener
 import jakarta.servlet.ServletInputStream
 import jakarta.servlet.ServletOutputStream
 import jakarta.servlet.WriteListener
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.complaint.application.ComplaintInstallationMeService
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -18,6 +20,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContex
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.security.ComplaintAdmissionFailure
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
+import me.manga.kira.backend.security.ComplaintHttpIngressBridge
+import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.historyTestIngress
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -35,6 +39,23 @@ import java.util.UUID
 /** Real handler/writer with a fake domain port only. The separate owned-PG IT proves actual c1 authentication. */
 class ComplaintInstallationMeHttpTest {
     private val mapper = ObjectMapper()
+
+    @Test
+    fun `admitted me entry keeps the same outer ingress without allowing an invented context`() {
+        val fixture = Fixture()
+        val bridge = ComplaintHttpIngressBridge(fixture.ingress)
+        val response = MockHttpServletResponse()
+        bridge.doFilter(installationMeTestRequest(), response) { admitted, target ->
+            val http = admitted as HttpServletRequest
+            fixture.handler.handleWithinIngress(http, target as HttpServletResponse, bridge.claimHandler(http))
+        }
+        assertEquals(200, response.status)
+        assertEquals(listOf("authenticate", "read"), fixture.calls)
+        val refused = MockHttpServletResponse()
+        fixture.handler.handleWithinIngress(installationMeTestRequest(), refused, ComplaintIngressContext())
+        assertEquals(503, refused.status)
+        assertEquals(2, fixture.calls.size)
+    }
 
     @Test
     fun `GET emits exactly three canonical scalars without cache validators or credential material`() {

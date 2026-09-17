@@ -1,13 +1,20 @@
 package me.manga.kira.backend.security
 
+import jakarta.servlet.DispatcherType
+import jakarta.servlet.ServletOutputStream
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletRequestWrapper
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.config.KiraSecurityProperties
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.io.IOException
 import java.security.ProviderException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -16,6 +23,88 @@ import java.util.concurrent.atomic.AtomicInteger
 
 /** Direct counter calls below test enforcement only; the real coordinator is exercised by the PG probe. */
 class ComplaintIngressAdmissionTest {
+    @Test
+    fun `HTTP bridge holds one ingress through wrappers semantic work and response delivery`() {
+        val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1, ingressRate = 1))
+        val bridge = ComplaintHttpIngressBridge(guard)
+        val input = request().apply { method = "GET"; requestURI = ComplaintInstallationRoutes.ME }
+        lateinit var context: ComplaintIngressContext
+        val response = object : MockHttpServletResponse() {
+            override fun getOutputStream(): ServletOutputStream {
+                guard.requireLiveContext(context)
+                return super.getOutputStream()
+            }
+        }
+        bridge.doFilter(input, response) { admitted, output ->
+            val wrapped = HttpServletRequestWrapper(admitted as HttpServletRequest)
+            context = bridge.authenticationContext(wrapped)
+            assertSame(context, bridge.claimHandler(wrapped))
+            guard.startOwnerHistory(context)
+            val identity = Any()
+            guard.chargeOwnerHistory(context, admissionTestActor(1), identity)
+            guard.consumeOwnerHistory(context, identity)
+            output.outputStream.write(byteArrayOf(1, 2, 3))
+        }
+        assertEquals(listOf<Byte>(1, 2, 3), response.contentAsByteArray.toList())
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.requireLiveContext(context) }
+        val limited = MockHttpServletResponse()
+        bridge.doFilter(input, limited) { _, _ -> error("A second request must pay ingress again") }
+        assertEquals(429, limited.status)
+        guard.withIngress(request("192.0.2.2")) {} // Response completion released the only reservation.
+    }
+
+    @Test
+    fun `HTTP bridge refuses foreign rewritten redispatched threaded and escaped frame reuse`() {
+        val guard = newGuard(MutableAdmissionTestClock())
+        val bridge = ComplaintHttpIngressBridge(guard)
+        val other = ComplaintHttpIngressBridge(guard)
+        val input = request().apply { method = "GET"; requestURI = ComplaintInstallationRoutes.ME }
+        val executor = Executors.newSingleThreadExecutor()
+        try {
+            bridge.doFilter(input, MockHttpServletResponse()) { admitted, _ ->
+                val http = admitted as HttpServletRequest
+                assertThrows(ComplaintSecurityRejected::class.java) { other.authenticationContext(http) }
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(request()) }
+                val rewritten = object : HttpServletRequestWrapper(http) {
+                    override fun getRequestURI(): String = "/api/v1/auth/me"
+                }
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(rewritten) }
+                executor.submit { assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(http) } }.get(5, TimeUnit.SECONDS)
+                assertThrows(ComplaintSecurityRejected::class.java) { http.startAsync() }
+                input.dispatcherType = DispatcherType.FORWARD
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.claimHandler(http) }
+                input.dispatcherType = DispatcherType.REQUEST
+                bridge.claimHandler(http)
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.claimHandler(http) }
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(http) }
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.doFilter(input, MockHttpServletResponse()) { _, _ -> } }
+            }
+        } finally {
+            executor.shutdownNow()
+            assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
+        }
+        assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(input) }
+    }
+
+    @Test
+    fun `HTTP bridge never appends a problem after buffered delivery or leaks its reservation on failure`() {
+        for (failure in listOf(IOException("synthetic"), ComplaintSecurityRejected(ComplaintSecurityFailure.UNAVAILABLE))) {
+            val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1))
+            val bridge = ComplaintHttpIngressBridge(guard)
+            val input = request().apply { method = "GET"; requestURI = ComplaintInstallationRoutes.ME }
+            val response = MockHttpServletResponse()
+            assertThrows(IOException::class.java) {
+                bridge.doFilter(input, response) { _, output ->
+                    output.outputStream.write("prefix".toByteArray())
+                    throw failure
+                }
+            }
+            assertEquals("prefix", response.contentAsString)
+            guard.withIngress(input) {}
+            assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(input) }
+        }
+    }
+
     @Test
     fun `ingress enforces exact IP rate and 2048 physical bucket ceiling without live eviction`() {
         val clock = MutableAdmissionTestClock()

@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintValidationException
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.ComplaintIngressAdmission
+import me.manga.kira.backend.security.ComplaintIngressContext
 import org.springframework.web.HttpRequestHandler
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -34,42 +35,21 @@ internal class ComplaintOwnerCreateHttpHandler(
     private val ingress: ComplaintIngressAdmission,
     private val responses: ComplaintOwnerOperationResponse = ComplaintOwnerOperationResponse(),
 ) : HttpRequestHandler {
+    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) = responseBoundary(request, response) {
+        ingress.withIngress(request) { context -> exchangeHttp(request, response, context) }
+    }
+
+    /** The concrete outer bridge already owns ingress; validation never starts or renews it. */
+    internal fun handleWithinIngress(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) =
+        responseBoundary(request, response) {
+            ingress.requireLiveContext(context)
+            exchangeHttp(request, response, context)
+        }
+
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
-    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) {
+    private fun responseBoundary(request: HttpServletRequest, response: HttpServletResponse, operation: () -> Unit) {
         try {
-            ingress.withIngress(request) { context ->
-                val path = request.requestURI.removePrefix(request.contextPath)
-                if (request.method != "POST" || path !in PATHS) rejectOwnerOperation(ComplaintOwnerOperationFailure.NOT_FOUND)
-                if (request.queryString != null ||
-                    single(request, "If-Match", 128) != null
-                ) {
-                    rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
-                }
-                val statusLookup = path == STATUS
-                val bearer = bearer(request)
-                val key = single(request, "X-Kira-Idempotency-Key", 36)
-                if (statusLookup == (key != null)) rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
-                val permit = responses.acquire() ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
-                permit.use {
-                    val body = body(request)
-                    val receipt = try {
-                        if (statusLookup) {
-                            service.status(context, bearer, ComplaintOwnerOperationJson.status(body))
-                        } else {
-                            service.create(context, bearer, ComplaintOwnerOperationJson.create(body, checkNotNull(key)))
-                        }
-                    } finally {
-                        body.fill(0)
-                    }
-                    val encoded = responses.encode(permit, receipt, statusLookup)
-                    try {
-                        if (!responses.isOpen()) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
-                        deliver(response, encoded, receipt, statusLookup)
-                    } finally {
-                        encoded.destroy()
-                    }
-                }
-            }
+            operation()
         } catch (failure: ComplaintOwnerOperationRejected) {
             if (failure.failure == ComplaintOwnerOperationFailure.INTERNAL) responses.failClosed()
             problem(request, response, failure.failure, if (failure.failure == ComplaintOwnerOperationFailure.IN_PROGRESS) 1 else null)
@@ -88,6 +68,40 @@ internal class ComplaintOwnerCreateHttpHandler(
         } catch (failure: OutOfMemoryError) {
             responses.failClosed()
             problem(request, response, ComplaintOwnerOperationFailure.INTERNAL)
+        }
+    }
+
+    private fun exchangeHttp(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) {
+        val path = request.requestURI.removePrefix(request.contextPath)
+        if (request.method != "POST" || path !in PATHS) rejectOwnerOperation(ComplaintOwnerOperationFailure.NOT_FOUND)
+        if (request.queryString != null ||
+            single(request, "If-Match", 128) != null
+        ) {
+            rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+        }
+        val statusLookup = path == STATUS
+        val bearer = bearer(request)
+        val key = single(request, "X-Kira-Idempotency-Key", 36)
+        if (statusLookup == (key != null)) rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+        val permit = responses.acquire() ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
+        permit.use {
+            val body = body(request)
+            val receipt = try {
+                if (statusLookup) {
+                    service.status(context, bearer, ComplaintOwnerOperationJson.status(body))
+                } else {
+                    service.create(context, bearer, ComplaintOwnerOperationJson.create(body, checkNotNull(key)))
+                }
+            } finally {
+                body.fill(0)
+            }
+            val encoded = responses.encode(permit, receipt, statusLookup)
+            try {
+                if (!responses.isOpen()) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
+                deliver(response, encoded, receipt, statusLookup)
+            } finally {
+                encoded.destroy()
+            }
         }
     }
 

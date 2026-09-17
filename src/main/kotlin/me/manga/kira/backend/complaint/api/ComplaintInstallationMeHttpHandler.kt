@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContex
 import me.manga.kira.backend.complaint.domain.rejectInstallationMe
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.ComplaintIngressAdmission
+import me.manga.kira.backend.security.ComplaintIngressContext
 import org.springframework.web.HttpRequestHandler
 import java.io.IOException
 
@@ -18,10 +19,21 @@ internal class ComplaintInstallationMeHttpHandler(
     private val ingress: ComplaintIngressAdmission,
     private val responses: ComplaintInstallationMeHttpResponses = ComplaintInstallationMeHttpResponses(),
 ) : HttpRequestHandler {
+    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) = responseBoundary(request, response) {
+        ingress.withIngress(request) { context -> exchange(request, response, context) }
+    }
+
+    /** The concrete outer bridge already owns ingress; validation never starts or renews it. */
+    internal fun handleWithinIngress(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) =
+        responseBoundary(request, response) {
+            ingress.requireLiveContext(context)
+            exchange(request, response, context)
+        }
+
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
-    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) {
+    private fun responseBoundary(request: HttpServletRequest, response: HttpServletResponse, operation: () -> Unit) {
         try {
-            ingress.withIngress(request) { context -> exchange(request, response, context) }
+            operation()
         } catch (failure: ComplaintInstallationMeRejected) {
             if (failure.failure == ComplaintInstallationMeFailure.INTERNAL) responses.failClosed()
             problem(request, response, failure.failure)

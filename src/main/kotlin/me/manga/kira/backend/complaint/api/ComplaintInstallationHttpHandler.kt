@@ -29,34 +29,21 @@ internal class ComplaintInstallationHttpHandler(
 ) : HttpRequestHandler {
     private val bodyFilter = RequestBodySizeLimitFilter(ObjectMapper())
 
+    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) = responseBoundary(request, response) {
+        ingress.withIngress(request) { context -> exchangeHttp(request, response, context) }
+    }
+
+    /** The concrete outer bridge already owns ingress; validation never starts or renews it. */
+    internal fun handleWithinIngress(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) =
+        responseBoundary(request, response) {
+            ingress.requireLiveContext(context)
+            exchangeHttp(request, response, context)
+        }
+
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
-    override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) {
+    private fun responseBoundary(request: HttpServletRequest, response: HttpServletResponse, operation: () -> Unit) {
         try {
-            ingress.withIngress(request) { context ->
-                val path = request.requestURI.removePrefix(request.contextPath)
-                if (request.method != "POST" || path !in PATHS) rejectInstallationHttp(ComplaintInstallationHttpFailure.NOT_FOUND)
-                if (request.queryString != null) rejectInstallationHttp(ComplaintInstallationHttpFailure.INVALID_REQUEST)
-                boundedHeader(request, "Authorization", 4096)
-                boundedHeader(request, "X-Kira-Complaint-Contract", 64)
-                if (!responses.isOpen()) rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE)
-                var result: Result? = null
-                // Reuse the actual framing/media/stream cap inside ingress, before either parser or DB work.
-                try {
-                    bodyFilter.doFilter(request, BodyFailureResponse(response)) { bounded, _ ->
-                        result = exchange(bounded as HttpServletRequest, context, path)
-                    }
-                } catch (failure: IOException) {
-                    rejectInstallationHttp(ComplaintInstallationHttpFailure.INVALID_REQUEST)
-                }
-                val completed = checkNotNull(result)
-                val body = responses.encode(completed.session)
-                try {
-                    if (!responses.isOpen()) rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE)
-                    deliver(response, body, completed.created)
-                } finally {
-                    body.destroy()
-                }
-            }
+            operation()
         } catch (failure: ComplaintInstallationHttpRejected) {
             if (failure.failure == ComplaintInstallationHttpFailure.INTERNAL) responses.failClosed()
             problem(request, response, failure.failure, failure.retryAfterSeconds)
@@ -75,6 +62,33 @@ internal class ComplaintInstallationHttpHandler(
         } catch (failure: OutOfMemoryError) {
             responses.failClosed()
             problem(request, response, ComplaintInstallationHttpFailure.INTERNAL)
+        }
+    }
+
+    @Suppress("SwallowedException") // A failed input read precedes response delivery.
+    private fun exchangeHttp(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) {
+        val path = request.requestURI.removePrefix(request.contextPath)
+        if (request.method != "POST" || path !in PATHS) rejectInstallationHttp(ComplaintInstallationHttpFailure.NOT_FOUND)
+        if (request.queryString != null) rejectInstallationHttp(ComplaintInstallationHttpFailure.INVALID_REQUEST)
+        boundedHeader(request, "Authorization", 4096)
+        boundedHeader(request, "X-Kira-Complaint-Contract", 64)
+        if (!responses.isOpen()) rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE)
+        var result: Result? = null
+        // Reuse the actual framing/media/stream cap inside ingress, before either parser or DB work.
+        try {
+            bodyFilter.doFilter(request, BodyFailureResponse(response)) { bounded, _ ->
+                result = exchange(bounded as HttpServletRequest, context, path)
+            }
+        } catch (failure: IOException) {
+            rejectInstallationHttp(ComplaintInstallationHttpFailure.INVALID_REQUEST)
+        }
+        val completed = checkNotNull(result)
+        val body = responses.encode(completed.session)
+        try {
+            if (!responses.isOpen()) rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE)
+            deliver(response, body, completed.created)
+        } finally {
+            body.destroy()
         }
     }
 

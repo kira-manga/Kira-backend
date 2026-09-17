@@ -116,6 +116,12 @@ internal class ComplaintIngressAdmission(
         }
     }
 
+    /** Validation only for the concrete HTTP bridge; never starts, renews or charges an admission. */
+    internal fun requireLiveContext(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { state(context) }
+    }
+
     internal fun startOwnerHistory(context: ComplaintIngressContext) {
         requireConnectionFree()
         locked { startAttempt(context, SemanticOperation.OWNER_HISTORY) }

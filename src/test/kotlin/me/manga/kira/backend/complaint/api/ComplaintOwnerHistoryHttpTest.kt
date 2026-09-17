@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.servlet.FilterChain
 import jakarta.servlet.ServletOutputStream
 import jakarta.servlet.WriteListener
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
@@ -21,6 +23,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintPlatform
 import me.manga.kira.backend.complaint.domain.ComplaintStatus
 import me.manga.kira.backend.complaint.domain.ComplaintType
 import me.manga.kira.backend.complaint.domain.ComplaintValidationException
+import me.manga.kira.backend.security.ComplaintHttpIngressBridge
 import me.manga.kira.backend.security.historyTestIngress
 import me.manga.kira.backend.security.historyTestRequest
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -40,6 +43,20 @@ import java.util.UUID
 class ComplaintOwnerHistoryHttpTest {
     private val mapper = ObjectMapper()
     private val now = Instant.parse("2026-09-17T01:00:00.123456Z")
+
+    @Test
+    fun `admitted history entry preserves its one ingress and existing bounded response`() {
+        val fixture = Fixture()
+        val bridge = ComplaintHttpIngressBridge(fixture.ingress)
+        val response = MockHttpServletResponse()
+        bridge.doFilter(historyTestRequest(), response) { admitted, target ->
+            val http = admitted as HttpServletRequest
+            fixture.handler.handleWithinIngress(http, target as HttpServletResponse, bridge.claimHandler(http))
+        }
+        assertEquals(200, response.status)
+        assertEquals(listOf("authenticate", "read"), fixture.port.events)
+        assertHeaders(response, "application/json")
+    }
 
     @Test
     fun `empty history is exact UTF8 JSON with explicit terminal null and complaint headers`() {
@@ -327,7 +344,8 @@ class ComplaintOwnerHistoryHttpTest {
     private class Fixture {
         val port = Port()
         val responses = ComplaintOwnerHistoryResponses()
-        val handler = ComplaintOwnerHistoryHttpHandler(ComplaintOwnerHistoryService(port), historyTestIngress(), responses)
+        val ingress = historyTestIngress()
+        val handler = ComplaintOwnerHistoryHttpHandler(ComplaintOwnerHistoryService(port), ingress, responses)
         fun request(request: MockHttpServletRequest = historyTestRequest()): MockHttpServletResponse =
             MockHttpServletResponse().also { handler.handleRequest(request, it) }
     }

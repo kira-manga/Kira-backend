@@ -5,6 +5,8 @@ import jakarta.servlet.FilterChain
 import jakarta.servlet.ServletInputStream
 import jakarta.servlet.ServletOutputStream
 import jakarta.servlet.WriteListener
+import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
@@ -16,6 +18,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerStatusQuery
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
+import me.manga.kira.backend.security.ComplaintHttpIngressBridge
 import me.manga.kira.backend.security.ownerCreateTestIngress
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -37,6 +40,22 @@ class ComplaintOwnerCreateHttpTest {
     private val createBody = """{"id":"$id","type":"TECHNICAL","subject":"  Synthetic subject  ","body":"Synthetic body","metadata":{"appVersion":null,""" +
         """"osVersion":"","manufacturer":"","deviceModel":""}}"""
     private val statusBody = """{"operation":"OWNER_CREATE","key":"$key","targetIds":["$id"],"fingerprint":"${"A".repeat(43)}"}"""
+
+    @Test
+    fun `admitted create and status entries reuse the outer ingress and existing response ownership`() {
+        for ((path, status) in listOf(CREATE to 201, STATUS to 200)) {
+            val fixture = Fixture()
+            val bridge = ComplaintHttpIngressBridge(fixture.ingress)
+            val response = MockHttpServletResponse()
+            bridge.doFilter(input(path), response) { admitted, target ->
+                val http = admitted as HttpServletRequest
+                fixture.handler.handleWithinIngress(http, target as HttpServletResponse, bridge.claimHandler(http))
+            }
+            assertEquals(status, response.status)
+            assertEquals(1, fixture.calls.size)
+            assertHeaders(response)
+        }
+    }
 
     @Test
     fun `direct acknowledgement and status are exact closed scalar unions with original headers only on direct creation`() {
