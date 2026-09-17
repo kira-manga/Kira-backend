@@ -63,6 +63,8 @@ internal object JournalS3XmlPreflightV1 {
 
                 XMLStreamConstants.CHARACTERS, XMLStreamConstants.CDATA, XMLStreamConstants.SPACE -> shape?.text(reader)
 
+                XMLStreamConstants.COMMENT, XMLStreamConstants.PROCESSING_INSTRUCTION -> shape?.markup()
+
                 XMLStreamConstants.DTD,
                 XMLStreamConstants.ENTITY_REFERENCE,
                 XMLStreamConstants.ENTITY_DECLARATION,
@@ -113,6 +115,15 @@ internal object JournalS3XmlPreflightV1 {
                 requireJournalPublication(reader.textLength <= 5 - text.length, JournalPublicationFailureV1.INVALID_LISTING)
                 text.append(reader.textCharacters, reader.textStart, reader.textLength)
             }
+        }
+
+        fun markup() {
+            val parent = stack.lastOrNull() ?: return
+            // SDK XML scalar decoding overwrites text runs separated by comments or processing instructions.
+            requireJournalPublication(
+                parent.name in setOf("ListVersionsResult", "Version", "Owner"),
+                JournalPublicationFailureV1.INVALID_LISTING,
+            )
         }
 
         fun end(name: String) {
