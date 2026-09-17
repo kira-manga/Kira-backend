@@ -11,7 +11,8 @@ import me.manga.kira.backend.security.ComplaintIngressContext
 /**
  * One synchronous dormant authenticated attempt, not an HTTP handler or background recovery worker.
  * The actual shared J lane, full-D/current runtime authority and stronger horizon remain prerequisites
- * for any live wiring. No local busy flag, result or matching descriptor supplies that permission.
+ * for any live wiring, with real journal-lane admission BEFORE new authorization, not just at
+ * publisher open. No local busy flag, result or matching descriptor supplies that permission.
  */
 internal class ComplaintOwnerDeleteAllContinuation(
     private val ingress: ComplaintIngressAdmission,
