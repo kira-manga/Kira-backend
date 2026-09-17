@@ -19,7 +19,7 @@ internal class EpochSealCodecV1(
     private val limits = declaration.limits.decoder
     private val writer = declaration.writer.generationId
     private val sealPrefix = OfflineBootstrapGrammar.sealTerminalPrefix(writer)
-    private val retainedIds = declaration.routing.keys.map { it.keyId }.toSet()
+    private val canonical = EpochSealCanonicalV1(routingOwner)
     private val json = EpochSealJsonV1(limits)
     private val wire = EpochSealWireV1(limits)
 
@@ -30,22 +30,8 @@ internal class EpochSealCodecV1(
     }
 
     /** Count/root come only from the two-pass helper; durable completeness and initial-G1 acceptance remain outside the codec. */
-    fun canonicalize(manifest: EpochSealManifestV1, preparingFencingToken: Long, attempt: EpochSealAttemptV1): EpochSealContentV1 = epochSealBoundary {
-        requireConnectionFree()
-        manifest.requireOwner(routingOwner, attempt)
-        requireEpochSeal(preparingFencingToken > 0)
-        val route = routingOwner.deriveEpochSeal(EpochSealRoutingTupleV1(manifest.range, manifest.eventManifestSha256)).active
-        val payload = EpochSealPayloadV1(
-            1, KIND, route.sealId, writer, "LIVE", LIVE_SCOPE, manifest.range.epochStartInclusive, manifest.range.epochEndInclusive,
-            manifest.eventCount, manifest.eventManifestSha256, manifest.range.precedingSealSha256, preparingFencingToken,
-        )
-        withEpochSealBuffers { buffers ->
-            val canonical = buffers.own(json.encodePayload(payload))
-            requireEpochSeal(bindPayload(payload, route.routingKeyId) == route)
-            attempt.remainingMillis(1)
-            EpochSealContentV1(routingOwner, payload, route, canonical)
-        }
-    }
+    fun canonicalize(manifest: EpochSealManifestV1, preparingFencingToken: Long, attempt: EpochSealAttemptV1): EpochSealContentV1 =
+        canonical.canonicalize(manifest, preparingFencingToken, attempt)
 
     /** Revalidate exact frozen canonical bytes; never regenerate a successor token, ID, key or payload. */
     fun restoreCanonical(
@@ -54,26 +40,13 @@ internal class EpochSealCodecV1(
         expectedObjectKey: String,
         expectedSemanticSha256: String,
         attempt: EpochSealAttemptV1,
-    ): EpochSealContentV1 = epochSealBoundary {
-        checkAttempt(attempt)
-        requireEpochSeal(canonicalBytes.size in 1..limits.maximumPlaintextBytes, EpochSealFailureV1.LIMIT_EXCEEDED)
-        requireEpochSeal(OfflineBootstrapGrammar.sha256(expectedSemanticSha256))
-        withEpochSealBuffers { buffers ->
-            val canonical = buffers.own(canonicalBytes.copyOf())
-            requireEpochSeal(Sha256.hex(canonical) == expectedSemanticSha256)
-            val payload = json.payload(canonical)
-            val route = bindPayload(payload, selectedRoutingKeyId)
-            requireEpochSeal(route.objectKey == expectedObjectKey)
-            attempt.remainingMillis(1)
-            EpochSealContentV1(routingOwner, payload, route, canonical)
-        }
-    }
+    ): EpochSealContentV1 = canonical.restoreCanonical(canonicalBytes, selectedRoutingKeyId, expectedObjectKey, expectedSemanticSha256, attempt)
 
     /** Fresh candidate ONLY for a missing wire stage. A retry of wire-ready work must reuse its durable exact bytes instead. */
     fun seal(content: EpochSealContentV1, attempt: EpochSealAttemptV1): EpochSealEnvelopeV1 = epochSealBoundary {
         checkAttempt(attempt)
         withEpochSealBuffers { buffers ->
-            val plaintext = checkedContent(content, buffers)
+            val plaintext = canonical.checkedContent(content, buffers)
             val nonce = buffers.own(ByteArray(EpochSealWireV1.NONCE_BYTES))
             random.nextBytes(nonce)
             val header = header(content, EpochSealFramesV1.encode(nonce))
@@ -111,7 +84,7 @@ internal class EpochSealCodecV1(
         requireEpochSeal(expectedBucket == declaration.journalLocation.bucket && expectedObjectKey == expected.route.objectKey)
         requireEpochSeal(wireBytes.size in EpochSealWireV1.OUTER_BYTES..limits.maximumEnvelopeBytes, EpochSealFailureV1.LIMIT_EXCEEDED)
         withEpochSealBuffers { buffers ->
-            val canonical = checkedContent(expected, buffers)
+            val canonicalBytes = canonical.checkedContent(expected, buffers)
             val bytes = buffers.own(wireBytes.copyOf())
             val parts = wire.split(bytes, buffers)
             val header = json.header(parts.header)
@@ -132,8 +105,8 @@ internal class EpochSealCodecV1(
             attempt.remainingMillis(1)
             requireEpochSeal(plaintext.size <= limits.maximumPlaintextBytes, EpochSealFailureV1.LIMIT_EXCEEDED)
             val payload = json.payload(plaintext)
-            requireEpochSeal(bindPayload(payload, header.routingKeyId) == expected.route)
-            requireEpochSeal(payload == expected.payload && plaintext.contentEquals(canonical))
+            requireEpochSeal(canonical.bindPayload(payload, header.routingKeyId) == expected.route)
+            requireEpochSeal(payload == expected.payload && plaintext.contentEquals(canonicalBytes))
             attempt.remainingMillis(1)
             EpochSealDecodedV1(expected, Sha256.hex(bytes))
         }
@@ -142,28 +115,6 @@ internal class EpochSealCodecV1(
     private fun checkAttempt(attempt: EpochSealAttemptV1) {
         attempt.requireOwner(routingOwner)
         attempt.remainingMillis(1)
-    }
-
-    private fun checkedContent(content: EpochSealContentV1, buffers: EpochSealBuffersV1): ByteArray {
-        requireEpochSeal(content.belongsTo(routingOwner))
-        requireEpochSeal(content.byteCount <= limits.maximumPlaintextBytes, EpochSealFailureV1.LIMIT_EXCEEDED)
-        val canonical = buffers.own(content.canonicalBytes())
-        val payload = json.payload(canonical)
-        requireEpochSeal(content.payload == payload && content.semanticSha256 == Sha256.hex(canonical))
-        requireEpochSeal(bindPayload(payload, content.route.routingKeyId) == content.route)
-        return canonical
-    }
-
-    private fun bindPayload(value: EpochSealPayloadV1, selectedId: String): EpochSealRoutingCandidateV1 {
-        requireEpochSeal(value.schemaVersion == 1 && value.objectKind == KIND)
-        requireEpochSeal(value.writerGeneration == writer && value.dataScopeKind == "LIVE" && value.dataScopeId == LIVE_SCOPE)
-        requireEpochSeal(value.preparingFencingToken > 0 && value.eventCount in 0..declaration.limits.capacity.maximumRetainedVersions)
-        requireEpochSeal(selectedId in retainedIds)
-        val range = EpochSealRangeV1(value.epochStartInclusive, value.epochEndInclusive, value.precedingSealSha256)
-        val routes = routingOwner.deriveEpochSeal(EpochSealRoutingTupleV1(range, value.eventManifestSha256))
-        val route = routes.candidates().single { it.routingKeyId == selectedId }
-        requireEpochSeal(value.sealId == route.sealId)
-        return route
     }
 
     private fun bindHeader(value: EpochSealHeaderV1, expected: EpochSealContentV1): ByteArray {
