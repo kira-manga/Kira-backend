@@ -199,13 +199,7 @@ class ComplaintInstallationSecurityChainTest {
         private val proxy = context.getBean(FilterChainProxy::class.java)
         private val body = RequestBodySizeLimitFilter(ObjectMapper())
 
-        fun request(
-            method: String,
-            path: String,
-            token: String? = null,
-            content: String? = null,
-            decodedServletPath: String = path,
-        ): MockHttpServletResponse {
+        fun request(method: String, path: String, token: String? = null, content: String? = null, decodedServletPath: String = path): MockHttpServletResponse {
             lastRequest = object : MockHttpServletRequest(method, path) {
                 override fun getInputStream(): jakarta.servlet.ServletInputStream {
                     if (ComplaintInstallationRoutes.matches(this)) ingress.requireLiveContext(bridge.authenticationContext(this))
