@@ -42,8 +42,8 @@ internal object InstallationRequestJson {
     fun deletionInstallation(root: JsonNode): ScopedInstallationId = installation(root, "dataScopeId")
 
     fun credentialVersion(root: JsonNode): Long {
-        val value = root["credentialVersion"]
-        if (value == null || !value.isIntegralNumber || !value.canConvertToLong() || value.longValue() <= 0) malformed()
+        val value = root["credentialVersion"] ?: malformed()
+        if (!value.isIntegralNumber || !value.canConvertToLong() || value.longValue() <= 0) malformed()
         return value.longValue()
     }
 

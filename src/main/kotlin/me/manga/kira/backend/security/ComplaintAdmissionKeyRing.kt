@@ -98,8 +98,7 @@ internal class ComplaintAdmissionKeyConfiguration private constructor(
             current: ComplaintAdmissionKey,
             previous: ComplaintAdmissionKey?,
             forbiddenFamilies: List<ComplaintAdmissionForbiddenFamily>,
-        ): ComplaintAdmissionKeyConfiguration =
-            ComplaintAdmissionKeyConfiguration(current, previous, forbiddenFamilies, true)
+        ): ComplaintAdmissionKeyConfiguration = ComplaintAdmissionKeyConfiguration(current, previous, forbiddenFamilies, true)
     }
 }
 

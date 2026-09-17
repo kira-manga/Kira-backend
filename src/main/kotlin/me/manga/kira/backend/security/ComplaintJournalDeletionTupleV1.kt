@@ -37,6 +37,7 @@ internal class ComplaintJournalDeletionTupleV1(
             ComplaintJournalActorKindV1.INSTALLATION -> require(
                 actorId.version() == 4 && actorId.variant() == 2 && credentialVersion != null && credentialVersion > 0,
             ) { INVALID_TUPLE }
+
             ComplaintJournalActorKindV1.ADMIN -> require(credentialVersion == null) { INVALID_TUPLE }
         }
         storedFingerprint = fingerprint.copyOf()

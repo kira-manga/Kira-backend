@@ -7,11 +7,7 @@ import java.util.UUID
  * The existing verifier mechanics are reused; session state rejection/refresh semantics are not.
  * Delete-all preflight must also support exact pending and retained-verifier terminal replays.
  */
-internal class InstallationDeletionCandidate(
-    val credential: InstallationSessionCandidate,
-    val credentialVersion: Long,
-    val operationKey: UUID,
-) {
+internal class InstallationDeletionCandidate(val credential: InstallationSessionCandidate, val credentialVersion: Long, val operationKey: UUID) {
     init {
         require(credentialVersion > 0) { "Invalid installation deletion candidate" }
         ComplaintIdentifiers.requireVersion4(operationKey, ComplaintField.IDEMPOTENCY_KEY)

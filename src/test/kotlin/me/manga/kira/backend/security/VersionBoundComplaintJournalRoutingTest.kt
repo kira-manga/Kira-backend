@@ -132,7 +132,8 @@ class VersionBoundComplaintJournalRoutingTest {
         val first = expected.first()
         val otherVersion = ImmutableSecretVersion.awsSecretsManager(first.secret.resourceArn, InitialLiveJournalTestFixture.uuid('9'))
         val otherArn = ImmutableSecretVersion.awsSecretsManager(
-            first.secret.resourceArn.replace("journal-routing-a", "journal-routing-other"), first.secret.versionId,
+            first.secret.resourceArn.replace("journal-routing-a", "journal-routing-other"),
+            first.secret.versionId,
         )
         listOf(first.copy(keyId = "other-label"), first.copy(secret = otherVersion), first.copy(secret = otherArn)).forEach {
             invalid { VersionBoundComplaintJournalRouting.fromAcquired(journal, listOf(acquired(it), valid.last())) }
@@ -207,10 +208,8 @@ class VersionBoundComplaintJournalRoutingTest {
 
     private fun journal(): ComplaintJournalConfigurationV1 = ComplaintJournalConfigurationV1.of(InitialLiveJournalTestFixture.declaration())
 
-    private fun owner(
-        journal: ComplaintJournalConfigurationV1,
-        materialFor: (String) -> ByteArray = ::material,
-    ): VersionBoundComplaintJournalRouting = VersionBoundComplaintJournalRouting.fromAcquired(journal, inputs(journal, materialFor))
+    private fun owner(journal: ComplaintJournalConfigurationV1, materialFor: (String) -> ByteArray = ::material): VersionBoundComplaintJournalRouting =
+        VersionBoundComplaintJournalRouting.fromAcquired(journal, inputs(journal, materialFor))
 
     private fun inputs(
         journal: ComplaintJournalConfigurationV1,
@@ -246,7 +245,14 @@ class VersionBoundComplaintJournalRoutingTest {
         fingerprint: ByteArray = ByteArray(32) { (128 + it).toByte() },
         scope: ComplaintDataScope = ComplaintDataScope.LIVE,
     ): ComplaintJournalDeletionTupleV1 = ComplaintJournalDeletionTupleV1(
-        epoch, eventKind, actorKind, actorId, credentialVersion, operationKey, fingerprint, scope,
+        epoch,
+        eventKind,
+        actorKind,
+        actorId,
+        credentialVersion,
+        operationKey,
+        fingerprint,
+        scope,
     )
 
     private fun independentFrame(fields: List<String>): ByteArray = ByteArrayOutputStream().use { buffer ->

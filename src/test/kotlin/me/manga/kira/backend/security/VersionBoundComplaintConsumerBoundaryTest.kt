@@ -79,21 +79,34 @@ class VersionBoundComplaintConsumerBoundaryTest {
         invalid { fixture.inputs(previous = fixture.current) }
         invalid { fixture.inputs(cursors = listOf(fixture.cursorSecrets.first(), fixture.cursorSecrets.first())) }
         val database = fixture.acquired(
-            SecretMaterialFamily.DATABASE, "database", 201, purpose = SecretMaterialPurpose.AUTHENTICATION_PASSWORD,
+            SecretMaterialFamily.DATABASE,
+            "database",
+            201,
+            purpose = SecretMaterialPurpose.AUTHENTICATION_PASSWORD,
         )
         invalid { fixture.inputs(current = database) }
 
         // Different material cannot turn one immutable provider reference into multiple keys or families.
         val reusedUserVersion = fixture.acquired(
-            SecretMaterialFamily.COMPLAINT_ADMISSION, "admission-z", 202, version = fixture.userSecret.descriptor.version,
+            SecretMaterialFamily.COMPLAINT_ADMISSION,
+            "admission-z",
+            202,
+            version = fixture.userSecret.descriptor.version,
         )
         invalid { fixture.configuration(fixture.inputs(current = reusedUserVersion)) }
         val reusedJournalVersion = fixture.acquired(
-            SecretMaterialFamily.COMPLAINT_CURSOR, "cursor-z", 203, version = fixture.journalSecrets.first().descriptor.version,
+            SecretMaterialFamily.COMPLAINT_CURSOR,
+            "cursor-z",
+            203,
+            version = fixture.journalSecrets.first().descriptor.version,
         )
         invalid { fixture.configuration(fixture.inputs(cursors = listOf(reusedJournalVersion))) }
         val declarationOnlyJwt = VersionBoundInstallationJwtConfiguration.fromAcquired(
-            "installation-z", fixture.installationSecrets, "user-issuer", "user-audience", listOf(fixture.userSecret),
+            "installation-z",
+            fixture.installationSecrets,
+            "user-issuer",
+            "user-audience",
+            listOf(fixture.userSecret),
         )
         invalid { fixture.configuration(jwt = declarationOnlyJwt) }
         for (size in listOf(31, 129)) {
@@ -125,7 +138,11 @@ class VersionBoundComplaintConsumerBoundaryTest {
         val retainedJournal = fixture.journalSecrets.first()
         for (source in listOf(fixture.userSecret, fixture.installationSecrets.last())) {
             val reused = fixture.acquired(
-                SecretMaterialFamily.COMPLAINT_JOURNAL_ROUTING, retainedJournal.descriptor.logicalKeyId, 203, alias(source), retainedJournal.descriptor.version,
+                SecretMaterialFamily.COMPLAINT_JOURNAL_ROUTING,
+                retainedJournal.descriptor.logicalKeyId,
+                203,
+                alias(source),
+                retainedJournal.descriptor.version,
             )
             val routing = VersionBoundComplaintJournalRouting.fromAcquired(fixture.journal, listOf(reused, fixture.journalSecrets.last()))
             invalid { fixture.configuration(fixture.inputs(routing = routing)) }
