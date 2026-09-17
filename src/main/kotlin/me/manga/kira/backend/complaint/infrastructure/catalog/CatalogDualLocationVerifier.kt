@@ -4,6 +4,7 @@ import kotlinx.serialization.Serializable
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenMutation
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenSignatureSlot
 import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
@@ -85,6 +86,7 @@ internal object CatalogDualLocationVerifier {
      */
     class GenesisReadback private constructor(
         val resume: GenesisResume,
+        private val commonHead: CatalogCommonHeadEvidence,
         private val envelope: ByteArray,
         val initialTrustBundleSha256: String,
         val currentTrustBundleSha256: String,
@@ -114,6 +116,9 @@ internal object CatalogDualLocationVerifier {
             requireCatalogReadback(unsigned.size in 1..CatalogGenesisCapacity.MAX_DOCUMENT_BYTES, CatalogReadbackFailure.LIMIT_EXCEEDED)
             requireCatalogReadback(envelope.size in 1..CatalogGenesisCapacity.MAX_DOCUMENT_BYTES, CatalogReadbackFailure.LIMIT_EXCEEDED)
         }
+
+        /** Raw-verifier data only; callers still need actual SDK custody and committed projection. */
+        internal fun commonHeadEvidence(): CatalogCommonHeadEvidence = commonHead
 
         internal fun mutation(): CatalogFrozenMutation = frozen
 
@@ -166,6 +171,7 @@ internal object CatalogDualLocationVerifier {
                 val read = verified.read ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
                 return GenesisReadback(
                     resume,
+                    evidence,
                     read.bytes.copyOf(),
                     verified.initialHash,
                     verified.currentHash,

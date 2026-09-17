@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentAcceptedCatalogRefreshV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationDeletionPreflightPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllApplyPhaseExecutor
@@ -69,6 +70,20 @@ internal class VersionBoundOwnerDeleteAllConfiguration(
 
     fun exchange(publishers: OwnerDeleteAllJournalPublisherFactoryV1): ComplaintOwnerDeleteAllExchangeAdapter =
         ComplaintOwnerDeleteAllExchangeAdapter(ingress, continuation(publishers))
+
+    companion object {
+        /** Genuine SDK/projected G1 provenance only; existing locked control/checkpoint checks are still mandatory. */
+        fun fromCatalogRefresh(
+            process: VersionBoundComplaintProcessConfiguration,
+            ordinaryOwnership: PersistencePhaseOwnership,
+            deletionOwnership: PersistencePhaseOwnership,
+            audit: AuditService,
+            catalog: CurrentAcceptedCatalogRefreshV1.Result,
+            dataKeys: JournalDataKeyPortV1,
+        ): VersionBoundOwnerDeleteAllConfiguration = VersionBoundOwnerDeleteAllConfiguration(
+            process, ordinaryOwnership, deletionOwnership, audit, catalog.catalogFor(process), dataKeys,
+        )
+    }
 
     override fun toString(): String = "VersionBoundOwnerDeleteAllConfiguration(dormant,no-runtime-authority)"
 }

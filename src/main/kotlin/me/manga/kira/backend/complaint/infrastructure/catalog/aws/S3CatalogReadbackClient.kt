@@ -145,8 +145,33 @@ internal class S3CatalogReadbackClient private constructor(
 
     override fun toString(): String = "S3CatalogReadbackClient(read-only,redacted)"
 
-    companion object {
-        fun create(
+    /** Concrete per-location construction custody, retained before any HTTP/SDK constructor is invoked. */
+    internal class Construction : AutoCloseable {
+        private var stage = Stage.NEW
+        private var opened = false
+        private var closed = false
+        private var raw: SdkHttpClient? = null
+        private var transport: BoundedCatalogSdkHttpClient? = null
+        private var sdk: S3Client? = null
+        private var closeIssued = false
+        private var closeFailure: Throwable? = null
+
+        internal fun open(
+            location: OfflineCatalogLocationV1,
+            credentials: AwsSessionCredentials,
+            limits: S3CatalogReadbackLimits,
+            httpFactory: () -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): S3CatalogReadbackClient {
+            requireConnectionFree()
+            requireCatalogReadback(!opened && !closed, CatalogReadbackFailure.INVALID_POLICY)
+            opened = true
+            val result = runCatching { construct(location, credentials, limits, httpFactory, nanoTime) }
+            if (result.isFailure) return withS3Cleanup({ result.getOrThrow() }, ::close)
+            return result.getOrThrow()
+        }
+
+        private fun construct(
             location: OfflineCatalogLocationV1,
             credentials: AwsSessionCredentials,
             limits: S3CatalogReadbackLimits,
@@ -160,9 +185,11 @@ internal class S3CatalogReadbackClient private constructor(
                 ?: throw CatalogReadbackException(CatalogReadbackFailure.INVALID_POLICY)
             val emptyProfile = ProfileFile.aggregator().build()
             val endpoint = catalogProviderCall(CatalogReadbackFailure.INVALID_POLICY) { regionalEndpoint(region, emptyProfile) }
-            val transport = BoundedCatalogSdkHttpClient(catalogProviderCall { httpFactory() }, location, endpoint, limits, nanoTime)
-            val built = runCatching {
-                sdkReadbackCall {
+            stage = Stage.OPENING_HTTP
+            val raw = catalogProviderCall { httpFactory() }.also { this.raw = it; stage = Stage.HTTP_RETURNED }
+            val transport = BoundedCatalogSdkHttpClient(raw, location, endpoint, limits, nanoTime).also { this.transport = it }
+            stage = Stage.OPENING_SDK
+            val sdk = sdkReadbackCall {
                     S3Client.builder()
                         .region(region)
                         .credentialsProvider(StaticCredentialsProvider.create(credentials))
@@ -186,11 +213,39 @@ internal class S3CatalogReadbackClient private constructor(
                                 .build(),
                         )
                         .build()
-                }
-            }
-            built.exceptionOrNull()?.let { failure -> return withS3Cleanup({ throw failure }, transport::close) }
-            return S3CatalogReadbackClient(location, built.getOrThrow(), transport)
+            }.also { this.sdk = it; stage = Stage.SDK_RETURNED }
+            return S3CatalogReadbackClient(location, sdk, transport)
         }
+
+        /** Original synchronous caller owns cleanup. A failed constructor or close can never become a release receipt. */
+        override fun close() {
+            closed = true
+            if (!closeIssued) {
+                closeIssued = true
+                closeFailure = runCatching {
+                    withS3Cleanup(
+                        { transport?.close() ?: raw?.let { catalogProviderCall(CatalogReadbackFailure.CLOSE_FAILURE) { it.close() } } },
+                        { sdk?.let { catalogProviderCall(CatalogReadbackFailure.CLOSE_FAILURE) { it.close() } } },
+                    )
+                    requireCatalogReadback(stage != Stage.OPENING_HTTP && stage != Stage.OPENING_SDK, CatalogReadbackFailure.CLOSE_FAILURE)
+                }.exceptionOrNull()
+            }
+            closeFailure?.let { throw it }
+        }
+
+        override fun toString(): String = "CatalogS3ConstructionV1(concrete,redacted)"
+
+        private enum class Stage { NEW, OPENING_HTTP, HTTP_RETURNED, OPENING_SDK, SDK_RETURNED }
+    }
+
+    companion object {
+        fun create(
+            location: OfflineCatalogLocationV1,
+            credentials: AwsSessionCredentials,
+            limits: S3CatalogReadbackLimits,
+            httpFactory: () -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): S3CatalogReadbackClient = Construction().open(location, credentials, limits, httpFactory, nanoTime)
 
         private fun regionalEndpoint(region: Region, emptyProfile: ProfileFile): URI {
             // This SDK setting can otherwise alter us-east-1 metadata before endpointOverride is applied.
