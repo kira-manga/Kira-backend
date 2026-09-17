@@ -42,6 +42,7 @@ internal class PersistenceJdbcGuardCall private constructor(
 
     fun failure(failure: Throwable, wrapping: Boolean = false): Throwable {
         checkActualCaller()
+        context.observeOwnerDeleteAllApplyFailure(failure)
         val observed = when {
             wrapping || output != null -> PersistenceJdbcCallOutcome.WRAPPING_FAILURE
             kind === PersistenceJdbcGuardCallKind.CLEANUP -> PersistenceJdbcCallOutcome.CLEANUP_FAILURE

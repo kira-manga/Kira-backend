@@ -50,6 +50,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.lang.reflect.Method
 import java.sql.Connection
 import java.util.UUID
+import java.util.concurrent.CancellationException
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -115,7 +116,8 @@ internal class PersistencePhaseContext(
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerDeleteAll: PersistenceOwnerDeleteAll = OwnerDeleteAllBoundary()
     internal val ownerDeleteAllVerification: PersistenceOwnerDeleteAllVerification = OwnerDeleteAllVerificationBoundary()
-    internal val ownerDeleteAllApply: PersistenceOwnerDeleteAllApply = OwnerDeleteAllApplyBoundary()
+    private val ownerDeleteAllApplyBoundary = OwnerDeleteAllApplyBoundary()
+    internal val ownerDeleteAllApply: PersistenceOwnerDeleteAllApply = ownerDeleteAllApplyBoundary
     internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
     internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
     internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
@@ -523,6 +525,7 @@ internal class PersistencePhaseContext(
             cleanupBudget()
         }
         completionActive = true
+        if (commit) ownerDeleteAllApplyBoundary.commitDispatched()
     }
 
     internal fun completionDispatchEnded(status: PersistenceManagedStatus) {
@@ -534,7 +537,11 @@ internal class PersistencePhaseContext(
 
     internal fun managerFailure(problem: Throwable) = recordFailure(problem)
 
+    /** Veto only, before any owned JDBC/manager adapter discards a signal's type. Never grants an outcome. */
+    internal fun observeOwnerDeleteAllApplyFailure(problem: Throwable) = ownerDeleteAllApplyBoundary.observeFailure(problem)
+
     internal fun recordFailure(problem: Throwable) {
+        observeOwnerDeleteAllApplyFailure(problem)
         val reason = when (problem) {
             is InterruptedException -> {
                 restoreInterrupt = true
@@ -679,6 +686,7 @@ internal class PersistencePhaseContext(
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
             }
+            ownerDeleteAllApplyBoundary.finalizerObserved()
             finalizerEnded = true
             if (!releaseIfProven()) quarantine()
         }
@@ -1251,6 +1259,27 @@ internal class PersistencePhaseContext(
         private var issued = false
         private var boundsChecked = false
         private var retained: ComplaintOwnerDeleteAllApplyOperation? = null
+        private var commitDispatchObserved = false
+        private var unconfirmedCompletion = false
+        private val signalVeto = AtomicBoolean()
+
+        fun commitDispatched() {
+            if (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) commitDispatchObserved = true
+        }
+
+        fun observeFailure(problem: Throwable) {
+            if (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY &&
+                (problem is Error || problem is CancellationException || problem is InterruptedException)
+            ) {
+                signalVeto.set(true)
+            }
+        }
+
+        fun finalizerObserved() {
+            // Snapshot only the real attempt's failure, before refund/clear. A later diagnostic
+            // or wrong-caller result access cannot turn a successfully finished APPLY into pending.
+            unconfirmedCompletion = commitDispatchObserved && failure.get() != null
+        }
 
         override fun requireOperation(jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
@@ -1290,6 +1319,58 @@ internal class PersistencePhaseContext(
         override fun requireCommitted(operation: ComplaintOwnerDeleteAllApplyOperation) {
             if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             requireSuccessfulResult()
+        }
+
+        override fun reconciliationPending(operation: ComplaintOwnerDeleteAllApplyOperation): Boolean {
+            val exactCompleted = caller.isCurrent() && path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY &&
+                retained === operation && operation.completedFor(this@PersistencePhaseContext) && boundsChecked
+            if (!exactCompleted) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+                throw failureException(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireNoSignal()
+            if (!unconfirmedCompletion) {
+                requireSuccessfulResult()
+                return false
+            }
+            // These are original owner facts, not PersistencePhaseException's caller-constructible
+            // cleanup/outcome fields. A quarantined attempt stays a failure even if later reconciled.
+            val originalCleanup = stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+                acquisition?.quiescent() == true && !completionActive && completionEnded
+            if (!originalCleanup || failure.get() === PersistencePhaseFailureCode.CLEANUP_UNRESOLVED ||
+                databaseOutcome() === PersistenceDatabaseOutcome.NONE
+            ) {
+                throw failureException(PersistencePhaseFailureCode.COMPLETION_FAILED)
+            }
+            observeFinalCallerSignal()
+            requireNoSignal()
+            return true
+        }
+
+        private fun requireNoSignal() {
+            if (signalVeto.get() || restoreInterrupt || failure.get() === PersistencePhaseFailureCode.INTERRUPTED) {
+                throw failureException(PersistencePhaseFailureCode.COMPLETION_FAILED)
+            }
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        private fun observeFinalCallerSignal() {
+            try {
+                if (caller.sampleOutsideLocks() != null) {
+                    signalVeto.set(true)
+                    failure.compareAndSet(null, PersistencePhaseFailureCode.INTERRUPTED)
+                }
+            } catch (problem: Throwable) {
+                signalVeto.set(true)
+                recordFailure(problem)
+            } finally {
+                try {
+                    caller.restoreAfterFailure()
+                } catch (problem: Throwable) {
+                    signalVeto.set(true)
+                    recordFailure(problem)
+                }
+            }
         }
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true && boundsChecked
@@ -1994,5 +2075,6 @@ internal interface PersistenceOwnerDeleteAllApply {
     fun checkWrite(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)
     fun connection(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate): Connection
     fun requireCommitted(operation: ComplaintOwnerDeleteAllApplyOperation)
+    fun reconciliationPending(operation: ComplaintOwnerDeleteAllApplyOperation): Boolean
     fun completed(): Boolean
 }

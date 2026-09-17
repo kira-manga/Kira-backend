@@ -73,7 +73,7 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore(
         check(Instant.parse(record.retainUntil) == proof.retainUntil && Instant.parse(record.verifiedAt) == proof.verifiedAt)
         val verifier = verification.authenticatedVerifier(work, proof)
         return try {
-            CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash, verifier)
+            CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash, verifier, work, proof)
         } finally {
             verifier.fill(0)
         }
@@ -87,12 +87,18 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore(
 
 internal sealed interface OwnerDeleteAllApplyInputV1
 
+/** Discrimination only; neither a caller-set permission nor an HTTP response mapping. */
+internal sealed interface OwnerDeleteAllApplyOutcomeV1 : OwnerDeleteAllOutcome
+
 /** Released only after the original caller's known commit AND original-holder cleanup. No content/identity is returned. */
-internal sealed interface CommittedOwnerDeleteAllApplyV1 : OwnerDeleteAllOutcome {
+internal sealed interface CommittedOwnerDeleteAllApplyV1 : OwnerDeleteAllApplyOutcomeV1 {
     val completedAt: Instant
     val expiresAt: Instant
     val responseStatus: Int get() = 204
 }
+
+/** Genuine committed VERIFY custody, but no released APPLY result. Deliberately no erasure/status/proof fields. */
+internal sealed interface OwnerDeleteAllReconciliationPendingV1 : OwnerDeleteAllApplyOutcomeV1
 
 private class CapturedOwnerDeleteAllApply(
     private val issuer: Any,
@@ -102,6 +108,8 @@ private class CapturedOwnerDeleteAllApply(
     bytes: ByteArray,
     hash: ByteArray,
     verifier: ByteArray,
+    val work: CommittedOwnerDeleteAllWork,
+    val proof: CommittedOwnerDeleteAllVerificationV1,
 ) : OwnerDeleteAllApplyInputV1 {
     val verificationBytes = bytes.copyOf()
     val verificationHash = hash.copyOf()
@@ -143,6 +151,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private var resources: List<OwnerDeleteAllApplyRows.Resource> = emptyList()
     private val removed = ArrayList<OwnerDeleteAllApplyRows.Content>()
     private var released: CommittedOwnerDeleteAllApplyV1? = null
+    private var pending: OwnerDeleteAllReconciliationPendingV1? = null
 
     fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE &&
@@ -153,6 +162,13 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             phase.ownerDeleteAllApply.requireCommitted(this)
             requireConnectionFree()
             return released ?: Released(checkNotNull(completion), checkNotNull(expiry)).also { released = it }
+        }
+
+    val continuationResult: OwnerDeleteAllApplyOutcomeV1
+        get() {
+            if (!phase.ownerDeleteAllApply.reconciliationPending(this)) return result
+            requireConnectionFree()
+            return pending ?: ReconciliationPending(observed.work, observed.proof).also { pending = it }
         }
 
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
@@ -531,6 +547,14 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     private class Released(override val completedAt: Instant, override val expiresAt: Instant) : CommittedOwnerDeleteAllApplyV1 {
         override fun toString(): String = "CommittedOwnerDeleteAllApplyV1(completed204,redacted)"
+    }
+
+    /** Retain the exact privately authenticated producers, not copied proof descriptors or the failed phase/holder. */
+    private class ReconciliationPending(
+        @Suppress("unused") private val work: CommittedOwnerDeleteAllWork,
+        @Suppress("unused") private val proof: CommittedOwnerDeleteAllVerificationV1,
+    ) : OwnerDeleteAllReconciliationPendingV1 {
+        override fun toString(): String = "OwnerDeleteAllReconciliationPendingV1(redacted,no-erasure-result)"
     }
 
     private enum class Stage {
