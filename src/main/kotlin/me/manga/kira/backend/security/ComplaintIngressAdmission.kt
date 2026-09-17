@@ -4,6 +4,7 @@ import jakarta.servlet.http.HttpServletRequest
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
@@ -13,7 +14,9 @@ import java.security.ProviderException
 import java.util.IdentityHashMap
 
 /** Identity alone grants nothing: only the owning live registry can recognize this view. */
-internal class ComplaintIngressContext : ComplaintOwnerHistoryRequestContext {
+internal class ComplaintIngressContext :
+    ComplaintOwnerHistoryRequestContext,
+    ComplaintInstallationRequestContext {
     override fun toString(): String = "ComplaintIngressContext(redacted)"
 }
 
