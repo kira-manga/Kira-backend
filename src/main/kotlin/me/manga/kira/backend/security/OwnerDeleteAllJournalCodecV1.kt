@@ -1,7 +1,10 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintIdentifiers
@@ -33,9 +36,9 @@ internal class OwnerDeleteAllJournalCodecV1(
     private val retainedIds = declaration.routing.keys.map { it.keyId }.toSet()
 
     /** Start once for the entire connection-free publication attempt, not once for each key call. */
-    fun startAttempt(): JournalCodecAttemptV1 {
+    fun startAttempt(enclosingBudget: PersistenceTimeBudget? = null): JournalCodecAttemptV1 = codecBoundary {
         requireConnectionFree()
-        return JournalCodecAttemptV1(routingOwner, nanoTime)
+        JournalCodecAttemptV1(routingOwner, nanoTime, enclosingBudget).also { it.remainingMillis(1) }
     }
 
     /** Null selects active for a new candidate. A retry must supply its already selected retained ID. */
@@ -58,7 +61,7 @@ internal class OwnerDeleteAllJournalCodecV1(
             )
             withBuffers { buffers ->
                 val canonical = buffers.own(json.encodePayload(payload))
-                val bound = bindPayload(payload, route.routingKeyId)
+                val bound = bindOwnerDeleteAllPayload(routingOwner, payload, route.routingKeyId)
                 event(bound, canonical)
             }
         }
@@ -71,7 +74,7 @@ internal class OwnerDeleteAllJournalCodecV1(
         requireJournalCodec(event.byteCount <= limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
         withBuffers { buffers ->
             val plaintext = buffers.own(event.canonicalBytes())
-            val bound = bindPayload(json.payload(plaintext), event.route.routingKeyId)
+            val bound = bindOwnerDeleteAllPayload(routingOwner, json.payload(plaintext), event.route.routingKeyId)
             requireJournalCodec(bound.route == event.route)
             val nonce = buffers.own(ByteArray(NONCE_BYTES))
             random.nextBytes(nonce)
@@ -129,50 +132,20 @@ internal class OwnerDeleteAllJournalCodecV1(
                 requireJournalCodec(plaintext.size <= limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
                 val payload = json.payload(plaintext)
                 requireJournalCodec(payload.eventId == header.eventId && payload.publicationEpoch == header.publicationEpoch)
-                val bound = bindPayload(payload, header.routingKeyId)
+                val bound = bindOwnerDeleteAllPayload(routingOwner, payload, header.routingKeyId)
                 requireJournalCodec(bound.route.objectKey == expectedObjectKey && bound.route.eventId == header.eventId)
                 attempt.remainingMillis(1)
                 DecodedOwnerDeleteAllJournalEventV1(event(bound, plaintext), Sha256.hex(wire))
             }
         }
 
-    private fun event(bound: BoundPayload, canonical: ByteArray): OwnerDeleteAllJournalEventV1 = OwnerDeleteAllJournalEventV1(
+    private fun event(bound: OwnerDeleteAllBoundPayload, canonical: ByteArray): OwnerDeleteAllJournalEventV1 = OwnerDeleteAllJournalEventV1(
         routingOwner,
         bound.tuple,
         bound.targets,
         bound.route,
         canonical,
     )
-
-    private fun bindPayload(value: OwnerDeleteAllJournalPayloadV1, selectedId: String): BoundPayload {
-        requireJournalCodec(value.schemaVersion == 1 && value.eventKind == KIND && value.actorKind == "INSTALLATION")
-        requireJournalCodec(value.writerGeneration == writer && value.publicationEpoch > 0 && value.credentialVersion > 0)
-        requireJournalCodec(value.dataScopeKind == "LIVE" && value.dataScopeId == LIVE_SCOPE && selectedId in retainedIds)
-        val actor = ComplaintIdentifiers.installationId(value.actorId)
-        val operation = ComplaintIdentifiers.idempotencyKey(value.operationKey)
-        requireJournalCodec(value.ownerInstallationIds == listOf(value.actorId))
-        requireJournalCodec(value.complaintIds.size <= 100, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
-        val targets = value.complaintIds.map(ComplaintIdentifiers::resourceId)
-        requireJournalCodec(value.complaintIds.zipWithNext().all { (left, right) -> left < right })
-        val fingerprint = ComplaintIdentifiers.fingerprint(value.requestFingerprint)
-        val tuple = try {
-            ComplaintJournalDeletionTupleV1(
-                value.publicationEpoch,
-                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL,
-                ComplaintJournalActorKindV1.INSTALLATION,
-                actor,
-                value.credentialVersion,
-                operation,
-                fingerprint,
-                ComplaintDataScope.LIVE,
-            )
-        } finally {
-            fingerprint.fill(0)
-        }
-        val route = routingOwner.derive(tuple).candidates().single { it.routingKeyId == selectedId }
-        requireJournalCodec(value.eventId == route.eventId)
-        return BoundPayload(tuple, targets, route)
-    }
 
     private fun bindHeader(value: OwnerDeleteAllJournalHeaderV1, expectedBucket: String, expectedKey: String): ByteArray {
         requireJournalCodec(value.envelopeSchemaVersion == 1 && value.payloadSchemaVersion == 1 && value.canonicalizerId == "kcj-1")
@@ -298,32 +271,54 @@ internal class OwnerDeleteAllJournalCodecV1(
 
     override fun toString(): String = "OwnerDeleteAllJournalCodecV1(redacted,no-authority)"
 
-    private class BoundPayload(val tuple: ComplaintJournalDeletionTupleV1, val targets: List<UUID>, val route: ComplaintJournalRoutingCandidateV1)
     private class EnvelopeParts(val header: ByteArray, val wrapped: ByteArray, val ciphertext: ByteArray)
 
-    private companion object {
-        const val MAGIC = 0x4b4a4556
-        const val OUTER_BYTES = 20
-        const val NONCE_BYTES = 12
-        const val TAG_BYTES = 16
-        const val KIND = "OWNER_DELETE_ALL"
-        const val DATA_KEY_MODE = "FRESH_PER_OBJECT_KMS_WRAPPED"
-        const val LIVE_SCOPE = "00000000-0000-0000-0000-000000000000"
-        const val KMS_DOMAIN = "kira-complaint-journal-kms-context-v1"
-        const val AAD_DOMAIN = "kira-complaint-journal-aad-v1"
-        const val CONTEXT_KEY = "kira-complaint-journal-context-v1"
-        val BASE64_URL = Regex("[A-Za-z0-9_-]+")
+    companion object {
+        /** Portless local restoration only; callers must independently match the complete durable row and proof. */
+        fun restoreCanonical(
+            routingOwner: VersionBoundComplaintJournalRouting,
+            canonicalBytes: ByteArray,
+            selectedRoutingKeyId: String,
+        ): OwnerDeleteAllJournalEventV1 = codecBoundary {
+            val limits = routingOwner.journalConfiguration.declaration().limits.decoder
+            requireJournalCodec(canonicalBytes.size in 1..limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
+            withBuffers { buffers ->
+                val canonical = buffers.own(canonicalBytes.copyOf())
+                val bound = bindOwnerDeleteAllPayload(routingOwner, OwnerDeleteAllJournalJsonV1(limits).payload(canonical), selectedRoutingKeyId)
+                OwnerDeleteAllJournalEventV1(routingOwner, bound.tuple, bound.targets, bound.route, canonical)
+            }
+        }
 
-        fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+        private const val MAGIC = 0x4b4a4556
+        private const val OUTER_BYTES = 20
+        private const val NONCE_BYTES = 12
+        private const val TAG_BYTES = 16
+        private const val KIND = "OWNER_DELETE_ALL"
+        private const val DATA_KEY_MODE = "FRESH_PER_OBJECT_KMS_WRAPPED"
+        private const val LIVE_SCOPE = "00000000-0000-0000-0000-000000000000"
+        private const val KMS_DOMAIN = "kira-complaint-journal-kms-context-v1"
+        private const val AAD_DOMAIN = "kira-complaint-journal-aad-v1"
+        private const val CONTEXT_KEY = "kira-complaint-journal-context-v1"
+        private val BASE64_URL = Regex("[A-Za-z0-9_-]+")
+
+        private fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
     }
 }
 
 /** Shared monotonic time accounting only, never durable authorization or an external-effect verdict. */
-internal class JournalCodecAttemptV1(private val owner: VersionBoundComplaintJournalRouting, private val nanoTime: () -> Long) {
+internal class JournalCodecAttemptV1(
+    private val owner: VersionBoundComplaintJournalRouting,
+    private val nanoTime: () -> Long,
+    private val enclosingBudget: PersistenceTimeBudget? = null,
+) {
     private val started = nanoTime()
     private val allowanceNanos = owner.journalConfiguration.declaration().limits.deadlines.publicationAttemptMillis * 1_000_000L
     private var lastElapsed = 0L
     private var expired = false
+
+    init {
+        if (enclosingBudget != null) remainingMillis(1)
+    }
 
     internal fun requireOwner(expected: VersionBoundComplaintJournalRouting) = requireJournalCodec(owner === expected)
 
@@ -339,7 +334,19 @@ internal class JournalCodecAttemptV1(private val owner: VersionBoundComplaintJou
             throw OwnerDeleteAllJournalException(OwnerDeleteAllJournalFailure.DEADLINE_EXHAUSTED)
         }
         lastElapsed = elapsed
-        return minOf(remaining, ceilingMillis.toLong()).toInt()
+        val local = minOf(remaining, ceilingMillis.toLong())
+        val outer = runCatching { enclosingBudget?.remainingMillis(local) ?: local }
+        if (outer.isFailure) expired = true
+        return try {
+            outer.getOrThrow().toInt()
+        } catch (failure: PersistenceBoundaryException) {
+            val code = if (failure.code == PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) {
+                OwnerDeleteAllJournalFailure.DEADLINE_EXHAUSTED
+            } else {
+                OwnerDeleteAllJournalFailure.INVALID_INPUT
+            }
+            throw OwnerDeleteAllJournalException(code)
+        }
     }
 
     override fun toString(): String = "JournalCodecAttemptV1(redacted,no-authority)"
@@ -378,6 +385,49 @@ internal class EncodedOwnerDeleteAllEnvelopeV1(val route: ComplaintJournalRoutin
 /** Tag-verified content and local wire digest, explicitly not provider/version/retention evidence. */
 internal class DecodedOwnerDeleteAllJournalEventV1(val event: OwnerDeleteAllJournalEventV1, val wireSha256: String) {
     override fun toString(): String = "DecodedOwnerDeleteAllJournalEventV1(redacted,no-authority)"
+}
+
+private class OwnerDeleteAllBoundPayload(
+    val tuple: ComplaintJournalDeletionTupleV1,
+    val targets: List<UUID>,
+    val route: ComplaintJournalRoutingCandidateV1,
+)
+
+private fun bindOwnerDeleteAllPayload(
+    routingOwner: VersionBoundComplaintJournalRouting,
+    value: OwnerDeleteAllJournalPayloadV1,
+    selectedId: String,
+): OwnerDeleteAllBoundPayload {
+    val declaration = routingOwner.journalConfiguration.declaration()
+    val writer = declaration.writer.generationId
+    val retainedIds = declaration.routing.keys.map { it.keyId }.toSet()
+    requireJournalCodec(value.schemaVersion == 1 && value.eventKind == "OWNER_DELETE_ALL" && value.actorKind == "INSTALLATION")
+    requireJournalCodec(value.writerGeneration == writer && value.publicationEpoch > 0 && value.credentialVersion > 0)
+    requireJournalCodec(value.dataScopeKind == "LIVE" && value.dataScopeId == OfflineBootstrapGrammar.LIVE_SCOPE_ID && selectedId in retainedIds)
+    val actor = ComplaintIdentifiers.installationId(value.actorId)
+    val operation = ComplaintIdentifiers.idempotencyKey(value.operationKey)
+    requireJournalCodec(value.ownerInstallationIds == listOf(value.actorId))
+    requireJournalCodec(value.complaintIds.size <= 100, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
+    val targets = value.complaintIds.map(ComplaintIdentifiers::resourceId)
+    requireJournalCodec(value.complaintIds.zipWithNext().all { (left, right) -> left < right })
+    val fingerprint = ComplaintIdentifiers.fingerprint(value.requestFingerprint)
+    val tuple = try {
+        ComplaintJournalDeletionTupleV1(
+            value.publicationEpoch,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL,
+            ComplaintJournalActorKindV1.INSTALLATION,
+            actor,
+            value.credentialVersion,
+            operation,
+            fingerprint,
+            ComplaintDataScope.LIVE,
+        )
+    } finally {
+        fingerprint.fill(0)
+    }
+    val route = routingOwner.derive(tuple).candidates().single { it.routingKeyId == selectedId }
+    requireJournalCodec(value.eventId == route.eventId)
+    return OwnerDeleteAllBoundPayload(tuple, targets, route)
 }
 
 private class OwnedBuffers {
