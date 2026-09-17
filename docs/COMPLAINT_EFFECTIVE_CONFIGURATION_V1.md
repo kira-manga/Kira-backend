@@ -17,7 +17,8 @@ descriptor list, provider observation, callback or readiness boolean is accepted
 The constructor checks schema 1, positive generation, canonical UUIDv4 DB/restore identity,
 the identical routing/J owner, J's matching DB/restore identity and INITIAL_LIVE namespace,
 memory/one-instance admission, actual acquired user JWT owner and shared create/delete-all
-member bounds. Every pool must retain the same actual DATABASE/AUTHENTICATION_PASSWORD
+member bounds. Ordinary maximum pool size must exceed one for complaint admission.
+Every pool must retain the same actual DATABASE/AUTHENTICATION_PASSWORD
 binding; its immutable version cannot also nominate a consumer HMAC family. Complete HMAC
 family/reference separation remains enforced by the retained consumer factory.
 
@@ -57,7 +58,8 @@ UUIDs use lowercase canonical text; hashes are lowercase 64-character hex.
 | `admission.quotas` | Fixed bootstrap IP/hour120, session actor/hour30 and IP/hour100, enrollment IP/hour10; actual enrollment global/hour and create global/hour (**outside P**); create actor/hour10, delete-all actor/day5 and IP/hour20. Enrollment/create/delete-all are explicitly enabled by this actual retained graph. |
 | `admission.mutationMembers` | `sharedCreateDeleteAll:true`, actual member limit/prune batch (checked equal across both retained policies), fixed retention duration25h. P remains the independent actual locked-capacity policy, not these local quotas. |
 | `consumers.ownerCursor` | Actual active/sorted verifier IDs and actual codec protocol: envelope/selection/MAC domains, actor kind, route/direction, TTL/future skew, page/cursor/payload/signature limits. |
-| `persistence` | `profileVersion:1`, exact `pools` order ORDINARY, DELETION, CATALOG_COORDINATOR. No separate persistence hash/fragment protocol. |
+| `persistence` | `profileVersion:1`, `admission`, exact `pools` order ORDINARY, DELETION, CATALOG_COORDINATOR. No separate persistence hash/fragment protocol. |
+| `persistence.admission` | `ordinaryOwnerLimitRule:"MIN_4_POOL_MINUS_ONE"` and its limit derived from the actual ordinary pool size; deletion total4/routine3 and catalog1 owners. The consuming graph must require actual ordinary complaint-enabled admission with that budget, not an independently supplied source-only owner. |
 | Each pool | `role`; its actual full `authenticationPassword` descriptor using the five secret-binding fields; actual public trust SHA-256/byte count/certificate count; actual `hikari`; exact retained `openings` in construction order. |
 | Pool `hikari` | maximum size/minimum idle; connection/validation/initialization-failure/idle/max-lifetime/keepalive/leak-detection milliseconds; autoCommit/readOnly/isolateInternalQueries booleans. These are rechecked against the actual configured Hikari instance. |
 | Each opening | Actual `recipe`, `evidencePolicy`, `transportRoute`, `driverUrl`, `loginBudgetMillis`, full public driver-property name/string-value object. Ordinary original-provider/weak/strong recipes stay distinct; deletion and coordinator retain their actual strict recipes. Password/sslrootcert are excluded by the real projection; public trust content replaces the private file path. |

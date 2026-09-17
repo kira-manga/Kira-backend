@@ -95,7 +95,9 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
             restoreIdentity: UUID,
         ): VersionBoundComplaintProcessConfiguration {
             requireConnectionFree()
-            return VersionBoundComplaintProcessConfiguration(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity)
+            return VersionBoundComplaintProcessConfiguration(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+            )
         }
 
         private fun isV4(value: UUID): Boolean = value.version() == 4 && value.variant() == 2
