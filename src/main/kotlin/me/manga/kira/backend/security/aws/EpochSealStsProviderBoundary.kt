@@ -24,13 +24,15 @@ internal fun requireEpochSealSts(condition: Boolean, code: EpochSealStsFailure =
 
 /** Classify only a finite SDK cause prefix. Never carry provider text, causes or suppressed diagnostics out. */
 @Suppress("TooGenericExceptionCaught")
-internal fun <T> epochSealStsCall(
-    code: EpochSealStsFailure = EpochSealStsFailure.ACQUISITION_FAILED,
-    action: () -> T,
-): T = try {
+internal fun <T> epochSealStsCall(code: EpochSealStsFailure = EpochSealStsFailure.ACQUISITION_FAILED, action: () -> T): T = try {
     action()
+} catch (failure: SdkException) {
+    rejectEpochSealStsCall(generateSequence<Throwable>(failure) { it.cause }.take(16).toList(), code)
 } catch (failure: Exception) {
-    val causes = if (failure is SdkException) generateSequence<Throwable>(failure) { it.cause }.take(16).toList() else listOf(failure)
+    rejectEpochSealStsCall(listOf(failure), code)
+}
+
+private fun rejectEpochSealStsCall(causes: List<Throwable>, code: EpochSealStsFailure): Nothing {
     causes.filterIsInstance<Error>().firstOrNull()?.let { throw it }
     if (causes.any { it is CancellationException }) throw CancellationException("Epoch seal STS operation cancelled.")
     if (Thread.currentThread().isInterrupted || causes.any { it is InterruptedException }) {

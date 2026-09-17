@@ -53,8 +53,11 @@ internal class AwsEpochSealStsAdapter private constructor(
     private val used = AtomicBoolean()
     private val closed = AtomicBoolean()
     private val closeFailure = AtomicReference<Throwable?>()
+
     @Volatile private var source: EpochSealStsClientOwner? = null
+
     @Volatile private var target: EpochSealStsClientOwner? = null
+
     @Volatile private var session: Session? = null
 
     /** Syntax/response binding only: an arbitrary key or historical prepared DTO cannot become publication authority here. */
@@ -108,16 +111,12 @@ internal class AwsEpochSealStsAdapter private constructor(
     private fun call(action: String, parameters: Map<String, String>, acquisition: EpochSealStsAcquisition): EpochSealStsCall =
         EpochSealStsCall(action, parameters, acquisition, acquisition.remainingMillis(limits.requestTimeoutMillis), nanoTime)
 
-    private fun identity(
-        owner: EpochSealStsClientOwner,
-        acquisition: EpochSealStsAcquisition,
-        account: String,
-        arn: String,
-        userId: String,
-    ): Identity {
+    private fun identity(owner: EpochSealStsClientOwner, acquisition: EpochSealStsAcquisition, account: String, arn: String, userId: String): Identity {
         val call = call("GetCallerIdentity", emptyMap(), acquisition)
-        return owner.execute(call, { sdk, overrides -> sdk.getCallerIdentity(GetCallerIdentityRequest.builder().overrideConfiguration(overrides).build()) }) {
-            response: GetCallerIdentityResponse, report: EpochSealStsWireReport ->
+        return owner.execute(
+            call,
+            { sdk, overrides -> sdk.getCallerIdentity(GetCallerIdentityRequest.builder().overrideConfiguration(overrides).build()) },
+        ) { response: GetCallerIdentityResponse, report: EpochSealStsWireReport ->
             report.requireValue("Account", response.account())
             report.requireValue("Arn", response.arn())
             report.requireValue("UserId", response.userId())
@@ -209,7 +208,9 @@ internal class AwsEpochSealStsAdapter private constructor(
             }
         }
 
-        fun discard() { credentials = null } // Strings/SDK copies cannot be claimed zeroized; close does not revoke AWS sessions.
+        fun discard() {
+            credentials = null
+        } // Strings/SDK copies cannot be claimed zeroized; close does not revoke AWS sessions.
         override fun close() = this@AwsEpochSealStsAdapter.close()
         override fun toString(): String = "ObservedEpochSealStsSession(private-custody,redacted,no-publication-authority)"
     }
@@ -335,9 +336,13 @@ private class EpochSealStsClientOwner(
     private val sdkCloseIssued = AtomicBoolean()
     private val rawCloseIssued = AtomicBoolean()
     private val closeFailure = AtomicReference<Throwable?>()
+
     @Volatile private var stage = Stage.NEW
+
     @Volatile private var raw: SdkHttpClient? = null
+
     @Volatile private var transport: BoundedEpochSealStsHttpClient? = null
+
     @Volatile private var sdk: StsClient? = null
 
     fun open() {
@@ -354,8 +359,12 @@ private class EpochSealStsClientOwner(
                 requireEpochSealSts(!closed.get())
                 // Only the fixed commercial regional endpoint, including us-east-1. Never the global STS endpoint.
                 transport = BoundedEpochSealStsHttpClient(
-                    region.id(), URI.create("https://sts.${region.id()}.amazonaws.com"), credentials.accessKeyId(),
-                    credentials.sessionToken(), raw, limits.maxResponseBytes,
+                    region.id(),
+                    URI.create("https://sts.${region.id()}.amazonaws.com"),
+                    credentials.accessKeyId(),
+                    credentials.sessionToken(),
+                    raw,
+                    limits.maxResponseBytes,
                 )
             }
             acquisition.remainingMillis(1)
