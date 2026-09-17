@@ -51,7 +51,8 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
     internal fun tryCutoff(factory: OwnerDeleteAllJournalPublisherFactoryV1): OwnerDeleteAllReservation? {
         if (!lock.tryLock()) return null
         try {
-            if (stopping || factory.isClosed() || privacy.isNotEmpty() || routine.size.toLong() + cutoff.size >= limits.routinePublicationLanes) return null
+            if (stopping || factory.isClosed() || privacy.isNotEmpty()) return null
+            if (routine.size.toLong() + cutoff.size >= limits.routinePublicationLanes) return null
             factory.requireLane(this)
             factory.requireJournal(journal)
             return OwnerDeleteAllReservation(factory, routineOwner = true).also { cutoff.add(it) }

@@ -25,6 +25,8 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
     @Suppress("TooGenericExceptionCaught")
     internal fun resolve(campaign: CatalogCoordinatorLeaseCampaignV1, ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1): CapturedCutoffManifestV1 {
         var attempt: CatalogCutoffAttemptV1? = null
+        var result: CapturedCutoffManifestV1? = null
+        var failure: PersistencePhaseException? = null
         try {
             requireResources()
             check(campaign.binding.coordinator === coordinator && campaign.jdbc === jdbc && coordinator.leaseCustody.isActive(campaign))
@@ -48,23 +50,23 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
             renew(retained)
             val final = persistence.control(retained)
             retained.acceptControl(final)
-            return CapturedCutoffManifestV1.fromReleased(final)
+            result = CapturedCutoffManifestV1.fromReleased(final)
         } catch (problem: Throwable) {
             campaign.close()
             attempt?.abort()
-            throw boundedEpochRotationFailure(problem)
+            failure = boundedEpochRotationFailure(problem)
         } finally {
             attempt?.let {
-                try {
-                    it.finish()
-                } catch (problem: Throwable) {
+                val finishing = runCatching(it::finish).exceptionOrNull()
+                if (finishing != null) {
                     it.abort()
-                    throw boundedEpochRotationFailure(problem)
-                } finally {
-                    active.compareAndSet(it, null)
-                }
+                    if (failure == null) failure = boundedEpochRotationFailure(finishing)
+                } // Always stop on failed cleanup, but never mask the original bounded failure/outcome.
+                active.compareAndSet(it, null)
             }
         }
+        failure?.let { throw it }
+        return checkNotNull(result)
     }
 
     private fun resolveRows(attempt: CatalogCutoffAttemptV1, factory: OwnerDeleteAllJournalPublisherFactoryV1) {
@@ -109,10 +111,13 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
     private fun requireResources() {
         requireConnectionFree()
         coordinator.requireResources()
-        if (coordinator.cutoffPublications !== this || coordinator.ownership !== ownership || coordinator.manager !== manager ||
-            coordinator.dataSource !== source || jdbc.dataSource !== source
-        ) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (coordinator.cutoffPublications !== this || !hasOriginalCoordinatorResources() || jdbc.dataSource !== source) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
+
+    private fun hasOriginalCoordinatorResources(): Boolean =
+        coordinator.ownership === ownership && coordinator.manager === manager && coordinator.dataSource === source
 
     override fun toString(): String = "CatalogCutoffPublicationsV1(dormant,bounded-receiptless-resolution,NO-seal-checkpoint-or-activation)"
 }
