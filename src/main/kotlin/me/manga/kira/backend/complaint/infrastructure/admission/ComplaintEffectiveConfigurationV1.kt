@@ -29,6 +29,19 @@ internal object ComplaintEffectiveConfigurationV1 {
         databaseIdentity: UUID,
         restoreIdentity: UUID,
     ): ByteArray {
+        require(pools.epochRotation == null) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        return encodeInventory(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity)
+    }
+
+    /** Base inventory for a strictly larger encoder, not a complete D for an opted-in rotation root. */
+    internal fun encodeInventory(
+        consumers: VersionBoundComplaintConsumerConfiguration,
+        pools: VersionBoundPersistencePools,
+        implementationSchema: Int,
+        desiredGeneration: Long,
+        databaseIdentity: UUID,
+        restoreIdentity: UUID,
+    ): ByteArray {
         require(CanonicalJson.CANON_VERSION == "kcj-1") { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         val descriptors = pools.descriptors()
         require(descriptors.map { it.role } == POOL_ROLES) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }

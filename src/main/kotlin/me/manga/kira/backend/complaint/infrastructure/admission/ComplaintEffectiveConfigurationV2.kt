@@ -20,7 +20,21 @@ internal object ComplaintEffectiveConfigurationV2 {
         restoreIdentity: UUID,
         catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
     ): ByteArray {
-        val previous = ComplaintEffectiveConfigurationV1.encode(
+        require(pools.epochRotation == null) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        return encodeInventory(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, catalogReadback)
+    }
+
+    /** Base inventory for a strictly larger encoder, not a complete D for an opted-in rotation root. */
+    internal fun encodeInventory(
+        consumers: VersionBoundComplaintConsumerConfiguration,
+        pools: VersionBoundPersistencePools,
+        implementationSchema: Int,
+        desiredGeneration: Long,
+        databaseIdentity: UUID,
+        restoreIdentity: UUID,
+        catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+    ): ByteArray {
+        val previous = ComplaintEffectiveConfigurationV1.encodeInventory(
             consumers,
             pools,
             implementationSchema,

@@ -1,5 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.admission
 
+import me.manga.kira.backend.common.infrastructure.persistence.EpochRotationPersistence
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundEpochRotationDescriptor
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePoolDescriptor
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
@@ -25,15 +27,23 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     private val databaseIdentity: UUID,
     private val restoreIdentity: UUID,
     val catalogReadback: VersionBoundCatalogReadbackConfigurationV1?,
+    val epochRotation: EpochRotationPersistence?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
+    private val retainedRotation: VersionBoundEpochRotationDescriptor?
     private val canonical: ByteArray
     private val hash: ByteArray
 
     init {
         requireGraph()
         retainedPools = pools.descriptors()
-        canonical = if (catalogReadback == null) {
+        retainedRotation = epochRotation?.descriptor()
+        canonical = if (epochRotation != null) {
+            ComplaintEffectiveConfigurationV3.encode(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+                checkNotNull(catalogReadback), epochRotation,
+            )
+        } else if (catalogReadback == null) {
             ComplaintEffectiveConfigurationV1.encode(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity)
         } else {
             ComplaintEffectiveConfigurationV2.encode(
@@ -77,12 +87,18 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     fun requireUnchangedConfiguration() {
         requireGraph()
         val current = pools.descriptors()
+        require(epochRotation?.descriptor() === retainedRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         require(current.size == retainedPools.size && current.indices.all { current[it] === retainedPools[it] }) {
             INVALID_COMPLAINT_PROCESS_CONFIGURATION
         }
     }
 
     private fun requireGraph() {
+        require(pools.epochRotation === epochRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        epochRotation?.let { rotation ->
+            require(catalogReadback != null && rotation.belongsTo(pools)) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+            rotation.requireUnchangedConfiguration()
+        }
         require(implementationSchema == 1 && desiredGeneration > 0 && isV4(databaseIdentity) && isV4(restoreIdentity)) {
             INVALID_COMPLAINT_PROCESS_CONFIGURATION
         }
@@ -122,6 +138,24 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 databaseIdentity,
                 restoreIdentity,
                 catalogReadback,
+                null,
+            )
+        }
+
+        /** Explicit actual same-root nonpooled resource inventory; no supplied descriptor, hash or readiness assertion. */
+        fun fromRetainedWithEpochRotation(
+            consumers: VersionBoundComplaintConsumerConfiguration,
+            pools: VersionBoundPersistencePools,
+            implementationSchema: Int,
+            desiredGeneration: Long,
+            databaseIdentity: UUID,
+            restoreIdentity: UUID,
+            catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+        ): VersionBoundComplaintProcessConfiguration {
+            requireConnectionFree()
+            val rotation = requireNotNull(pools.epochRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+            return VersionBoundComplaintProcessConfiguration(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, catalogReadback, rotation,
             )
         }
 
