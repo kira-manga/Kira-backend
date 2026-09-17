@@ -3,8 +3,9 @@
 This dormant contract supplies a matched secret-version descriptor and one copied
 material snapshot. It constructs **neither complete configuration D nor any
 activation, credential, key-separation or provider-verification authority**.
-There is no SDK adapter, environment/profile lookup, bean, Kubernetes wiring,
-network access, default secret, retry, or cache.
+The explicit dormant AWS SDK adapter described below performs exact-version reads
+only when called. There is no environment/profile secret lookup, bean, Kubernetes
+wiring, default secret, automatic retry, cache or route activation.
 
 ## Supported reference and binding
 
@@ -34,12 +35,13 @@ The installation credential verifier is unkeyed and adds no secret family here.
 
 ## Acquisition boundary
 
-`SecretVersionResolver` is a **trusted port**, not a default implementation. A
-future adapter must request the exact resource and VersionId and independently
-read the response's full ARN and VersionId with its decoded **SecretBinary**
-payload. V1 has no SecretString/Base64/text-decoding fallback. The adapter must
-provide authenticated, bounded I/O and cannot echo request labels beside
-unrelated bytes. The report object cannot prove that the adapter obeyed this rule.
+`SecretVersionResolver` remains a **trusted port**, with an explicit dormant AWS
+implementation rather than an automatically selected default. Every implementation
+must request the exact resource and VersionId and independently read the response's
+full ARN and VersionId with its decoded **SecretBinary** payload. V1 has no
+SecretString/Base64/text-decoding fallback. The adapter must provide authenticated,
+bounded I/O and cannot echo request labels beside unrelated bytes. The report object
+cannot prove that an arbitrary implementation obeyed this rule.
 
 `AcquiredVersionedSecret.acquire` invokes the resolver once and rejects a different
 resource or version. It constructs the returned descriptor using the reported
@@ -60,10 +62,84 @@ lookup refuses acquisition and preserves the flag. Fatal Errors propagate
 normally. The contract itself performs no logging and does not sanitize arbitrary
 consumer code inside `useMaterial`.
 
-Real provider permissions, immutable-version guarantees, payload encoding and
-version retention still need an independently verified adapter/deployment. This
+Real provider permissions and version retention still need independent deployment
+verification; controlled HTTP fixtures are not live AWS evidence. This
 contract does not make the existing fixed-name Kubernetes Secret references
 version-bound, replace runtime family checks, construct D, or enable any route.
+
+## Explicit AWS Secrets Manager resolver and persistence bootstrap
+
+`security.aws.AwsSecretsManagerVersionResolver.open(region, credentials, limits)`
+constructs an owned synchronous Secrets Manager **2.54.19** client without opening
+a connection. Region and `AwsSessionCredentials` are mandatory: no credential or
+region provider chain, profile credentials, STS lookup, secret discovery, endpoint
+argument or session refresh is supplied. The region must be in the SDK's service
+metadata, match the existing syntax and belong to the commercial `aws` partition;
+GovCloud/China/ISO, pseudo-FIPS and unknown regions are rejected. Reads reject an
+ARN from another region before dispatch. The SDK-derived regional HTTPS endpoint
+overrides ambient endpoint URLs. An empty profile, standard defaults mode,
+disabled FIPS/dualstack and absence of `AWS_PARTITIONS_FILE` are explicit.
+
+The SDK signs exactly `GetSecretValue(SecretId = full ARN, VersionId = UUIDv4)`.
+The owned transport also checks the actual signed POST target, region/service
+scope and two-field JSON request; a `VersionStage`, name/partial ARN, second
+attempt or redirect cannot replace it. The stock URLConnection implementation
+uses `Proxy.NO_PROXY`, no redirects, no interaction and no caching. Defaults are
+a 10-second SDK/elapsed request ceiling and 2-second connect/read timeouts, with
+bounded explicit lower/upper limits. These do **not** prove a hard DNS/native
+completion deadline or successful cancellation. There is one retained exchange
+through SDK response decoding and cleanup, not a reusable stream handed to callers.
+
+Before SDK unmarshalling, a fixed allocation bounds the response to at most
+131,072 wire bytes (including framing whitespace and JSON escapes). Only a 200
+response with AWS JSON content type and no compression/range/redirect metadata
+is read; error and redirect bodies are not handed to any SDK decoder. Content
+length, progress, EOF and actual byte ceilings are checked. Header limits apply
+**after** stock URLConnection header parsing, not before its allocations.
+
+A bounded streaming JSON pass requires one complete UTF-8 object without BOM,
+duplicate decoded field names, trailing tokens or unknown fields. Required `ARN`,
+`VersionId` and `SecretBinary` must be strings; optional bounded `Name`,
+`VersionStages` and numeric `CreatedDate` are metadata only. `SecretString` is
+rejected even alongside a binary value. Standard canonical Base64, padding bits
+and exact 1–65,536 decoded-byte size are checked **before** the SDK's blob
+allocation; a maximum binary value occupies 87,384 encoded characters, so the
+wire bound deliberately exceeds 64 KiB. After the actual SDK decodes the response,
+its independently returned ARN/VersionId and blob length are checked again.
+`SdkBytes` is consumed as bytes, never Base64-decoded a second time. Raw wire and
+temporary copied material arrays are cleared on owned cleanup; SDK/String/JVM
+copies preclude a whole-process erasure claim.
+
+Creation, dispatch, reads and the post-decode boundary require connection-free
+context. Cancellation/interruption remain sanitized and do not become ordinary
+lookup failures; fatal Errors retain normal propagation. Native abort, response
+close, transport close and SDK close each have explicit custody, including late
+responses and construction failure. Cleanup failure retains the failed slot;
+closing once or reaching EOF is not proof that an outstanding call ended. No
+provider body, cause graph or submitted material is attached to an ordinary
+exception or logged by the adapter. SDK/debug logging and launch settings still
+require deployment policy.
+
+For the production constructor path, first retain
+`AwsVersionBoundPersistenceBootstrap(binding, resolver)`, then explicitly call
+its one-shot `bind(host, port, database, username, ordinaryCapacity,
+publicTrustPem, protectedTrustParent)`. Construction is inert and accepts only
+the existing DATABASE/AUTHENTICATION_PASSWORD binding. `bind` checks
+connection-free context, invokes the resolver through `AcquiredVersionedSecret`,
+retains that exact acquisition, calls the existing persistence `fromAcquired`,
+retains its configuration and binds/retains the existing lifecycle owner. Each
+successful stage remains accessible if a later stage fails; an entered bootstrap
+cannot retry lookup or bind again. It returns the existing owner **without**
+preparing trust, constructing pools or starting actors. The caller independently
+owns/closes the resolver, retains the bootstrap/owner, and uses the same owner's
+explicit preparation, pool and shutdown operations described below.
+
+JWT consumers use `AcquiredVersionedSecret.acquire(binding, resolver)` followed
+by the existing `VersionBoundInstallationJwtConfiguration.fromAcquired`, retaining
+those acquisitions before construction. Neither composition re-resolves or
+substitutes material on failure. AWS immutable-version semantics do not guarantee
+continued availability of an old version: operator IAM (including applicable
+KMS decrypt permission), retention, credential expiry and rollout remain separate.
 
 ## Cold installation-JWT composition
 

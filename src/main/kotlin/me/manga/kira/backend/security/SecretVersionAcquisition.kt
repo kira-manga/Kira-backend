@@ -3,9 +3,9 @@ package me.manga.kira.backend.security
 import java.util.concurrent.CancellationException
 
 /**
- * Trusted acquisition port, deliberately without an implementation. A future adapter must request the
- * exact VersionId and return the independently reported full ARN/VersionId with that response's
- * decoded SecretBinary bytes. Echoing the request beside unrelated bytes does not meet this contract.
+ * Trusted acquisition port. The dormant security.aws adapter requests the exact VersionId and returns
+ * the independently reported full ARN/VersionId with that response's decoded SecretBinary bytes.
+ * Other implementations must meet the same rule; echoing request labels beside unrelated bytes does not.
  * Provider authentication, permissions and finite I/O/cancellation bounds remain adapter obligations.
  */
 internal fun interface SecretVersionResolver {
