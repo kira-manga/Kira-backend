@@ -1,5 +1,7 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.config.KiraSecurityProperties
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -173,11 +175,19 @@ class VersionBoundComplaintConsumerBoundaryTest {
         for (differentJ in listOf(activeChanged, retainedRemoved, versionChanged, ComplaintJournalConfigurationV1.of(declaration))) {
             invalid { fixture.configuration(journal = differentJ) }
         }
+        // The strict P ceiling changes with the real fixture; equality is the first rejected hourly quota.
+        val firstRejectedCreateGlobal = ComplaintCapacityCounter.entries
+            .filter { ComplaintCapacityCharges.OWNER_CREATE[it] > 0 }
+            .minOf { fixture.capacity.creationLimit[it] / ComplaintCapacityCharges.OWNER_CREATE[it] }
+        assertTrue(firstRejectedCreateGlobal in 2L..120L, "The P boundary must be inside the independent hourly quota range.")
+        val acceptedCreateGlobal = (firstRejectedCreateGlobal - 1).toInt()
+        val boundaryOwner = fixture.configuration(settings = boundConsumerTestSettings(createGlobal = acceptedCreateGlobal))
+        assertEquals(acceptedCreateGlobal, boundaryOwner.ownerCreatePolicy.globalPerHour)
         val invalidSettings = listOf(
             boundConsumerTestSettings(enrollmentGlobal = 0),
             boundConsumerTestSettings(enrollmentGlobal = 100),
             boundConsumerTestSettings(createGlobal = 0),
-            boundConsumerTestSettings(createGlobal = 18),
+            boundConsumerTestSettings(createGlobal = firstRejectedCreateGlobal.toInt()),
             boundConsumerTestSettings(coordinationMode = "redis"),
             boundConsumerTestSettings(declaredInstances = 2),
             boundConsumerTestSettings(ingressRate = 121),
