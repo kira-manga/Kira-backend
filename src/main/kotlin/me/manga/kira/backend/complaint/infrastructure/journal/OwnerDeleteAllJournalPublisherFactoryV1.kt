@@ -115,7 +115,14 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
             routing: VersionBoundComplaintJournalRouting,
             credentials: AwsSessionCredentials,
         ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1(
-            lanes, null, routing, credentials, ::journalS3UrlConnectionClient, ::journalKmsUrlConnectionClient, Clock.systemUTC(), System::nanoTime,
+            lanes,
+            null,
+            routing,
+            credentials,
+            ::journalS3UrlConnectionClient,
+            ::journalKmsUrlConnectionClient,
+            Clock.systemUTC(),
+            System::nanoTime,
         )
 
         /** Raw HTTP SPI only; cannot supply a row, receipt, readback or successful persistence flag. */
@@ -128,7 +135,14 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
             clock: Clock,
             nanoTime: () -> Long,
         ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1(
-            lanes, null, routing, credentials, { s3HttpFactory() }, { kmsHttpFactory() }, clock, nanoTime,
+            lanes,
+            null,
+            routing,
+            credentials,
+            { s3HttpFactory() },
+            { kmsHttpFactory() },
+            clock,
+            nanoTime,
         )
 
         /** Raw HTTP SPI substitution only; no substitute publisher, arbitrary mutation or result callback. */

@@ -52,14 +52,7 @@ internal class ClosedJournalJsonV1(private val limits: JournalDecoderLimitsV1) {
         }
     }
 
-    fun <T> parse(
-        bytes: ByteArray,
-        maximumBytes: Int,
-        fields: Set<String>,
-        numbers: Set<String>,
-        arrays: Map<String, Int>,
-        serializer: KSerializer<T>,
-    ): T {
+    fun <T> parse(bytes: ByteArray, maximumBytes: Int, fields: Set<String>, numbers: Set<String>, arrays: Map<String, Int>, serializer: KSerializer<T>): T {
         requireJournalCodec(bytes.size in 1..maximumBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
         try {
             val decoded = Charsets.UTF_8.newDecoder()

@@ -5,13 +5,13 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseE
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCampaignV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseReceiptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogCoordinatorLeaseStore
 import org.springframework.jdbc.core.JdbcTemplate
 
@@ -99,9 +99,12 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         val store = JdbcCatalogCoordinatorLeaseStore(jdbc)
         val phase = when (attempt.path) {
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> ownership.enterComplaintCoordinatorLeaseAcquire()
+
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> original?.let(ownership::enterComplaintCutoffRenew)
                 ?: ownership.enterComplaintCoordinatorLeaseRenew()
+
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH -> ownership.enterComplaintCoordinatorLeaseRelinquish()
+
             else -> error("Unsupported coordinator lease phase.")
         }
         var completed: CatalogCoordinatorLeaseOperation? = null

@@ -8,11 +8,21 @@ internal class EpochSealJsonV1(private val limits: JournalDecoderLimitsV1) {
     private val parser = ClosedJournalJsonV1(limits)
 
     fun header(bytes: ByteArray): EpochSealHeaderV1 = parser.parse(
-        bytes, minOf(4096, limits.maximumPlaintextBytes), HEADER_FIELDS, HEADER_NUMBERS, emptyMap(), EpochSealHeaderV1.serializer(),
+        bytes,
+        minOf(4096, limits.maximumPlaintextBytes),
+        HEADER_FIELDS,
+        HEADER_NUMBERS,
+        emptyMap(),
+        EpochSealHeaderV1.serializer(),
     )
 
     fun payload(bytes: ByteArray): EpochSealPayloadV1 = parser.parse(
-        bytes, limits.maximumPlaintextBytes, PAYLOAD_FIELDS, PAYLOAD_NUMBERS, emptyMap(), EpochSealPayloadV1.serializer(),
+        bytes,
+        limits.maximumPlaintextBytes,
+        PAYLOAD_FIELDS,
+        PAYLOAD_NUMBERS,
+        emptyMap(),
+        EpochSealPayloadV1.serializer(),
     )
 
     fun encodeHeader(value: EpochSealHeaderV1): ByteArray = parser.encode(EpochSealHeaderV1.serializer(), value) { header(it) }

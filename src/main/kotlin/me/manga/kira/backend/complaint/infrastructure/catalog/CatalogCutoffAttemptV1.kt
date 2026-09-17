@@ -165,8 +165,11 @@ internal class CatalogCutoffAttemptV1 internal constructor(
         val event = row.event(this)
         val proof = row.firstProof(event, routing) // Includes APPLIED and preserves exact first evidence; PREPARED refuses.
         val selected = checkNotNull(builder)
-        if (stage === Stage.COUNT) selected.firstPass(row.objectKey, proof.objectVersion, proof.ciphertextSha256)
-        else selected.secondPass(row.objectKey, proof.objectVersion, proof.ciphertextSha256)
+        if (stage === Stage.COUNT) {
+            selected.firstPass(row.objectKey, proof.objectVersion, proof.ciphertextSha256)
+        } else {
+            selected.secondPass(row.objectKey, proof.objectVersion, proof.ciphertextSha256)
+        }
         passCount++
         pageIndex++
         afterKey = row.objectKey

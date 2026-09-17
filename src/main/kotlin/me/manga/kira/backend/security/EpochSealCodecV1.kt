@@ -196,7 +196,9 @@ internal class EpochSealCodecV1(
         val context = EpochSealFramesV1.encode(contextFrame)
         requireEpochSeal(EpochSealFramesV1.CONTEXT_KEY.length + context.length <= 8192, EpochSealFailureV1.LIMIT_EXCEEDED)
         return JournalDataKeyRequestV1(
-            declaration.encryption.keyArn, mapOf(EpochSealFramesV1.CONTEXT_KEY to context), maximumWrappedBytes,
+            declaration.encryption.keyArn,
+            mapOf(EpochSealFramesV1.CONTEXT_KEY to context),
+            maximumWrappedBytes,
             attempt.remainingMillis(declaration.limits.deadlines.kmsCallMillis),
         )
     }

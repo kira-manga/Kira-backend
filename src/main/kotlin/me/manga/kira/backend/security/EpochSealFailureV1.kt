@@ -32,9 +32,12 @@ internal fun <T> epochSealBoundary(action: () -> T): T = try {
 
 private fun boundedEpochSealFailure(failure: Exception): Exception = when (failure) {
     is EpochSealExceptionV1 -> failure
+
     // The shared strict parser and data-key cleanup retain their original ordinary-family contract.
     is OwnerDeleteAllJournalException -> EpochSealExceptionV1(EpochSealFailureV1.valueOf(failure.code.name))
+
     is PersistencePhaseException -> failure
+
     is PersistenceBoundaryException -> EpochSealExceptionV1(
         if (failure.code == PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) {
             EpochSealFailureV1.DEADLINE_EXHAUSTED
@@ -42,10 +45,13 @@ private fun boundedEpochSealFailure(failure: Exception): Exception = when (failu
             EpochSealFailureV1.INVALID_INPUT
         },
     )
+
     is CancellationException -> CancellationException("Epoch seal codec operation cancelled.")
+
     is InterruptedException -> {
         Thread.currentThread().interrupt()
         InterruptedException("Epoch seal codec operation interrupted.")
     }
+
     else -> EpochSealExceptionV1(EpochSealFailureV1.INVALID_INPUT)
 }

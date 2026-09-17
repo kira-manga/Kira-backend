@@ -57,8 +57,13 @@ class EpochSealManifestV1Test {
         val two = fixture.entry(2)
         val original = listOf(one, two)
         listOf(
-            emptyList(), listOf(one), listOf(one, two, fixture.entry(3)), listOf(two, one), listOf(one, one),
-            listOf(one, two.copy(version = "changed-version")), listOf(one, two.copy(checksum = "f".repeat(64))),
+            emptyList(),
+            listOf(one),
+            listOf(one, two, fixture.entry(3)),
+            listOf(two, one),
+            listOf(one, one),
+            listOf(one, two.copy(version = "changed-version")),
+            listOf(one, two.copy(checksum = "f".repeat(64))),
         ).forEach { repeated ->
             val builder = builder(fixture)
             original.forEach { builder.firstPass(it.key, it.version, it.checksum) }

@@ -111,7 +111,9 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
         coordinator.requireResources()
         if (coordinator.cutoffPublications !== this || coordinator.ownership !== ownership || coordinator.manager !== manager ||
             coordinator.dataSource !== source || jdbc.dataSource !== source
-        ) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
 
     override fun toString(): String = "CatalogCutoffPublicationsV1(dormant,bounded-receiptless-resolution,NO-seal-checkpoint-or-activation)"

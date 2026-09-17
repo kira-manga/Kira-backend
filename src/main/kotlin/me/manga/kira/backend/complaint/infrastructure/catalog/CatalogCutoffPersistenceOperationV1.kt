@@ -56,10 +56,15 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
         requireRetained()
         when (path) {
             PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL -> control()
+
             PersistencePhasePath.COMPLAINT_CUTOFF_PAGE -> publications = jdbc.query(
-                attempt.pageSql(), { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, *attempt.pageArguments(),
+                attempt.pageSql(),
+                { row, _ -> CatalogCutoffPublicationRowV1.copy(row) },
+                *attempt.pageArguments(),
             )
+
             PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY -> verify()
+
             else -> error("Invalid cutoff persistence phase.")
         }
         requireRetained()
@@ -86,16 +91,22 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
         input.requireOwned(attempt)
         // Historical immutable evidence is deliberately NOT fenced. No control/receipt/counter/domain lock.
         val locked = jdbc.query(
-            CatalogCutoffPublicationSqlV1.LOCK_PUBLICATION, { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, input.row.eventId,
+            CatalogCutoffPublicationSqlV1.LOCK_PUBLICATION,
+            { row, _ -> CatalogCutoffPublicationRowV1.copy(row) },
+            input.row.eventId,
         ).single()
         requireRetained()
         check(input.row.sameImmutable(locked))
         val changed = locked.state == "PREPARED"
         val stored = if (changed) {
             jdbc.query(
-                CatalogCutoffPublicationSqlV1.RECORD_VERIFIED, { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, *input.arguments(),
+                CatalogCutoffPublicationSqlV1.RECORD_VERIFIED,
+                { row, _ -> CatalogCutoffPublicationRowV1.copy(row) },
+                *input.arguments(),
             ).single()
-        } else locked // VERIFIED/APPLIED race preserves the exact first proof, never a rewritten timestamp/hash.
+        } else {
+            locked // VERIFIED/APPLIED race preserves the exact first proof, never a rewritten timestamp/hash.
+        }
         requireRetained()
         input.checkStored(stored, changed)
         publications = listOf(stored)
@@ -137,8 +148,7 @@ internal class CatalogCutoffPersistenceExecutorV1(private val coordinator: Catal
     internal fun control(attempt: CatalogCutoffAttemptV1): CatalogCutoffPersistenceOperationV1 =
         persist(attempt, PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL, null)
 
-    internal fun page(attempt: CatalogCutoffAttemptV1): CatalogCutoffPersistenceOperationV1 =
-        persist(attempt, PersistencePhasePath.COMPLAINT_CUTOFF_PAGE, null)
+    internal fun page(attempt: CatalogCutoffAttemptV1): CatalogCutoffPersistenceOperationV1 = persist(attempt, PersistencePhasePath.COMPLAINT_CUTOFF_PAGE, null)
 
     internal fun verify(attempt: CatalogCutoffAttemptV1, proof: CapturedCutoffVerificationV1) {
         persist(attempt, PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY, proof).verified()

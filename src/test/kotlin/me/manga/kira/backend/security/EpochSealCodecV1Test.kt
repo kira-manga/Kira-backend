@@ -172,7 +172,11 @@ class EpochSealCodecV1Test {
             assertEquals(before + 1, fixture.keys.unwraps)
         }
         val restored = fixture.codec.restoreCanonical(
-            content.canonicalBytes(), content.route.routingKeyId, content.route.objectKey, content.semanticSha256, attempt,
+            content.canonicalBytes(),
+            content.route.routingKeyId,
+            content.route.objectKey,
+            content.semanticSha256,
+            attempt,
         )
         assertArrayEquals(content.canonicalBytes(), restored.canonicalBytes())
         assertEquals(7L, restored.payload.preparingFencingToken)
@@ -261,7 +265,9 @@ class EpochSealCodecV1Test {
     private fun authenticate(parts: Parts, plaintext: ByteArray): ByteArray {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
-            Cipher.ENCRYPT_MODE, SecretKeySpec(ByteArray(32) { (it + 13).toByte() }, "AES"), GCMParameterSpec(128, unb64(parts.header.text("nonce"))),
+            Cipher.ENCRYPT_MODE,
+            SecretKeySpec(ByteArray(32) { (it + 13).toByte() }, "AES"),
+            GCMParameterSpec(128, unb64(parts.header.text("nonce"))),
         )
         cipher.updateAAD(
             frame(
@@ -276,7 +282,10 @@ class EpochSealCodecV1Test {
         DataOutputStream(bytes).use { out ->
             out.writeInt(0x4b4a4556)
             out.writeInt(1)
-            listOf(header, wrapped, encrypted).forEach { out.writeInt(it.size); out.write(it) }
+            listOf(header, wrapped, encrypted).forEach {
+                out.writeInt(it.size)
+                out.write(it)
+            }
         }
         bytes.toByteArray()
     }

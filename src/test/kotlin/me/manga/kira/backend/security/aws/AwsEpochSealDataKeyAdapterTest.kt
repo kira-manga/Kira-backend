@@ -77,8 +77,13 @@ class AwsEpochSealDataKeyAdapterTest {
             17 to "-1", 17 to "042", 17 to "9223372036854775808", 18 to "foreign-routing-key",
             19 to "not-an-id", 20 to "f".repeat(64), 21 to url(ByteArray(11)),
         ).map { (index, value) -> initial.toMutableList().also { it[index] = value }.toList() } + listOf(
-            initial.dropLast(1), initial + "extra", initial.toMutableList().also { it[16] = "2" },
-            initial.toMutableList().also { it[16] = "2"; it[20] = "F".repeat(64) },
+            initial.dropLast(1),
+            initial + "extra",
+            initial.toMutableList().also { it[16] = "2" },
+            initial.toMutableList().also {
+                it[16] = "2"
+                it[20] = "F".repeat(64)
+            },
         )
         fixture.sealAdapter().use { adapter ->
             assertThrows(OwnerDeleteAllJournalException::class.java) { adapter.generate(request(fixture.journal)) }
@@ -87,7 +92,10 @@ class AwsEpochSealDataKeyAdapterTest {
             }
             assertTrue(fixture.requests.isEmpty())
             // A later-range context is a supported grammar, not evidence that its predecessor exists.
-            val later = initial.toMutableList().also { it[16] = "2"; it[20] = "f".repeat(64) }
+            val later = initial.toMutableList().also {
+                it[16] = "2"
+                it[20] = "f".repeat(64)
+            }
             adapter.generate(request(fixture.journal, context = sealContext(later))).close()
             assertEquals(1, fixture.requests.size)
         }

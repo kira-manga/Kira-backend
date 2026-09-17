@@ -23,7 +23,10 @@ class EpochSealAwsCodecV1Test {
         val total = PersistenceTimeBudget.start(d.limits.deadlines.epochSealMillis.toLong(), PersistenceNanoClock { fixture.now })
         // Depends on the separately owned additive fixed seal SDK profile; ordinary open/withHttpFixture remain unchanged.
         AwsJournalDataKeyAdapter.withEpochSealHttpFixture(
-            fixture.journal, AwsJournalKmsFixture.CREDENTIALS, fixture::httpClient, enclosingBudget = total,
+            fixture.journal,
+            AwsJournalKmsFixture.CREDENTIALS,
+            fixture::httpClient,
+            enclosingBudget = total,
         ) { fixture.now }.use { adapter ->
             val codec = EpochSealCodecV1(owner, adapter, EpochSealTestFixtureV1.Nonces()) { fixture.now }
             val attempt = codec.startAttempt(total)

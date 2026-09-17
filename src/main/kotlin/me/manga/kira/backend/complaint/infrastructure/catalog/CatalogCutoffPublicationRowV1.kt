@@ -98,12 +98,19 @@ internal class CatalogCutoffPublicationRowV1 private constructor(
         internal fun copy(row: ResultSet): CatalogCutoffPublicationRowV1 {
             check(row.getBoolean("live") && !row.wasNull() && row.getBoolean("valid") && !row.wasNull())
             val state = checkNotNull(row.getString("state"))
-            val proof = if (state == "PREPARED") null else Proof(
-                checkNotNull(row.getString("object_version")), checkNotNull(row.getBytes("ciphertext_hash")),
-                checkNotNull(row.getTimestamp("object_created_at")).toInstant(), checkNotNull(row.getTimestamp("retain_until")).toInstant(),
-                checkNotNull(row.getTimestamp("verified_at")).toInstant(), checkNotNull(row.getBytes("verification_bytes")),
-                checkNotNull(row.getBytes("verification_hash")),
-            )
+            val proof = if (state == "PREPARED") {
+                null
+            } else {
+                Proof(
+                    checkNotNull(row.getString("object_version")),
+                    checkNotNull(row.getBytes("ciphertext_hash")),
+                    checkNotNull(row.getTimestamp("object_created_at")).toInstant(),
+                    checkNotNull(row.getTimestamp("retain_until")).toInstant(),
+                    checkNotNull(row.getTimestamp("verified_at")).toInstant(),
+                    checkNotNull(row.getBytes("verification_bytes")),
+                    checkNotNull(row.getBytes("verification_hash")),
+                )
+            }
             return CatalogCutoffPublicationRowV1(
                 checkNotNull(row.getString("event_id")), checkNotNull(row.getObject("writer_generation", UUID::class.java)),
                 row.getLong("journal_epoch").also { check(!row.wasNull()) }, checkNotNull(row.getString("event_kind")),
@@ -187,7 +194,13 @@ internal class CapturedCutoffVerificationV1 private constructor(
     }
 
     internal fun arguments(): Array<Any?> = arrayOf(
-        record.objectVersion, ciphertextHash, Timestamp.from(createdAt), Timestamp.from(retainUntil), Timestamp.from(verifiedAt), bytes, hash,
+        record.objectVersion,
+        ciphertextHash,
+        Timestamp.from(createdAt),
+        Timestamp.from(retainUntil),
+        Timestamp.from(verifiedAt),
+        bytes,
+        hash,
         *immutable,
     )
 

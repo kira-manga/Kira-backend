@@ -387,11 +387,7 @@ internal class DecodedOwnerDeleteAllJournalEventV1(val event: OwnerDeleteAllJour
     override fun toString(): String = "DecodedOwnerDeleteAllJournalEventV1(redacted,no-authority)"
 }
 
-private class OwnerDeleteAllBoundPayload(
-    val tuple: ComplaintJournalDeletionTupleV1,
-    val targets: List<UUID>,
-    val route: ComplaintJournalRoutingCandidateV1,
-)
+private class OwnerDeleteAllBoundPayload(val tuple: ComplaintJournalDeletionTupleV1, val targets: List<UUID>, val route: ComplaintJournalRoutingCandidateV1)
 
 private fun bindOwnerDeleteAllPayload(
     routingOwner: VersionBoundComplaintJournalRouting,

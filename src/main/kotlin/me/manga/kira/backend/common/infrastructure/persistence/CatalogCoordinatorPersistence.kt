@@ -1,7 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffPublicationsV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffPublicationsV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1

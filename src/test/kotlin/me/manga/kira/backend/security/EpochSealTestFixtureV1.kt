@@ -10,11 +10,7 @@ import java.util.HexFormat
 import java.util.UUID
 
 /** Existing J/acquisition fixtures, synthetic in-memory keys only; no provider, retention or durable authority. */
-internal class EpochSealTestFixtureV1(
-    val journal: ComplaintJournalConfigurationV1 = journal(),
-    val keys: Keys = Keys(),
-    val clock: Clock = Clock(),
-) {
+internal class EpochSealTestFixtureV1(val journal: ComplaintJournalConfigurationV1 = journal(), val keys: Keys = Keys(), val clock: Clock = Clock()) {
     val owner = owner(journal)
     val nonces = Nonces()
     val codec = EpochSealCodecV1(owner, keys, nonces) { clock.nanos }
@@ -119,7 +115,10 @@ internal class EpochSealTestFixtureV1(
         fun owner(journal: ComplaintJournalConfigurationV1): VersionBoundComplaintJournalRouting {
             val acquired = journal.declaration().routing.keys.map { key ->
                 val binding = VersionedSecretBinding.of(
-                    SecretMaterialFamily.COMPLAINT_JOURNAL_ROUTING, SecretMaterialPurpose.HMAC_SHA256, key.keyId, key.secret,
+                    SecretMaterialFamily.COMPLAINT_JOURNAL_ROUTING,
+                    SecretMaterialPurpose.HMAC_SHA256,
+                    key.keyId,
+                    key.secret,
                 )
                 AcquiredVersionedSecret.acquire(binding) { SecretVersionSnapshot(key.secret, material(key.keyId)) }
             }
@@ -129,9 +128,14 @@ internal class EpochSealTestFixtureV1(
         fun material(id: String): ByteArray = ByteArray(32) { (it + (id.last() - 'a') * 32).toByte() }
 
         fun tuple(number: Int = 1, epoch: Long = 42): ComplaintJournalDeletionTupleV1 = ComplaintJournalDeletionTupleV1(
-            epoch, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, ComplaintJournalActorKindV1.INSTALLATION,
-            UUID.fromString("71000000-0000-4000-8000-000000000001"), 7,
-            UUID.fromString("72000000-0000-4000-8000-000000000001"), ByteArray(32) { (it + number).toByte() }, ComplaintDataScope.LIVE,
+            epoch,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL,
+            ComplaintJournalActorKindV1.INSTALLATION,
+            UUID.fromString("71000000-0000-4000-8000-000000000001"),
+            7,
+            UUID.fromString("72000000-0000-4000-8000-000000000001"),
+            ByteArray(32) { (it + number).toByte() },
+            ComplaintDataScope.LIVE,
         )
 
         fun sha(bytes: ByteArray): String = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))

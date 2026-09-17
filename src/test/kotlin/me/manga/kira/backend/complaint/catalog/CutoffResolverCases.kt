@@ -88,7 +88,10 @@ internal class CutoffResolverCases(val f: EpochRotationTestFixture, val publicat
                     publications.reply(request) // The actual signed PUT reached the raw provider and stored its exact wire.
                     throw IOException("Synthetic lost journal PUT reply")
                 }
-                "LIST" -> wire.listReply(emptyList(), publications.key(request)) // No current list proof of the completed dispatch.
+
+                "LIST" -> wire.listReply(emptyList(), publications.key(request))
+
+                // No current list proof of the completed dispatch.
                 else -> publications.reply(request)
             }
         }
@@ -157,8 +160,13 @@ internal class CutoffResolverCases(val f: EpochRotationTestFixture, val publicat
         publications.sampleWall()
         try {
             return OwnerDeleteAllJournalPublisherFactoryV1.cutoffWithHttpFixture(
-                lanes, publications.routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS, wire::httpClient, wire.kms::httpClient,
-                wire.clock, System::nanoTime,
+                lanes,
+                publications.routing,
+                OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
+                wire::httpClient,
+                wire.kms::httpClient,
+                wire.clock,
+                System::nanoTime,
             ).use { factory -> f.coordinator.cutoffPublications.resolve(campaign, factory) }
         } finally {
             assertionFailure.get()?.let { throw it } // A sanitized production refusal must not conceal a fixture boundary assertion.
@@ -203,7 +211,8 @@ internal class CutoffResolverCases(val f: EpochRotationTestFixture, val publicat
                     "(l.locktype = 'advisory' OR l.relation IN (" +
                     "'complaint_journal_control'::regclass, 'complaint_journal_publications'::regclass, " +
                     "'installation_deletion_receipts'::regclass, 'complaint_capacity_counters'::regclass))",
-                Long::class.java, PgLifecycleDatabaseSettings.CANDIDATE,
+                Long::class.java,
+                PgLifecycleDatabaseSettings.CANDIDATE,
             ),
             "No candidate control/publication/receipt/capacity transaction or epoch fence may survive into an SDK request/close.",
         )

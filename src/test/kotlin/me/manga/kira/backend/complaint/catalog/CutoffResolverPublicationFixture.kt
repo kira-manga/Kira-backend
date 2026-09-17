@@ -33,7 +33,12 @@ internal fun withCutoffResolverHistory(
     bindProcess = { consumers, pools ->
         val writer = consumers.journalConfiguration.declaration().writer
         VersionBoundComplaintProcessConfiguration.fromRetainedWithEpochRotation(
-            consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
+            consumers,
+            pools,
+            1,
+            7,
+            UUID.fromString(writer.databaseIdentity),
+            UUID.fromString(writer.restoreIdentity),
             VersionBoundCatalogReadbackTestFixture.settings(),
         )
     },
@@ -76,13 +81,20 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
             true,
             observer.queryForObject(
                 "SELECT accepted_catalog_generation IS NULL AND rotation_sequence = 0 FROM complaint_journal_control WHERE data_scope_id = ?",
-                Boolean::class.java, ComplaintDataScope.LIVE.id,
+                Boolean::class.java,
+                ComplaintDataScope.LIVE.id,
             ),
             "Historical data must precede genuine G1/capture; fixture rows never reopen a closed range.",
         )
         val tuple = ComplaintJournalDeletionTupleV1(
-            epoch, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, ComplaintJournalActorKindV1.INSTALLATION,
-            UUID.randomUUID(), 1, UUID.randomUUID(), ByteArray(32) { (seeded.size + it).toByte() }, ComplaintDataScope.LIVE,
+            epoch,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL,
+            ComplaintJournalActorKindV1.INSTALLATION,
+            UUID.randomUUID(),
+            1,
+            UUID.randomUUID(),
+            ByteArray(32) { (seeded.size + it).toByte() },
+            ComplaintDataScope.LIVE,
         )
         val event = codec.canonicalize(tuple, listOf(UUID.randomUUID()))
         assertEquals(0, dataKeys.calls.get())
@@ -115,13 +127,18 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
         val current = objects[key]
         return when (request.kind) {
             "LIST" -> wire.listReply(listOfNotNull(current), key)
+
             "GET" -> wire.getReply(checkNotNull(current))
+
             else -> {
                 if (current != null) {
                     OwnerDeleteAllJournalPublisherFixture.errorReply(412)
                 } else {
                     val value = JournalPublisherObject(
-                        key, OwnerDeleteAllJournalPublisherFixture.VERSION, request.body.copyOf(), wire.wall.truncatedTo(ChronoUnit.SECONDS),
+                        key,
+                        OwnerDeleteAllJournalPublisherFixture.VERSION,
+                        request.body.copyOf(),
+                        wire.wall.truncatedTo(ChronoUnit.SECONDS),
                         Instant.parse(request.header("x-amz-object-lock-retain-until-date")),
                         request.http.headers().entries.filter { it.key.startsWith("x-amz-meta-", ignoreCase = true) }
                             .associate { it.key.lowercase().removePrefix("x-amz-meta-") to it.value.single() },
@@ -154,7 +171,8 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
     fun immutableRow(event: OwnerDeleteAllJournalEventV1): String = checkNotNull(
         observer.queryForObject(
             "SELECT (to_jsonb(p) - ARRAY['state','applied_at'])::text FROM complaint_journal_publications p WHERE event_id = ?",
-            String::class.java, event.route.eventId,
+            String::class.java,
+            event.route.eventId,
         ),
     )
 
@@ -162,7 +180,8 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
         observer.queryForObject(
             "SELECT (to_jsonb(p) - ARRAY['state','object_version','ciphertext_hash','object_created_at','retain_until'," +
                 "'verified_at','verification_bytes','verification_hash','applied_at'])::text FROM complaint_journal_publications p WHERE event_id = ?",
-            String::class.java, event.route.eventId,
+            String::class.java,
+            event.route.eventId,
         ),
     )
 
@@ -185,7 +204,8 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
         assertEquals(
             1,
             observer.update(
-                "UPDATE complaint_journal_publications SET event_kind = 'RETENTION' WHERE event_id = ? AND state = 'PREPARED'", event.route.eventId,
+                "UPDATE complaint_journal_publications SET event_kind = 'RETENTION' WHERE event_id = ? AND state = 'PREPARED'",
+                event.route.eventId,
             ),
         )
     }
@@ -201,7 +221,10 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
                 observer.queryForObject(
                     "SELECT state IN ('VERIFIED','APPLIED') AND object_version = ? AND ciphertext_hash = ? " +
                         "AND verification_bytes IS NOT NULL AND verification_hash IS NOT NULL FROM complaint_journal_publications WHERE event_id = ?",
-                    Boolean::class.java, observed.version, HexFormat.of().parseHex(hash), event.route.eventId,
+                    Boolean::class.java,
+                    observed.version,
+                    HexFormat.of().parseHex(hash),
+                    event.route.eventId,
                 ),
             )
             listOf(event.route.objectKey, observed.version, hash)

@@ -79,7 +79,9 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
         assertEquals(
             ComplaintDataScope.LIVE.id,
             selected.queryForObject(
-                "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE", UUID::class.java, ComplaintDataScope.LIVE.id,
+                "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE",
+                UUID::class.java,
+                ComplaintDataScope.LIVE.id,
             ),
         )
         val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
@@ -105,7 +107,9 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
         assertEquals(
             event.route.eventId,
             selected.queryForObject(
-                "SELECT event_id FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE", String::class.java, event.route.eventId,
+                "SELECT event_id FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE",
+                String::class.java,
+                event.route.eventId,
             ),
         )
         val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
@@ -156,11 +160,15 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
                 { row, _ ->
                     LockObservation(
                         PgLifecycleDatabaseSession(row.getInt("pid"), row.getTimestamp("backend_start").toInstant()),
-                        row.getTimestamp("query_start").toInstant(), row.getBoolean("only_selected"),
+                        row.getTimestamp("query_start").toInstant(),
+                        row.getBoolean("only_selected"),
                         row.getBoolean("ssl") && row.getString("version") in setOf("TLSv1.2", "TLSv1.3") && row.getInt("bits") >= 128,
                     )
                 },
-                forbidden, PgLifecycleDatabaseSettings.CANDIDATE, holder, table,
+                forbidden,
+                PgLifecycleDatabaseSettings.CANDIDATE,
+                holder,
+                table,
             ).singleOrNull()
             observation != null
         }
