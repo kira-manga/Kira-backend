@@ -85,7 +85,11 @@ internal fun assertOwnerDeleteAllVerificationCorruption(f: OwnerDeleteAllVerific
     for ((name, value, scalar) in listOf(
         Triple("objectVersion", JsonPrimitive("different-valid-version"), "object_version = 'different-valid-version'"),
         Triple("ciphertextSha256", JsonPrimitive("ee".repeat(32)), "ciphertext_hash = decode(repeat('ee', 32), 'hex')"),
-        Triple("objectCreatedAt", JsonPrimitive(committed.objectCreatedAt.minusSeconds(1).toString()), "object_created_at = object_created_at - interval '1 second'"),
+        Triple(
+            "objectCreatedAt",
+            JsonPrimitive(committed.objectCreatedAt.minusSeconds(1).toString()),
+            "object_created_at = object_created_at - interval '1 second'",
+        ),
     )) {
         replaceVerificationBytes(f, canonical(original + (name to value)))
         f.auth.observer.update("UPDATE complaint_journal_publications SET $scalar WHERE event_id = ?", committed.eventId)
@@ -115,7 +119,8 @@ internal fun assertOwnerDeleteAllVerificationFrozenIdentity(f: OwnerDeleteAllVer
     val eventId = event.route.eventId
     val original = f.auth.state()
     for ((assignment, undo) in listOf(
-        "writer_generation = '${UUID.randomUUID()}'::uuid" to "writer_generation = '${f.auth.routing.journalConfiguration.declaration().writer.generationId}'::uuid",
+        "writer_generation = '${UUID.randomUUID()}'::uuid" to
+            "writer_generation = '${f.auth.routing.journalConfiguration.declaration().writer.generationId}'::uuid",
         "journal_epoch = journal_epoch + 1" to "journal_epoch = journal_epoch - 1",
         "target_count = 2" to "target_count = 1",
         "event_kind = 'OWNER_DELETE'" to "event_kind = 'OWNER_DELETE_ALL'",
@@ -133,7 +138,10 @@ internal fun assertOwnerDeleteAllVerificationFrozenIdentity(f: OwnerDeleteAllVer
         }
     }
     val canonical = event.canonicalBytes()
-    for (changed in listOf(canonical + byteArrayOf(' '.code.toByte()), canonical.toString(Charsets.UTF_8).replace("\"schemaVersion\":1", "\"schemaVersion\":2").toByteArray())) {
+    for (changed in listOf(
+        canonical + byteArrayOf(' '.code.toByte()),
+        canonical.toString(Charsets.UTF_8).replace("\"schemaVersion\":1", "\"schemaVersion\":2").toByteArray(),
+    )) {
         replaceEventBytes(f, changed)
         try {
             val before = f.auth.state()
@@ -147,7 +155,8 @@ internal fun assertOwnerDeleteAllVerificationFrozenIdentity(f: OwnerDeleteAllVer
     for ((assignment, undo) in listOf(
         "deletion_key = '${UUID.randomUUID()}'::uuid" to "deletion_key = '${f.candidate.operationKey}'::uuid",
         "submitted_credential_version = submitted_credential_version + 1" to "submitted_credential_version = submitted_credential_version - 1",
-        "fingerprint = decode(repeat('aa', 32), 'hex')" to "fingerprint = decode('${HexFormat.of().formatHex(ComplaintDeleteAllFingerprint.of(f.candidate).bytes())}', 'hex')",
+        "fingerprint = decode(repeat('aa', 32), 'hex')" to
+            "fingerprint = decode('${HexFormat.of().formatHex(ComplaintDeleteAllFingerprint.of(f.candidate).bytes())}', 'hex')",
         "authorized_at = authorized_at + interval '1 microsecond'" to "authorized_at = authorized_at - interval '1 microsecond'",
     )) {
         f.auth.observer.update("UPDATE installation_deletion_receipts SET $assignment WHERE installation_id = ?", f.candidate.installation.id)
@@ -166,9 +175,12 @@ internal fun assertOwnerDeleteAllVerificationFrozenIdentity(f: OwnerDeleteAllVer
         f.auth.observer.update(
             "INSERT INTO installation_deletion_receipts (installation_id, deletion_key, submitted_credential_version, fingerprint, " +
                 "data_scope_id, test_only, state, publication_ref, created_at, authorized_at) " +
-                "SELECT installation_id, ?, submitted_credential_version, fingerprint, data_scope_id, test_only, state, publication_ref, created_at, authorized_at " +
+                "SELECT installation_id, ?, submitted_credential_version, fingerprint, " +
+                "data_scope_id, test_only, state, publication_ref, created_at, authorized_at " +
                 "FROM installation_deletion_receipts WHERE installation_id = ? AND deletion_key = ?",
-            extraKey, f.candidate.installation.id, f.candidate.operationKey,
+            extraKey,
+            f.candidate.installation.id,
+            f.candidate.operationKey,
         ),
     )
     try {
@@ -178,7 +190,11 @@ internal fun assertOwnerDeleteAllVerificationFrozenIdentity(f: OwnerDeleteAllVer
         assertEquals(before, f.auth.state())
         assertEquals(listOf(OwnerDeleteAllVerificationSql.LOCK_RECEIPTS), f.statements.toList())
     } finally {
-        f.auth.observer.update("DELETE FROM installation_deletion_receipts WHERE installation_id = ? AND deletion_key = ?", f.candidate.installation.id, extraKey)
+        f.auth.observer.update(
+            "DELETE FROM installation_deletion_receipts WHERE installation_id = ? AND deletion_key = ?",
+            f.candidate.installation.id,
+            extraKey,
+        )
     }
     assertEquals(original, f.auth.state())
     f.phases.verify(readback) // Every negative control restored the original genuine PREPARED continuation.
@@ -231,7 +247,9 @@ private fun replaceVerificationBytes(f: OwnerDeleteAllVerificationFixture, bytes
         1,
         f.auth.observer.update(
             "UPDATE complaint_journal_publications SET verification_bytes = ?, verification_hash = sha256(?) WHERE event_id = ?",
-            bytes, bytes, f.publisher.event.route.eventId,
+            bytes,
+            bytes,
+            f.publisher.event.route.eventId,
         ),
     )
 }
@@ -241,7 +259,9 @@ private fun replaceEventBytes(f: OwnerDeleteAllVerificationFixture, bytes: ByteA
         1,
         f.auth.observer.update(
             "UPDATE complaint_journal_publications SET event_bytes = ?, semantic_hash = sha256(?) WHERE event_id = ?",
-            bytes, bytes, f.publisher.event.route.eventId,
+            bytes,
+            bytes,
+            f.publisher.event.route.eventId,
         ),
     )
 }
