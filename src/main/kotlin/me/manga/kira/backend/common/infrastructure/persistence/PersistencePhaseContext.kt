@@ -537,16 +537,11 @@ internal class PersistencePhaseContext(
 
     internal fun managerFailure(problem: Throwable) = recordFailure(problem)
 
-    /** Veto only, before any owned JDBC/manager adapter discards a signal's type. Never grants an outcome. */
-    internal fun observeOwnerDeleteAllApplyFailure(problem: Throwable) = ownerDeleteAllApplyBoundary.observeFailure(problem)
-
     internal fun recordFailure(problem: Throwable) {
-        observeOwnerDeleteAllApplyFailure(problem)
+        ownerDeleteAllApply.observeFailure(problem)
+        if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
-            is InterruptedException -> {
-                restoreInterrupt = true
-                PersistencePhaseFailureCode.INTERRUPTED
-            }
+            is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
 
             is PersistencePhaseException -> problem.code
 
@@ -1267,10 +1262,9 @@ internal class PersistencePhaseContext(
             if (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) commitDispatchObserved = true
         }
 
-        fun observeFailure(problem: Throwable) {
-            if (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY &&
-                (problem is Error || problem is CancellationException || problem is InterruptedException)
-            ) {
+        override fun observeFailure(problem: Throwable) {
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) return
+            if (problem is Error || problem is CancellationException || problem is InterruptedException) {
                 signalVeto.set(true)
             }
         }
@@ -2068,6 +2062,8 @@ internal interface PersistenceOwnerDeleteAllVerification {
 
 /** No generic callback, second holder, repeated authorization or caller-selected locking policy. */
 internal interface PersistenceOwnerDeleteAllApply {
+    /** Veto only, before raw signal types are discarded; never grants completion, cleanup or an outcome. */
+    fun observeFailure(problem: Throwable)
     fun requireOperation(jdbc: JdbcTemplate)
     fun retain(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate)

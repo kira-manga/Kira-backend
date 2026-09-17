@@ -92,7 +92,7 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     /** Only a sticky APPLY outcome veto; the attached original phase still owns all release facts. */
     internal fun observeOwnerDeleteAllApplyFailure(failure: Throwable) {
-        phase?.observeOwnerDeleteAllApplyFailure(failure)
+        phase?.ownerDeleteAllApply?.observeFailure(failure)
     }
 
     internal fun belongsToPool(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean = epoch === expected && pool.boundTo(lifecycle)

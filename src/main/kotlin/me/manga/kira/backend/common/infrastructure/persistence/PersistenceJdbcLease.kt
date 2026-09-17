@@ -124,6 +124,8 @@ internal class PersistenceJdbcLease private constructor(
         closeActual(budget)
     }
 
+    // Contain every retirement failure; the original cleanup owner, not this catch, settles custody.
+    @Suppress("TooGenericExceptionCaught")
     internal fun retireScoped(scope: PersistencePhaseContext) {
         if (completion.phase !== scope || Thread.currentThread() !== original) PersistenceJdbcGuardContext.refuse()
         // In particular, a consented old return tail has no authority over its successor.
@@ -131,7 +133,7 @@ internal class PersistenceJdbcLease private constructor(
         try {
             closeActual(scope.cleanupBudget(), retire = true)
         } catch (problem: Throwable) {
-            scope.observeOwnerDeleteAllApplyFailure(problem)
+            scope.ownerDeleteAllApply.observeFailure(problem)
             scope.jdbcFailure()
             // The original operation/entitlement and terminal receipt, not this catch, decide completion.
         }
