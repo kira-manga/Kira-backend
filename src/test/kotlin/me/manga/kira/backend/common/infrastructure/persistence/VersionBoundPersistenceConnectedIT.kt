@@ -1,5 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
+import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -155,6 +157,14 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `computed D is rechecked after original preflight and readback at AUTH RELOAD VERIFY and APPLY`() =
         withFixture { tls -> withCurrentOwnerDeleteAll(tls) { it.lockedPhases() } }
+
+    @Test
+    fun `process bound G1 projection requires exact nonnull D original identities and committed released custody while legacy null D stays diagnostic`() =
+        withFixture { tls -> withProcessBoundCatalogGenesis(tls) { ProcessBoundCatalogGenesisCases(it).projectReplayAndNullDSeparation() } }
+
+    @Test
+    fun `process bound G1 final reread rejects D drift and commit or completion failure never releases a projection receipt`() =
+        withFixture { tls -> withProcessBoundCatalogGenesis(tls) { ProcessBoundCatalogGenesisCases(it).currentDriftAndCommitReleaseFailures() } }
 
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
