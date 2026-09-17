@@ -34,6 +34,7 @@ import org.mockito.Mockito.mock
 import org.slf4j.MDC
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
+import org.springframework.security.authentication.AnonymousAuthenticationToken
 import org.springframework.security.core.Authentication
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.FilterChainProxy
@@ -123,7 +124,7 @@ class ComplaintInstallationSecurityChainTest {
             val response = f.request("POST", ComplaintInstallationRoutes.DELETE_ALL, token, "{}")
             assertEquals(204, response.status) // Inert handler proves dispatch only, not deletion or a private outcome.
             assertNull(response.getHeader("WWW-Authenticate"))
-            assertNull(f.observed)
+            assertTrue(f.observed is AnonymousAuthenticationToken)
             assertNull(f.observedUser)
             assertNull(f.observedMdcUser)
         }
