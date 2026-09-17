@@ -6,10 +6,12 @@ import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPreparation
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationSql
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFatalV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.ComplaintIngressContext
+import me.manga.kira.backend.security.historyTestRequest
 import me.manga.kira.backend.security.ownerCreateTestIngress
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -28,8 +30,7 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Actual connected lower operations, not LIVE wiring. A future LIVE composition must admit the
- * real shared J lane before new authorization; neither this fixture nor the factory supplies it.
+ * Actual connected lower operations and shared in-process J custody, not LIVE wiring or full-D authority.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -107,7 +108,7 @@ class OwnerDeleteAllContinuationIT {
         val clients = f.publisher.s3ClientsCreated
         val disabled = ownerCreateTestIngress()
         val forbidden = OwnerDeleteAllJournalPublisherFactoryV1.withHttpFixture(
-            f.auth.store, f.auth.routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
+            f.journalLanes, f.auth.store, f.auth.routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
             { error("Replay must not open S3.") }, { error("Replay must not open KMS.") }, f.publisher.clock, { f.publisher.nanos },
         )
         val connected = f.continuation(disabled, forbidden)
@@ -199,7 +200,10 @@ class OwnerDeleteAllContinuationIT {
         }
         assertEquals(untouched, f.auth.state())
         assertEquals(0, f.publisher.s3ClientsCreated)
-        for (factory in listOf(f.publishers(f.auth.newStore()), f.publishers(routing = ownerDeleteAllTestRouting()))) {
+        val foreignRouting = ownerDeleteAllTestRouting()
+        assertThrows<Throwable> { f.publishers(routing = foreignRouting) } // A matching copy cannot replace the shared J owner.
+        val foreignFactory = f.publishers(routing = foreignRouting, lanes = JournalPublicationLanesV1(foreignRouting.journalConfiguration))
+        for (factory in listOf(f.publishers(f.auth.newStore()), foreignFactory)) {
             assertThrows<Throwable> { f.complete(selected = f.continuation(publishers = factory)) }
             assertEquals("PREPARED", f.publicationState())
             assertTrue(f.publisher.requests.isEmpty() && f.publisher.kms.requests.isEmpty())

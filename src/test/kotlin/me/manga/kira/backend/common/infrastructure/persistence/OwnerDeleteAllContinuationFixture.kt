@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAl
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllOutcome
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationSql
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllApplyPhaseExecutor
@@ -29,6 +30,7 @@ import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.CurrentUser
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
+import me.manga.kira.backend.security.historyTestRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -51,6 +53,7 @@ internal class OwnerDeleteAllContinuationFixture(
     val auth: OwnerDeleteAllAuthorizationFixture,
     val candidate: InstallationDeletionCandidate,
     val targets: List<UUID>,
+    val journalLanes: JournalPublicationLanesV1 = JournalPublicationLanesV1(auth.routing.journalConfiguration),
 ) {
     val publisher = OwnerDeleteAllJournalPublisherFixture(auth, candidate, targets)
     val jdbc = ContinuationFixtureJdbc(this)
@@ -91,8 +94,9 @@ internal class OwnerDeleteAllContinuationFixture(
     fun publishers(
         store: JdbcComplaintOwnerDeleteAllStore = auth.store,
         routing: VersionBoundComplaintJournalRouting = auth.routing,
+        lanes: JournalPublicationLanesV1 = journalLanes,
     ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1.withHttpFixture(
-        store, routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
+        lanes, store, routing, OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
         {
             requireConnectionFree()
             // Sample only after the real authorization/reload, never before publication.created_at.
@@ -130,7 +134,7 @@ internal class OwnerDeleteAllContinuationFixture(
 
     fun prepareVerified(): CommittedOwnerDeleteAllVerificationV1 {
         val work = auth.prepared(candidate)
-        val owner = publishers().open()
+        val owner = publishers().reserve()
         val readback = withJournalPublicationCleanup({ owner.publish(work) }, owner::close)
         return verification.verify(readback)
     }
