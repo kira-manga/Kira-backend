@@ -13,11 +13,12 @@ import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.Base64
 
-/** Shared mechanics for only the two closed installation bodies; route parsers redact all diagnostics. */
+/** Shared mechanics for the closed installation bodies; route parsers redact all diagnostics. */
 internal object InstallationRequestJson {
     const val MAX_BODY_BYTES = 4096
     private val sessionFields = setOf("installationId", "secret", "expectedDataScopeId")
     private val enrollmentFields = sessionFields + "platform"
+    private val deletionFields = setOf("installationId", "secret", "credentialVersion", "dataScopeId")
     private val secretPattern = Regex("[A-Za-z0-9_-]{43}")
     private val decoder = Base64.getUrlDecoder()
     private val encoder = Base64.getUrlEncoder().withoutPadding()
@@ -34,9 +35,21 @@ internal object InstallationRequestJson {
 
     fun enrollment(body: ByteArray): JsonNode = read(body, enrollmentFields)
 
-    fun installation(root: JsonNode): ScopedInstallationId = ScopedInstallationId(
+    fun deletion(body: ByteArray): JsonNode = read(body, deletionFields)
+
+    fun installation(root: JsonNode): ScopedInstallationId = installation(root, "expectedDataScopeId")
+
+    fun deletionInstallation(root: JsonNode): ScopedInstallationId = installation(root, "dataScopeId")
+
+    fun credentialVersion(root: JsonNode): Long {
+        val value = root["credentialVersion"]
+        if (value == null || !value.isIntegralNumber || !value.canConvertToLong() || value.longValue() <= 0) malformed()
+        return value.longValue()
+    }
+
+    private fun installation(root: JsonNode, scopeField: String): ScopedInstallationId = ScopedInstallationId(
         ComplaintIdentifiers.installationId(string(root, "installationId")),
-        ComplaintIdentifiers.dataScope(string(root, "expectedDataScopeId")),
+        ComplaintIdentifiers.dataScope(string(root, scopeField)),
     )
 
     fun platform(root: JsonNode): ComplaintPlatform = when (string(root, "platform")) {
