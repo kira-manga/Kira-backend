@@ -21,6 +21,7 @@ import software.amazon.awssdk.core.checksums.ResponseChecksumValidation
 import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration
 import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.http.SdkHttpClient
+import software.amazon.awssdk.http.auth.aws.signer.AwsV4FamilyHttpSigner
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient
 import software.amazon.awssdk.profiles.ProfileFile
 import software.amazon.awssdk.regions.PartitionMetadata
@@ -30,6 +31,7 @@ import software.amazon.awssdk.regions.ServiceMetadataConfiguration
 import software.amazon.awssdk.retries.StandardRetryStrategy
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.auth.scheme.S3AuthSchemeProvider
 import software.amazon.awssdk.services.s3.model.ChecksumAlgorithm
 import software.amazon.awssdk.services.s3.model.ChecksumMode
 import software.amazon.awssdk.services.s3.model.EncodingType
@@ -248,9 +250,15 @@ internal class S3OrdinaryJournalClientV1 private constructor(
                     .endpointOverride(endpoint).httpClient(transport)
                     .serviceConfiguration(
                         S3Configuration.builder().pathStyleAccessEnabled(true).accelerateModeEnabled(false).chunkedEncodingEnabled(false)
-                            .payloadSigningEnabled(true).useArnRegionEnabled(false).multiRegionEnabled(false)
+                            .useArnRegionEnabled(false).multiRegionEnabled(false)
                             .profileFile(emptyProfile).profileName(PROFILE_NAME).build(),
                     )
+                    .authSchemeProvider { params ->
+                        // Keep SDK endpoint/auth defaults, but sign the real body instead of its S3 UNSIGNED-PAYLOAD default.
+                        S3AuthSchemeProvider.defaultProvider().resolveAuthScheme(params).map { option ->
+                            option.toBuilder().putSignerProperty(AwsV4FamilyHttpSigner.PAYLOAD_SIGNING_ENABLED, true).build()
+                        }
+                    }
                     .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)
                     .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
                     .overrideConfiguration(
