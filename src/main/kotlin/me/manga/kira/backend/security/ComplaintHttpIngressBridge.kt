@@ -73,9 +73,8 @@ internal class ComplaintHttpIngressBridge(private val ingress: ComplaintIngressA
     private fun frame(request: HttpServletRequest): Frame {
         requireConnectionFree()
         val frame = current.get() ?: refuse()
-        if (frame.finished || frame.caller !== Thread.currentThread() || frame.request !== root(request) || request.dispatcherType != DispatcherType.REQUEST) {
-            refuse()
-        }
+        if (frame.finished || frame.caller !== Thread.currentThread()) refuse()
+        if (frame.request !== root(request) || request.dispatcherType != DispatcherType.REQUEST) refuse()
         if (frame.method != request.method || frame.uri != request.requestURI || frame.contextPath != request.contextPath) refuse()
         ingress.requireLiveContext(frame.context)
         return frame

@@ -15,8 +15,7 @@ internal enum class ComplaintSecurityFailure(val status: Int, val code: String, 
 }
 
 /** Fixed diagnostics only. In particular, a persistence exception never becomes a bearer credential error. */
-internal class ComplaintSecurityRejected(val failure: ComplaintSecurityFailure) :
-    RuntimeException("Complaint security refused.", null, false, false)
+internal class ComplaintSecurityRejected(val failure: ComplaintSecurityFailure) : RuntimeException("Complaint security refused.", null, false, false)
 
 internal object ComplaintSecurityResponses {
     private val problems = ComplaintSecurityFailure.entries.associateWith { failure ->

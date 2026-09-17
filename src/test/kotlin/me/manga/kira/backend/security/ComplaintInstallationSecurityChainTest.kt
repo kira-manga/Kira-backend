@@ -81,19 +81,24 @@ class ComplaintInstallationSecurityChainTest {
             assertNull(response.getHeader("WWW-Authenticate"))
         }
         for ((method, path) in listOf(
-            "GET" to "/api/v1/installations/bootstrap", "POST" to "/api/v1/installations/delete-all",
-            "DELETE" to ComplaintInstallationRoutes.ENROLLMENT, "POST" to ComplaintInstallationRoutes.ME,
+            "GET" to "/api/v1/installations/bootstrap",
+            "POST" to "/api/v1/installations/delete-all",
+            "DELETE" to ComplaintInstallationRoutes.ENROLLMENT,
+            "POST" to ComplaintInstallationRoutes.ME,
             "GET" to "/api/v1/complaints/${f.id}",
-            "GET" to "/api/v1/installations/me/", "GET" to "/api/v1/installations/%6de",
+            "GET" to "/api/v1/installations/me/",
+            "GET" to "/api/v1/installations/%6de",
         )) {
-            val response = f.request(method, path, "not-a-token")
-            assertEquals(404, response.status)
+            // Containers decode servletPath; requestURI retains this explicit raw unreserved alias.
+            val decodedPath = if (path == "/api/v1/installations/%6de") ComplaintInstallationRoutes.ME else path
+            val response = f.request(method, path, "not-a-token", decodedServletPath = decodedPath)
+            assertEquals(404, response.status, "$method $path")
             assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
             assertNull(response.getHeader("WWW-Authenticate"))
         }
         for (path in listOf("/api/v1/installations//me", "/api/v1/installations/%2fme", "/api/v1/installations/me;variant=1")) {
             val response = f.request("GET", path, "not-a-token")
-            assertEquals(400, response.status) // The real Spring StrictHttpFirewall, not a home-grown path canonicalizer.
+            assertEquals(400, response.status, "GET $path") // The real Spring StrictHttpFirewall, not a home-grown path canonicalizer.
             assertNull(response.getHeader("WWW-Authenticate"))
         }
         assertEquals(0, f.currentReads)
@@ -194,7 +199,13 @@ class ComplaintInstallationSecurityChainTest {
         private val proxy = context.getBean(FilterChainProxy::class.java)
         private val body = RequestBodySizeLimitFilter(ObjectMapper())
 
-        fun request(method: String, path: String, token: String? = null, content: String? = null): MockHttpServletResponse {
+        fun request(
+            method: String,
+            path: String,
+            token: String? = null,
+            content: String? = null,
+            decodedServletPath: String = path,
+        ): MockHttpServletResponse {
             lastRequest = object : MockHttpServletRequest(method, path) {
                 override fun getInputStream(): jakarta.servlet.ServletInputStream {
                     if (ComplaintInstallationRoutes.matches(this)) ingress.requireLiveContext(bridge.authenticationContext(this))
@@ -202,17 +213,23 @@ class ComplaintInstallationSecurityChainTest {
                 }
             }.apply {
                 remoteAddr = "192.0.2.1"
-                servletPath = path
+                servletPath = decodedServletPath
                 token?.let { addHeader("Authorization", "Bearer $it") }
-                content?.let { contentType = "application/json"; setContent(it.toByteArray()) }
+                content?.let {
+                    contentType = "application/json"
+                    setContent(it.toByteArray())
+                }
             }
             val response = MockHttpServletResponse()
             bridge.doFilter(lastRequest, response) { admitted, output ->
                 body.doFilter(admitted, output) { bounded, target ->
                     proxy.doFilter(bounded, target) { routed, result ->
                         val http = routed as HttpServletRequest
-                        if (ComplaintInstallationRoutes.matches(http)) factory.handler.handleRequest(http, result as HttpServletResponse)
-                        else capture(http, result as HttpServletResponse)
+                        if (ComplaintInstallationRoutes.matches(http)) {
+                            factory.handler.handleRequest(http, result as HttpServletResponse)
+                        } else {
+                            capture(http, result as HttpServletResponse)
+                        }
                     }
                 }
             }
@@ -222,10 +239,14 @@ class ComplaintInstallationSecurityChainTest {
         private fun capture(request: HttpServletRequest, response: HttpServletResponse) {
             observed = SecurityContextHolder.getContext().authentication
             observedUser = CurrentUser().getOrNull()
-            AuthenticatedMdcFilter().doFilter(request, response, FilterChain { _, _ ->
-                observedMdcUser = MDC.get(AuthenticatedMdcFilter.MDC_USER_ID)
-                response.status = 204
-            })
+            AuthenticatedMdcFilter().doFilter(
+                request,
+                response,
+                FilterChain { _, _ ->
+                    observedMdcUser = MDC.get(AuthenticatedMdcFilter.MDC_USER_ID)
+                    response.status = 204
+                },
+            )
         }
 
         override fun close() {

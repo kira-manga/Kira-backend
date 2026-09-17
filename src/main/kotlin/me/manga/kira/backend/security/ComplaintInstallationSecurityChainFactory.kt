@@ -96,8 +96,11 @@ internal class ComplaintInstallationSecurityChainFactory(
         } else {
             when (ComplaintInstallationRoutes.path(request)) {
                 ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION -> installations.handleWithinIngress(request, response, context)
+
                 ComplaintInstallationRoutes.ME -> me.handleWithinIngress(request, response, context)
+
                 ComplaintInstallationRoutes.STATUS -> create.handleWithinIngress(request, response, context)
+
                 else -> if (request.method == "GET") {
                     history.handleWithinIngress(request, response, context)
                 } else {
@@ -160,8 +163,11 @@ internal object ComplaintInstallationBearerResolver : BearerTokenResolver {
         if (!values.hasMoreElements()) return null
         val value = values.nextElement()
         if (values.hasMoreElements() || value.length > InstallationJwtCodec.MAX_COMPACT_BYTES + 7 ||
-            value.any { it.code !in 32..126 } || !value.startsWith("Bearer ") || value.length == 7
+            value.any { it.code !in 32..126 }
         ) {
+            throw InvalidBearerTokenException("Installation credential refused.")
+        }
+        if (!value.startsWith("Bearer ") || value.length == 7) {
             throw InvalidBearerTokenException("Installation credential refused.")
         }
         return value.substring(7)

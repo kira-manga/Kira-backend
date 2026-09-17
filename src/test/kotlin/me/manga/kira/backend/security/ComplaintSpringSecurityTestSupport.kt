@@ -43,8 +43,7 @@ internal fun complaintSpringSecurityContext(
 internal class ComplaintSpringTestConfiguration {
     @Bean
     @Order(1)
-    fun installationTestSecurityFilterChain(http: HttpSecurity, factory: ComplaintInstallationSecurityChainFactory): SecurityFilterChain =
-        factory.build(http)
+    fun installationTestSecurityFilterChain(http: HttpSecurity, factory: ComplaintInstallationSecurityChainFactory): SecurityFilterChain = factory.build(http)
 
     @Bean
     fun mvcHandlerMappingIntrospector(): HandlerMappingIntrospector = HandlerMappingIntrospector()

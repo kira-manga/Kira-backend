@@ -27,7 +27,10 @@ class ComplaintIngressAdmissionTest {
     fun `HTTP bridge holds one ingress through wrappers semantic work and response delivery`() {
         val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1, ingressRate = 1))
         val bridge = ComplaintHttpIngressBridge(guard)
-        val input = request().apply { method = "GET"; requestURI = ComplaintInstallationRoutes.ME }
+        val input = request().apply {
+            method = "GET"
+            requestURI = ComplaintInstallationRoutes.ME
+        }
         lateinit var context: ComplaintIngressContext
         val response = object : MockHttpServletResponse() {
             override fun getOutputStream(): ServletOutputStream {
@@ -58,7 +61,10 @@ class ComplaintIngressAdmissionTest {
         val guard = newGuard(MutableAdmissionTestClock())
         val bridge = ComplaintHttpIngressBridge(guard)
         val other = ComplaintHttpIngressBridge(guard)
-        val input = request().apply { method = "GET"; requestURI = ComplaintInstallationRoutes.ME }
+        val input = request().apply {
+            method = "GET"
+            requestURI = ComplaintInstallationRoutes.ME
+        }
         val executor = Executors.newSingleThreadExecutor()
         try {
             bridge.doFilter(input, MockHttpServletResponse()) { admitted, _ ->
@@ -91,7 +97,10 @@ class ComplaintIngressAdmissionTest {
         for (failure in listOf(IOException("synthetic"), ComplaintSecurityRejected(ComplaintSecurityFailure.UNAVAILABLE))) {
             val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1))
             val bridge = ComplaintHttpIngressBridge(guard)
-            val input = request().apply { method = "GET"; requestURI = ComplaintInstallationRoutes.ME }
+            val input = request().apply {
+                method = "GET"
+                requestURI = ComplaintInstallationRoutes.ME
+            }
             val response = MockHttpServletResponse()
             assertThrows(IOException::class.java) {
                 bridge.doFilter(input, response) { _, output ->

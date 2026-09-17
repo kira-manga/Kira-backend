@@ -92,7 +92,9 @@ class ComplaintInstallationMeHttpIT {
                     }
                 }
                 assertTrue(dispatched)
-                if (revoke) f.assertProblem(response, 401, "UNAUTHORIZED") else {
+                if (revoke) {
+                    f.assertProblem(response, 401, "UNAUTHORIZED")
+                } else {
                     assertEquals(200, response.status)
                     assertEquals(f.id.toString(), f.json(response)["installationId"].asText())
                     assertEquals(before, f.run.state())
