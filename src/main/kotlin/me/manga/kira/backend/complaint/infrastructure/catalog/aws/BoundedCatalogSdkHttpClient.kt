@@ -20,10 +20,6 @@ import java.io.InputStream
 import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import javax.xml.XMLConstants
-import javax.xml.stream.XMLInputFactory
-import javax.xml.stream.XMLStreamConstants
-import javax.xml.stream.XMLStreamException
 
 /**
  * One retained HTTP exchange, including decoding and any returned GET body. LIST/error bytes are completely
@@ -195,7 +191,9 @@ internal class BoundedCatalogSdkHttpClient(
                     val bytes = withS3Cleanup(
                         {
                             val buffered = buffered(stream, length, maximum)
-                            if (buffered.isNotEmpty()) preflightXml(buffered)
+                            if (buffered.isNotEmpty()) {
+                                CatalogS3XmlPreflight.inspect(buffered, listing && response.httpResponse().statusCode() == 200, pageSize, ::checkRead)
+                            }
                             buffered
                         },
                         ::finish,
@@ -236,52 +234,6 @@ internal class BoundedCatalogSdkHttpClient(
             requireCatalogReadback(eof == -1, CatalogReadbackFailure.LIMIT_EXCEEDED)
             requireCatalogReadback(declared == null || offset.toLong() == declared, CatalogReadbackFailure.INVALID_READBACK)
             return bytes.copyOf(offset)
-        }
-
-        /** SDK's XML tree builder is recursive. A byte ceiling alone is not a depth/element ceiling. */
-        private fun preflightXml(bytes: ByteArray) = catalogProviderCall {
-            val factory = XMLInputFactory.newDefaultFactory().apply {
-                setProperty(XMLInputFactory.SUPPORT_DTD, false)
-                setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false)
-                setProperty(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, false)
-                setProperty(XMLInputFactory.IS_COALESCING, false)
-                setProperty(XMLConstants.ACCESS_EXTERNAL_DTD, "")
-                setXMLResolver { _, _, _, _ -> throw XMLStreamException("External XML resolution refused.") }
-            }
-            val reader = factory.createXMLStreamReader(ByteArrayInputStream(bytes))
-            withS3Cleanup(
-                {
-                    val maximumElements = 128 + pageSize * 32
-                    var depth = 0
-                    var elements = 0
-                    var tokens = 0
-                    while (reader.hasNext()) {
-                        checkRead()
-                        val token = reader.next()
-                        checkRead()
-                        requireCatalogReadback(++tokens <= maximumElements * 8, CatalogReadbackFailure.LIMIT_EXCEEDED)
-                        when (token) {
-                            XMLStreamConstants.START_ELEMENT -> {
-                                requireCatalogReadback(++depth <= 16 && ++elements <= maximumElements, CatalogReadbackFailure.LIMIT_EXCEEDED)
-                                requireCatalogReadback(
-                                    reader.localName.length <= 256 && reader.attributeCount <= 16 && reader.namespaceCount <= 8,
-                                    CatalogReadbackFailure.LIMIT_EXCEEDED,
-                                )
-                            }
-
-                            XMLStreamConstants.END_ELEMENT -> depth--
-
-                            XMLStreamConstants.DTD,
-                            XMLStreamConstants.ENTITY_REFERENCE,
-                            XMLStreamConstants.ENTITY_DECLARATION,
-                            XMLStreamConstants.NOTATION_DECLARATION,
-                            -> throw CatalogReadbackException(CatalogReadbackFailure.INVALID_READBACK)
-                        }
-                    }
-                    requireCatalogReadback(depth == 0 && elements > 0, CatalogReadbackFailure.INVALID_READBACK)
-                },
-                { catalogProviderCall(CatalogReadbackFailure.CLOSE_FAILURE) { reader.close() } },
-            )
         }
 
         private fun checkRead() {
