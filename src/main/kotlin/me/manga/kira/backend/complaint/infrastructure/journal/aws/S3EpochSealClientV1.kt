@@ -13,10 +13,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * only: no production credential entry, STS session consumer, durable intent or current-work wiring.
  * The caller owns the binding; client close neither discards it nor revokes a possible AWS request.
  */
-internal class S3EpochSealClientV1 private constructor(
-    internal val binding: EpochSealS3BindingV1,
-    private val sdkOwner: JournalS3SdkOwnerV1,
-) : AutoCloseable {
+internal class S3EpochSealClientV1 private constructor(internal val binding: EpochSealS3BindingV1, private val sdkOwner: JournalS3SdkOwnerV1) : AutoCloseable {
     private val closed = AtomicBoolean()
 
     fun listExact(): JournalListedVersionV1? = journalPublicationSdkCall {
@@ -32,13 +29,10 @@ internal class S3EpochSealClientV1 private constructor(
     fun getVersion(versionId: String): JournalFetchedVersionV1 = journalPublicationSdkCall {
         check()
         val fetched = sdkOwner.getEpochSeal(binding, versionId)
-        try {
+        runCatching {
             check()
             fetched
-        } catch (failure: Throwable) {
-            fetched.close()
-            throw failure
-        }
+        }.onFailure { fetched.close() }.getOrThrow()
     }
 
     internal fun check() {

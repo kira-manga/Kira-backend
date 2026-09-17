@@ -57,11 +57,15 @@ internal class EpochSealS3FixtureV1(outerMillis: Long? = null, retentionSeconds:
     )
 
     fun objectFor(bytes: ByteArray = envelope.wireBytes()): JournalPublisherObject = JournalPublisherObject(
-        content.route.objectKey, VERSION, bytes.copyOf(), created, requested, metadata(bytes),
+        content.route.objectKey,
+        VERSION,
+        bytes.copyOf(),
+        created,
+        requested,
+        metadata(bytes),
     )
 
-    fun listDocument(versions: List<JournalPublisherObject> = listOfNotNull(http.stored)): String =
-        http.listDocument(versions, content.route.objectKey)
+    fun listDocument(versions: List<JournalPublisherObject> = listOfNotNull(http.stored)): String = http.listDocument(versions, content.route.objectKey)
 
     fun reply(request: JournalPublisherHttpRequest): S3CatalogReply = when (request.kind) {
         "LIST" -> http.listReply(listOfNotNull(http.stored), content.route.objectKey)

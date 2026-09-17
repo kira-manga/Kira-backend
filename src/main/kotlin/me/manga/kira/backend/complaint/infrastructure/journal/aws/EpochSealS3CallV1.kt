@@ -60,12 +60,9 @@ internal class EpochSealS3BindingV1 private constructor(
             withEpochSealBuffers { buffers -> EpochSealCanonicalV1(routing).checkedContent(content, buffers) }
             OrdinaryJournalRetentionV1.canonicalInstant(retainUntil.toString())
             val candidate = EpochSealS3CandidateV1.encoded(routing, envelope, retainUntil)
-            try {
+            runCatching {
                 EpochSealS3BindingV1(routing, content, attempt, candidate).also { it.check() }
-            } catch (failure: Throwable) {
-                candidate.close()
-                throw failure
-            }
+            }.onFailure { candidate.close() }.getOrThrow()
         }
     }
 }
@@ -103,11 +100,7 @@ internal class EpochSealS3CandidateV1 private constructor(
     override fun toString(): String = "EpochSealS3CandidateV1(immutable-in-memory-only,redacted)"
 
     companion object {
-        internal fun encoded(
-            routing: VersionBoundComplaintJournalRouting,
-            envelope: EpochSealEnvelopeV1,
-            retainUntil: Instant,
-        ): EpochSealS3CandidateV1 {
+        internal fun encoded(routing: VersionBoundComplaintJournalRouting, envelope: EpochSealEnvelopeV1, retainUntil: Instant): EpochSealS3CandidateV1 {
             val wire = envelope.wireBytes()
             var transferred = false
             try {
@@ -146,7 +139,8 @@ internal class EpochSealS3CallV1 private constructor(
         val total = binding.attempt.remainingMillis(declaration.limits.deadlines.s3CallMillis)
         val elapsed = nanoTime() - started
         val remaining = (allowance - elapsed) / 1_000_000L
-        if (expired || elapsed < 0 || elapsed < lastElapsed || remaining <= 0) {
+        val clockRegressed = elapsed < 0 || elapsed < lastElapsed
+        if (expired || clockRegressed || remaining <= 0) {
             expired = true
             requireJournalPublication(false, JournalPublicationFailureV1.DEADLINE_EXHAUSTED)
         }

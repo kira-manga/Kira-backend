@@ -19,11 +19,7 @@ import java.util.Base64
  * Native S3 cleanup and cheap checks precede KMS. J-relative retention is necessary only: this is
  * not a LIVE restore-horizon policy, a durable wire-ready handoff, SEAL_VERIFIED or checkpoint authority.
  */
-internal class EpochSealVersionReadbackV1(
-    private val client: S3EpochSealClientV1,
-    private val codec: EpochSealCodecV1,
-    clock: Clock,
-) {
+internal class EpochSealVersionReadbackV1(private val client: S3EpochSealClientV1, private val codec: EpochSealCodecV1, clock: Clock) {
     private val binding = client.binding
     private val retention = OrdinaryJournalRetentionV1(binding.routing, clock)
 

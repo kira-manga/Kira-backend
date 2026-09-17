@@ -61,19 +61,7 @@ class VersionBoundEpochSealAcquisitionTest {
                     acquired,
                 )
                 assertSame(acquired, composed.epochSealAcquisition)
-                val registry = VersionBoundCatalogReadbackTestFixture.envelope().manifest.initialWriterRegistry
-                val binding = CatalogGenesisInitialLiveBinding.fromRetained(composed)
-                binding.requireMatchingRegistry(registry)
-                assertThrows<IllegalArgumentException> {
-                    binding.requireMatchingRegistry(
-                        registry.copy(catalogWriter = registry.catalogWriter.copy(putAuthority = registry.catalogWriter.signAuthority)),
-                    )
-                }
-                assertThrows<IllegalArgumentException> {
-                    binding.requireMatchingRegistry(
-                        registry.copy(catalogWriter = registry.catalogWriter.copy(signAuthority = registry.catalogWriter.putAuthority)),
-                    )
-                }
+                requireCatalogPrincipalBinding(composed)
                 val before = Json.parseToJsonElement(originalBytes.decodeToString()).jsonObject
                 val after = Json.parseToJsonElement(composed.canonicalBytes().decodeToString()).jsonObject
                 assertEquals("3", before.getValue("schemaVersion").jsonPrimitive.content)
@@ -131,6 +119,22 @@ class VersionBoundEpochSealAcquisitionTest {
                 original.requireUnchangedConfiguration()
             }
         }
+
+    private fun requireCatalogPrincipalBinding(composed: VersionBoundComplaintProcessConfiguration) {
+        val registry = VersionBoundCatalogReadbackTestFixture.envelope().manifest.initialWriterRegistry
+        val binding = CatalogGenesisInitialLiveBinding.fromRetained(composed)
+        binding.requireMatchingRegistry(registry)
+        assertThrows<IllegalArgumentException> {
+            binding.requireMatchingRegistry(
+                registry.copy(catalogWriter = registry.catalogWriter.copy(putAuthority = registry.catalogWriter.signAuthority)),
+            )
+        }
+        assertThrows<IllegalArgumentException> {
+            binding.requireMatchingRegistry(
+                registry.copy(catalogWriter = registry.catalogWriter.copy(signAuthority = registry.catalogWriter.putAuthority)),
+            )
+        }
+    }
 
     @Test
     fun `cold graph refuses same-byte replacement routing lanes absent rotation and closed owner`() = ComplaintProcessPoolFixture().use { database ->

@@ -10,8 +10,7 @@ internal class EpochSealProviderPrincipalV1 private constructor(val kind: Kind, 
     private val name = arn.substringAfterLast('/')
 
     /** Reject obvious aliases, including alternate paths or a recreated same-named principal. Not policy qualification. */
-    internal fun aliases(other: EpochSealProviderPrincipalV1): Boolean =
-        arn == other.arn || stableId == other.stableId || sameAccountName(other)
+    internal fun aliases(other: EpochSealProviderPrincipalV1): Boolean = arn == other.arn || stableId == other.stableId || sameAccountName(other)
 
     private fun sameAccountName(other: EpochSealProviderPrincipalV1): Boolean =
         accountId == other.accountId && kind == other.kind && name.equals(other.name, ignoreCase = true)

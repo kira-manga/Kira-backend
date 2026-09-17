@@ -69,13 +69,20 @@ class S3EpochSealClientV1Test {
                 EpochSealS3BindingV1.encoded(f.local.owner, f.content, f.envelope, f.requested, foreign.codec.startAttempt())
             }
             val restored = f.codec.restoreCanonical(
-                f.content.canonicalBytes(), f.content.route.routingKeyId, f.content.route.objectKey, f.content.semanticSha256, f.attempt,
+                f.content.canonicalBytes(),
+                f.content.route.routingKeyId,
+                f.content.route.objectKey,
+                f.content.semanticSha256,
+                f.attempt,
             )
             publicationFailure(JournalPublicationFailureV1.INVALID_BINDING) {
                 EpochSealS3BindingV1.encoded(f.local.owner, restored, f.envelope, f.requested, f.attempt)
             }
             val forged = EpochSealContentV1(
-                f.local.owner, f.content.payload, f.content.route.copy(objectKey = f.http.event.route.objectKey), f.content.canonicalBytes(),
+                f.local.owner,
+                f.content.payload,
+                f.content.route.copy(objectKey = f.http.event.route.objectKey),
+                f.content.canonicalBytes(),
             )
             sealFailure(EpochSealFailureV1.INVALID_INPUT) {
                 EpochSealS3BindingV1.encoded(f.local.owner, forged, EpochSealEnvelopeV1(forged, f.envelope.wireBytes()), f.requested, f.attempt)
@@ -335,6 +342,7 @@ class S3EpochSealClientV1Test {
                     val failure = checkNotNull(runCatching { f.readback(client).verify() }.exceptionOrNull())
                     when (signal) {
                         is EpochSealExceptionV1 -> assertSame(signal, assertInstanceOf(EpochSealExceptionV1::class.java, failure))
+
                         is CancellationException -> assertInstanceOf(CancellationException::class.java, failure)
 
                         is InterruptedException -> {
