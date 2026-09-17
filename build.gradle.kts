@@ -145,6 +145,12 @@ dependencies {
         exclude(group = "software.amazon.awssdk", module = "apache5-client")
         exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
     }
+    // Exact-version SecretBinary reads use the same explicitly owned synchronous transport.
+    implementation(libs.aws.sdk.secretsmanager) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
     implementation(libs.aws.sdk.url.connection.client)
 
     // --- API docs ---
