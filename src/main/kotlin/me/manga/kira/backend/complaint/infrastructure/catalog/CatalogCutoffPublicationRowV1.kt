@@ -46,12 +46,7 @@ internal class CatalogCutoffPublicationRowV1 private constructor(
 
     internal fun firstProof(event: OwnerDeleteAllJournalEventV1, routing: VersionBoundComplaintJournalRouting): OwnerDeleteAllVerificationRecordV1 {
         requireConnectionFree()
-        val stored = checkNotNull(proof)
-        val record = OwnerDeleteAllVerificationCodecV1(routing).parse(stored.bytes, event)
-        check(record.objectVersion == stored.version && record.ciphertextSha256 == HexFormat.of().formatHex(stored.ciphertextHash))
-        check(Instant.parse(record.objectCreatedAt) == stored.createdAt && Instant.parse(record.retainUntil) == stored.retainUntil)
-        check(Instant.parse(record.verifiedAt) == stored.verifiedAt)
-        return record
+        return checkNotNull(proof).parse(event, routing)
     }
 
     internal fun sameImmutable(other: CatalogCutoffPublicationRowV1): Boolean = eventId == other.eventId && writer == other.writer && epoch == other.epoch &&
@@ -66,14 +61,38 @@ internal class CatalogCutoffPublicationRowV1 private constructor(
     override fun toString(): String = "CatalogCutoffPublicationRowV1(detached,redacted,no-authority)"
 
     internal class Proof internal constructor(
-        val version: String,
-        val ciphertextHash: ByteArray,
-        val createdAt: Instant,
-        val retainUntil: Instant,
-        val verifiedAt: Instant,
-        val bytes: ByteArray,
-        val hash: ByteArray,
-    )
+        private val version: String,
+        private val ciphertextHash: ByteArray,
+        private val createdAt: Instant,
+        private val retainUntil: Instant,
+        private val verifiedAt: Instant,
+        private val bytes: ByteArray,
+        private val hash: ByteArray,
+    ) {
+        internal fun parse(event: OwnerDeleteAllJournalEventV1, routing: VersionBoundComplaintJournalRouting): OwnerDeleteAllVerificationRecordV1 {
+            requireConnectionFree()
+            val record = OwnerDeleteAllVerificationCodecV1(routing).parse(bytes, event)
+            check(record.objectVersion == version && record.ciphertextSha256 == HexFormat.of().formatHex(ciphertextHash))
+            check(Instant.parse(record.objectCreatedAt) == createdAt && Instant.parse(record.retainUntil) == retainUntil)
+            check(Instant.parse(record.verifiedAt) == verifiedAt)
+            return record
+        }
+
+        internal fun matchesObservation(
+            record: OwnerDeleteAllVerificationRecordV1,
+            observedCiphertext: ByteArray,
+            observedCreatedAt: Instant,
+            observedRetainUntil: Instant,
+        ) {
+            check(version == record.objectVersion && ciphertextHash.contentEquals(observedCiphertext) && createdAt == observedCreatedAt)
+            check(!observedRetainUntil.isBefore(retainUntil))
+        }
+
+        internal fun matchesInserted(observedBytes: ByteArray, observedHash: ByteArray, observedVerifiedAt: Instant, observedRetainUntil: Instant) {
+            check(bytes.contentEquals(observedBytes) && hash.contentEquals(observedHash))
+            check(verifiedAt == observedVerifiedAt && retainUntil == observedRetainUntil)
+        }
+    }
 
     companion object {
         internal fun copy(row: ResultSet): CatalogCutoffPublicationRowV1 {
@@ -176,11 +195,9 @@ internal class CapturedCutoffVerificationV1 private constructor(
     internal fun checkStored(stored: CatalogCutoffPublicationRowV1, inserted: Boolean) {
         check(row.sameImmutable(stored))
         val proof = checkNotNull(stored.proof)
-        check(proof.version == record.objectVersion && proof.ciphertextHash.contentEquals(ciphertextHash) && proof.createdAt == createdAt)
-        check(!retainUntil.isBefore(proof.retainUntil))
-        if (inserted) {
-            check(proof.bytes.contentEquals(bytes) && proof.hash.contentEquals(hash) && proof.verifiedAt == verifiedAt && proof.retainUntil == retainUntil)
-        } // Replay preserves the first proof byte-for-byte, including original times and weaker retention.
+        proof.matchesObservation(record, ciphertextHash, createdAt, retainUntil)
+        if (inserted) proof.matchesInserted(bytes, hash, verifiedAt, retainUntil)
+        // Replay preserves the first proof byte-for-byte, including original times and weaker retention.
     }
 
     internal fun validateReleased(stored: CatalogCutoffPublicationRowV1) {

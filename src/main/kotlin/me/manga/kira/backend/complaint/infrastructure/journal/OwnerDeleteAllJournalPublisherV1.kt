@@ -2,8 +2,8 @@ package me.manga.kira.backend.complaint.infrastructure.journal
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
-import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
+import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalPutObservationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalS3BindingV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalS3CandidateV1
