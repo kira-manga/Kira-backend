@@ -21,6 +21,7 @@ internal enum class ConnectedTlsClient { MATCHED, WRONG_CA, WRONG_HOST, WRONG_PA
 internal class VersionBoundPersistenceConnectedFixture(
     private val database: PgLifecycleDatabaseFixture,
     val client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
+    epochRotation: Boolean = false,
 ) : AutoCloseable {
     private val trustParent = database.versionBoundTls().publicTrustParent()
     private val suppliedPassword = when (client) {
@@ -43,7 +44,9 @@ internal class VersionBoundPersistenceConnectedFixture(
         database.versionBoundTls().publicTrust(client == ConnectedTlsClient.WRONG_CA),
         trustParent,
     )
-    val scope = PgLifecycleTestScope(configuration.bindLifecycleOwner())
+    val scope = PgLifecycleTestScope(
+        if (epochRotation) configuration.bindLifecycleOwnerWithEpochRotation() else configuration.bindLifecycleOwner(),
+    )
     val owner = scope.owner
     lateinit var pools: VersionBoundPersistencePools
         private set
