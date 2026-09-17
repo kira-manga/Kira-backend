@@ -6,6 +6,7 @@ import java.util.Properties
 internal object PersistenceNativeSettings {
     val deletionLoginPolicy: PersistenceLoginPolicy = PersistenceLoginPolicy.resolve("2", 2000)
     val catalogCoordinatorLoginPolicy: PersistenceLoginPolicy = PersistenceLoginPolicy.resolve("2", 2000)
+    val epochRotationLoginPolicy: PersistenceLoginPolicy = PersistenceLoginPolicy.resolve("2", 2000)
     private val SSL_FACTORIES = setOf(null, "org.postgresql.ssl.LibPQFactory", "org.postgresql.ssl.jdbc4.LibPQFactory")
     private val HOSTNAME_VERIFIERS = setOf(null, "org.postgresql.ssl.PGjdbcHostnameVerifier")
     private val TIMEOUT_CAPS = mapOf("connectTimeout" to 1, "socketTimeout" to 2, "cancelSignalTimeout" to 1)
@@ -18,6 +19,9 @@ internal object PersistenceNativeSettings {
 
     fun deriveCatalogCoordinator(endpoint: ResolvedPersistenceEndpoint, pathStyle: PersistencePathStyle): PersistenceNativeSettingsResult =
         assess(endpoint, pathStyle, deletion = true, loginPolicy = catalogCoordinatorLoginPolicy)
+
+    fun deriveEpochRotation(endpoint: ResolvedPersistenceEndpoint, pathStyle: PersistencePathStyle): PersistenceNativeSettingsResult =
+        assess(endpoint, pathStyle, deletion = true, loginPolicy = epochRotationLoginPolicy)
 
     private fun assess(
         endpoint: ResolvedPersistenceEndpoint,

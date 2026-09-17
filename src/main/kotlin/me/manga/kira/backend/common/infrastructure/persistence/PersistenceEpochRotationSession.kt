@@ -1,0 +1,278 @@
+package me.manga.kira.backend.common.infrastructure.persistence
+
+import me.manga.kira.backend.complaint.infrastructure.catalog.CAPTURE_EPOCH_ROTATION_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCaptureOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationRowV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_EPOCH_ROTATION_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_EPOCH_ROTATION_CONTROL
+import java.lang.reflect.InvocationHandler
+import java.lang.reflect.InvocationTargetException
+import java.lang.reflect.Method
+import java.lang.reflect.Proxy
+import java.sql.Connection
+import java.sql.Wrapper
+import java.util.concurrent.Executor
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.LockSupport
+
+/** The distinct original first-delivery owner. Only these fixed operations expose detached rows, never JDBC or arbitrary SQL. */
+internal class PersistenceEpochRotationSession private constructor(
+    private val entry: PersistencePhysicalEntry,
+    private val epoch: PersistenceProducerEpoch,
+    private val resource: EpochRotationPersistence,
+    private val attempt: CatalogEpochRotationAttemptV1,
+) {
+    private val caller = Thread.currentThread()
+    private val total = attempt.budget
+    private val problem = AtomicBoolean()
+    private val retired = AtomicBoolean()
+    private val context = PersistenceJdbcGuardContext.forEpochRotation(entry.jdbc, epoch, this, entry.driverCut)
+    private val connection = EpochRotationConnectionCalls(entry, context).proxy
+    private var work: PersistenceTimeBudget? = null
+    private var retained: CatalogEpochRotationCaptureOperation? = null
+    private var stage = Stage.PREPARED
+    private var clippingRead = false
+
+    internal fun begin() {
+        requireCaller()
+        check(stage === Stage.PREPARED && entry.jdbc.currentSession(this, epoch))
+        attempt.requireCore(resource)
+        work = total.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
+        stage = Stage.STARTING
+        connection.autoCommit = false
+        connection.isReadOnly = false
+        connection.transactionIsolation = Connection.TRANSACTION_READ_COMMITTED
+        installLimits(EpochRotationLimits.STATEMENT_MILLIS)
+        connection.prepareStatement(EXCLUSIVE_EPOCH_FENCE).use { statement ->
+            statement.executeQuery().use { row -> check(row.next() && !row.next()) }
+        }
+        requireWork()
+        stage = Stage.EXCLUSIVE
+    }
+
+    internal fun retain(operation: CatalogEpochRotationCaptureOperation) {
+        requireWork()
+        check(stage === Stage.EXCLUSIVE && retained == null && operation.belongsTo(this))
+        retained = operation
+    }
+
+    internal fun lockControl(operation: CatalogEpochRotationCaptureOperation): CatalogEpochRotationRowV1 {
+        requireOperation(operation)
+        check(stage === Stage.EXCLUSIVE)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        val result = query(LOCK_EPOCH_ROTATION_CONTROL, operation.lockArguments())
+        stage = Stage.LOCKED
+        return result
+    }
+
+    internal fun captureControl(operation: CatalogEpochRotationCaptureOperation): CatalogEpochRotationRowV1 {
+        requireOperation(operation)
+        check(stage === Stage.LOCKED)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        val result = query(CAPTURE_EPOCH_ROTATION_CONTROL, operation.captureArguments())
+        stage = Stage.WRITTEN
+        return result
+    }
+
+    internal fun readControl(operation: CatalogEpochRotationCaptureOperation): CatalogEpochRotationRowV1 {
+        requireOperation(operation)
+        check(stage === Stage.LOCKED || stage === Stage.WRITTEN)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        val result = query(READ_EPOCH_ROTATION_CONTROL, operation.readArguments())
+        stage = Stage.REREAD
+        return result
+    }
+
+    internal fun commit(operation: CatalogEpochRotationCaptureOperation) {
+        requireOperation(operation)
+        check(stage === Stage.REREAD && operation.completedFor(this))
+        connection.commit()
+        requireWork()
+        check(context.transaction.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED && !context.transaction.uncertain())
+        stage = Stage.COMMITTED
+    }
+
+    /** This is a retirement request only. The existing producer/native/Timer/first-close finalizer owns actual release. */
+    internal fun finish() {
+        if (retired.compareAndSet(false, true)) entry.jdbc.requestRetirement(epoch)
+    }
+
+    internal fun awaitRelease() {
+        requireCaller()
+        check(retired.get() && stage === Stage.COMMITTED)
+        while (!entry.jdbc.terminalCompletion().reclaimed()) {
+            requireWork()
+            LockSupport.parkNanos(total.remainingMillis(10) * 1_000_000)
+        }
+        requireWork()
+        stage = Stage.RELEASED
+    }
+
+    /** Early/between-commit-and-release probes refuse without upgrading or poisoning an otherwise active operation. */
+    internal fun requireReleased(operation: CatalogEpochRotationCaptureOperation) {
+        if (caller !== Thread.currentThread() || retained !== operation || !operation.completedFor(this)) throw failure()
+        if (stage !== Stage.RELEASED || problem.get() || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
+        if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
+    }
+
+    internal fun failed() {
+        problem.set(true)
+        finish()
+    }
+
+    internal fun failure(): PersistencePhaseException = PersistencePhaseException(
+        if (problem.get()) PersistencePhaseFailureCode.WORK_FAILED else PersistencePhaseFailureCode.COMPLETION_FAILED,
+        context.transaction.databaseOutcome(),
+        entry.jdbc.terminalCompletion().reclaimed(),
+    )
+
+    internal fun jdbcFailure() = failed()
+
+    /** Data-only deadline attachment survives the factory's TAKEN state; the existing scanner owns physical retirement. */
+    internal fun deadlineExpired(): Boolean {
+        val expired = persistenceFactoryRemainingMillis(total) == 0L || work?.let { persistenceFactoryRemainingMillis(it) == 0L } == true
+        if (expired) problem.set(true)
+        return expired
+    }
+
+    internal fun callBudget(kind: PersistenceJdbcGuardCallKind): PersistenceTimeBudget {
+        if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION) requireCaller()
+        if (kind === PersistenceJdbcGuardCallKind.BUSINESS) requireWork()
+        // No restarted emergency allowance: terminal cleanup continues under the original retained physical owner when this expires.
+        return work ?: total
+    }
+
+    /** Every guarded descendant dispatch reclips the actual native read cap, not only the initial query. */
+    internal fun beforeJdbcCall(kind: PersistenceJdbcGuardCallKind) {
+        if (kind === PersistenceJdbcGuardCallKind.CANCELLATION || clippingRead) return
+        requireCaller()
+        val budget = callBudget(kind)
+        clippingRead = true
+        try {
+            connection.setNetworkTimeout(INLINE, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toInt())
+        } finally {
+            clippingRead = false
+        }
+    }
+
+    private fun requireOperation(operation: CatalogEpochRotationCaptureOperation) {
+        requireWork()
+        check(retained === operation && operation.belongsTo(this))
+        attempt.requireCore(resource)
+    }
+
+    private fun requireCaller() {
+        if (caller !== Thread.currentThread()) throw failure()
+        if (Thread.currentThread().isInterrupted) {
+            failed()
+            throw PersistencePhaseException(PersistencePhaseFailureCode.INTERRUPTED, context.transaction.databaseOutcome(), false)
+        }
+    }
+
+    private fun requireWork() {
+        requireCaller()
+        if (deadlineExpired() || problem.get()) throw failure()
+    }
+
+    private fun query(sql: String, arguments: Array<Any?>): CatalogEpochRotationRowV1 {
+        requireWork()
+        val value = connection.prepareStatement(sql).use { statement ->
+            arguments.forEachIndexed { index, argument -> statement.setObject(index + 1, argument) }
+            statement.executeQuery().use { row ->
+                check(row.next())
+                val result = CatalogEpochRotationRowV1.copy(row)
+                check(!row.next())
+                result
+            }
+        }
+        requireWork()
+        return value
+    }
+
+    private fun installLimits(lockMillis: Long) {
+        val budget = callBudget(PersistenceJdbcGuardCallKind.BUSINESS)
+        connection.prepareStatement(LIMITS).use { statement ->
+            statement.setString(1, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toString() + "ms")
+            statement.setString(2, budget.remainingMillis(lockMillis).toString() + "ms")
+            statement.setString(3, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toString() + "ms")
+            statement.executeQuery().use { row -> check(row.next() && !row.next()) }
+        }
+    }
+
+    override fun toString(): String = "PersistenceEpochRotationSession(original-first-delivery,non-pooled,no-work-capability)"
+
+    private enum class Stage { PREPARED, STARTING, EXCLUSIVE, LOCKED, WRITTEN, REREAD, COMMITTED, RELEASED }
+
+    companion object {
+        private val INLINE = Executor { it.run() }
+        private const val EXCLUSIVE_EPOCH_FENCE = "SELECT pg_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))"
+        private const val LIMITS = "SELECT set_config('statement_timeout', ?, true), set_config('lock_timeout', ?, true), " +
+            "set_config('idle_in_transaction_session_timeout', ?, true)"
+
+        internal fun prepare(
+            entry: PersistencePhysicalEntry,
+            epoch: PersistenceProducerEpoch,
+            resource: EpochRotationPersistence,
+            attempt: CatalogEpochRotationAttemptV1,
+        ): PersistenceEpochRotationSession = PersistenceEpochRotationSession(entry, epoch, resource, attempt)
+    }
+}
+
+/** Private JDBC reflection stays inside the owner. Native outputs use the existing child/invocation ledger before use. */
+private class EpochRotationConnectionCalls(private val entry: PersistencePhysicalEntry, private val context: PersistenceJdbcGuardContext) : InvocationHandler {
+    val proxy: Connection = Proxy.newProxyInstance(Connection::class.java.classLoader, arrayOf(Connection::class.java), this) as Connection
+    private val graph = PhysicalJdbcDescendants(context, proxy)
+
+    @Suppress("TooGenericExceptionCaught")
+    override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
+        if (method.declaringClass === Any::class.java) return when (method.name) {
+            "toString" -> "EpochRotationJdbcConnection(redacted)"
+            "hashCode" -> System.identityHashCode(proxy)
+            "equals" -> proxy === args?.singleOrNull()
+            else -> error("Unsupported JDBC object method.")
+        }
+        check(method.declaringClass === Connection::class.java || method.declaringClass === Wrapper::class.java)
+        if (method.name == "unwrap" || method.name == "close" || method.name == "abort") PersistenceJdbcGuardContext.refuse()
+        if (method.name == "isWrapperFor") return false
+        val call = context.enterRoot(PersistenceJdbcGuardCallKind.BUSINESS)
+        var invoked = false
+        var returned = false
+        var wrapping = false
+        var completed = false
+        try {
+            try {
+                val arguments: Array<Any?> = args?.let { original -> Array(original.size) { original[it] } } ?: emptyArray()
+                val adapted = graph.connectionArguments(call, method, arguments)
+                context.transaction.beforeConnection(method, adapted, returning = false)
+                val raw = entry.raw.get() ?: PersistenceJdbcGuardContext.refuse()
+                call.attachDriver(raw)
+                call.prepareDriver(raw, method, adapted, PhysicalJdbcInputs.prepare(graph, call.identity, arguments, adapted))
+                call.armDriver()
+                invoked = true
+                val result = method.invoke(raw, *adapted)
+                returned = true
+                context.transaction.connectionReturned(method, adapted, result)
+                call.captureOutput(result)
+                wrapping = true
+                call.reconcileDriver()
+                val guarded = graph.connectionResult(call, method, result)
+                call.outputGuarded()
+                completed = true
+                return guarded
+            } finally {
+                if (!completed) {
+                    if (invoked && !returned) context.transaction.connectionFailed(method)
+                    context.phaseJdbcFailure(retireImmediately = true)
+                    call.reconcileDriver()
+                    call.failedBeforeBoxing(wrapping)
+                }
+            }
+        } catch (problem: Throwable) {
+            val actual = if (problem.javaClass === InvocationTargetException::class.java) (problem as InvocationTargetException).targetException else problem
+            throw call.failure(actual, wrapping)
+        } finally {
+            call.finish()
+        }
+    }
+}

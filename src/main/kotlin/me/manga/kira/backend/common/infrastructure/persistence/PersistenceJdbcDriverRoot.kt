@@ -9,18 +9,28 @@ internal class PersistenceJdbcDriverRoot(
     val pathStyle: PersistencePathStyle,
     internal val sourceOnly: Boolean = false,
     versionBound: VersionBoundPersistenceConfiguration? = null,
+    epochRotationEnabled: Boolean = false,
 ) {
     private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly)
     val shutdown = AtomicBoolean()
     internal val versionBoundPools = versionBound?.createPools(this)
+    internal val epochRotationMaterial = if (epochRotationEnabled) {
+        check(!sourceOnly && pathStyle === PersistencePathStyle.POSIX)
+        checkNotNull(versionBound).createEpochRotationMaterial(this)
+    } else {
+        null
+    }
     val retainedDriver = PersistenceRetainedPgDriver()
     val ordinary = PersistenceJdbcParticipant(this, capacity, deletion = false)
     val deletion = PersistenceJdbcParticipant(this, 4, deletion = true)
     val catalogCoordinator = PersistenceJdbcParticipant(this, 1, PersistenceJdbcParticipantRole.CATALOG_COORDINATOR)
+    private val epochRotationParticipant = epochRotationMaterial?.let { PersistenceJdbcParticipant(this, it.descriptor.capacity, PersistenceJdbcParticipantRole.EPOCH_ROTATION) }
+    internal val epochRotation = epochRotationParticipant?.let { EpochRotationPersistence.create(this, it, checkNotNull(epochRotationMaterial)) }
     val timer = PersistenceDriverTimer(this)
     private val startClaimed = AtomicBoolean()
     private val deletionClaimed = AtomicBoolean()
     private val catalogCoordinatorClaimed = AtomicBoolean()
+    private val epochRotationClaimed = AtomicBoolean()
     private val failed = AtomicBoolean()
     private val scanner = PersistenceRetainedPlatformThread("kira-persistence-scanner", ::scan)
 
@@ -79,6 +89,8 @@ internal class PersistenceJdbcDriverRoot(
         ordinary.forbidStarts()
         deletion.forbidStarts()
         catalogCoordinator.forbidStarts()
+        epochRotationParticipant?.forbidStarts()
+        epochRotation?.seal()
         timer.forbidStart()
         scanner.forbidStart()
         return first
@@ -92,7 +104,8 @@ internal class PersistenceJdbcDriverRoot(
 
     /** Exact driver-root conjunction AND every retained bound pool's own local custody; never a recursive pool receipt. */
     internal fun publicTrustReleaseReady(): Boolean = shutdown.get() &&
-        shutdownObservation() === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && versionBoundPools?.poolsEndedForTrust() != false
+        shutdownObservation() === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && versionBoundPools?.poolsEndedForTrust() != false &&
+        epochRotation?.endedForTrust() != false
 
     /** Stop only the existing deletion participant; the shared scanner/Timer remain owned by this root. */
     fun requestDeletionShutdown(): Boolean = deletion.forbidStarts()
@@ -115,6 +128,52 @@ internal class PersistenceJdbcDriverRoot(
     }
 
     fun requestCatalogCoordinatorShutdown(): Boolean = catalogCoordinator.forbidStarts()
+
+    internal fun prepareEpochRotation(): PersistenceLifecycleActivation {
+        val participant = epochRotationParticipant ?: return PersistenceLifecycleActivation.CLOSED
+        if (shutdown.get() || !startClaimed.get()) return PersistenceLifecycleActivation.CLOSED
+        if (!epochRotationClaimed.compareAndSet(false, true)) return PersistenceLifecycleActivation.ALREADY_CLAIMED
+        return runCatching {
+            when (participant.start()) {
+                PersistenceFactoryStart.STARTED -> PersistenceLifecycleActivation.STARTED
+                PersistenceFactoryStart.CLOSED -> PersistenceLifecycleActivation.CLOSED
+                else -> PersistenceLifecycleActivation.FAILED
+            }
+        }.getOrElse { failure ->
+            participant.forbidStarts()
+            if (failure is InterruptedException) Thread.currentThread().interrupt()
+            if (failure is Error) throw failure
+            PersistenceLifecycleActivation.FAILED
+        }
+    }
+
+    internal fun requestEpochRotationShutdown(): Boolean {
+        epochRotation?.seal()
+        return epochRotationParticipant?.forbidStarts() ?: false
+    }
+
+    internal fun epochRotationPreparationObservation(): PersistenceLifecycleObservation {
+        val participant = epochRotationParticipant ?: return PersistenceLifecycleObservation.UNAVAILABLE
+        if (shutdown.get()) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (!startClaimed.get() || !epochRotationClaimed.get()) return PersistenceLifecycleObservation.NOT_REQUESTED
+        return when {
+            participant.isReady() -> PersistenceLifecycleObservation.READY
+            participant.preparationFinished() -> PersistenceLifecycleObservation.UNAVAILABLE
+            else -> PersistenceLifecycleObservation.PENDING
+        }
+    }
+
+    internal fun epochRotationShutdownObservation(): PersistenceLifecycleObservation {
+        val participant = epochRotationParticipant ?: return PersistenceLifecycleObservation.UNAVAILABLE
+        if (!participant.shutdownRequested()) return PersistenceLifecycleObservation.NOT_REQUESTED
+        if (!participant.finishShutdownScan() || epochRotation?.endedForTrust() != true) return PersistenceLifecycleObservation.PENDING
+        val retained = participant.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
+        return if (participant.cleanupFailed() || participant.usedWeakEvidence() || retained != 0) {
+            PersistenceLifecycleObservation.UNKNOWN
+        } else {
+            PersistenceLifecycleObservation.EPOCH_ROTATION_LOCAL_ENDED
+        }
+    }
 
     fun catalogCoordinatorShutdownObservation(): PersistenceLifecycleObservation {
         if (!catalogCoordinator.shutdownRequested()) return PersistenceLifecycleObservation.NOT_REQUESTED
@@ -150,12 +209,14 @@ internal class PersistenceJdbcDriverRoot(
 
     fun scannerReady(): Boolean = scanner.startPhase() === PersistenceThreadStartPhase.RETURNED && scanner.hasEntered() && !scanner.hasBodyEnded()
 
-    internal fun ownershipLockHeld(): Boolean = ordinary.ownershipLockHeld() || deletion.ownershipLockHeld() || catalogCoordinator.ownershipLockHeld()
+    internal fun ownershipLockHeld(): Boolean = ordinary.ownershipLockHeld() || deletion.ownershipLockHeld() || catalogCoordinator.ownershipLockHeld() ||
+        epochRotationParticipant?.ownershipLockHeld() == true
 
     fun canReleaseTimer(): Boolean = shutdown.get() && participantsEnded() && scanner.termination().ended()
 
     private fun participantsEnded(): Boolean = ordinary.recordsEnded() && deletion.recordsEnded() && catalogCoordinator.recordsEnded() &&
-        ordinary.threadsEnded() && deletion.threadsEnded() && catalogCoordinator.threadsEnded()
+        ordinary.threadsEnded() && deletion.threadsEnded() && catalogCoordinator.threadsEnded() &&
+        epochRotationParticipant?.recordsEnded() != false && epochRotationParticipant?.threadsEnded() != false && epochRotation?.endedForTrust() != false
 
     fun preparationObservation(deleting: Boolean): PersistenceLifecycleObservation {
         if (shutdown.get()) return PersistenceLifecycleObservation.UNAVAILABLE
@@ -179,12 +240,13 @@ internal class PersistenceJdbcDriverRoot(
         val retained = ordinary.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
         val retainedDeletion = deletion.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
         val retainedCatalog = catalogCoordinator.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
+        val retainedRotation = if (epochRotationParticipant == null) 0 else epochRotationParticipant.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
         return when {
             failed.get() || ordinary.cleanupFailed() || deletion.cleanupFailed() || catalogCoordinator.cleanupFailed() ||
-                retained != 0 || retainedDeletion != 0 || retainedCatalog != 0 ->
+                retained != 0 || retainedDeletion != 0 || retainedCatalog != 0 || retainedRotation != 0 || epochRotationParticipant?.cleanupFailed() == true ->
                 PersistenceLifecycleObservation.UNKNOWN
 
-            ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() ->
+            ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() || epochRotationParticipant?.usedWeakEvidence() == true ->
                 PersistenceLifecycleObservation.DRIVER_CONTRACT_ONLY_ENDED
 
             else -> PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED
@@ -193,9 +255,10 @@ internal class PersistenceJdbcDriverRoot(
 
     fun snapshot(): PersistenceLifecycleSnapshot = PersistenceLifecycleSnapshot(
         shutdown.get(), ordinary.isReady(), deletionClaimed.get(), deletion.isReady(), timer.canAcceptStrong(),
-        ordinary.retainedCount(), deletion.retainedCount(), ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence(),
-        failed.get() || ordinary.cleanupFailed() || deletion.cleanupFailed() || catalogCoordinator.cleanupFailed(),
+        ordinary.retainedCount(), deletion.retainedCount(), ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() || epochRotationParticipant?.usedWeakEvidence() == true,
+        failed.get() || ordinary.cleanupFailed() || deletion.cleanupFailed() || catalogCoordinator.cleanupFailed() || epochRotationParticipant?.cleanupFailed() == true,
         catalogCoordinatorClaimed.get(), catalogCoordinator.isReady(), catalogCoordinator.retainedCount(),
+        epochRotationClaimed.get(), epochRotationParticipant?.isReady() == true, if (epochRotationParticipant == null) 0 else epochRotationParticipant.retainedCount(),
     )
 
     private fun scan() {
@@ -204,6 +267,8 @@ internal class PersistenceJdbcDriverRoot(
                 ordinary.scan()
                 deletion.scan()
                 catalogCoordinator.scan()
+                epochRotationParticipant?.scan()
+                epochRotation?.reconcile()
                 if (shutdown.get() && participantsEnded() && shutdownScanFinished()) return
                 persistenceLifecyclePark()
             }
@@ -215,7 +280,8 @@ internal class PersistenceJdbcDriverRoot(
         }
     }
 
-    private fun shutdownScanFinished(): Boolean = ordinary.finishShutdownScan() && deletion.finishShutdownScan() && catalogCoordinator.finishShutdownScan()
+    private fun shutdownScanFinished(): Boolean = ordinary.finishShutdownScan() && deletion.finishShutdownScan() && catalogCoordinator.finishShutdownScan() &&
+        epochRotationParticipant?.finishShutdownScan() != false
 
     override fun toString(): String = "PersistenceJdbcDriverRoot(redacted)"
 }

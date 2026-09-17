@@ -24,8 +24,14 @@ internal class VersionBoundPersistenceConfiguration private constructor(
 
     fun bindLifecycleOwner(): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner.versionBound(this)
 
+    /** Explicit cold resource opt-in; the existing default root and v1/v2 inventory remain unchanged. */
+    fun bindLifecycleOwnerWithEpochRotation(): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner.versionBoundWithEpochRotation(this)
+
     internal fun createRoot(): PersistenceJdbcDriverRoot =
         PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this)
+
+    internal fun createRootWithEpochRotation(): PersistenceJdbcDriverRoot =
+        PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this, epochRotationEnabled = true)
 
     /** Root construction calls this before any actor can start. No independent endpoint/trust pairing is accepted. */
     internal fun adopt(
@@ -44,6 +50,11 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     internal fun createPools(root: PersistenceJdbcDriverRoot): VersionBoundPersistencePools {
         requireConfiguration(adoptedRoot === root)
         return VersionBoundPersistencePools.create(root, endpoint, ordinaryCapacity, descriptor)
+    }
+
+    internal fun createEpochRotationMaterial(root: PersistenceJdbcDriverRoot): VersionBoundEpochRotationMaterial {
+        requireConfiguration(adoptedRoot === root)
+        return VersionBoundEpochRotationMaterial.create(endpoint, descriptor)
     }
 
     /**

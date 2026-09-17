@@ -12,7 +12,8 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
     internal val legacyRegistry = PersistencePhysicalRegistry(ledger)
     internal val admissionOpen = AtomicBoolean()
     internal val completion = PersistencePhysicalCompletion(this)
-    internal val poolIdentity = PersistenceJdbcPoolIdentity.prepare(this)
+    private val preparedPoolIdentity = if (managed?.isEpochRotation() == true) null else PersistenceJdbcPoolIdentity.prepare(this)
+    internal val poolIdentity: PersistenceJdbcPoolIdentity get() = checkNotNull(preparedPoolIdentity)
     private val stopRequested = AtomicBoolean()
     private var worker: PersistenceRetainedPlatformThread? = null
 
@@ -240,6 +241,32 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         }
     }
 
+    /** Third closed FIRST delivery, never an opaque/pool conversion. All packaging precedes this original F→G cut. */
+    internal fun takeEpochRotationSession(entry: PersistencePhysicalEntry, prepared: PreparedEpochRotationSession): Boolean {
+        if (!rendezvous.lock.tryLock()) return false
+        return try {
+            if (!ledger.lock.tryLock()) return false
+            try {
+                val control = requireNotNull(entry.control)
+                val attempt = requireNotNull(entry.attempt)
+                val reason = sessionClaimFailure(entry, prepared) ?: finalCallerFailure(control)
+                if (reason != null) {
+                    control.fail(reason)
+                    return false
+                }
+                rendezvous.changed.signalAll()
+                if (!control.take()) return false
+                entry.jdbc.deliveredSessionLocked(prepared)
+                attempt.commitOwnedTransfer()
+                true
+            } finally {
+                ledger.lock.unlock()
+            }
+        } finally {
+            rendezvous.lock.unlock()
+        }
+    }
+
     /** Caller-side unused release is one nonblocking attempt. Failure leaves the exact Entry to the scanner. */
     internal fun releaseRefused(entry: PersistencePhysicalEntry): Boolean {
         if (!ledger.lock.tryLock()) return false
@@ -340,6 +367,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         if (ledger.current(entry.record) !== entry || entry.control?.state()?.phase != PersistenceOwnedCallerPhase.REFUSED) return false
         if (entry.dispatched || entry.opening != PersistencePhysicalOpeningPhase.UNCLAIMED) return false
         if (entry.raw.get() != null || entry.terminal != null) return false
+        entry.jdbc.unusedReleasedLocked()
         ledger.entries[entry.record.slotHint] = null
         return true
     }
@@ -366,6 +394,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         val control = requireNotNull(entry.control)
         if (!claimIdentityMatches(entry, prepared)) return PersistenceFactoryFailure.COORDINATION_FAILED
         return when {
+            managed?.isEpochRotation() == true -> PersistenceFactoryFailure.COORDINATION_FAILED
             isClosed() || ledger.sealed || entry.retiring || entry.retirementRequested.get() -> PersistenceFactoryFailure.CLOSED
             !entry.jdbc.canDeliverOpaqueLocked() -> PersistenceFactoryFailure.COORDINATION_FAILED
             managed?.permits(entry) == false -> PersistenceFactoryFailure.NOT_READY
@@ -399,6 +428,7 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
             return PersistenceFactoryFailure.COORDINATION_FAILED
         }
         return when {
+            managed?.isEpochRotation() == true -> PersistenceFactoryFailure.COORDINATION_FAILED
             isClosed() || ledger.sealed || entry.retiring || entry.retirementRequested.get() -> PersistenceFactoryFailure.CLOSED
             !entry.jdbc.canDeliverPoolLocked(prepared) -> PersistenceFactoryFailure.COORDINATION_FAILED
             managed?.permits(entry) == false -> PersistenceFactoryFailure.NOT_READY
@@ -421,6 +451,31 @@ internal class PersistencePhysicalFactoryBinding(capacity: Int, private val shut
         control: PersistenceOwnedCallerControl,
     ): Boolean = ledger.current(entry.record) === entry && rendezvous.current === attempt && control.matchesRecord(entry.record) &&
         attempt.ownedControl === control && attempt.budget === control.budget && prepared.matches(entry, this)
+
+    private fun sessionClaimFailure(entry: PersistencePhysicalEntry, prepared: PreparedEpochRotationSession): PersistenceFactoryFailure? {
+        val attempt = requireNotNull(entry.attempt)
+        val control = requireNotNull(entry.control)
+        if (ledger.current(entry.record) !== entry || rendezvous.current !== attempt || !control.matchesRecord(entry.record)) {
+            return PersistenceFactoryFailure.COORDINATION_FAILED
+        }
+        if (attempt.ownedControl !== control || attempt.budget !== control.budget || !prepared.matches(entry, this)) {
+            return PersistenceFactoryFailure.COORDINATION_FAILED
+        }
+        return when {
+            managed?.ownsEpochRotation(prepared.resource) != true -> PersistenceFactoryFailure.COORDINATION_FAILED
+            isClosed() || ledger.sealed || entry.retiring || entry.retirementRequested.get() -> PersistenceFactoryFailure.CLOSED
+            !entry.jdbc.canDeliverSessionLocked(prepared) -> PersistenceFactoryFailure.COORDINATION_FAILED
+            managed?.permits(entry) != true -> PersistenceFactoryFailure.NOT_READY
+            rendezvous.closedFailure() != null -> rendezvous.closedFailure()
+            attempt.failure != null -> attempt.failure
+            control.state() !== PersistenceOwnedCallerDisposition.ATTACHED -> PersistenceFactoryFailure.COORDINATION_FAILED
+            attempt.phase !== PersistenceFactoryAttemptPhase.OFFERED || !prepared.matchesOffer(attempt.result) -> PersistenceFactoryFailure.COORDINATION_FAILED
+            attempt.callerDetached || attempt.workerSettled || attempt.unresolved -> PersistenceFactoryFailure.BROKEN
+            !entry.dispatched || entry.opening !== PersistencePhysicalOpeningPhase.SETTLED || !entry.scopeEnded -> PersistenceFactoryFailure.NOT_READY
+            entry.raw.get() == null || entry.unknown -> PersistenceFactoryFailure.CREATE_FAILED
+            else -> entry.transports?.liveFailureLocked() ?: if (entry.transports == null) PersistenceFactoryFailure.CREATE_FAILED else null
+        }
+    }
 
     override fun toString(): String = "PersistencePhysicalFactoryBinding(redacted)"
 }

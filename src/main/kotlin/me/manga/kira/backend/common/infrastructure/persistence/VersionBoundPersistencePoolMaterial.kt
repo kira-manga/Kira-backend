@@ -16,6 +16,7 @@ internal class VersionBoundPersistencePoolMaterial private constructor(
         PersistenceJdbcParticipantRole.ORDINARY -> loginPolicy.durationMillis
         PersistenceJdbcParticipantRole.DELETION -> 500L
         PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> 250L
+        PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a pool.")
     }
 
     fun opening(policy: PersistenceDriverAttemptPolicy): PersistencePgDriverOpening.Configuration =
@@ -86,11 +87,13 @@ internal class VersionBoundPersistencePoolMaterial private constructor(
                 PersistenceJdbcParticipantRole.DELETION -> listOf(PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION)
 
                 PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> listOf(PersistenceDriverAttemptPolicy.TRACKED_CATALOG_CONJUNCTION)
+                PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a pool.")
             }
             val capacity = when (role) {
                 PersistenceJdbcParticipantRole.ORDINARY -> ordinaryCapacity
                 PersistenceJdbcParticipantRole.DELETION -> 4
                 PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> 1
+                PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a pool.")
             }
             val openings = policies.map { PersistencePgDriverOpening.Configuration.resolve(endpoint, it, PersistencePathStyle.POSIX) }
             return VersionBoundPersistencePoolMaterial(endpoint, role, capacity, identity, openings)

@@ -1,6 +1,8 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
@@ -18,17 +20,20 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
+    internal val epochRotationCustody = CatalogEpochRotationCustodyV1(this)
     private val admitted = AtomicBoolean()
     private val bindingClaimed = AtomicBoolean()
     private var phaseOwner: PersistencePhaseOwnership? = null
     private var executor: ComplaintCatalogSnapshotPhaseExecutor? = null
     private var genesisExecutor: ComplaintCatalogGenesisPersistencePhaseExecutor? = null
     private var leaseExecutor: ComplaintCoordinatorLeasePersistencePhaseExecutor? = null
+    private var rotationExecutor: CatalogEpochRotationV1? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
     internal val genesis: ComplaintCatalogGenesisPersistencePhaseExecutor get() = checkNotNull(genesisExecutor)
     internal val lease: ComplaintCoordinatorLeasePersistencePhaseExecutor get() = checkNotNull(leaseExecutor)
+    internal val epochRotation: CatalogEpochRotationV1 get() = checkNotNull(rotationExecutor)
 
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
@@ -39,6 +44,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
+        rotationExecutor = CatalogEpochRotationV1(this, jdbc)
     }
 
     internal fun requireResources() {

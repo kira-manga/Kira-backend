@@ -935,6 +935,7 @@ internal class PoolLifecycle private constructor(
                 PersistenceJdbcParticipantRole.ORDINARY -> ShutdownScope.ROOT
                 PersistenceJdbcParticipantRole.DELETION -> ShutdownScope.DELETION
                 PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> ShutdownScope.CATALOG_COORDINATOR
+                PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a pool lifecycle.")
             }
             return PoolLifecycle(pool, owner, scope, versionBound = binding)
         }
