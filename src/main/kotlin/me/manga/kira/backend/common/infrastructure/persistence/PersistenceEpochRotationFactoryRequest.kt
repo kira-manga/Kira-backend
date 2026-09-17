@@ -11,7 +11,6 @@ internal class PersistenceEpochRotationFactoryRequest(
     private val participant: PersistenceJdbcParticipant,
     private val resource: EpochRotationPersistence,
     private val attempt: CatalogEpochRotationAttemptV1,
-    private val loginMillis: Long,
 ) {
     private val claimed = AtomicBoolean()
     private val retained = AtomicReference<PersistencePhysicalEntry?>()
@@ -24,7 +23,7 @@ internal class PersistenceEpochRotationFactoryRequest(
         try {
             attempt.requireCore(resource)
             check(participant.ownsEpochRotation(resource))
-            val caller = PersistenceOwnedCallerControl.forEpochRotation(resource, attempt, loginMillis)
+            val caller = PersistenceOwnedCallerControl.forEpochRotation(resource, attempt)
             control = caller
             try {
                 outsideFailure(caller)?.let { caller.fail(it) }
@@ -56,7 +55,10 @@ internal class PersistenceEpochRotationFactoryRequest(
         }
     }
 
-    private fun awaitOutcome(entry: PersistencePhysicalEntry, control: PersistenceOwnedCallerControl): PersistenceFactoryResult<PersistenceEpochRotationSession> {
+    private fun awaitOutcome(
+        entry: PersistencePhysicalEntry,
+        control: PersistenceOwnedCallerControl,
+    ): PersistenceFactoryResult<PersistenceEpochRotationSession> {
         var prepared: PreparedEpochRotationSession? = null
         while (true) {
             outsideFailure(control)?.let { control.fail(it) }

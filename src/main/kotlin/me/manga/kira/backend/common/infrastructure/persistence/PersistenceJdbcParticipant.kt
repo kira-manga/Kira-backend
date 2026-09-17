@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -83,10 +84,12 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
 
     internal fun ownsEpochRotation(resource: EpochRotationPersistence): Boolean = isEpochRotation() && root.epochRotation === resource
 
-    internal fun prepareEpochRotationRequest(resource: EpochRotationPersistence, attempt: me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1):
-        PersistenceEpochRotationFactoryRequest {
+    internal fun prepareEpochRotationRequest(
+        resource: EpochRotationPersistence,
+        attempt: CatalogEpochRotationAttemptV1,
+    ): PersistenceEpochRotationFactoryRequest {
         check(ownsEpochRotation(resource))
-        return PersistenceEpochRotationFactoryRequest(binding, this, resource, attempt, loginPolicy.durationMillis)
+        return PersistenceEpochRotationFactoryRequest(binding, this, resource, attempt)
     }
 
     fun request(): PersistenceFactoryResult<PersistenceJdbcCandidate> = prepareRequest().execute()

@@ -75,6 +75,7 @@ internal class PersistencePhaseContext(
     private val deletionScope: ComplaintDataScope? = null,
     private val enrollmentOwnerReference: UUID? = null,
     private val rotationAttempt: CatalogEpochRotationAttemptV1? = null,
+    private val rotationWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -266,13 +267,13 @@ internal class PersistencePhaseContext(
     internal fun leaseAccepted(completion: PersistenceLeaseCompletion) {
         requireCaller()
         check(acquisition === completion && work == null)
-        // Immediately after the real CHECKOUT consent, before its old tail and all remaining JPA begin work.
-        work = rotationAttempt?.budget?.capped(WORK_MILLIS) ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
+        // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
+        work = rotationWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun epochRotationCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
-        return rotationAttempt?.budget?.systemCappedSnapshot(ceilingMillis)
+        return rotationWork?.systemCappedSnapshot(ceilingMillis)
     }
 
     internal fun requireAcceptedLease() = requireWork()
@@ -772,7 +773,7 @@ internal class PersistencePhaseContext(
 
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
-        val selected = work ?: rotationAttempt?.budget ?: return false
+        val selected = work ?: rotationWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -804,7 +805,9 @@ internal class PersistencePhaseContext(
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
-        return (rotationAttempt?.budget?.capped(EMERGENCY_MILLIS) ?: PersistenceTimeBudget.start(EMERGENCY_MILLIS, ownership.nanoClock)).also { emergency = it }
+        val selected = rotationAttempt?.budget?.capped(EMERGENCY_MILLIS) ?: PersistenceTimeBudget.start(EMERGENCY_MILLIS, ownership.nanoClock)
+        emergency = selected
+        return selected
     }
 
     private fun requireCaller() {
@@ -1181,7 +1184,9 @@ internal class PersistencePhaseContext(
         }
 
         override fun requireCommitted(operation: CatalogEpochRotationControlOperation) {
-            if (!caller.isCurrent() || retained !== operation || operation.attempt !== rotationAttempt || !operation.completedFor(this@PersistencePhaseContext)) {
+            if (!caller.isCurrent() || retained !== operation || operation.attempt !== rotationAttempt ||
+                !operation.completedFor(this@PersistencePhaseContext)
+            ) {
                 failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireSuccessfulResult() // Actual same-phase commit, holder release and completed permit refund.

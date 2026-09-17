@@ -24,8 +24,12 @@ internal class PersistenceJdbcDriverRoot(
     val ordinary = PersistenceJdbcParticipant(this, capacity, deletion = false)
     val deletion = PersistenceJdbcParticipant(this, 4, deletion = true)
     val catalogCoordinator = PersistenceJdbcParticipant(this, 1, PersistenceJdbcParticipantRole.CATALOG_COORDINATOR)
-    private val epochRotationParticipant = epochRotationMaterial?.let { PersistenceJdbcParticipant(this, it.descriptor.capacity, PersistenceJdbcParticipantRole.EPOCH_ROTATION) }
-    internal val epochRotation = epochRotationParticipant?.let { EpochRotationPersistence.create(this, it, checkNotNull(epochRotationMaterial)) }
+    private val epochRotationParticipant = epochRotationMaterial?.let {
+        PersistenceJdbcParticipant(this, it.descriptor.capacity, PersistenceJdbcParticipantRole.EPOCH_ROTATION)
+    }
+    internal val epochRotation = epochRotationParticipant?.let {
+        EpochRotationPersistence.create(this, it, checkNotNull(epochRotationMaterial))
+    }
     val timer = PersistenceDriverTimer(this)
     private val startClaimed = AtomicBoolean()
     private val deletionClaimed = AtomicBoolean()
@@ -240,13 +244,18 @@ internal class PersistenceJdbcDriverRoot(
         val retained = ordinary.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
         val retainedDeletion = deletion.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
         val retainedCatalog = catalogCoordinator.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
-        val retainedRotation = if (epochRotationParticipant == null) 0 else epochRotationParticipant.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
+        val retainedRotation = if (epochRotationParticipant == null) {
+            0
+        } else {
+            epochRotationParticipant.retainedCount() ?: return PersistenceLifecycleObservation.PENDING
+        }
         return when {
             failed.get() || ordinary.cleanupFailed() || deletion.cleanupFailed() || catalogCoordinator.cleanupFailed() ||
                 retained != 0 || retainedDeletion != 0 || retainedCatalog != 0 || retainedRotation != 0 || epochRotationParticipant?.cleanupFailed() == true ->
                 PersistenceLifecycleObservation.UNKNOWN
 
-            ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() || epochRotationParticipant?.usedWeakEvidence() == true ->
+            ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() ||
+                epochRotationParticipant?.usedWeakEvidence() == true ->
                 PersistenceLifecycleObservation.DRIVER_CONTRACT_ONLY_ENDED
 
             else -> PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED
@@ -255,10 +264,14 @@ internal class PersistenceJdbcDriverRoot(
 
     fun snapshot(): PersistenceLifecycleSnapshot = PersistenceLifecycleSnapshot(
         shutdown.get(), ordinary.isReady(), deletionClaimed.get(), deletion.isReady(), timer.canAcceptStrong(),
-        ordinary.retainedCount(), deletion.retainedCount(), ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() || epochRotationParticipant?.usedWeakEvidence() == true,
-        failed.get() || ordinary.cleanupFailed() || deletion.cleanupFailed() || catalogCoordinator.cleanupFailed() || epochRotationParticipant?.cleanupFailed() == true,
+        ordinary.retainedCount(), deletion.retainedCount(),
+        ordinary.usedWeakEvidence() || deletion.usedWeakEvidence() || catalogCoordinator.usedWeakEvidence() ||
+            epochRotationParticipant?.usedWeakEvidence() == true,
+        failed.get() || ordinary.cleanupFailed() || deletion.cleanupFailed() || catalogCoordinator.cleanupFailed() ||
+            epochRotationParticipant?.cleanupFailed() == true,
         catalogCoordinatorClaimed.get(), catalogCoordinator.isReady(), catalogCoordinator.retainedCount(),
-        epochRotationClaimed.get(), epochRotationParticipant?.isReady() == true, if (epochRotationParticipant == null) 0 else epochRotationParticipant.retainedCount(),
+        epochRotationClaimed.get(), epochRotationParticipant?.isReady() == true,
+        if (epochRotationParticipant == null) 0 else epochRotationParticipant.retainedCount(),
     )
 
     private fun scan() {

@@ -202,9 +202,10 @@ internal class PersistenceEpochRotationSession private constructor(
     private fun installLimits(lockMillis: Long) {
         val budget = callBudget(PersistenceJdbcGuardCallKind.BUSINESS)
         connection.prepareStatement(LIMITS).use { statement ->
-            statement.setString(1, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toString() + "ms")
-            statement.setString(2, budget.remainingMillis(lockMillis).toString() + "ms")
-            statement.setString(3, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toString() + "ms")
+            statement.setString(1, budget.remainingMillis(EpochRotationLimits.REQUEST_PHASE_MILLIS).toString() + "ms")
+            statement.setString(2, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toString() + "ms")
+            statement.setString(3, budget.remainingMillis(lockMillis).toString() + "ms")
+            statement.setString(4, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toString() + "ms")
             statement.executeQuery().use { row -> check(row.next() && !row.next()) }
         }
     }
@@ -216,8 +217,8 @@ internal class PersistenceEpochRotationSession private constructor(
     companion object {
         private val INLINE = Executor { it.run() }
         private const val EXCLUSIVE_EPOCH_FENCE = "SELECT pg_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))"
-        private const val LIMITS = "SELECT set_config('statement_timeout', ?, true), set_config('lock_timeout', ?, true), " +
-            "set_config('idle_in_transaction_session_timeout', ?, true)"
+        private const val LIMITS = "SELECT set_config('transaction_timeout', ?, true), set_config('statement_timeout', ?, true), " +
+            "set_config('lock_timeout', ?, true), set_config('idle_in_transaction_session_timeout', ?, true)"
 
         internal fun prepare(
             entry: PersistencePhysicalEntry,
@@ -229,7 +230,10 @@ internal class PersistenceEpochRotationSession private constructor(
 }
 
 /** Private JDBC reflection stays inside the owner. Native outputs use the existing child/invocation ledger before use. */
-private class EpochRotationConnectionCalls(private val entry: PersistencePhysicalEntry, private val context: PersistenceJdbcGuardContext) : InvocationHandler {
+private class EpochRotationConnectionCalls(
+    private val entry: PersistencePhysicalEntry,
+    private val context: PersistenceJdbcGuardContext,
+) : InvocationHandler {
     val proxy: Connection = Proxy.newProxyInstance(Connection::class.java.classLoader, arrayOf(Connection::class.java), this) as Connection
     private val graph = PhysicalJdbcDescendants(context, proxy)
 
