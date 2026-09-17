@@ -542,9 +542,7 @@ internal class PersistencePhaseContext(
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
-
             is PersistencePhaseException -> problem.code
-
             else -> PersistencePhaseFailureCode.WORK_FAILED
         }
         failure.compareAndSet(null, reason) // Preserve our refusal code; DB/cleanup facts still come from this exact owner.
