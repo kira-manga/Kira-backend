@@ -537,6 +537,7 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
         PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
         PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
+        PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
         -> completedRotationOrCutoff()
     }
 
@@ -548,6 +549,7 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
         PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
         PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
+        PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
         -> cutoffPublications.completed()
 
         else -> false
@@ -1227,7 +1229,7 @@ internal class PersistencePhaseContext(
         override fun completed(): Boolean = retained?.let { it.attempt === rotationAttempt && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
-    /** Closed control/page/immutable-evidence operations; no supplied SQL, callback or authority flag. */
+    /** Closed control/canonical-prepare/page/immutable-evidence operations; no supplied SQL, callback or authority flag. */
     private inner class CutoffPublicationsBoundary : PersistenceCutoffPublications {
         private var issued = false
         private var retained: CatalogCutoffPersistenceOperationV1? = null

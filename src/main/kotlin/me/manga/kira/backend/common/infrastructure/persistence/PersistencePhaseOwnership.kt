@@ -173,6 +173,10 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintCutoffVerify(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY, cutoffAttempt = attempt)
 
+    /** Canonical-only seal bookkeeping on the original coordinator, with the original resolver attempt/budget. */
+    internal fun enterComplaintSealPrepare(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_SEAL_PREPARE, cutoffAttempt = attempt)
+
     /** Actual locked renewal on the SAME lease path, bounded by this original seal attempt. */
     internal fun enterComplaintCutoffRenew(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW, cutoffAttempt = attempt)
@@ -329,6 +333,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
                 PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
                 PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
+                PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
                 -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
         }
@@ -386,6 +391,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
             PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
             PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
+            PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
         )
         private val DELETION_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
@@ -504,6 +510,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CUTOFF_CONTROL,
     COMPLAINT_CUTOFF_PAGE,
     COMPLAINT_CUTOFF_VERIFY,
+    COMPLAINT_SEAL_PREPARE,
     ;
 
     internal val source: Boolean

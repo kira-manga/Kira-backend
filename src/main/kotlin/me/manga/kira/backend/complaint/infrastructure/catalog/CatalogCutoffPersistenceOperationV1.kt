@@ -9,7 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseP
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import org.springframework.jdbc.core.JdbcTemplate
 
-/** Closed control-only, row-page-only OR publication-only operation. No backward locks or network under a holder. */
+/** Closed control-only (including canonical PREPARED), row-page-only OR publication-only operation. No backward locks or network under a holder. */
 internal class CatalogCutoffPersistenceOperationV1 private constructor(
     private val phase: PersistencePhaseContext,
     private val jdbc: JdbcTemplate,
@@ -19,7 +19,7 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
 ) {
     private var complete = false
     private var wasReleased = false
-    private var control: CatalogEpochRotationRowV1? = null
+    private var control: CatalogCutoffControlRowV1? = null
     private var publications: List<CatalogCutoffPublicationRowV1>? = null
 
     internal fun belongsTo(selected: PersistencePhaseContext, selectedPath: PersistencePhasePath): Boolean = phase === selected && path === selectedPath
@@ -32,9 +32,15 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
         wasReleased = true
     }
 
-    internal fun controlRow(): CatalogEpochRotationRowV1 {
+    /** Old final-control phase's genuine commit/release check, safe inside the later canonical control holder. */
+    internal fun requireSealedHandoff() {
+        phase.cutoffPublications.requireCommitted(this)
+        check(wasReleased && path === PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL)
+    }
+
+    internal fun controlRow(): CatalogCutoffControlRowV1 {
         requireReleased()
-        check(path === PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL)
+        check(path === PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL || path === PersistencePhasePath.COMPLAINT_SEAL_PREPARE)
         return checkNotNull(control)
     }
 
@@ -65,6 +71,8 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
 
             PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY -> verify()
 
+            PersistencePhasePath.COMPLAINT_SEAL_PREPARE -> prepare()
+
             else -> error("Invalid cutoff persistence phase.")
         }
         requireRetained()
@@ -72,17 +80,44 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
     }
 
     private fun control() {
-        val locked = jdbc.query(LOCK_EPOCH_ROTATION_CONTROL, { row, _ -> CatalogEpochRotationRowV1.copy(row) }).single()
+        val locked = jdbc.query(CatalogCutoffControlSqlV1.LOCK, { row, _ -> CatalogCutoffControlRowV1.copy(row) }).single()
         requireRetained()
         // Strict DB-time lease/full B is sampled only AFTER the actual row lock returns.
-        val sampled = jdbc.query(READ_EPOCH_ROTATION_CONTROL, { row, _ -> CatalogEpochRotationRowV1.copy(row) }).single()
+        val sampled = jdbc.query(CatalogCutoffControlSqlV1.READ, { row, _ -> CatalogCutoffControlRowV1.copy(row) }).single()
         requireRetained()
         check(locked.sameState(sampled))
         attempt.checkControl(sampled)
-        val final = jdbc.query(READ_EPOCH_ROTATION_CONTROL, { row, _ -> CatalogEpochRotationRowV1.copy(row) }).single()
+        val final = jdbc.query(CatalogCutoffControlSqlV1.READ, { row, _ -> CatalogCutoffControlRowV1.copy(row) }).single()
         requireRetained()
         check(sampled.sameState(final))
         attempt.checkControl(final)
+        control = final
+    }
+
+    private fun prepare() {
+        val locked = jdbc.query(CatalogCutoffControlSqlV1.PREPARE_LOCK, { row, _ -> CatalogCutoffControlRowV1.copy(row) }).single()
+        requireRetained()
+        val sampled = jdbc.query(CatalogCutoffControlSqlV1.READ, { row, _ -> CatalogCutoffControlRowV1.copy(row) }).single()
+        requireRetained()
+        check(locked.sameState(sampled))
+        attempt.checkControl(sampled) // Current full B/strict lease from a LATER clock sample; exact discovery predecessor/slot too.
+        val expected = if (sampled.seal == null) {
+            val changed = jdbc.query(
+                CatalogCutoffControlSqlV1.PREPARE,
+                { row, _ -> CatalogCutoffControlRowV1.copy(row) },
+                *attempt.preparationArguments(this, sampled),
+            ).single()
+            requireRetained()
+            attempt.checkPreparedMutation(this, sampled, changed)
+            changed
+        } else {
+            attempt.checkPrepared(this, sampled)
+            sampled // Genuine successor preserves every original byte/key/token/operation UUID and timestamp; no rewrite.
+        }
+        val final = jdbc.query(CatalogCutoffControlSqlV1.READ, { row, _ -> CatalogCutoffControlRowV1.copy(row) }).single()
+        requireRetained()
+        check(expected.sameState(final))
+        attempt.checkPrepared(this, final)
         control = final
     }
 
@@ -117,11 +152,12 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
         attempt.requireOperation(this)
     }
 
-    override fun toString(): String = "CatalogCutoffPersistenceOperationV1(closed,redacted,no-provider-or-seal-authority)"
+    override fun toString(): String = "CatalogCutoffPersistenceOperationV1(closed,redacted,NO-wire-or-provider-authority)"
 
     companion object {
         internal fun supports(path: PersistencePhasePath): Boolean = path === PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL ||
-            path === PersistencePhasePath.COMPLAINT_CUTOFF_PAGE || path === PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY
+            path === PersistencePhasePath.COMPLAINT_CUTOFF_PAGE || path === PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY ||
+            path === PersistencePhasePath.COMPLAINT_SEAL_PREPARE
 
         internal fun execute(
             jdbc: JdbcTemplate,
@@ -150,6 +186,9 @@ internal class CatalogCutoffPersistenceExecutorV1(private val coordinator: Catal
 
     internal fun page(attempt: CatalogCutoffAttemptV1): CatalogCutoffPersistenceOperationV1 = persist(attempt, PersistencePhasePath.COMPLAINT_CUTOFF_PAGE, null)
 
+    internal fun prepare(attempt: CatalogCutoffAttemptV1): CatalogCutoffPersistenceOperationV1 =
+        persist(attempt, PersistencePhasePath.COMPLAINT_SEAL_PREPARE, null)
+
     internal fun verify(attempt: CatalogCutoffAttemptV1, proof: CapturedCutoffVerificationV1) {
         persist(attempt, PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY, proof).verified()
     }
@@ -166,6 +205,7 @@ internal class CatalogCutoffPersistenceExecutorV1(private val coordinator: Catal
             PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL -> ownership.enterComplaintCutoffControl(attempt)
             PersistencePhasePath.COMPLAINT_CUTOFF_PAGE -> ownership.enterComplaintCutoffPage(attempt)
             PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY -> ownership.enterComplaintCutoffVerify(attempt)
+            PersistencePhasePath.COMPLAINT_SEAL_PREPARE -> ownership.enterComplaintSealPrepare(attempt)
             else -> error("Invalid cutoff persistence phase.")
         }
         var operation: CatalogCutoffPersistenceOperationV1? = null

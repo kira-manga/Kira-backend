@@ -1,7 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
 /** Fixed LIVE control projections. No seal/checkpoint body, staging row, counter or arbitrary SQL input is exposed. */
-private val EPOCH_ROTATION_COLUMNS = """
+internal val EPOCH_ROTATION_COLUMNS = """
     c.data_scope_id, c.test_only, c.implementation_schema, c.desired_generation, c.desired_configuration_hash,
     c.database_identity, c.restore_identity, c.event_writer_generation, c.accepted_catalog_generation,
     c.accepted_catalog_hash, c.trust_bundle_hash, c.catalog_writer_generation, c.pending_projection_token,
@@ -36,14 +36,14 @@ internal val READ_EPOCH_ROTATION_CONTROL = """
 """.trimIndent()
 
 /** Same exact retained INITIAL_LIVE/G1 binding as the genuine campaign; D includes the new actual D3 resource. */
-private val EPOCH_ROTATION_BINDING = """
+internal val EPOCH_ROTATION_BINDING = """
     NOT c.test_only AND c.implementation_schema = 1 AND c.desired_generation = ?
         AND c.desired_configuration_hash = ?::bytea AND c.database_identity = ?::uuid AND c.restore_identity = ?::uuid
         AND c.event_writer_generation = ?::uuid AND c.accepted_catalog_generation = 1 AND c.accepted_catalog_hash = ?::bytea
         AND c.trust_bundle_hash = ?::bytea AND c.catalog_writer_generation = ?::uuid AND c.pending_projection_token IS NULL
 """.trimIndent()
 
-private val EPOCH_ROTATION_CURRENT_LEASE = """
+internal val EPOCH_ROTATION_CURRENT_LEASE = """
     c.lease_owner = ?::uuid AND c.lease_token = ? AND c.lease_expires_at > sampled.sampled_at
         AND isfinite(c.lease_expires_at) AND isfinite(sampled.sampled_at)
 """.trimIndent()
