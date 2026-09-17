@@ -89,12 +89,16 @@ internal class CatalogEpochRotationV1 internal constructor(private val coordinat
     private fun requireEntryResources() {
         requireConnectionFree()
         coordinator.requireResources()
-        if (coordinator.epochRotation !== this || coordinator.epochRotationCustody !== custody || coordinator.ownership !== ownership ||
-            coordinator.manager !== manager || coordinator.dataSource !== source || jdbc.dataSource !== source
-        ) {
+        if (!hasOriginalRotationOwnership() || !hasOriginalJdbcResources()) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
+
+    private fun hasOriginalRotationOwnership(): Boolean =
+        coordinator.epochRotation === this && coordinator.epochRotationCustody === custody && coordinator.ownership === ownership
+
+    private fun hasOriginalJdbcResources(): Boolean =
+        coordinator.manager === manager && coordinator.dataSource === source && jdbc.dataSource === source
 
     override fun toString(): String = "CatalogEpochRotationV1(dormant-fixed-LIVE,no-seal-checkpoint-or-deployment-authority)"
 

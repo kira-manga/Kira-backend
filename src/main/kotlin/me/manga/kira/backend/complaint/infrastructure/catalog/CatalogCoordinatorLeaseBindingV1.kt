@@ -77,9 +77,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     internal fun requireUnchangedConfiguration() {
         process.requireUnchangedConfiguration()
-        if (!hasOriginalCoordinatorOwnership() || coordinator.manager !== manager || coordinator.dataSource !== source ||
-            process.consumers.journalConfiguration !== journal
-        ) {
+        if (!hasOriginalCoordinatorResources() || process.consumers.journalConfiguration !== journal) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         coordinator.requireResources()
@@ -111,6 +109,9 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     }
 
     private fun hasOriginalCoordinatorOwnership(): Boolean = process.pools.catalogCoordinator === coordinator && coordinator.ownership === ownership
+
+    private fun hasOriginalCoordinatorResources(): Boolean =
+        hasOriginalCoordinatorOwnership() && coordinator.manager === manager && coordinator.dataSource === source
 
     override fun toString(): String = "CatalogCoordinatorLeaseBindingV1(retained-initial-LIVE-G1,no-current-authority)"
 
