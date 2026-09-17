@@ -35,8 +35,9 @@ class OwnerDeleteAllApplyOutcomeIT {
 
     @Test
     fun `known commit returns the original producer result and later diagnostics cannot create pending`() = withFixture { f ->
-        val work = f.verification.prepared
-        val captured = f.store.capture(work, f.proof)
+        val (work, proof) = f.restart() // Genuine strict resume, alongside the fresh VERIFY path in the lost-COMMIT case.
+        assertEquals(f.proof.verifiedAt, proof.verifiedAt)
+        val captured = f.store.capture(work, proof)
         val phase = f.auth.ownership.enterComplaintOwnerDeleteAllApply()
         var operation: ComplaintOwnerDeleteAllApplyOperation? = null
         try {
@@ -62,7 +63,7 @@ class OwnerDeleteAllApplyOutcomeIT {
         f.assertCompleted(committed, f.targets, 1, 0)
         val stable = f.auth.state()
         f.statements.clear()
-        val named = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.phases.applyForContinuation(work, f.proof))
+        val named = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.phases.applyForContinuation(work, proof))
         assertEquals(committed.completedAt, named.completedAt)
         assertEquals(committed.expiresAt, named.expiresAt)
         assertEquals(stable, f.auth.state())
