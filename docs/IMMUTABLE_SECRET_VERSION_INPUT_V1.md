@@ -148,7 +148,7 @@ KMS decrypt permission), retention, credential expiry and rollout remain separat
 
 ## Cold installation-JWT composition
 
-`VersionBoundInstallationJwtConfiguration.fromAcquired` takes the explicit active
+The compatibility five-argument `VersionBoundInstallationJwtConfiguration.fromAcquired` takes the explicit active
 installation key ID, user issuer/audience and both complete supplied retained-key
 lists: 1–8 `INSTALLATION_JWT` and 1–8 `USER_ADMIN_JWT` acquisitions, all HMAC_SHA256.
 It derives the existing installation ring, forbidden user family and immutable
@@ -164,6 +164,46 @@ This is a cold composition, not proof that the supplied user family matches the
 deployed `JwtService`, that no retained key was omitted, or that acquisition,
 rotation and provider permissions are genuine. It performs no lookup and creates
 neither complete desired configuration D nor runtime/installation authority.
+
+## Actual single-key user-JWT owner
+
+`JwtKeyProvider.fromAcquired(secret, properties)` explicitly constructs the same
+key-owner class used by the existing `JwtService` and `SecurityConfig.jwtDecoder`.
+The caller retains one `USER_ADMIN_JWT / HMAC_SHA256` acquisition first. Its
+logical ID must equal the existing fixed wire kid `kira-hs256-1`; there is no
+new active-key selector, verifier ring or rotation/migration contract. This new
+bound profile accepts 32–128 bytes, matching the existing installation-separation
+types. It refuses a simultaneous `properties.jwtSecret` and copies the acquisition
+directly into its actual HS256 key; no Base64/text conversion or relookup occurs.
+
+The owner retains the immutable version binding and frozen issuer, audience, TTL
+and skew scalars, not the raw property secret or a replaceable caller key list.
+It explicitly requires nonblank issuer/audience on this non-Spring construction
+path; the properties constructor already validates TTL, skew and distinct claims.
+The actual `JwtService` and `SecurityConfig.jwtDecoder` constructors check those
+same four effective scalars and refuse any parallel property secret before
+constructing their encoder/decoder. The existing signing headers, claims,
+timestamp/issuer/audience/type validators and
+DB-backed authorization remain unchanged. Unrelated security properties are not
+part of this JWT input check. The explicitly annotated public Spring constructor
+still exclusively selects the original environment/Base64 path, with its existing
+at-least-32-byte rule and development defaults; the bound factory is not a bean.
+
+The three-argument installation `fromAcquired(activeId, installationSecrets,
+userKeyProvider)` overload accepts only this bound user owner. It retains that
+owner and derives the complete **singleton** forbidden user family from the
+actual key used by its signer/verifier, fixed kid and captured issuer/audience.
+No second user list, user material or user-family labels can be supplied. Exact
+version aliases, logical-ID collisions and effective-HMAC aliases (including
+zero padding and long-key hashing) still fail the existing ring checks across
+every retained installation verifier. Descriptors come from the same acquisitions
+and owner. The older five-argument supplied-family seam remains non-deployed
+compatibility input, not an alternative actual-user-owner proof.
+
+Both paths remain cold composition. These checks do not select deployed beans,
+prove provider permissions/retention/entropy, compute D or activate a route. An
+actual deployment must retain and install these same guarded owners rather than
+claiming that constructing a separate value switched the running application.
 
 ## Cold version-bound persistence password and public-trust custody
 

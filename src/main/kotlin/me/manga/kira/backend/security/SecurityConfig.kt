@@ -57,6 +57,7 @@ class SecurityConfig(private val environment: Environment) {
     /** HS256 decoder + explicit signature/exp/nbf/issuer/audience validation with 60s skew (PLAN §6). */
     @Bean
     fun jwtDecoder(keyProvider: JwtKeyProvider, properties: KiraSecurityProperties): JwtDecoder {
+        keyProvider.requireMatchingConfiguration(properties)
         val decoder =
             NimbusJwtDecoder
                 .withSecretKey(keyProvider.secretKey)

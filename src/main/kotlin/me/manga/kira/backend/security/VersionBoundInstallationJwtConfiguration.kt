@@ -1,24 +1,47 @@
 package me.manga.kira.backend.security
 
 /**
- * Cold composition from supplied acquisitions only. The caller supplies every retained user/admin
- * and installation key; this cannot prove that they match the deployed user JwtService or that a
- * resolver/provider told the truth. No lookup, bean, D, rollout/retention proof or activation authority.
+ * Cold composition from acquisitions and either the actual acquired user key owner or a compatibility
+ * supplied-family list. Neither path proves deployed bean selection or resolver/provider truth.
+ * No lookup, bean, D, rollout/retention proof or activation authority.
  */
 internal class VersionBoundInstallationJwtConfiguration private constructor(
     val installationKeyRing: InstallationJwtKeyRing,
     val userAdminFamily: InstallationJwtForbiddenFamily,
     descriptors: List<VersionedSecretBinding>,
+    val boundUserKeyProvider: JwtKeyProvider? = null,
 ) {
     private val storedDescriptors = descriptors.toList()
 
     /** USER_ADMIN_JWT then INSTALLATION_JWT, each sorted by logical ID. Elements are immutable. */
     fun descriptors(): List<VersionedSecretBinding> = storedDescriptors.toList()
 
-    override fun toString(): String = "VersionBoundInstallationJwtConfiguration(redacted,no-deployed-user-binding,no-authority)"
+    override fun toString(): String = if (boundUserKeyProvider == null) {
+        "VersionBoundInstallationJwtConfiguration(redacted,no-deployed-user-binding,no-authority)"
+    } else {
+        "VersionBoundInstallationJwtConfiguration(redacted,acquired-user-owner,no-authority)"
+    }
 
     companion object {
-        /** No parallel material/descriptor lists, inferred family, active-key default or hidden retained keys. */
+        /** Actual single-key user owner only: no second user list, settings, material or logical/wire ID. */
+        fun fromAcquired(
+            activeKeyId: String,
+            installationSecrets: List<AcquiredVersionedSecret>,
+            userKeyProvider: JwtKeyProvider,
+        ): VersionBoundInstallationJwtConfiguration {
+            val userBinding = userKeyProvider.immutableVersionBinding()
+            val installations = snapshot(installationSecrets, SecretMaterialFamily.INSTALLATION_JWT)
+            val descriptors = listOf(userBinding) + installations.map { it.descriptor }
+            require(descriptors.map { it.version }.distinct().size == descriptors.size) { INVALID_CONFIGURATION }
+            val forbidden = userKeyProvider.installationUserFamily()
+            val ring = InstallationJwtKeyRing(activeKeyId, installations.map(::keyMaterial), forbidden)
+            return VersionBoundInstallationJwtConfiguration(ring, forbidden, descriptors, userKeyProvider)
+        }
+
+        /**
+         * Compatibility declaration seam only; this user list is NOT bound to an actual user signer/verifier.
+         * No parallel material/descriptor lists, inferred family, active-key default or hidden retained keys.
+         */
         fun fromAcquired(
             activeKeyId: String,
             installationSecrets: List<AcquiredVersionedSecret>,
