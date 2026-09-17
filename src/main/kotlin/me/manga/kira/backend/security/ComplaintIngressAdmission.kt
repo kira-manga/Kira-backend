@@ -8,8 +8,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContex
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
-import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import java.security.GeneralSecurityException
@@ -235,10 +235,18 @@ internal class ComplaintIngressAdmission(
     /** The concrete coordinator has just verified custody of a genuinely released preflight. */
     internal fun admitOwnerDeleteAll(context: ComplaintIngressContext, tuple: InstallationDeletionPreflightTuple): ComplaintAdmittedOwnerDeleteAll {
         requireConnectionFree()
-        if (clock !== SystemComplaintAdmissionNanoClock || tuple.installation.scope.testOnly) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        if (clock !== SystemComplaintAdmissionNanoClock ||
+            tuple.installation.scope.testOnly
+        ) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
         return locked {
             val state = state(context)
-            if (state.operation !== SemanticOperation.OWNER_DELETE_ALL || state.admission != null) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (state.operation !== SemanticOperation.OWNER_DELETE_ALL ||
+                state.admission != null
+            ) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
             val limits = deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
             val handoff = AdmittedDeleteAll(this, context, tuple, limits)
             val now = time()
@@ -608,7 +616,11 @@ internal class ComplaintIngressAdmission(
             val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             selected.owner.locked {
                 selected.owner.requireDeleteAllState(selected)
-                if (selected.stage !== DeleteAllStage.MINTED || selected.phaseIdentity != null) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                if (selected.stage !== DeleteAllStage.MINTED ||
+                    selected.phaseIdentity != null
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
                 selected.phaseIdentity = phaseIdentity
                 selected.stage = DeleteAllStage.BOUND
             }

@@ -56,8 +56,10 @@ internal class ComplaintAdmissionWindowStore(
         }
         if (retryNanos > 0) {
             // Idle means last observed ingress attempt, including an exhausted existing bucket.
-            if (idleNanos > windowNanos) selected.forEach { pending ->
-                buckets[pending.charge.key]?.let { touch(pending.charge.key, it, pending.expiresAt) }
+            if (idleNanos > windowNanos) {
+                selected.forEach { pending ->
+                    buckets[pending.charge.key]?.let { touch(pending.charge.key, it, pending.expiresAt) }
+                }
             }
             val seconds = (retryNanos + ComplaintAdmissionPolicy.SECOND_NANOS - 1) / ComplaintAdmissionPolicy.SECOND_NANOS
             throw ComplaintAdmissionRejected(ComplaintAdmissionFailure.RATE_LIMITED, seconds)

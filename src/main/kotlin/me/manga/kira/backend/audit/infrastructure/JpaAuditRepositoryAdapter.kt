@@ -7,8 +7,8 @@ import me.manga.kira.backend.audit.domain.ComplaintAuditActorKind
 import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
-import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
+import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort

@@ -40,24 +40,38 @@ internal fun assertOwnerDeleteAllCapacityEnvelopes(f: OwnerDeleteAllAuthorizatio
             measure(sql, RECEIPT, "installation_id = '${candidate.installation.id}'", 0)
             sql.update(
                 "UPDATE installation_deletion_receipts SET state = 'AUTHORIZED_DELETE', publication_ref = ?, authorized_at = clock_timestamp() WHERE installation_id = ?",
-                event, candidate.installation.id,
+                event,
+                candidate.installation.id,
             )
             measure(sql, RECEIPT, "installation_id = '${candidate.installation.id}'", 0)
             sql.update(
                 "UPDATE installation_deletion_receipts SET state = 'COMPLETED', outcome = 'APPLIED', response_status = 204, external_event_id = publication_ref, " +
                     "external_epoch = ?, external_object_version = ?, external_ciphertext_hash = ?, completed_at = now(), expires_at = now() + interval '192 hours' " +
-                    "WHERE installation_id = ?", Long.MAX_VALUE, version, digest, candidate.installation.id,
+                    "WHERE installation_id = ?",
+                Long.MAX_VALUE,
+                version,
+                digest,
+                candidate.installation.id,
             )
             measure(sql, RECEIPT, "installation_id = '${candidate.installation.id}'", 1024)
             sql.update(
                 "UPDATE complaint_journal_publications SET journal_epoch = ?, target_count = 100, routing_key_id = repeat('r', 128), object_key = ?, " +
-                    "event_bytes = ?, semantic_hash = ? WHERE event_id = ?", Long.MAX_VALUE, key, document, digest, event,
+                    "event_bytes = ?, semantic_hash = ? WHERE event_id = ?",
+                Long.MAX_VALUE,
+                key,
+                document,
+                digest,
+                event,
             )
             measure(sql, PUBLICATION, "event_id = '$event'", 65536)
             sql.update(
                 "UPDATE complaint_journal_publications SET state = 'VERIFIED', object_version = ?, ciphertext_hash = ?, object_created_at = now(), " +
                     "retain_until = now() + interval '70 days', verified_at = now(), verification_bytes = ?, verification_hash = ? WHERE event_id = ?",
-                version, digest, document, digest, event,
+                version,
+                digest,
+                document,
+                digest,
+                event,
             )
             measure(sql, PUBLICATION, "event_id = '$event'", 2 * 65536)
             sql.update("UPDATE complaint_journal_publications SET state = 'APPLIED', applied_at = now() WHERE event_id = ?", event)
@@ -66,7 +80,8 @@ internal fun assertOwnerDeleteAllCapacityEnvelopes(f: OwnerDeleteAllAuthorizatio
             measure(sql, RESERVATION, "event_id = '$event'", 22 * 8)
             sql.update(
                 "UPDATE complaint_recovery_capacity_reservations SET state = 'CONVERTED', converted_amounts = reserved_amounts, " +
-                    "converted_at = now() WHERE event_id = ?", event,
+                    "converted_at = now() WHERE event_id = ?",
+                event,
             )
             measure(sql, RESERVATION, "event_id = '$event'", 2 * 22 * 8)
             sql.update("UPDATE complaint_recovery_capacity_reservations SET publication_ref = NULL WHERE event_id = ?", event)
@@ -75,19 +90,30 @@ internal fun assertOwnerDeleteAllCapacityEnvelopes(f: OwnerDeleteAllAuthorizatio
                 "INSERT INTO complaint_deletion_journal_applied (object_key, object_version, event_id, ciphertext_hash, writer_generation, journal_epoch, " +
                     "event_kind, target_count, data_scope_id, test_only, applied_at) SELECT object_key, object_version, event_id, ciphertext_hash, " +
                     "writer_generation, journal_epoch, event_kind, target_count, data_scope_id, test_only, applied_at " +
-                    "FROM complaint_journal_publications WHERE event_id = ?", event,
+                    "FROM complaint_journal_publications WHERE event_id = ?",
+                event,
             )
             measure(sql, APPLIED, "event_id = '$event'", 2 * 1024)
             sql.update(
                 "INSERT INTO complaint_deletion_journal_retirements (object_key, object_version, data_scope_id, test_only, event_kind, state, " +
                     "authorization_catalog_generation, authorization_catalog_hash, restore_floor, authorization_bytes, authorization_hash, authorized_at) " +
                     "SELECT object_key, object_version, data_scope_id, test_only, event_kind, 'AUTHORIZED', ?, ?, now(), ?, ?, now() " +
-                    "FROM complaint_deletion_journal_applied WHERE event_id = ?", Long.MAX_VALUE - 1, digest, document, digest, event,
+                    "FROM complaint_deletion_journal_applied WHERE event_id = ?",
+                Long.MAX_VALUE - 1,
+                digest,
+                document,
+                digest,
+                event,
             )
             measure(sql, RETIREMENT, "object_key = '$key'", 65536)
             sql.update(
                 "UPDATE complaint_deletion_journal_retirements SET state = 'COMPLETED', completion_catalog_generation = ?, completion_catalog_hash = ?, " +
-                    "completion_bytes = ?, completion_hash = ?, completed_at = now() WHERE object_key = ?", Long.MAX_VALUE, digest, document, digest, key,
+                    "completion_bytes = ?, completion_hash = ?, completed_at = now() WHERE object_key = ?",
+                Long.MAX_VALUE,
+                digest,
+                document,
+                digest,
+                key,
             )
             measure(sql, RETIREMENT, "object_key = '$key'", 2 * 65536)
         } finally {
@@ -108,7 +134,8 @@ private fun assertCatalogue(sql: JdbcTemplate, profile: DeleteAllEnvelopeProfile
     val columns = sql.query(
         "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute " +
             "WHERE attrelid = ?::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum",
-        { row, _ -> row.getString(1) + ":" + row.getString(2) }, profile.table,
+        { row, _ -> row.getString(1) + ":" + row.getString(2) },
+        profile.table,
     )
     assertEquals(profile.columns.split(','), columns)
     val indexes = sql.query(
@@ -122,7 +149,8 @@ private fun assertCatalogue(sql: JdbcTemplate, profile: DeleteAllEnvelopeProfile
             assertTrue(row.getBoolean(5), "No unmeasured INCLUDE payload may hide in an index")
             assertEquals("btree", row.getString(6))
             row.getString(1) to row.getString(2)
-        }, profile.table,
+        },
+        profile.table,
     ).toMap()
     assertEquals(profile.indexes, indexes)
 }
@@ -138,9 +166,12 @@ private fun measure(sql: JdbcTemplate, profile: DeleteAllEnvelopeProfile, predic
     val keys = profile.indexes.values.map { columns -> columns.split(',').joinToString(",", transform = ::inline) }
     // Concatenation detoasts the full fields: compressed repeated bytes and TOAST pointers are not a logical envelope.
     val projections = (listOf(row) + keys).joinToString(",") { "pg_column_size(ROW($it))" }
-    val sizes = checkNotNull(sql.queryForObject(
-        "SELECT $projections FROM ${profile.table} WHERE $predicate", { result, _ -> (1..keys.size + 1).map { result.getLong(it) } },
-    ))
+    val sizes = checkNotNull(
+        sql.queryForObject(
+            "SELECT $projections FROM ${profile.table} WHERE $predicate",
+            { result, _ -> (1..keys.size + 1).map { result.getLong(it) } },
+        ),
+    )
     assertTrue(sizes.first() >= minimumInlineBytes)
     assertTrue(sizes.drop(1).all { it in 1L..4096L })
     assertTrue(profile.charge > sizes.sum() * 3 / 2, "Every full heap/index tuple needs a conservative logical margin: ${profile.table}")
@@ -149,7 +180,8 @@ private fun measure(sql: JdbcTemplate, profile: DeleteAllEnvelopeProfile, predic
 private class DeleteAllEnvelopeProfile(val table: String, val charge: Long, val columns: String, val indexes: Map<String, String>)
 
 private val RECEIPT = DeleteAllEnvelopeProfile(
-    "installation_deletion_receipts", OwnerDeleteAllCapacityCharges.RECEIPT[ComplaintCapacityCounter.STORAGE_BYTES],
+    "installation_deletion_receipts",
+    OwnerDeleteAllCapacityCharges.RECEIPT[ComplaintCapacityCounter.STORAGE_BYTES],
     "installation_id:uuid,deletion_key:uuid,submitted_credential_version:bigint,fingerprint:bytea,data_scope_id:uuid,test_only:boolean," +
         "state:character varying(24),outcome:character varying(8),response_status:integer,publication_ref:character varying(43)," +
         "external_event_id:character varying(43),external_epoch:bigint,external_object_version:text,external_ciphertext_hash:bytea," +
@@ -164,7 +196,8 @@ private val RECEIPT = DeleteAllEnvelopeProfile(
 )
 
 private val PUBLICATION = DeleteAllEnvelopeProfile(
-    "complaint_journal_publications", OwnerDeleteAllCapacityCharges.PUBLICATION[ComplaintCapacityCounter.STORAGE_BYTES],
+    "complaint_journal_publications",
+    OwnerDeleteAllCapacityCharges.PUBLICATION[ComplaintCapacityCounter.STORAGE_BYTES],
     "event_id:character varying(43),data_scope_id:uuid,test_only:boolean,writer_generation:uuid,journal_epoch:bigint,event_kind:character varying(32)," +
         "target_count:integer,routing_key_id:character varying(128),object_key:text,canonicalizer:character varying(16),event_bytes:bytea,semantic_hash:bytea," +
         "state:character varying(16),created_at:timestamp with time zone,object_version:text,ciphertext_hash:bytea,object_created_at:timestamp with time zone," +
@@ -179,7 +212,8 @@ private val PUBLICATION = DeleteAllEnvelopeProfile(
 )
 
 private val RESERVATION = DeleteAllEnvelopeProfile(
-    "complaint_recovery_capacity_reservations", OwnerDeleteAllCapacityCharges.RESERVATION[ComplaintCapacityCounter.STORAGE_BYTES],
+    "complaint_recovery_capacity_reservations",
+    OwnerDeleteAllCapacityCharges.RESERVATION[ComplaintCapacityCounter.STORAGE_BYTES],
     "event_id:character varying(43),data_scope_id:uuid,test_only:boolean,publication_ref:character varying(43),state:character varying(16)," +
         "accounting_version:smallint,reserved_amounts:bigint[],converted_amounts:bigint[],created_at:timestamp with time zone,converted_at:timestamp with time zone",
     linkedMapOf(
@@ -191,7 +225,8 @@ private val RESERVATION = DeleteAllEnvelopeProfile(
 )
 
 private val APPLIED = DeleteAllEnvelopeProfile(
-    "complaint_deletion_journal_applied", OwnerDeleteAllCapacityCharges.APPLIED[ComplaintCapacityCounter.STORAGE_BYTES],
+    "complaint_deletion_journal_applied",
+    OwnerDeleteAllCapacityCharges.APPLIED[ComplaintCapacityCounter.STORAGE_BYTES],
     "object_key:text,object_version:text,event_id:character varying(43),ciphertext_hash:bytea,writer_generation:uuid,journal_epoch:bigint," +
         "event_kind:character varying(32),target_count:integer,data_scope_id:uuid,test_only:boolean,applied_at:timestamp with time zone",
     linkedMapOf(
@@ -203,7 +238,8 @@ private val APPLIED = DeleteAllEnvelopeProfile(
 )
 
 private val RETIREMENT = DeleteAllEnvelopeProfile(
-    "complaint_deletion_journal_retirements", OwnerDeleteAllCapacityCharges.RETIREMENT[ComplaintCapacityCounter.STORAGE_BYTES],
+    "complaint_deletion_journal_retirements",
+    OwnerDeleteAllCapacityCharges.RETIREMENT[ComplaintCapacityCounter.STORAGE_BYTES],
     "object_key:text,object_version:text,data_scope_id:uuid,test_only:boolean,event_kind:character varying(32),state:character varying(16)," +
         "authorization_catalog_generation:bigint,authorization_catalog_hash:bytea,restore_floor:timestamp with time zone,authorization_bytes:bytea," +
         "authorization_hash:bytea,authorized_at:timestamp with time zone,completion_catalog_generation:bigint,completion_catalog_hash:bytea," +

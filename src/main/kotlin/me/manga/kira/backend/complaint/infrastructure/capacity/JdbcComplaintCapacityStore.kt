@@ -4,12 +4,12 @@ import jakarta.persistence.EntityManager
 import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
 import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
-import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
+import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.infrastructure.ComplaintAuditInsertion
 import me.manga.kira.backend.audit.infrastructure.ComplaintAuditSelectedHolder
-import me.manga.kira.backend.audit.infrastructure.ComplaintInstallationEnrollmentAuditInsertion
 import me.manga.kira.backend.audit.infrastructure.ComplaintInstallationDeleteAuthorizationAuditInsertion
+import me.manga.kira.backend.audit.infrastructure.ComplaintInstallationEnrollmentAuditInsertion
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityBalance
@@ -33,8 +33,8 @@ import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
 import me.manga.kira.backend.security.StepUpGrantIssuance
 import org.springframework.jdbc.core.JdbcTemplate
-import java.sql.Date
 import java.sql.Connection
+import java.sql.Date
 import java.sql.ResultSet
 import java.time.Duration
 import java.time.LocalDate
@@ -210,7 +210,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 operation.requireCapacityWrite(this, store.jdbc)
                 if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter] &&
                     before.recoveryReserved[counter] == after.recoveryReserved[counter]
-                ) continue
+                ) {
+                    continue
+                }
                 check(
                     store.jdbc.update(
                         RECOVERY_COUNTER,

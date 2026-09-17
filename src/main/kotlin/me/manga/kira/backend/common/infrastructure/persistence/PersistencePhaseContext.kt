@@ -8,8 +8,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.ComplaintRecoverySettlementResult
 import me.manga.kira.backend.complaint.domain.ComplaintTestReserveSpendResult
-import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentResult
 import me.manga.kira.backend.complaint.domain.InstallationSessionPreflight
 import me.manga.kira.backend.complaint.domain.InstallationSessionResult
@@ -1213,7 +1213,11 @@ internal class PersistencePhaseContext(
 
         override fun checkWrite(operation: ComplaintOwnerDeleteAllOperation, jdbc: JdbcTemplate) {
             requireRetained(operation, jdbc)
-            if (!claimed || !boundsChecked || path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!claimed || !boundsChecked ||
+                path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
             ComplaintIngressAdmission.checkOwnerDeleteAllWrite(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity)
         }
 

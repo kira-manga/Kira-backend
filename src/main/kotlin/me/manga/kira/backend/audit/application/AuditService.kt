@@ -9,8 +9,8 @@ import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
 import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
-import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
+import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
 import me.manga.kira.backend.audit.domain.scalarDetails
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope

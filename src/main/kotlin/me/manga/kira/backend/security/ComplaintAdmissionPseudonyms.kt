@@ -61,8 +61,13 @@ internal object ComplaintAdmissionPseudonyms {
     fun ownerDeleteAllMember(keys: List<ComplaintAdmissionKey>, tuple: InstallationDeletionPreflightTuple): List<ComplaintAdmissionBucketKey> = derive(
         keys,
         listOf(
-            domain(), ascii("MEMBER"), ascii("INSTALLATION"), uuid(tuple.installation.id), uuid(tuple.installation.scope.id),
-            ascii("OWNER_DELETE_ALL"), uuid(tuple.operationKey),
+            domain(),
+            ascii("MEMBER"),
+            ascii("INSTALLATION"),
+            uuid(tuple.installation.id),
+            uuid(tuple.installation.scope.id),
+            ascii("OWNER_DELETE_ALL"),
+            uuid(tuple.operationKey),
             ByteBuffer.allocate(40).putLong(tuple.submittedCredentialVersion).put(tuple.fingerprint.bytes()).array(),
         ),
     )

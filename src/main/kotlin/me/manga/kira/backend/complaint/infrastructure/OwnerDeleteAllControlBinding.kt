@@ -59,9 +59,14 @@ internal class OwnerDeleteAllControlBinding(
         val seal = requiredLong(row, "seal_epoch")
         check(epoch > seal && seal >= requiredLong(row, "checkpoint_cutoff_epoch"))
         return Observation(
-            epoch, seal, requiredBoolean(row, "maintenance_closed"), requiredBoolean(row, "scan_requested"),
-            row.getTimestamp("checkpoint_started_at").toInstant(), row.getTimestamp("checkpoint_completed_at").toInstant(),
-            row.getTimestamp("seal_verified_at").toInstant(), row.getTimestamp("seal_retain_until").toInstant(),
+            epoch,
+            seal,
+            requiredBoolean(row, "maintenance_closed"),
+            requiredBoolean(row, "scan_requested"),
+            row.getTimestamp("checkpoint_started_at").toInstant(),
+            row.getTimestamp("checkpoint_completed_at").toInstant(),
+            row.getTimestamp("seal_verified_at").toInstant(),
+            row.getTimestamp("seal_retain_until").toInstant(),
         )
     }
 

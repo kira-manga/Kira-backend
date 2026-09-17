@@ -105,12 +105,25 @@ internal fun withOwnerDeleteAllAuthorization(
  */
 internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintInstallationEnrollmentFixture, val pool: GuardedDataSource) : AutoCloseable {
     val observer get() = base.observer
-    val policy = ComplaintCapacityPolicyV1.of(ComplaintCapacityVector.of(LongArray(22) { 1_000_000_000 }), ComplaintCapacityVector.of(LongArray(22) { 900_000_000 }), 100)
+    val policy = ComplaintCapacityPolicyV1.of(
+        ComplaintCapacityVector.of(
+            LongArray(22) {
+                1_000_000_000
+            },
+        ),
+        ComplaintCapacityVector.of(LongArray(22) { 900_000_000 }),
+        100,
+    )
     val routing = ownerDeleteAllTestRouting()
     private val writer = routing.journalConfiguration.declaration().writer
     val desired = ComplaintInstallationDesiredSettings.Configured(
-        ComplaintInstallationMode.LIVE, 1, 7, ComplaintDataScope.LIVE,
-        UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), ByteArray(32) { 5 },
+        ComplaintInstallationMode.LIVE,
+        1,
+        7,
+        ComplaintDataScope.LIVE,
+        UUID.fromString(writer.databaseIdentity),
+        UUID.fromString(writer.restoreIdentity),
+        ByteArray(32) { 5 },
     )
     private val catalogHash = ByteArray(32) { 6 }
     private val trustHash = ByteArray(32) { 7 }
@@ -119,10 +132,15 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         CheckedOfflineCatalogInventoryChain(
             CatalogTailEvidence(7, HexFormat.of().formatHex(catalogHash), HexFormat.of().formatHex(catalogHash), catalogWriter.toString()),
             CatalogChainTrustEvidence(HexFormat.of().formatHex(trustHash), HexFormat.of().formatHex(trustHash), 1, HexFormat.of().formatHex(catalogHash), 1),
-            CatalogRotationState.Stable(OfflineRequiredSignerV1("synthetic-catalog-signer", "Ed25519")), 100,
+            CatalogRotationState.Stable(OfflineRequiredSignerV1("synthetic-catalog-signer", "Ed25519")),
+            100,
             CatalogRestoreInventoryV1(emptyList(), emptyList()),
         ),
-        "synthetic-catalog-version", 2_000_000_000, 1_900_000_000, 100, 100,
+        "synthetic-catalog-version",
+        2_000_000_000,
+        1_900_000_000,
+        100,
+        100,
     )
     val admission = DeletionPersistenceAdmission()
     val manager = GuardedJdbcTransactionManager(pool)
@@ -142,7 +160,8 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
     val audit = AuditService(counted, CurrentUser(), Clock.fixed(base.ordinary.cutoff, ZoneOffset.UTC))
     val store = newStore()
     val preflights = ComplaintInstallationDeletionPreflightPhaseExecutor(
-        base.ordinary.ownership, JdbcComplaintInstallationDeletionPreflightStore(base.ordinary.jdbc),
+        base.ordinary.ownership,
+        JdbcComplaintInstallationDeletionPreflightStore(base.ordinary.jdbc),
     )
     val phases = ComplaintOwnerDeleteAllPhaseExecutor(ownership, store, preflights)
     val ingress = ownerDeleteAllTestIngress(policy)
@@ -161,7 +180,10 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         seedControl()
     }
 
-    fun newStore(selected: VersionBoundComplaintJournalRouting = routing, selectedPolicy: ComplaintCapacityPolicyV1 = policy): JdbcComplaintOwnerDeleteAllStore =
+    fun newStore(
+        selected: VersionBoundComplaintJournalRouting = routing,
+        selectedPolicy: ComplaintCapacityPolicyV1 = policy,
+    ): JdbcComplaintOwnerDeleteAllStore =
         JdbcComplaintOwnerDeleteAllStore(jdbc, capacity, audit, desired, selected, OwnerDeleteAllJournalCodecV1(selected, dataKeys), selectedPolicy, catalog)
 
     fun enrolled(): InstallationDeletionCandidate {
@@ -171,34 +193,36 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         return request(enrollment.installation, created.credentialVersion)
     }
 
-    fun request(
-        installation: ScopedInstallationId,
-        version: Long = 1,
-        key: UUID = UUID.randomUUID(),
-        secret: ByteArray = ByteArray(32) { it.toByte() },
-    ) = InstallationDeletionCandidate(InstallationEnrollmentCredentials.prepareSession(installation, secret), version, key)
+    fun request(installation: ScopedInstallationId, version: Long = 1, key: UUID = UUID.randomUUID(), secret: ByteArray = ByteArray(32) { it.toByte() }) =
+        InstallationDeletionCandidate(InstallationEnrollmentCredentials.prepareSession(installation, secret), version, key)
 
     fun prepare(candidate: InstallationDeletionCandidate): OwnerDeleteAllPreparation = ingress.withIngress(historyTestRequest()) { context ->
         coordinator.prepare(context, candidate)
     }
 
-    fun prepared(candidate: InstallationDeletionCandidate): CommittedOwnerDeleteAllWork.Prepared =
-        assertInstanceOf(CommittedOwnerDeleteAllWork.Prepared::class.java, assertInstanceOf(OwnerDeleteAllPreparation.Durable::class.java, prepare(candidate)).work)
+    fun prepared(candidate: InstallationDeletionCandidate): CommittedOwnerDeleteAllWork.Prepared = assertInstanceOf(
+        CommittedOwnerDeleteAllWork.Prepared::class.java,
+        assertInstanceOf(OwnerDeleteAllPreparation.Durable::class.java, prepare(candidate)).work,
+    )
 
-    fun <T> admitted(
-        candidate: InstallationDeletionCandidate,
-        work: (InstallationDeletionPreflightResult.Active, ComplaintAdmittedOwnerDeleteAll) -> T,
-    ): T = ingress.withIngress(historyTestRequest()) { context ->
-        ingress.startOwnerDeleteAll(context)
-        val preflight = assertInstanceOf(InstallationDeletionPreflightResult.Active::class.java, preflights.preflight(candidate))
-        assertEquals(0, base.ordinary.admission.activeOwners())
-        requireConnectionFree()
-        work(preflight, ingress.admitOwnerDeleteAll(context, preflight))
-    }
+    fun <T> admitted(candidate: InstallationDeletionCandidate, work: (InstallationDeletionPreflightResult.Active, ComplaintAdmittedOwnerDeleteAll) -> T): T =
+        ingress.withIngress(historyTestRequest()) { context ->
+            ingress.startOwnerDeleteAll(context)
+            val preflight = assertInstanceOf(InstallationDeletionPreflightResult.Active::class.java, preflights.preflight(candidate))
+            assertEquals(0, base.ordinary.admission.activeOwners())
+            requireConnectionFree()
+            work(preflight, ingress.admitOwnerDeleteAll(context, preflight))
+        }
 
     fun journalTuple(candidate: InstallationDeletionCandidate, epoch: Long = 11) = ComplaintJournalDeletionTupleV1(
-        epoch, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, ComplaintJournalActorKindV1.INSTALLATION,
-        candidate.installation.id, candidate.credentialVersion, candidate.operationKey, ComplaintDeleteAllFingerprint.of(candidate).bytes(), ComplaintDataScope.LIVE,
+        epoch,
+        ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL,
+        ComplaintJournalActorKindV1.INSTALLATION,
+        candidate.installation.id,
+        candidate.credentialVersion,
+        candidate.operationKey,
+        ComplaintDeleteAllFingerprint.of(candidate).bytes(),
+        ComplaintDataScope.LIVE,
     )
 
     /** Real rows, but not the missing LIVE owner-create producer or its accounting/current-capability evidence. */
@@ -211,17 +235,26 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
 
     fun insertContent(selected: JdbcTemplate, installation: UUID, id: UUID) {
         resources.addIfAbsent(id)
-        assertEquals(1, selected.update(
-            "INSERT INTO complaint_resource_ids (id, data_scope_id, test_only, state, created_at) VALUES (?, ?, false, 'LIVE', clock_timestamp())",
-            id, ComplaintDataScope.LIVE.id,
-        ))
-        assertEquals(1, selected.update(
-            "INSERT INTO complaints (id, data_scope_id, test_only, owner_id, ownership, kind, type, status, subject, body, platform, " +
-                "os_version, manufacturer, device_model, created_at, updated_at, version) " +
-                "VALUES (?, ?, false, ?, 'INSTALLATION', 'REPORT', 'CUSTOM', 'OPEN', 'synthetic subject', 'retained synthetic content', " +
-                "'ANDROID', '', '', '', clock_timestamp(), clock_timestamp(), 1)",
-            id, ComplaintDataScope.LIVE.id, installation,
-        ))
+        assertEquals(
+            1,
+            selected.update(
+                "INSERT INTO complaint_resource_ids (id, data_scope_id, test_only, state, created_at) VALUES (?, ?, false, 'LIVE', clock_timestamp())",
+                id,
+                ComplaintDataScope.LIVE.id,
+            ),
+        )
+        assertEquals(
+            1,
+            selected.update(
+                "INSERT INTO complaints (id, data_scope_id, test_only, owner_id, ownership, kind, type, status, subject, body, platform, " +
+                    "os_version, manufacturer, device_model, created_at, updated_at, version) " +
+                    "VALUES (?, ?, false, ?, 'INSTALLATION', 'REPORT', 'CUSTOM', 'OPEN', 'synthetic subject', 'retained synthetic content', " +
+                    "'ANDROID', '', '', '', clock_timestamp(), clock_timestamp(), 1)",
+                id,
+                ComplaintDataScope.LIVE.id,
+                installation,
+            ),
+        )
     }
 
     fun counters(): Map<ComplaintCapacityCounter, DeleteAllCounter> = observer.query(
@@ -248,11 +281,19 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
 
     fun installPolicy(selected: ComplaintCapacityPolicyV1, closed: Boolean = false) {
         ComplaintCapacityCounter.entries.forEach { counter ->
-            assertEquals(1, observer.update(
-                "UPDATE complaint_capacity_counters SET configuration_hash = ?, configuration_closed = ?, hard_limit = ?, creation_limit = ?, " +
-                    "free_units = ? - actual_units - recovery_reserved_units - test_reserved_units WHERE name = ?",
-                selected.digestBytes(), closed, selected.hardLimit[counter], selected.creationLimit[counter], selected.hardLimit[counter], counter.storedName,
-            ))
+            assertEquals(
+                1,
+                observer.update(
+                    "UPDATE complaint_capacity_counters SET configuration_hash = ?, configuration_closed = ?, hard_limit = ?, creation_limit = ?, " +
+                        "free_units = ? - actual_units - recovery_reserved_units - test_reserved_units WHERE name = ?",
+                    selected.digestBytes(),
+                    closed,
+                    selected.hardLimit[counter],
+                    selected.creationLimit[counter],
+                    selected.hardLimit[counter],
+                    counter.storedName,
+                ),
+            )
         }
     }
 
@@ -268,7 +309,8 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         "reservations" to rows("complaint_recovery_capacity_reservations", "event_id = ANY (?::text[])", textArray(events)),
         "applied" to rows("complaint_deletion_journal_applied", "event_id = ANY (?::text[])", textArray(events)),
         "retirements" to rows(
-            "complaint_deletion_journal_retirements", "object_key IN (SELECT object_key FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[]))",
+            "complaint_deletion_journal_retirements",
+            "object_key IN (SELECT object_key FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[]))",
             textArray(events),
         ),
         "audits" to rows("audit_log", "id = ANY (?::bigint[])", base.auditIds.joinToString(",", "{", "}")),
@@ -280,7 +322,10 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
 
     fun restoreControl(row: String) = transaction { selected ->
         selected.update("DELETE FROM complaint_journal_control WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id)
-        assertEquals(1, selected.update("INSERT INTO complaint_journal_control SELECT (jsonb_populate_record(NULL::complaint_journal_control, ?::jsonb)).*", row))
+        assertEquals(
+            1,
+            selected.update("INSERT INTO complaint_journal_control SELECT (jsonb_populate_record(NULL::complaint_journal_control, ?::jsonb)).*", row),
+        )
     }
 
     fun <T> transaction(work: (JdbcTemplate) -> T): T = checkNotNull(observer.dataSource).connection.use { connection ->
@@ -342,7 +387,8 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
                 selected.update("DELETE FROM complaint_recovery_capacity_reservations WHERE event_id = ANY (?::text[])", textArray(events))
                 selected.update(
                     "DELETE FROM complaint_deletion_journal_retirements WHERE object_key IN " +
-                        "(SELECT object_key FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[]))", textArray(events),
+                        "(SELECT object_key FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[]))",
+                    textArray(events),
                 )
                 selected.update("DELETE FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[])", textArray(events))
                 selected.update("DELETE FROM complaint_journal_publications WHERE event_id = ANY (?::text[])", textArray(events))
@@ -355,36 +401,44 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
             val receipt = checkNotNull(pool.requestShutdown())
             assertTrue(pool.shutdownInvocation() in setOf(PoolShutdownInvocation.RETURNED, PoolShutdownInvocation.ALREADY_CLAIMED))
             var observed = PoolShutdownObservation.PENDING
-            awaitLifecycleFact { observed = receipt.observe(); observed !== PoolShutdownObservation.PENDING }
+            awaitLifecycleFact {
+                observed = receipt.observe()
+                observed !== PoolShutdownObservation.PENDING
+            }
             assertEquals(PoolShutdownObservation.DELETION_LOCAL_ENDED, observed)
             assertFalse(base.ordinary.ownedPool.scope.owner.snapshot().shutdownRequested)
         }
     }
 
     private fun rows(table: String, predicate: String, vararg args: Any?): List<String> = observer.queryForList(
-        "SELECT to_jsonb(r)::text FROM $table r WHERE $predicate ORDER BY to_jsonb(r)::text", String::class.java, *args,
+        "SELECT to_jsonb(r)::text FROM $table r WHERE $predicate ORDER BY to_jsonb(r)::text",
+        String::class.java,
+        *args,
     )
 
     private fun seedControl() {
         val bytes = "synthetic-checkpoint-and-seal-NOT-external-evidence".toByteArray(Charsets.UTF_8)
         val digest = ownerDeleteAllTestDigest(bytes)
-        assertEquals(1, observer.update(
-            "UPDATE complaint_journal_control SET publication_epoch = 11, desired_generation = 7, desired_configuration_hash = ?, " +
-                "database_identity = ?, restore_identity = ?, event_writer_generation = ?, accepted_catalog_generation = 7, accepted_catalog_hash = ?, " +
-                "trust_bundle_hash = ?, catalog_writer_generation = ?, maintenance_closed = false, creation_closed = true, scan_requested = false, " +
-                "lease_token = 3, seal_state = 'SEAL_VERIFIED', seal_epoch = 9, seal_writer_generation = ?, seal_operation_token = ?, " +
-                "seal_object_key = 'synthetic/seal', seal_bytes = ?, seal_hash = ?, seal_object_version = 'synthetic-seal-v1', seal_ciphertext_hash = ?, " +
-                "seal_retain_until = clock_timestamp() + interval '70 days', seal_verified_at = clock_timestamp(), seal_verification_bytes = ?, " +
-                "seal_verification_hash = ?, checkpoint_generation = 1, checkpoint_fencing_token = 3, checkpoint_catalog_generation = 7, " +
-                "checkpoint_catalog_hash = ?, checkpoint_writer_generation = ?, checkpoint_cutoff_epoch = 9, checkpoint_configuration_hash = ?, " +
-                "checkpoint_database_identity = ?, checkpoint_restore_identity = ?, checkpoint_schema = 1, checkpoint_started_at = clock_timestamp(), " +
-                "checkpoint_completed_at = clock_timestamp(), checkpoint_object_count = 0, checkpoint_byte_count = 0, checkpoint_result = 'SUCCESS', " +
-                "checkpoint_bytes = ?, checkpoint_hash = ? WHERE data_scope_id = ?",
-            desired.configurationHashBytes(), desired.databaseIdentity, desired.restoreIdentity, UUID.fromString(writer.generationId), catalogHash,
-            trustHash, catalogWriter, UUID.fromString(writer.generationId), UUID.randomUUID(), bytes, digest, digest, bytes, digest,
-            catalogHash, UUID.fromString(writer.generationId), desired.configurationHashBytes(), desired.databaseIdentity, desired.restoreIdentity,
-            bytes, digest, ComplaintDataScope.LIVE.id,
-        ))
+        assertEquals(
+            1,
+            observer.update(
+                "UPDATE complaint_journal_control SET publication_epoch = 11, desired_generation = 7, desired_configuration_hash = ?, " +
+                    "database_identity = ?, restore_identity = ?, event_writer_generation = ?, accepted_catalog_generation = 7, accepted_catalog_hash = ?, " +
+                    "trust_bundle_hash = ?, catalog_writer_generation = ?, maintenance_closed = false, creation_closed = true, scan_requested = false, " +
+                    "lease_token = 3, seal_state = 'SEAL_VERIFIED', seal_epoch = 9, seal_writer_generation = ?, seal_operation_token = ?, " +
+                    "seal_object_key = 'synthetic/seal', seal_bytes = ?, seal_hash = ?, seal_object_version = 'synthetic-seal-v1', seal_ciphertext_hash = ?, " +
+                    "seal_retain_until = clock_timestamp() + interval '70 days', seal_verified_at = clock_timestamp(), seal_verification_bytes = ?, " +
+                    "seal_verification_hash = ?, checkpoint_generation = 1, checkpoint_fencing_token = 3, checkpoint_catalog_generation = 7, " +
+                    "checkpoint_catalog_hash = ?, checkpoint_writer_generation = ?, checkpoint_cutoff_epoch = 9, checkpoint_configuration_hash = ?, " +
+                    "checkpoint_database_identity = ?, checkpoint_restore_identity = ?, checkpoint_schema = 1, checkpoint_started_at = clock_timestamp(), " +
+                    "checkpoint_completed_at = clock_timestamp(), checkpoint_object_count = 0, checkpoint_byte_count = 0, checkpoint_result = 'SUCCESS', " +
+                    "checkpoint_bytes = ?, checkpoint_hash = ? WHERE data_scope_id = ?",
+                desired.configurationHashBytes(), desired.databaseIdentity, desired.restoreIdentity, UUID.fromString(writer.generationId), catalogHash,
+                trustHash, catalogWriter, UUID.fromString(writer.generationId), UUID.randomUUID(), bytes, digest, digest, bytes, digest,
+                catalogHash, UUID.fromString(writer.generationId), desired.configurationHashBytes(), desired.databaseIdentity, desired.restoreIdentity,
+                bytes, digest, ComplaintDataScope.LIVE.id,
+            ),
+        )
     }
 
     private fun uuidArray(ids: Collection<UUID>): String = ids.joinToString(",", "{", "}")
@@ -393,13 +447,32 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
 
 internal data class DeleteAllCounter(val free: Long, val actual: Long, val recovery: Long, val test: Long, val preserved: String)
 internal enum class DeleteAllStep {
-    CONTROL, RECEIPT_LOCK, RECEIPT, COUNTER_LOCK, COUNTER, RESERVATION, INSTALLATION, CREDENTIAL, TARGETS, RESOURCES, CONTENT,
-    PENDING_ID, PENDING_CREDENTIAL, PUBLICATION, AUTHORIZED_RECEIPT, BEFORE_AUDIT, AUDIT, RELOAD_PUBLICATION, RELOAD_RESERVATION,
+    CONTROL,
+    RECEIPT_LOCK,
+    RECEIPT,
+    COUNTER_LOCK,
+    COUNTER,
+    RESERVATION,
+    INSTALLATION,
+    CREDENTIAL,
+    TARGETS,
+    RESOURCES,
+    CONTENT,
+    PENDING_ID,
+    PENDING_CREDENTIAL,
+    PUBLICATION,
+    AUTHORIZED_RECEIPT,
+    BEFORE_AUDIT,
+    AUDIT,
+    RELOAD_PUBLICATION,
+    RELOAD_RESERVATION,
 }
 
 /** Brackets actual query/update results; never synthesizes rows, counts, phase outcomes or a connection identity. */
 internal class OwnerDeleteAllFixtureJdbc(private val fixture: OwnerDeleteAllAuthorizationFixture) : JdbcTemplate(fixture.pool) {
-    init { exceptionTranslator = SQLExceptionSubclassTranslator() }
+    init {
+        exceptionTranslator = SQLExceptionSubclassTranslator()
+    }
 
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>): List<T> = around(sql) { super.query(sql, rowMapper) }
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = around(sql) { super.query(sql, rowMapper, *args) }
@@ -459,7 +532,10 @@ internal class NeverOwnerDeleteAllDataKeys : JournalDataKeyPortV1 {
     val calls = AtomicInteger()
     override fun generate(request: JournalDataKeyRequestV1): JournalGeneratedDataKeyV1 = unexpected()
     override fun unwrap(request: JournalDataKeyRequestV1, wrappedKey: ByteArray): JournalPlaintextDataKeyV1 = unexpected()
-    private fun unexpected(): Nothing { calls.incrementAndGet(); error("Dormant authorization called a data-key port") }
+    private fun unexpected(): Nothing {
+        calls.incrementAndGet()
+        error("Dormant authorization called a data-key port")
+    }
 }
 
 internal fun ownerDeleteAllTestDigest(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)

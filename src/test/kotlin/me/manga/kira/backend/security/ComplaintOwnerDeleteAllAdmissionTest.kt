@@ -102,13 +102,18 @@ class ComplaintOwnerDeleteAllAdmissionTest {
             creates.admit(
                 ComplaintAdmissionPseudonyms.ownerCreateMember(keys, created),
                 ComplaintAdmissionPseudonyms.ownerCreateActor(keys, created.installation),
-                ComplaintAdmissionPseudonyms.ownerCreateGlobal(keys), f.quotas, now,
+                ComplaintAdmissionPseudonyms.ownerCreateGlobal(keys),
+                f.quotas,
+                now,
             )
         }
         f.admit(deleted, 0)
         create(0)
         val expiry = ComplaintAdmissionPolicy.PREVIOUS_RETENTION_NANOS
-        repeat(3) { f.admit(deleted, expiry - 1); create(expiry - 1) }
+        repeat(3) {
+            f.admit(deleted, expiry - 1)
+            create(expiry - 1)
+        }
         admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { f.admit(tuple(deleted.installation), expiry - 1) }
         // One expired member per attempt, bounded backlog refusal. A duplicate above extended neither TTL.
         admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { f.admit(tuple(deleted.installation), expiry) }
@@ -227,7 +232,8 @@ class ComplaintOwnerDeleteAllAdmissionTest {
     }
 
     private fun ledger(p: ComplaintCapacityPolicyV1, closed: Boolean) = ComplaintCapacityLedger(
-        ComplaintCapacityConfiguration.of(p.digestBytes(), closed), ComplaintCapacityBalance(p.hardLimit, p.creationLimit, p.hardLimit),
+        ComplaintCapacityConfiguration.of(p.digestBytes(), closed),
+        ComplaintCapacityBalance(p.hardLimit, p.creationLimit, p.hardLimit),
     )
 
     private fun tuple(actor: ScopedInstallationId, version: Long = 1, key: UUID = UUID.randomUUID()): InstallationDeletionPreflightTuple {
@@ -244,15 +250,19 @@ class ComplaintOwnerDeleteAllAdmissionTest {
         val policy = ownerDeleteAllTestCapacityPolicy()
         val ring = ComplaintAdmissionKeyRing(admissionTestKeys())
         val members = ComplaintMutationAdmissionMembers(members, prune)
-        val quotas = ComplaintAdmissionWindowStore(buckets, events, 128, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
-        private val store = ComplaintOwnerDeleteAllAdmissionStore(ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(policy, this.members.memberLimit, prune), this.members)
+        val quotas =
+            ComplaintAdmissionWindowStore(buckets, events, 128, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
+        private val store =
+            ComplaintOwnerDeleteAllAdmissionStore(ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(policy, this.members.memberLimit, prune), this.members)
 
         fun admit(tuple: InstallationDeletionPreflightTuple, now: Long, ip: Int = 1) {
             val keys = ring.keys()
             store.admit(
                 ComplaintAdmissionPseudonyms.ownerDeleteAllMember(keys, tuple),
                 ComplaintAdmissionPseudonyms.ownerDeleteAllActor(keys, tuple.installation),
-                ComplaintAdmissionPseudonyms.ownerDeleteAllIp(keys, byteArrayOf(192.toByte(), 0, 2, ip.toByte())), quotas, now,
+                ComplaintAdmissionPseudonyms.ownerDeleteAllIp(keys, byteArrayOf(192.toByte(), 0, 2, ip.toByte())),
+                quotas,
+                now,
             )
         }
     }
@@ -265,11 +275,16 @@ internal fun ownerDeleteAllTestIngress(
     creates: Boolean = false,
     clock: ComplaintAdmissionNanoClock = SystemComplaintAdmissionNanoClock,
 ): ComplaintIngressAdmission = ComplaintIngressAdmission(
-    ClientIpResolver(KiraSecurityProperties()), admissionTestPolicy(), admissionTestKeys(), clock,
+    ClientIpResolver(KiraSecurityProperties()),
+    admissionTestPolicy(),
+    admissionTestKeys(),
+    clock,
     if (creates) ComplaintOwnerCreateAdmissionPolicy.Bounded(policy, 12, members, 128) else ComplaintOwnerCreateAdmissionPolicy.Disabled,
     ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(policy, members, 128),
 )
 
 internal fun ownerDeleteAllTestCapacityPolicy(): ComplaintCapacityPolicyV1 = ComplaintCapacityPolicyV1.of(
-    ComplaintCapacityVector.of(LongArray(22) { 20_000_000 }), ComplaintCapacityVector.of(LongArray(22) { 18_000_000 }), 100,
+    ComplaintCapacityVector.of(LongArray(22) { 20_000_000 }),
+    ComplaintCapacityVector.of(LongArray(22) { 18_000_000 }),
+    100,
 )

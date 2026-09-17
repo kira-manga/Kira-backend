@@ -69,7 +69,11 @@ private fun lostCommit(f: OwnerDeleteAllAuthorizationFixture, relay: PgLifecycle
         }
         val failure = try {
             assertThrows<PersistencePhaseException> {
-                try { returned.set(f.prepared(candidate)) } finally { callerCompleted.set(true) }
+                try {
+                    returned.set(f.prepared(candidate))
+                } finally {
+                    callerCompleted.set(true)
+                }
             }
         } finally {
             start.release()
