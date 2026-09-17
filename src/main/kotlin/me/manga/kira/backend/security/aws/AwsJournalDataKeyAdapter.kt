@@ -158,7 +158,9 @@ internal class AwsJournalDataKeyAdapter private constructor(
     }
 
     private fun overrides(call: JournalKmsCall): AwsRequestOverrideConfiguration {
-        val remaining = Duration.ofNanos(call.remainingNanos())
+        val millis = call.remainingNanos() / 1_000_000
+        requireJournalKms(millis >= 1) // SDK timers must not truncate a positive submillisecond slice to disabled zero.
+        val remaining = Duration.ofMillis(millis)
         return AwsRequestOverrideConfiguration.builder().apiCallTimeout(remaining).apiCallAttemptTimeout(remaining).build()
     }
 

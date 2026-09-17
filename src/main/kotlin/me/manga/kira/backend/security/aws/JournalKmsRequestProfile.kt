@@ -107,11 +107,13 @@ internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurati
         requireJournalKms(value.isNotEmpty() && value.length <= MAX_CONTEXT_BYTES)
         requireJournalKms(value.all { it in URL_ALPHABET })
         val bytes = Base64.getUrlDecoder().decode(value)
-        if (Base64.getUrlEncoder().withoutPadding().encodeToString(bytes) != value) {
+        return runCatching {
+            requireJournalKms(Base64.getUrlEncoder().withoutPadding().encodeToString(bytes) == value)
+            bytes
+        }.getOrElse { failure ->
             bytes.fill(0)
-            requireJournalKms(false)
+            throw failure
         }
-        return bytes
     }
 
     override fun toString(): String = "JournalKmsRequestProfile(J-bound,redacted,no-authority)"
