@@ -10,7 +10,10 @@ import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightRejection
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightResult
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
+import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import org.springframework.jdbc.core.JdbcTemplate
+import java.time.Instant
 
 /** Fixed read-only comparison producer. No session refresh, enabled bean, admission or deletion writer. */
 internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc: JdbcTemplate) {
@@ -21,6 +24,13 @@ internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc:
 
     fun requireOwned(comparison: InstallationDeletionPreflightTuple, ownerIdentity: Any) =
         ComplaintInstallationDeletionPreflightOperation.requireOwned(comparison, issuer, ownerIdentity)
+
+    fun bindReplay(
+        comparison: InstallationDeletionPreflightResult.Completed,
+        ownerIdentity: Any,
+        routing: VersionBoundComplaintJournalRouting,
+        codec: OwnerDeleteAllJournalCodecV1,
+    ): BoundOwnerDeleteAllReplayV1 = ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing, codec)
 
     override fun toString(): String = "JdbcComplaintInstallationDeletionPreflightStore(read-only)"
 }
@@ -77,7 +87,7 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
             ReleasedAuthorized(candidate, value.fingerprint, issuer, owner, value.publicationReference)
 
         is InstallationDeletionPreflightSnapshot.Comparison.Completed ->
-            ReleasedCompleted(candidate, value.fingerprint, issuer, owner, value.publicationReference)
+            ReleasedCompleted(candidate, value.fingerprint, issuer, owner, value.publicationReference, value.replay)
     }
 
     private fun failed(problem: Throwable): Nothing {
@@ -131,8 +141,20 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         issuer: Any,
         owner: Any,
         override val publicationReference: String,
+        private val snapshot: InstallationDeletionCompletedReplaySnapshot,
     ) : ReleasedTuple(candidate, fingerprint, issuer, owner),
-        InstallationDeletionPreflightResult.Completed
+        InstallationDeletionPreflightResult.Completed {
+        private var boundReplay: BoundOwnerDeleteAllReplayV1? = null
+
+        fun bindReplay(routing: VersionBoundComplaintJournalRouting, codec: OwnerDeleteAllJournalCodecV1): BoundOwnerDeleteAllReplayV1 {
+            snapshot.requireBound(this, routing, codec) // Even a cached outcome cannot bypass a mismatched same-J codec check.
+            return boundReplay ?: ReleasedBoundReplay(snapshot.completedAt, snapshot.expiresAt).also { boundReplay = it }
+        }
+    }
+
+    private class ReleasedBoundReplay(override val completedAt: Instant, override val expiresAt: Instant) : BoundOwnerDeleteAllReplayV1 {
+        override fun toString(): String = "BoundOwnerDeleteAllReplayV1(redacted,no-runtime-authority)"
+    }
 
     private class ReleasedRejection(override val reason: InstallationDeletionPreflightRejection) : InstallationDeletionPreflightResult.Rejected {
         override fun toString(): String = "InstallationDeletionPreflightResult.Rejected($reason)"
@@ -160,6 +182,19 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
             requireConnectionFree()
             val retained = comparison as? ReleasedTuple ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
             retained.requireOwned(issuer, ownerIdentity)
+        }
+
+        fun bindReplay(
+            comparison: InstallationDeletionPreflightResult.Completed,
+            issuer: Any,
+            ownerIdentity: Any,
+            routing: VersionBoundComplaintJournalRouting,
+            codec: OwnerDeleteAllJournalCodecV1,
+        ): BoundOwnerDeleteAllReplayV1 {
+            requireConnectionFree()
+            val retained = comparison as? ReleasedCompleted ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+            retained.requireOwned(issuer, ownerIdentity)
+            return retained.bindReplay(routing, codec)
         }
     }
 }

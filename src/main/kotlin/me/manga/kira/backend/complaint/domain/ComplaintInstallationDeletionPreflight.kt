@@ -26,8 +26,9 @@ internal sealed interface InstallationDeletionPreflightResult {
 
     /**
      * Exact stored-204-receipt comparison only, NOT independent HTTP204/apply authority. The actual
-     * service still needs trusted writer/activation provenance and the same-J canonical event binding;
-     * this slice neither parses that event nor authenticates provider evidence from stored labels.
+     * service still needs trusted writer/activation provenance and a separate same-J binding of the
+     * original retained event/proof. This view alone neither authenticates those bytes nor supplies
+     * provider evidence or permission to repeat erasure.
      */
     interface Completed :
         InstallationDeletionPreflightResult,

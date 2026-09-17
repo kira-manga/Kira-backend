@@ -6,8 +6,11 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightResult
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.infrastructure.BoundOwnerDeleteAllReplayV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationDeletionPreflightOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintInstallationDeletionPreflightStore
+import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
+import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 
 /** One ordinary read-only entry on the existing owner, before semantic admission or any deletion permit/fence. */
 internal class ComplaintInstallationDeletionPreflightPhaseExecutor(
@@ -38,6 +41,19 @@ internal class ComplaintInstallationDeletionPreflightPhaseExecutor(
     fun requireOwned(comparison: InstallationDeletionPreflightTuple) {
         requireConnectionFree()
         store.requireOwned(comparison, ownership.installationDeletionIdentity)
+    }
+
+    /**
+     * Local same-J binding of this owner's original committed/released Completed snapshot only.
+     * No new phase, semantic/deletion/J admission, provider call, mutation or current authority.
+     */
+    fun bindReplay(
+        completed: InstallationDeletionPreflightResult.Completed,
+        routing: VersionBoundComplaintJournalRouting,
+        codec: OwnerDeleteAllJournalCodecV1,
+    ): BoundOwnerDeleteAllReplayV1 {
+        requireConnectionFree()
+        return store.bindReplay(completed, ownership.installationDeletionIdentity, routing, codec)
     }
 
     override fun toString(): String = "ComplaintInstallationDeletionPreflightPhaseExecutor(read-only)"
