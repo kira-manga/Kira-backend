@@ -1,5 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure
 
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
@@ -48,6 +50,7 @@ internal class ComplaintOwnerDeleteAllContinuation(
             }
 
             is CommittedOwnerDeleteAllWork.RecordedVerified -> verificationStore.resume(work)
+            else -> throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
         }
         ingress.requireLiveContext(context)
         return application.apply(work, proof)
