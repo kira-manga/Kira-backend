@@ -104,6 +104,8 @@ class VersionBoundComplaintConsumerConfigurationTest {
     @Test
     fun `same retained P derives all actual policies while explicit global hourly quotas remain outside P and drive the actual guard`() {
         val fixture = BoundComplaintConsumerFixture()
+        // Create-only fixture headroom cannot fund the delete authorization plus recovery promise.
+        assertThrows<IllegalArgumentException> { fixture.configuration(capacity = ownerCreateTestCapacityPolicy()) }
         val originalP = fixture.capacity.canonicalBytes()
         val daily = ComplaintDailyAdmission(null, 0, fixture.capacity.dailyEnrollmentLimit)
         val differentP = ComplaintCapacityPolicyV1.of(
@@ -242,7 +244,7 @@ internal class BoundComplaintConsumerFixture {
         acquired(SecretMaterialFamily.INSTALLATION_JWT, "installation-a", 82, admissionTestBytes(82, 128)),
     )
     val jwt = VersionBoundInstallationJwtConfiguration.fromAcquired("installation-z", installationSecrets, user)
-    val capacity = ownerCreateTestCapacityPolicy()
+    val capacity = ownerDeleteAllTestCapacityPolicy()
     val journal = ComplaintJournalConfigurationV1.of(InitialLiveJournalTestFixture.declaration())
     val journalSecrets = journal.declaration().routing.keys.mapIndexed { index, key ->
         acquired(
