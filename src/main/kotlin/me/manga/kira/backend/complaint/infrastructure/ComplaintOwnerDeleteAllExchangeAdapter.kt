@@ -38,9 +38,13 @@ internal class ComplaintOwnerDeleteAllExchangeAdapter(
         ingress.requireResponseReady()
         return when (outcome) {
             is CommittedOwnerDeleteAllApplyV1 -> outcome
+
             is BoundOwnerDeleteAllReplayV1 -> outcome
+
             is OwnerDeleteAllReconciliationPendingV1 -> outcome
+
             is OwnerDeleteAllPreparation.Rejected -> rejectInstallationHttp(rejection(outcome.comparison.reason))
+
             // A raw Completed comparison, publication label or caller output view cannot select HTTP success.
             else -> unavailable()
         }

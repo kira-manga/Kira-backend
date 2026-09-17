@@ -25,10 +25,8 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Unregistered synchronous adapter only. No mode authority, session refresh, response token or background retry. */
-internal class ComplaintOwnerDeleteAllHttpHandler(
-    private val service: ComplaintOwnerDeleteAllService,
-    private val ingress: ComplaintIngressAdmission,
-) : HttpRequestHandler {
+internal class ComplaintOwnerDeleteAllHttpHandler(private val service: ComplaintOwnerDeleteAllService, private val ingress: ComplaintIngressAdmission) :
+    HttpRequestHandler {
     private val bodyFilter = RequestBodySizeLimitFilter(ObjectMapper())
     private val closed = AtomicBoolean()
 
@@ -133,7 +131,8 @@ internal class ComplaintOwnerDeleteAllHttpHandler(
         return value
     }
 
-    @Suppress("TooGenericExceptionCaught", "SwallowedException") // Once delivery starts, even an uncommitted container buffer must never receive a second response.
+    // Once delivery starts, even an uncommitted container buffer must never receive a second response.
+    @Suppress("TooGenericExceptionCaught", "SwallowedException")
     private fun deliverEmpty(response: HttpServletResponse, pending: Boolean) {
         requireResponseReady(response)
         try {

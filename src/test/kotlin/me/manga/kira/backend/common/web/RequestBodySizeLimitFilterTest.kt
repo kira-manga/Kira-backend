@@ -399,19 +399,17 @@ class RequestBodySizeLimitFilterTest {
         // Preserve exact field values for vectors the Spring mock would normalize or replace.
         override fun getContentType(): String? = if (rawContentTypes != null) rawContentTypes.firstOrNull() else super.getContentType()
 
-        override fun getHeader(name: String): String? =
-            if (rawContentTypes != null && name.equals(HttpHeaders.CONTENT_TYPE, ignoreCase = true)) {
-                rawContentTypes.firstOrNull()
-            } else {
-                super.getHeader(name)
-            }
+        override fun getHeader(name: String): String? = if (rawContentTypes != null && name.equals(HttpHeaders.CONTENT_TYPE, ignoreCase = true)) {
+            rawContentTypes.firstOrNull()
+        } else {
+            super.getHeader(name)
+        }
 
-        override fun getHeaders(name: String): Enumeration<String> =
-            if (rawContentTypes != null && name.equals(HttpHeaders.CONTENT_TYPE, ignoreCase = true)) {
-                Collections.enumeration(rawContentTypes)
-            } else {
-                super.getHeaders(name)
-            }
+        override fun getHeaders(name: String): Enumeration<String> = if (rawContentTypes != null && name.equals(HttpHeaders.CONTENT_TYPE, ignoreCase = true)) {
+            Collections.enumeration(rawContentTypes)
+        } else {
+            super.getHeaders(name)
+        }
 
         override fun getContentLength(): Int = if (declaredLength in 0..Int.MAX_VALUE.toLong()) declaredLength.toInt() else -1
 

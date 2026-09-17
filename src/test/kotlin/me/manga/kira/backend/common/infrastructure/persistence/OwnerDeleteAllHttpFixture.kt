@@ -33,9 +33,15 @@ internal class OwnerDeleteAllHttpFixture(val connected: OwnerDeleteAllContinuati
 
     init {
         val beforeS3 = connected.publisher.beforePrepare
-        connected.publisher.beforePrepare = { beforeS3(); requireOriginalIngress() }
+        connected.publisher.beforePrepare = {
+            beforeS3()
+            requireOriginalIngress()
+        }
         val beforeKms = connected.publisher.kms.beforePrepare
-        connected.publisher.kms.beforePrepare = { beforeKms(); requireOriginalIngress() }
+        connected.publisher.kms.beforePrepare = {
+            beforeKms()
+            requireOriginalIngress()
+        }
     }
 
     fun request(
@@ -51,8 +57,10 @@ internal class OwnerDeleteAllHttpFixture(val connected: OwnerDeleteAllContinuati
         val candidate = connected.candidate
         val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(secret)
         setContent(
-            ("{\"installationId\":\"${candidate.installation.id}\",\"secret\":\"$encoded\"," +
-                "\"credentialVersion\":$version,\"dataScopeId\":\"${candidate.installation.scope.id}\"}").toByteArray(),
+            (
+                "{\"installationId\":\"${candidate.installation.id}\",\"secret\":\"$encoded\"," +
+                    "\"credentialVersion\":$version,\"dataScopeId\":\"${candidate.installation.scope.id}\"}"
+                ).toByteArray(),
         )
     }
 

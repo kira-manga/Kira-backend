@@ -25,7 +25,9 @@ import java.util.UUID
  * observation, HTTP status or current-mode/restore authority. Only the preflight's private producer
  * can implement it; the later consumer still owns full-D/current authority and HTTP gating.
  */
-internal sealed interface BoundOwnerDeleteAllReplayV1 : OwnerDeleteAllOutcome, ComplaintOwnerDeleteAllResponse.Completed {
+internal sealed interface BoundOwnerDeleteAllReplayV1 :
+    OwnerDeleteAllOutcome,
+    ComplaintOwnerDeleteAllResponse.Completed {
     val completedAt: Instant
     val expiresAt: Instant
 }

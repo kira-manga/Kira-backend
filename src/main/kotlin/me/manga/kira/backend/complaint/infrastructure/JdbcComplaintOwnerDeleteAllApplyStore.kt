@@ -92,14 +92,18 @@ internal sealed interface OwnerDeleteAllApplyInputV1
 internal sealed interface OwnerDeleteAllApplyOutcomeV1 : OwnerDeleteAllOutcome
 
 /** Released only after the original caller's known commit AND original-holder cleanup. No content/identity is returned. */
-internal sealed interface CommittedOwnerDeleteAllApplyV1 : OwnerDeleteAllApplyOutcomeV1, ComplaintOwnerDeleteAllResponse.Completed {
+internal sealed interface CommittedOwnerDeleteAllApplyV1 :
+    OwnerDeleteAllApplyOutcomeV1,
+    ComplaintOwnerDeleteAllResponse.Completed {
     val completedAt: Instant
     val expiresAt: Instant
     val responseStatus: Int get() = 204
 }
 
 /** Genuine committed VERIFY custody, but no released APPLY result. Deliberately no erasure/status/proof fields. */
-internal sealed interface OwnerDeleteAllReconciliationPendingV1 : OwnerDeleteAllApplyOutcomeV1, ComplaintOwnerDeleteAllResponse.Pending
+internal sealed interface OwnerDeleteAllReconciliationPendingV1 :
+    OwnerDeleteAllApplyOutcomeV1,
+    ComplaintOwnerDeleteAllResponse.Pending
 
 private class CapturedOwnerDeleteAllApply(
     private val issuer: Any,
