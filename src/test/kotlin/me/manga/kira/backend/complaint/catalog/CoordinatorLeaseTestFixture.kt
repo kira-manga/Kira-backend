@@ -169,10 +169,8 @@ internal data class CoordinatorLeaseRow(val owner: UUID?, val token: Long, val e
 internal enum class CoordinatorLeaseSqlStep { LOCK_CONTROL, WRITE_CONTROL, READ_CONTROL }
 
 /** Observes the actual original holder; expected sanitized refusals cannot hide an assertion made in a SQL cut. */
-internal class CoordinatorLeaseProbeJdbc(
-    private val coordinator: CatalogCoordinatorPersistence,
-    private val bindingArguments: Array<Any?>,
-) : JdbcTemplate(coordinator.dataSource) {
+internal class CoordinatorLeaseProbeJdbc(private val coordinator: CatalogCoordinatorPersistence, private val bindingArguments: Array<Any?>) :
+    JdbcTemplate(coordinator.dataSource) {
     var phase: PersistencePhaseContext? = null
         private set
     var observation: StepUpPhaseObservation? = null
