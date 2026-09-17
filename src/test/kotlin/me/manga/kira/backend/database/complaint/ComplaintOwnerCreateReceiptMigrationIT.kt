@@ -33,8 +33,14 @@ internal fun assertOwnerCreateReceiptMigration(dataSource: DataSource) {
             "68bf2e7e5e5baf80dbaaeeff1ba8dc743c6e473778ab8df6ed8bd4f1f619cb75",
             HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(v14)),
         )
-        assertEquals(14, flyway(14).migrate().migrationsExecuted)
+        // V13.1 is the real user credential-generation migration between V13 and V14, not another complaint migration.
+        val v14Versions = (1..13).map(Int::toString) + listOf("13.1", "14")
+        assertEquals(v14Versions.size, flyway(14).migrate().migrationsExecuted)
         connection().use { sql ->
+            assertEquals(
+                v14Versions,
+                sql.strings("SELECT version FROM flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"),
+            )
             sql.exec(complaintResource("fixtures/complaint/v13-rich.sql"))
             sql.exec(complaintResource("fixtures/complaint/v14-rich.sql"))
             sql.autoCommit = false
@@ -47,6 +53,10 @@ internal fun assertOwnerCreateReceiptMigration(dataSource: DataSource) {
         assertEquals(1, flyway(15).migrate().migrationsExecuted)
         assertTrue(flyway(15).validateWithResult().validationSuccessful)
         connection().use { sql ->
+            assertEquals(
+                v14Versions + "15",
+                sql.strings("SELECT version FROM flyway_schema_history WHERE success AND version IS NOT NULL ORDER BY installed_rank"),
+            )
             sql.assertPreserved(before)
             assertEquals(declarations, sql.schemaSnapshot().filterNot(::changedResultConstraint))
             assertEquals(sequences, sql.sequenceValues())

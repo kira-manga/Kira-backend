@@ -232,7 +232,8 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
         for (counter in ComplaintCapacityCounter.entries) {
             val old = before.getValue(counter.storedName)
             val current = after.getValue(counter.storedName)
-            if (amount[counter] == 0L) {
+            // Rejection precharges then refunds these dimensions in the SAME transaction: updated_at may advance.
+            if (amount[counter] == 0L && ComplaintCapacityCharges.OWNER_CREATE[counter] == 0L) {
                 assertEquals(old, current)
             } else {
                 assertEquals(old.preserved, current.preserved, "Reservation/configuration state must not be repurposed.")

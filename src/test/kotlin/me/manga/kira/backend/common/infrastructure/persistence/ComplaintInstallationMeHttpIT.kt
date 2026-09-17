@@ -60,22 +60,26 @@ class ComplaintInstallationMeHttpIT {
     }
 
     @Test
-    fun `invalid missing wrong family and actual foreign scope tokens refuse before unavailable current row SQL`() = withFixture { f ->
-        val foreign = OrdinaryComplaintTestInstallationFixture(f.base).use { run -> ComplaintInstallationMeFixture(f.base, run).token }
-        assertThrows<IllegalArgumentException> { ComplaintInstallationMeReadAdapter(ComplaintDataScope.LIVE, f.jwt, f.phases, f.ingress) }
-        withoutDatabaseAdmission(f) {
-            f.assertProblem(f.request(), 503, "SERVICE_UNAVAILABLE") // A valid actual token reaches the unavailable named phase.
-            for (token in listOf(null, "malformed", JwtTestSupport.tamperSignature(f.token), foreign)) {
-                f.assertProblem(f.request(token), 401, "UNAUTHORIZED")
+    fun `invalid missing wrong family and actual foreign scope tokens refuse before unavailable current row SQL`() {
+        lateinit var foreign: String
+        withFixture { foreign = it.token } // Fully close this run before creating the next nonterminal run.
+        withFixture { f ->
+            assertTrue(f.jwt.verify(foreign).installation.scope != f.run.scope)
+            assertThrows<IllegalArgumentException> { ComplaintInstallationMeReadAdapter(ComplaintDataScope.LIVE, f.jwt, f.phases, f.ingress) }
+            withoutDatabaseAdmission(f) {
+                f.assertProblem(f.request(), 503, "SERVICE_UNAVAILABLE") // A valid actual token reaches the unavailable named phase.
+                for (token in listOf(null, "malformed", JwtTestSupport.tamperSignature(f.token), foreign)) {
+                    f.assertProblem(f.request(token), 401, "UNAUTHORIZED")
+                }
+                for (role in listOf("USER", "ADMIN")) {
+                    f.assertProblem(f.request(JwtTestSupport.mint(f.base.ordinary.userId, role = role)), 401, "UNAUTHORIZED")
+                }
+                assertEquals(0L, f.base.ordinary.ownedPool.lifecycle.activeAcquisitions())
             }
-            for (role in listOf("USER", "ADMIN")) {
-                f.assertProblem(f.request(JwtTestSupport.mint(f.base.ordinary.userId, role = role)), 401, "UNAUTHORIZED")
-            }
-            assertEquals(0L, f.base.ordinary.ownedPool.lifecycle.activeAcquisitions())
+            assertEquals(200, f.request().status)
+            assertEquals(1, f.base.observer.update("DELETE FROM app_installations WHERE id = ?", f.id))
+            f.assertProblem(f.request(), 401, "UNAUTHORIZED")
         }
-        assertEquals(200, f.request().status)
-        assertEquals(1, f.base.observer.update("DELETE FROM app_installations WHERE id = ?", f.id))
-        f.assertProblem(f.request(), 401, "UNAUTHORIZED")
     }
 
     @Test
