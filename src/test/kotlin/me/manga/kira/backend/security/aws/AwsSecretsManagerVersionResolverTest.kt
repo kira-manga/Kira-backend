@@ -141,6 +141,22 @@ class AwsSecretsManagerVersionResolverTest {
     }
 
     @Test
+    fun `wire UTF8 rejects overlong surrogate out of range and truncated sequences before either JSON parser`() {
+        val prefix = "{\"ARN\":\"".toByteArray()
+        val suffix = document().removePrefix("{\"ARN\":\"a").toByteArray()
+        // First three would decode to the expected initial 'a' under a permissive overlong decoder.
+        listOf(
+            byteArrayOf(0xc1.toByte(), 0xa1.toByte()),
+            byteArrayOf(0xe0.toByte(), 0x81.toByte(), 0xa1.toByte()),
+            byteArrayOf(0xf0.toByte(), 0x80.toByte(), 0x81.toByte(), 0xa1.toByte()),
+            byteArrayOf(0xed.toByte(), 0xa0.toByte(), 0x80.toByte()),
+            byteArrayOf(0xf4.toByte(), 0x90.toByte(), 0x80.toByte(), 0x80.toByte()),
+            byteArrayOf(0xe2.toByte(), 0x82.toByte()),
+            byteArrayOf(0x80.toByte()),
+        ).forEach { invalid -> rejectReply(SecretHttpReply(prefix + invalid + suffix)) }
+    }
+
+    @Test
     fun `canonical Base64 and exact decoded ceiling are checked before permissive SDK blob decoding`() {
         val encoded = Base64.getEncoder().encodeToString(material())
         val invalid = listOf("", "AA", "AAA", "A===", "AA=A", "AA-_", "AA==\\n", "AB==", "AAB=", "AAAA=", "A A=") +
@@ -159,7 +175,7 @@ class AwsSecretsManagerVersionResolverTest {
     fun `bounded optional metadata never demands a current stage or replaces exact returned identity`() {
         val fixture = AwsSecretVersionFixture()
         val response = SecretHttpReply(
-            (document().dropLast(1) + ",\"Name\":\"fixture\",\"VersionStages\":[\"retained-only\"],\"CreatedDate\":1700000000.125}").toByteArray(),
+            (document().dropLast(1) + ",\"Name\":\"fixture\",\"VersionStages\":[\"retained-π\"],\"CreatedDate\":1700000000.125}").toByteArray(),
         )
         fixture.respond = { response }
         fixture.resolver().use { resolver ->

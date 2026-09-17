@@ -8,6 +8,10 @@ import com.fasterxml.jackson.core.StreamReadFeature
 import me.manga.kira.backend.security.ImmutableSecretVersion
 import me.manga.kira.backend.security.SecretVersionFailure
 import me.manga.kira.backend.security.requireSecretVersion
+import java.nio.ByteBuffer
+import java.nio.CharBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
 
 /** SDK AWS-JSON decoding is permissive. This bounded streaming pass precedes its string/blob allocations. */
 internal object SecretVersionJsonPreflight {
@@ -70,6 +74,7 @@ internal object SecretVersionJsonPreflight {
         // Do not let Jackson's charset autodetection accept a BOM, UTF-16 or UTF-32 instead of wire UTF-8 JSON.
         val first = bytes.firstOrNull { it.toInt() !in JSON_WHITESPACE }
         requireSecretVersion(first == '{'.code.toByte() && bytes.none { it == 0.toByte() }, SecretVersionFailure.RESOLVER_FAILURE)
+        requireUtf8(bytes, check) // Jackson's byte parser is not our strict UTF-8 validation authority.
         val parser = factory.createParser(bytes)
         withSecretCleanup(
             {
@@ -80,6 +85,26 @@ internal object SecretVersionJsonPreflight {
             },
             { secretProviderCall { parser.close() } },
         )
+    }
+
+    private fun requireUtf8(bytes: ByteArray, check: () -> Unit) {
+        val decoder = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+        val input = ByteBuffer.wrap(bytes)
+        val characters = CharArray(2048)
+        val output = CharBuffer.wrap(characters)
+        try {
+            while (true) {
+                check()
+                val result = decoder.decode(input, output, true)
+                check()
+                if (result.isError) result.throwException()
+                if (result.isUnderflow) break
+                requireSecretVersion(result.isOverflow, SecretVersionFailure.RESOLVER_FAILURE)
+                output.clear()
+            }
+        } finally {
+            characters.fill('\u0000')
+        }
     }
 
     private fun next(parser: JsonParser, check: () -> Unit): JsonToken? {

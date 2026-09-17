@@ -125,8 +125,11 @@ internal class AwsSecretsManagerVersionResolver private constructor(
 
     companion object {
         /** Explicit session credentials only. Construction does not dispatch a request or discover credentials/region. */
-        fun open(region: String, credentials: AwsSessionCredentials, limits: AwsSecretVersionLimits = AwsSecretVersionLimits()): AwsSecretsManagerVersionResolver =
-            create(region, credentials, limits, { secretUrlConnectionClient(limits) }, System::nanoTime)
+        fun open(
+            region: String,
+            credentials: AwsSessionCredentials,
+            limits: AwsSecretVersionLimits = AwsSecretVersionLimits(),
+        ): AwsSecretsManagerVersionResolver = create(region, credentials, limits, { secretUrlConnectionClient(limits) }, System::nanoTime)
 
         /** Controlled HTTP substitution still uses the real SDK's signing, AWS-JSON marshalling and response decoding. */
         fun withHttpFixture(

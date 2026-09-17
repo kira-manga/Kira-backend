@@ -97,7 +97,9 @@ is read; error and redirect bodies are not handed to any SDK decoder. Content
 length, progress, EOF and actual byte ceilings are checked. Header limits apply
 **after** stock URLConnection header parsing, not before its allocations.
 
-A bounded streaming JSON pass requires one complete UTF-8 object without BOM,
+A bounded JDK UTF-8 decoder rejects malformed, overlong, surrogate and out-of-range
+wire sequences without constructing a whole-document String. A bounded streaming
+JSON pass then requires one complete UTF-8 object without BOM,
 duplicate decoded field names, trailing tokens or unknown fields. Required `ARN`,
 `VersionId` and `SecretBinary` must be strings; optional bounded `Name`,
 `VersionStages` and numeric `CreatedDate` are metadata only. `SecretString` is
