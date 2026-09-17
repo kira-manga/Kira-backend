@@ -5,6 +5,7 @@ import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
 import me.manga.kira.backend.complaint.application.ComplaintOwnerDeleteAllService
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllContinuation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllExchangeAdapter
 import me.manga.kira.backend.security.ComplaintHttpIngressBridge
 import me.manga.kira.backend.security.ComplaintIngressContext
@@ -19,11 +20,14 @@ import java.util.Base64
 import java.util.UUID
 
 /** Real parser, handler, ingress, private producers and paid-content PG. Synthetic catalog/provider fixture, NOT live routing. */
-internal class OwnerDeleteAllHttpFixture(val connected: OwnerDeleteAllContinuationFixture) {
+internal class OwnerDeleteAllHttpFixture(
+    val connected: OwnerDeleteAllContinuationFixture,
+    continuation: ComplaintOwnerDeleteAllContinuation = connected.continuation(),
+) {
     val auth get() = connected.auth
     private val bridge = ComplaintHttpIngressBridge(auth.ingress)
     private val handler = ComplaintOwnerDeleteAllHttpHandler(
-        ComplaintOwnerDeleteAllService(ComplaintOwnerDeleteAllExchangeAdapter(auth.ingress, connected.continuation())),
+        ComplaintOwnerDeleteAllService(ComplaintOwnerDeleteAllExchangeAdapter(auth.ingress, continuation)),
         auth.ingress,
     )
     private var context: ComplaintIngressContext? = null
