@@ -37,6 +37,7 @@ internal class JdbcComplaintInstallationDeletionPreflightStore(
         codec: OwnerDeleteAllJournalCodecV1,
     ): BoundOwnerDeleteAllReplayV1 {
         process?.requireOrdinary(jdbc)
+        process?.requireInputs(process.desired, routing)
         return ComplaintInstallationDeletionPreflightOperation.bindReplay(comparison, issuer, ownerIdentity, routing, codec)
     }
 

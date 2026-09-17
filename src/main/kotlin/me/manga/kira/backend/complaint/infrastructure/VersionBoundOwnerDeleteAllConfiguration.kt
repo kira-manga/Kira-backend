@@ -3,8 +3,8 @@ package me.manga.kira.backend.complaint.infrastructure
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
+import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationDeletionPreflightPhaseExecutor
