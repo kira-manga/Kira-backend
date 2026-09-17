@@ -21,46 +21,69 @@ import java.util.concurrent.atomic.AtomicReference
 internal fun assertOwnerDeleteAllVerificationLocks(f: OwnerDeleteAllVerificationFixture) {
     val readback = f.readback()
     val before = f.auth.state()
-    val routine = List(3) { checkNotNull(f.auth.admission.tryRoutineDeletion()) }
-    try {
-        checkNotNull(f.auth.observer.dataSource).connection.use { observer ->
-            observer.autoCommit = false
-            f.afterStep = { step ->
-                assertEquals(3, f.auth.admission.activeOwners().routineOwners)
-                assertEquals(1, f.auth.admission.activeOwners().privacyOwners)
-                assertNull(f.auth.admission.tryRoutineDeletion())
-                f.assertNoForbiddenLocks(f.observations.last().second)
-                assertRowLock(
-                    observer,
-                    "SELECT installation_id FROM installation_deletion_receipts WHERE installation_id = ? FOR UPDATE NOWAIT",
-                    f.candidate.installation.id,
-                    blocked = true,
-                )
-                assertRowLock(
-                    observer,
-                    "SELECT event_id FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE NOWAIT",
-                    readback.event.route.eventId,
-                    blocked = step != VerificationStep.RECEIPT,
-                )
+    OwnedCallerTestScope().use { callers ->
+        val held = callers.gate()
+        val occupancy = callers.launch {
+            requireConnectionFree()
+            val routine = List(3) { checkNotNull(f.auth.admission.tryRoutineDeletion()) }
+            try {
+                held.hold()
+            } finally {
+                routine.forEach { assertTrue(it.releaseAfterQuiescence()) }
             }
-            f.auth.transaction { blockers ->
-                // Genuine concurrent locks on every omitted class. Any forbidden reach-back blocks
-                // or fails the short phase; merely claiming an unfenced enum would not pass this.
-                blockers.execute("SELECT pg_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))")
-                holdRows(blockers, "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE", ComplaintDataScope.LIVE.id)
-                holdRows(blockers, "SELECT event_id FROM complaint_recovery_capacity_reservations WHERE event_id = ? FOR UPDATE", readback.event.route.eventId)
-                holdRows(blockers, "SELECT name FROM complaint_capacity_counters ORDER BY name COLLATE \"C\" FOR UPDATE")
-                holdRows(blockers, "SELECT id FROM complaint_installation_ids WHERE id = ? FOR UPDATE", f.candidate.installation.id)
-                holdRows(blockers, "SELECT id FROM app_installations WHERE id = ? FOR UPDATE", f.candidate.installation.id)
-                val ids = readback.event.complaintIds().joinToString(",", "{", "}")
-                holdRows(blockers, "SELECT id FROM complaint_resource_ids WHERE id = ANY (?::uuid[]) ORDER BY id FOR UPDATE", ids)
-                holdRows(blockers, "SELECT id FROM complaints WHERE id = ANY (?::uuid[]) ORDER BY id FOR UPDATE", ids)
-                f.phases.verify(readback)
-            }
+            requireConnectionFree()
+            true
         }
-    } finally {
-        f.afterStep = {}
-        routine.forEach { assertTrue(it.releaseAfterQuiescence()) }
+        held.awaitEntered()
+        try {
+            checkNotNull(f.auth.observer.dataSource).connection.use { observer ->
+                observer.autoCommit = false
+                f.afterStep = { step ->
+                    assertEquals(3, f.auth.admission.activeOwners().routineOwners)
+                    assertEquals(1, f.auth.admission.activeOwners().privacyOwners)
+                    assertNull(f.auth.admission.tryRoutineDeletion())
+                    val observation = f.observations.last().second
+                    // Bounded actor completion holds this SQL checkpoint. Only one observer actor
+                    // uses the preopened raw connection at a time; no foreign holder binds here.
+                    assertTrue(callers.launch {
+                        requireConnectionFree()
+                        f.assertNoForbiddenLocks(observation)
+                        assertRowLock(
+                            observer,
+                            "SELECT installation_id FROM installation_deletion_receipts WHERE installation_id = ? FOR UPDATE NOWAIT",
+                            f.candidate.installation.id,
+                            blocked = true,
+                        )
+                        assertRowLock(
+                            observer,
+                            "SELECT event_id FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE NOWAIT",
+                            readback.event.route.eventId,
+                            blocked = step != VerificationStep.RECEIPT,
+                        )
+                        requireConnectionFree()
+                        true
+                    }.value())
+                }
+                f.auth.transaction { blockers ->
+                    // Genuine concurrent locks on every omitted class. Any forbidden reach-back blocks
+                    // or fails the short phase; merely claiming an unfenced enum would not pass this.
+                    blockers.execute("SELECT pg_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))")
+                    holdRows(blockers, "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE", ComplaintDataScope.LIVE.id)
+                    holdRows(blockers, "SELECT event_id FROM complaint_recovery_capacity_reservations WHERE event_id = ? FOR UPDATE", readback.event.route.eventId)
+                    holdRows(blockers, "SELECT name FROM complaint_capacity_counters ORDER BY name COLLATE \"C\" FOR UPDATE")
+                    holdRows(blockers, "SELECT id FROM complaint_installation_ids WHERE id = ? FOR UPDATE", f.candidate.installation.id)
+                    holdRows(blockers, "SELECT id FROM app_installations WHERE id = ? FOR UPDATE", f.candidate.installation.id)
+                    val ids = readback.event.complaintIds().joinToString(",", "{", "}")
+                    holdRows(blockers, "SELECT id FROM complaint_resource_ids WHERE id = ANY (?::uuid[]) ORDER BY id FOR UPDATE", ids)
+                    holdRows(blockers, "SELECT id FROM complaints WHERE id = ANY (?::uuid[]) ORDER BY id FOR UPDATE", ids)
+                    f.phases.verify(readback)
+                }
+            }
+        } finally {
+            f.afterStep = {}
+            held.release()
+        }
+        assertTrue(occupancy.value())
     }
     assertEquals(before.filterKeys { it != "publications" }, f.auth.state().filterKeys { it != "publications" })
     f.assertOnlyVerificationStatements(write = true)
@@ -96,7 +119,15 @@ internal fun assertOwnerDeleteAllVerificationFailures(f: OwnerDeleteAllVerificat
                     assertEquals(2, f.jdbc.update("INSERT INTO kira_verify_commit VALUES (1), (1)"))
                 }
 
-                "SERVER_LOSS" -> f.auth.base.ordinary.terminateSession(f.observations.last().second.identity.first)
+                "SERVER_LOSS" -> OwnedCallerTestScope().use { faults ->
+                    val pid = f.observations.last().second.identity.first
+                    assertTrue(faults.launch {
+                        requireConnectionFree()
+                        f.auth.base.ordinary.terminateSession(pid)
+                        requireConnectionFree()
+                        true
+                    }.value())
+                }
 
                 "INTERRUPT" -> Thread.currentThread().interrupt()
 

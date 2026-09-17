@@ -54,27 +54,37 @@ class OwnerDeleteAllVerificationIT {
                 val externalCalls = f.publisher.requests.size to f.publisher.kms.requests.size
                 val captured = f.store.capture(readback)
                 var operation: ComplaintOwnerDeleteAllVerificationOperation? = null
-                f.afterStep = { step ->
-                    f.assertNoForbiddenLocks(f.observations.last().second)
-                    if (step == VerificationStep.VERIFIED) assertEquals(before, f.auth.state()) // Uncommitted proof is invisible to independent PG.
-                }
-                val phase = f.auth.ownership.enterComplaintOwnerDeleteAllVerify()
-                try {
-                    phase.begin()
-                    operation = f.store.verify(captured)
-                    val early = assertThrows<PersistencePhaseException> { checkNotNull(operation).result }
-                    assertEquals(PersistenceDatabaseOutcome.NONE, early.databaseOutcome)
-                    assertFalse(early.cleanupProven)
-                    phase.commit()
-                    val held = assertThrows<PersistencePhaseException> { checkNotNull(operation).result }
-                    assertEquals(PersistenceDatabaseOutcome.COMMITTED, held.databaseOutcome)
-                    assertFalse(held.cleanupProven)
-                } catch (problem: Throwable) {
-                    phase.recordFailure(problem)
-                    throw problem
-                } finally {
-                    phase.finish()
-                    f.afterStep = {}
+                OwnedCallerTestScope().use { observers ->
+                    f.afterStep = { step ->
+                        val observation = f.observations.last().second
+                        // The SQL caller waits at this exact result boundary; foreign JdbcTemplate
+                        // observations run only on an actor with no Spring/phase/permit ownership.
+                        assertTrue(observers.launch {
+                            requireConnectionFree()
+                            f.assertNoForbiddenLocks(observation)
+                            if (step == VerificationStep.VERIFIED) assertEquals(before, f.auth.state()) // Uncommitted proof is invisible to independent PG.
+                            requireConnectionFree()
+                            true
+                        }.value())
+                    }
+                    val phase = f.auth.ownership.enterComplaintOwnerDeleteAllVerify()
+                    try {
+                        phase.begin()
+                        operation = f.store.verify(captured)
+                        val early = assertThrows<PersistencePhaseException> { checkNotNull(operation).result }
+                        assertEquals(PersistenceDatabaseOutcome.NONE, early.databaseOutcome)
+                        assertFalse(early.cleanupProven)
+                        phase.commit()
+                        val held = assertThrows<PersistencePhaseException> { checkNotNull(operation).result }
+                        assertEquals(PersistenceDatabaseOutcome.COMMITTED, held.databaseOutcome)
+                        assertFalse(held.cleanupProven)
+                    } catch (problem: Throwable) {
+                        phase.recordFailure(problem)
+                        throw problem
+                    } finally {
+                        phase.finish()
+                        f.afterStep = {}
+                    }
                 }
                 val retained = checkNotNull(operation)
                 val verified = retained.result
