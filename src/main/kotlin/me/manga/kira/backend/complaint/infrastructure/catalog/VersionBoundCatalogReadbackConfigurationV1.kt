@@ -58,9 +58,10 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
         requireCatalogReadback(totalAttemptMillis in 1..MAXIMUM_ATTEMPT_MILLIS, CatalogReadbackFailure.INVALID_POLICY)
         requireCatalogReadback(pageSize in 1..CatalogReadbackProtocol.MAX_PAGE_ENTRIES, CatalogReadbackFailure.INVALID_POLICY)
         requireCatalogReadback(maximumPagesPerLocation in 1..OfflineCatalogChainProtocol.MAX_GENERATIONS, CatalogReadbackFailure.INVALID_POLICY)
-        val checked = try {
+        val checked = runCatching {
             OfflineTrustBundleVerifier.verify(current, chainPolicy.trustBundlePolicy)
-        } catch (failure: OfflineTrustBundleException) {
+        }.getOrElse { failure ->
+            if (failure !is OfflineTrustBundleException) throw failure
             throw CatalogReadbackException(
                 if (failure.code == OfflineTrustBundleFailure.LIMIT_EXCEEDED) CatalogReadbackFailure.LIMIT_EXCEEDED else CatalogReadbackFailure.INVALID_POLICY,
             )
