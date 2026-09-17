@@ -151,6 +151,12 @@ dependencies {
         exclude(group = "software.amazon.awssdk", module = "apache5-client")
         exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
     }
+    // Dormant J-bound data-key operations; same explicit owned synchronous transport.
+    implementation(libs.aws.sdk.kms) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
     implementation(libs.aws.sdk.url.connection.client)
 
     // --- API docs ---
