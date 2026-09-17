@@ -408,7 +408,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                         check(
                             store.jdbc.update(
                                 CHARGE_ENROLLMENT_COUNTER,
-                                after.free[counter], after.actual[counter], counter.storedName, counter.storedOrdinal, expected,
+                                after.free[counter], after.actual[counter], after.testReserved[counter], counter.storedName, counter.storedOrdinal, expected,
                                 balance.hardLimit[counter], balance.creationLimit[counter], balance.free[counter], balance.actual[counter],
                                 balance.recoveryReserved[counter], balance.testReserved[counter],
                             ) == 1,

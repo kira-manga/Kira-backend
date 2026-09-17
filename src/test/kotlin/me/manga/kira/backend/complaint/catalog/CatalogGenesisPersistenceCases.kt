@@ -548,7 +548,7 @@ internal class GenesisProbeJdbc(catalog: CatalogCoordinatorPersistence) : JdbcTe
     }
 
     override fun update(sql: String, vararg args: Any?): Int {
-        val step = if (sql.contains("UPDATE complaint_capacity_counters")) "charge:${args[2]}" else step(sql)
+        val step = if (sql.contains("UPDATE complaint_capacity_counters")) "charge:${args[3]}" else step(sql)
         before(step)
         return super.update(sql, *args).also { afterSql?.invoke(step) }
     }

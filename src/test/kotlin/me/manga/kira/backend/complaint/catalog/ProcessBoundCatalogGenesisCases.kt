@@ -33,7 +33,22 @@ import java.util.UUID
 internal class ProcessBoundCatalogGenesisCases(private val f: ProcessBoundCatalogGenesisFixture) {
     fun projectReplayAndNullDSeparation() {
         assertNull(f.process.catalogReadback, "This case intentionally proves only the intermediate D-v1 persistence contract.")
+        // Explicit accounting-fixture reserve only: G1 must preserve it, never consume TEST capacity or manufacture catalog success.
+        assertEquals(
+            2,
+            f.observer.update(
+                "UPDATE complaint_capacity_counters SET free_units = free_units - 7, test_reserved_units = 7 " +
+                    "WHERE name IN ('catalog_mutations', 'storage_bytes') AND test_reserved_units = 0",
+            ),
+        )
         f.stageSigned()
+        assertEquals(
+            listOf(7L, 7L),
+            f.observer.queryForList(
+                "SELECT test_reserved_units FROM complaint_capacity_counters WHERE name IN ('catalog_mutations', 'storage_bytes') ORDER BY name",
+                Long::class.java,
+            ),
+        )
         val readback = f.proof()
         assertEquals(GenesisResume.PREPARED, readback.resume)
         f.setDesired(null)
