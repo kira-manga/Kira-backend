@@ -24,7 +24,7 @@ internal class JournalPublicationLanesV1(private val journal: ComplaintJournalCo
 
     internal fun requireJournal(expected: ComplaintJournalConfigurationV1) = requireJournalPublication(journal === expected)
 
-    /** Unstarted routine accounting only. There is deliberately no routine provider entry in this slice. */
+    /** Unstarted accounting-only reservation; the separate private receiptless path below owns actual routine publication. */
     fun tryRoutinePublication(): RoutineReservation? {
         if (!lock.tryLock()) return null
         try {

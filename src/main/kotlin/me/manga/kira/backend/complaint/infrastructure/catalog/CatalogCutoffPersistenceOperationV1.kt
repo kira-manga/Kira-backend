@@ -56,7 +56,9 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
         requireRetained()
         when (path) {
             PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL -> control()
-            PersistencePhasePath.COMPLAINT_CUTOFF_PAGE -> publications = jdbc.query(attempt.pageSql(), { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, *attempt.pageArguments())
+            PersistencePhasePath.COMPLAINT_CUTOFF_PAGE -> publications = jdbc.query(
+                attempt.pageSql(), { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, *attempt.pageArguments(),
+            )
             PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY -> verify()
             else -> error("Invalid cutoff persistence phase.")
         }
@@ -83,12 +85,16 @@ internal class CatalogCutoffPersistenceOperationV1 private constructor(
         val input = checkNotNull(verification)
         input.requireOwned(attempt)
         // Historical immutable evidence is deliberately NOT fenced. No control/receipt/counter/domain lock.
-        val locked = jdbc.query(CatalogCutoffPublicationSqlV1.LOCK_PUBLICATION, { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, input.row.eventId).single()
+        val locked = jdbc.query(
+            CatalogCutoffPublicationSqlV1.LOCK_PUBLICATION, { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, input.row.eventId,
+        ).single()
         requireRetained()
         check(input.row.sameImmutable(locked))
         val changed = locked.state == "PREPARED"
         val stored = if (changed) {
-            jdbc.query(CatalogCutoffPublicationSqlV1.RECORD_VERIFIED, { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, *input.arguments()).single()
+            jdbc.query(
+                CatalogCutoffPublicationSqlV1.RECORD_VERIFIED, { row, _ -> CatalogCutoffPublicationRowV1.copy(row) }, *input.arguments(),
+            ).single()
         } else locked // VERIFIED/APPLIED race preserves the exact first proof, never a rewritten timestamp/hash.
         requireRetained()
         input.checkStored(stored, changed)

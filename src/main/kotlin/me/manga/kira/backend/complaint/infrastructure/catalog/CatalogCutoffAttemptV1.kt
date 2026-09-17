@@ -128,7 +128,9 @@ internal class CatalogCutoffAttemptV1 internal constructor(
         } else {
             check(stage === Stage.COUNT || stage === Stage.DIGEST)
             val prefix = "${OfflineBootstrapGrammar.ordinaryPrefix(writer.toString())}writer/$writer/epoch/"
-            arrayOf(writer, prefix + "1".padStart(19, '0') + "/", prefix + Math.addExact(cutoffEpoch(), 1L).toString().padStart(19, '0') + "/", afterKey)
+            val lower = prefix + "1".padStart(19, '0') + "/"
+            val upper = prefix + Math.addExact(cutoffEpoch(), 1L).toString().padStart(19, '0') + "/"
+            arrayOf(writer, lower, upper, afterKey)
         }
     }
 

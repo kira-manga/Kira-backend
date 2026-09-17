@@ -48,8 +48,7 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
             renew(retained)
             val final = persistence.control(retained)
             retained.acceptControl(final)
-            val (slot, manifest) = retained.result(final)
-            return CapturedCutoffManifestV1.fromReleased(final, slot, manifest.eventCount, manifest.eventManifestSha256)
+            return CapturedCutoffManifestV1.fromReleased(final)
         } catch (problem: Throwable) {
             campaign.close()
             attempt?.abort()
@@ -129,14 +128,8 @@ internal class CapturedCutoffManifestV1 private constructor(slot: CatalogEpochRo
     override fun toString(): String = "CapturedCutoffManifestV1(historical,redacted,NOT-a-verified-seal)"
 
     companion object {
-        internal fun fromReleased(
-            operation: CatalogCutoffPersistenceOperationV1,
-            slot: CatalogEpochRotationSlotV1,
-            count: Long,
-            digest: String,
-        ): CapturedCutoffManifestV1 {
-            val (actualSlot, manifest) = operation.attempt.result(operation)
-            check(actualSlot === slot && manifest.eventCount == count && manifest.eventManifestSha256 == digest)
+        internal fun fromReleased(operation: CatalogCutoffPersistenceOperationV1): CapturedCutoffManifestV1 {
+            val (slot, manifest) = operation.attempt.result(operation)
             return CapturedCutoffManifestV1(slot, manifest.eventCount, manifest.eventManifestSha256)
         }
     }
