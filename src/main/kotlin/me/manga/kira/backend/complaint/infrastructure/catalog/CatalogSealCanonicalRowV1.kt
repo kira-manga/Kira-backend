@@ -98,8 +98,7 @@ internal class CatalogCutoffControlRowV1 private constructor(
     internal fun sameState(other: CatalogCutoffControlRowV1): Boolean = rotation.sameState(other.rotation) && preimage.sameState(other.preimage) &&
         sameSeal(other.seal)
 
-    internal fun sameSeal(expected: CatalogSealCanonicalRowV1?): Boolean =
-        if (seal == null) expected == null else expected != null && seal.sameIntent(expected)
+    internal fun sameSeal(expected: CatalogSealCanonicalRowV1?): Boolean = if (seal == null) expected == null else expected != null && seal.sameIntent(expected)
 
     internal fun sameExceptCanonicalAndUpdatedAt(other: CatalogCutoffControlRowV1): Boolean = preimage.sameExceptUpdatedAt(other.preimage)
 
@@ -113,7 +112,9 @@ internal class CatalogCutoffControlRowV1 private constructor(
             check(row.getBoolean("cutoff_checkpoint_empty") && !row.wasNull())
             check(row.getBoolean("cutoff_finite_times") && !row.wasNull())
             return CatalogCutoffControlRowV1(
-                CatalogEpochRotationRowV1.copy(row), CatalogSealCanonicalRowV1.copy(row), CatalogCutoffControlPreimageV1.copy(row),
+                CatalogEpochRotationRowV1.copy(row),
+                CatalogSealCanonicalRowV1.copy(row),
+                CatalogCutoffControlPreimageV1.copy(row),
             )
         }
     }

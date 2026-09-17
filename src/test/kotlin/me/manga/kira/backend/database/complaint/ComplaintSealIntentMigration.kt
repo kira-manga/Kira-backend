@@ -122,7 +122,13 @@ private const val SEAL_INTENT_CONSTRAINT = "chk_complaint_control_seal_intent"
 private const val INTENT_ID = "68000000-0000-4000-8000-000000000001"
 private const val FOREIGN_INTENT_ID = "68000000-0000-4000-8000-000000000002"
 private val SEAL_INTENT_COLUMNS = listOf(
-    "seal_format", "seal_rotation_id", "seal_rotation_sequence", "seal_preparing_fencing_token", "seal_routing_key_id", "seal_epoch_start", "seal_preceding_hash",
+    "seal_format",
+    "seal_rotation_id",
+    "seal_rotation_sequence",
+    "seal_preparing_fencing_token",
+    "seal_routing_key_id",
+    "seal_epoch_start",
+    "seal_preceding_hash",
 )
 private val SEAL_SHAPE = "seal_state='SEAL_PREPARED',seal_epoch=7,seal_writer_generation=event_writer_generation," +
     "seal_operation_token='$INTENT_ID',seal_object_key='fixture/unlinked-seal',seal_bytes=$FIXTURE_BYTES,seal_hash=$FIXTURE_HASH"

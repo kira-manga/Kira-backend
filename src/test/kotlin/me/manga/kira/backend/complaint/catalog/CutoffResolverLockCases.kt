@@ -90,42 +90,39 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
 
     fun canonicalEntryLeaseRefusal(campaign: CatalogCoordinatorLeaseCampaignV1) = controlRefusal(campaign, canonical = true, change = ::expire)
 
-    private fun controlRefusal(
-        campaign: CatalogCoordinatorLeaseCampaignV1,
-        canonical: Boolean = false,
-        change: (JdbcTemplate) -> Unit,
-    ) = independentTransaction { blocker, selected ->
-        assertEquals(
-            ComplaintDataScope.LIVE.id,
-            selected.queryForObject(
-                "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE",
-                UUID::class.java,
+    private fun controlRefusal(campaign: CatalogCoordinatorLeaseCampaignV1, canonical: Boolean = false, change: (JdbcTemplate) -> Unit) =
+        independentTransaction { blocker, selected ->
+            assertEquals(
                 ComplaintDataScope.LIVE.id,
-            ),
-        )
-        val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
-        val traffic = wire.requests.size to wire.kms.requests.size
-        OwnedCallerTestScope().use { callers ->
-            val worker = callers.launch {
-                runCatching { if (canonical) cases.prepareCapturedLive(campaign) else cases.resolve(campaign) }
-            }
-            val observation = runCatching {
-                try {
-                    val waiting = awaiting(selected, holder, "complaint_journal_control", "complaint_journal_publications")
-                    assertWait(waiting)
-                    assertEquals(traffic, wire.requests.size to wire.kms.requests.size)
-                    change(selected)
-                    assertPromptRelease(waiting, selected)
-                    blocker.commit()
-                } finally {
-                    blocker.rollback()
+                selected.queryForObject(
+                    "SELECT data_scope_id FROM complaint_journal_control WHERE data_scope_id = ? FOR UPDATE",
+                    UUID::class.java,
+                    ComplaintDataScope.LIVE.id,
+                ),
+            )
+            val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
+            val traffic = wire.requests.size to wire.kms.requests.size
+            OwnedCallerTestScope().use { callers ->
+                val worker = callers.launch {
+                    runCatching { if (canonical) cases.prepareCapturedLive(campaign) else cases.resolve(campaign) }
                 }
+                val observation = runCatching {
+                    try {
+                        val waiting = awaiting(selected, holder, "complaint_journal_control", "complaint_journal_publications")
+                        assertWait(waiting)
+                        assertEquals(traffic, wire.requests.size to wire.kms.requests.size)
+                        change(selected)
+                        assertPromptRelease(waiting, selected)
+                        blocker.commit()
+                    } finally {
+                        blocker.rollback()
+                    }
+                }
+                assertObservedRefusal(observation, worker.value())
+                assertEquals(traffic, wire.requests.size to wire.kms.requests.size)
+                cases.assertReleased()
             }
-            assertObservedRefusal(observation, worker.value())
-            assertEquals(traffic, wire.requests.size to wire.kms.requests.size)
-            cases.assertReleased()
         }
-    }
 
     private fun publicationOnlyEvidenceAfterLoss(campaign: CatalogCoordinatorLeaseCampaignV1) = independentTransaction { blocker, selected ->
         val event = publications.cutoffEvents.single()

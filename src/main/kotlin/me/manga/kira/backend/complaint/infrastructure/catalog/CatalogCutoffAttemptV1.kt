@@ -288,11 +288,7 @@ internal class CatalogCutoffAttemptV1 internal constructor(
         return arrayOf(*selected.insertArguments(), *arguments, owner, token, *before.preimageArguments())
     }
 
-    internal fun checkPreparedMutation(
-        operation: CatalogCutoffPersistenceOperationV1,
-        before: CatalogCutoffControlRowV1,
-        after: CatalogCutoffControlRowV1,
-    ) {
+    internal fun checkPreparedMutation(operation: CatalogCutoffPersistenceOperationV1, before: CatalogCutoffControlRowV1, after: CatalogCutoffControlRowV1) {
         checkPrepared(operation, after)
         check(before.seal == null && discoveredSeal == null && before.sameExceptCanonicalAndUpdatedAt(after))
         check(after.rotation.updatedAt == after.rotation.sampledAt)
