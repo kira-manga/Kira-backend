@@ -56,9 +56,15 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore(
     private val policy: ComplaintCapacityPolicyV1,
     catalog: CatalogCommonHeadEvidence,
     private val verification: JdbcComplaintOwnerDeleteAllVerificationStore,
+    private val process: OwnerDeleteAllProcessBinding? = null,
 ) {
+    init {
+        process?.requireDeletion(jdbc)
+        process?.requirePolicy(policy)
+    }
+
     private val issuer = Any()
-    private val controls = OwnerDeleteAllControlBinding(desired, routing, catalog)
+    private val controls = OwnerDeleteAllControlBinding(desired, routing, catalog, process)
     private val codec = OwnerDeleteAllVerificationCodecV1(routing)
 
     fun capture(work: CommittedOwnerDeleteAllWork, proof: CommittedOwnerDeleteAllVerificationV1): OwnerDeleteAllApplyInputV1 {

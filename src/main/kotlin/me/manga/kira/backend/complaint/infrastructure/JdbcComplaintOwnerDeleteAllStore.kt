@@ -50,9 +50,24 @@ internal class JdbcComplaintOwnerDeleteAllStore(
     private val codec: OwnerDeleteAllJournalCodecV1,
     private val policy: ComplaintCapacityPolicyV1,
     catalog: CatalogCommonHeadEvidence,
+    private val process: OwnerDeleteAllProcessBinding? = null,
 ) {
+    init {
+        process?.requireDeletion(jdbc)
+        process?.requirePolicy(policy)
+    }
+
     private val issuer = Any()
-    private val controls = OwnerDeleteAllControlBinding(desired, routing, catalog)
+    private val controls = OwnerDeleteAllControlBinding(desired, routing, catalog, process)
+
+    /** Bound VERIFY rechecks current control before locking its receipt; legacy diagnostic paths stay unchanged. */
+    internal fun lockBoundVerification(selected: JdbcTemplate) {
+        if (process != null) {
+            process.requireDeletion(selected)
+            check(selected.dataSource === jdbc.dataSource)
+            controls.lock(selected, authorizingPath = false)
+        }
+    }
 
     fun authorize(candidate: InstallationDeletionCandidate, preflight: InstallationDeletionPreflightTuple): ComplaintOwnerDeleteAllOperation =
         capture(candidate, preflight, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE)

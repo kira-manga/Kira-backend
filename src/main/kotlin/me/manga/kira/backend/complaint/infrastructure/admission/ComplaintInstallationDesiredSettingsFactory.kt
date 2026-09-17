@@ -15,6 +15,10 @@ import java.util.UUID
  * Schema/generation are typed deployment scalars, not a new wire-number grammar.
  */
 internal object ComplaintInstallationDesiredSettingsFactory {
+    /** Derived from the retained concrete graph, never supplied D or an observed database value. */
+    fun fromRetained(process: VersionBoundComplaintProcessConfiguration): ComplaintInstallationDesiredSettings.Configured =
+        process.desiredSettings()
+
     fun fromDeployment(
         mode: String? = null,
         implementationSchema: Int? = null,
