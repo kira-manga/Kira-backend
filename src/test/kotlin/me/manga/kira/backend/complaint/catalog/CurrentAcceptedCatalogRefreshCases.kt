@@ -78,7 +78,8 @@ internal class CurrentAcceptedCatalogRefreshCases(private val f: ProcessBoundCat
             rejectedPersistence { owner.refresh() }
             wire.assertFullReadback(attempts = 2)
             val pending = assertInstanceOf(
-                LocalCatalogSnapshot.ProjectionPending::class.java, f.coordinator.snapshot.load(f.initial, f.current, f.policy),
+                LocalCatalogSnapshot.ProjectionPending::class.java,
+                f.coordinator.snapshot.load(f.initial, f.current, f.policy),
             )
             assertEquals(f.token.toString(), pending.projection.operationToken)
             assertArrayEquals(f.genesisBytes, pending.projection.signedEnvelopeBytes)
