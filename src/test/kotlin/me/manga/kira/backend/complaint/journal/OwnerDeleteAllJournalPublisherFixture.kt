@@ -74,7 +74,10 @@ internal class OwnerDeleteAllJournalPublisherFixture(
 
     init {
         kms.respond = ::keyReply
-        kms.beforePrepare = { requireConnectionFree(); assertClosedExchanges() }
+        kms.beforePrepare = {
+            requireConnectionFree()
+            assertClosedExchanges()
+        }
         kms.afterPrepare = {}
         kms.onClientClose = {}
     }
@@ -84,7 +87,13 @@ internal class OwnerDeleteAllJournalPublisherFixture(
         selected: VersionBoundComplaintJournalRouting = routing,
         credentials: AwsSessionCredentials = CREDENTIALS,
     ): OwnerDeleteAllJournalPublisherV1 = OwnerDeleteAllJournalPublisherV1.withHttpFixture(
-        store, selected, credentials, ::httpClient, kms::httpClient, clock, { nanos },
+        store,
+        selected,
+        credentials,
+        ::httpClient,
+        kms::httpClient,
+        clock,
+        { nanos },
     )
 
     fun httpClient(): SdkHttpClient {
@@ -107,7 +116,10 @@ internal class OwnerDeleteAllJournalPublisherFixture(
 
                     override fun abort() {
                         captured.aborts++
-                        captured.reply?.let { it.aborts++; it.onAbort() }
+                        captured.reply?.let {
+                            it.aborts++
+                            it.onAbort()
+                        }
                     }
                 }
                 afterPrepare()
@@ -125,7 +137,9 @@ internal class OwnerDeleteAllJournalPublisherFixture(
 
     fun statefulReply(request: JournalPublisherHttpRequest): S3CatalogReply = when (request.kind) {
         "LIST" -> listReply(listOfNotNull(stored))
+
         "GET" -> getReply(checkNotNull(stored))
+
         else -> {
             if (stored != null) {
                 errorReply(412)
@@ -183,7 +197,11 @@ internal class OwnerDeleteAllJournalPublisherFixture(
         val created = wall.truncatedTo(ChronoUnit.SECONDS)
         val retention = created.plusSeconds(journal.declaration().limits.retention.ordinaryRetentionSeconds + 30)
         return JournalPublisherObject(
-            event.route.objectKey, version, bytes.copyOf(), created, retention,
+            event.route.objectKey,
+            version,
+            bytes.copyOf(),
+            created,
+            retention,
             mapOf(
                 "kira-journal-schema" to "1",
                 "kira-journal-event-id" to event.route.eventId,
@@ -210,7 +228,10 @@ internal class OwnerDeleteAllJournalPublisherFixture(
         onClientClose = {}
         respond = ::statefulReply
         kms.respond = ::keyReply
-        kms.beforePrepare = { requireConnectionFree(); assertClosedExchanges() }
+        kms.beforePrepare = {
+            requireConnectionFree()
+            assertClosedExchanges()
+        }
         kms.afterPrepare = {}
         kms.onClientClose = {}
     }
@@ -280,14 +301,21 @@ internal class OwnerDeleteAllJournalPublisherFixture(
     companion object {
         const val VERSION = "ordinary-%2F+&=version-1"
         const val PRIVATE_TEXT = "synthetic-private-journal-publication-provider-text"
-        val CREDENTIALS: AwsSessionCredentials = AwsSessionCredentials.create("SYNTHETICJOURNALACCESS", "synthetic-journal-not-a-real-secret", "synthetic-journal-session")
+        val CREDENTIALS: AwsSessionCredentials = AwsSessionCredentials.create(
+            "SYNTHETICJOURNALACCESS",
+            "synthetic-journal-not-a-real-secret",
+            "synthetic-journal-session",
+        )
 
         fun checksum(bytes: ByteArray): String = Base64.getEncoder().encodeToString(MessageDigest.getInstance("SHA-256").digest(bytes))
         fun hash(bytes: ByteArray): String = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
         fun xml(value: String): String = value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         fun encoded(value: String): String = xml(encodedQuery(value))
         fun encodedQuery(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20").replace("%7E", "~")
-        fun xmlReply(document: String): S3CatalogReply = S3CatalogReply(document.toByteArray()).apply { headers = headers + ("Content-Type" to listOf("application/xml")) }
+        fun xmlReply(document: String): S3CatalogReply = S3CatalogReply(document.toByteArray()).apply {
+            headers =
+                headers + ("Content-Type" to listOf("application/xml"))
+        }
         fun errorReply(statusCode: Int): S3CatalogReply = xmlReply("<Error><Code>ConditionalRequestConflict</Code><Message>synthetic</Message></Error>")
             .apply { status = statusCode }
 

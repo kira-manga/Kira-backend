@@ -37,7 +37,12 @@ internal class OrdinaryJournalVersionReadbackV1(
                 val facts = cheapChecks(binding, listed, fetched)
                 acknowledgment?.let { requireJournalPublication(it.wireSha256 == facts.wireSha256, JournalPublicationFailureV1.CONFLICT) }
                 checkAttempt(binding)
-                val decoded = codec.open(routing.journalConfiguration.declaration().journalLocation.bucket, binding.event.route.objectKey, fetched.bytes, binding.attempt)
+                val decoded = codec.open(
+                    routing.journalConfiguration.declaration().journalLocation.bucket,
+                    binding.event.route.objectKey,
+                    fetched.bytes,
+                    binding.attempt,
+                )
                 requireJournalPublication(decoded.event.belongsTo(routing) && decoded.event.route == binding.event.route, JournalPublicationFailureV1.CONFLICT)
                 val expected = binding.event.canonicalBytes()
                 val actual = decoded.event.canonicalBytes()
@@ -75,7 +80,8 @@ internal class OrdinaryJournalVersionReadbackV1(
             JournalPublicationFailureV1.INVALID_READBACK,
         )
         requireJournalPublication(
-            response.contentType() == JournalS3HttpWireV1.CONTENT_TYPE && JournalS3HttpWireV1.single(headers, "Content-Type") == JournalS3HttpWireV1.CONTENT_TYPE,
+            response.contentType() == JournalS3HttpWireV1.CONTENT_TYPE &&
+                JournalS3HttpWireV1.single(headers, "Content-Type") == JournalS3HttpWireV1.CONTENT_TYPE,
             JournalPublicationFailureV1.INVALID_READBACK,
         )
         val wireSha256 = wholeWireChecksum(fetched)

@@ -156,7 +156,10 @@ internal class S3OrdinaryJournalClientV1 private constructor(
         observed: JournalS3HttpObservationV1,
         candidate: JournalS3CandidateV1,
     ): JournalPutObservationV1.Acknowledged {
-        requireJournalPublication(response.sdkHttpResponse().statusCode() == 200 && observed.response.statusCode() == 200, JournalPublicationFailureV1.INVALID_PUT)
+        requireJournalPublication(
+            response.sdkHttpResponse().statusCode() == 200 && observed.response.statusCode() == 200,
+            JournalPublicationFailureV1.INVALID_PUT,
+        )
         val headers = observed.response.headers()
         val version = requireJournalVersion(response.versionId())
         requireJournalPublication(version == JournalS3HttpWireV1.single(headers, "x-amz-version-id"), JournalPublicationFailureV1.INVALID_PUT)
@@ -164,7 +167,10 @@ internal class S3OrdinaryJournalClientV1 private constructor(
             response.checksumSHA256() == candidate.checksum && response.checksumSHA256() == JournalS3HttpWireV1.single(headers, "x-amz-checksum-sha256"),
             JournalPublicationFailureV1.CHECKSUM_MISMATCH,
         )
-        requireJournalPublication(JournalS3HttpWireV1.single(headers, "x-amz-checksum-type") in listOf(null, "FULL_OBJECT"), JournalPublicationFailureV1.CHECKSUM_MISMATCH)
+        requireJournalPublication(
+            JournalS3HttpWireV1.single(headers, "x-amz-checksum-type") in listOf(null, "FULL_OBJECT"),
+            JournalPublicationFailureV1.CHECKSUM_MISMATCH,
+        )
         return JournalPutObservationV1.Acknowledged(version, candidate.wireSha256)
     }
 
@@ -174,12 +180,16 @@ internal class S3OrdinaryJournalClientV1 private constructor(
         val status = observed?.response?.statusCode()
         return when {
             status == 409 -> JournalPutObservationV1.Conflict
+
             status == 412 -> JournalPutObservationV1.PreconditionFailed
+
             status != null && status in 500..599 -> JournalPutObservationV1.Uncertain
+
             status == null -> {
                 requireJournalPublication(transport.dispatched(call), JournalPublicationFailureV1.PROVIDER_FAILURE)
                 JournalPutObservationV1.Uncertain
             }
+
             else -> throw failure // 403/404, an unvalidated body or a local rejection is never absence/retry permission.
         }
     }
@@ -247,7 +257,9 @@ internal class S3OrdinaryJournalClientV1 private constructor(
                         ClientOverrideConfiguration.builder().defaultProfileFile(emptyProfile).defaultProfileName(PROFILE_NAME)
                             .retryStrategy(StandardRetryStrategy.builder().maxAttempts(1).build())
                             .apiCallTimeout(Duration.ofMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis.toLong()))
-                            .apiCallAttemptTimeout(Duration.ofMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis.toLong())).build(),
+                            .apiCallAttemptTimeout(
+                                Duration.ofMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis.toLong()),
+                            ).build(),
                     ).build()
             }
             built.exceptionOrNull()?.let { failure -> return@journalPublicationSdkCall withJournalPublicationCleanup({ throw failure }, transport::close) }
@@ -275,7 +287,8 @@ internal class S3OrdinaryJournalClientV1 private constructor(
             return endpoint
         }
 
-        private fun ambient(setting: SdkSystemSetting): List<String?> = listOf(System.getProperty(setting.property()), System.getenv(setting.environmentVariable()))
+        private fun ambient(setting: SdkSystemSetting): List<String?> =
+            listOf(System.getProperty(setting.property()), System.getenv(setting.environmentVariable()))
 
         private fun validateCredentials(credentials: AwsSessionCredentials) {
             requireJournalPublication(credentials.accessKeyId().length in 1..128 && credentials.secretAccessKey().length in 1..256)

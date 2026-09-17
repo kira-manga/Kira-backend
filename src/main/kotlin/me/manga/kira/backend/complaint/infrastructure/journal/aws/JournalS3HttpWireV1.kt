@@ -115,7 +115,9 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         val date = single(headers, "x-amz-date")
         val authorization = single(headers, "Authorization")
         requireJournalPublication(date != null && DATE.matches(date) && authorization != null)
-        val prefix = "AWS4-HMAC-SHA256 Credential=$accessKeyId/${checkNotNull(date).take(8)}/${call.declaration.journalLocation.region}/s3/aws4_request, SignedHeaders="
+        val prefix = "AWS4-HMAC-SHA256 Credential=$accessKeyId/${checkNotNull(
+            date,
+        ).take(8)}/${call.declaration.journalLocation.region}/s3/aws4_request, SignedHeaders="
         val value = checkNotNull(authorization)
         requireJournalPublication(value.startsWith(prefix))
         val parts = value.removePrefix(prefix).split(", Signature=")
@@ -144,7 +146,7 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(missing == null || missing == "0", JournalPublicationFailureV1.INVALID_READBACK)
         val declared = declaredLength(headers)
         val transfer = single(headers, "Transfer-Encoding")
-        requireJournalPublication(transfer == null || transfer == "chunked" && declared == null, JournalPublicationFailureV1.INVALID_READBACK)
+        requireJournalPublication(transfer == null || (transfer == "chunked" && declared == null), JournalPublicationFailureV1.INVALID_READBACK)
         return declared
     }
 
@@ -160,15 +162,25 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         private val LIST_PARAMETERS = setOf("versions", "prefix", "max-keys", "encoding-type")
         private val COMMON_SIGNED_HEADERS = setOf("host", "x-amz-date", "x-amz-security-token", "x-amz-expected-bucket-owner")
         private val PUT_SIGNED_HEADERS = setOf(
-            "if-none-match", "content-type", "content-length", "x-amz-checksum-sha256", "x-amz-sdk-checksum-algorithm",
-            "x-amz-object-lock-mode", "x-amz-object-lock-retain-until-date",
+            "if-none-match",
+            "content-type",
+            "content-length",
+            "x-amz-checksum-sha256",
+            "x-amz-sdk-checksum-algorithm",
+            "x-amz-object-lock-mode",
+            "x-amz-object-lock-retain-until-date",
         )
         private val FORBIDDEN_REQUEST_HEADERS = setOf(
             "Range", "Content-Range", "Content-Encoding", "Transfer-Encoding", "x-amz-trailer", "x-amz-decoded-content-length",
             "x-amz-copy-source", "x-amz-bypass-governance-retention", "x-amz-website-redirect-location",
         )
         private val FORBIDDEN_RESPONSE_HEADERS = setOf(
-            "Location", "Content-Range", "Content-Encoding", "x-amz-expiration", "x-amz-website-redirect-location", "x-amz-trailer",
+            "Location",
+            "Content-Range",
+            "Content-Encoding",
+            "x-amz-expiration",
+            "x-amz-website-redirect-location",
+            "x-amz-trailer",
         )
 
         private fun parameter(http: SdkHttpRequest, name: String): String? = http.firstMatchingRawQueryParameter(name).orElse(null)
@@ -193,7 +205,12 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
             requireJournalPublication(headers.size <= 64, JournalPublicationFailureV1.LIMIT_EXCEEDED)
             var size = 0L
             headers.forEach { (name, values) ->
-                requireJournalPublication(name.length in 1..256 && name.all { it in HEADER_NAME } && values.size == 1, JournalPublicationFailureV1.LIMIT_EXCEEDED)
+                requireJournalPublication(
+                    name.length in 1..256 && name.all {
+                        it in HEADER_NAME
+                    } && values.size == 1,
+                    JournalPublicationFailureV1.LIMIT_EXCEEDED,
+                )
                 size += name.length + values.single().length.toLong()
                 requireJournalPublication(size <= 32 * 1024, JournalPublicationFailureV1.LIMIT_EXCEEDED)
                 requireJournalPublication(values.single().none { it < ' ' || it == '\u007f' }, JournalPublicationFailureV1.INVALID_READBACK)
