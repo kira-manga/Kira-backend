@@ -8,14 +8,17 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
+import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealAcquisitionDescriptorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.VersionBoundComplaintConsumerConfiguration
 import java.security.MessageDigest
 import java.util.UUID
 
 /**
  * One actual retained INITIAL_LIVE/memory/one-declared-instance composition and its versioned D.
- * The explicit catalog opt-in enlarges the dormant inventory; neither profile proves deployable authority.
+ * Explicit catalog/rotation/sealer opt-ins enlarge the dormant inventory; none proves deployable authority.
  * No bean, supplied D, provider observation, topology proof or current/restore/activation authority.
  * A rebuilt in-memory consumer loses quota state; this is not a rotation or rollout procedure.
  */
@@ -28,9 +31,12 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     private val restoreIdentity: UUID,
     val catalogReadback: VersionBoundCatalogReadbackConfigurationV1?,
     val epochRotation: EpochRotationPersistence?,
+    val epochSealAcquisition: VersionBoundEpochSealAcquisitionV1?,
+    private val publicationLanes: JournalPublicationLanesV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val retainedRotation: VersionBoundEpochRotationDescriptor?
+    private val retainedEpochSealAcquisition: EpochSealAcquisitionDescriptorV1?
     private val canonical: ByteArray
     private val hash: ByteArray
 
@@ -38,7 +44,21 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         requireGraph()
         retainedPools = pools.descriptors()
         retainedRotation = epochRotation?.descriptor()
-        canonical = if (epochRotation != null) {
+        retainedEpochSealAcquisition = epochSealAcquisition?.descriptor()
+        canonical = if (epochSealAcquisition != null) {
+            ComplaintEffectiveConfigurationV4.encode(
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                checkNotNull(catalogReadback),
+                checkNotNull(epochRotation),
+                checkNotNull(publicationLanes),
+                epochSealAcquisition,
+            )
+        } else if (epochRotation != null) {
             ComplaintEffectiveConfigurationV3.encode(
                 consumers,
                 pools,
@@ -94,12 +114,18 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         requireGraph()
         val current = pools.descriptors()
         require(epochRotation?.descriptor() === retainedRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        require(epochSealAcquisition?.descriptor() === retainedEpochSealAcquisition) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         require(current.size == retainedPools.size && current.indices.all { current[it] === retainedPools[it] }) {
             INVALID_COMPLAINT_PROCESS_CONFIGURATION
         }
     }
 
     private fun requireGraph() {
+        require((epochSealAcquisition == null) == (publicationLanes == null)) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        epochSealAcquisition?.let { acquisition ->
+            require(catalogReadback != null && epochRotation != null) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+            acquisition.requireRetained(consumers.journalRouting, checkNotNull(publicationLanes))
+        }
         require(pools.epochRotation === epochRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         epochRotation?.let { rotation ->
             require(catalogReadback != null && rotation.belongsTo(pools)) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
@@ -145,6 +171,8 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 restoreIdentity,
                 catalogReadback,
                 null,
+                null,
+                null,
             )
         }
 
@@ -169,6 +197,36 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 restoreIdentity,
                 catalogReadback,
                 rotation,
+                null,
+                null,
+            )
+        }
+
+        /** Cold D4 inventory only, before G1 acceptance; no current acquisition entry or retrofit into a D3 binding. */
+        fun fromRetainedWithEpochSealAcquisition(
+            consumers: VersionBoundComplaintConsumerConfiguration,
+            pools: VersionBoundPersistencePools,
+            implementationSchema: Int,
+            desiredGeneration: Long,
+            databaseIdentity: UUID,
+            restoreIdentity: UUID,
+            catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+            publicationLanes: JournalPublicationLanesV1,
+            epochSealAcquisition: VersionBoundEpochSealAcquisitionV1,
+        ): VersionBoundComplaintProcessConfiguration {
+            requireConnectionFree()
+            val rotation = requireNotNull(pools.epochRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+            return VersionBoundComplaintProcessConfiguration(
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                catalogReadback,
+                rotation,
+                epochSealAcquisition,
+                publicationLanes,
             )
         }
 

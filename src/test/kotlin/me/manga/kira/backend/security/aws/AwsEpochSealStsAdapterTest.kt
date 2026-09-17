@@ -16,9 +16,12 @@ import org.junit.jupiter.api.Test
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.core.exception.SdkClientException
+import software.amazon.awssdk.http.HttpExecuteRequest
 import software.amazon.awssdk.http.SdkHttpClient
 import software.amazon.awssdk.http.SdkHttpMethod
+import java.io.ByteArrayInputStream
 import java.io.IOException
+import java.net.URI
 import java.net.URLDecoder
 import java.net.URLEncoder
 import java.time.Instant
@@ -63,7 +66,7 @@ class AwsEpochSealStsAdapterTest {
                     assertEquals("https", request.http.protocol())
                     assertEquals("sts.us-east-1.amazonaws.com", request.http.host())
                     assertEquals(443, request.http.port())
-                    assertEquals("/", request.http.encodedPath())
+                    assertEquals("", request.http.encodedPath())
                     assertTrue(request.http.rawQueryParameters().isEmpty())
                     assertFalse(request.http.firstMatchingHeader("X-Amz-Target").isPresent)
                     val credentials = if (index == 2) TARGET_CREDENTIALS else AwsJournalKmsFixture.CREDENTIALS
@@ -205,7 +208,22 @@ class AwsEpochSealStsAdapterTest {
         fun encoded(values: Map<String, String>): ByteArray = values.entries.joinToString("&") { (name, value) ->
             "${URLEncoder.encode(name, Charsets.UTF_8)}=${URLEncoder.encode(value, Charsets.UTF_8)}"
         }.toByteArray(Charsets.US_ASCII)
-        EpochSealStsProtocol.request(http.requests[1].json.toByteArray(), call) {}
+        val captured = http.requests[1]
+        val wire = EpochSealStsHttpWire(
+            "us-east-1",
+            URI.create("https://sts.us-east-1.amazonaws.com"),
+            AwsJournalKmsFixture.CREDENTIALS.accessKeyId(),
+            AwsJournalKmsFixture.CREDENTIALS.sessionToken(),
+        )
+        fun requestAt(path: String): HttpExecuteRequest = HttpExecuteRequest.builder()
+            .request(captured.http.toBuilder().encodedPath(path).build())
+            .contentStreamProvider { ByteArrayInputStream(captured.json.toByteArray()) }
+            .build()
+        listOf("", "/").forEach { path -> wire.request(requestAt(path), call) {}.fill(0) }
+        listOf("/not-sts", "//", "/%2F").forEach { path ->
+            assertEquals(EpochSealStsFailure.PROTOCOL_REJECTED, reject { wire.request(requestAt(path), call) {} }.code)
+        }
+        EpochSealStsProtocol.request(captured.json.toByteArray(), call) {}
         listOf(
             fields + ("Policy" to fields.getValue("Policy").replace(key, "$key*")),
             fields + ("Policy" to fields.getValue("Policy").replace("\"s3:prefix\":\"$key\"", "\"s3:prefix\":\"\"")),
@@ -306,14 +324,23 @@ class AwsEpochSealStsAdapterTest {
                             status = 307
                             headers = headers + ("Location" to listOf("https://synthetic-unapproved.invalid/"))
                         }
+
                         "error" -> status = 503
+
                         "length" -> headers = headers + ("Content-Length" to listOf(Long.MAX_VALUE.toString()))
+
                         "duplicate" -> headers = headers + ("Content-Length" to listOf(bytes.size.toString(), bytes.size.toString()))
+
                         "encoding" -> headers = headers + ("Content-Encoding" to listOf("gzip"))
+
                         "type" -> headers = headers + ("Content-Type" to listOf("application/json"))
+
                         "missing" -> bodyPresent = false
+
                         "zero" -> chunkSize = 0
+
                         "short" -> headers = headers + ("Content-Length" to listOf((bytes.size + 1).toString()))
+
                         else -> beforeRead = { throw IOException(PRIVATE_TEXT) }
                     }
                 }
@@ -334,8 +361,12 @@ class AwsEpochSealStsAdapterTest {
         val attempt = seal.codec.startAttempt()
         val key = seal.content(attempt).route.objectKey
         listOf(
-            key.replace("/seal-terminal/", "/ordinary/"), key.replace("/live/", "/test/"), key + "*",
-            key.replace("0000000000000000042", "0000000000000000000"), key.replace("/route-b/", "/foreign-routing/"), key.dropLast(1) + "B",
+            key.replace("/seal-terminal/", "/ordinary/"),
+            key.replace("/live/", "/test/"),
+            key + "*",
+            key.replace("0000000000000000042", "0000000000000000000"),
+            key.replace("/route-b/", "/foreign-routing/"),
+            key.dropLast(1) + "B",
         ).forEach { bad -> http.stsAdapter(seal).use { adapter -> reject { adapter.acquire(bad, attempt) } } }
         http.stsAdapter(seal).use { adapter -> reject { adapter.acquire(key, EpochSealTestFixtureV1().codec.startAttempt()) } }
         val adapter = http.stsAdapter(seal)
@@ -395,7 +426,9 @@ class AwsEpochSealStsAdapterTest {
             try {
                 when (signal) {
                     is AssertionError -> assertSame(signal, assertThrows(AssertionError::class.java) { operation() })
+
                     is CancellationException -> sanitized(assertThrows(CancellationException::class.java) { operation() })
+
                     else -> {
                         sanitized(assertThrows(InterruptedException::class.java) { operation() })
                         assertTrue(Thread.currentThread().isInterrupted)
@@ -460,11 +493,14 @@ class AwsEpochSealStsAdapterTest {
             val number = requests.size
             val xml = when (number) {
                 1 -> identity()
+
                 2 -> {
                     session = request.query().getValue("RoleSessionName")
                     assumed(session)
                 }
+
                 3 -> identity(arn = targetArn(session), userId = "$TARGET_ROLE_ID:$session")
+
                 else -> error("Unexpected extra synthetic STS request")
             }
             change(number, xml)
@@ -526,14 +562,13 @@ class AwsEpochSealStsAdapterTest {
             "<Arn>$arn</Arn><UserId>$userId</UserId><Account>$account</Account></GetCallerIdentityResult>" +
             "<ResponseMetadata><RequestId>synthetic-request-1</RequestId></ResponseMetadata></GetCallerIdentityResponse>"
 
-    private fun assumed(session: String): String =
-        """<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult>""" +
-            "<Credentials><AccessKeyId>${TARGET_CREDENTIALS.accessKeyId()}</AccessKeyId>" +
-            "<SecretAccessKey>${TARGET_CREDENTIALS.secretAccessKey()}</SecretAccessKey>" +
-            "<SessionToken>${TARGET_CREDENTIALS.sessionToken()}</SessionToken><Expiration>$EXPIRATION</Expiration></Credentials>" +
-            "<AssumedRoleUser><AssumedRoleId>$TARGET_ROLE_ID:$session</AssumedRoleId><Arn>${targetArn(session)}</Arn></AssumedRoleUser>" +
-            "<PackedPolicySize>1</PackedPolicySize></AssumeRoleResult>" +
-            "<ResponseMetadata><RequestId>synthetic-request-2</RequestId></ResponseMetadata></AssumeRoleResponse>"
+    private fun assumed(session: String): String = """<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult>""" +
+        "<Credentials><AccessKeyId>${TARGET_CREDENTIALS.accessKeyId()}</AccessKeyId>" +
+        "<SecretAccessKey>${TARGET_CREDENTIALS.secretAccessKey()}</SecretAccessKey>" +
+        "<SessionToken>${TARGET_CREDENTIALS.sessionToken()}</SessionToken><Expiration>$EXPIRATION</Expiration></Credentials>" +
+        "<AssumedRoleUser><AssumedRoleId>$TARGET_ROLE_ID:$session</AssumedRoleId><Arn>${targetArn(session)}</Arn></AssumedRoleUser>" +
+        "<PackedPolicySize>1</PackedPolicySize></AssumeRoleResult>" +
+        "<ResponseMetadata><RequestId>synthetic-request-2</RequestId></ResponseMetadata></AssumeRoleResponse>"
 
     private fun targetArn(session: String): String = "arn:aws:sts::$ACCOUNT:assumed-role/epoch-sealer/$session"
 

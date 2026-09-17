@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.journal.aws
 
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.InitialLiveJournalDeclarationV1
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
@@ -64,22 +65,46 @@ internal class JournalS3BindingV1 private constructor(
 
 internal enum class JournalS3OperationV1 { LIST, PUT, GET }
 
+/** Two concrete families only. Neither the SDK nor its transport accepts caller-selected routing or validation. */
+internal sealed interface JournalS3RequestV1 {
+    val routing: VersionBoundComplaintJournalRouting
+    val declaration: InitialLiveJournalDeclarationV1
+    val objectKey: String
+    val operation: JournalS3OperationV1
+    val versionId: String?
+    val candidate: JournalS3PutV1?
+    fun remainingMillis(): Int
+    fun check()
+}
+
+/** Exact immutable candidate facts from the ordinary or seal encoder; never an arbitrary PUT profile. */
+internal sealed interface JournalS3PutV1 : AutoCloseable {
+    val wireSha256: String
+    val checksum: String
+    val size: Int
+    val retainUntil: Instant
+    fun bytes(): ByteArray
+    fun metadata(): Map<String, String>
+}
+
 /** The S3 subcall ceiling shrinks inside the SAME codec attempt; it never supplies a fresh total allowance. */
 internal class JournalS3CallV1 private constructor(
     val binding: JournalS3BindingV1,
-    val operation: JournalS3OperationV1,
-    val versionId: String?,
-    val candidate: JournalS3CandidateV1?,
+    override val operation: JournalS3OperationV1,
+    override val versionId: String?,
+    override val candidate: JournalS3CandidateV1?,
     private val nanoTime: () -> Long,
-) {
-    val declaration = binding.routing.journalConfiguration.declaration()
+) : JournalS3RequestV1 {
+    override val routing: VersionBoundComplaintJournalRouting get() = binding.routing
+    override val declaration = binding.routing.journalConfiguration.declaration()
+    override val objectKey: String get() = binding.event.route.objectKey
     private val started = nanoTime()
     private val allowance = binding.attempt.remainingMillis(declaration.limits.deadlines.s3CallMillis) * 1_000_000L
     private var lastElapsed = 0L
     private var expired = false
 
     @Synchronized
-    fun remainingMillis(): Int {
+    override fun remainingMillis(): Int {
         requireConnectionFree()
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
         binding.requirePublicationStart()
@@ -96,7 +121,7 @@ internal class JournalS3CallV1 private constructor(
         return minOf(total.toLong(), remaining).toInt()
     }
 
-    fun check() {
+    override fun check() {
         remainingMillis()
     }
 
@@ -118,19 +143,22 @@ internal class JournalS3CallV1 private constructor(
 }
 
 /** One in-memory randomized candidate, reused byte-for-byte (including retention metadata) for the sole optional retry. */
-internal class JournalS3CandidateV1 private constructor(val event: OwnerDeleteAllJournalEventV1, private val wire: ByteArray, val retainUntil: Instant) :
-    AutoCloseable {
-    val wireSha256: String = Sha256.hex(wire)
-    val checksum: String = Base64.getEncoder().encodeToString(HexFormat.of().parseHex(wireSha256))
-    val size: Int get() = wire.size
+internal class JournalS3CandidateV1 private constructor(
+    val event: OwnerDeleteAllJournalEventV1,
+    private val wire: ByteArray,
+    override val retainUntil: Instant,
+) : JournalS3PutV1 {
+    override val wireSha256: String = Sha256.hex(wire)
+    override val checksum: String = Base64.getEncoder().encodeToString(HexFormat.of().parseHex(wireSha256))
+    override val size: Int get() = wire.size
     private var closed = false
 
-    fun bytes(): ByteArray {
+    override fun bytes(): ByteArray {
         requireJournalPublication(!closed, JournalPublicationFailureV1.INVALID_PUT)
         return wire.copyOf()
     }
 
-    fun metadata(): Map<String, String> = journalMetadata(event.route.eventId, wireSha256, retainUntil.toString())
+    override fun metadata(): Map<String, String> = journalMetadata(event.route.eventId, wireSha256, retainUntil.toString())
 
     override fun close() {
         closed = true

@@ -91,9 +91,13 @@ internal object EpochSealStsProtocol {
                             requireEpochSealSts(++elements <= 32 && stack.size < 4)
                             start(reader)
                         }
+
                         XMLStreamConstants.END_ELEMENT -> end(reader.localName)
+
                         XMLStreamConstants.CHARACTERS, XMLStreamConstants.SPACE -> text(reader)
+
                         XMLStreamConstants.END_DOCUMENT -> requireEpochSealSts(stack.isEmpty() && roots == 1)
+
                         else -> throw EpochSealStsException(EpochSealStsFailure.PROTOCOL_REJECTED)
                     }
                 }
@@ -108,14 +112,19 @@ internal object EpochSealStsProtocol {
 
         private fun children(name: String): Set<String> = when (name) {
             root -> setOf(result, "ResponseMetadata")
+
             result -> if (assume) {
                 setOf("Credentials", "AssumedRoleUser", "PackedPolicySize", "SessionTokenSize", "SessionTokenUtilization")
             } else {
                 setOf("UserId", "Account", "Arn")
             }
+
             "Credentials" -> setOf("AccessKeyId", "SecretAccessKey", "SessionToken", "Expiration")
+
             "AssumedRoleUser" -> setOf("AssumedRoleId", "Arn")
+
             "ResponseMetadata" -> setOf("RequestId")
+
             else -> emptySet()
         }
 
@@ -172,7 +181,9 @@ internal object EpochSealStsProtocol {
             }
         }
 
-        fun clearNodes() { stack.forEach { it.bytes.fill(0) } }
+        fun clearNodes() {
+            stack.forEach { it.bytes.fill(0) }
+        }
 
         private fun maximum(name: String): Int = when (name) {
             "SessionToken" -> 16_384
@@ -233,6 +244,8 @@ internal class EpochSealStsWireReport(private val values: Map<String, String>, p
         }
     }
 
-    fun clear() { digests.values.forEach { it.fill(0) } }
+    fun clear() {
+        digests.values.forEach { it.fill(0) }
+    }
     override fun toString(): String = "EpochSealStsWireReport(bounded,redacted,no-authority)"
 }

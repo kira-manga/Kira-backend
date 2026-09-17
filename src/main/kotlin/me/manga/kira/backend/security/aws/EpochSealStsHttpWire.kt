@@ -13,7 +13,7 @@ internal class EpochSealStsHttpWire(private val region: String, private val endp
         val http = request.httpRequest()
         requireEpochSealSts(
             http.method() == SdkHttpMethod.POST && http.protocol() == "https" && http.host() == endpoint.host && http.port() == 443 &&
-                http.encodedPath() == "/" && http.rawQueryParameters().isEmpty(),
+                http.encodedPath() in ROOT_PATHS && http.rawQueryParameters().isEmpty(),
         )
         val headers = http.headers()
         checkHeaders(headers)
@@ -102,6 +102,8 @@ internal class EpochSealStsHttpWire(private val region: String, private val endp
     override fun toString(): String = "EpochSealStsHttpWire(bounded,redacted)"
 
     companion object {
+        // The pinned SDK represents the root as an empty encoded path, even for an explicit root endpoint.
+        private val ROOT_PATHS = setOf("", "/")
         private const val CONTENT_TYPE = "application/x-www-form-urlencoded; charset=utf-8"
         private val RESPONSE_TYPES = setOf("text/xml", "application/xml")
         private const val HEADER_NAME = "!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"

@@ -133,10 +133,7 @@ internal object EpochSealStsPolicy {
 }
 
 /** A stricter acquisition slice retains, never restarts, the original enclosing seal attempt. */
-internal class EpochSealStsAcquisition(
-    val original: EpochSealAttemptV1,
-    private val nanoTime: () -> Long,
-) {
+internal class EpochSealStsAcquisition(val original: EpochSealAttemptV1, private val nanoTime: () -> Long) {
     private val started = nanoTime()
     private var lastElapsed = 0L
     private var failed = false
@@ -179,6 +176,8 @@ internal class EpochSealStsCall(
         return acquisition.remainingMillis(remaining)
     }
 
-    fun check() { remainingMillis() }
+    fun check() {
+        remainingMillis()
+    }
     override fun toString(): String = "EpochSealStsCall(fixed-query,redacted)"
 }
