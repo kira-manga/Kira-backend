@@ -52,6 +52,7 @@ internal fun assertRotationSlotMigration(dataSource: DataSource, populated: Bool
             try {
                 sql.exec("UPDATE complaint_journal_control SET publication_epoch=publication_epoch")
                 assertRotationSlotConstraints(sql)
+                if (populated) assertRotationControlFootprint(sql)
             } finally {
                 sql.rollback()
             }
