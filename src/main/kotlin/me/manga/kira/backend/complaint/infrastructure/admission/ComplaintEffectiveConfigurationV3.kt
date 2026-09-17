@@ -39,7 +39,13 @@ internal object ComplaintEffectiveConfigurationV3 {
         val allowance = consumers.journalConfiguration.declaration().limits.deadlines.epochRotationMillis
         require(allowance.toLong() in 1..descriptor.maximumRotationMillis) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         val previous = ComplaintEffectiveConfigurationV2.encodeInventory(
-            consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, catalogReadback,
+            consumers,
+            pools,
+            implementationSchema,
+            desiredGeneration,
+            databaseIdentity,
+            restoreIdentity,
+            catalogReadback,
         )
         val base = CanonicalJson.json.parseToJsonElement(previous.toString(Charsets.UTF_8)).jsonObject
         val document = JsonObject(

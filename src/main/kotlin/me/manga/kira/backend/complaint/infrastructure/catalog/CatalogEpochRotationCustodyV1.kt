@@ -87,7 +87,9 @@ internal class CatalogEpochRotationCustodyV1(private val coordinator: CatalogCoo
     private fun requireCampaign(campaign: CatalogCoordinatorLeaseCampaignV1, jdbc: JdbcTemplate) {
         if (coordinator.epochRotationCustody !== this || campaign.custody !== coordinator.leaseCustody || campaign.jdbc !== jdbc ||
             campaign.binding.coordinator !== coordinator || !coordinator.leaseCustody.isActive(campaign)
-        ) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         campaign.binding.requirePersistence(coordinator.ownership, jdbc)
     }
 

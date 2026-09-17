@@ -113,18 +113,30 @@ class VersionBoundComplaintEpochRotationConfigurationTest {
                 val desired = original.desiredSettings()
                 rejected {
                     ComplaintEffectiveConfigurationV1.encode(
-                        consumers, rotationPools, 1, 7, desired.databaseIdentity, desired.restoreIdentity,
+                        consumers,
+                        rotationPools,
+                        1,
+                        7,
+                        desired.databaseIdentity,
+                        desired.restoreIdentity,
                     )
                 }
                 rejected {
                     ComplaintEffectiveConfigurationV2.encode(
-                        consumers, rotationPools, 1, 7, desired.databaseIdentity, desired.restoreIdentity, catalog,
+                        consumers,
+                        rotationPools,
+                        1,
+                        7,
+                        desired.databaseIdentity,
+                        desired.restoreIdentity,
+                        catalog,
                     )
                 }
                 val expanded = process(consumers, rotationPools)
                 val restoredV2 = JsonObject(
                     document(expanded) - "epochRotation" + mapOf(
-                        "schemaVersion" to JsonPrimitive(2), "profile" to JsonPrimitive("INITIAL_LIVE_MEMORY_SINGLE_INSTANCE_G1_READBACK"),
+                        "schemaVersion" to JsonPrimitive(2),
+                        "profile" to JsonPrimitive("INITIAL_LIVE_MEMORY_SINGLE_INSTANCE_G1_READBACK"),
                     ),
                 )
                 assertEquals(document(catalogOnly), restoredV2)
@@ -222,7 +234,13 @@ class VersionBoundComplaintEpochRotationConfigurationTest {
     ): VersionBoundComplaintProcessConfiguration {
         val writer = consumers.journalConfiguration.declaration().writer
         return VersionBoundComplaintProcessConfiguration.fromRetainedWithEpochRotation(
-            consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), catalog,
+            consumers,
+            pools,
+            1,
+            7,
+            UUID.fromString(writer.databaseIdentity),
+            UUID.fromString(writer.restoreIdentity),
+            catalog,
         )
     }
 
@@ -233,7 +251,13 @@ class VersionBoundComplaintEpochRotationConfigurationTest {
     ): VersionBoundComplaintProcessConfiguration {
         val writer = consumers.journalConfiguration.declaration().writer
         return VersionBoundComplaintProcessConfiguration.fromRetained(
-            consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), settings,
+            consumers,
+            pools,
+            1,
+            7,
+            UUID.fromString(writer.databaseIdentity),
+            UUID.fromString(writer.restoreIdentity),
+            settings,
         )
     }
 
@@ -244,7 +268,14 @@ class VersionBoundComplaintEpochRotationConfigurationTest {
     ): ByteArray {
         val writer = consumers.journalConfiguration.declaration().writer
         return ComplaintEffectiveConfigurationV3.encode(
-            consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), catalog, rotation,
+            consumers,
+            pools,
+            1,
+            7,
+            UUID.fromString(writer.databaseIdentity),
+            UUID.fromString(writer.restoreIdentity),
+            catalog,
+            rotation,
         )
     }
 
@@ -253,8 +284,11 @@ class VersionBoundComplaintEpochRotationConfigurationTest {
         assertFields(
             actual,
             mapOf(
-                "recipe" to "TRACKED_STANDARD", "evidencePolicy" to "TRACKED_CONJUNCTION", "transportRoute" to "APPROVED_DIRECT",
-                "driverUrl" to descriptor.driverUrl, "loginBudgetMillis" to descriptor.loginBudgetMillis.toString(),
+                "recipe" to "TRACKED_STANDARD",
+                "evidencePolicy" to "TRACKED_CONJUNCTION",
+                "transportRoute" to "APPROVED_DIRECT",
+                "driverUrl" to descriptor.driverUrl,
+                "loginBudgetMillis" to descriptor.loginBudgetMillis.toString(),
             ),
         )
         assertEquals(

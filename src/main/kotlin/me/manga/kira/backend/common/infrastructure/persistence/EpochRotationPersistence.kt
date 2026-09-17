@@ -121,7 +121,9 @@ internal class EpochRotationPersistence private constructor(
 
     private inner class Capture(val attempt: CatalogEpochRotationAttemptV1) {
         val bodyEnded = AtomicBoolean()
+
         @Volatile var request: PersistenceEpochRotationFactoryRequest? = null
+
         @Volatile var session: PersistenceEpochRotationSession? = null
 
         fun custodyEnded(): Boolean = bodyEnded.get() && request?.custodyEnded() != false
@@ -144,8 +146,11 @@ internal class EpochRotationPersistence private constructor(
             return current.get() != null
         }
 
-        internal fun create(root: PersistenceJdbcDriverRoot, participant: PersistenceJdbcParticipant, material: VersionBoundEpochRotationMaterial):
-            EpochRotationPersistence = EpochRotationPersistence(root, participant, material)
+        internal fun create(
+            root: PersistenceJdbcDriverRoot,
+            participant: PersistenceJdbcParticipant,
+            material: VersionBoundEpochRotationMaterial,
+        ): EpochRotationPersistence = EpochRotationPersistence(root, participant, material)
 
         private fun refuse(): Nothing = throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
     }

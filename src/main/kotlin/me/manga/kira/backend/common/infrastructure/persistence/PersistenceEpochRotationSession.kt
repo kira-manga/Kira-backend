@@ -30,6 +30,7 @@ internal class PersistenceEpochRotationSession private constructor(
     private val retired = AtomicBoolean()
     private val context = PersistenceJdbcGuardContext.forEpochRotation(entry.jdbc, epoch, this, entry.driverCut)
     private val connection = EpochRotationConnectionCalls(entry, context).proxy
+
     @Volatile private var work: PersistenceTimeBudget? = null
     private var retained: CatalogEpochRotationCaptureOperation? = null
     private var stage = Stage.PREPARED
@@ -230,20 +231,19 @@ internal class PersistenceEpochRotationSession private constructor(
 }
 
 /** Private JDBC reflection stays inside the owner. Native outputs use the existing child/invocation ledger before use. */
-private class EpochRotationConnectionCalls(
-    private val entry: PersistencePhysicalEntry,
-    private val context: PersistenceJdbcGuardContext,
-) : InvocationHandler {
+private class EpochRotationConnectionCalls(private val entry: PersistencePhysicalEntry, private val context: PersistenceJdbcGuardContext) : InvocationHandler {
     val proxy: Connection = Proxy.newProxyInstance(Connection::class.java.classLoader, arrayOf(Connection::class.java), this) as Connection
     private val graph = PhysicalJdbcDescendants(context, proxy)
 
     @Suppress("TooGenericExceptionCaught")
     override fun invoke(proxy: Any, method: Method, args: Array<out Any?>?): Any? {
-        if (method.declaringClass === Any::class.java) return when (method.name) {
-            "toString" -> "EpochRotationJdbcConnection(redacted)"
-            "hashCode" -> System.identityHashCode(proxy)
-            "equals" -> proxy === args?.singleOrNull()
-            else -> error("Unsupported JDBC object method.")
+        if (method.declaringClass === Any::class.java) {
+            return when (method.name) {
+                "toString" -> "EpochRotationJdbcConnection(redacted)"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.singleOrNull()
+                else -> error("Unsupported JDBC object method.")
+            }
         }
         check(method.declaringClass === Connection::class.java || method.declaringClass === Wrapper::class.java)
         if (method.name == "unwrap" || method.name == "close" || method.name == "abort") PersistenceJdbcGuardContext.refuse()

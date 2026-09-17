@@ -77,6 +77,7 @@ internal class CatalogEpochRotationCaptureOperation private constructor(
                     requireCapturedMutation(sampled, changed)
                     changed
                 }
+
                 CatalogEpochRotationStateV1.CAPTURED -> sampled // Exact stored cutoff, never a second increment or epoch-minus-one guess.
             }
             stage = Stage.REREADING

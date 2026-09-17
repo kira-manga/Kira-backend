@@ -40,8 +40,14 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         retainedRotation = epochRotation?.descriptor()
         canonical = if (epochRotation != null) {
             ComplaintEffectiveConfigurationV3.encode(
-                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                checkNotNull(catalogReadback), epochRotation,
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                checkNotNull(catalogReadback),
+                epochRotation,
             )
         } else if (catalogReadback == null) {
             ComplaintEffectiveConfigurationV1.encode(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity)
@@ -155,7 +161,14 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
             requireConnectionFree()
             val rotation = requireNotNull(pools.epochRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
             return VersionBoundComplaintProcessConfiguration(
-                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, catalogReadback, rotation,
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                catalogReadback,
+                rotation,
             )
         }
 

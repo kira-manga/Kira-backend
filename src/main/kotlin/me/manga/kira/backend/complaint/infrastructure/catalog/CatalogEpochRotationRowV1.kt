@@ -158,9 +158,11 @@ internal class CatalogEpochRotationSlotV1 private constructor(
             val captured = if (state === CatalogEpochRotationStateV1.CAPTURED) {
                 CatalogEpochRotationProvenanceV1.copy(row, "rotation_capture_", "rotation_captured_at")
             } else {
-                check(listOf("rotation_capture_owner", "rotation_capture_token", "rotation_captured_at", "rotation_epoch_after").all {
-                    row.getObject(it) == null
-                })
+                check(
+                    listOf("rotation_capture_owner", "rotation_capture_token", "rotation_captured_at", "rotation_epoch_after").all {
+                        row.getObject(it) == null
+                    },
+                )
                 null
             }
             val after = if (captured == null) null else requiredLong(row, "rotation_epoch_after").also { check(it == Math.addExact(before, 1L)) }

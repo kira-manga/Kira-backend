@@ -83,8 +83,12 @@ private fun populateRotationPredecessor(sql: Connection) {
         sql.copyRowSql(
             "complaint_journal_control",
             mapOf(
-                "data_scope_id" to "'$TEST_SCOPE'", "test_only" to "true", "publication_epoch" to Long.MAX_VALUE.toString(),
-                "maintenance_closed" to "true", "creation_closed" to "true", "scan_requested" to "true",
+                "data_scope_id" to "'$TEST_SCOPE'",
+                "test_only" to "true",
+                "publication_epoch" to Long.MAX_VALUE.toString(),
+                "maintenance_closed" to "true",
+                "creation_closed" to "true",
+                "scan_requested" to "true",
             ),
             "data_scope_id='$LIVE_SCOPE'",
         ),
@@ -217,8 +221,12 @@ private const val ROTATION_WRITER = "67000000-0000-4000-8000-000000000002"
 private const val ROTATION_REQUEST_OWNER = "67000000-0000-4000-8000-000000000003"
 private const val ROTATION_CAPTURE_OWNER = "67000000-0000-4000-8000-000000000004"
 private val requestedRotationUuids = listOf(
-    "rotation_id", "rotation_database_identity", "rotation_restore_identity", "rotation_event_writer_generation",
-    "rotation_catalog_writer_generation", "rotation_request_owner",
+    "rotation_id",
+    "rotation_database_identity",
+    "rotation_restore_identity",
+    "rotation_event_writer_generation",
+    "rotation_catalog_writer_generation",
+    "rotation_request_owner",
 )
 private val requestedRotationValues = linkedMapOf(
     "rotation_id" to "'$ROTATION_ID'",

@@ -70,10 +70,12 @@ internal class CatalogEpochRotationControlOperation private constructor(
                     attempt.requireRequestedMutation(this, changed)
                     changed
                 }
+
                 PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME -> {
                     if (sampled.slot == null) attempt.retainPredecessor(this, sampled)
                     sampled // REQUESTED and CAPTURED are discoveries, never rewritten/rebound here.
                 }
+
                 else -> error("Unsupported rotation control phase.")
             }
             stage = Stage.REREADING

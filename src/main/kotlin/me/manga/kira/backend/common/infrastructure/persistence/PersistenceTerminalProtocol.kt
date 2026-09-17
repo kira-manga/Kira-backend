@@ -43,6 +43,7 @@ internal enum class PersistenceLifecycleObservation {
 
     /** Catalog participant only; never shared Timer/root completion or a new physical disposal proof. */
     CATALOG_COORDINATOR_LOCAL_ENDED,
+
     /** Non-pooled rotation participant only; the original shared Timer/root may still be active. */
     EPOCH_ROTATION_LOCAL_ENDED,
     TRACKED_LOCAL_ENDED,

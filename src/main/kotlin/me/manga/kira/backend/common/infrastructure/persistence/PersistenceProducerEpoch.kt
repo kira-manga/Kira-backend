@@ -12,6 +12,7 @@ internal class PersistenceProducerEpoch private constructor(private val ownershi
     private val cleanup = PersistenceJdbcCleanup.prepare(this, issuance)
 
     @Volatile private var phase: PersistencePhaseContext? = null
+
     @Volatile private var session: PersistenceEpochRotationSession? = null
 
     internal fun attachPhase(owner: PersistencePhaseContext) {

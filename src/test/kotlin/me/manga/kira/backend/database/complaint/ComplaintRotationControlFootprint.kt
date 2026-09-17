@@ -23,7 +23,8 @@ internal fun assertRotationControlFootprint(sql: Connection) = sql.withRollbackP
     val noCheckpoint = absent(CONTROL_FOOTPRINT_COLUMNS.keys.filter { it.startsWith("checkpoint_") })
     val noLeases = absent(listOf("lease_owner", "lease_expires_at", "retention_lease_owner", "retention_lease_expires_at"))
     val requested = absent(listOf("rotation_capture_owner", "rotation_capture_token", "rotation_captured_at", "rotation_epoch_after")) + mapOf(
-        "rotation_state" to "'REQUESTED'", "publication_epoch" to (Long.MAX_VALUE - 1).toString(),
+        "rotation_state" to "'REQUESTED'",
+        "publication_epoch" to (Long.MAX_VALUE - 1).toString(),
     )
     val preparedSeal = absent(
         listOf("seal_object_version", "seal_ciphertext_hash", "seal_retain_until", "seal_verified_at", "seal_verification_bytes", "seal_verification_hash"),
@@ -41,9 +42,13 @@ internal fun assertRotationControlFootprint(sql: Connection) = sql.withRollbackP
         "verified seal and complete checkpoint with empty rotation" to emptyRotation,
         "maximal requested rotation" to requested,
         "maximal captured rotation" to mapOf("scan_requested" to "false"),
-        "retained history after lease release and projection" to (noLeases + mapOf(
-            "pending_projection_token" to "NULL", "maintenance_closed" to "false", "creation_closed" to "false",
-        )),
+        "retained history after lease release and projection" to (
+            noLeases + mapOf(
+                "pending_projection_token" to "NULL",
+                "maintenance_closed" to "false",
+                "creation_closed" to "false",
+            )
+            ),
     )
     for ((phase, changes) in phases) {
         val values = maximum + changes
@@ -98,27 +103,43 @@ private fun assertControlFootprintInventory(sql: Connection) {
 
 private fun maximumControlValue(column: String, type: String): String = when (type) {
     "uuid" -> if (column == "pending_projection_token") "'63000000-0000-4000-8000-000000000001'" else "'$CONTROL_FOOTPRINT_UUID'"
+
     "boolean" -> "true"
+
     "bigint" -> when {
         column.endsWith("catalog_generation") -> "65536"
+
         column == "rotation_epoch_before" -> (Long.MAX_VALUE - 1).toString()
+
         // Fixed-width cutoffs can precede both maximal rotation epochs without reducing their size.
         column in setOf("seal_epoch", "checkpoint_cutoff_epoch") -> (Long.MAX_VALUE - 2).toString()
+
         else -> Long.MAX_VALUE.toString()
     }
+
     "integer" -> "1"
-    "timestamp with time zone" -> FIXTURE_INSTANT // All finite timestamps have the same fixed width.
+
+    "timestamp with time zone" -> FIXTURE_INSTANT
+
+    // All finite timestamps have the same fixed width.
     "bytea" -> when {
         column in CONTROL_FOOTPRINT_DOCUMENTS -> CONTROL_FOOTPRINT_DOCUMENT
         column.removeSuffix("_hash") + "_bytes" in CONTROL_FOOTPRINT_DOCUMENTS -> "sha256($CONTROL_FOOTPRINT_DOCUMENT)"
         else -> FIXTURE_DIGEST
     }
+
     else -> when (column) {
         "seal_state" -> "'SEAL_VERIFIED'"
+
         "checkpoint_result" -> "'SUCCESS'"
+
         "rotation_state" -> "'CAPTURED'"
+
         "seal_object_key" -> "repeat('k',1024)"
-        "seal_object_version" -> "repeat('😀',256)" // The opaque maximum is UTF-8 bytes, not characters.
+
+        "seal_object_version" -> "repeat('😀',256)"
+
+        // The opaque maximum is UTF-8 bytes, not characters.
         else -> error("Unaccounted control field $column:$type")
     }
 }
@@ -130,6 +151,7 @@ private fun measureControlFootprint(sql: Connection, phase: String, values: Map<
         else -> controlMaximumPayloadBytes(column)
     }
     val fullFields = CONTROL_FOOTPRINT_COLUMNS.keys
+
     // Concatenation allocates each complete value: repeated fixture bytes must not hide behind
     // heap compression or TOAST pointers. ROW(index-key) is a logical key projection, not a page.
     fun inline(column: String): String = when (CONTROL_FOOTPRINT_COLUMNS.getValue(column)) {
@@ -179,15 +201,26 @@ private fun variableControlField(column: String): Boolean = CONTROL_FOOTPRINT_CO
 
 private fun controlMaximumPayloadBytes(column: String): Long = when (CONTROL_FOOTPRINT_COLUMNS.getValue(column)) {
     "uuid" -> 16
+
     "boolean" -> 1
+
     "integer" -> 4
+
     "bigint", "timestamp with time zone" -> 8
+
     "bytea" -> if (column in CONTROL_FOOTPRINT_DOCUMENTS) 65536 else 32
+
     else -> when (column) {
         "seal_object_key", "seal_object_version" -> 1024
-        "seal_state" -> 13 // Both legal seal names; varchar(16) is not permission for other values.
+
+        "seal_state" -> 13
+
+        // Both legal seal names; varchar(16) is not permission for other values.
         "checkpoint_result" -> 7
-        "rotation_state" -> 9 // REQUESTED is longer; CAPTURED adds the complete capture tuple.
+
+        "rotation_state" -> 9
+
+        // REQUESTED is longer; CAPTURED adds the complete capture tuple.
         else -> error("Unbounded control field $column")
     }
 }

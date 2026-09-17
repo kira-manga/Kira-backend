@@ -17,8 +17,10 @@ internal class VersionBoundEpochRotationMaterial private constructor(
     override fun toString(): String = "VersionBoundEpochRotationMaterial(original-root,non-pooled,redacted)"
 
     companion object {
-        internal fun create(endpoint: ResolvedPersistenceEndpoint, identity: VersionBoundPersistenceConfiguration.EndpointDescriptor):
-            VersionBoundEpochRotationMaterial = VersionBoundEpochRotationMaterial(endpoint, identity)
+        internal fun create(
+            endpoint: ResolvedPersistenceEndpoint,
+            identity: VersionBoundPersistenceConfiguration.EndpointDescriptor,
+        ): VersionBoundEpochRotationMaterial = VersionBoundEpochRotationMaterial(endpoint, identity)
     }
 }
 

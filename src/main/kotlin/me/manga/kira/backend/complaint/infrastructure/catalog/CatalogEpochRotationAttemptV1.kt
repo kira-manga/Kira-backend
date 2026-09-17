@@ -259,13 +259,19 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
 /** No supplied driver/SQL/provider exception or caller data crosses this dormant protocol boundary. */
 internal fun boundedEpochRotationFailure(problem: Throwable): PersistencePhaseException = when (problem) {
     is PersistencePhaseException -> problem
+
     is PersistenceBoundaryException -> PersistencePhaseException(
-        if (problem.code === PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED
-        else PersistencePhaseFailureCode.RESOURCE_REFUSED,
+        if (problem.code === PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) {
+            PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED
+        } else {
+            PersistencePhaseFailureCode.RESOURCE_REFUSED
+        },
     )
+
     is InterruptedException -> {
         Thread.currentThread().interrupt()
         PersistencePhaseException(PersistencePhaseFailureCode.INTERRUPTED)
     }
+
     else -> PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
 }

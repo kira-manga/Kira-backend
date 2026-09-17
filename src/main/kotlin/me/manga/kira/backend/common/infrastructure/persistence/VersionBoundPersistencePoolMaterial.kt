@@ -87,6 +87,7 @@ internal class VersionBoundPersistencePoolMaterial private constructor(
                 PersistenceJdbcParticipantRole.DELETION -> listOf(PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION)
 
                 PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> listOf(PersistenceDriverAttemptPolicy.TRACKED_CATALOG_CONJUNCTION)
+
                 PersistenceJdbcParticipantRole.EPOCH_ROTATION -> error("Epoch rotation is not a pool.")
             }
             val capacity = when (role) {

@@ -91,7 +91,9 @@ internal class CatalogEpochRotationV1 internal constructor(private val coordinat
         coordinator.requireResources()
         if (coordinator.epochRotation !== this || coordinator.epochRotationCustody !== custody || coordinator.ownership !== ownership ||
             coordinator.manager !== manager || coordinator.dataSource !== source || jdbc.dataSource !== source
-        ) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
 
     override fun toString(): String = "CatalogEpochRotationV1(dormant-fixed-LIVE,no-seal-checkpoint-or-deployment-authority)"
