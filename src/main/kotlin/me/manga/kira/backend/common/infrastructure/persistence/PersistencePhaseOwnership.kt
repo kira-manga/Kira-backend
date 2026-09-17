@@ -379,6 +379,22 @@ internal enum class PersistencePhasePath {
 
     internal val source: Boolean
         get() = this === SOURCE_GRANT_CLEANUP || this === SOURCE_STEP_UP_SNAPSHOT || this === SOURCE_STEP_UP_ISSUANCE
+
+    internal val readOnly: Boolean
+        get() = when (this) {
+            COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+            COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
+            COMPLAINT_INSTALLATION_CURRENT_STATE,
+            COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
+            COMPLAINT_OWNER_HISTORY_PAGE,
+            COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
+            COMPLAINT_OWNER_CREATE_PREFLIGHT,
+            COMPLAINT_OWNER_OPERATION_STATUS,
+            COMPLAINT_CATALOG_SNAPSHOT,
+            -> true
+
+            else -> false
+        }
 }
 
 /** Bounded, value-free result. A DB fact is deliberately separate from local cleanup/refund. */

@@ -134,20 +134,7 @@ internal class PersistencePhaseContext(
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
             setName(path.name)
             timeout = 2
-            isReadOnly = when (path) {
-                PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
-                PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
-                PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
-                PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
-                PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
-                PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
-                PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
-                PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
-                PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
-                -> true
-
-                else -> false
-            }
+            isReadOnly = path.readOnly
         }
         manager.getTransaction(definition)
         // The wrapper retained TransactionStatus before this validation. A failure here still has rollback custody.
@@ -1528,9 +1515,8 @@ internal class PersistencePhaseContext(
         }
 
         override fun requireCommitted(operation: ComplaintInstallationDeletionPreflightOperation) {
-            if (!caller.isCurrent() || path !== PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT ||
-                retained !== operation || !operation.completedFor(this@PersistencePhaseContext)
-            ) {
+            val callerAndPathMatch = caller.isCurrent() && path === PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT
+            if (!callerAndPathMatch || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
                 failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireSuccessfulResult()
