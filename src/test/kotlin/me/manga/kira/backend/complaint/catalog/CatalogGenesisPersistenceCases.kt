@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorTestFixture
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
@@ -505,7 +506,9 @@ internal class CatalogGenesisPersistenceCases(
 }
 
 /** Observation/failure injection around the real same-holder JdbcTemplate only; no fake rows, commits or resource receipts. */
-internal class GenesisProbeJdbc(f: CatalogCoordinatorTestFixture) : JdbcTemplate(f.catalog.dataSource) {
+internal class GenesisProbeJdbc(catalog: CatalogCoordinatorPersistence) : JdbcTemplate(catalog.dataSource) {
+    constructor(f: CatalogCoordinatorTestFixture) : this(f.catalog)
+
     var phase: PersistencePhaseContext? = null
     val steps = mutableListOf<String>()
     var beforeSql: ((String) -> Unit)? = null

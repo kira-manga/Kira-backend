@@ -4,6 +4,10 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
+import me.manga.kira.backend.common.infrastructure.persistence.actualPool
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
@@ -14,17 +18,28 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPolicy
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackResult
 import me.manga.kira.backend.complaint.domain.catalog.LocalCatalogSnapshot
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleException
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintProcessPoolFixture
+import me.manga.kira.backend.complaint.infrastructure.admission.processConfiguration
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogDualLocationVerifier
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizationObservation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationInput
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.GenesisResume
+import me.manga.kira.backend.complaint.infrastructure.catalog.ProcessBoundCatalogGenesisProjection
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
+import me.manga.kira.backend.security.BoundComplaintConsumerFixture
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
+import org.springframework.jdbc.core.JdbcTemplate
 import java.lang.reflect.Modifier
 import java.util.UUID
 
@@ -96,6 +111,18 @@ class CatalogGenesisFinalizationVerifierTest {
         assertFalse(
             CatalogDualLocationVerifier.GenesisReadback.Companion::class.java.declaredMethods.any { method ->
                 method.parameterTypes.any { CatalogReadbackResult::class.java.isAssignableFrom(it) }
+            },
+        )
+        val projection = ProcessBoundCatalogGenesisProjection::class.java
+        val constructors = projection.declaredConstructors.filterNot { it.isSynthetic }
+        assertEquals(1, constructors.size)
+        assertTrue(Modifier.isPrivate(constructors.single().modifiers))
+        assertTrue(constructors.single().parameterTypes.contentEquals(arrayOf(CatalogGenesisMutationOperation::class.java)))
+        assertFalse(projection.declaredMethods.any { it.name == "copy" || it.name.startsWith("set") })
+        assertTrue(projection.declaredFields.filterNot { it.isSynthetic }.all { Modifier.isFinal(it.modifiers) })
+        assertFalse(
+            ProcessBoundCatalogGenesisProjection.Companion::class.java.declaredMethods.any { method ->
+                method.parameterTypes.any { it === CatalogGenesisFinalizationObservation::class.java || CatalogReadbackResult::class.java.isAssignableFrom(it) }
             },
         )
     }
@@ -257,6 +284,80 @@ class CatalogGenesisFinalizationVerifierTest {
         assertThrows(CatalogReadbackException::class.java) { CatalogGenesisMutationInput.complete(verified, anotherJournal) }
         assertThrows(CatalogReadbackException::class.java) { CatalogGenesisMutationInput.project(verified, anotherJournal) }
     }
+
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `retained initial LIVE binding derives defensive D J P from the actual graph and rejects equal descriptor replacement resources`() =
+        ComplaintProcessPoolFixture().use { first ->
+            ComplaintProcessPoolFixture().use { second ->
+                val acquired = BoundComplaintConsumerFixture()
+                val consumers = acquired.configuration()
+                val pools = first.bind()
+                val otherPools = second.bind()
+                val process = processConfiguration(consumers, pools)
+                val other = processConfiguration(consumers, otherPools)
+                val expected = CatalogGenesisInitialLiveBinding.fromRetained(process)
+                assertSame(process, expected.process)
+                assertArrayEquals(process.configurationHashBytes(), other.configurationHashBytes())
+                val desired = process.configurationHashBytes()
+                expected.desiredConfigurationHashBytes().fill(0)
+                expected.capacityPolicyDigestBytes().fill(0)
+                process.desiredSettings().configurationHashBytes().fill(0)
+                assertArrayEquals(desired, expected.desiredConfigurationHashBytes())
+                assertArrayEquals(consumers.capacityPolicy.digestBytes(), expected.capacityPolicyDigestBytes())
+                assertEquals(1, expected.implementationSchema)
+                assertEquals(7L, expected.desiredGeneration)
+                expected.requireMatchingRegistry(VersionBoundCatalogReadbackTestFixture.envelope().manifest.initialWriterRegistry)
+                val coordinator = pools.catalogCoordinator
+                val jdbc = JdbcTemplate(coordinator.dataSource)
+                expected.requirePersistence(coordinator.ownership, jdbc)
+                for ((owner, source) in listOf(
+                    otherPools.catalogCoordinator.ownership to coordinator.dataSource,
+                    coordinator.ownership to otherPools.catalogCoordinator.dataSource,
+                    coordinator.ownership to pools.ordinary,
+                    coordinator.ownership to pools.deletion,
+                )) {
+                    val failure = assertThrows(PersistencePhaseException::class.java) { expected.requirePersistence(owner, JdbcTemplate(source)) }
+                    assertEquals(PersistencePhaseFailureCode.RESOURCE_REFUSED, failure.code)
+                }
+                val port = SyntheticCatalogReadbackPort(emptyList())
+                val wrongExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(
+                    otherPools.catalogCoordinator.ownership, JdbcTemplate(otherPools.catalogCoordinator.dataSource),
+                )
+                val refused = assertThrows(PersistencePhaseException::class.java) {
+                    wrongExecutor.resumeGenesis(
+                        port,
+                        VersionBoundCatalogReadbackTestFixture.initialBundleBytes(),
+                        VersionBoundCatalogReadbackTestFixture.currentBundleBytes(),
+                        VersionBoundCatalogReadbackTestFixture.settings().policyAt(VersionBoundCatalogReadbackTestFixture.evaluatedAt),
+                        expected,
+                    )
+                }
+                assertEquals(PersistencePhaseFailureCode.RESOURCE_REFUSED, refused.code)
+                assertTrue(port.listRequests.isEmpty() && port.getRequests.isEmpty())
+                listOf(pools, otherPools).flatMap { listOf(it.ordinary, it.deletion, it.catalogCoordinator.dataSource) }
+                    .forEach { assertFalse(actualPool(it).isRunning) }
+                assertEquals(9, acquired.lookups)
+                assertEquals("CatalogGenesisInitialLiveBinding(retained-process,G1-only,no-authority)", expected.toString())
+            }
+        }
+
+    @Test
+    @EnabledOnOs(OS.LINUX, OS.MAC)
+    fun `retained genesis binding rechecks actual noncatalog pool drift instead of trusting cached D`() =
+        ComplaintProcessPoolFixture(retained = true).use { database ->
+            val pools = database.bind()
+            val process = processConfiguration(BoundComplaintConsumerFixture().configuration(), pools)
+            val expected = CatalogGenesisInitialLiveBinding.fromRetained(process)
+            val hash = expected.desiredConfigurationHashBytes()
+            val coordinator = pools.catalogCoordinator
+            actualPool(pools.deletion).maximumPoolSize += 1
+            assertThrows(PersistenceBoundaryException::class.java) { expected.requireUnchangedConfiguration() }
+            assertThrows(PersistenceBoundaryException::class.java) { expected.requirePersistence(coordinator.ownership, JdbcTemplate(coordinator.dataSource)) }
+            assertThrows(PersistenceBoundaryException::class.java) { CatalogGenesisInitialLiveBinding.fromRetained(process) }
+            assertArrayEquals(hash, expected.desiredConfigurationHashBytes(), "Historical bytes are not current use permission.")
+            listOf(pools.ordinary, pools.deletion, coordinator.dataSource).forEach { assertFalse(actualPool(it).isRunning) }
+        }
 
     private fun provider(): SyntheticCatalogReadbackPort = SyntheticCatalogReadbackPort(fixture.bytes.take(1))
 
