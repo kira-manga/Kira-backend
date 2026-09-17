@@ -6,6 +6,11 @@ No bean/route is registered. TEST/Redis/multiple instances have no conversion or
 One declared instance is not evidence of installed topology. Rebuilding the memory owner
 loses its counters and is not a safe rotation or rollout procedure.
 
+"Complete" here describes this delivered dormant consumer/J/P/pool profile, **not** catalog
+trust/policy or complete deployable configuration. The explicit retained G1-reader opt-in uses
+[D version2](COMPLAINT_EFFECTIVE_CONFIGURATION_V2.md); omitting it preserves these exact V1 bytes
+and does not authorize another component to treat V1 as covering catalog semantics.
+
 ## Producer and custody
 
 `VersionBoundComplaintProcessConfiguration.fromRetained(consumers, pools,
