@@ -21,7 +21,10 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import java.nio.file.Path
 import java.util.UUID
 
-/** Real cold configuration/root/all-three-pool custody; no provider, trust-file write, connection or pool start. */
+/**
+ * Real cold configuration/root/all-three-pool custody, with explicit optional nonpooled rotation.
+ * No provider, trust-file write, connection or pool/rotation start.
+ */
 internal class ComplaintProcessPoolFixture(
     password: AcquiredVersionedSecret = VersionBoundPersistenceTestInputs.acquired(),
     host: String = "db.invalid",
@@ -32,6 +35,7 @@ internal class ComplaintProcessPoolFixture(
     trust: ByteArray = VersionBoundPersistenceTestInputs.pem(),
     parent: Path = Path.of("/deliberately-not-created/complaint-process-test"),
     private val retained: Boolean = false,
+    epochRotation: Boolean = false,
 ) : AutoCloseable {
     val configuration = VersionBoundPersistenceConfiguration.fromAcquired(
         password,
@@ -43,7 +47,7 @@ internal class ComplaintProcessPoolFixture(
         trust,
         parent,
     )
-    val owner = configuration.bindLifecycleOwner()
+    val owner = if (epochRotation) configuration.bindLifecycleOwnerWithEpochRotation() else configuration.bindLifecycleOwner()
     val root: PersistenceJdbcDriverRoot = poolTestField(owner, "root")
 
     fun bind(): VersionBoundPersistencePools = owner.bindVersionBoundPools()
