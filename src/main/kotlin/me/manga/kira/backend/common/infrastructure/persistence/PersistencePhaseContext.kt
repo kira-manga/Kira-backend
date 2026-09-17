@@ -27,6 +27,8 @@ import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurr
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintRecoverySettlementOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintTestReserveSpendOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
@@ -122,6 +124,7 @@ internal class PersistencePhaseContext(
     internal val complaintDeletion: PersistenceComplaintDeletion = DeletionBoundary()
     internal val catalogSnapshot: PersistenceCatalogSnapshot = CatalogSnapshotBoundary()
     internal val catalogGenesis: PersistenceCatalogGenesisMutation = CatalogGenesisBoundary()
+    internal val coordinatorLease: PersistenceCoordinatorLease = CoordinatorLeaseBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -505,6 +508,11 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
         -> catalogGenesis.completed()
+
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+        -> coordinatorLease.completed()
     }
 
     // Root completion must match its commit/rollback stage with no overlapping completion dispatch.
@@ -1073,6 +1081,50 @@ internal class PersistencePhaseContext(
 
         /** Resource identity only, usable after the separate committed/released proof as well as during work. */
         override fun requireProcessBinding(binding: CatalogGenesisInitialLiveBinding, jdbc: JdbcTemplate) = binding.requirePersistence(ownership, jdbc)
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** Row-only lease phases: no fence is acquired or required, so renewal remains independent of epoch rotation. */
+    private inner class CoordinatorLeaseBoundary : PersistenceCoordinatorLease {
+        private var issued = false
+        private var retained: CatalogCoordinatorLeaseOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate, path: PersistencePhasePath) {
+            if (path !in setOf(
+                    PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+                    PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
+                    PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+                )
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, path)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: CatalogCoordinatorLeaseOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: CatalogCoordinatorLeaseOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireCommitted(operation: CatalogCoordinatorLeaseOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult() // Includes actual released permit/holder proof, not merely COMMITTED.
+        }
+
+        override fun requireProcessBinding(binding: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate) = binding.requirePersistence(ownership, jdbc)
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
     }
