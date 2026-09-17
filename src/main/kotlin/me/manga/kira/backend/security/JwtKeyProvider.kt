@@ -107,8 +107,7 @@ class JwtKeyProvider private constructor(val secretKey: SecretKey, private val v
             require(issuer.isNotBlank() && audience.isNotBlank()) { INVALID_VERSION_BOUND_CONFIGURATION }
         }
 
-        fun matches(properties: KiraSecurityProperties): Boolean =
-            issuer == properties.issuer && audience == properties.audience &&
-                ttl == properties.accessTokenTtl && skew == properties.clockSkew && properties.jwtSecret == null
+        fun matches(properties: KiraSecurityProperties): Boolean = issuer == properties.issuer && audience == properties.audience &&
+            ttl == properties.accessTokenTtl && skew == properties.clockSkew && properties.jwtSecret == null
     }
 }
