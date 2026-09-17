@@ -31,7 +31,12 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         requireGraph()
         retainedPools = pools.descriptors()
         canonical = ComplaintEffectiveConfigurationV1.encode(
-            consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+            consumers,
+            pools,
+            implementationSchema,
+            desiredGeneration,
+            databaseIdentity,
+            restoreIdentity,
         )
         hash = MessageDigest.getInstance("SHA-256").digest(canonical)
         requireUnchangedConfiguration()
@@ -46,8 +51,13 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     fun desiredSettings(): ComplaintInstallationDesiredSettings.Configured {
         requireUnchangedConfiguration()
         return ComplaintInstallationDesiredSettings.Configured(
-            ComplaintInstallationMode.LIVE, implementationSchema, desiredGeneration, ComplaintDataScope.LIVE,
-            databaseIdentity, restoreIdentity, hash,
+            ComplaintInstallationMode.LIVE,
+            implementationSchema,
+            desiredGeneration,
+            ComplaintDataScope.LIVE,
+            databaseIdentity,
+            restoreIdentity,
+            hash,
         )
     }
 
@@ -96,7 +106,12 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         ): VersionBoundComplaintProcessConfiguration {
             requireConnectionFree()
             return VersionBoundComplaintProcessConfiguration(
-                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
             )
         }
 

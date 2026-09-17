@@ -53,7 +53,11 @@ class VersionBoundComplaintProcessBoundaryTest {
             assertThrows<IllegalArgumentException> { fixture.configuration(settings = input.settings()) }
         }
         val declarationOnly = VersionBoundInstallationJwtConfiguration.fromAcquired(
-            "installation-z", fixture.installationSecrets, "user-issuer", "user-audience", listOf(fixture.userSecret),
+            "installation-z",
+            fixture.installationSecrets,
+            "user-issuer",
+            "user-audience",
+            listOf(fixture.userSecret),
         )
         assertThrows<IllegalArgumentException> { fixture.configuration(jwt = declarationOnly) }
     }
@@ -88,7 +92,8 @@ class VersionBoundComplaintProcessBoundaryTest {
         val fixture = BoundComplaintConsumerFixture()
         val consumers = fixture.configuration()
         val changedVersion = ImmutableSecretVersion.awsSecretsManager(
-            VersionBoundPersistenceTestInputs.binding().version.resourceArn, "72000000-0000-4000-8000-000000000001",
+            VersionBoundPersistenceTestInputs.binding().version.resourceArn,
+            "72000000-0000-4000-8000-000000000001",
         )
         ComplaintProcessPoolFixture().use { baseline ->
             val configuration = processConfiguration(consumers, baseline.bind())
@@ -120,7 +125,10 @@ class VersionBoundComplaintProcessBoundaryTest {
 
     private fun password(version: ImmutableSecretVersion): AcquiredVersionedSecret {
         val binding = VersionedSecretBinding.of(
-            SecretMaterialFamily.DATABASE, SecretMaterialPurpose.AUTHENTICATION_PASSWORD, "fixture-db-password", version,
+            SecretMaterialFamily.DATABASE,
+            SecretMaterialPurpose.AUTHENTICATION_PASSWORD,
+            "fixture-db-password",
+            version,
         )
         return AcquiredVersionedSecret.acquire(binding) {
             SecretVersionSnapshot(it, VersionBoundPersistenceTestInputs.PASSWORD.toByteArray(Charsets.UTF_8))

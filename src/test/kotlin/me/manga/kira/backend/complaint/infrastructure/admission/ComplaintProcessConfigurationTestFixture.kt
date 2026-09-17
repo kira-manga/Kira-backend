@@ -34,7 +34,14 @@ internal class ComplaintProcessPoolFixture(
     private val retained: Boolean = false,
 ) : AutoCloseable {
     val configuration = VersionBoundPersistenceConfiguration.fromAcquired(
-        password, host, port, database, username, capacity, trust, parent,
+        password,
+        host,
+        port,
+        database,
+        username,
+        capacity,
+        trust,
+        parent,
     )
     val owner = configuration.bindLifecycleOwner()
     val root: PersistenceJdbcDriverRoot = poolTestField(owner, "root")
@@ -82,13 +89,16 @@ internal fun processConfiguration(
     generation: Long = 7,
     database: UUID = UUID.fromString(consumers.journalConfiguration.declaration().writer.databaseIdentity),
     restore: UUID = UUID.fromString(consumers.journalConfiguration.declaration().writer.restoreIdentity),
-): VersionBoundComplaintProcessConfiguration =
-    VersionBoundComplaintProcessConfiguration.fromRetained(consumers, pools, schema, generation, database, restore)
+): VersionBoundComplaintProcessConfiguration = VersionBoundComplaintProcessConfiguration.fromRetained(consumers, pools, schema, generation, database, restore)
 
 /** Change a real acquired version in every HMAC family, including retained-only verifiers. No descriptor is substituted after construction. */
 internal fun replacedProcessConsumerVersions(fixture: BoundComplaintConsumerFixture): List<VersionBoundComplaintConsumerConfiguration> {
     val originals = listOf(
-        fixture.userSecret, fixture.installationSecrets.last(), fixture.previous, fixture.cursorSecrets.last(), fixture.journalSecrets.first(),
+        fixture.userSecret,
+        fixture.installationSecrets.last(),
+        fixture.previous,
+        fixture.cursorSecrets.last(),
+        fixture.journalSecrets.first(),
     )
     return originals.mapIndexed { index, original ->
         val binding = original.descriptor
@@ -96,13 +106,17 @@ internal fun replacedProcessConsumerVersions(fixture: BoundComplaintConsumerFixt
         when (binding.family) {
             SecretMaterialFamily.USER_ADMIN_JWT -> fixture.configuration(
                 jwt = VersionBoundInstallationJwtConfiguration.fromAcquired(
-                    "installation-z", fixture.installationSecrets, JwtKeyProvider.fromAcquired(replacement, KiraSecurityProperties()),
+                    "installation-z",
+                    fixture.installationSecrets,
+                    JwtKeyProvider.fromAcquired(replacement, KiraSecurityProperties()),
                 ),
             )
 
             SecretMaterialFamily.INSTALLATION_JWT -> fixture.configuration(
                 jwt = VersionBoundInstallationJwtConfiguration.fromAcquired(
-                    "installation-z", fixture.installationSecrets.map { if (it === original) replacement else it }, fixture.user,
+                    "installation-z",
+                    fixture.installationSecrets.map { if (it === original) replacement else it },
+                    fixture.user,
                 ),
             )
 
@@ -124,7 +138,8 @@ internal fun replacedProcessConsumerVersions(fixture: BoundComplaintConsumerFixt
                     ),
                 )
                 val routing = VersionBoundComplaintJournalRouting.fromAcquired(
-                    changed, fixture.journalSecrets.map { if (it === original) replacement else it },
+                    changed,
+                    fixture.journalSecrets.map { if (it === original) replacement else it },
                 )
                 fixture.configuration(keys = fixture.inputs(routing = routing), journal = changed)
             }

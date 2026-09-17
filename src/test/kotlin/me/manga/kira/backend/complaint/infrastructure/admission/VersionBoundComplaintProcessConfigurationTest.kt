@@ -69,13 +69,16 @@ class VersionBoundComplaintProcessConfigurationTest {
             )
             val document = document(configuration)
             assertEquals(
-                consumers.capacityPolicy.sha256, document.getValue("capacityPolicy").jsonObject.getValue("sha256").jsonPrimitive.content,
+                consumers.capacityPolicy.sha256,
+                document.getValue("capacityPolicy").jsonObject.getValue("sha256").jsonPrimitive.content,
             )
             assertEquals(
-                consumers.journalConfiguration.sha256, document.getValue("journalConfiguration").jsonObject.getValue("sha256").jsonPrimitive.content,
+                consumers.journalConfiguration.sha256,
+                document.getValue("journalConfiguration").jsonObject.getValue("sha256").jsonPrimitive.content,
             )
             assertEquals(
-                listOf("ORDINARY", "DELETION", "CATALOG_COORDINATOR"), poolDocuments(document).map { it.getValue("role").jsonPrimitive.content },
+                listOf("ORDINARY", "DELETION", "CATALOG_COORDINATOR"),
+                poolDocuments(document).map { it.getValue("role").jsonPrimitive.content },
             )
             listOf(pools.ordinary, pools.deletion, pools.catalogCoordinator.dataSource).forEach { assertFalse(actualPool(it).isRunning) }
             configuration.requireUnchangedConfiguration()
@@ -93,7 +96,8 @@ class VersionBoundComplaintProcessConfigurationTest {
                 fixture.cursorSecrets.reverse()
                 val reorderedJwt = VersionBoundInstallationJwtConfiguration.fromAcquired("installation-z", fixture.installationSecrets, fixture.user)
                 val right = processConfiguration(
-                    fixture.configuration(settings = boundConsumerTestSettings(trustedProxies = proxies.reversed()), jwt = reorderedJwt), second.bind(),
+                    fixture.configuration(settings = boundConsumerTestSettings(trustedProxies = proxies.reversed()), jwt = reorderedJwt),
+                    second.bind(),
                 )
                 val bytes = left.canonicalBytes()
                 val hash = left.configurationHashBytes()
@@ -158,8 +162,10 @@ class VersionBoundComplaintProcessConfigurationTest {
             val fixture = BoundComplaintConsumerFixture()
             val pools = database.bind()
             val properties = KiraSecurityProperties(
-                issuer = "process-issuer-π", audience = "process-audience",
-                accessTokenTtl = Duration.ofSeconds(900, 17), clockSkew = Duration.ofSeconds(3, 41),
+                issuer = "process-issuer-π",
+                audience = "process-audience",
+                accessTokenTtl = Duration.ofSeconds(900, 17),
+                clockSkew = Duration.ofSeconds(3, 41),
             )
             val user = JwtKeyProvider.fromAcquired(fixture.userSecret, properties)
             val jwt = VersionBoundInstallationJwtConfiguration.fromAcquired("installation-z", fixture.installationSecrets, user)
@@ -170,17 +176,21 @@ class VersionBoundComplaintProcessConfigurationTest {
             assertEquals(properties.accessTokenTtl, user.versionBoundAccessTokenTtl)
             assertEquals(properties.clockSkew, user.versionBoundClockSkew)
             assertEquals(
-                "17", encodedUser.getValue("accessTokenTtl").jsonObject.getValue("nanoAdjustment").jsonPrimitive.content,
+                "17",
+                encodedUser.getValue("accessTokenTtl").jsonObject.getValue("nanoAdjustment").jsonPrimitive.content,
             )
             assertEquals(
-                "41", encodedUser.getValue("clockSkew").jsonObject.getValue("nanoAdjustment").jsonPrimitive.content,
+                "41",
+                encodedUser.getValue("clockSkew").jsonObject.getValue("nanoAdjustment").jsonPrimitive.content,
             )
             val security = SecurityConfig(MockEnvironment())
             JwtService(user, properties, Clock.systemUTC())
             security.jwtDecoder(user, properties)
             val changes = listOf(
-                properties.copy(issuer = "other-issuer"), properties.copy(audience = "other-audience"),
-                properties.copy(accessTokenTtl = properties.accessTokenTtl.plusNanos(1)), properties.copy(clockSkew = properties.clockSkew.plusNanos(1)),
+                properties.copy(issuer = "other-issuer"),
+                properties.copy(audience = "other-audience"),
+                properties.copy(accessTokenTtl = properties.accessTokenTtl.plusNanos(1)),
+                properties.copy(clockSkew = properties.clockSkew.plusNanos(1)),
             )
             changes.forEach { changed ->
                 assertThrows<IllegalArgumentException> { JwtService(user, changed, Clock.systemUTC()) }
@@ -209,7 +219,8 @@ class VersionBoundComplaintProcessConfigurationTest {
             val policy = fixture.capacity
             val changedP = ComplaintCapacityPolicyV1.of(
                 policy.hardLimit.with(ComplaintCapacityCounter.AUDIT_ROWS, policy.hardLimit[ComplaintCapacityCounter.AUDIT_ROWS] + 1),
-                policy.creationLimit, policy.dailyEnrollmentLimit,
+                policy.creationLimit,
+                policy.dailyEnrollmentLimit,
             )
             val journal = fixture.journal.declaration()
             val changedJ = ComplaintJournalConfigurationV1.of(journal.copy(routing = journal.routing.copy(activeKeyId = "route-a")))

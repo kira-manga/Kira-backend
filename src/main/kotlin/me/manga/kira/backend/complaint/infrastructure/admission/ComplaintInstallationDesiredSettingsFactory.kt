@@ -16,8 +16,7 @@ import java.util.UUID
  */
 internal object ComplaintInstallationDesiredSettingsFactory {
     /** Derived from the retained concrete graph, never supplied D or an observed database value. */
-    fun fromRetained(process: VersionBoundComplaintProcessConfiguration): ComplaintInstallationDesiredSettings.Configured =
-        process.desiredSettings()
+    fun fromRetained(process: VersionBoundComplaintProcessConfiguration): ComplaintInstallationDesiredSettings.Configured = process.desiredSettings()
 
     fun fromDeployment(
         mode: String? = null,

@@ -20,10 +20,7 @@ import java.io.IOException
 import java.util.UUID
 
 /** Existing exact TLS/root/three-pool fixture only; no second PG launcher or plaintext relabelling. */
-internal fun withCurrentOwnerDeleteAll(
-    tls: VersionBoundPersistenceConnectedFixture,
-    test: (OwnerDeleteAllCurrentBindingCases) -> Unit,
-) {
+internal fun withCurrentOwnerDeleteAll(tls: VersionBoundPersistenceConnectedFixture, test: (OwnerDeleteAllCurrentBindingCases) -> Unit) {
     tls.start()
     assertEquals(PersistenceLifecycleObservation.READY, tls.pools.deletion.prepareDeletion())
     assertEquals(PersistenceLifecycleObservation.READY, tls.pools.catalogCoordinator.prepare())
@@ -66,7 +63,12 @@ internal class OwnerDeleteAllCurrentBindingCases(
     private val candidate = auth.enrolled()
     private val connected = OwnerDeleteAllContinuationFixture(auth, candidate, paidApplyContent(auth, candidate, 1))
     private val bound = VersionBoundOwnerDeleteAllConfiguration(
-        process, auth.base.ordinary.ownership, auth.ownership, auth.audit, auth.catalog, auth.dataKeys,
+        process,
+        auth.base.ordinary.ownership,
+        auth.ownership,
+        auth.audit,
+        auth.catalog,
+        auth.dataKeys,
     )
     private val publishers = connected.publishers(store = bound.authorizationStore)
     private val http by lazy { OwnerDeleteAllHttpFixture(connected, bound.continuation(publishers)) }
@@ -313,10 +315,5 @@ internal class OwnerDeleteAllCurrentBindingCases(
     }
 
     private enum class ControlChange { HASH, GENERATION, RESTORE }
-    private data class Snapshot(
-        val rows: Map<String, List<String>>,
-        val semanticEvents: Int,
-        val members: Map<Any, Long>,
-        val providerCounts: List<Int>,
-    )
+    private data class Snapshot(val rows: Map<String, List<String>>, val semanticEvents: Int, val members: Map<Any, Long>, val providerCounts: List<Int>)
 }

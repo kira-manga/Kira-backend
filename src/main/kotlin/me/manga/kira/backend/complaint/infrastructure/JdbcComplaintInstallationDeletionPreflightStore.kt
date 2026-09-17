@@ -16,10 +16,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import java.time.Instant
 
 /** Fixed read-only comparison producer. No session refresh, enabled bean, admission or deletion writer. */
-internal class JdbcComplaintInstallationDeletionPreflightStore(
-    private val jdbc: JdbcTemplate,
-    private val process: OwnerDeleteAllProcessBinding? = null,
-) {
+internal class JdbcComplaintInstallationDeletionPreflightStore(private val jdbc: JdbcTemplate, private val process: OwnerDeleteAllProcessBinding? = null) {
     private val issuer = Any()
 
     fun read(candidate: InstallationDeletionCandidate): ComplaintInstallationDeletionPreflightOperation =
