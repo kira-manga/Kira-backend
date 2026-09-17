@@ -228,7 +228,6 @@ class InstallationDeletionPreflightIT {
         OwnedCallerTestScope().use { callers ->
             callers.launch { assertThrows<PersistencePhaseException> { f.phases.requireOwned(result) } }.value()
         }
-        differentOwner(f, candidate)
         val queries = f.jdbc.queries
         val wrongPath = f.ordinary.ownership.enterSourceGrantCleanup()
         try {
@@ -240,6 +239,7 @@ class InstallationDeletionPreflightIT {
         }
         assertEquals(queries, f.jdbc.queries)
         f.assertReleased()
+        differentOwner(f, candidate) // Paired shutdown must follow the last ordinary-pool operation.
     }
 
     @Test
@@ -284,7 +284,7 @@ class InstallationDeletionPreflightIT {
         val store = JdbcComplaintInstallationDeletionPreflightStore(movable)
         val first = ComplaintInstallationDeletionPreflightPhaseExecutor(f.ordinary.ownership, store)
         val ticket = assertInstanceOf(InstallationDeletionPreflightResult.Active::class.java, first.preflight(candidate))
-        withOrdinarySourceGrantCleanup(database.value, maximumPoolSize = 2) { other ->
+        withOrdinarySourceGrantCleanup(database.value, SystemPersistenceNanoClock, maximumPoolSize = 2, companion = f.ordinary.ownedPool) { other ->
             val second = ComplaintInstallationDeletionPreflightPhaseExecutor(other.ownership, store)
             movable.dataSource = other.pool
             try {
