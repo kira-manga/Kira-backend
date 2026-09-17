@@ -241,8 +241,11 @@ Both short transactions use this fixed order:
 
 1. Actual nonblocking shared `complaint-journal-epoch` fence on the retained holder, with the
    existing 100 ms sub-budget/75 ms call cap inside the original two-second phase.
-2. Lock LIVE/global control; require maintenance **and** creation closed, scan not requested, and
-   all five catalog fields null. This is deliberately **not** the deletion availability predicate.
+2. Lock LIVE/global control; require maintenance **and** creation closed, publication epoch 1,
+   and all five catalog fields null. Normally scan must not be requested; the sole exception
+   permits `scan_requested=true` while database identity, restore identity, and event-writer
+   generation are also null. This narrow initial-state exception preserves the scan request;
+   it is deliberately **not** the deletion availability predicate or a reconciliation acknowledgment.
 3. Nonblocking `complaint-catalog-mutation` advisory lock, then lock existing catalog history
    (`LIMIT 2 FOR UPDATE`) **before counters**, including on exact replay. No history permits a
    new G1; one exact PREPARED G1 permits replay. Completed history, another token/intent or an
@@ -266,7 +269,8 @@ is used after signature persistence and independent offline pin handling, withou
 pin setter or making the database the pin authority. No JSON, cryptographic verification, signer,
 network or application callback executes under these locks; existing V14 hash constraints remain
 database invariants. Initial scan reconciliation/opening is separate: the V14 seed still has
-`scan_requested=true`, and tests explicitly stage a synthetic closed bootstrap context.
+`scan_requested=true`; the desired installer changes only D/updated-at at bootstrap, and G1
+preserves that request through preparation, signature persistence, completion, and projection.
 
 ### G1-specific full-lifecycle charge
 

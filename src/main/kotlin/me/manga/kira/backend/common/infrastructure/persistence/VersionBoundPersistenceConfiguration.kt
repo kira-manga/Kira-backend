@@ -18,20 +18,41 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     private val ordinaryCapacity: Int,
     private val trust: OwnedPersistencePublicTrust,
     authenticationPassword: VersionedSecretBinding,
+    private val desiredInstallationOperator: Boolean,
 ) {
     val descriptor = EndpointDescriptor(endpoint, authenticationPassword, trust.sha256, trust.byteCount, trust.certificateCount)
     private var adoptedRoot: PersistenceJdbcDriverRoot? = null
 
-    fun bindLifecycleOwner(): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner.versionBound(this)
+    fun bindLifecycleOwner(): PersistenceJdbcLifecycleOwner {
+        requireConfiguration(!desiredInstallationOperator)
+        return PersistenceJdbcLifecycleOwner.versionBound(this)
+    }
 
     /** Explicit cold resource opt-in; the existing default root and v1/v2 inventory remain unchanged. */
-    fun bindLifecycleOwnerWithEpochRotation(): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner.versionBoundWithEpochRotation(this)
+    fun bindLifecycleOwnerWithEpochRotation(): PersistenceJdbcLifecycleOwner {
+        requireConfiguration(!desiredInstallationOperator)
+        return PersistenceJdbcLifecycleOwner.versionBoundWithEpochRotation(this)
+    }
+
+    /** Only the explicit non-web installer uses this fixed login/root. This is a route, not launch qualification. */
+    internal fun bindDesiredInstallationOperatorOwner(): PersistenceJdbcLifecycleOwner {
+        requireConfiguration(desiredInstallationOperator)
+        return PersistenceJdbcLifecycleOwner.desiredInstallationOperator(this)
+    }
 
     internal fun createRoot(): PersistenceJdbcDriverRoot =
         PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this)
 
     internal fun createRootWithEpochRotation(): PersistenceJdbcDriverRoot =
         PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this, epochRotationEnabled = true)
+
+    internal fun createDesiredInstallationOperatorRoot(): PersistenceJdbcDriverRoot = PersistenceJdbcDriverRoot(
+        endpoint,
+        ordinaryCapacity,
+        PersistencePathStyle.POSIX,
+        versionBound = this,
+        desiredInstallationOperator = true,
+    )
 
     /** Root construction calls this before any actor can start. No independent endpoint/trust pairing is accepted. */
     internal fun adopt(
@@ -40,8 +61,10 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         capacity: Int,
         pathStyle: PersistencePathStyle,
         sourceOnly: Boolean,
+        operatorOnly: Boolean,
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
+        requireConfiguration(operatorOnly == desiredInstallationOperator)
         trust.adopt(root)
         adoptedRoot = root
         return trust
@@ -83,6 +106,8 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     override fun toString(): String = "VersionBoundPersistenceConfiguration(redacted)"
 
     companion object {
+        internal const val DESIRED_INSTALLATION_OPERATOR_USERNAME = "kira_complaint_config_operator"
+
         /** No trust-file I/O, resolver call, JDBC driver loading, pool construction or actor start. */
         fun fromAcquired(
             authenticationPassword: AcquiredVersionedSecret,
@@ -93,6 +118,32 @@ internal class VersionBoundPersistenceConfiguration private constructor(
             ordinaryCapacity: Int,
             publicTrustPem: ByteArray,
             protectedTrustParent: Path,
+        ): VersionBoundPersistenceConfiguration = capture(
+            authenticationPassword, host, port, database, username, ordinaryCapacity, publicTrustPem, protectedTrustParent, false,
+        )
+
+        /** A separately acquired DB password; never substitutes credentials in the target process or its D. */
+        internal fun forDesiredInstallationOperator(
+            authenticationPassword: AcquiredVersionedSecret,
+            host: String,
+            port: Int,
+            database: String,
+            publicTrustPem: ByteArray,
+            protectedTrustParent: Path,
+        ): VersionBoundPersistenceConfiguration = capture(
+            authenticationPassword, host, port, database, DESIRED_INSTALLATION_OPERATOR_USERNAME, 1, publicTrustPem, protectedTrustParent, true,
+        )
+
+        private fun capture(
+            authenticationPassword: AcquiredVersionedSecret,
+            host: String,
+            port: Int,
+            database: String,
+            username: String,
+            ordinaryCapacity: Int,
+            publicTrustPem: ByteArray,
+            protectedTrustParent: Path,
+            operatorOnly: Boolean,
         ): VersionBoundPersistenceConfiguration = persistenceBootstrapBoundary {
             val binding = authenticationPassword.descriptor
             requireConfiguration(binding.family === SecretMaterialFamily.DATABASE && binding.purpose === SecretMaterialPurpose.AUTHENTICATION_PASSWORD)
@@ -126,7 +177,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
                 PersistenceLoginPolicy.resolve("2", 2000),
             )
             requireConfiguration(PersistenceNativeSettings.assessOrdinary(endpoint, PersistencePathStyle.POSIX) is PersistenceNativeSettingsResult.Supported)
-            VersionBoundPersistenceConfiguration(endpoint, ordinaryCapacity, trust, binding)
+            VersionBoundPersistenceConfiguration(endpoint, ordinaryCapacity, trust, binding, operatorOnly)
         }
 
         private fun decodePassword(material: ByteArray): String {

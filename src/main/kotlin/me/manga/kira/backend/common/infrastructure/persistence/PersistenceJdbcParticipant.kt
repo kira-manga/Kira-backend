@@ -19,6 +19,7 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
         PersistenceJdbcParticipantRole.EPOCH_ROTATION -> PersistenceNativeSettings.epochRotationLoginPolicy
     }
     private val strict = role !== PersistenceJdbcParticipantRole.ORDINARY
+    private val operatorCoordinator = root.desiredInstallationOperator && role === PersistenceJdbcParticipantRole.CATALOG_COORDINATOR
     private val strictPolicy = when (role) {
         PersistenceJdbcParticipantRole.ORDINARY -> null
         PersistenceJdbcParticipantRole.DELETION -> PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION
@@ -187,14 +188,21 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
             }
         } finally {
             preparationEnded.set(true)
-            if (!strict) root.timer.finishMetadataIfAbsent()
+            if (!strict || operatorCoordinator) root.timer.finishMetadataIfAbsent()
         }
     }
 
     private fun prepare() {
         if (binding.isClosed()) return
         if (strict) {
-            while (!root.ordinary.preparationFinished() && !binding.isClosed()) persistenceLifecyclePark()
+            if (operatorCoordinator) {
+                // Same retained bootstrap, globals/logging/defaults/ABI checks as ordinary preparation, on this original controller.
+                // No ordinary opening or worker is constructed to make an operator-only root reachable.
+                root.retainedDriver.construct()
+                root.timer.publishMetadata(optional { root.retainedDriver.timerAccess() })
+            } else {
+                while (!root.ordinary.preparationFinished() && !binding.isClosed()) persistenceLifecyclePark()
+            }
             if (binding.isClosed() || !root.retainedDriver.isConstructed()) return
             while (!root.timer.canAcceptStrong() && !root.timer.preparationFailed() && !binding.isClosed()) persistenceLifecyclePark()
             if (!binding.isClosed() && root.timer.canAcceptStrong()) {

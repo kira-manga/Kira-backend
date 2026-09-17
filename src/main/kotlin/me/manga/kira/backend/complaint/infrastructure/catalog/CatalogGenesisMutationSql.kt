@@ -4,13 +4,17 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
 
 /** Fixed pre-publication G1 statements. No caller-supplied identifier, predicate, lock key or callback. */
 internal val LOCK_GENESIS_CONTROL = """
-    SELECT NOT test_only AND maintenance_closed AND creation_closed AND NOT scan_requested
+    SELECT NOT test_only AND maintenance_closed AND creation_closed AND publication_epoch = 1
+        AND (NOT scan_requested OR (database_identity IS NULL AND restore_identity IS NULL AND event_writer_generation IS NULL))
         AND accepted_catalog_generation IS NULL AND accepted_catalog_hash IS NULL AND trust_bundle_hash IS NULL
         AND catalog_writer_generation IS NULL AND pending_projection_token IS NULL AS genesis_closed
     FROM complaint_journal_control
     WHERE data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
     FOR UPDATE
 """.trimIndent()
+
+// G1 is a prerequisite to requested reconciliation, not its acknowledgment. A pristine bootstrap
+// keeps scan_requested=true through preparation/signature/projection; no G1 step clears that request.
 
 internal const val TRY_CATALOG_LOCK = "SELECT pg_try_advisory_xact_lock(hashtextextended('complaint-catalog-mutation', 0)) AS locked"
 

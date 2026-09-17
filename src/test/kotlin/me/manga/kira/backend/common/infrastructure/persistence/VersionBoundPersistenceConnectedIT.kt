@@ -24,6 +24,11 @@ import me.manga.kira.backend.complaint.catalog.withEpochRotation
 import me.manga.kira.backend.complaint.catalog.withHeldEpochSeal
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationCases
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationCompletionCases
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationRefusalCases
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationCompletionCut
+import me.manga.kira.backend.complaint.infrastructure.admission.withDesiredInstallation
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -390,6 +395,77 @@ class VersionBoundPersistenceConnectedIT {
             withFixture(epochRotation = true, nanoClock = clock) { tls ->
                 withHeldEpochSeal(tls, clock) { HeldEpochSealCleanupCases(it).foreignStop(cut) }
             }
+        }
+    }
+
+    @Test
+    fun `desired installer fixed operator opens only its real TLS coordinator and permanently refuses every unrelated route`() = withFixture { tls ->
+        withDesiredInstallation(tls) { DesiredInstallationOperatorLifecycleTest.connected(it) }
+    }
+
+    @Test
+    fun `desired installer authenticates separately from denied runtime and bootstrap commits only genuine D with read only retry`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).authenticationBootstrapAndReadOnlyRetry() }
+    }
+
+    @Test
+    fun `desired installer bootstrap reaches actual signed G1 SDK completion and projection with scan requested and intact initial guards`() =
+        withFixture { tls ->
+            withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).genuineGenesisKeepsScanRequestedAndGuardsInitialState() }
+        }
+
+    @Test
+    fun `desired installer supersession fences the live old full binding and exact retry preserves a genuinely acquired later lease`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).supersessionFencesLiveCampaignAndRetryPreservesLaterLease() }
+    }
+
+    @Test
+    fun `desired installer identical authenticated contender between released phases never repeats the lease fence`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).twoAuthenticatedContenders(identical = true) }
+    }
+
+    @Test
+    fun `desired installer different authenticated contender cannot borrow the original expected old binding`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).twoAuthenticatedContenders(identical = false) }
+    }
+
+    @Test
+    fun `desired installer pins read committed under role repeatable read and sees genuine pending history after an actual control lock wait`() =
+        withFixture { tls ->
+            withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).readCommittedSeesPendingHistoryAfterActualControlWait() }
+        }
+
+    @Test
+    fun `desired installer keeps phase one closure durable rejects changed old catalog binding and only a fresh owner recovers`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationCases(it).phaseOneInterruptionStaleOldBindingAndFreshRetry() }
+    }
+
+    @Test
+    fun `desired installer refuses pending mutations projection and populated rotation or seal slots after durable gate closure`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationRefusalCases(it).pendingMutationProjectionAndSlots() }
+    }
+
+    @Test
+    fun `desired installer refuses token and generation maxima and projected NULL D without a bootstrap reset escape`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationRefusalCases(it).maximaAndProjectedNullD() }
+    }
+
+    @Test
+    fun `desired installer genuine deferred commit failure stays unknown and only a fresh authenticated bootstrap can recover`() = withFixture { tls ->
+        withDesiredInstallation(tls) {
+            ComplaintDesiredInstallationCompletionCases(it).commitAndReleaseFailure(DesiredInstallationCompletionCut.DEFERRED_COMMIT)
+        }
+    }
+
+    @Test
+    fun `desired installer afterCommit failure never returns success and fresh exact retry cannot rewrite committed state`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintDesiredInstallationCompletionCases(it).commitAndReleaseFailure(DesiredInstallationCompletionCut.AFTER_COMMIT) }
+    }
+
+    @Test
+    fun `desired installer unresolved Spring release remains quarantined and failed original cannot revive after truthful cleanup`() = withFixture { tls ->
+        withDesiredInstallation(tls) {
+            ComplaintDesiredInstallationCompletionCases(it).commitAndReleaseFailure(DesiredInstallationCompletionCut.UNRESOLVED_RELEASE)
         }
     }
 

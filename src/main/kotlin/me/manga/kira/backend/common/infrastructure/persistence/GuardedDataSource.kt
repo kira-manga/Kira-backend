@@ -13,6 +13,7 @@ import javax.sql.DataSource
  * This guarded identity retains the private lower factory, one inert stock Hikari, and its
  * actor/lifecycle owner before initialization. The raw pool/factory are never Spring beans.
  * CONTROLLED_TEST_ONLY is a fixture selection, not evidence approving a production launch image.
+ * The fixed operator owner's coordinator is a separate explicit route, likewise not immutable-image qualification.
  */
 internal class GuardedDataSource private constructor(
     private val owner: PersistenceJdbcLifecycleOwner,
@@ -102,7 +103,8 @@ internal class GuardedDataSource private constructor(
     }
 
     fun start(): PersistenceLifecycleActivation {
-        if (route !== Route.ORDINARY || (!sourceOnly && launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY)) {
+        if (owner.desiredInstallationOperator || route !== Route.ORDINARY) return PersistenceLifecycleActivation.FAILED
+        if (!sourceOnly && launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) {
             return PersistenceLifecycleActivation.FAILED
         }
         return owner.start()
@@ -110,12 +112,16 @@ internal class GuardedDataSource private constructor(
 
     /** Explicit infrastructure warm-up only; neither a health getter nor a request may activate deletion. */
     fun prepareDeletion(): PersistenceLifecycleObservation {
-        if (launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (owner.desiredInstallationOperator ||
+            launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY
+        ) {
+            return PersistenceLifecycleObservation.UNAVAILABLE
+        }
         return deletionPreparation?.prepare() ?: PersistenceLifecycleObservation.UNAVAILABLE
     }
 
     internal fun prepareCatalogCoordinator(): PersistenceLifecycleObservation {
-        if (launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY || !owner.ownsCatalogDataSource(this)) {
+        if (!launchRoutePermitsBusiness() || !owner.ownsCatalogDataSource(this)) {
             return PersistenceLifecycleObservation.UNAVAILABLE
         }
         return catalogPreparation?.prepare() ?: PersistenceLifecycleObservation.UNAVAILABLE
@@ -125,6 +131,9 @@ internal class GuardedDataSource private constructor(
         catalogPreparation?.observation() ?: deletionPreparation?.observation() ?: owner.observeOrdinaryPreparation()
 
     override fun getConnection(): Connection {
+        // Stock pool preparation uses its retained raw initialization ticket, not this business facade.
+        // An operator connection has no unscoped caller route around the three fixed phase operations.
+        if (owner.desiredInstallationOperator && PersistencePhaseOwnership.current() == null) PersistenceJdbcGuardContext.refuse()
         val budget = PersistencePhaseOwnership.current()?.retainedPhaseCheckoutBudget(checkoutMillis) ?: PersistenceTimeBudget.start(checkoutMillis)
         if (!businessReady()) PersistenceJdbcGuardContext.refuse()
         val acquisition = lifecycle.prepareAcquisition(budget)
@@ -195,11 +204,11 @@ internal class GuardedDataSource private constructor(
     internal val complaintContainment: PersistenceComplaintContainment get() = owner.complaintContainment
 
     internal fun requireOrdinaryPhaseResource() {
-        if (route !== Route.ORDINARY) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (owner.desiredInstallationOperator || route !== Route.ORDINARY) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
     }
 
     internal fun requireDeletionPhaseResource() {
-        if (route !== Route.DELETION) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (owner.desiredInstallationOperator || route !== Route.DELETION) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
     }
 
     internal fun requireCatalogCoordinatorPhaseResource() {
@@ -220,9 +229,15 @@ internal class GuardedDataSource private constructor(
 
     internal fun ordinaryValidationQuery(): String? = pool.connectionTestQuery
 
-    internal fun businessReady(): Boolean = (sourceOnly || launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) &&
+    internal fun businessReady(): Boolean = launchRoutePermitsBusiness() &&
         deletionPreparation?.prepared() != false && catalogPreparation?.prepared() != false &&
         (route !== Route.CATALOG_COORDINATOR || owner.ownsCatalogDataSource(this)) && lifecycle.businessReady()
+
+    private fun launchRoutePermitsBusiness(): Boolean = if (owner.desiredInstallationOperator) {
+        route === Route.CATALOG_COORDINATOR && launchProfile === PersistencePoolLaunchProfile.UNKNOWN && owner.ownsCatalogDataSource(this)
+    } else {
+        sourceOnly || launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY
+    }
 
     internal fun evictOwned(lease: PersistenceJdbcLease, handle: Connection, budget: PersistenceTimeBudget): PersistenceLeaseRetirementClaim {
         if (!lifecycle.isAuthenticPoolCaller()) PersistenceJdbcGuardContext.refuse()

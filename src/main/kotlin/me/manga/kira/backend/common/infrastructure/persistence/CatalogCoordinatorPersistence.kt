@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogProjectedHeadPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDesiredInstallPhaseExecutor
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import java.util.concurrent.atomic.AtomicBoolean
@@ -19,6 +20,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private val owner: PersistenceJdbcLifecycleOwner,
     internal val dataSource: GuardedDataSource,
 ) : AutoCloseable {
+    internal val desiredInstallationOperator: Boolean get() = owner.desiredInstallationOperator
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
@@ -32,6 +34,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var leaseExecutor: ComplaintCoordinatorLeasePersistencePhaseExecutor? = null
     private var rotationExecutor: CatalogEpochRotationV1? = null
     private var cutoffExecutor: CatalogCutoffPublicationsV1? = null
+    private var desiredExecutor: ComplaintDesiredInstallPhaseExecutor? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
@@ -40,6 +43,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val lease: ComplaintCoordinatorLeasePersistencePhaseExecutor get() = checkNotNull(leaseExecutor)
     internal val epochRotation: CatalogEpochRotationV1 get() = checkNotNull(rotationExecutor)
     internal val cutoffPublications: CatalogCutoffPublicationsV1 get() = checkNotNull(cutoffExecutor)
+    internal val desiredInstallation: ComplaintDesiredInstallPhaseExecutor get() = checkNotNull(desiredExecutor)
 
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
@@ -47,6 +51,10 @@ internal class CatalogCoordinatorPersistence private constructor(
         val bound = PersistencePhaseOwnership.catalogCoordinator(this, nanoClock)
         phaseOwner = bound
         val jdbc = JdbcTemplate(dataSource).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
+        if (desiredInstallationOperator) {
+            desiredExecutor = ComplaintDesiredInstallPhaseExecutor(this, jdbc)
+            return // No catalog/lease/rotation/readback executor is even constructed on the operator root.
+        }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
@@ -73,7 +81,16 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     fun prepare(): PersistenceLifecycleObservation {
         requireResources()
+        if (desiredInstallationOperator) return PersistenceLifecycleObservation.UNAVAILABLE
         checkNotNull(executor)
+        return dataSource.prepareCatalogCoordinator()
+    }
+
+    /** Only the named operator owner can start the infrastructure for this route. */
+    internal fun prepareDesiredInstallationOperator(): PersistenceLifecycleObservation {
+        requireResources()
+        if (!desiredInstallationOperator) return PersistenceLifecycleObservation.UNAVAILABLE
+        checkNotNull(desiredExecutor)
         return dataSource.prepareCatalogCoordinator()
     }
 

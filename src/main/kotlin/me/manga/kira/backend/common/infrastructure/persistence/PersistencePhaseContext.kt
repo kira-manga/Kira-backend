@@ -23,6 +23,8 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApp
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallOperationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurrentStateReadOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintRecoverySettlementOperation
@@ -85,6 +87,8 @@ internal class PersistencePhaseContext(
     private val cutoffWork: PersistenceTimeBudget? = null,
     private val catalogRefresh: CatalogReadbackRefreshCustodyV1.Attempt? = null,
     private val catalogRefreshWork: PersistenceTimeBudget? = null,
+    private val desiredAttempt: ComplaintDesiredInstallAttemptV1? = null,
+    private val desiredWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -142,6 +146,7 @@ internal class PersistencePhaseContext(
     internal val coordinatorLease: PersistenceCoordinatorLease = CoordinatorLeaseBoundary()
     internal val epochRotation: PersistenceEpochRotationControl = EpochRotationBoundary()
     internal val cutoffPublications: PersistenceCutoffPublications = CutoffPublicationsBoundary()
+    internal val desiredInstallation: PersistenceDesiredInstall = DesiredInstallationBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -166,6 +171,9 @@ internal class PersistencePhaseContext(
             setName(path.name)
             timeout = 2
             isReadOnly = path.readOnly
+            // Desired-state pending/pristine checks deliberately take a fresh statement snapshot
+            // AFTER the LIVE control lock. Never inherit a role/database REPEATABLE READ default.
+            if (desiredAttempt != null) isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
         }
         manager.getTransaction(definition)
         // The wrapper retained TransactionStatus before this validation. A failure here still has rollback custody.
@@ -279,12 +287,12 @@ internal class PersistencePhaseContext(
         requireCaller()
         check(acquisition === completion && work == null)
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
-        work = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
+        work = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
-        return (rotationWork ?: cutoffWork ?: catalogRefreshWork)?.systemCappedSnapshot(ceilingMillis)
+        return (rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork)?.systemCappedSnapshot(ceilingMillis)
     }
 
     internal fun requireAcceptedLease() = requireWork()
@@ -538,7 +546,10 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
-        -> coordinatorLease.completed()
+        PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP,
+        PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
+        PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
+        -> completedControlOperation()
 
         PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
         PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
@@ -547,6 +558,20 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
         PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
         -> completedRotationOrCutoff()
+    }
+
+    private fun completedControlOperation(): Boolean = when (path) {
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+        -> coordinatorLease.completed()
+
+        PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP,
+        PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
+        PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
+        -> desiredInstallation.completed()
+
+        else -> false
     }
 
     private fun completedCatalogRead(): Boolean = when (path) {
@@ -812,7 +837,7 @@ internal class PersistencePhaseContext(
 
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
-        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: return false
+        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -838,13 +863,14 @@ internal class PersistencePhaseContext(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        return if (rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
+        val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
+        return if (ordinaryBudget && desiredAttempt == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
     }
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
-        val selected = (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget)?.capped(EMERGENCY_MILLIS)
+        val selected = (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget ?: desiredAttempt?.budget)?.capped(EMERGENCY_MILLIS)
             ?: PersistenceTimeBudget.start(EMERGENCY_MILLIS, ownership.nanoClock)
         emergency = selected
         return selected
@@ -1324,6 +1350,53 @@ internal class PersistencePhaseContext(
             operation.attempt === cutoffAttempt && operation.belongsTo(this@PersistencePhaseContext, path)
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
+    /** Fixed operator/control-only work. The original attempt, exact operation and released phase cannot be replaced. */
+    private inner class DesiredInstallationBoundary : PersistenceDesiredInstall {
+        private var issued = false
+        private var retained: ComplaintDesiredInstallOperationV1? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate, path: PersistencePhasePath) {
+            if (path !in setOf(
+                    PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP,
+                    PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
+                    PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
+                )
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, path)
+            val attempt = desiredAttempt ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            attempt.requirePersistence(ownership, jdbc)
+            if (issued || attempt.path !== path) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintDesiredInstallOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || operation.attempt !== desiredAttempt) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintDesiredInstallOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.attempt !== desiredAttempt) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            operation.attempt.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: ComplaintDesiredInstallOperationV1) {
+            val retainedByCaller = caller.isCurrent() && retained === operation && operation.attempt === desiredAttempt
+            if (!retainedByCaller || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult() // Actual known COMMITTED + released holder/permit; never a supplied success/cleanup flag.
+        }
+
+        override fun completed(): Boolean = retained?.let { it.attempt === desiredAttempt && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     /** Four fixed operations; a write has a mandatory one-use ingress handoff, never a raw bypass. */

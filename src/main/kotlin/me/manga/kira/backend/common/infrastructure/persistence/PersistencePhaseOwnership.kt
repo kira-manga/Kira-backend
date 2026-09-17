@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import jakarta.persistence.EntityManagerFactory
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
@@ -188,6 +189,16 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintCutoffRenew(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW, cutoffAttempt = attempt)
 
+    /** Fixed authenticated operator lane only. All three caps retain the same original command deadline. */
+    internal fun enterComplaintDesiredBootstrap(attempt: ComplaintDesiredInstallAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP, desiredAttempt = attempt)
+
+    internal fun enterComplaintDesiredClose(attempt: ComplaintDesiredInstallAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_DESIRED_CLOSE, desiredAttempt = attempt)
+
+    internal fun enterComplaintDesiredSupersede(attempt: ComplaintDesiredInstallAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE, desiredAttempt = attempt)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught")
     private fun enter(
@@ -196,6 +207,7 @@ internal class PersistencePhaseOwnership private constructor(
         rotationAttempt: CatalogEpochRotationAttemptV1? = null,
         cutoffAttempt: CatalogCutoffAttemptV1? = null,
         catalogRefresh: CatalogReadbackRefreshCustodyV1.Attempt? = null,
+        desiredAttempt: ComplaintDesiredInstallAttemptV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -205,10 +217,12 @@ internal class PersistencePhaseOwnership private constructor(
         }
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
         catalogRefresh?.requireProjectedPersistence(this)
+        desiredAttempt?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
         val catalogRefreshWork = catalogRefresh?.let { checkNotNull(it.projectedBudget).capped(2_000) }
+        val desiredWork = desiredAttempt?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -237,6 +251,8 @@ internal class PersistencePhaseOwnership private constructor(
                 cutoffWork,
                 catalogRefresh,
                 catalogRefreshWork,
+                desiredAttempt,
+                desiredWork,
             )
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
@@ -347,6 +363,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
                 PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
                 PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
+                PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP,
+                PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
+                PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
                 -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
         }
@@ -381,7 +400,8 @@ internal class PersistencePhaseOwnership private constructor(
             override fun requireResources() = resources.requireResources()
 
             override fun acquire(path: PersistencePhasePath): LocalPersistencePermit? {
-                if (path !in CATALOG_PATHS) {
+                val allowed = if (resources.desiredInstallationOperator) DESIRED_INSTALL_PATHS else CATALOG_PATHS
+                if (path !in allowed) {
                     throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
                 }
                 return resources.tryPhaseAdmission()
@@ -390,6 +410,11 @@ internal class PersistencePhaseOwnership private constructor(
     }
 
     companion object {
+        private val DESIRED_INSTALL_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP,
+            PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
+            PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
+        )
         private val CATALOG_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
@@ -526,6 +551,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CUTOFF_PAGE,
     COMPLAINT_CUTOFF_VERIFY,
     COMPLAINT_SEAL_PREPARE,
+    COMPLAINT_DESIRED_BOOTSTRAP,
+    COMPLAINT_DESIRED_CLOSE,
+    COMPLAINT_DESIRED_SUPERSEDE,
     ;
 
     internal val source: Boolean

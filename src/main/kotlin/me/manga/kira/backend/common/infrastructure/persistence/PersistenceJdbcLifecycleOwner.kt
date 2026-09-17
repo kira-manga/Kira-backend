@@ -3,11 +3,14 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Inert construction. The caller retains this owner before start and must request/observe shutdown separately. */
+// Fixed lifecycle facade: non-interchangeable owned routes deliberately share one custody root.
+@Suppress("TooManyFunctions")
 internal class PersistenceJdbcLifecycleOwner private constructor(private val root: PersistenceJdbcDriverRoot) {
     constructor(endpoint: ResolvedPersistenceEndpoint, ordinaryCapacity: Int, pathStyle: PersistencePathStyle) :
         this(PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle))
 
     internal val sourceOnly: Boolean get() = root.sourceOnly
+    internal val desiredInstallationOperator: Boolean get() = root.desiredInstallationOperator
     internal val versionBoundPools: VersionBoundPersistencePools? get() = root.versionBoundPools
     internal val epochRotation: EpochRotationPersistence? get() = root.epochRotation
     internal val complaintContainment = PersistenceComplaintContainment()
@@ -19,8 +22,20 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
     internal fun bindVersionBoundPools(
         launchProfile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.UNKNOWN,
         nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
-    ): VersionBoundPersistencePools =
-        (versionBoundPools ?: rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)).bind(this, launchProfile, nanoClock)
+    ): VersionBoundPersistencePools {
+        if (desiredInstallationOperator) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        return (versionBoundPools ?: rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)).bind(this, launchProfile, nanoClock)
+    }
+
+    /** Original scanner/Timer plus the original coordinator only. All other participant starts are permanently sealed. */
+    internal fun prepareDesiredInstallationOperator(): PersistenceLifecycleObservation {
+        requireConnectionFree()
+        if (!desiredInstallationOperator || catalogResources == null || ownershipLockHeld()) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (root.startDesiredInstallationOperatorInfrastructure() !== PersistenceLifecycleActivation.STARTED) {
+            return PersistenceLifecycleObservation.UNAVAILABLE
+        }
+        return checkNotNull(catalogResources).prepareDesiredInstallationOperator()
+    }
 
     /** One inert exact composition on THIS owner. No endpoint/capacity override, replacement or implicit start. */
     internal fun bindCatalogCoordinator(
@@ -29,6 +44,9 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
     ): CatalogCoordinatorPersistence {
         requireConnectionFree()
         if (sourceOnly || ownershipLockHeld() || root.shutdown.get()) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (desiredInstallationOperator && launchProfile !== PersistencePoolLaunchProfile.UNKNOWN) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         versionBoundPools?.requireCatalogConstruction()
@@ -136,5 +154,8 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
 
         internal fun versionBoundWithEpochRotation(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
             PersistenceJdbcLifecycleOwner(configuration.createRootWithEpochRotation())
+
+        internal fun desiredInstallationOperator(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createDesiredInstallationOperatorRoot())
     }
 }
