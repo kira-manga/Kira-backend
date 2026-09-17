@@ -6,12 +6,14 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
 import me.manga.kira.backend.security.VersionBoundComplaintConsumerConfiguration
 import java.security.MessageDigest
 import java.util.UUID
 
 /**
- * One actual retained INITIAL_LIVE/memory/one-declared-instance composition and its complete D.
+ * One actual retained INITIAL_LIVE/memory/one-declared-instance composition and its versioned D.
+ * The explicit catalog opt-in enlarges the dormant inventory; neither profile proves deployable authority.
  * No bean, supplied D, provider observation, topology proof or current/restore/activation authority.
  * A rebuilt in-memory consumer loses quota state; this is not a rotation or rollout procedure.
  */
@@ -22,6 +24,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     private val desiredGeneration: Long,
     private val databaseIdentity: UUID,
     private val restoreIdentity: UUID,
+    val catalogReadback: VersionBoundCatalogReadbackConfigurationV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -30,14 +33,13 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     init {
         requireGraph()
         retainedPools = pools.descriptors()
-        canonical = ComplaintEffectiveConfigurationV1.encode(
-            consumers,
-            pools,
-            implementationSchema,
-            desiredGeneration,
-            databaseIdentity,
-            restoreIdentity,
-        )
+        canonical = if (catalogReadback == null) {
+            ComplaintEffectiveConfigurationV1.encode(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity)
+        } else {
+            ComplaintEffectiveConfigurationV2.encode(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, catalogReadback,
+            )
+        }
         hash = MessageDigest.getInstance("SHA-256").digest(canonical)
         requireUnchangedConfiguration()
     }
@@ -103,6 +105,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
             desiredGeneration: Long,
             databaseIdentity: UUID,
             restoreIdentity: UUID,
+            catalogReadback: VersionBoundCatalogReadbackConfigurationV1? = null,
         ): VersionBoundComplaintProcessConfiguration {
             requireConnectionFree()
             return VersionBoundComplaintProcessConfiguration(
@@ -112,6 +115,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 desiredGeneration,
                 databaseIdentity,
                 restoreIdentity,
+                catalogReadback,
             )
         }
 
