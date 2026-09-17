@@ -1,7 +1,9 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PoolLifecycle
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
@@ -47,8 +49,13 @@ internal fun withProcessBoundCatalogGenesis(
     assertEquals(9, acquired.lookups)
     tls.withEnrollment { base ->
         ProcessBoundCatalogGenesisFixture(process, base.observer).use { fixture ->
-            fixture.installDesiredForTest()
-            test(fixture)
+            try {
+                fixture.installDesiredForTest()
+                test(fixture)
+            } catch (problem: PersistencePhaseException) {
+                // Only an unexpected escape: expected assertThrows inside a case retain their original exception.
+                throw fixture.unexpectedPersistenceFailure(problem)
+            }
         }
     }
 }
@@ -76,6 +83,7 @@ internal class ProcessBoundCatalogGenesisFixture(val process: VersionBoundCompla
     private val digest = process.consumers.capacityPolicy.digestBytes()
     private val originalControl = controlRow()
     private var ownsToken = false
+    private var diagnosticStage = DiagnosticStage.INSTALL_TEST_STATE
 
     internal fun installDesiredForTest() {
         assertEquals(0L, observer.queryForObject("SELECT count(*) FROM complaint_catalog_mutations", Long::class.java))
@@ -106,12 +114,38 @@ internal class ProcessBoundCatalogGenesisFixture(val process: VersionBoundCompla
                 ComplaintDataScope.LIVE.id,
             ),
         )
+        diagnosticStage = DiagnosticStage.CASE_BODY
     }
 
     fun stageSigned() {
+        diagnosticStage = DiagnosticStage.GENESIS_PREPARE
         val prepared = executor.prepareGenesis(intent, initial, current, policy.chain, digest)
+        diagnosticStage = DiagnosticStage.GENESIS_SIGNATURE
         executor.persistGenesisSignature(prepared, intent, initial, current, policy.chain, digest, signature)
+        diagnosticStage = DiagnosticStage.STAGING_RELEASE_CHECK
         released()
+        diagnosticStage = DiagnosticStage.CASE_BODY
+    }
+
+    /** Fixed test diagnostics only; no exception cause, SQL, parameter, row, identifier or credential is rendered. */
+    fun unexpectedPersistenceFailure(problem: PersistencePhaseException): AssertionError {
+        val lastPhase = jdbc.phase?.let { selected ->
+            runCatching { poolTestField<PersistencePhasePath>(selected, "path").name }.getOrDefault("UNAVAILABLE")
+        } ?: "NONE"
+        val lastStep = when (val step = jdbc.steps.lastOrNull()) {
+            "control", "catalog", "counters", "insert", "signature", "mutation", "readback", "head", "initial", "complete", "project",
+            "charge:catalog_mutations", "charge:storage_bytes",
+            -> step
+
+            null -> "NONE"
+            else -> "OTHER"
+        }
+        // The probe is not used by built-in snapshot/SDK calls: these are explicitly last observations, not a failing-phase claim.
+        return AssertionError(
+            "PROCESS_BOUND_G1_FAILURE stage=${diagnosticStage.name} code=${problem.code.name} " +
+                "database_outcome=${problem.databaseOutcome.name} cleanup_proven=${problem.cleanupProven} " +
+                "last_observed_phase=$lastPhase last_observed_sql_step=$lastStep",
+        )
     }
 
     /** Synthetic raw provider only; local PREPARED/pending/projected state always comes from the actual released snapshot. */
@@ -188,4 +222,6 @@ internal class ProcessBoundCatalogGenesisFixture(val process: VersionBoundCompla
             throw problem
         }
     }
+
+    private enum class DiagnosticStage { INSTALL_TEST_STATE, CASE_BODY, GENESIS_PREPARE, GENESIS_SIGNATURE, STAGING_RELEASE_CHECK }
 }
