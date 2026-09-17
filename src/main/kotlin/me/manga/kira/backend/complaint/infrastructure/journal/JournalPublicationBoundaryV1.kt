@@ -32,7 +32,11 @@ internal fun requireJournalPublication(condition: Boolean, code: JournalPublicat
 }
 
 /** SDKs can wrap transport signals; inspect only a finite cause prefix, never retain its diagnostic graph. */
-internal fun <T> journalPublicationSdkCall(action: () -> T): T = journalPublicationCall {
+internal fun <T> journalPublicationSdkCall(
+    code: JournalPublicationFailureV1 = JournalPublicationFailureV1.PROVIDER_FAILURE,
+    checkInterrupted: Boolean = true,
+    action: () -> T,
+): T = journalPublicationCall(code, checkInterrupted) {
     try {
         action()
     } catch (failure: SdkException) {
@@ -43,7 +47,7 @@ internal fun <T> journalPublicationSdkCall(action: () -> T): T = journalPublicat
         causes.filterIsInstance<JournalPublicationExceptionV1>().firstOrNull()?.let { throw it }
         causes.filterIsInstance<OwnerDeleteAllJournalException>().firstOrNull()?.let { throw it }
         causes.filterIsInstance<PersistencePhaseException>().firstOrNull()?.let { throw it }
-        throw JournalPublicationExceptionV1(JournalPublicationFailureV1.PROVIDER_FAILURE)
+        throw JournalPublicationExceptionV1(code)
     }
 }
 
@@ -75,10 +79,10 @@ internal fun <T> journalPublicationCall(
     throw JournalPublicationExceptionV1(code)
 }
 
-internal fun <T> journalPublicationClose(action: () -> T): T = journalPublicationCall(
+internal fun <T> journalPublicationClose(action: () -> T): T = journalPublicationSdkCall(
     JournalPublicationFailureV1.CLEANUP_FAILURE,
     checkInterrupted = false,
-    action,
+    action = action,
 )
 
 /** Both branches run even on cancellation/Error; cleanup failure is retained by its resource owner as well. */

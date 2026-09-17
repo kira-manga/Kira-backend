@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFailureV1
 import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationCall
 import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationClose
+import me.manga.kira.backend.complaint.infrastructure.journal.journalPublicationSdkCall
 import me.manga.kira.backend.complaint.infrastructure.journal.replaceJournalPublicationFailure
 import me.manga.kira.backend.complaint.infrastructure.journal.requireJournalPublication
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
@@ -138,7 +139,7 @@ internal class BoundedJournalSdkHttpClientV1(
                     }
                 }
                 checkRead()
-                nativeRequest = journalPublicationCall { delegate.prepareRequest(bounded.build()) }
+                nativeRequest = journalPublicationSdkCall { delegate.prepareRequest(bounded.build()) }
                 checkRead()
             } catch (failure: Throwable) {
                 withJournalPublicationCleanup({ throw failure }, ::finish)
@@ -152,7 +153,7 @@ internal class BoundedJournalSdkHttpClientV1(
             requireJournalPublication(dispatched.compareAndSet(false, true))
             try {
                 checkRead()
-                val response = journalPublicationCall { checkNotNull(nativeRequest).call() }
+                val response = journalPublicationSdkCall { checkNotNull(nativeRequest).call() }
                 body = response.responseBody().orElse(null)
                 checkRead()
                 val declared = wire.responseLength(response.httpResponse(), call)

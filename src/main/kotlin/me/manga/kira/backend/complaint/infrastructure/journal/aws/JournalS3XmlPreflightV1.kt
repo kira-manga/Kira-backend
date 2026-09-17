@@ -108,6 +108,10 @@ internal object JournalS3XmlPreflightV1 {
             if (parent.name in setOf("ListVersionsResult", "Version", "Owner")) {
                 requireJournalPublication(reader.isWhiteSpace, JournalPublicationFailureV1.INVALID_LISTING)
             }
+            parent.booleanText?.let { text ->
+                requireJournalPublication(reader.textLength <= 5 - text.length, JournalPublicationFailureV1.INVALID_LISTING)
+                text.append(reader.textCharacters, reader.textStart, reader.textLength)
+            }
         }
 
         fun end(name: String) {
@@ -119,10 +123,16 @@ internal object JournalS3XmlPreflightV1 {
                 else -> emptySet()
             }
             requireJournalPublication(node.children.containsAll(required), JournalPublicationFailureV1.INVALID_LISTING)
+            node.booleanText?.let { text ->
+                // SDK Boolean.parseBoolean turns empty/garbage text into false. Never let that prove absence.
+                requireJournalPublication(text.toString() in setOf("true", "false"), JournalPublicationFailureV1.INVALID_LISTING)
+            }
         }
 
         fun complete() = requireJournalPublication(roots == 1 && stack.isEmpty(), JournalPublicationFailureV1.INVALID_LISTING)
-        private class Node(val name: String, val children: MutableSet<String> = HashSet())
+        private class Node(val name: String, val children: MutableSet<String> = HashSet()) {
+            val booleanText: StringBuilder? = if (name == "IsTruncated" || name == "IsLatest") StringBuilder(5) else null
+        }
     }
 
     private const val NAMESPACE = "http://s3.amazonaws.com/doc/2006-03-01/"

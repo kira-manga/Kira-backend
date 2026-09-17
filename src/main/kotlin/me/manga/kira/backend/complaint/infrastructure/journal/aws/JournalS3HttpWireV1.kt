@@ -142,7 +142,10 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(marker == null || marker == "false", JournalPublicationFailureV1.INVALID_READBACK)
         val missing = single(headers, "x-amz-missing-meta")
         requireJournalPublication(missing == null || missing == "0", JournalPublicationFailureV1.INVALID_READBACK)
-        return declaredLength(headers)
+        val declared = declaredLength(headers)
+        val transfer = single(headers, "Transfer-Encoding")
+        requireJournalPublication(transfer == null || transfer == "chunked" && declared == null, JournalPublicationFailureV1.INVALID_READBACK)
+        return declared
     }
 
     override fun toString(): String = "JournalS3HttpWireV1(exact-ordinary-key,redacted)"

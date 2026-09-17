@@ -171,11 +171,12 @@ internal class S3OrdinaryJournalClientV1 private constructor(
     private fun uncertainOrConflict(call: JournalS3CallV1, failure: Throwable): JournalPutObservationV1 {
         if (failure !is JournalPublicationExceptionV1 || failure.code != JournalPublicationFailureV1.PROVIDER_FAILURE) throw failure
         val observed = transport.observation(call)
-        return when (observed?.response?.statusCode()) {
-            409 -> JournalPutObservationV1.Conflict
-            412 -> JournalPutObservationV1.PreconditionFailed
-            in 500..599 -> JournalPutObservationV1.Uncertain
-            null -> {
+        val status = observed?.response?.statusCode()
+        return when {
+            status == 409 -> JournalPutObservationV1.Conflict
+            status == 412 -> JournalPutObservationV1.PreconditionFailed
+            status != null && status in 500..599 -> JournalPutObservationV1.Uncertain
+            status == null -> {
                 requireJournalPublication(transport.dispatched(call), JournalPublicationFailureV1.PROVIDER_FAILURE)
                 JournalPutObservationV1.Uncertain
             }
@@ -190,7 +191,7 @@ internal class S3OrdinaryJournalClientV1 private constructor(
             {
                 call.check()
                 transport.begin(call)
-                journalPublicationSdkCall(action).also { call.check() }
+                journalPublicationSdkCall(action = action).also { call.check() }
             },
             {
                 transport.finishRequest()
