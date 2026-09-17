@@ -12,6 +12,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.sql.Connection
+import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Instant
 
@@ -80,15 +81,18 @@ internal class VersionBoundPersistenceConnectedFixture(
         statement.executeQuery(
             "SELECT a.pid, a.backend_start, s.ssl, s.version, s.bits, current_user " +
                 "FROM pg_stat_activity a JOIN pg_stat_ssl s USING (pid) WHERE a.pid = pg_backend_pid()",
-        ).use { row ->
-            assertTrue(row.next())
-            assertTrue(row.getBoolean(3) && !row.wasNull())
-            assertTrue(row.getString(4) in setOf("TLSv1.2", "TLSv1.3") && row.getInt(5) >= 128)
-            assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(6))
-            val session = TlsSession(row.getInt(1), row.getTimestamp(2).toInstant())
-            assertFalse(row.next())
-            sessions.add(session)
-            session.pid
+        ).use(::retainTlsSession)
+    }
+
+    /** Observer-only proof for the nonpooled session; never borrows its private connection or first-delivery authority. */
+    fun observeTlsPid(pid: Int): Int = ordinaryCleanupReader(database).connection.use { observer ->
+        observer.prepareStatement(
+            "SELECT a.pid, a.backend_start, s.ssl, s.version, s.bits, a.usename " +
+                "FROM pg_stat_activity a JOIN pg_stat_ssl s USING (pid) WHERE a.pid = ? AND a.datname = current_database()",
+        ).use { statement ->
+            statement.queryTimeout = 2
+            statement.setInt(1, pid)
+            statement.executeQuery().use(::retainTlsSession).also { assertEquals(pid, it) }
         }
     }
 
@@ -133,6 +137,11 @@ internal class VersionBoundPersistenceConnectedFixture(
 
     private fun completeClose() {
         assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, owner.observeShutdown())
+        owner.epochRotation?.let { rotation ->
+            assertEquals(PersistenceLifecycleObservation.EPOCH_ROTATION_LOCAL_ENDED, rotation.observeShutdown())
+            val participant = poolTestField<PersistenceJdbcParticipant>(scope.root, "epochRotationParticipant")
+            assertTrue(scope.actors(participant).all { it.termination().ended() && !it.thread.isAlive })
+        }
         assertEquals(PersistencePublicTrustRelease.RELEASED, owner.releasePublicTrustAfterShutdown())
         assertFalse(Files.exists(trustPath().parent))
         if (parentCreated) Files.delete(trustParent) // Never recursively remove unknown/retained trust material.
@@ -199,6 +208,17 @@ internal class VersionBoundPersistenceConnectedFixture(
                 }
             }
         }
+    }
+
+    private fun retainTlsSession(row: ResultSet): Int {
+        assertTrue(row.next())
+        assertTrue(row.getBoolean(3) && !row.wasNull())
+        assertTrue(row.getString(4) in setOf("TLSv1.2", "TLSv1.3") && row.getInt(5) >= 128)
+        assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(6))
+        val session = TlsSession(row.getInt(1), row.getTimestamp(2).toInstant())
+        assertFalse(row.next())
+        sessions.add(session)
+        return session.pid
     }
 
     private data class TlsSession(val pid: Int, val started: Instant)
