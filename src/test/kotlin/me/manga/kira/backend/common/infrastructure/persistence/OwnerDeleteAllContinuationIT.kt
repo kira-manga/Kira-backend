@@ -155,7 +155,7 @@ class OwnerDeleteAllContinuationIT {
             if (point == "AUTHORIZATION") {
                 f.auth.afterStep = { step ->
                     if (step == DeleteAllStep.AUDIT) TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
-                        override fun afterCommit() = throw IllegalStateException("Synthetic authorization completion failure.")
+                        override fun afterCommit() = error("Synthetic authorization completion failure.")
                     })
                 }
             }
@@ -175,6 +175,8 @@ class OwnerDeleteAllContinuationIT {
             assertEquals("AUTHORIZED_DELETE", f.receiptState())
             assertEquals("PREPARED", f.publicationState())
             assertTrue(f.statements.isEmpty())
+            val retained = if (point in setOf("CLOSE", "BOTH_FATAL")) 1L else 0L
+            assertEquals(retained, f.journalLanes.activeOwners().totalOwners)
             f.assertReleased()
             f.auth.afterStep = {}
             f.publisher.respond = f.publisher::statefulReply
@@ -183,6 +185,7 @@ class OwnerDeleteAllContinuationIT {
             val result = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.complete())
             f.assertAccounting(before, newAuthorization = false)
             f.assertCompleted(result)
+            assertEquals(retained, f.journalLanes.activeOwners().totalOwners) // Retry used another admitted slot, never replaced failed cleanup.
             f.assertReleased()
         }
     }
