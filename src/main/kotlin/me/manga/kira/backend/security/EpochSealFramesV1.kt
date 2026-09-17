@@ -53,7 +53,7 @@ internal object EpochSealFramesV1 {
     fun encode(bytes: ByteArray): String = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
 
     fun opaque(value: String) {
-        requireEpochSeal(value.length == 43 && value.all { it.isLetterOrDigit() && it.code < 128 || it == '-' || it == '_' })
+        requireEpochSeal(value.length == 43 && value.all { (it.isLetterOrDigit() && it.code < 128) || it == '-' || it == '_' })
         val decoded = Base64.getUrlDecoder().decode(value)
         try {
             requireEpochSeal(decoded.size == 32 && encode(decoded) == value)

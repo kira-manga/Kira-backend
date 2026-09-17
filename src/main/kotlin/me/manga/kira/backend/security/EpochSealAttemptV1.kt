@@ -26,7 +26,8 @@ internal class EpochSealAttemptV1 internal constructor(
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
         val elapsed = nanoTime() - started
         val remaining = (allowanceNanos - elapsed) / 1_000_000L
-        if (expired || elapsed < 0 || elapsed < lastElapsed || elapsed >= allowanceNanos || remaining <= 0) {
+        val invalidElapsed = elapsed < 0 || elapsed < lastElapsed || elapsed >= allowanceNanos
+        if (expired || invalidElapsed || remaining <= 0) {
             expired = true
             throw EpochSealExceptionV1(EpochSealFailureV1.DEADLINE_EXHAUSTED)
         }
