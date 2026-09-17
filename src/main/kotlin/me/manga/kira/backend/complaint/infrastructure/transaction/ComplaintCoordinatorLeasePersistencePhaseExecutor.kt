@@ -77,12 +77,13 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
     private fun requireEntryResources() {
         requireConnectionFree()
         coordinator.requireResources()
-        if (coordinator.ownership !== ownership || coordinator.manager !== manager || coordinator.dataSource !== source ||
-            coordinator.leaseCustody !== custody || jdbc.dataSource !== source
-        ) {
+        if (!hasOriginalCoordinatorResources() || coordinator.leaseCustody !== custody || jdbc.dataSource !== source) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
+
+    private fun hasOriginalCoordinatorResources(): Boolean =
+        coordinator.ownership === ownership && coordinator.manager === manager && coordinator.dataSource === source
 
     @Suppress("TooGenericExceptionCaught")
     private fun persist(attempt: CatalogCoordinatorLeaseCustodyV1.Attempt): CatalogCoordinatorLeaseOperation {

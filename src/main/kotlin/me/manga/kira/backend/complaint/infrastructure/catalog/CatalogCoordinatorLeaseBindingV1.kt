@@ -52,8 +52,14 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireConnectionFree()
         requireUnchangedConfiguration()
         return arrayOf(
-            desired.desiredGeneration, desiredHash.copyOf(), desired.databaseIdentity, desired.restoreIdentity,
-            writer, catalogHash.copyOf(), trustHash.copyOf(), catalogWriter,
+            desired.desiredGeneration,
+            desiredHash.copyOf(),
+            desired.databaseIdentity,
+            desired.restoreIdentity,
+            writer,
+            catalogHash.copyOf(),
+            trustHash.copyOf(),
+            catalogWriter,
         )
     }
 
@@ -67,18 +73,21 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     internal fun requireUnchangedConfiguration() {
         process.requireUnchangedConfiguration()
-        if (process.pools.catalogCoordinator !== coordinator || coordinator.ownership !== ownership ||
-            coordinator.manager !== manager || coordinator.dataSource !== source
-        ) {
+        if (!hasOriginalCoordinatorOwnership() || coordinator.manager !== manager || coordinator.dataSource !== source) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         coordinator.requireResources()
     }
 
+    private fun hasOriginalCoordinatorOwnership(): Boolean = process.pools.catalogCoordinator === coordinator && coordinator.ownership === ownership
+
     override fun toString(): String = "CatalogCoordinatorLeaseBindingV1(retained-initial-LIVE-G1,no-current-authority)"
 
     companion object {
-        fun fromRetained(process: VersionBoundComplaintProcessConfiguration, refresh: CurrentAcceptedCatalogRefreshV1.Result): CatalogCoordinatorLeaseBindingV1 {
+        fun fromRetained(
+            process: VersionBoundComplaintProcessConfiguration,
+            refresh: CurrentAcceptedCatalogRefreshV1.Result,
+        ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
             return CatalogCoordinatorLeaseBindingV1(process, refresh)
         }

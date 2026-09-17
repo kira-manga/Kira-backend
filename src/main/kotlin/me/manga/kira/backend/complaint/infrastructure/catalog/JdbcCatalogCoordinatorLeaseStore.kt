@@ -99,15 +99,29 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             // Only now may a later statement sample clock_timestamp(); no time expression was in the locking projection.
             val changed = when (attempt.path) {
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> jdbc.query(
-                    ACQUIRE_COORDINATOR_LEASE, { row, _ -> Changed.copy(row) }, attempt.owner, *arguments(), *before.arguments(),
+                    ACQUIRE_COORDINATOR_LEASE,
+                    { row, _ -> Changed.copy(row) },
+                    attempt.owner,
+                    *arguments(),
+                    *before.arguments(),
                 )
 
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> jdbc.query(
-                    RENEW_COORDINATOR_LEASE, { row, _ -> Changed.copy(row) }, *arguments(), *before.arguments(), attempt.owner, attempt.token,
+                    RENEW_COORDINATOR_LEASE,
+                    { row, _ -> Changed.copy(row) },
+                    *arguments(),
+                    *before.arguments(),
+                    attempt.owner,
+                    attempt.token,
                 )
 
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH -> jdbc.query(
-                    RELINQUISH_COORDINATOR_LEASE, { row, _ -> Changed.copy(row) }, *arguments(), *before.arguments(), attempt.owner, attempt.token,
+                    RELINQUISH_COORDINATOR_LEASE,
+                    { row, _ -> Changed.copy(row) },
+                    *arguments(),
+                    *before.arguments(),
+                    attempt.owner,
+                    attempt.token,
                 )
 
                 else -> error("Unsupported coordinator lease phase.")

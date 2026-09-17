@@ -62,8 +62,9 @@ import java.util.concurrent.locks.LockSupport
 /**
  * One synchronous named owner. No application lambda, foreign thread or resource switch.
  * All guarded transitions share this retained phase/permit/lease rather than splitting their custody.
+ * Named operation boundaries keep commit/release/quarantine proof on this one original context.
  */
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LargeClass")
 internal class PersistencePhaseContext(
     private val ownership: PersistencePhaseOwnership,
     private val slot: Int,

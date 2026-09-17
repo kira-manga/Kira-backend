@@ -90,7 +90,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         private var ended = false
 
         internal fun requireRunning(selected: JdbcTemplate) {
-            if (caller !== Thread.currentThread() || selected !== jdbc || ended || failed || inFlight.get() !== this) {
+            if (caller !== Thread.currentThread() || selected !== jdbc || !hasRunningCustody()) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireBinding(binding, selected)
@@ -100,6 +100,8 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
                 prior?.requireSameWindow(checkNotNull(priorWindow))
             }
         }
+
+        private fun hasRunningCustody(): Boolean = !ended && !failed && inFlight.get() === this
 
         internal fun retain(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate) {
             requireRunning(selected)
@@ -119,12 +121,14 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
 
         /** A historical receipt can be reread after success, but a failed/late original return can never recover one. */
         internal fun requireReleasedResult(operation: CatalogCoordinatorLeaseOperation) {
-            if (caller !== Thread.currentThread() || retained !== operation || failed || (ended && !successful)) {
+            if (caller !== Thread.currentThread() || retained !== operation || resultReturnRefused()) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireBinding(binding, jdbc)
             if (!successful) requireRunning(jdbc)
         }
+
+        private fun resultReturnRefused(): Boolean = failed || (ended && !successful)
 
         internal fun acceptAcquire(operation: CatalogCoordinatorLeaseOperation): CatalogCoordinatorLeaseCampaignV1 {
             requireOperation(operation, jdbc)
@@ -150,8 +154,10 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
             successful = true // Historical reduction only; the prior campaign stays permanently stopped.
         }
 
-        internal fun renewalWindow(operation: CatalogCoordinatorLeaseOperation, campaign: CatalogCoordinatorLeaseCampaignV1):
-            Pair<CatalogCoordinatorLeaseCampaignV1.Window, Long> {
+        internal fun renewalWindow(
+            operation: CatalogCoordinatorLeaseOperation,
+            campaign: CatalogCoordinatorLeaseCampaignV1,
+        ): Pair<CatalogCoordinatorLeaseCampaignV1.Window, Long> {
             requireOperation(operation, jdbc)
             if (path !== PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW || prior !== campaign || successful) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)

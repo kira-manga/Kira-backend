@@ -14,7 +14,11 @@ import java.util.UUID
 import java.util.concurrent.atomic.AtomicReferenceArray
 import java.util.concurrent.locks.ReentrantLock
 
-/** Dormant closed resource composition of existing permit budgets, never another pool/physical owner. */
+/**
+ * Dormant closed resource composition of existing permit budgets, never another pool/physical owner.
+ * Explicit named entries intentionally share this one selection/permit owner, not a caller-selected path API.
+ */
+@Suppress("TooManyFunctions")
 internal class PersistencePhaseOwnership private constructor(
     private val selection: Selection,
     internal val nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,

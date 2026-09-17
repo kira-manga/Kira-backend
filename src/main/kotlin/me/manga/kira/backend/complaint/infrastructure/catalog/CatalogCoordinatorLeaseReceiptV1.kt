@@ -29,6 +29,7 @@ internal class CatalogCoordinatorLeaseAcquisitionV1 private constructor(operatio
     override fun toString(): String = "CatalogCoordinatorLeaseAcquisitionV1(local-continuation,historical-receipt,no-work-authority)"
 
     companion object {
-        internal fun issuedBy(operation: CatalogCoordinatorLeaseOperation): CatalogCoordinatorLeaseAcquisitionV1 = CatalogCoordinatorLeaseAcquisitionV1(operation)
+        internal fun issuedBy(operation: CatalogCoordinatorLeaseOperation): CatalogCoordinatorLeaseAcquisitionV1 =
+            CatalogCoordinatorLeaseAcquisitionV1(operation)
     }
 }
