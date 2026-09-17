@@ -2,10 +2,12 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
+import me.manga.kira.backend.complaint.catalog.EpochRotationCases
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
+import me.manga.kira.backend.complaint.catalog.withEpochRotation
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
 import org.junit.jupiter.api.AfterAll
@@ -210,6 +212,22 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `owned coordinator lease releases no receipt before actual commit and cleanup or after SQL commit completion and quarantine failures`() =
         withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseBoundaryCases(it).sealedResultsCommitAndReleaseFailures() } }
+
+    @Test
+    fun `owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder`() =
+        withFixture(epochRotation = true) { tls -> withEpochRotation(tls) { EpochRotationCases(it).requestReleaseAndFreshExclusiveCapture() } }
+
+    @Test
+    fun `owned epoch rotation returns exact durable retries and genuine commit refusals require a successor locked reread`() =
+        withFixture(epochRotation = true) { tls -> withEpochRotation(tls) { EpochRotationCases(it).durableRetriesAndCommitRefusals() } }
+
+    @Test
+    fun `owned epoch rotation refuses expired lease and changed retained LIVE binding without altering the durable slot`() =
+        withFixture(epochRotation = true) { tls -> withEpochRotation(tls) { EpochRotationCases(it).leaseAndBindingRefusals() } }
+
+    @Test
+    fun `owned epoch rotation shares one discovery deadline and failed requests cannot revive after cleanup`() =
+        withFixture(epochRotation = true) { tls -> withEpochRotation(tls) { EpochRotationCases(it).discoveryDeadlineAndNonrevival() } }
 
     /** A test-only contention pair, not a supported multi-instance deployment or another database lifecycle. */
     private fun withPairedFixture(
