@@ -26,7 +26,7 @@ class BoundedCatalogSdkHttpClientTest {
         listOf(200, 403).forEach { status ->
             listOf(false, true).forEach { omitted ->
                 val fixture = S3CatalogReadbackFixture()
-                val reply = S3CatalogReply("<root/>".toByteArray()).apply {
+                val reply = (if (status == 200) fixture.listReply() else S3CatalogReply("<root/>".toByteArray())).apply {
                     this.status = status
                     if (omitted) headers = emptyMap()
                 }

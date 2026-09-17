@@ -151,6 +151,90 @@ class S3CatalogReadbackAdapterTest {
     }
 
     @Test
+    fun `LIST split truncated true cannot be decoded as a complete page by the real SDK`() {
+        val correct = S3CatalogReadbackFixture().listReply().bytes.toString(Charsets.UTF_8)
+        assertFalse(correct.contains("<NextKeyMarker>"))
+        assertFalse(correct.contains("<NextVersionIdMarker>"))
+        listOf("tr<!--split-->ue", "tr<?split?>ue").forEach { split ->
+            rejectListXml(correct.replace("<IsTruncated>false</IsTruncated>", "<IsTruncated>$split</IsTruncated>"), "split truncation [$split]")
+        }
+    }
+
+    @Test
+    fun `LIST noncanonical boolean scalars cannot acquire SDK false defaults`() {
+        val correct = S3CatalogReadbackFixture().listReply().bytes.toString(Charsets.UTF_8)
+        listOf("", "garbage", "FALSE", " false ", "0").forEach { value ->
+            rejectListXml(correct.replace("<IsTruncated>false</IsTruncated>", "<IsTruncated>$value</IsTruncated>"), "truncation Boolean [$value]")
+        }
+        rejectListXml(correct.replace("<IsTruncated>false</IsTruncated>", "<IsTruncated/>"), "self-closing truncation")
+        rejectListXml(correct.replace("<IsLatest>true</IsLatest>", "<IsLatest>garbage</IsLatest>"), "invalid latest Boolean")
+    }
+
+    @Test
+    fun `LIST scalar prefixes and duplicate singletons cannot be overwritten during SDK decoding`() {
+        val correct = S3CatalogReadbackFixture().listReply().bytes.toString(Charsets.UTF_8)
+        for (field in listOf("Name", "MaxKeys", "VersionId", "Size")) {
+            for (markup in listOf("<!--split-->", "<?split?>")) {
+                rejectListXml(correct.replace("<$field>", "<$field>$PRIVATE_TEXT$markup"), "split $field with $markup")
+            }
+        }
+        rejectListXml(
+            correct.replace("<IsTruncated>false</IsTruncated>", "<IsTruncated>false</IsTruncated><IsTruncated>true</IsTruncated>"),
+            "conflicting truncation singleton",
+        )
+        rejectListXml(correct.replace("</VersionId>", "</VersionId><VersionId>conflicting-version</VersionId>"), "conflicting version singleton")
+    }
+
+    @Test
+    fun `LIST namespace root and scalar structure are checked before SDK decoding`() {
+        val correct = S3CatalogReadbackFixture().listReply().bytes.toString(Charsets.UTF_8)
+        listOf(
+            "wrong root" to correct.replace("ListVersionsResult", "OtherResult"),
+            "wrong namespace" to correct.replace("http://s3.amazonaws.com/doc/2006-03-01/", "urn:untrusted"),
+            "namespace reset" to correct.replace("<Version>", "<Version xmlns=\"\">"),
+            "nested scalar" to correct.replace("<IsTruncated>false</IsTruncated>", "<IsTruncated><Nested>false</Nested></IsTruncated>"),
+            "scalar attribute" to correct.replace("<IsTruncated>", "<IsTruncated ignored=\"true\">"),
+            "unknown field" to correct.replace("</ListVersionsResult>", "<Unrecognized/></ListVersionsResult>"),
+            "container text" to correct.replace("<Version>", "<Version>not-whitespace"),
+        ).forEach { (label, xml) -> rejectListXml(xml, label) }
+    }
+
+    @Test
+    fun `LIST lossless CDATA and container markup preserve pagination and all version observations`() {
+        val fixture = S3CatalogReadbackFixture()
+        val request = listRequest().copy(maxKeys = 2)
+        val versions = listOf(
+            CatalogListedVersion(S3CatalogReadbackFixture.key, "opaque%2F+&version", 7),
+            CatalogListedVersion(CatalogReadbackProtocol.key(2), "catalog-version-2", 8),
+        )
+        val next = CatalogListCursor(versions.last().key, requireNotNull(versions.last().versionId))
+        val optional = "<Owner><!--owner--><?owner?><ID>synthetic-owner</ID><DisplayName>synthetic</DisplayName></Owner>" +
+            "<ChecksumAlgorithm>CRC32</ChecksumAlgorithm><ChecksumAlgorithm>SHA256</ChecksumAlgorithm>" +
+            "<RestoreStatus><!--restore--><?restore?><IsRestoreInProgress>tr<![CDATA[ue]]></IsRestoreInProgress></RestoreStatus>"
+        val xml = fixture.listReply(request, versions, next, "<!--root--><?root?>").bytes.toString(Charsets.UTF_8)
+            .replace("<KeyMarker></KeyMarker><VersionIdMarker></VersionIdMarker>", "")
+            .replace("<IsTruncated>true</IsTruncated>", "<IsTruncated>tr<![CDATA[ue]]></IsTruncated>")
+            .replace("<IsLatest>true</IsLatest>", "<IsLatest>fa<![CDATA[lse]]></IsLatest>")
+            .replace("<Version>", "<Version><!--version--><?version?>")
+            .replace("</Version>", "$optional</Version>")
+        assertFalse(xml.contains("<KeyMarker>"))
+        assertFalse(xml.contains("<VersionIdMarker>"))
+        val reply = S3CatalogReply(xml.toByteArray())
+        fixture.respond = { reply }
+        fixture.adapter().use { adapter ->
+            val page = adapter.listVersions(request)
+            assertEquals(request, page.requestBinding)
+            assertEquals(versions, page.versions)
+            assertTrue(page.deleteMarkers.isEmpty())
+            assertTrue(page.isTruncated)
+            assertEquals(next, page.nextCursor)
+            assertReleased(reply)
+        }
+        assertEquals(1, fixture.requests.size)
+        assertReleased(reply)
+    }
+
+    @Test
     fun `actual SDK delete markers remain visible to the unchanged verifier rather than being filtered away`() {
         val fixture = S3CatalogReadbackFixture()
         val encodedKey = S3CatalogReadbackFixture.encoded(S3CatalogReadbackFixture.key)
@@ -356,6 +440,20 @@ class S3CatalogReadbackAdapterTest {
             reject(CatalogReadbackFailure.PROVIDER_FAILURE) { body.read(ByteArray(1), 0, 1) }
         }
         assertEquals(1, reply.reads)
+        assertReleased(reply)
+    }
+
+    private fun rejectListXml(xml: String, label: String) {
+        val fixture = S3CatalogReadbackFixture()
+        val reply = S3CatalogReply(xml.toByteArray())
+        fixture.respond = { reply }
+        fixture.adapter().use { adapter ->
+            val failure = assertThrows(CatalogReadbackException::class.java, { adapter.listVersions(listRequest()) }, label)
+            assertEquals(CatalogReadbackFailure.PROVIDER_FAILURE, failure.code, label)
+            safe(failure)
+            assertReleased(reply)
+        }
+        assertEquals(1, fixture.requests.size)
         assertReleased(reply)
     }
 
