@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
@@ -196,6 +197,14 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `owned coordinator lease rechecks every retained LIVE binding field and failed or substituted campaigns cannot revive`() =
         withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseCases(it).exactBindingAndFailedRenewalCannotRevive() } }
+
+    @Test
+    fun `owned coordinator lease samples DB time after real row lock waits and stays independent of exclusive epoch fence and later locks`() =
+        withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseBoundaryCases(it).postLockClockAndFenceIndependence() } }
+
+    @Test
+    fun `owned coordinator lease releases no receipt before actual commit and cleanup or after SQL commit completion and quarantine failures`() =
+        withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseBoundaryCases(it).sealedResultsCommitAndReleaseFailures() } }
 
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,

@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.actualPool
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
@@ -168,6 +169,7 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
         f.expireForTest()
         val recovered = f.phases.acquire(f.binding)
         f.assertReceipt(f.phases.relinquish(recovered.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
+        configurationFailureStopsBeforeEntry()
         missingLiveNeverFallsBackToTest()
         f.released()
     }
@@ -199,6 +201,21 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
                 ),
             )
         }
+    }
+
+    private fun configurationFailureStopsBeforeEntry() {
+        val acquired = f.phases.acquire(f.binding)
+        val actual = actualPool(f.process.pools.deletion)
+        val original = actual.maximumPoolSize
+        try {
+            actual.maximumPoolSize = original + 1
+            f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+        } finally {
+            actual.maximumPoolSize = original
+        }
+        // The original resources are exact again, but a pre-entry configuration failure has already stopped this campaign.
+        f.refused(PersistenceDatabaseOutcome.NONE, noSql = true) { f.phases.renew(acquired.campaign) }
+        f.assertReceipt(f.phases.relinquish(acquired.campaign), CatalogCoordinatorLeaseTransitionV1.RELINQUISHED)
     }
 }
 
