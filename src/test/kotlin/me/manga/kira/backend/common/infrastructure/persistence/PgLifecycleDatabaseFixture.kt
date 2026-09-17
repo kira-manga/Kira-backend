@@ -209,6 +209,8 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.InstallationDeletionPreflightIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllVerificationIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyOutcomeIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllBoundReplayIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllContinuationIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllJournalOwnershipIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT",
