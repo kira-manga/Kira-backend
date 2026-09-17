@@ -438,6 +438,14 @@ internal class PersistencePhaseContext(
 
     internal fun commit() {
         requireParticipation()
+        requireCompletedOperation()
+        stage = Stage.COMMITTING
+        manager.commit(requireNotNull(rootStatus))
+        if (databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
+        requireWork()
+    }
+
+    private fun requireCompletedOperation() {
         // Preserve the existing source-only participation contract.
         val complete = when (path) {
             PersistencePhasePath.SOURCE_GRANT_CLEANUP -> true
@@ -497,10 +505,6 @@ internal class PersistencePhaseContext(
             -> catalogGenesis.completed()
         }
         if (!complete) refuse(PersistencePhaseFailureCode.WORK_FAILED) // No skipped check, unspent charge or incomplete insert can commit.
-        stage = Stage.COMMITTING
-        manager.commit(requireNotNull(rootStatus))
-        if (databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
-        requireWork()
     }
 
     // Root completion must match its commit/rollback stage with no overlapping completion dispatch.
