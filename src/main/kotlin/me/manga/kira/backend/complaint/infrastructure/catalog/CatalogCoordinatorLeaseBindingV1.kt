@@ -1,8 +1,10 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
+import me.manga.kira.backend.common.infrastructure.persistence.EpochRotationPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
@@ -28,7 +30,9 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val source = coordinator.dataSource
     private val desired = process.desiredSettings()
     private val desiredHash = process.configurationHashBytes()
-    private val writer = UUID.fromString(process.consumers.journalConfiguration.declaration().writer.generationId)
+    private val journal = process.consumers.journalConfiguration
+    private val writer = UUID.fromString(journal.declaration().writer.generationId)
+    private val epochRotationMillis = journal.declaration().limits.deadlines.epochRotationMillis
     private val catalog = refresh.catalogFor(process)
     private val catalogHash = digest(catalog.chain.tail.envelopeSha256)
     private val trustHash = digest(catalog.chain.trust.currentBundleEnvelopeSha256)
@@ -73,10 +77,37 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     internal fun requireUnchangedConfiguration() {
         process.requireUnchangedConfiguration()
-        if (!hasOriginalCoordinatorOwnership() || coordinator.manager !== manager || coordinator.dataSource !== source) {
+        if (!hasOriginalCoordinatorOwnership() || coordinator.manager !== manager || coordinator.dataSource !== source ||
+            process.consumers.journalConfiguration !== journal
+        ) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         coordinator.requireResources()
+    }
+
+    /** The original J starts the one total budget before nonce generation, phase entry or handoff. */
+    internal fun startEpochRotationBudget(): PersistenceTimeBudget {
+        requireConnectionFree()
+        if (epochRotationMillis !in 1..10_000) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        val budget = PersistenceTimeBudget.start(epochRotationMillis.toLong(), ownership.nanoClock)
+        requireUnchangedConfiguration()
+        return budget
+    }
+
+    /** Only the actual retained D3 resource; a fourth pool or independently assembled descriptor is not accepted. */
+    internal fun epochRotationResource(): EpochRotationPersistence {
+        val selected = process.epochRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        requireEpochRotation(selected)
+        return selected
+    }
+
+    /** Identity/configuration checks only, safe inside either fixed phase; no connection, hash or provider work. */
+    internal fun requireEpochRotation(selected: EpochRotationPersistence) {
+        requireUnchangedConfiguration()
+        if (process.epochRotation !== selected || process.pools.epochRotation !== selected || !selected.belongsTo(process.pools)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        selected.requireUnchangedConfiguration()
     }
 
     private fun hasOriginalCoordinatorOwnership(): Boolean = process.pools.catalogCoordinator === coordinator && coordinator.ownership === ownership
