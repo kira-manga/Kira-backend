@@ -1,5 +1,7 @@
 package me.manga.kira.backend.security.aws
 
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalException
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture.Companion.CONTEXT_KEY
@@ -16,6 +18,20 @@ import org.junit.jupiter.api.Test
 
 /** Actual SDK with the existing raw HTTP fixture. No genuine role-policy, retention or seal authority. */
 class AwsEpochSealDataKeyAdapterTest {
+    @Test
+    fun `expired enclosing seal budget refuses construction without starting an SDK request or HTTP owner`() {
+        var now = 0L
+        val budget = PersistenceTimeBudget.start(1, PersistenceNanoClock { now })
+        now = 1_000_000
+        val fixture = AwsJournalKmsFixture()
+        assertThrows(OwnerDeleteAllJournalException::class.java) {
+            AwsJournalDataKeyAdapter.withEpochSealHttpFixture(fixture.journal, AwsJournalKmsFixture.CREDENTIALS, fixture::httpClient, budget) { now }
+        }
+        assertTrue(fixture.requests.isEmpty())
+        assertEquals(0, fixture.createdClients)
+        assertEquals(0, fixture.closedClients)
+    }
+
     @Test
     fun `fixed seal profile generates and unwraps through actual SDK with exact signed context and cleared leases`() {
         val fixture = AwsJournalKmsFixture()
