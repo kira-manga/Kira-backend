@@ -63,6 +63,11 @@ These field-order/empty-field/fingerprint-text/padding choices complete the smal
 internal byte contract left unspecified by V6, using J's fixed framing/domains.
 They do not define general event serialization or a separate D fragment/hash.
 
+The independently calculated synthetic owner/admin vectors and stdlib Python
+generator are retained under `src/test/resources/fixtures/complaint-journal-routing-v1/`.
+They pin both framed byte strings and HMACs, including the empty admin field and
+the maximum signed 64-bit epoch; they are not provider or runtime evidence.
+
 ## Deliberate limits
 
 No retention-policy operation-key producer, INSTALLATION_RETIREMENT, TEST scope,
