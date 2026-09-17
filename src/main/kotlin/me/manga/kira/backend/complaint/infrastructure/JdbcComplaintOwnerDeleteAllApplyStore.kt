@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteAllResponse
 import me.manga.kira.backend.complaint.domain.InstallationCredentialSnapshot
 import me.manga.kira.backend.complaint.domain.InstallationCredentialState
 import me.manga.kira.backend.complaint.domain.InstallationIdentityState
@@ -91,14 +92,14 @@ internal sealed interface OwnerDeleteAllApplyInputV1
 internal sealed interface OwnerDeleteAllApplyOutcomeV1 : OwnerDeleteAllOutcome
 
 /** Released only after the original caller's known commit AND original-holder cleanup. No content/identity is returned. */
-internal sealed interface CommittedOwnerDeleteAllApplyV1 : OwnerDeleteAllApplyOutcomeV1 {
+internal sealed interface CommittedOwnerDeleteAllApplyV1 : OwnerDeleteAllApplyOutcomeV1, ComplaintOwnerDeleteAllResponse.Completed {
     val completedAt: Instant
     val expiresAt: Instant
     val responseStatus: Int get() = 204
 }
 
 /** Genuine committed VERIFY custody, but no released APPLY result. Deliberately no erasure/status/proof fields. */
-internal sealed interface OwnerDeleteAllReconciliationPendingV1 : OwnerDeleteAllApplyOutcomeV1
+internal sealed interface OwnerDeleteAllReconciliationPendingV1 : OwnerDeleteAllApplyOutcomeV1, ComplaintOwnerDeleteAllResponse.Pending
 
 private class CapturedOwnerDeleteAllApply(
     private val issuer: Any,
