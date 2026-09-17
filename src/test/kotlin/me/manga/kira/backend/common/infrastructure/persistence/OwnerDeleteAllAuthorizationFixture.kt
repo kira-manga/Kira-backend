@@ -5,6 +5,7 @@ import me.manga.kira.backend.audit.domain.AuditRepository
 import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
 import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
+import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAllAuditEntry
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
@@ -31,6 +32,7 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintInstallationD
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPreparation
+import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintInstallationEnrollmentStore
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationDeletionPreflightPhaseExecutor
@@ -99,13 +101,18 @@ internal fun withOwnerDeleteAllAuthorization(
 }
 
 /**
- * D/catalog/checkpoint/seal/P and pre-existing content are explicitly SYNTHETIC comparison inputs.
- * Enrollment, preflight, admission, authorization/reload, capacity and audit execute their actual producers.
- * No fixture label, matching row or returned work is full-D/current runtime or external object authority.
+ * Legacy D/P defaults and catalog/checkpoint/seal/pre-existing content are SYNTHETIC comparison inputs.
+ * The optional retained process selects its own P/D/routing/ingress; the separate bound graph owns
+ * current comparisons. Neither fixture rows nor matching configuration grant runtime/external authority.
  */
-internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintInstallationEnrollmentFixture, val pool: GuardedDataSource) : AutoCloseable {
+internal class OwnerDeleteAllAuthorizationFixture(
+    val base: OrdinaryComplaintInstallationEnrollmentFixture,
+    val pool: GuardedDataSource,
+    process: VersionBoundComplaintProcessConfiguration? = null,
+    private val closePoolOnClose: Boolean = true,
+) : AutoCloseable {
     val observer get() = base.observer
-    val policy = ComplaintCapacityPolicyV1.of(
+    val policy = process?.consumers?.capacityPolicy ?: ComplaintCapacityPolicyV1.of(
         ComplaintCapacityVector.of(
             LongArray(22) {
                 1_000_000_000
@@ -114,9 +121,9 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         ComplaintCapacityVector.of(LongArray(22) { 900_000_000 }),
         100,
     )
-    val routing = ownerDeleteAllTestRouting()
+    val routing = process?.consumers?.journalRouting ?: ownerDeleteAllTestRouting()
     private val writer = routing.journalConfiguration.declaration().writer
-    val desired = ComplaintInstallationDesiredSettings.Configured(
+    val desired = process?.desiredSettings() ?: ComplaintInstallationDesiredSettings.Configured(
         ComplaintInstallationMode.LIVE,
         1,
         7,
@@ -156,6 +163,11 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
             base.auditIds.add(checkNotNull(jdbc.queryForObject("SELECT currval(pg_get_serial_sequence('audit_log', 'id'))", Long::class.java)))
             checkpoint(DeleteAllStep.AUDIT)
         }
+
+        override fun recordOwnerDeleteAll(entry: CountedOwnerDeleteAllAuditEntry, allocation: ComplaintAuditAllocation) {
+            base.repository.recordOwnerDeleteAll(entry, allocation)
+            base.auditIds.add(checkNotNull(jdbc.queryForObject("SELECT currval(pg_get_serial_sequence('audit_log', 'id'))", Long::class.java)))
+        }
     }
     val audit = AuditService(counted, CurrentUser(), Clock.fixed(base.ordinary.cutoff, ZoneOffset.UTC))
     val store = newStore()
@@ -164,7 +176,7 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         JdbcComplaintInstallationDeletionPreflightStore(base.ordinary.jdbc),
     )
     val phases = ComplaintOwnerDeleteAllPhaseExecutor(ownership, store, preflights)
-    val ingress = ownerDeleteAllTestIngress(policy)
+    val ingress = process?.consumers?.ingressAdmission ?: ownerDeleteAllTestIngress(policy)
     val coordinator = ComplaintOwnerDeleteAllCoordinator(ingress, preflights, phases)
     val events = CopyOnWriteArrayList<String>()
     val resources = CopyOnWriteArrayList<UUID>()
@@ -398,14 +410,16 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
             }
             restoreControl(originalControl)
         } finally {
-            val receipt = checkNotNull(pool.requestShutdown())
-            assertTrue(pool.shutdownInvocation() in setOf(PoolShutdownInvocation.RETURNED, PoolShutdownInvocation.ALREADY_CLAIMED))
-            var observed = PoolShutdownObservation.PENDING
-            awaitLifecycleFact {
-                observed = receipt.observe()
-                observed !== PoolShutdownObservation.PENDING
+            if (closePoolOnClose) {
+                val receipt = checkNotNull(pool.requestShutdown())
+                assertTrue(pool.shutdownInvocation() in setOf(PoolShutdownInvocation.RETURNED, PoolShutdownInvocation.ALREADY_CLAIMED))
+                var observed = PoolShutdownObservation.PENDING
+                awaitLifecycleFact {
+                    observed = receipt.observe()
+                    observed !== PoolShutdownObservation.PENDING
+                }
+                assertEquals(PoolShutdownObservation.DELETION_LOCAL_ENDED, observed)
             }
-            assertEquals(PoolShutdownObservation.DELETION_LOCAL_ENDED, observed)
             assertFalse(base.ordinary.ownedPool.scope.owner.snapshot().shutdownRequested)
         }
     }

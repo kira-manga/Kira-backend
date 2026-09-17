@@ -144,6 +144,18 @@ class VersionBoundPersistenceConnectedIT {
             requireConnectionFree()
         }
 
+    @Test
+    fun `computed D completed HTTP replay rejects changed control and stays read only during matching maintenance and provider outage`() =
+        withFixture { tls -> withCurrentOwnerDeleteAll(tls) { it.completedReplay() } }
+
+    @Test
+    fun `computed D active and authorized preflights reject stale control before semantic or provider work`() =
+        withFixture { tls -> withCurrentOwnerDeleteAll(tls) { it.staleActiveAndAuthorized() } }
+
+    @Test
+    fun `computed D is rechecked after original preflight and readback at AUTH RELOAD VERIFY and APPLY`() =
+        withFixture { tls -> withCurrentOwnerDeleteAll(tls) { it.lockedPhases() } }
+
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
         profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,
