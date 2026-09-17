@@ -12,6 +12,14 @@ import org.springframework.jdbc.core.JdbcTemplate
  * Dormant fixed LIVE rotation only. No route/bean, scheduling, scan, seal, checkpoint or activation.
  * A failed original campaign stops permanently; only a distinct genuine successor may discover the
  * durable slot. No discovery refunds an unresolved original native owner or revives its result.
+ *
+ * Chosen V6 next-fenced-leader recovery, not the draft CUTOFF-MAPPING's optional same-attempt retry:
+ * UNKNOWN remains UNKNOWN for that operation. A new genuinely acquired campaign starts its own
+ * bounded locked discovery of REQUESTED/CAPTURED/EMPTY, retaining the stored request/capture
+ * provenance. It cannot claim the previous call committed, rolled back or released. A failed or
+ * captured campaign cannot restart through this facade or its custody. EMPTY discovery alone may
+ * continue to requestScan on the SAME retained attempt/J deadline/nonce and exact predecessor.
+ * Nonempty slots have no replacement/clear transition until a genuine seal/checkpoint owner exists.
  */
 internal class CatalogEpochRotationV1 internal constructor(private val coordinator: CatalogCoordinatorPersistence, private val jdbc: JdbcTemplate) {
     private val ownership = coordinator.ownership

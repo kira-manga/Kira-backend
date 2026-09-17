@@ -25,16 +25,16 @@ internal class CatalogEpochRotationControlOperation private constructor(
     internal fun completedFor(selected: PersistencePhaseContext): Boolean = phase === selected && stage === Stage.COMPLETE
 
     internal fun requireReleasedRow(): CatalogEpochRotationRowV1 {
-        phase.epochRotationControl.requireCommitted(this)
+        phase.epochRotation.requireCommitted(this)
         requireConnectionFree()
-        phase.epochRotationControl.requireProcessBinding(attempt, jdbc)
+        phase.epochRotation.requireProcessBinding(attempt, jdbc)
         attempt.requireControl(this)
         return checkNotNull(observed)
     }
 
     /** Pure old-phase commit/release seal: safe while the later exclusive session is active. */
     internal fun requireSealedHandoff(): CatalogEpochRotationRowV1 {
-        phase.epochRotationControl.requireCommitted(this)
+        phase.epochRotation.requireCommitted(this)
         attempt.requireHandoff(this)
         return checkNotNull(observed).also { check(it.slot?.state === CatalogEpochRotationStateV1.REQUESTED) }
     }
@@ -91,8 +91,8 @@ internal class CatalogEpochRotationControlOperation private constructor(
     }
 
     private fun requireAt(expected: Stage) {
-        phase.epochRotationControl.requireRetained(this, jdbc)
-        phase.epochRotationControl.requireProcessBinding(attempt, jdbc)
+        phase.epochRotation.requireRetained(this, jdbc)
+        phase.epochRotation.requireProcessBinding(attempt, jdbc)
         attempt.requireControl(this)
         check(stage === expected && attempt.path === path)
     }
@@ -115,10 +115,10 @@ internal class CatalogEpochRotationControlOperation private constructor(
                 throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             }
             try {
-                phase.epochRotationControl.requireOperation(jdbc, path)
+                phase.epochRotation.requireOperation(jdbc, path)
                 check(attempt.path === path)
                 val operation = CatalogEpochRotationControlOperation(phase, jdbc, attempt, path)
-                phase.epochRotationControl.retain(operation, jdbc)
+                phase.epochRotation.retain(operation, jdbc)
                 attempt.retain(operation)
                 operation.execute()
                 return operation
