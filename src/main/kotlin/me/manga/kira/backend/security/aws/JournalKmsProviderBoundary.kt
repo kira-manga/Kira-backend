@@ -25,8 +25,8 @@ private fun <T> classifyJournalKmsSignal(action: () -> T): T = try {
 
 /** Cleanup also runs on Error and never attaches provider-supplied suppressed diagnostics. */
 internal fun <T> withJournalKmsCleanup(action: () -> T, cleanup: () -> Unit): T {
-    val result = runCatching(action)
-    val closing = runCatching(cleanup).exceptionOrNull()
+    val result = runCatching { classifyJournalKmsSignal(action) }
+    val closing = runCatching { classifyJournalKmsSignal(cleanup) }.exceptionOrNull()
     val pending = result.exceptionOrNull()
     if (closing != null && replaceJournalKmsFailure(pending, closing)) throw closing
     return result.getOrThrow()
