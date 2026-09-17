@@ -157,6 +157,12 @@ dependencies {
         exclude(group = "software.amazon.awssdk", module = "apache5-client")
         exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
     }
+    // Fixed dormant sealer STS protocol; no default credentials or authority/activation wiring.
+    implementation(libs.aws.sdk.sts) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
     implementation(libs.aws.sdk.url.connection.client)
 
     // --- API docs ---
