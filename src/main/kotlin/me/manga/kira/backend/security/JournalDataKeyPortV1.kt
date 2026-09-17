@@ -44,6 +44,7 @@ internal enum class OwnerDeleteAllJournalFailure {
     LIMIT_EXCEEDED,
     KEY_FAILURE,
     KEY_CLEANUP_FAILURE,
+    DEADLINE_EXHAUSTED,
     CRYPTO_FAILURE,
     AUTHENTICATION_FAILED,
 }

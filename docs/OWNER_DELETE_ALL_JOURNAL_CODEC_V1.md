@@ -130,9 +130,13 @@ preserved. No whole-JVM/String/provider erasure guarantee is made.
   retained event ID/object key. Never skip a malformed/unsupported object.
 
 Canonical plaintext SHA-256 and whole-wire SHA-256 are separate digests of
-their exact respective bytes; neither is D or a storage observation. Call
-timeout input is bounded by J's KMS cap; a future publisher additionally owns
-its shared attempt deadline and durable authorization before any provider use.
+their exact respective bytes; neither is D or a storage observation. The caller
+starts one same-owner `JournalCodecAttemptV1` for the whole connection-free
+attempt and passes it to seal/open; it must not restart this budget per call.
+The codec derives each request duration from actual monotonic remaining time
+capped by J's KMS limit, and rechecks after crypto/key cleanup. A future publisher
+must share that original budget across S3 work too, and separately prove
+durable authorization before any provider use. Expiry never proves no effect.
 
 ## Publication and retries remain a separate owner
 
