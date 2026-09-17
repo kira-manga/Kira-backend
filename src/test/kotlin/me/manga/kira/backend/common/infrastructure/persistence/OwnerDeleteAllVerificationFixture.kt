@@ -33,7 +33,7 @@ internal class OwnerDeleteAllVerificationFixture(
     val publisher = OwnerDeleteAllJournalPublisherFixture(auth, candidate, targets)
     val codec = OwnerDeleteAllVerificationCodecV1(auth.routing)
     val jdbc = VerificationFixtureJdbc(this)
-    val store = JdbcComplaintOwnerDeleteAllVerificationStore(jdbc, auth.routing)
+    val store = JdbcComplaintOwnerDeleteAllVerificationStore(jdbc, auth.routing, auth.store)
     val phases = ComplaintOwnerDeleteAllVerificationPhaseExecutor(auth.ownership, store)
     val observations = CopyOnWriteArrayList<Pair<VerificationStep, StepUpPhaseObservation>>()
     val statements = CopyOnWriteArrayList<String>()

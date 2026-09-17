@@ -24,7 +24,11 @@ import java.util.UUID
  * preflight, canonical-event custody, raw record or caller's success flag. No APPLY/route/runtime
  * authority or new accounting is supplied. Existing authorization/reload semantics are unchanged.
  */
-internal class JdbcComplaintOwnerDeleteAllVerificationStore(private val jdbc: JdbcTemplate, private val routing: VersionBoundComplaintJournalRouting) {
+internal class JdbcComplaintOwnerDeleteAllVerificationStore(
+    private val jdbc: JdbcTemplate,
+    private val routing: VersionBoundComplaintJournalRouting,
+    private val authorization: JdbcComplaintOwnerDeleteAllStore,
+) {
     private val issuer = Any()
     private val codec = OwnerDeleteAllVerificationCodecV1(routing)
 
@@ -38,6 +42,28 @@ internal class JdbcComplaintOwnerDeleteAllVerificationStore(private val jdbc: Jd
 
     fun verify(input: OwnerDeleteAllVerificationInputV1): ComplaintOwnerDeleteAllVerificationOperation =
         ComplaintOwnerDeleteAllVerificationOperation.capture(jdbc, routing, codec, issuer, input)
+
+    /** Recover the first strictly bound local proof; never fabricate Prepared, a provider readback or new timestamps. */
+    fun resume(work: CommittedOwnerDeleteAllWork.RecordedVerified): CommittedOwnerDeleteAllVerificationV1 {
+        requireConnectionFree()
+        val event = authorization.recordedEvent(work)
+        check(event.belongsTo(routing))
+        val bytes = work.verificationBytes()
+        val hash = work.verificationHash()
+        check(bytes.size in 1..65536 && hash.size == 32 && MessageDigest.isEqual(hash, MessageDigest.getInstance("SHA-256").digest(bytes)))
+        val record = codec.parse(bytes, event)
+        check(record.objectVersion == work.objectVersion && record.ciphertextSha256 == work.ciphertextSha256)
+        check(Instant.parse(record.objectCreatedAt) == work.objectCreatedAt)
+        check(Instant.parse(record.retainUntil) == work.retainUntil && Instant.parse(record.verifiedAt) == work.verifiedAt)
+        return ReleasedOwnerDeleteAllVerification(issuer, routing, event, record, bytes, hash)
+    }
+
+    /** Fixed-consumer handoff. Matching descriptors/bytes or another store's private result are insufficient. */
+    fun verifiedEvent(work: CommittedOwnerDeleteAllVerificationV1): OwnerDeleteAllJournalEventV1 {
+        requireConnectionFree()
+        val retained = work as? ReleasedOwnerDeleteAllVerification ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        return retained.requireOwned(issuer, routing)
+    }
 
     override fun toString(): String = "JdbcComplaintOwnerDeleteAllVerificationStore(dormant,redacted,no-apply-authority)"
 }
@@ -89,6 +115,8 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
     private val jdbc: JdbcTemplate,
     private val codec: OwnerDeleteAllVerificationCodecV1,
     private val observed: CapturedOwnerDeleteAllVerification,
+    private val issuer: Any,
+    private val routing: VersionBoundComplaintJournalRouting,
 ) {
     private var stage = Stage.RETAINED
     private var proof: StoredVerification? = null
@@ -101,7 +129,9 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         get() {
             phase.ownerDeleteAllVerification.requireCommitted(this)
             requireConnectionFree()
-            return released ?: Released(checkNotNull(proof)).also { released = it }
+            return released ?: checkNotNull(proof).let {
+                ReleasedOwnerDeleteAllVerification(issuer, routing, observed.event, it.record, it.bytes, it.hash)
+            }.also { released = it }
         }
 
     private fun execute() {
@@ -228,20 +258,6 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
 
     private class StoredVerification(val record: OwnerDeleteAllVerificationRecordV1, val bytes: ByteArray, val hash: ByteArray)
 
-    private class Released(proof: StoredVerification) : CommittedOwnerDeleteAllVerificationV1 {
-        override val eventId = proof.record.eventId
-        override val objectVersion = proof.record.objectVersion
-        override val ciphertextSha256 = proof.record.ciphertextSha256
-        override val objectCreatedAt: Instant = Instant.parse(proof.record.objectCreatedAt)
-        override val retainUntil: Instant = Instant.parse(proof.record.retainUntil)
-        override val verifiedAt: Instant = Instant.parse(proof.record.verifiedAt)
-        private val bytes = proof.bytes.copyOf()
-        private val hash = proof.hash.copyOf()
-        override fun verificationBytes(): ByteArray = bytes.copyOf()
-        override fun verificationHash(): ByteArray = hash.copyOf()
-        override fun toString(): String = "CommittedOwnerDeleteAllVerificationV1(recorded-only,redacted,no-apply-authority)"
-    }
-
     companion object {
         @Suppress("TooGenericExceptionCaught")
         fun capture(
@@ -257,7 +273,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
                 phase.ownerDeleteAllVerification.requireOperation(jdbc)
                 val observed = input as? CapturedOwnerDeleteAllVerification ?: error("Private publisher readback capture required")
                 observed.requireOwned(issuer, routing)
-                operation = ComplaintOwnerDeleteAllVerificationOperation(phase, jdbc, codec, observed)
+                operation = ComplaintOwnerDeleteAllVerificationOperation(phase, jdbc, codec, observed, issuer, routing)
                 phase.ownerDeleteAllVerification.retain(operation, jdbc)
                 operation.execute()
                 return operation
@@ -306,4 +322,32 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         private fun requiredBoolean(row: ResultSet, name: String): Boolean = row.getBoolean(name).also { check(!row.wasNull()) }
         private fun requiredLong(row: ResultSet, name: String): Long = row.getLong(name).also { check(!row.wasNull()) }
     }
+}
+
+/** Issued only after the genuine VERIFY release or strict committed-reload validation in this file. */
+private class ReleasedOwnerDeleteAllVerification(
+    private val issuer: Any,
+    private val routing: VersionBoundComplaintJournalRouting,
+    private val event: OwnerDeleteAllJournalEventV1,
+    record: OwnerDeleteAllVerificationRecordV1,
+    bytes: ByteArray,
+    hash: ByteArray,
+) : CommittedOwnerDeleteAllVerificationV1 {
+    override val eventId = record.eventId
+    override val objectVersion = record.objectVersion
+    override val ciphertextSha256 = record.ciphertextSha256
+    override val objectCreatedAt: Instant = Instant.parse(record.objectCreatedAt)
+    override val retainUntil: Instant = Instant.parse(record.retainUntil)
+    override val verifiedAt: Instant = Instant.parse(record.verifiedAt)
+    private val bytes = bytes.copyOf()
+    private val hash = hash.copyOf()
+    override fun verificationBytes(): ByteArray = bytes.copyOf()
+    override fun verificationHash(): ByteArray = hash.copyOf()
+
+    fun requireOwned(selectedIssuer: Any, selectedRouting: VersionBoundComplaintJournalRouting): OwnerDeleteAllJournalEventV1 {
+        check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(selectedRouting))
+        return event
+    }
+
+    override fun toString(): String = "CommittedOwnerDeleteAllVerificationV1(recorded-only,redacted,no-apply-authority)"
 }

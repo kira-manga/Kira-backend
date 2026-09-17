@@ -80,7 +80,11 @@ internal object OwnerDeleteAllPersistenceSql {
 
     val LOCK_PUBLICATION = """
         SELECT event_id, writer_generation, journal_epoch, event_kind, target_count, routing_key_id, object_key,
-            canonicalizer, event_bytes, semantic_hash, state, ($LIVE) AS live,
+            canonicalizer, event_bytes, semantic_hash, state, object_version, ciphertext_hash,
+            object_created_at, retain_until, verified_at,
+            CASE WHEN octet_length(verification_bytes) BETWEEN 1 AND 65536 THEN verification_bytes END AS verification_bytes,
+            CASE WHEN octet_length(verification_hash) = 32 THEN verification_hash END AS verification_hash,
+            ($LIVE) AS live,
             (complaint_bytes_match(event_bytes, semantic_hash, 65536)
                 AND complaint_finite_times(created_at, object_created_at, retain_until, verified_at, applied_at)
                 AND applied_at IS NULL AND (
