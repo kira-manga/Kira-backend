@@ -70,6 +70,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private val sessions = linkedSetOf<TlsSession>()
     private var parentCreated = false
     private var trustPrepared = false
+    private var stoppedBeforeClose = false
     private var closed = false
 
     init {
@@ -157,6 +158,14 @@ internal class VersionBoundPersistenceConnectedFixture(
         return Path.of(endpoint.driverProperties().getProperty("sslrootcert"))
     }
 
+    /** Stop this peer before another original root's shared Timer wait; this records sequencing, never retirement proof. */
+    fun stopWithoutWaiting() {
+        requireConnectionFree()
+        owner.requestShutdown()
+        pools.close()
+        stoppedBeforeClose = true
+    }
+
     override fun close() = closeSelected(listOf(this))
 
     /** Both independent roots stop before either shared driver Timer wait or database-wide session assertion. */
@@ -185,7 +194,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         val shutdown = selected.map { runCatching { it.owner.requestShutdown() } }
         val beforeClose = selected.map { fixture ->
             runCatching {
-                if (fixture.trustPrepared) {
+                if (fixture.trustPrepared && !fixture.stoppedBeforeClose) {
                     assertEquals(PersistencePublicTrustRelease.RETAINED, fixture.owner.releasePublicTrustAfterShutdown())
                 }
             }

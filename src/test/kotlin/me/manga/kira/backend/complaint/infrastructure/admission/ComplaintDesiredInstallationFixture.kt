@@ -278,29 +278,46 @@ internal class ComplaintDesiredInstallationFixture(val tls: VersionBoundPersiste
     }
 
     /** Stop both kinds of peer actors before the command's shared Timer wait; this is not an operator success receipt. */
-    fun stopRuntimeWithoutWaiting() {
-        requireConnectionFree()
-        tls.owner.requestShutdown()
-        tls.pools.close()
-    }
+    fun stopRuntimeWithoutWaiting() = tls.stopWithoutWaiting()
 
     override fun close() {
-        stopRuntimeWithoutWaiting() // Every original peer stops before any retained installer root's shared-Timer proof.
-        invocations.forEach { it.fixtureCleanup() }
-        originalControl?.let(::restoreControl)
-        if (originalControl != null) {
-            observer.update(
-                "DELETE FROM public.complaint_catalog_mutations WHERE operation_token = ?",
-                UUID.fromString(VersionBoundCatalogReadbackTestFixture.envelope().manifest.operationToken),
-            )
+        val stopped = runCatching(::stopRuntimeWithoutWaiting) // Every original peer stops before any installer's shared-Timer proof.
+        val retired = invocations.map { runCatching { it.fixtureCleanup() } }
+        val restorationReady = runCatching {
+            stopped.getOrThrow()
+            requireConnectionFree()
+            assertTrue(invocations.all { it.cleanupVerified }, "An original installer invocation has not completed fixture retirement.")
         }
-        counters?.close()
-        if (roleCreated) {
-            observer.execute("DROP OWNED BY $OPERATOR; DROP ROLE $OPERATOR")
-            observer.execute("GRANT UPDATE ON public.complaint_journal_control TO ${PgLifecycleDatabaseSettings.CANDIDATE}")
-        }
-        if (parentCreated) Files.delete(trustParent) // Never recursively remove a retained trust directory.
+        // A preserved test assertion must not strand owned fixture rows; actual unproven retirement still forbids restoration.
+        val restored = listOf(
+            afterRetirement(restorationReady) { originalControl?.let(::restoreControl) },
+            afterRetirement(restorationReady) {
+                if (originalControl != null) {
+                    observer.update(
+                        "DELETE FROM public.complaint_catalog_mutations WHERE operation_token = ?",
+                        UUID.fromString(VersionBoundCatalogReadbackTestFixture.envelope().manifest.operationToken),
+                    )
+                }
+            },
+            afterRetirement(restorationReady) { counters?.close() },
+            afterRetirement(restorationReady) {
+                if (roleCreated) observer.execute("DROP OWNED BY $OPERATOR; DROP ROLE $OPERATOR")
+            },
+            afterRetirement(restorationReady) {
+                if (roleCreated) observer.execute("GRANT UPDATE ON public.complaint_journal_control TO ${PgLifecycleDatabaseSettings.CANDIDATE}")
+            },
+            afterRetirement(restorationReady) {
+                if (parentCreated) Files.delete(trustParent) // Never recursively remove a retained trust directory.
+            },
+            runCatching { requireConnectionFree() },
+        )
+        rethrowDesiredFixtureFailures(listOf(stopped) + retired + listOf(restorationReady) + restored)
+    }
+
+    private fun afterRetirement(ready: Result<Unit>, action: () -> Unit): Result<Unit> = runCatching {
+        ready.getOrThrow()
         requireConnectionFree()
+        action()
     }
 
     companion object {
@@ -316,6 +333,7 @@ internal class DesiredInstallationInvocation(
     private val beforeClose: () -> Unit = {},
     private val configure: (DesiredInstallationProbeJdbc) -> Unit = {},
 ) {
+    private val caller = Thread.currentThread()
     val http = AwsSecretVersionFixture()
     val clock = DesiredInstallationTestClock()
     val operator = ComplaintDesiredInstallationOperatorV1.withSecretHttpFixture(http::httpClient, clock)
@@ -327,7 +345,8 @@ internal class DesiredInstallationInvocation(
     private var closingObserved = false
     private var betweenObserved = false
     private var clockHookActive = false
-    private var cleanupVerified = false
+    var cleanupVerified = false
+        private set
     var betweenPhases: () -> Unit = {}
 
     init {
@@ -365,12 +384,18 @@ internal class DesiredInstallationInvocation(
         cleanupVerified = true // The actual one-shot result is returned only after its original cleanup predicate.
         result
     } finally {
-        clock.assertNoLostAssertions()
-        probe?.assertNoLostAssertions()
+        assertNoLostAssertions()
         assertEquals(http.createdClients, http.closedClients)
     }
 
     private fun sealerCredentials() = if (inputs.sealerMapping == null) null else AwsSecretVersionFixture.CREDENTIALS
+
+    private fun assertNoLostAssertions() = rethrowDesiredFixtureFailures(
+        listOf(
+            runCatching(clock::assertNoLostAssertions),
+            runCatching { probe?.assertNoLostAssertions() },
+        ),
+    )
 
     private fun observeBetweenPhases() {
         if (betweenObserved || closingObserved || PersistencePhaseOwnership.current() != null) return
@@ -407,10 +432,10 @@ internal class DesiredInstallationInvocation(
     /** After a test removes its own injected quarantine cause, settle the ORIGINAL resources, never retry SQL or turn a failed command into success. */
     fun fixtureCleanup() {
         if (cleanupVerified) {
-            clock.assertNoLostAssertions()
-            probe?.assertNoLostAssertions()
+            assertNoLostAssertions()
             return
         }
+        assertSame(caller, Thread.currentThread(), "Only the original invocation caller may retire unverified resources.")
         clock.onSample = {}
         runCatching(operator::close) // A sticky failed command deliberately remains refused.
         beforeClose()
@@ -422,9 +447,18 @@ internal class DesiredInstallationInvocation(
             assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, it.observeShutdown())
             assertEquals(PersistencePublicTrustRelease.RELEASED, it.releasePublicTrustAfterShutdown())
         }
-        probe?.assertNoLostAssertions()
-        clock.assertNoLostAssertions()
-        cleanupVerified = true // Fixture retirement only; never changes the failed original command or its result.
+        cleanupVerified = true // Fixture retirement only, before surfacing both assertion channels; never a failed-command receipt.
+        assertNoLostAssertions()
+    }
+}
+
+private fun rethrowDesiredFixtureFailures(results: List<Result<*>>) {
+    val failures = results.mapNotNull { it.exceptionOrNull() }
+    failures.firstOrNull()?.let { first ->
+        failures.drop(1).forEach { failure ->
+            if (failure !== first && first.suppressed.none { it === failure }) first.addSuppressed(failure)
+        }
+        throw first
     }
 }
 

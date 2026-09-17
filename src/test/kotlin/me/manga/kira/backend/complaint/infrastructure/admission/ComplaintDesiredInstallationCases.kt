@@ -312,11 +312,7 @@ internal class ComplaintDesiredInstallationCases(private val f: ComplaintDesired
             val exact = f.control()
             val retry = DesiredInstallationInvocation(
                 ComplaintDesiredDeploymentInputsV1.fromDecoded(selected),
-                beforeClose = {
-                    requireConnectionFree()
-                    peer.owner.requestShutdown()
-                    peer.pools.close()
-                },
+                beforeClose = peer::stopWithoutWaiting,
             ).also(f.invocations::add)
             try {
                 assertEquals(ComplaintDesiredInstallationTransitionV1.ALREADY_SELECTED, retry.execute(1).transition)
@@ -483,13 +479,17 @@ internal class ComplaintDesiredInstallationCases(private val f: ComplaintDesired
                                     if (step == DesiredInstallationSqlStep.AUTHENTICATE) {
                                         val holder = TransactionSynchronizationManager.getResource(probe.coordinator.dataSource) as ConnectionHolder
                                         holder.connection.createStatement().use { statement ->
-                                            statement.executeQuery("SHOW default_transaction_isolation").use { row ->
+                                            statement.executeQuery(
+                                                "SELECT reset_val, current_setting('transaction_isolation') FROM pg_settings " +
+                                                    "WHERE name = 'default_transaction_isolation'",
+                                            ).use { row ->
                                                 assertTrue(row.next())
                                                 assertEquals("repeatable read", row.getString(1))
+                                                assertEquals("read committed", row.getString(2))
                                                 assertFalse(row.next())
                                             }
                                         }
-                                        roleDefaults++ // Actual role default remains RR; the original desired phase explicitly pins RC.
+                                        roleDefaults++ // This actual login's RESET baseline is RR; pgjdbc's session SET pins the active phase to RC.
                                     }
                                     if (path == PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE &&
                                         step == DesiredInstallationSqlStep.LOCK_CONTROL
