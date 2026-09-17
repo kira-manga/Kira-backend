@@ -24,19 +24,22 @@ import java.time.Duration
 import java.util.UUID
 
 /** Existing SAME_THREAD TLS suite delegates here; no new PostgreSQL registration or separately owned pool. */
-internal fun withCurrentAcceptedCatalogRefresh(
-    tls: VersionBoundPersistenceConnectedFixture,
-    test: (CurrentAcceptedCatalogRefreshCases) -> Unit,
-) = withProcessBoundCatalogGenesis(
-    tls,
-    bindProcess = { consumers, pools ->
-        val writer = consumers.journalConfiguration.declaration().writer
-        VersionBoundComplaintProcessConfiguration.fromRetained(
-            consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            VersionBoundCatalogReadbackTestFixture.settings(),
-        )
-    },
-) { test(CurrentAcceptedCatalogRefreshCases(it)) }
+internal fun withCurrentAcceptedCatalogRefresh(tls: VersionBoundPersistenceConnectedFixture, test: (CurrentAcceptedCatalogRefreshCases) -> Unit) =
+    withProcessBoundCatalogGenesis(
+        tls,
+        bindProcess = { consumers, pools ->
+            val writer = consumers.journalConfiguration.declaration().writer
+            VersionBoundComplaintProcessConfiguration.fromRetained(
+                consumers,
+                pools,
+                1,
+                7,
+                UUID.fromString(writer.databaseIdentity),
+                UUID.fromString(writer.restoreIdentity),
+                VersionBoundCatalogReadbackTestFixture.settings(),
+            )
+        },
+    ) { test(CurrentAcceptedCatalogRefreshCases(it)) }
 
 /** Genuine signed public G1 -> real SDK HTTP SPI -> original owned PG, not supplied catalog or checkpoint success. */
 internal class CurrentAcceptedCatalogRefreshCases(private val f: ProcessBoundCatalogGenesisFixture) {
@@ -202,13 +205,17 @@ internal class CurrentAcceptedCatalogRefreshCases(private val f: ProcessBoundCat
     private fun recompose(settings: VersionBoundCatalogReadbackConfigurationV1?): VersionBoundComplaintProcessConfiguration {
         val desired = f.process.desiredSettings()
         return VersionBoundComplaintProcessConfiguration.fromRetained(
-            f.process.consumers, f.process.pools, desired.implementationSchema, desired.desiredGeneration,
-            desired.databaseIdentity, desired.restoreIdentity, settings,
+            f.process.consumers,
+            f.process.pools,
+            desired.implementationSchema,
+            desired.desiredGeneration,
+            desired.databaseIdentity,
+            desired.restoreIdentity,
+            settings,
         )
     }
 
-    private fun mutation(): Map<String, Any?> =
-        f.observer.queryForMap("SELECT * FROM complaint_catalog_mutations WHERE operation_token = ?", f.token)
+    private fun mutation(): Map<String, Any?> = f.observer.queryForMap("SELECT * FROM complaint_catalog_mutations WHERE operation_token = ?", f.token)
 
     private fun counterRows(): List<String> =
         f.observer.queryForList("SELECT to_jsonb(c)::text FROM complaint_capacity_counters c ORDER BY name", String::class.java)

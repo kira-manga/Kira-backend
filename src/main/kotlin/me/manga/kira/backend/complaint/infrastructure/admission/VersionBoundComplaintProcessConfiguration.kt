@@ -37,7 +37,13 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
             ComplaintEffectiveConfigurationV1.encode(consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity)
         } else {
             ComplaintEffectiveConfigurationV2.encode(
-                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, catalogReadback,
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                catalogReadback,
             )
         }
         hash = MessageDigest.getInstance("SHA-256").digest(canonical)

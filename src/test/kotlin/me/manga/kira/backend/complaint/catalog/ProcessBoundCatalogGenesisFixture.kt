@@ -59,10 +59,7 @@ internal fun withProcessBoundCatalogGenesis(
  * lacks SDK readback settings and yields historical persistence evidence only. Joined SDK tests
  * supply their exact settings-bearing process through the same wrapper, not another pool.
  */
-internal class ProcessBoundCatalogGenesisFixture(
-    val process: VersionBoundComplaintProcessConfiguration,
-    val observer: JdbcTemplate,
-) : AutoCloseable {
+internal class ProcessBoundCatalogGenesisFixture(val process: VersionBoundComplaintProcessConfiguration, val observer: JdbcTemplate) : AutoCloseable {
     val coordinator = process.pools.catalogCoordinator
     val binding = CatalogGenesisInitialLiveBinding.fromRetained(process)
     val jdbc = GenesisProbeJdbc(coordinator)
@@ -90,7 +87,11 @@ internal class ProcessBoundCatalogGenesisFixture(
                 observer.update(
                     "UPDATE complaint_capacity_counters SET configuration_hash = ?, configuration_closed = false, hard_limit = ?, " +
                         "creation_limit = ?, free_units = ?, actual_units = 0, recovery_reserved_units = 0, test_reserved_units = 0 WHERE name = ?",
-                    digest, capacity.hardLimit[counter], capacity.creationLimit[counter], capacity.hardLimit[counter], counter.storedName,
+                    digest,
+                    capacity.hardLimit[counter],
+                    capacity.creationLimit[counter],
+                    capacity.hardLimit[counter],
+                    counter.storedName,
                 ),
             )
         }
@@ -100,7 +101,9 @@ internal class ProcessBoundCatalogGenesisFixture(
                 "UPDATE complaint_journal_control SET desired_generation = ?, desired_configuration_hash = ?, scan_requested = false " +
                     "WHERE data_scope_id = ? AND maintenance_closed AND creation_closed AND publication_epoch = 1 " +
                     "AND accepted_catalog_generation IS NULL AND pending_projection_token IS NULL",
-                binding.desiredGeneration, process.configurationHashBytes(), ComplaintDataScope.LIVE.id,
+                binding.desiredGeneration,
+                process.configurationHashBytes(),
+                ComplaintDataScope.LIVE.id,
             ),
         )
     }
@@ -133,7 +136,9 @@ internal class ProcessBoundCatalogGenesisFixture(
 
     fun controlRow(): String = checkNotNull(
         observer.queryForObject(
-            "SELECT to_jsonb(c)::text FROM complaint_journal_control c WHERE data_scope_id = ?", String::class.java, ComplaintDataScope.LIVE.id,
+            "SELECT to_jsonb(c)::text FROM complaint_journal_control c WHERE data_scope_id = ?",
+            String::class.java,
+            ComplaintDataScope.LIVE.id,
         ),
     )
 

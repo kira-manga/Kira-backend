@@ -21,7 +21,12 @@ internal object ComplaintEffectiveConfigurationV2 {
         catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
     ): ByteArray {
         val previous = ComplaintEffectiveConfigurationV1.encode(
-            consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+            consumers,
+            pools,
+            implementationSchema,
+            desiredGeneration,
+            databaseIdentity,
+            restoreIdentity,
         )
         val base = CanonicalJson.json.parseToJsonElement(previous.toString(Charsets.UTF_8)).jsonObject
         val document = JsonObject(

@@ -33,7 +33,12 @@ internal class CurrentAcceptedCatalogRefreshHttpFixture(private val database: Pr
 
     fun owner(process: VersionBoundComplaintProcessConfiguration = database.process): CurrentAcceptedCatalogRefreshV1 =
         CurrentAcceptedCatalogRefreshV1.withHttpFixture(
-            process, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials, ::httpClient, clock, { now },
+            process,
+            S3CatalogReadbackFixture.credentials,
+            S3CatalogReadbackFixture.credentials,
+            ::httpClient,
+            clock,
+            { now },
         )
 
     fun assertFullReadback(attempts: Int = 1) {

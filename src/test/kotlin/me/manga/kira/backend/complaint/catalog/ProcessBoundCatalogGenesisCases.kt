@@ -67,7 +67,9 @@ internal class ProcessBoundCatalogGenesisCases(private val f: ProcessBoundCatalo
         f.setDesired(null)
         projected.requireBinding(f.process, readback) // Historical identity only: this deliberately does not claim current DB authority.
         val legacy = CatalogGenesisInitialLiveBinding.fromDeclarations(
-            f.process.desiredSettings(), f.process.consumers.journalConfiguration, f.process.consumers.capacityPolicy,
+            f.process.desiredSettings(),
+            f.process.consumers.journalConfiguration,
+            f.process.consumers.capacityPolicy,
         )
         f.jdbc.steps.clear()
         assertThrows<CatalogReadbackException> { f.executor.projectGenesisForProcess(replay, legacy) }
@@ -110,7 +112,8 @@ internal class ProcessBoundCatalogGenesisCases(private val f: ProcessBoundCatalo
                 assertEquals(
                     1,
                     JdbcTemplate(f.coordinator.dataSource).update(
-                        "UPDATE complaint_journal_control SET desired_configuration_hash = NULL WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id,
+                        "UPDATE complaint_journal_control SET desired_configuration_hash = NULL WHERE data_scope_id = ?",
+                        ComplaintDataScope.LIVE.id,
                     ),
                 )
                 drifted = true // Same-holder cut after the actual projection write, before the final control reread.
@@ -235,6 +238,7 @@ internal class ProcessBoundCatalogGenesisCases(private val f: ProcessBoundCatalo
         ownedCutField(checkNotNull(f.jdbc.phase).catalogGenesis, "retained") as CatalogGenesisMutationOperation
 
     private fun control(): Map<String, Any> = f.observer.queryForMap(
-        "SELECT * FROM complaint_journal_control WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id,
+        "SELECT * FROM complaint_journal_control WHERE data_scope_id = ?",
+        ComplaintDataScope.LIVE.id,
     )
 }

@@ -41,8 +41,12 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
     private val current = copyBundle(currentBundleBytes)
     val chainPolicy: OfflineCatalogChainReaderPolicy = copyPolicy(policy)
     val sdkLimits = S3CatalogReadbackLimits(
-        limits.requestTimeoutMillis, limits.connectTimeoutMillis, limits.readTimeoutMillis,
-        limits.maximumListBytes, limits.maximumErrorBytes, limits.maximumObjectBytes,
+        limits.requestTimeoutMillis,
+        limits.connectTimeoutMillis,
+        limits.readTimeoutMillis,
+        limits.maximumListBytes,
+        limits.maximumErrorBytes,
+        limits.maximumObjectBytes,
     )
     val initialTrustBundleSha256: String = Sha256.hex(initial)
     val currentTrustBundleSha256: String = Sha256.hex(current)
@@ -134,8 +138,14 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
         ): VersionBoundCatalogReadbackConfigurationV1 {
             requireConnectionFree()
             return VersionBoundCatalogReadbackConfigurationV1(
-                initialBundleBytes, currentBundleBytes, chainPolicy, expectedGenesisEnvelopeSha256, sdkLimits,
-                totalAttemptMillis, pageSize, maximumPagesPerLocation,
+                initialBundleBytes,
+                currentBundleBytes,
+                chainPolicy,
+                expectedGenesisEnvelopeSha256,
+                sdkLimits,
+                totalAttemptMillis,
+                pageSize,
+                maximumPagesPerLocation,
             )
         }
 
@@ -148,8 +158,13 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
             val trust = policy.trustBundlePolicy
             return OfflineCatalogChainReaderPolicy(
                 OfflineTrustBundlePolicy(
-                    trust.rootPublicKeySpki, trust.rootPublicKeySha256, trust.rootKeyId, trust.rootAlgorithmId,
-                    trust.expectedEnvironment, trust.expectedCatalogLocations, trust.minimumBundleVersion,
+                    trust.rootPublicKeySpki,
+                    trust.rootPublicKeySha256,
+                    trust.rootKeyId,
+                    trust.rootAlgorithmId,
+                    trust.expectedEnvironment,
+                    trust.expectedCatalogLocations,
+                    trust.minimumBundleVersion,
                 ),
                 policy.currentWriterGenerationIds,
                 policy.currentApproverIds,

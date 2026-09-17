@@ -58,8 +58,14 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
                 val readback = withS3Cleanup(
                     {
                         val adapter = S3CatalogReadbackAdapter.openOwned(
-                            attempt.construction, current, settings.chainPolicy.trustBundlePolicy,
-                            primaryCredentials, replicaCredentials, settings.sdkLimits, httpFactory, nanoTime,
+                            attempt.construction,
+                            current,
+                            settings.chainPolicy.trustBundlePolicy,
+                            primaryCredentials,
+                            replicaCredentials,
+                            settings.sdkLimits,
+                            httpFactory,
+                            nanoTime,
                         )
                         val provider = TimedReadback(adapter, attempt)
                         CatalogDualLocationVerifier.GenesisReadback.verify(provider, initial, current, policy, local)
@@ -84,7 +90,9 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     internal fun isClosed(): Boolean = closed.get()
 
     /** Cooperative stop only. The original synchronous caller still owns cleanup and its retained slot. */
-    override fun close() { closed.set(true) }
+    override fun close() {
+        closed.set(true)
+    }
 
     override fun toString(): String = "CurrentAcceptedCatalogRefreshV1(G1-only,partial-provenance,no-capability)"
 
@@ -117,7 +125,12 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
         ): CurrentAcceptedCatalogRefreshV1 {
             val settings = requireNotNull(process.catalogReadback)
             return CurrentAcceptedCatalogRefreshV1(
-                process, primaryCredentials, replicaCredentials, { catalogUrlConnectionClient(settings.sdkLimits) }, Clock.systemUTC(), System::nanoTime,
+                process,
+                primaryCredentials,
+                replicaCredentials,
+                { catalogUrlConnectionClient(settings.sdkLimits) },
+                Clock.systemUTC(),
+                System::nanoTime,
             )
         }
 

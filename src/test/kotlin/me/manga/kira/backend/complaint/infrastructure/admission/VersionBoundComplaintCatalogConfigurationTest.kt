@@ -50,13 +50,17 @@ class VersionBoundComplaintCatalogConfigurationTest {
             assertEquals(GOLDEN_SHA256, Sha256.hex(expected))
             val restoredV1 = JsonObject(
                 document(expanded) - "catalogReadback" + mapOf(
-                    "schemaVersion" to JsonPrimitive(1), "profile" to JsonPrimitive("INITIAL_LIVE_MEMORY_SINGLE_INSTANCE"),
+                    "schemaVersion" to JsonPrimitive(1),
+                    "profile" to JsonPrimitive("INITIAL_LIVE_MEMORY_SINGLE_INSTANCE"),
                 ),
             )
             assertEquals(document(original), restoredV1)
             assertFalse(original.configurationHashBytes().contentEquals(expanded.configurationHashBytes()))
             val signed = OfflineTrustBundleVerifier.verifyBootstrapEvidence(
-                fixture.genesisBytes(), catalog.initialBundleBytes(), catalog.currentBundleBytes(), catalog.chainPolicy.trustBundlePolicy,
+                fixture.genesisBytes(),
+                catalog.initialBundleBytes(),
+                catalog.currentBundleBytes(),
+                catalog.chainPolicy.trustBundlePolicy,
             )
             assertEquals(fixture.EXPECTED_GENESIS_SHA256, signed.genesis.envelopeSha256)
             assertEquals(consumers.journalConfiguration.sha256, signed.genesis.manifest.initialWriterRegistry.eventWriter.liveRange.configurationSha256)
@@ -78,7 +82,9 @@ class VersionBoundComplaintCatalogConfigurationTest {
                     limits = OfflineCatalogChainLimits(128000, 100, 5, 200000),
                 ),
                 sdkLimits = S3CatalogReadbackLimits(8000, 500, 700, 128000, 4096, 256000),
-                totalAttemptMillis = 15000, pageSize = 7, maximumPagesPerLocation = 8,
+                totalAttemptMillis = 15000,
+                pageSize = 7,
+                maximumPagesPerLocation = 8,
             )
             val changedProcess = process(consumers, pools, changed)
             assertFalse(original.configurationHashBytes().contentEquals(changedProcess.configurationHashBytes()))
@@ -92,15 +98,23 @@ class VersionBoundComplaintCatalogConfigurationTest {
             assertFields(
                 encoded.getValue("chain").jsonObject,
                 mapOf(
-                    "maximumEnvelopeBytes" to "128000", "maximumManifestRecords" to "100", "maximumGenerations" to "5",
-                    "maximumEncodedBytes" to "200000", "pageSize" to "7", "maximumPagesPerLocation" to "8",
+                    "maximumEnvelopeBytes" to "128000",
+                    "maximumManifestRecords" to "100",
+                    "maximumGenerations" to "5",
+                    "maximumEncodedBytes" to "200000",
+                    "pageSize" to "7",
+                    "maximumPagesPerLocation" to "8",
                 ),
             )
             assertFields(
                 encoded.getValue("sdk").jsonObject,
                 mapOf(
-                    "requestTimeoutMillis" to "8000", "connectTimeoutMillis" to "500", "readTimeoutMillis" to "700",
-                    "maximumListBytes" to "128000", "maximumErrorBytes" to "4096", "maximumObjectBytes" to "256000",
+                    "requestTimeoutMillis" to "8000",
+                    "connectTimeoutMillis" to "500",
+                    "readTimeoutMillis" to "700",
+                    "maximumListBytes" to "128000",
+                    "maximumErrorBytes" to "4096",
+                    "maximumObjectBytes" to "256000",
                 ),
             )
             assertEquals("15000", encoded.getValue("totalAttemptMillis").jsonPrimitive.content)
@@ -151,7 +165,13 @@ class VersionBoundComplaintCatalogConfigurationTest {
     ): VersionBoundComplaintProcessConfiguration {
         val writer = consumers.journalConfiguration.declaration().writer
         return VersionBoundComplaintProcessConfiguration.fromRetained(
-            consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), catalog,
+            consumers,
+            pools,
+            1,
+            7,
+            UUID.fromString(writer.databaseIdentity),
+            UUID.fromString(writer.restoreIdentity),
+            catalog,
         )
     }
 

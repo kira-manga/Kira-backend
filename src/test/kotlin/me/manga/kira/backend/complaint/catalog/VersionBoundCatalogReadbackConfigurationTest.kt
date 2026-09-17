@@ -61,8 +61,10 @@ class VersionBoundCatalogReadbackConfigurationTest {
         rejected(CatalogReadbackFailure.INVALID_POLICY) { fixture.settings(totalAttemptMillis = 0) }
         val laterHead = OfflineTrustBundleFixture.bytes(OfflineTrustBundleFixture.signed())
         val policy = OfflineCatalogChainReaderPolicy(
-            OfflineTrustBundleFixture.policy(), listOf(OfflineTrustBundleFixture.CATALOG_WRITER),
-            listOf("catalog-approver-a", "catalog-approver-b"), OfflineCatalogRotationFixture.limits(),
+            OfflineTrustBundleFixture.policy(),
+            listOf(OfflineTrustBundleFixture.CATALOG_WRITER),
+            listOf("catalog-approver-a", "catalog-approver-b"),
+            OfflineCatalogRotationFixture.limits(),
         )
         rejected(CatalogReadbackFailure.INVALID_POLICY) { fixture.settings(initial = laterHead, current = laterHead, policy = policy) }
     }
@@ -128,7 +130,10 @@ class VersionBoundCatalogReadbackConfigurationTest {
             transformMetadata = { it.copy(retainUntilEpochSecond = retention.epochSecond) }
         }
         return CatalogDualLocationVerifier.GenesisReadback.verify(
-            port, settings.initialBundleBytes(), settings.currentBundleBytes(), settings.policyAt(evaluation),
+            port,
+            settings.initialBundleBytes(),
+            settings.currentBundleBytes(),
+            settings.policyAt(evaluation),
             LocalCatalogSnapshot.Accepted(CatalogLocalHead(1, fixture.EXPECTED_GENESIS_SHA256)),
         )
     }

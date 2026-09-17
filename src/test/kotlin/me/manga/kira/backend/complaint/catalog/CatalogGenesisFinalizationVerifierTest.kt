@@ -322,7 +322,8 @@ class CatalogGenesisFinalizationVerifierTest {
                 }
                 val port = SyntheticCatalogReadbackPort(emptyList())
                 val wrongExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(
-                    otherPools.catalogCoordinator.ownership, JdbcTemplate(otherPools.catalogCoordinator.dataSource),
+                    otherPools.catalogCoordinator.ownership,
+                    JdbcTemplate(otherPools.catalogCoordinator.dataSource),
                 )
                 val refused = assertThrows(PersistencePhaseException::class.java) {
                     wrongExecutor.resumeGenesis(

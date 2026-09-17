@@ -28,8 +28,7 @@ internal class S3CatalogReadbackAdapter private constructor(
     private val primary: S3CatalogReadbackClient,
     private val replica: S3CatalogReadbackClient,
     private val construction: Construction,
-) :
-    CatalogReadbackPort,
+) : CatalogReadbackPort,
     AutoCloseable {
     private val closed = AtomicBoolean()
 
@@ -185,8 +184,7 @@ internal class S3CatalogReadbackAdapter private constructor(
             limits: S3CatalogReadbackLimits,
             httpFactory: () -> SdkHttpClient,
             nanoTime: () -> Long,
-        ): S3CatalogReadbackAdapter =
-            construction.open(currentBundleBytes, trustPolicy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
+        ): S3CatalogReadbackAdapter = construction.open(currentBundleBytes, trustPolicy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
 
         private fun create(
             bytes: ByteArray,
@@ -196,9 +194,7 @@ internal class S3CatalogReadbackAdapter private constructor(
             limits: S3CatalogReadbackLimits,
             httpFactory: () -> SdkHttpClient,
             nanoTime: () -> Long,
-        ): S3CatalogReadbackAdapter {
-            return Construction().open(bytes, policy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
-        }
+        ): S3CatalogReadbackAdapter = Construction().open(bytes, policy, primaryCredentials, replicaCredentials, limits, httpFactory, nanoTime)
     }
 }
 

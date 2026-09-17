@@ -28,8 +28,7 @@ internal object VersionBoundCatalogReadbackTestFixture {
     fun rootPublicKeySpki(): ByteArray = Base64.getDecoder().decode(resource("root-spki.base64").decodeToString().trim())
     fun envelope(): OfflineCatalogGenesisEnvelopeV1 = OfflineTrustBundleParser.parseGenesis(genesisBytes())
 
-    fun manifestBytes(): ByteArray =
-        CanonicalJson.canonicalize(OfflineCatalogGenesisManifestV1.serializer(), envelope().manifest).toByteArray(Charsets.UTF_8)
+    fun manifestBytes(): ByteArray = CanonicalJson.canonicalize(OfflineCatalogGenesisManifestV1.serializer(), envelope().manifest).toByteArray(Charsets.UTF_8)
 
     fun trustPolicy(
         root: ByteArray = rootPublicKeySpki(),
@@ -58,7 +57,14 @@ internal object VersionBoundCatalogReadbackTestFixture {
         pageSize: Int = 1000,
         maximumPagesPerLocation: Int = 65536,
     ): VersionBoundCatalogReadbackConfigurationV1 = VersionBoundCatalogReadbackConfigurationV1.fromIndependentInputs(
-        initial, current, policy, pin, sdkLimits, totalAttemptMillis, pageSize, maximumPagesPerLocation,
+        initial,
+        current,
+        policy,
+        pin,
+        sdkLimits,
+        totalAttemptMillis,
+        pageSize,
+        maximumPagesPerLocation,
     )
 
     private fun resource(name: String): ByteArray =

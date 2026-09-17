@@ -188,36 +188,42 @@ internal class S3CatalogReadbackClient private constructor(
             val endpoint = catalogProviderCall(CatalogReadbackFailure.INVALID_POLICY) { regionalEndpoint(region, emptyProfile) }
             attempt?.requireRunning()
             stage = Stage.OPENING_HTTP
-            val raw = catalogProviderCall { httpFactory() }.also { this.raw = it; stage = Stage.HTTP_RETURNED }
+            val raw = catalogProviderCall { httpFactory() }.also {
+                this.raw = it
+                stage = Stage.HTTP_RETURNED
+            }
             attempt?.requireRunning() // Record the returned owner before checking deadline/stop; cleanup must still close it.
             val transport = BoundedCatalogSdkHttpClient(raw, location, endpoint, limits, nanoTime).also { this.transport = it }
             attempt?.requireRunning()
             stage = Stage.OPENING_SDK
             val sdk = sdkReadbackCall {
-                    S3Client.builder()
-                        .region(region)
-                        .credentialsProvider(StaticCredentialsProvider.create(credentials))
-                        .defaultsMode(DefaultsMode.STANDARD)
-                        .dualstackEnabled(false)
-                        .fipsEnabled(false)
-                        .crossRegionAccessEnabled(false)
-                        .endpointOverride(endpoint) // Explicit SDK-derived endpoint wins over profile/system endpoint URLs.
-                        .httpClient(transport)
-                        .serviceConfiguration(
-                            S3Configuration.builder().pathStyleAccessEnabled(true).accelerateModeEnabled(false)
-                                .useArnRegionEnabled(false).multiRegionEnabled(false).profileFile(emptyProfile).profileName("catalog-readback").build(),
-                        )
-                        .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
-                        .overrideConfiguration(
-                            ClientOverrideConfiguration.builder()
-                                .defaultProfileFile(emptyProfile).defaultProfileName("catalog-readback")
-                                .retryStrategy(StandardRetryStrategy.builder().maxAttempts(1).build())
-                                .apiCallTimeout(Duration.ofMillis(limits.requestTimeoutMillis))
-                                .apiCallAttemptTimeout(Duration.ofMillis(limits.requestTimeoutMillis))
-                                .build(),
-                        )
-                        .build()
-            }.also { this.sdk = it; stage = Stage.SDK_RETURNED }
+                S3Client.builder()
+                    .region(region)
+                    .credentialsProvider(StaticCredentialsProvider.create(credentials))
+                    .defaultsMode(DefaultsMode.STANDARD)
+                    .dualstackEnabled(false)
+                    .fipsEnabled(false)
+                    .crossRegionAccessEnabled(false)
+                    .endpointOverride(endpoint) // Explicit SDK-derived endpoint wins over profile/system endpoint URLs.
+                    .httpClient(transport)
+                    .serviceConfiguration(
+                        S3Configuration.builder().pathStyleAccessEnabled(true).accelerateModeEnabled(false)
+                            .useArnRegionEnabled(false).multiRegionEnabled(false).profileFile(emptyProfile).profileName("catalog-readback").build(),
+                    )
+                    .responseChecksumValidation(ResponseChecksumValidation.WHEN_REQUIRED)
+                    .overrideConfiguration(
+                        ClientOverrideConfiguration.builder()
+                            .defaultProfileFile(emptyProfile).defaultProfileName("catalog-readback")
+                            .retryStrategy(StandardRetryStrategy.builder().maxAttempts(1).build())
+                            .apiCallTimeout(Duration.ofMillis(limits.requestTimeoutMillis))
+                            .apiCallAttemptTimeout(Duration.ofMillis(limits.requestTimeoutMillis))
+                            .build(),
+                    )
+                    .build()
+            }.also {
+                this.sdk = it
+                stage = Stage.SDK_RETURNED
+            }
             attempt?.requireRunning()
             return S3CatalogReadbackClient(location, sdk, transport)
         }

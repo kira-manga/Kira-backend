@@ -81,7 +81,12 @@ internal class VersionBoundOwnerDeleteAllConfiguration(
             catalog: CurrentAcceptedCatalogRefreshV1.Result,
             dataKeys: JournalDataKeyPortV1,
         ): VersionBoundOwnerDeleteAllConfiguration = VersionBoundOwnerDeleteAllConfiguration(
-            process, ordinaryOwnership, deletionOwnership, audit, catalog.catalogFor(process), dataKeys,
+            process,
+            ordinaryOwnership,
+            deletionOwnership,
+            audit,
+            catalog.catalogFor(process),
+            dataKeys,
         )
     }
 
