@@ -587,8 +587,9 @@ class OwnerDeleteAllAuthorizationIT {
         )
         selected.update(
             "INSERT INTO complaint_deletion_journal_applied (object_key, object_version, event_id, ciphertext_hash, writer_generation, journal_epoch, " +
-                "event_kind, target_count, data_scope_id, test_only, applied_at) SELECT object_key, object_version, event_id, ciphertext_hash, writer_generation, " +
-                "journal_epoch, event_kind, target_count, data_scope_id, test_only, applied_at FROM complaint_journal_publications WHERE event_id = " +
+                "event_kind, target_count, data_scope_id, test_only, applied_at) SELECT object_key, object_version, event_id, ciphertext_hash, " +
+                "writer_generation, journal_epoch, event_kind, target_count, data_scope_id, test_only, applied_at " +
+                "FROM complaint_journal_publications WHERE event_id = " +
                 "(SELECT publication_ref FROM installation_deletion_receipts WHERE installation_id = ?)",
             candidate.installation.id,
         )
@@ -620,61 +621,6 @@ class OwnerDeleteAllAuthorizationIT {
                 ComplaintDataScope.LIVE.id,
             ),
         )
-    }
-
-    private fun assertPersisted(
-        f: OwnerDeleteAllAuthorizationFixture,
-        candidate: InstallationDeletionCandidate,
-        event: OwnerDeleteAllJournalEventV1,
-        count: Int,
-    ) {
-        val row = f.observer.queryForMap(
-            "SELECT d.*, p.event_bytes, p.semantic_hash, p.target_count, p.state AS publication_state, p.object_version, " +
-                "p.verification_bytes, i.state AS identity_state, c.state AS credential_state, c.credential_version, c.version AS optimistic_version, " +
-                "c.secret_verifier, c.platform, c.owner_reference, c.last_authenticated_at, c.deleted_at, c.verifier_expires_at " +
-                "FROM installation_deletion_receipts d JOIN complaint_journal_publications p ON p.event_id = d.publication_ref " +
-                "JOIN complaint_installation_ids i ON i.id = d.installation_id JOIN app_installations c ON c.id = d.installation_id " +
-                "WHERE d.installation_id = ?",
-            candidate.installation.id,
-        )
-        assertEquals("AUTHORIZED_DELETE", row["state"])
-        assertEquals(candidate.credentialVersion, row["submitted_credential_version"])
-        assertEquals(candidate.credentialVersion, row["credential_version"])
-        assertEquals(2L, row["optimistic_version"])
-        assertArrayEquals(candidate.credential.verifierBytes(), row["secret_verifier"] as ByteArray)
-        assertArrayEquals(ComplaintDeleteAllFingerprint.of(candidate).bytes(), row["fingerprint"] as ByteArray)
-        assertArrayEquals(event.canonicalBytes(), row["event_bytes"] as ByteArray)
-        assertArrayEquals(HexFormat.of().parseHex(event.semanticSha256), row["semantic_hash"] as ByteArray)
-        assertEquals(event.route.eventId, row["publication_ref"])
-        assertEquals(count, row["target_count"])
-        assertEquals("PREPARED", row["publication_state"])
-        assertEquals("DELETION_PENDING", row["identity_state"])
-        assertEquals("DELETION_PENDING", row["credential_state"])
-        for (field in listOf("outcome", "response_status", "external_event_id", "completed_at", "expires_at", "object_version", "verification_bytes", "deleted_at", "verifier_expires_at")) {
-            assertNull(row[field])
-        }
-        for (field in listOf("platform", "owner_reference", "last_authenticated_at")) assertNotNull(row[field])
-        assertEquals(
-            true,
-            f.observer.queryForObject(
-                "SELECT state = 'RESERVED' AND publication_ref = event_id AND accounting_version = 1 AND reserved_amounts = ?::bigint[] " +
-                    "AND converted_amounts IS NULL AND converted_at IS NULL FROM complaint_recovery_capacity_reservations WHERE event_id = ?",
-                Boolean::class.java,
-                OwnerDeleteAllCapacityCharges.RECOVERY.toLongArray().joinToString(",", "{", "}"),
-                event.route.eventId,
-            ),
-        )
-        val audit = f.observer.queryForMap(
-            "SELECT a.* FROM audit_log a JOIN installation_deletion_receipts d ON a.created_at = d.authorized_at " +
-                "WHERE d.installation_id = ? AND a.action = 'COMPLAINT_INSTALLATION_DELETE_AUTHORIZED'",
-            candidate.installation.id,
-        )
-        assertEquals("complaint_scope", audit["entity_type"])
-        assertEquals(ComplaintDataScope.LIVE.id.toString(), audit["entity_id"])
-        assertEquals(ComplaintDataScope.LIVE.id, audit["complaint_data_scope_id"])
-        assertEquals("INSTALLATION", audit["complaint_actor_kind"])
-        assertEquals("{\"version\": ${candidate.credentialVersion}}", audit["detail"]?.toString())
-        assertNull(audit["actor_user_id"])
     }
 
     private fun markVerified(f: OwnerDeleteAllAuthorizationFixture, event: String) {
@@ -715,4 +661,68 @@ class OwnerDeleteAllAuthorizationIT {
     }
 
     private fun withFixture(test: (OwnerDeleteAllAuthorizationFixture) -> Unit) = withOwnerDeleteAllAuthorization(database.value, test = test)
+}
+
+private fun assertPersisted(
+    f: OwnerDeleteAllAuthorizationFixture,
+    candidate: InstallationDeletionCandidate,
+    event: OwnerDeleteAllJournalEventV1,
+    count: Int,
+) {
+    val row = f.observer.queryForMap(
+        "SELECT d.*, p.event_bytes, p.semantic_hash, p.target_count, p.state AS publication_state, p.object_version, " +
+            "p.verification_bytes, i.state AS identity_state, c.state AS credential_state, c.credential_version, c.version AS optimistic_version, " +
+            "c.secret_verifier, c.platform, c.owner_reference, c.last_authenticated_at, c.deleted_at, c.verifier_expires_at " +
+            "FROM installation_deletion_receipts d JOIN complaint_journal_publications p ON p.event_id = d.publication_ref " +
+            "JOIN complaint_installation_ids i ON i.id = d.installation_id JOIN app_installations c ON c.id = d.installation_id " +
+            "WHERE d.installation_id = ?",
+        candidate.installation.id,
+    )
+    assertEquals("AUTHORIZED_DELETE", row["state"])
+    assertEquals(candidate.credentialVersion, row["submitted_credential_version"])
+    assertEquals(candidate.credentialVersion, row["credential_version"])
+    assertEquals(2L, row["optimistic_version"])
+    assertArrayEquals(candidate.credential.verifierBytes(), row["secret_verifier"] as ByteArray)
+    assertArrayEquals(ComplaintDeleteAllFingerprint.of(candidate).bytes(), row["fingerprint"] as ByteArray)
+    assertArrayEquals(event.canonicalBytes(), row["event_bytes"] as ByteArray)
+    assertArrayEquals(HexFormat.of().parseHex(event.semanticSha256), row["semantic_hash"] as ByteArray)
+    assertEquals(event.route.eventId, row["publication_ref"])
+    assertEquals(count, row["target_count"])
+    assertEquals("PREPARED", row["publication_state"])
+    assertEquals("DELETION_PENDING", row["identity_state"])
+    assertEquals("DELETION_PENDING", row["credential_state"])
+    val absentFields = listOf(
+        "outcome",
+        "response_status",
+        "external_event_id",
+        "completed_at",
+        "expires_at",
+        "object_version",
+        "verification_bytes",
+        "deleted_at",
+        "verifier_expires_at",
+    )
+    for (field in absentFields) assertNull(row[field])
+    for (field in listOf("platform", "owner_reference", "last_authenticated_at")) assertNotNull(row[field])
+    assertEquals(
+        true,
+        f.observer.queryForObject(
+            "SELECT state = 'RESERVED' AND publication_ref = event_id AND accounting_version = 1 AND reserved_amounts = ?::bigint[] " +
+                "AND converted_amounts IS NULL AND converted_at IS NULL FROM complaint_recovery_capacity_reservations WHERE event_id = ?",
+            Boolean::class.java,
+            OwnerDeleteAllCapacityCharges.RECOVERY.toLongArray().joinToString(",", "{", "}"),
+            event.route.eventId,
+        ),
+    )
+    val audit = f.observer.queryForMap(
+        "SELECT a.* FROM audit_log a JOIN installation_deletion_receipts d ON a.created_at = d.authorized_at " +
+            "WHERE d.installation_id = ? AND a.action = 'COMPLAINT_INSTALLATION_DELETE_AUTHORIZED'",
+        candidate.installation.id,
+    )
+    assertEquals("complaint_scope", audit["entity_type"])
+    assertEquals(ComplaintDataScope.LIVE.id.toString(), audit["entity_id"])
+    assertEquals(ComplaintDataScope.LIVE.id, audit["complaint_data_scope_id"])
+    assertEquals("INSTALLATION", audit["complaint_actor_kind"])
+    assertEquals("{\"version\": ${candidate.credentialVersion}}", audit["detail"]?.toString())
+    assertNull(audit["actor_user_id"])
 }

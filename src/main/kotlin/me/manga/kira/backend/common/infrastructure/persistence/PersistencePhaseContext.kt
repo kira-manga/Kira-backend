@@ -1167,9 +1167,10 @@ internal class PersistencePhaseContext(
                 refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
             requireStepUpResource(jdbc, expected)
-            if (issued || entityManagerFactory != null || !selectedHolder.fenceReady() ||
-                (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE && admission == null)
-            ) {
+            if (issued || entityManagerFactory != null || !selectedHolder.fenceReady()) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            if (path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE && admission == null) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             issued = true

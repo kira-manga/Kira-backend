@@ -413,9 +413,10 @@ internal class ComplaintIngressAdmission(
 
     private fun requireDeleteAllState(handoff: AdmittedDeleteAll) {
         val state = state(handoff.context)
-        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_DELETE_ALL || !state.consumed ||
-            state.ownerDeleteAllIdentity !== handoff.identity || state.admission !== handoff.identity
-        ) {
+        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_DELETE_ALL || !state.consumed) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        if (state.ownerDeleteAllIdentity !== handoff.identity || state.admission !== handoff.identity) {
             refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
         }
         requireLifetime(state, advanceTime(System.nanoTime()))

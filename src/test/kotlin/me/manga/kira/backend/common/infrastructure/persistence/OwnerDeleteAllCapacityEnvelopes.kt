@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import java.util.HexFormat
+import java.util.UUID
 
 /**
  * Existing owned database only. Maximal legal V14 row/index payloads are synthetic sizing rows, NOT
@@ -33,27 +34,7 @@ internal fun assertOwnerDeleteAllCapacityEnvelopes(f: OwnerDeleteAllAuthorizatio
         val sql = JdbcTemplate(SingleConnectionDataSource(connection, true))
         try {
             PROFILES.forEach { profile -> assertCatalogue(sql, profile) }
-            sql.update(
-                "UPDATE installation_deletion_receipts SET state = 'IN_PROGRESS', publication_ref = NULL, authorized_at = NULL WHERE installation_id = ?",
-                candidate.installation.id,
-            )
-            measure(sql, RECEIPT, "installation_id = '${candidate.installation.id}'", 0)
-            sql.update(
-                "UPDATE installation_deletion_receipts SET state = 'AUTHORIZED_DELETE', publication_ref = ?, authorized_at = clock_timestamp() WHERE installation_id = ?",
-                event,
-                candidate.installation.id,
-            )
-            measure(sql, RECEIPT, "installation_id = '${candidate.installation.id}'", 0)
-            sql.update(
-                "UPDATE installation_deletion_receipts SET state = 'COMPLETED', outcome = 'APPLIED', response_status = 204, external_event_id = publication_ref, " +
-                    "external_epoch = ?, external_object_version = ?, external_ciphertext_hash = ?, completed_at = now(), expires_at = now() + interval '192 hours' " +
-                    "WHERE installation_id = ?",
-                Long.MAX_VALUE,
-                version,
-                digest,
-                candidate.installation.id,
-            )
-            measure(sql, RECEIPT, "installation_id = '${candidate.installation.id}'", 1024)
+            measureReceiptLifecycle(sql, candidate.installation.id, event, version, digest)
             sql.update(
                 "UPDATE complaint_journal_publications SET journal_epoch = ?, target_count = 100, routing_key_id = repeat('r', 128), object_key = ?, " +
                     "event_bytes = ?, semantic_hash = ? WHERE event_id = ?",
@@ -130,6 +111,31 @@ internal fun assertOwnerDeleteAllCapacityEnvelopes(f: OwnerDeleteAllAuthorizatio
     f.assertReleased()
 }
 
+private fun measureReceiptLifecycle(sql: JdbcTemplate, installationId: UUID, event: String, version: String, digest: ByteArray) {
+    sql.update(
+        "UPDATE installation_deletion_receipts SET state = 'IN_PROGRESS', publication_ref = NULL, authorized_at = NULL WHERE installation_id = ?",
+        installationId,
+    )
+    measure(sql, RECEIPT, "installation_id = '$installationId'", 0)
+    sql.update(
+        "UPDATE installation_deletion_receipts SET state = 'AUTHORIZED_DELETE', publication_ref = ?, " +
+            "authorized_at = clock_timestamp() WHERE installation_id = ?",
+        event,
+        installationId,
+    )
+    measure(sql, RECEIPT, "installation_id = '$installationId'", 0)
+    sql.update(
+        "UPDATE installation_deletion_receipts SET state = 'COMPLETED', outcome = 'APPLIED', response_status = 204, " +
+            "external_event_id = publication_ref, external_epoch = ?, external_object_version = ?, external_ciphertext_hash = ?, " +
+            "completed_at = now(), expires_at = now() + interval '192 hours' WHERE installation_id = ?",
+        Long.MAX_VALUE,
+        version,
+        digest,
+        installationId,
+    )
+    measure(sql, RECEIPT, "installation_id = '$installationId'", 1024)
+}
+
 private fun assertCatalogue(sql: JdbcTemplate, profile: DeleteAllEnvelopeProfile) {
     val columns = sql.query(
         "SELECT attname, format_type(atttypid, atttypmod) FROM pg_attribute " +
@@ -142,7 +148,8 @@ private fun assertCatalogue(sql: JdbcTemplate, profile: DeleteAllEnvelopeProfile
         "SELECT idx.relname, string_agg(pg_get_indexdef(i.indexrelid, n, true), ',' ORDER BY n), i.indpred IS NOT NULL, " +
             "i.indisunique, i.indnatts = i.indnkeyatts, am.amname FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid " +
             "JOIN pg_am am ON idx.relam = am.oid CROSS JOIN LATERAL generate_series(1, i.indnkeyatts) n " +
-            "WHERE i.indrelid = ?::regclass GROUP BY idx.relname, i.indpred IS NOT NULL, i.indisunique, i.indnatts, i.indnkeyatts, am.amname ORDER BY idx.relname",
+            "WHERE i.indrelid = ?::regclass GROUP BY idx.relname, i.indpred IS NOT NULL, i.indisunique, " +
+            "i.indnatts, i.indnkeyatts, am.amname ORDER BY idx.relname",
         { row, _ ->
             assertEquals(row.getString(1) == "idx_installation_receipt_expiry", row.getBoolean(3))
             assertEquals(row.getString(1).startsWith("pk_") || row.getString(1).startsWith("uq_"), row.getBoolean(4))
@@ -199,9 +206,10 @@ private val PUBLICATION = DeleteAllEnvelopeProfile(
     "complaint_journal_publications",
     OwnerDeleteAllCapacityCharges.PUBLICATION[ComplaintCapacityCounter.STORAGE_BYTES],
     "event_id:character varying(43),data_scope_id:uuid,test_only:boolean,writer_generation:uuid,journal_epoch:bigint,event_kind:character varying(32)," +
-        "target_count:integer,routing_key_id:character varying(128),object_key:text,canonicalizer:character varying(16),event_bytes:bytea,semantic_hash:bytea," +
-        "state:character varying(16),created_at:timestamp with time zone,object_version:text,ciphertext_hash:bytea,object_created_at:timestamp with time zone," +
-        "retain_until:timestamp with time zone,verified_at:timestamp with time zone,verification_bytes:bytea,verification_hash:bytea,applied_at:timestamp with time zone",
+        "target_count:integer,routing_key_id:character varying(128),object_key:text,canonicalizer:character varying(16)," +
+        "event_bytes:bytea,semantic_hash:bytea,state:character varying(16),created_at:timestamp with time zone," +
+        "object_version:text,ciphertext_hash:bytea,object_created_at:timestamp with time zone,retain_until:timestamp with time zone," +
+        "verified_at:timestamp with time zone,verification_bytes:bytea,verification_hash:bytea,applied_at:timestamp with time zone",
     linkedMapOf(
         "pk_complaint_publications" to "event_id",
         "uq_complaint_publication_scope" to "event_id,data_scope_id",
@@ -215,7 +223,8 @@ private val RESERVATION = DeleteAllEnvelopeProfile(
     "complaint_recovery_capacity_reservations",
     OwnerDeleteAllCapacityCharges.RESERVATION[ComplaintCapacityCounter.STORAGE_BYTES],
     "event_id:character varying(43),data_scope_id:uuid,test_only:boolean,publication_ref:character varying(43),state:character varying(16)," +
-        "accounting_version:smallint,reserved_amounts:bigint[],converted_amounts:bigint[],created_at:timestamp with time zone,converted_at:timestamp with time zone",
+        "accounting_version:smallint,reserved_amounts:bigint[],converted_amounts:bigint[]," +
+        "created_at:timestamp with time zone,converted_at:timestamp with time zone",
     linkedMapOf(
         "pk_complaint_recovery_reservations" to "event_id,data_scope_id",
         "uq_complaint_recovery_event" to "event_id",
