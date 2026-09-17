@@ -73,7 +73,7 @@ internal object OwnerDeleteAllApplySql {
         FROM app_installations WHERE id = ? FOR UPDATE
     """.trimIndent()
 
-    val OWNER_TARGETS = "SELECT id FROM complaints WHERE owner_id = ? ORDER BY id LIMIT 101"
+    const val OWNER_TARGETS = "SELECT id FROM complaints WHERE owner_id = ? ORDER BY id LIMIT 101"
 
     val LOCK_RESOURCE = """
         SELECT id, state, deleted_at, ($LIVE) AS live,
@@ -154,7 +154,7 @@ internal object OwnerDeleteAllApplySql {
         VALUES (?, ?, ?, ?, ?, ?, 'OWNER_DELETE_ALL', ?, '00000000-0000-0000-0000-000000000000', false, ?)
     """.trimIndent()
 
-    val NO_OWNED_CONTENT = "SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)"
+    const val NO_OWNED_CONTENT = "SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)"
     val ALL_TOMBSTONED = """
         SELECT count(*) FROM complaint_resource_ids WHERE id = ANY (?::uuid[]) AND $LIVE AND state = 'DELETED' AND deleted_at IS NOT NULL
     """.trimIndent()

@@ -33,13 +33,17 @@ internal fun assertOwnerDeleteAllApplyCorruption(f: OwnerDeleteAllApplyFixture) 
         {
             f.auth.observer.update(
                 "UPDATE complaint_journal_publications SET verification_bytes = ?, verification_hash = ? WHERE event_id = ?",
-                badGrammar, ownerDeleteAllTestDigest(badGrammar), f.eventId(),
+                badGrammar,
+                ownerDeleteAllTestDigest(badGrammar),
+                f.eventId(),
             )
         },
         {
             f.auth.observer.update(
                 "UPDATE complaint_journal_publications SET verification_bytes = ?, verification_hash = ? WHERE event_id = ?",
-                f.proof.verificationBytes(), f.proof.verificationHash(), f.eventId(),
+                f.proof.verificationBytes(),
+                f.proof.verificationHash(),
+                f.eventId(),
             )
         },
     )
@@ -49,7 +53,8 @@ internal fun assertOwnerDeleteAllApplyCorruption(f: OwnerDeleteAllApplyFixture) 
         {
             f.auth.observer.update(
                 "UPDATE installation_deletion_receipts SET fingerprint = ? WHERE installation_id = ?",
-                ComplaintDeleteAllFingerprint.of(f.candidate).bytes(), f.candidate.installation.id,
+                ComplaintDeleteAllFingerprint.of(f.candidate).bytes(),
+                f.candidate.installation.id,
             )
         },
     )
@@ -58,13 +63,15 @@ internal fun assertOwnerDeleteAllApplyCorruption(f: OwnerDeleteAllApplyFixture) 
         {
             f.auth.observer.update(
                 "UPDATE complaint_recovery_capacity_reservations SET reserved_amounts = ?::bigint[] WHERE event_id = ?",
-                applyFixtureVector(OwnerDeleteAllCapacityCharges.RECOVERY - ComplaintCapacityCharges.RESOURCE_ID), f.eventId(),
+                applyFixtureVector(OwnerDeleteAllCapacityCharges.RECOVERY - ComplaintCapacityCharges.RESOURCE_ID),
+                f.eventId(),
             )
         },
         {
             f.auth.observer.update(
                 "UPDATE complaint_recovery_capacity_reservations SET reserved_amounts = ?::bigint[] WHERE event_id = ?",
-                applyFixtureVector(OwnerDeleteAllCapacityCharges.RECOVERY), f.eventId(),
+                applyFixtureVector(OwnerDeleteAllCapacityCharges.RECOVERY),
+                f.eventId(),
             )
         },
     )
@@ -72,14 +79,17 @@ internal fun assertOwnerDeleteAllApplyCorruption(f: OwnerDeleteAllApplyFixture) 
     val (credentialVersion, credentialRowVersion) = checkNotNull(
         f.auth.observer.queryForObject(
             "SELECT credential_version, version FROM app_installations WHERE id = ?",
-            { row, _ -> row.getLong(1) to row.getLong(2) }, f.candidate.installation.id,
+            { row, _ -> row.getLong(1) to row.getLong(2) },
+            f.candidate.installation.id,
         ),
     )
     corruptApplyRow(
         f,
         {
             f.auth.observer.update(
-                "UPDATE app_installations SET credential_version = ? WHERE id = ?", Math.addExact(credentialVersion, 1L), f.candidate.installation.id,
+                "UPDATE app_installations SET credential_version = ? WHERE id = ?",
+                Math.addExact(credentialVersion, 1L),
+                f.candidate.installation.id,
             )
         },
         { f.auth.observer.update("UPDATE app_installations SET credential_version = ? WHERE id = ?", credentialVersion, f.candidate.installation.id) },
@@ -174,11 +184,15 @@ internal fun assertOwnerDeleteAllApplyLocks(f: OwnerDeleteAllApplyFixture) {
     // installation lock above excluded a contender, and committed terminal state cannot pass it.
     val mutationAllowed = f.auth.transaction { selected ->
         val state = selected.queryForObject(
-            "SELECT state FROM complaint_installation_ids WHERE id = ? FOR UPDATE", String::class.java, f.candidate.installation.id,
+            "SELECT state FROM complaint_installation_ids WHERE id = ? FOR UPDATE",
+            String::class.java,
+            f.candidate.installation.id,
         )
         val credential = selected.queryForObject(
             "SELECT state = 'ACTIVE' AND credential_version = ? FROM app_installations WHERE id = ? FOR UPDATE",
-            Boolean::class.java, f.candidate.credentialVersion, f.candidate.installation.id,
+            Boolean::class.java,
+            f.candidate.credentialVersion,
+            f.candidate.installation.id,
         )
         state == "ACTIVE" && credential == true
     }

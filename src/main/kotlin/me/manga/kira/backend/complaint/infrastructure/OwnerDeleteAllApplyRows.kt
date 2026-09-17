@@ -80,8 +80,10 @@ internal object OwnerDeleteAllApplyRows {
             string(row, "publication_ref"), instant(row, "authorized_at"), state, time(row, "completed_at"), time(row, "expires_at"),
             if (state == "COMPLETED") {
                 External(
-                    string(row, "external_event_id"), long(row, "external_epoch"),
-                    string(row, "external_object_version"), bytes(row, "external_ciphertext_hash"),
+                    string(row, "external_event_id"),
+                    long(row, "external_epoch"),
+                    string(row, "external_object_version"),
+                    bytes(row, "external_ciphertext_hash"),
                 )
             } else {
                 null
@@ -96,8 +98,13 @@ internal object OwnerDeleteAllApplyRows {
             string(row, "routing_key_id"), string(row, "object_key"), row.getInt("target_count").also { check(!row.wasNull() && it in 0..100) },
             bytes(row, "event_bytes"), bytes(row, "semantic_hash"), string(row, "state"), instant(row, "created_at"), time(row, "applied_at"),
             Verification(
-                string(row, "object_version"), bytes(row, "ciphertext_hash"), instant(row, "object_created_at"),
-                instant(row, "retain_until"), instant(row, "verified_at"), bytes(row, "verification_bytes"), bytes(row, "verification_hash"),
+                string(row, "object_version"),
+                bytes(row, "ciphertext_hash"),
+                instant(row, "object_created_at"),
+                instant(row, "retain_until"),
+                instant(row, "verified_at"),
+                bytes(row, "verification_bytes"),
+                bytes(row, "verification_hash"),
             ),
         )
     }
@@ -108,7 +115,9 @@ internal object OwnerDeleteAllApplyRows {
         val event = string(row, "event_id")
         check(string(row, "publication_ref") == event)
         return Recovery(
-            event, state, vector(row, "reserved_amounts"),
+            event,
+            state,
+            vector(row, "reserved_amounts"),
             if (state == "PARTIAL") vector(row, "converted_amounts") else ComplaintCapacityVector.ZERO,
             time(row, "converted_at"),
         )
@@ -122,8 +131,12 @@ internal object OwnerDeleteAllApplyRows {
     fun credential(row: ResultSet): Credential {
         valid(row)
         return Credential(
-            string(row, "state"), long(row, "credential_version"), long(row, "version"), bytes(row, "secret_verifier"),
-            time(row, "deleted_at"), time(row, "verifier_expires_at"),
+            string(row, "state"),
+            long(row, "credential_version"),
+            long(row, "version"),
+            bytes(row, "secret_verifier"),
+            time(row, "deleted_at"),
+            time(row, "verifier_expires_at"),
         )
     }
 

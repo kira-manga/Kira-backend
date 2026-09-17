@@ -35,43 +35,45 @@ class OwnerDeleteAllApplyIT {
 
     @Test
     fun `fresh empty and strict restarted hundred paid targets complete only after commit cleanup and replay without writes`() {
-        for (count in listOf(0, 100)) withFixture(count) { f ->
-            val (work, proof) = if (count == 0) f.verification.prepared to f.proof else f.restart()
-            assertArrayEquals(f.proof.verificationBytes(), proof.verificationBytes())
-            assertArrayEquals(f.proof.verificationHash(), proof.verificationHash())
-            val before = f.auth.counters()
-            val external = f.verification.publisher.requests.size to f.verification.publisher.kms.requests.size
-            val captured = f.store.capture(work, proof)
-            val phase = f.auth.ownership.enterComplaintOwnerDeleteAllApply()
-            var operation: ComplaintOwnerDeleteAllApplyOperation? = null
-            try {
-                phase.begin()
-                operation = f.store.apply(captured)
-                assertEquals(PersistenceDatabaseOutcome.NONE, assertThrows<PersistencePhaseException> { checkNotNull(operation).result }.databaseOutcome)
-                phase.commit()
-                val held = assertThrows<PersistencePhaseException> { checkNotNull(operation).result }
-                assertEquals(PersistenceDatabaseOutcome.COMMITTED, held.databaseOutcome)
-                assertFalse(held.cleanupProven)
-            } catch (problem: Throwable) {
-                phase.recordFailure(problem)
-                throw problem
-            } finally {
-                phase.finish()
+        for (count in listOf(0, 100)) {
+            withFixture(count) { f ->
+                val (work, proof) = if (count == 0) f.verification.prepared to f.proof else f.restart()
+                assertArrayEquals(f.proof.verificationBytes(), proof.verificationBytes())
+                assertArrayEquals(f.proof.verificationHash(), proof.verificationHash())
+                val before = f.auth.counters()
+                val external = f.verification.publisher.requests.size to f.verification.publisher.kms.requests.size
+                val captured = f.store.capture(work, proof)
+                val phase = f.auth.ownership.enterComplaintOwnerDeleteAllApply()
+                var operation: ComplaintOwnerDeleteAllApplyOperation? = null
+                try {
+                    phase.begin()
+                    operation = f.store.apply(captured)
+                    assertEquals(PersistenceDatabaseOutcome.NONE, assertThrows<PersistencePhaseException> { checkNotNull(operation).result }.databaseOutcome)
+                    phase.commit()
+                    val held = assertThrows<PersistencePhaseException> { checkNotNull(operation).result }
+                    assertEquals(PersistenceDatabaseOutcome.COMMITTED, held.databaseOutcome)
+                    assertFalse(held.cleanupProven)
+                } catch (problem: Throwable) {
+                    phase.recordFailure(problem)
+                    throw problem
+                } finally {
+                    phase.finish()
+                }
+                val committed = checkNotNull(operation).result
+                assertSame(committed, checkNotNull(operation).result)
+                f.assertAccounting(before, count, 0)
+                f.assertCompleted(committed, f.targets, count, 0)
+                assertEquals(f.targets, f.resourceLocks.toList())
+                assertEquals(external, f.verification.publisher.requests.size to f.verification.publisher.kms.requests.size)
+                val stable = f.auth.state()
+                f.statements.clear()
+                val replay = f.apply(work, proof)
+                assertEquals(committed.completedAt, replay.completedAt)
+                assertEquals(committed.expiresAt, replay.expiresAt)
+                assertEquals(stable, f.auth.state())
+                f.assertNoWrites()
+                f.assertReleased()
             }
-            val committed = checkNotNull(operation).result
-            assertSame(committed, checkNotNull(operation).result)
-            f.assertAccounting(before, count, 0)
-            f.assertCompleted(committed, f.targets, count, 0)
-            assertEquals(f.targets, f.resourceLocks.toList())
-            assertEquals(external, f.verification.publisher.requests.size to f.verification.publisher.kms.requests.size)
-            val stable = f.auth.state()
-            f.statements.clear()
-            val replay = f.apply(work, proof)
-            assertEquals(committed.completedAt, replay.completedAt)
-            assertEquals(committed.expiresAt, replay.expiresAt)
-            assertEquals(stable, f.auth.state())
-            f.assertNoWrites()
-            f.assertReleased()
         }
     }
 
@@ -91,7 +93,10 @@ class OwnerDeleteAllApplyIT {
             assertApplyRolledBack(assertThrows { f.apply() }) // The actual current-owner LIMIT101 sentinel, not the frozen target count.
             assertEquals(tooMany, auth.state())
             forgetPaidApplyTargets(f, overflow)
-            assertEquals(100, auth.observer.update("UPDATE complaints SET version = 17, body = 'later valid content' WHERE owner_id = ?", owner.installation.id))
+            assertEquals(
+                100,
+                auth.observer.update("UPDATE complaints SET version = 17, body = 'later valid content' WHERE owner_id = ?", owner.installation.id),
+            )
             val foreignBefore = checkNotNull(
                 auth.observer.queryForObject("SELECT to_jsonb(c)::text FROM complaints c WHERE id = ?", String::class.java, foreignReply),
             )
@@ -102,14 +107,18 @@ class OwnerDeleteAllApplyIT {
             f.assertAccounting(before, 100, 100)
             f.assertCompleted(result, union, 100, 100)
             assertEquals(union, f.resourceLocks.toList())
-            assertEquals(foreignBefore, auth.observer.queryForObject("SELECT to_jsonb(c)::text FROM complaints c WHERE id = ?", String::class.java, foreignReply))
+            assertEquals(
+                foreignBefore,
+                auth.observer.queryForObject("SELECT to_jsonb(c)::text FROM complaints c WHERE id = ?", String::class.java, foreignReply),
+            )
             assertEquals("LIVE", auth.observer.queryForObject("SELECT state FROM complaint_resource_ids WHERE id = ?", String::class.java, foreignReply))
             assertEquals("DELETED", auth.observer.queryForObject("SELECT state FROM complaint_resource_ids WHERE id = ?", String::class.java, parent))
             assertEquals(
                 100L,
                 auth.observer.queryForObject(
                     "SELECT count(*) FROM audit_log WHERE id = ANY (?::bigint[]) AND action = 'COMPLAINT_DELETED' AND detail = '{\"version\":17}'::jsonb",
-                    Long::class.java, f.auditIds.joinToString(",", "{", "}"),
+                    Long::class.java,
+                    f.auditIds.joinToString(",", "{", "}"),
                 ),
             )
             f.assertReleased()
@@ -167,7 +176,10 @@ class OwnerDeleteAllApplyIT {
                 assertApplyRolledBack(assertThrows { f.apply(work, proof) })
                 assertEquals(wrong, f.auth.state())
             } finally {
-                assertEquals(1, f.auth.observer.update("UPDATE app_installations SET secret_verifier = ? WHERE id = ?", originalVerifier, f.candidate.installation.id))
+                assertEquals(
+                    1,
+                    f.auth.observer.update("UPDATE app_installations SET secret_verifier = ? WHERE id = ?", originalVerifier, f.candidate.installation.id),
+                )
             }
         }
         f.apply(restart.first, restart.second)
@@ -180,7 +192,10 @@ class OwnerDeleteAllApplyIT {
             assertEquals(wrong, f.auth.state())
             f.assertNoWrites()
         } finally {
-            assertEquals(1, f.auth.observer.update("UPDATE app_installations SET secret_verifier = ? WHERE id = ?", originalVerifier, f.candidate.installation.id))
+            assertEquals(
+                1,
+                f.auth.observer.update("UPDATE app_installations SET secret_verifier = ? WHERE id = ?", originalVerifier, f.candidate.installation.id),
+            )
         }
         f.apply()
         assertEquals(applied, f.auth.state())
@@ -216,7 +231,9 @@ class OwnerDeleteAllApplyIT {
                     selected.update(
                         "UPDATE complaint_capacity_counters SET actual_units = actual_units + ?, " +
                             "recovery_reserved_units = recovery_reserved_units - ? WHERE name = ?",
-                        prior[counter], prior[counter], counter.storedName,
+                        prior[counter],
+                        prior[counter],
+                        counter.storedName,
                     ),
                 )
             }
@@ -225,7 +242,9 @@ class OwnerDeleteAllApplyIT {
                 selected.update(
                     "UPDATE complaint_recovery_capacity_reservations SET state = 'PARTIAL', converted_amounts = ?::bigint[], " +
                         "converted_at = ? WHERE event_id = ?",
-                    applyFixtureVector(prior), Timestamp.from(at), f.eventId(),
+                    applyFixtureVector(prior),
+                    Timestamp.from(at),
+                    f.eventId(),
                 ),
             )
             assertEquals(1, selected.update("UPDATE complaint_resource_ids SET state = 'DELETION_PENDING' WHERE id = ?", f.targets.last()))
@@ -235,7 +254,8 @@ class OwnerDeleteAllApplyIT {
         f.assertAccounting(before, 1, 0, prior)
         f.assertCompleted(result, f.targets, 1, 0)
         assertEquals(
-            at, f.auth.observer.queryForObject("SELECT deleted_at FROM complaint_resource_ids WHERE id = ?", Timestamp::class.java, restored)?.toInstant(),
+            at,
+            f.auth.observer.queryForObject("SELECT deleted_at FROM complaint_resource_ids WHERE id = ?", Timestamp::class.java, restored)?.toInstant(),
         )
         val remaining = OwnerDeleteAllCapacityCharges.RECOVERY - prior - applyFixtureUse(1, 0)
         assertTrue((OwnerDeleteAllCapacityCharges.APPLIED.scaled(3) + OwnerDeleteAllCapacityCharges.RETIREMENT.scaled(4)).fitsWithin(remaining))

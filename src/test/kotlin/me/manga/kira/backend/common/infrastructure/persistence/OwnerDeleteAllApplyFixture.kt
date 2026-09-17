@@ -95,7 +95,9 @@ internal class OwnerDeleteAllApplyFixture(
                     1,
                     selected.update(
                         "UPDATE installation_deletion_receipts SET created_at = ?, authorized_at = ? WHERE installation_id = ?",
-                        historical, historical, candidate.installation.id,
+                        historical,
+                        historical,
+                        candidate.installation.id,
                     ),
                 )
             }
@@ -162,7 +164,8 @@ internal class OwnerDeleteAllApplyFixture(
             val old = before.getValue(counter)
             assertEquals(
                 old.copy(free = old.free + refund[counter], actual = old.actual + use[counter] - refund[counter], recovery = old.recovery - use[counter]),
-                after.getValue(counter), counter.name,
+                after.getValue(counter),
+                counter.name,
             )
         }
         assertEquals(
@@ -170,7 +173,10 @@ internal class OwnerDeleteAllApplyFixture(
             auth.observer.queryForObject(
                 "SELECT state = 'PARTIAL' AND reserved_amounts = ?::bigint[] AND converted_amounts = ?::bigint[] " +
                     "AND converted_at IS NOT NULL FROM complaint_recovery_capacity_reservations WHERE event_id = ?",
-                Boolean::class.java, applyFixtureVector(OwnerDeleteAllCapacityCharges.RECOVERY), applyFixtureVector(priorUse + use), eventId(),
+                Boolean::class.java,
+                applyFixtureVector(OwnerDeleteAllCapacityCharges.RECOVERY),
+                applyFixtureVector(priorUse + use),
+                eventId(),
             ),
         )
     }
@@ -217,7 +223,12 @@ internal class OwnerDeleteAllApplyFixture(
             auth.observer.queryForObject(
                 "SELECT detail = jsonb_build_object('version', ?::bigint, 'removed', ?::int, 'reconstructed', ?::int) " +
                     "AND actor_user_id IS NULL AND complaint_actor_kind = 'INSTALLATION' AND created_at = ? FROM audit_log WHERE id = ?",
-                Boolean::class.java, candidate.credentialVersion + 1, removed, reconstructed, Timestamp.from(result.completedAt), auditIds.last(),
+                Boolean::class.java,
+                candidate.credentialVersion + 1,
+                removed,
+                reconstructed,
+                Timestamp.from(result.completedAt),
+                auditIds.last(),
             ),
         )
     }
@@ -231,9 +242,32 @@ internal class OwnerDeleteAllApplyFixture(
 }
 
 internal enum class ApplyStep {
-    CONTROL, CLOCK, RECEIPT, PUBLICATION, RECOVERY, COUNTERS, INSTALLATION, CREDENTIAL, TARGETS, RESOURCE, RECONSTRUCT, CONTENT,
-    ERASE, TOMBSTONE, DELETE_INSTALLATION, DELETE_CREDENTIAL, COUNTER_UPDATE, PROGRESS, COMPLETE_RECEIPT, MARK_APPLIED, INSERT_APPLIED,
-    READ_APPLIED, AUDIT, NO_CONTENT, TOMBSTONES, FINAL,
+    CONTROL,
+    CLOCK,
+    RECEIPT,
+    PUBLICATION,
+    RECOVERY,
+    COUNTERS,
+    INSTALLATION,
+    CREDENTIAL,
+    TARGETS,
+    RESOURCE,
+    RECONSTRUCT,
+    CONTENT,
+    ERASE,
+    TOMBSTONE,
+    DELETE_INSTALLATION,
+    DELETE_CREDENTIAL,
+    COUNTER_UPDATE,
+    PROGRESS,
+    COMPLETE_RECEIPT,
+    MARK_APPLIED,
+    INSERT_APPLIED,
+    READ_APPLIED,
+    AUDIT,
+    NO_CONTENT,
+    TOMBSTONES,
+    FINAL,
 }
 
 /** Brackets real results, with nested JdbcTemplate overloads counted once. No manufactured row/count or substitute connection. */
@@ -264,8 +298,11 @@ internal class OwnerDeleteAllApplyFixtureJdbc(private val fixture: OwnerDeleteAl
             }
 
             sql.startsWith("SELECT publication_epoch, maintenance_closed") -> ApplyStep.CONTROL
+
             sql.startsWith("SELECT name, ordinal, accounting_version") -> ApplyStep.COUNTERS
+
             sql.startsWith("UPDATE complaint_capacity_counters") -> ApplyStep.COUNTER_UPDATE
+
             else -> STEPS[sql]
         }
         fixture.statements.add(sql)
@@ -298,12 +335,7 @@ internal class OwnerDeleteAllApplyFixtureJdbc(private val fixture: OwnerDeleteAl
 }
 
 /** Every actual REPORT/REPLY INSERT first pays exactly RESOURCE_ID + the explicit version1 shared profile. */
-internal fun paidApplyContent(
-    auth: OwnerDeleteAllAuthorizationFixture,
-    owner: InstallationDeletionCandidate,
-    count: Int,
-    parent: UUID? = null,
-): List<UUID> {
+internal fun paidApplyContent(auth: OwnerDeleteAllAuthorizationFixture, owner: InstallationDeletionCandidate, count: Int, parent: UUID? = null): List<UUID> {
     val ids = List(count) { UUID.randomUUID() }
     auth.transaction { selected ->
         ids.forEach { id ->
@@ -331,7 +363,9 @@ private fun adjustApplyFixturePayment(selected: JdbcTemplate, charge: ComplaintC
             1,
             selected.update(
                 "UPDATE complaint_capacity_counters SET free_units = free_units - ?, actual_units = actual_units + ? WHERE name = ?",
-                delta, delta, counter.storedName,
+                delta,
+                delta,
+                counter.storedName,
             ),
         )
     }

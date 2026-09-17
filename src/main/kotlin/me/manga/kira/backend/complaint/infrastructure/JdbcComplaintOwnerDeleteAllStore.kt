@@ -436,12 +436,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
 
         override fun toString(): String = "CommittedOwnerDeleteAllWork(custody-only,redacted)"
     }
-    private class ReleasedPrepared(
-        issuer: Any,
-        routing: VersionBoundComplaintJournalRouting,
-        event: OwnerDeleteAllJournalEventV1,
-        verifier: ByteArray,
-    ) :
+    private class ReleasedPrepared(issuer: Any, routing: VersionBoundComplaintJournalRouting, event: OwnerDeleteAllJournalEventV1, verifier: ByteArray) :
         Released(issuer, routing, event, verifier),
         CommittedOwnerDeleteAllWork.Prepared
     private class ReleasedVerified(
@@ -450,8 +445,7 @@ internal class ComplaintOwnerDeleteAllOperation private constructor(
         event: OwnerDeleteAllJournalEventV1,
         verifier: ByteArray,
         proof: RecordedProof,
-    ) :
-        Released(issuer, routing, event, verifier),
+    ) : Released(issuer, routing, event, verifier),
         CommittedOwnerDeleteAllWork.RecordedVerified {
         override val objectVersion = proof.objectVersion
         override val ciphertextSha256 = proof.ciphertextSha256

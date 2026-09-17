@@ -195,7 +195,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             stage = Stage.AUDIT
             removed.forEach { audit.recordOwnerDeleteAll(OwnerDeleteAllAuditOutcome.Removed(it.id, it.version), paid, checkNotNull(completion)) }
             audit.recordOwnerDeleteAll(
-                OwnerDeleteAllAuditOutcome.InstallationCompleted(nextCredentialVersion(), removed.size, reconstructed), paid, checkNotNull(completion),
+                OwnerDeleteAllAuditOutcome.InstallationCompleted(nextCredentialVersion(), removed.size, reconstructed),
+                paid,
+                checkNotNull(completion),
             )
         }
         requireRetained()
@@ -213,7 +215,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(MessageDigest.isEqual(receipt.fingerprint, observed.fingerprint))
         stage = Stage.PUBLICATION
         val publication = jdbc.query(
-            OwnerDeleteAllApplySql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteAllApplyRows.publication(row) }, receipt.reference,
+            OwnerDeleteAllApplySql.LOCK_PUBLICATION,
+            { row, _ -> OwnerDeleteAllApplyRows.publication(row) },
+            receipt.reference,
         ).single()
         requireRetained()
         check(publication.eventId == observed.record.eventId && publication.writer == controls.writer && publication.writer == observed.writer)
@@ -298,11 +302,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         return rows
     }
 
-    private fun requireReducer(
-        installation: OwnerDeleteAllApplyRows.Installation,
-        credential: OwnerDeleteAllApplyRows.Credential,
-        hasContent: Boolean,
-    ) {
+    private fun requireReducer(installation: OwnerDeleteAllApplyRows.Installation, credential: OwnerDeleteAllApplyRows.Credential, hasContent: Boolean) {
         val identity = ScopedInstallationId(observed.event.tuple.actorId, ComplaintDataScope.LIVE)
         val decision = InstallationRecoveryReducer.reduce(
             InstallationRecoverySnapshot(
@@ -349,7 +349,12 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
                     OwnerDeleteAllApplyRows.instant(row, "deleted_at") == completion &&
                     OwnerDeleteAllApplyRows.instant(row, "verifier_expires_at") == expiry
             },
-            time, Timestamp.from(checkNotNull(expiry)), identity, credential.credentialVersion, credential.rowVersion, credential.verifier,
+            time,
+            Timestamp.from(checkNotNull(expiry)),
+            identity,
+            credential.credentialVersion,
+            credential.rowVersion,
+            credential.verifier,
         ).single()
         check(updated && removed.size == current.size)
     }
@@ -369,7 +374,11 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         checkWrite()
         check(
             jdbc.update(
-                OwnerDeleteAllApplySql.MARK_APPLIED, time, observed.record.eventId, observed.verificationBytes, observed.verificationHash,
+                OwnerDeleteAllApplySql.MARK_APPLIED,
+                time,
+                observed.record.eventId,
+                observed.verificationBytes,
+                observed.verificationHash,
             ) == 1,
         )
         checkWrite()
@@ -454,8 +463,13 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         checkWrite()
         check(
             jdbc.update(
-                OwnerDeleteAllApplySql.RECORD_PROGRESS, vectorArray(cumulative), Timestamp.from(checkNotNull(completion)), reserve.eventId,
-                vectorArray(reserve.promise), reserve.state, if (reserve.state == "PARTIAL") vectorArray(reserve.used) else null,
+                OwnerDeleteAllApplySql.RECORD_PROGRESS,
+                vectorArray(cumulative),
+                Timestamp.from(checkNotNull(completion)),
+                reserve.eventId,
+                vectorArray(reserve.promise),
+                reserve.state,
+                if (reserve.state == "PARTIAL") vectorArray(reserve.used) else null,
                 reserve.convertedAt?.let(Timestamp::from),
             ) == 1,
         )
@@ -520,8 +534,22 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     }
 
     private enum class Stage {
-        RETAINED, CONTROL, RECEIPT, PUBLICATION, RESERVATION, COUNTERS_READY, COUNTERS, INSTALLATION, RESOURCES, CONTENT,
-        ERASURE, SETTLING, COMPLETING, AUDIT, COMPLETE, FAILED,
+        RETAINED,
+        CONTROL,
+        RECEIPT,
+        PUBLICATION,
+        RESERVATION,
+        COUNTERS_READY,
+        COUNTERS,
+        INSTALLATION,
+        RESOURCES,
+        CONTENT,
+        ERASURE,
+        SETTLING,
+        COMPLETING,
+        AUDIT,
+        COMPLETE,
+        FAILED,
     }
 
     companion object {
