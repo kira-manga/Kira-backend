@@ -1,9 +1,11 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.BoundOwnerDeleteAllReplayV1
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllApplyV1
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllVerificationStore
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPreparation
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllReconciliationPendingV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationSql
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFatalV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
@@ -138,9 +140,9 @@ class OwnerDeleteAllContinuationIT {
             }
             held.awaitEntered()
             try {
-                val replay = assertInstanceOf(OwnerDeleteAllPreparation.Replay::class.java, f.complete(disabled, connected))
-                f.auth.preflights.requireOwned(replay.comparison)
-                assertEquals(f.publisher.event.route.eventId, replay.comparison.publicationReference)
+                val replay = assertInstanceOf(BoundOwnerDeleteAllReplayV1::class.java, f.complete(disabled, connected))
+                assertEquals(committed.completedAt, replay.completedAt)
+                assertEquals(committed.expiresAt, replay.expiresAt)
                 val wrongKey = f.auth.request(f.candidate.installation, key = UUID.randomUUID())
                 assertInstanceOf(OwnerDeleteAllPreparation.Rejected::class.java, f.complete(disabled, connected, wrongKey))
                 val wrongSecret = f.auth.request(f.candidate.installation, key = f.candidate.operationKey, secret = ByteArray(32) { 99 })
@@ -153,6 +155,48 @@ class OwnerDeleteAllContinuationIT {
         assertEquals(before, f.auth.state())
         assertEquals(proof, f.proofSnapshot())
         assertEquals(clients, f.publisher.s3ClientsCreated)
+        assertTrue(f.statements.isEmpty())
+        f.assertReleased()
+    }
+
+    @Test
+    fun `actual APPLY completion failure returns only pending and a separate exact retry returns the original bound replay`() = withFixture { f ->
+        var completionRegistered = false
+        f.afterSql = { sql ->
+            if (sql == OwnerDeleteAllApplySql.COMPLETE_RECEIPT && !completionRegistered) {
+                completionRegistered = true
+                TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                    override fun afterCommit() = error("Synthetic APPLY completion failure.")
+                })
+            }
+        }
+        val pending = f.complete()
+        assertInstanceOf(OwnerDeleteAllReconciliationPendingV1::class.java, pending)
+        assertFalse(pending is CommittedOwnerDeleteAllApplyV1)
+        assertTrue(completionRegistered)
+        assertEquals("COMPLETED", f.receiptState()) // Actual commit happened; the failed completion did not release an erasure result.
+        assertEquals("APPLIED", f.publicationState())
+        assertEquals(0L, f.journalLanes.activeOwners().totalOwners)
+        f.assertReleased()
+        val completedAt = checkNotNull(f.auth.observer.queryForObject(
+            "SELECT completed_at FROM installation_deletion_receipts WHERE installation_id = ?",
+            java.sql.Timestamp::class.java, f.candidate.installation.id,
+        )).toInstant()
+        val expiresAt = checkNotNull(f.auth.observer.queryForObject(
+            "SELECT expires_at FROM installation_deletion_receipts WHERE installation_id = ?",
+            java.sql.Timestamp::class.java, f.candidate.installation.id,
+        )).toInstant()
+        val before = f.auth.state()
+        val proof = f.proofSnapshot()
+        val requests = f.publisher.requests.size to f.publisher.kms.requests.size
+        f.afterSql = {}
+        f.statements.clear()
+        val replay = assertInstanceOf(BoundOwnerDeleteAllReplayV1::class.java, f.complete())
+        assertEquals(completedAt, replay.completedAt)
+        assertEquals(expiresAt, replay.expiresAt)
+        assertEquals(before, f.auth.state())
+        assertEquals(proof, f.proofSnapshot())
+        assertEquals(requests, f.publisher.requests.size to f.publisher.kms.requests.size)
         assertTrue(f.statements.isEmpty())
         f.assertReleased()
     }

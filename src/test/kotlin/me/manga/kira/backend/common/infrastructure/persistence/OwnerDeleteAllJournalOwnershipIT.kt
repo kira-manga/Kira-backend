@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.BoundOwnerDeleteAllReplayV1
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllApplyV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPreparation
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
@@ -131,7 +132,7 @@ class OwnerDeleteAllJournalOwnershipIT {
                         f.assertCompleted(assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, result))
                         assertFalse(f.verifyWasEntered())
                     } else {
-                        assertInstanceOf(OwnerDeleteAllPreparation.Replay::class.java, result)
+                        assertInstanceOf(BoundOwnerDeleteAllReplayV1::class.java, result)
                         val wrong = f.auth.request(f.candidate.installation, key = f.candidate.operationKey, secret = ByteArray(32) { 99 })
                         assertInstanceOf(OwnerDeleteAllPreparation.Rejected::class.java, f.complete(disabled, connected, wrong))
                         assertTrue(f.statements.isEmpty())

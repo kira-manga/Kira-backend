@@ -10,6 +10,8 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInsta
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllPhaseExecutor
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
+import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
+import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 
 /**
  * Connected, dormant lower composition: real preflight/release, local semantic admission, actual
@@ -29,6 +31,20 @@ internal class ComplaintOwnerDeleteAllCoordinator(
         candidate: InstallationDeletionCandidate,
         publishers: OwnerDeleteAllJournalPublisherFactoryV1,
     ): OwnerDeleteAllPreparation = prepare(context, candidate, publishers)
+
+    /** Original released preflight custody plus exact J binding, never another DB/provider attempt. */
+    fun bindReplay(
+        context: ComplaintIngressContext,
+        replay: OwnerDeleteAllPreparation.Replay,
+        routing: VersionBoundComplaintJournalRouting,
+        codec: OwnerDeleteAllJournalCodecV1,
+    ): BoundOwnerDeleteAllReplayV1 {
+        ingress.requireLiveContext(context)
+        val bound = preflights.bindReplay(replay.comparison, routing, codec)
+        ingress.requireLiveContext(context)
+        ingress.requireResponseReady()
+        return bound
+    }
 
     private fun prepare(
         context: ComplaintIngressContext,
