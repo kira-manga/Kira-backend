@@ -2,9 +2,12 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllApplyV1
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyOutcomeV1
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllReconciliationPendingV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
@@ -17,7 +20,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /** Holds the existing relay's actual warmed APPLY COMMIT reply, never a fabricated commit/result flag. */
-internal fun assertOwnerDeleteAllApplyLostCommitResponse(database: PgLifecycleDatabaseFixture) {
+internal fun assertOwnerDeleteAllApplyLostCommitResponse(database: PgLifecycleDatabaseFixture) =
+    ownerDeleteAllApplyLostCommitResponse(database, continuation = false)
+
+/** Same real held COMMIT and independent witness, through the new fixed producer entry. */
+internal fun assertOwnerDeleteAllApplyPendingLostCommitResponse(database: PgLifecycleDatabaseFixture) =
+    ownerDeleteAllApplyLostCommitResponse(database, continuation = true)
+
+private fun ownerDeleteAllApplyLostCommitResponse(database: PgLifecycleDatabaseFixture, continuation: Boolean) {
     val warm = PgLifecycleDatabaseWarmControl()
     val case = PgLifecycleDatabaseCase(PgLifecycleDatabaseRecipe.DEFAULT, 0, PgLifecycleDatabaseLane.ORDINARY)
     PgLifecycleDatabaseRelay(database, warm.application, case, warm).use { relay ->
@@ -28,17 +38,22 @@ internal fun assertOwnerDeleteAllApplyLostCommitResponse(database: PgLifecycleDa
             val endpoint = PgLifecycleDatabaseSettings.endpoint(case, relay.port, warm.application)
             withOwnerDeleteAllAuthorization(database, endpoint) { auth ->
                 val candidate = auth.enrolled()
-                lostApplyCommit(OwnerDeleteAllApplyFixture(auth, candidate, paidApplyContent(auth, candidate, 1)), relay, warm)
+                lostApplyCommit(OwnerDeleteAllApplyFixture(auth, candidate, paidApplyContent(auth, candidate, 1)), relay, warm, continuation)
             }
         }
     }
 }
 
-private fun lostApplyCommit(f: OwnerDeleteAllApplyFixture, relay: PgLifecycleDatabaseRelay, warm: PgLifecycleDatabaseWarmControl) {
+private fun lostApplyCommit(
+    f: OwnerDeleteAllApplyFixture,
+    relay: PgLifecycleDatabaseRelay,
+    warm: PgLifecycleDatabaseWarmControl,
+    continuation: Boolean,
+) {
     val counters = f.auth.counters()
     val selected = AtomicReference<StepUpPhaseObservation?>()
     val session = AtomicReference<PgLifecycleDatabaseSession?>()
-    val returned = AtomicReference<CommittedOwnerDeleteAllApplyV1?>()
+    val returned = AtomicReference<OwnerDeleteAllApplyOutcomeV1?>()
     val committedAt = AtomicReference<Instant?>()
     val callerCompleted = AtomicBoolean()
     OwnedCallerTestScope().use { callers ->
@@ -83,23 +98,35 @@ private fun lostApplyCommit(f: OwnerDeleteAllApplyFixture, relay: PgLifecycleDat
             }
         }
         val failure = try {
-            assertThrows<PersistencePhaseException> {
-                try {
-                    returned.set(f.apply())
-                } finally {
-                    callerCompleted.set(true)
+            try {
+                if (continuation) {
+                    returned.set(f.phases.applyForContinuation(f.verification.prepared, f.proof))
+                    null
+                } else {
+                    assertThrows<PersistencePhaseException> {
+                        returned.set(f.apply())
+                    }
                 }
+            } finally {
+                callerCompleted.set(true)
             }
         } finally {
             start.release()
             f.afterStep = {}
         }
         assertTrue(witness.value())
-        assertNull(returned.get())
-        assertEquals(PersistenceDatabaseOutcome.UNKNOWN, failure.databaseOutcome)
-        assertTrue(failure.cleanupProven)
-        assertNull(failure.cause)
-        assertTrue(failure.suppressed.isEmpty())
+        if (continuation) {
+            assertInstanceOf(OwnerDeleteAllReconciliationPendingV1::class.java, returned.get())
+            assertFalse(returned.get() is CommittedOwnerDeleteAllApplyV1)
+            assertEquals(PersistenceDatabaseOutcome.UNKNOWN, checkNotNull(selected.get()).phase.databaseOutcome())
+            assertTrue(checkNotNull(selected.get()).lease.completion.quiescent())
+        } else {
+            assertNull(returned.get())
+            assertEquals(PersistenceDatabaseOutcome.UNKNOWN, checkNotNull(failure).databaseOutcome)
+            assertTrue(failure.cleanupProven)
+            assertNull(failure.cause)
+            assertTrue(failure.suppressed.isEmpty())
+        }
         val ended = warm.requireStopped()
         relay.awaitClientDisposal(ended.ordinal, PgLifecycleDatabaseDeadline(1_000)) {}
         f.assertReleased()

@@ -130,7 +130,8 @@ internal class PersistenceJdbcLease private constructor(
         if (phase.get() !== Phase.OPEN || transfer?.consented() == true) return
         try {
             closeActual(scope.cleanupBudget(), retire = true)
-        } catch (_: Throwable) {
+        } catch (problem: Throwable) {
+            scope.observeOwnerDeleteAllApplyFailure(problem)
             scope.jdbcFailure()
             // The original operation/entitlement and terminal receipt, not this catch, decide completion.
         }
@@ -163,6 +164,7 @@ internal class PersistenceJdbcLease private constructor(
             handle.close() // No epoch foreground ancestor around this complete Hikari/return extent.
             if (!attempt.consented()) PersistenceJdbcGuardContext.refuse()
         } catch (problem: Throwable) {
+            state.context.observeOwnerDeleteAllApplyFailure(problem)
             if (transfer?.consented() == true || transfer?.callerSamplingFailed() == true) operation.recordReturnIncidentBeforeEnd()
             failure = problem
         } finally {
@@ -188,9 +190,11 @@ internal class PersistenceJdbcLease private constructor(
                     bookkeepingFailure = state.context.adaptFailure(IllegalStateException("Persistence return bookkeeping refused."))
                     failure = restoreReturnFailure(operation, failure)
                 } catch (problem: Error) {
+                    state.context.observeOwnerDeleteAllApplyFailure(problem)
                     operation.failBeforeEnd()
                     failure = problem
                 } catch (problem: Throwable) {
+                    state.context.observeOwnerDeleteAllApplyFailure(problem)
                     operation.failBeforeEnd()
                     failure = bookkeepingFailure ?: problem
                 } finally {
@@ -231,10 +235,12 @@ internal class PersistenceJdbcLease private constructor(
             // This is still inside the consumed RETURN frame, never a second ingress.
             val retirement = owner.evictOwned(this, handle, budget)
             if (retirement is PersistenceLeaseRetirementClaim.CallerSampleFailed) {
+                state.context.observeOwnerDeleteAllApplyFailure(retirement.failure)
                 operation.recordReturnIncidentBeforeEnd()
                 if (failure == null) failure = retirement.failure
             }
         }.onFailure { problem ->
+            state.context.observeOwnerDeleteAllApplyFailure(problem)
             operation.failBeforeEnd()
             if (failure == null) failure = problem
         }
@@ -246,6 +252,7 @@ internal class PersistenceJdbcLease private constructor(
             runCatching {
                 requireNotNull(returnCaller).restoreAfterFailure()
             }.onFailure { problem ->
+                state.context.observeOwnerDeleteAllApplyFailure(problem)
                 operation.failBeforeEnd()
                 if (originalFailure == null) throw problem
             }
@@ -270,6 +277,7 @@ internal class PersistenceJdbcLease private constructor(
                 holderEnded = true
             }
         }.onFailure { problem ->
+            state.context.observeOwnerDeleteAllApplyFailure(problem)
             operation.failBeforeEnd()
             if (failure == null) {
                 failure = when (problem) {
@@ -284,6 +292,7 @@ internal class PersistenceJdbcLease private constructor(
                 dispatch?.end()
                 dispatchEnded = true
             }.onFailure { problem ->
+                state.context.observeOwnerDeleteAllApplyFailure(problem)
                 operation.failBeforeEnd()
                 if (failure == null) {
                     failure = when (problem) {
@@ -313,6 +322,7 @@ internal class PersistenceJdbcLease private constructor(
                 if (failure == null) failure = requireNotNull(bookkeepingFailure)
             }
         }.onFailure { problem ->
+            state.context.observeOwnerDeleteAllApplyFailure(problem)
             if (failure == null) {
                 failure = when (problem) {
                     is Error -> problem

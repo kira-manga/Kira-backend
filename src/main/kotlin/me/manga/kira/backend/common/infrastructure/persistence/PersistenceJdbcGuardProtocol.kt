@@ -90,6 +90,11 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun hasPhase(): Boolean = phase != null
 
+    /** Only a sticky APPLY outcome veto; the attached original phase still owns all release facts. */
+    internal fun observeOwnerDeleteAllApplyFailure(failure: Throwable) {
+        phase?.observeOwnerDeleteAllApplyFailure(failure)
+    }
+
     internal fun belongsToPool(expected: PersistenceProducerEpoch, lifecycle: PoolLifecycle): Boolean = epoch === expected && pool.boundTo(lifecycle)
 
     internal fun phaseJdbcFailure(retireImmediately: Boolean = false) {
@@ -168,6 +173,7 @@ internal class PersistenceJdbcGuardContext private constructor(
         ownership.requestRetirement(call.identity.epoch)
     }
 
+    @Suppress("TooGenericExceptionCaught")
     internal fun dispatchAbort(call: PersistenceJdbcGuardCall, executor: Executor) {
         requireCurrent(call.identity)
         if (!actualFrame(call)) refuse()
@@ -177,6 +183,9 @@ internal class PersistenceJdbcGuardContext private constructor(
             requestTerminal(call)
             executor.execute(abort)
             returned = true
+        } catch (failure: Throwable) {
+            observeOwnerDeleteAllApplyFailure(failure)
+            throw failure
         } finally {
             if (!returned) abort.rejected()
         }
@@ -184,9 +193,15 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun closed(): Boolean = ownership.retirementRequested()
 
-    internal fun clientInfo(failure: Throwable): SQLClientInfoException = failures.clientInfo(failure)
+    internal fun clientInfo(failure: Throwable): SQLClientInfoException {
+        observeOwnerDeleteAllApplyFailure(failure)
+        return failures.clientInfo(failure)
+    }
 
-    internal fun adaptFailure(failure: Throwable): SQLException = failures.sql(failure)
+    internal fun adaptFailure(failure: Throwable): SQLException {
+        observeOwnerDeleteAllApplyFailure(failure)
+        return failures.sql(failure)
+    }
 
     internal fun retainOutput(call: PersistenceJdbcGuardCall) {
         driverCustody?.retainOutput()
@@ -358,6 +373,7 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun driverPreparationFailed(call: PersistenceJdbcGuardCall, failure: Throwable) {
         check(actualFrame(call) && call.actualUnended(this))
+        observeOwnerDeleteAllApplyFailure(failure)
         driverFailed.set(true)
         driverCustody?.observationFailed(failure)
         call.observeDriverOwnedFailure(driverAuthority, null)
@@ -365,6 +381,7 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun driverEndFailed(call: PersistenceJdbcGuardCall, invocation: PersistencePgOwnedCutAccess.Invocation, failure: Throwable) {
         check(authenticDriverObservation(driverAuthority, call, invocation))
+        observeOwnerDeleteAllApplyFailure(failure)
         driverFailed.set(true)
         driverCustody?.observationFailed(failure)
         call.observeDriverOwnedFailure(driverAuthority, invocation)
@@ -406,6 +423,7 @@ internal class PersistenceJdbcGuardContext private constructor(
      * not a replacement top frame. Its failed count/dispatch custody is never silently released. */
     internal fun bookkeepingFailed(call: PersistenceJdbcGuardCall, failure: Throwable, retain: Boolean) {
         check(call.actualUnended(this))
+        observeOwnerDeleteAllApplyFailure(failure)
         driverFailed.set(true)
         unresolvedDriver.set(true)
         driverCustody?.observationFailed(failure)
