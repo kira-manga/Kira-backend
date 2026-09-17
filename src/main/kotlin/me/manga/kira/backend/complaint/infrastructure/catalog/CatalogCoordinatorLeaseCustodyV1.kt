@@ -215,6 +215,7 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
     private val clock = attempt.clock
     private val window = AtomicReference<Window?>(Window(attempt.startedAtNanos))
     private val relinquishmentIssued = AtomicBoolean()
+    private val cutoffResolutionIssued = AtomicBoolean()
 
     internal fun requireLocalWindow(): Window {
         val current = window.get() ?: refuse(PersistencePhaseFailureCode.WORK_FAILED)
@@ -227,8 +228,13 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
      * Every retry consumes the same original J; this cannot extend a rotation or resurrect a stop.
      * Renewal itself still uses its unchanged expected-window/CAS protocol below.
      */
+    internal fun requireRotationContinuity(originalBudget: PersistenceTimeBudget) = requireContinuity(originalBudget, COORDINATOR_LEASE_NANOS)
+
+    /** Resolution stops if real locked renewal did not recur within ten seconds; no local clock reset. */
+    internal fun requireSealContinuity(originalBudget: PersistenceTimeBudget) = requireContinuity(originalBudget, 10_000_000_000L)
+
     @Suppress("TooGenericExceptionCaught")
-    internal fun requireRotationContinuity(originalBudget: PersistenceTimeBudget) {
+    private fun requireContinuity(originalBudget: PersistenceTimeBudget, maximumElapsedNanos: Long) {
         try {
             while (true) {
                 originalBudget.remainingMillis(10_000)
@@ -238,7 +244,7 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
                 val elapsed = clock.nanoTime() - observed.startedAtNanos
                 originalBudget.remainingMillis(10_000) // Includes potentially delayed caller/clock readbacks.
                 if (window.get() !== observed) continue // A genuine renewal may have won while time was sampled.
-                if (elapsed !in 0 until COORDINATOR_LEASE_NANOS) {
+                if (elapsed !in 0 until maximumElapsedNanos) {
                     if (!window.compareAndSet(observed, null)) continue // Never close a renewal that already replaced this observation.
                     custody.stop(this)
                     refuse(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -288,6 +294,12 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
             close()
             throw problem
         }
+    }
+
+    /** One resolution per genuine campaign; a failed or completed call cannot restart its J budget. */
+    internal fun claimCutoffResolution() {
+        requireLocalWindow()
+        if (!cutoffResolutionIssued.compareAndSet(false, true)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
     }
 
     internal fun claimRelinquishment() {

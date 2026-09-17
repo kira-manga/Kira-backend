@@ -26,6 +26,15 @@ internal class CatalogEpochRotationRowV1 private constructor(
         slot?.let { check(it.hasBinding(binding)) }
     }
 
+    /** Only the actual resolver's retained current campaign may discover this historical CAPTURED slot. */
+    internal fun requireCurrent(attempt: CatalogCutoffAttemptV1) {
+        attempt.requireRunning()
+        check(local.scope == LIVE && !local.testOnly && local.projection == null)
+        check(attempt.matchesBinding(binding) && local.owner == attempt.owner && local.token == attempt.token)
+        check(checkNotNull(local.expiry).isAfter(checkNotNull(sampledAt)))
+        checkNotNull(slot).let { check(it.hasBinding(binding)) }
+    }
+
     internal fun sameState(other: CatalogEpochRotationRowV1): Boolean =
         binding.sameAs(other.binding) && local == other.local && publicationEpoch == other.publicationEpoch &&
             scanRequested == other.scanRequested && sequence == other.sequence && updatedAt == other.updatedAt &&
