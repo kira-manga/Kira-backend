@@ -14,12 +14,7 @@ internal interface JournalDataKeyPortV1 {
     fun unwrap(request: JournalDataKeyRequestV1, wrappedKey: ByteArray): JournalPlaintextDataKeyV1
 }
 
-internal class JournalDataKeyRequestV1(
-    val keyArn: String,
-    context: Map<String, String>,
-    val maximumWrappedKeyBytes: Int,
-    val timeoutMillis: Int,
-) {
+internal class JournalDataKeyRequestV1(val keyArn: String, context: Map<String, String>, val maximumWrappedKeyBytes: Int, val timeoutMillis: Int) {
     private val storedContext = HashMap(context)
     val dataKeyBytes: Int get() = 32
 

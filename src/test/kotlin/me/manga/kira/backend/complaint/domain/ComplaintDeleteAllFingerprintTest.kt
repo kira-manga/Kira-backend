@@ -24,7 +24,9 @@ class ComplaintDeleteAllFingerprintTest {
         val fingerprint = ComplaintDeleteAllFingerprint.of(candidate)
         assertEquals("_c4H5HZ1s5sLBDr0_rOIeq0S0embAa1qRgrsrxc-MSo", fingerprint.encoded)
         val otherKeyAndSecret = InstallationDeletionCandidate(
-            InstallationSessionCandidate.fromVerifier(installation, ByteArray(32) { 29 }), 7, UUID.randomUUID(),
+            InstallationSessionCandidate.fromVerifier(installation, ByteArray(32) { 29 }),
+            7,
+            UUID.randomUUID(),
         )
         assertArrayEquals(expected, ComplaintDeleteAllFingerprint.frameBytes(otherKeyAndSecret))
         assertNotEquals(

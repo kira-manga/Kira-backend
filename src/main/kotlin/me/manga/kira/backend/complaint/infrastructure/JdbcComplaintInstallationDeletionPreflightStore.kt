@@ -70,7 +70,9 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
 
     private fun release(value: InstallationDeletionPreflightSnapshot.Comparison, owner: Any): InstallationDeletionPreflightResult = when (value) {
         is InstallationDeletionPreflightSnapshot.Comparison.Rejected -> ReleasedRejection(value.reason)
+
         is InstallationDeletionPreflightSnapshot.Comparison.Active -> ReleasedActive(candidate, value.fingerprint, issuer, owner)
+
         is InstallationDeletionPreflightSnapshot.Comparison.Authorized ->
             ReleasedAuthorized(candidate, value.fingerprint, issuer, owner, value.publicationReference)
 
@@ -111,7 +113,8 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
     }
 
     private class ReleasedActive(candidate: InstallationDeletionCandidate, fingerprint: ComplaintDeleteAllFingerprint, issuer: Any, owner: Any) :
-        ReleasedTuple(candidate, fingerprint, issuer, owner), InstallationDeletionPreflightResult.Active
+        ReleasedTuple(candidate, fingerprint, issuer, owner),
+        InstallationDeletionPreflightResult.Active
 
     private class ReleasedAuthorized(
         candidate: InstallationDeletionCandidate,
@@ -119,7 +122,8 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         issuer: Any,
         owner: Any,
         override val publicationReference: String,
-    ) : ReleasedTuple(candidate, fingerprint, issuer, owner), InstallationDeletionPreflightResult.Authorized
+    ) : ReleasedTuple(candidate, fingerprint, issuer, owner),
+        InstallationDeletionPreflightResult.Authorized
 
     private class ReleasedCompleted(
         candidate: InstallationDeletionCandidate,
@@ -127,7 +131,8 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
         issuer: Any,
         owner: Any,
         override val publicationReference: String,
-    ) : ReleasedTuple(candidate, fingerprint, issuer, owner), InstallationDeletionPreflightResult.Completed
+    ) : ReleasedTuple(candidate, fingerprint, issuer, owner),
+        InstallationDeletionPreflightResult.Completed
 
     private class ReleasedRejection(override val reason: InstallationDeletionPreflightRejection) : InstallationDeletionPreflightResult.Rejected {
         override fun toString(): String = "InstallationDeletionPreflightResult.Rejected($reason)"

@@ -77,8 +77,13 @@ internal class InstallationDeletionPreflightFixture(val base: OrdinaryComplaintI
                     "INSERT INTO complaint_journal_publications (event_id, data_scope_id, test_only, writer_generation, journal_epoch, " +
                         "event_kind, target_count, routing_key_id, object_key, canonicalizer, event_bytes, semantic_hash, state, created_at) " +
                         "VALUES (?, ?, ?, ?, 1, 'OWNER_DELETE_ALL', 0, 'synthetic-routing', ?, 'kcj-1', ?, ?, 'PREPARED', now())",
-                    event, candidate.installation.scope.id, candidate.installation.scope.testOnly, UUID.randomUUID(),
-                    "synthetic/delete-all/$event", bytes, digest(bytes),
+                    event,
+                    candidate.installation.scope.id,
+                    candidate.installation.scope.testOnly,
+                    UUID.randomUUID(),
+                    "synthetic/delete-all/$event",
+                    bytes,
+                    digest(bytes),
                 ),
             )
             assertEquals(
@@ -87,8 +92,13 @@ internal class InstallationDeletionPreflightFixture(val base: OrdinaryComplaintI
                     "INSERT INTO installation_deletion_receipts (installation_id, deletion_key, submitted_credential_version, fingerprint, " +
                         "data_scope_id, test_only, state, publication_ref, created_at, authorized_at) " +
                         "VALUES (?, ?, ?, ?, ?, ?, 'AUTHORIZED_DELETE', ?, now(), now())",
-                    candidate.installation.id, candidate.operationKey, candidate.credentialVersion, ComplaintDeleteAllFingerprint.of(candidate).bytes(),
-                    candidate.installation.scope.id, candidate.installation.scope.testOnly, event,
+                    candidate.installation.id,
+                    candidate.operationKey,
+                    candidate.credentialVersion,
+                    ComplaintDeleteAllFingerprint.of(candidate).bytes(),
+                    candidate.installation.scope.id,
+                    candidate.installation.scope.testOnly,
+                    event,
                 ),
             )
             assertEquals(1, selected.update("UPDATE complaint_installation_ids SET state = 'DELETION_PENDING' WHERE id = ?", candidate.installation.id))
@@ -107,7 +117,10 @@ internal class InstallationDeletionPreflightFixture(val base: OrdinaryComplaintI
                     "UPDATE complaint_journal_publications SET state = 'APPLIED', object_version = 'synthetic-v1', ciphertext_hash = ?, " +
                         "object_created_at = now(), retain_until = now() + interval '70 days', verified_at = now(), " +
                         "verification_bytes = ?, verification_hash = ?, applied_at = now() WHERE event_id = ?",
-                    ByteArray(32) { 31 }, proof, digest(proof), event,
+                    ByteArray(32) { 31 },
+                    proof,
+                    digest(proof),
+                    event,
                 ),
             )
             assertEquals(

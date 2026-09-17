@@ -194,7 +194,9 @@ class OwnerDeleteAllJournalCodecV1Test {
         val invalidWire = listOf(0, 4, 8, wrappedLengthOffset, ciphertextLengthOffset).map { offset ->
             wire.copyOf().also { ByteBuffer.wrap(it).putInt(offset, -1) }
         } + listOf(
-            wire.copyOf(wire.size - 1), wire + byteArrayOf(0), ByteArray(98_305),
+            wire.copyOf(wire.size - 1),
+            wire + byteArrayOf(0),
+            ByteArray(98_305),
             pack(ByteArray(0), original.wrapped, original.encrypted),
             pack(canonical(original.header), ByteArray(0), original.encrypted),
             pack(canonical(original.header), ByteArray(6145), original.encrypted),
@@ -206,7 +208,9 @@ class OwnerDeleteAllJournalCodecV1Test {
         val profiles = listOf(
             profile(envelope = wire.size - 1, plaintext = wire.size - 2),
             profile(plaintext = vector.hex("plaintextHex").size - 1),
-            profile(fields = 17), profile(tokens = 37), profile(strings = original.header.text("objectKey").length - 1),
+            profile(fields = 17),
+            profile(tokens = 37),
+            profile(strings = original.header.text("objectKey").length - 1),
             profile(wrapped = original.wrapped.size - 1),
         )
         profiles.forEach { limits ->
@@ -373,12 +377,7 @@ class OwnerDeleteAllJournalCodecV1Test {
         assertEquals(0, typed.keys.generateCalls)
     }
 
-    private fun env(
-        journal: ComplaintJournalConfigurationV1 = journal(),
-        keys: Keys = Keys(),
-        nonces: Nonces = Nonces(),
-        clock: Clock = Clock(),
-    ): Env {
+    private fun env(journal: ComplaintJournalConfigurationV1 = journal(), keys: Keys = Keys(), nonces: Nonces = Nonces(), clock: Clock = Clock()): Env {
         val inputs = journal.declaration().routing.keys.map { key ->
             val binding = VersionedSecretBinding.of(SecretMaterialFamily.COMPLAINT_JOURNAL_ROUTING, SecretMaterialPurpose.HMAC_SHA256, key.keyId, key.secret)
             AcquiredVersionedSecret.acquire(binding) { SecretVersionSnapshot(key.secret, ByteArray(32) { (it + (key.keyId.last() - 'a') * 32).toByte() }) }
@@ -400,7 +399,13 @@ class OwnerDeleteAllJournalCodecV1Test {
         strings: Int = 4096,
         wrapped: Int = 6144,
     ): JournalDecoderLimitsV1 = JournalDecoderLimitsV1(
-        envelope, plaintext, depth, minOf(tokens, plaintext), fields, minOf(strings, plaintext), minOf(wrapped, envelope),
+        envelope,
+        plaintext,
+        depth,
+        minOf(tokens, plaintext),
+        fields,
+        minOf(strings, plaintext),
+        minOf(wrapped, envelope),
     )
 
     private fun tuple(
@@ -408,9 +413,14 @@ class OwnerDeleteAllJournalCodecV1Test {
         kind: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL,
         fingerprint: ByteArray = Base64.getUrlDecoder().decode(payload.text("requestFingerprint")),
     ): ComplaintJournalDeletionTupleV1 = ComplaintJournalDeletionTupleV1(
-        payload.getValue("publicationEpoch").jsonPrimitive.long, kind, ComplaintJournalActorKindV1.INSTALLATION,
-        UUID.fromString(payload.text("actorId")), payload.getValue("credentialVersion").jsonPrimitive.long,
-        UUID.fromString(payload.text("operationKey")), fingerprint, ComplaintDataScope.LIVE,
+        payload.getValue("publicationEpoch").jsonPrimitive.long,
+        kind,
+        ComplaintJournalActorKindV1.INSTALLATION,
+        UUID.fromString(payload.text("actorId")),
+        payload.getValue("credentialVersion").jsonPrimitive.long,
+        UUID.fromString(payload.text("operationKey")),
+        fingerprint,
+        ComplaintDataScope.LIVE,
     )
 
     private fun seal(env: Env): EncodedOwnerDeleteAllEnvelopeV1 = env.codec.seal(env.codec.canonicalize(tuple(), emptyList()), env.codec.startAttempt())
@@ -431,7 +441,8 @@ class OwnerDeleteAllJournalCodecV1Test {
         val wrapped = vector.hex("wrappedKeyHex")
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(
-            Cipher.ENCRYPT_MODE, SecretKeySpec(vector.hex("dataKeyHex"), "AES"),
+            Cipher.ENCRYPT_MODE,
+            SecretKeySpec(vector.hex("dataKeyHex"), "AES"),
             GCMParameterSpec(128, Base64.getUrlDecoder().decode(header.text("nonce"))),
         )
         cipher.updateAAD(independentAad(header, wrapped, payload.size + 16))

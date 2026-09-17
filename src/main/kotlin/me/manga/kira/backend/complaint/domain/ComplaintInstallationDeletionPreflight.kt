@@ -13,10 +13,14 @@ internal sealed interface InstallationDeletionPreflightResult {
     }
 
     /** New work still requires connection-free admission and a locked authorization recheck. */
-    interface Active : InstallationDeletionPreflightResult, InstallationDeletionPreflightTuple
+    interface Active :
+        InstallationDeletionPreflightResult,
+        InstallationDeletionPreflightTuple
 
     /** Resume ONLY this stored publication; never authorize a replacement event or emit 202 from this view. */
-    interface Authorized : InstallationDeletionPreflightResult, InstallationDeletionPreflightTuple {
+    interface Authorized :
+        InstallationDeletionPreflightResult,
+        InstallationDeletionPreflightTuple {
         val publicationReference: String
     }
 
@@ -25,7 +29,9 @@ internal sealed interface InstallationDeletionPreflightResult {
      * service still needs trusted writer/activation provenance and the same-J canonical event binding;
      * this slice neither parses that event nor authenticates provider evidence from stored labels.
      */
-    interface Completed : InstallationDeletionPreflightResult, InstallationDeletionPreflightTuple {
+    interface Completed :
+        InstallationDeletionPreflightResult,
+        InstallationDeletionPreflightTuple {
         val publicationReference: String
     }
 }

@@ -82,7 +82,8 @@ class InstallationDeletionPreflightIT {
             "UPDATE complaint_journal_publications SET state = 'VERIFIED', object_version = 'synthetic-v1', ciphertext_hash = ?, " +
                 "object_created_at = now(), retain_until = now() + interval '70 days', verified_at = now(), " +
                 "verification_bytes = decode('01','hex'), verification_hash = sha256(decode('01','hex')) WHERE event_id = ?",
-            ByteArray(32) { 31 }, event,
+            ByteArray(32) { 31 },
+            event,
         )
         assertInstanceOf(InstallationDeletionPreflightResult.Authorized::class.java, f.preflight(candidate))
         f.complete(candidate)
@@ -99,7 +100,8 @@ class InstallationDeletionPreflightIT {
         assertEquals(completedState, f.state())
         f.observer.update(
             "UPDATE installation_deletion_receipts SET external_ciphertext_hash = ? WHERE installation_id = ?",
-            ByteArray(32) { 9 }, candidate.installation.id,
+            ByteArray(32) { 9 },
+            candidate.installation.id,
         )
         refusedStorage(f, candidate)
         f.observer.update(
@@ -124,12 +126,14 @@ class InstallationDeletionPreflightIT {
         f.rejected(f.request(candidate.installation, candidate.credentialVersion), Rejection.IDEMPOTENCY_KEY_REUSED)
         f.observer.update(
             "UPDATE installation_deletion_receipts SET fingerprint = ? WHERE installation_id = ?",
-            ByteArray(32) { 17 }, candidate.installation.id,
+            ByteArray(32) { 17 },
+            candidate.installation.id,
         )
         f.rejected(candidate, Rejection.IDEMPOTENCY_KEY_REUSED)
         f.observer.update(
             "UPDATE installation_deletion_receipts SET fingerprint = ? WHERE installation_id = ?",
-            ComplaintDeleteAllFingerprint.of(candidate).bytes(), candidate.installation.id,
+            ComplaintDeleteAllFingerprint.of(candidate).bytes(),
+            candidate.installation.id,
         )
         OrdinaryComplaintTestInstallationFixture(f.base).use { scoped ->
             scoped.terminalState("PURGED") // Empty B; the authenticated pending installation belongs to LIVE/A, not B.
@@ -177,7 +181,8 @@ class InstallationDeletionPreflightIT {
                     "COMPLETED",
                     f.observer.queryForObject(
                         "SELECT state FROM installation_deletion_receipts WHERE installation_id = ?",
-                        String::class.java, candidate.installation.id,
+                        String::class.java,
+                        candidate.installation.id,
                     ),
                 )
             }
@@ -255,7 +260,10 @@ class InstallationDeletionPreflightIT {
             f.observer.update(
                 "INSERT INTO complaint_installation_ids (id, data_scope_id, test_only, state, created_at, terminal_at) " +
                     "VALUES (?, ?, false, ?, now(), CASE WHEN ? = 'RECOVERY_RESERVED' THEN NULL ELSE now() END)",
-                candidate.installation.id, candidate.installation.scope.id, state, state,
+                candidate.installation.id,
+                candidate.installation.scope.id,
+                state,
+                state,
             )
             f.rejected(candidate, if (state == "DELETED") Rejection.INSTALLATION_DELETED else Rejection.INSTALLATION_RETIRED)
         }

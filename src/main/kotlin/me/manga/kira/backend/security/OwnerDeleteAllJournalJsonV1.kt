@@ -43,13 +43,21 @@ internal class OwnerDeleteAllJournalJsonV1(private val limits: JournalDecoderLim
     }
 
     fun header(bytes: ByteArray): OwnerDeleteAllJournalHeaderV1 = parse(
-        bytes, minOf(4096, limits.maximumPlaintextBytes), HEADER_FIELDS, HEADER_NUMBERS, emptyMap(),
+        bytes,
+        minOf(4096, limits.maximumPlaintextBytes),
+        HEADER_FIELDS,
+        HEADER_NUMBERS,
+        emptyMap(),
         OwnerDeleteAllJournalHeaderV1.serializer(),
     )
 
     fun payload(bytes: ByteArray): OwnerDeleteAllJournalPayloadV1 = parse(
-        bytes, limits.maximumPlaintextBytes, PAYLOAD_FIELDS, PAYLOAD_NUMBERS,
-        mapOf("ownerInstallationIds" to 1, "complaintIds" to 100), OwnerDeleteAllJournalPayloadV1.serializer(),
+        bytes,
+        limits.maximumPlaintextBytes,
+        PAYLOAD_FIELDS,
+        PAYLOAD_NUMBERS,
+        mapOf("ownerInstallationIds" to 1, "complaintIds" to 100),
+        OwnerDeleteAllJournalPayloadV1.serializer(),
     )
 
     fun encodeHeader(value: OwnerDeleteAllJournalHeaderV1): ByteArray = encode(OwnerDeleteAllJournalHeaderV1.serializer(), value) { header(it) }

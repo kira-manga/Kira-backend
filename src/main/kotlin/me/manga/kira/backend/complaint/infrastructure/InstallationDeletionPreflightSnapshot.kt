@@ -58,6 +58,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
             // a reference for the later fixed writer, which still owns the terminal TEST protocol.
             return when (retained.state) {
                 ReceiptState.AUTHORIZED_DELETE -> Comparison.Authorized(fingerprint, retained.publicationReference)
+
                 ReceiptState.COMPLETED -> if (observedAt.isBefore(checkNotNull(retained.expiresAt))) {
                     Comparison.Completed(fingerprint, retained.publicationReference)
                 } else {
@@ -67,7 +68,9 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
         }
         return when (stored.state) {
             InstallationCredentialState.ACTIVE -> if (terminalRun()) rejected(SCOPE_RETIRED) else Comparison.Active(fingerprint)
+
             InstallationCredentialState.DELETION_PENDING -> rejected(InstallationDeletionPreflightRejection.INSTALLATION_DELETION_PENDING)
+
             // A still-live verifier without its exact retained receipt cannot invent a replay.
             InstallationCredentialState.DELETED -> rejected(InstallationDeletionPreflightRejection.IDEMPOTENCY_KEY_REUSED)
         }
