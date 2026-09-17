@@ -35,11 +35,11 @@ internal val READ_EPOCH_ROTATION_CONTROL = """
     FROM complaint_journal_control c CROSS JOIN sampled WHERE $EPOCH_ROTATION_LIVE
 """.trimIndent()
 
-/** Same exact retained INITIAL_LIVE/G1 binding as the genuine campaign; D includes the new actual D3 resource. */
+/** Same exact retained binding as the G1-only campaign producer; D includes the actual D3 resource. */
 internal val EPOCH_ROTATION_BINDING = """
     NOT c.test_only AND c.implementation_schema = 1 AND c.desired_generation = ?
         AND c.desired_configuration_hash = ?::bytea AND c.database_identity = ?::uuid AND c.restore_identity = ?::uuid
-        AND c.event_writer_generation = ?::uuid AND c.accepted_catalog_generation = 1 AND c.accepted_catalog_hash = ?::bytea
+        AND c.event_writer_generation = ?::uuid AND c.accepted_catalog_generation = ? AND c.accepted_catalog_hash = ?::bytea
         AND c.trust_bundle_hash = ?::bytea AND c.catalog_writer_generation = ?::uuid AND c.pending_projection_token IS NULL
 """.trimIndent()
 

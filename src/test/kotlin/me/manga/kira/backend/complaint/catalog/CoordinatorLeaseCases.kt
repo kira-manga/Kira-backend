@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComp
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseReceiptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseTransitionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationBindingRowV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -161,6 +162,7 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
     }
 
     fun exactBindingAndFailedRenewalCannotRevive() {
+        assertExactBindingArguments()
         val settings = f.process.desiredSettings()
         val replacement = VersionBoundComplaintProcessConfiguration.fromRetained(
             f.process.consumers,
@@ -233,6 +235,35 @@ internal class CoordinatorLeaseCases(private val f: CoordinatorLeaseTestFixture)
         resourceSubstitutionStopsBeforeEntry()
         missingLiveNeverFallsBackToTest()
         f.released()
+    }
+
+    /** Detached comparisons only; an argument array or observed row cannot produce a lease binding or current campaign. */
+    private fun assertExactBindingArguments() {
+        val arguments = f.binding.arguments()
+        assertEquals(9, arguments.size)
+        assertEquals(1L, arguments[5], "The genuine producer remains G1-only; generation is now an explicit full-B argument.")
+        val row = checkNotNull(
+            f.observer.queryForObject(
+                "SELECT implementation_schema, desired_generation, desired_configuration_hash, database_identity, restore_identity, " +
+                    "event_writer_generation, accepted_catalog_generation, accepted_catalog_hash, trust_bundle_hash, catalog_writer_generation " +
+                    "FROM complaint_journal_control WHERE data_scope_id = ?",
+                { result, _ -> CatalogEpochRotationBindingRowV1.copy(result, "") },
+                ComplaintDataScope.LIVE.id,
+            ),
+        )
+        assertTrue(row.matchesLeaseArguments(arguments))
+        assertFalse(row.matchesLeaseArguments(arguments.filterIndexed { index, _ -> index != 5 }.toTypedArray()), "The old eight-argument shape is refused.")
+        assertFalse(row.matchesLeaseArguments(arguments.copyOf(10)))
+        arguments.forEachIndexed { index, value ->
+            val changed = arguments.copyOf()
+            changed[index] = when (value) {
+                is ByteArray -> value.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }
+                is Long -> value + 1
+                is UUID -> UUID(value.mostSignificantBits xor 1L, value.leastSignificantBits)
+                else -> error("Unexpected full-B fixture argument.")
+            }
+            assertFalse(row.matchesLeaseArguments(changed), "Every full-B argument, including accepted generation, must match: $index")
+        }
     }
 
     /** Closed fixed fixture columns, not a production desired-state installer or generic administrative mutation API. */

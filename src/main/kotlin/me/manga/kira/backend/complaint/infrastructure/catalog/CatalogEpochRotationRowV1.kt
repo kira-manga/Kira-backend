@@ -91,8 +91,8 @@ internal class CatalogEpochRotationRowV1 private constructor(
 internal class CatalogEpochRotationBindingRowV1 private constructor(private val values: List<Any>) {
     internal val writer: UUID get() = values[5] as UUID
 
-    internal fun matchesLeaseArguments(arguments: Array<Any?>): Boolean = arguments.size == 8 && values[0] == 1 && values[6] == 1L &&
-        intArrayOf(1, 2, 3, 4, 5, 7, 8, 9).withIndex().all { (argument, field) -> sameValue(values[field], arguments[argument]) }
+    internal fun matchesLeaseArguments(arguments: Array<Any?>): Boolean = arguments.size == 9 && values[0] == 1 &&
+        arguments.indices.all { argument -> sameValue(values[argument + 1], arguments[argument]) }
 
     internal fun sameAs(other: CatalogEpochRotationBindingRowV1): Boolean = values.indices.all { sameValue(values[it], other.values[it]) }
 

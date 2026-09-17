@@ -12,9 +12,14 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
+import me.manga.kira.backend.complaint.infrastructure.catalog.ACQUIRE_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentAcceptedCatalogRefreshV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_COORDINATOR_LEASE_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.RELINQUISH_COORDINATOR_LEASE
+import me.manga.kira.backend.complaint.infrastructure.catalog.RENEW_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -109,7 +114,7 @@ internal class CoordinatorLeaseTestFixture(
     val coordinator = process.pools.catalogCoordinator
     val observer = genesis.observer
     val binding = CatalogCoordinatorLeaseBindingV1.fromRetained(process, refresh)
-    val jdbc = CoordinatorLeaseProbeJdbc(coordinator)
+    val jdbc = CoordinatorLeaseProbeJdbc(coordinator, binding.arguments())
     val phases = ComplaintCoordinatorLeasePersistencePhaseExecutor(coordinator, jdbc)
 
     fun retainedOperation(): CatalogCoordinatorLeaseOperation =
@@ -164,7 +169,10 @@ internal data class CoordinatorLeaseRow(val owner: UUID?, val token: Long, val e
 internal enum class CoordinatorLeaseSqlStep { LOCK_CONTROL, WRITE_CONTROL, READ_CONTROL }
 
 /** Observes the actual original holder; expected sanitized refusals cannot hide an assertion made in a SQL cut. */
-internal class CoordinatorLeaseProbeJdbc(private val coordinator: CatalogCoordinatorPersistence) : JdbcTemplate(coordinator.dataSource) {
+internal class CoordinatorLeaseProbeJdbc(
+    private val coordinator: CatalogCoordinatorPersistence,
+    private val bindingArguments: Array<Any?>,
+) : JdbcTemplate(coordinator.dataSource) {
     var phase: PersistencePhaseContext? = null
         private set
     var observation: StepUpPhaseObservation? = null
@@ -180,9 +188,35 @@ internal class CoordinatorLeaseProbeJdbc(private val coordinator: CatalogCoordin
 
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>): List<T> = observed(sql) { super.query(sql, rowMapper) }
 
-    override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql) { super.query(sql, rowMapper, *args) }
+    override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql) {
+        assertArguments(sql, args)
+        super.query(sql, rowMapper, *args)
+    }
 
     override fun update(sql: String, vararg args: Any?): Int = observed(sql) { super.update(sql, *args) }
+
+    /** Inspect the actual lock, CAS and reread calls on the existing probe, including the new exact-generation position. */
+    private fun assertArguments(sql: String, arguments: Array<out Any?>) {
+        val offset = if (sql == ACQUIRE_COORDINATOR_LEASE) 1 else 0
+        val suffix = when (sql) {
+            LOCK_COORDINATOR_LEASE_CONTROL, READ_COORDINATOR_LEASE_CONTROL -> 0
+            ACQUIRE_COORDINATOR_LEASE -> 4
+            RENEW_COORDINATOR_LEASE, RELINQUISH_COORDINATOR_LEASE -> 6
+            else -> error("Unexpected coordinator lease statement.")
+        }
+        assertEquals(9, bindingArguments.size)
+        assertEquals(offset + bindingArguments.size + suffix, arguments.size)
+        assertEquals(arguments.size, sql.count { it == '?' })
+        bindingArguments.forEachIndexed { index, expected ->
+            val actual = arguments[offset + index]
+            if (expected is ByteArray) {
+                assertTrue(actual is ByteArray)
+                assertArrayEquals(expected, actual as ByteArray)
+            } else {
+                assertEquals(expected, actual)
+            }
+        }
+    }
 
     fun assertNoLostAssertions() {
         assertionFailure.get()?.let { throw it }

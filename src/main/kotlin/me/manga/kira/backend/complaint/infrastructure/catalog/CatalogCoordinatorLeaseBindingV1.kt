@@ -35,6 +35,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val writer = UUID.fromString(journal.declaration().writer.generationId)
     private val epochRotationMillis = journal.declaration().limits.deadlines.epochRotationMillis
     private val catalog = refresh.catalogFor(process)
+    private val catalogGeneration = catalog.chain.tail.generation
     private val catalogHash = digest(catalog.chain.tail.envelopeSha256)
     private val trustHash = digest(catalog.chain.trust.currentBundleEnvelopeSha256)
     private val catalogWriter = UUID.fromString(catalog.chain.tail.catalogWriterGenerationId)
@@ -46,13 +47,13 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
                 desired.implementationSchema == 1 && desired.desiredGeneration > 0 &&
                 desired.configurationHashBytes().contentEquals(desiredHash) && desiredHash.size == 32 &&
                 writer.version() == 4 && writer.variant() == 2 && catalogWriter.version() == 4 && catalogWriter.variant() == 2 &&
-                catalog.chain.tail.generation == 1L && catalog.chain.trust.minimumHeadGeneration <= 1L,
+                catalogGeneration == 1L && catalog.chain.trust.minimumHeadGeneration <= 1L,
             CatalogReadbackFailure.INVALID_POLICY,
         )
         requireUnchangedConfiguration()
     }
 
-    /** Defensive SQL buffers are detached before phase entry, never cloned or hashed under the row lock. */
+    /** Exact generation travels with its hash; defensive SQL buffers are detached before phase entry, never cloned or hashed under the row lock. */
     internal fun arguments(): Array<Any?> {
         requireConnectionFree()
         requireUnchangedConfiguration()
@@ -62,6 +63,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             desired.databaseIdentity,
             desired.restoreIdentity,
             writer,
+            catalogGeneration,
             catalogHash.copyOf(),
             trustHash.copyOf(),
             catalogWriter,

@@ -1,10 +1,13 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
-/** INITIAL_LIVE/G1 only. Epoch, gates, scan flags, checkpoint/seal and the different retention lease are not lease-cookie fields. */
+/**
+ * Exact INITIAL_LIVE binding from the G1-only producer. Epoch, gates, scan flags,
+ * checkpoint/seal and the different retention lease are not lease-cookie fields.
+ */
 private val COORDINATOR_LEASE_BINDING = """
     NOT c.test_only AND c.implementation_schema = 1 AND c.desired_generation = ?
         AND c.desired_configuration_hash = ?::bytea AND c.database_identity = ?::uuid AND c.restore_identity = ?::uuid
-        AND c.event_writer_generation = ?::uuid AND c.accepted_catalog_generation = 1 AND c.accepted_catalog_hash = ?::bytea
+        AND c.event_writer_generation = ?::uuid AND c.accepted_catalog_generation = ? AND c.accepted_catalog_hash = ?::bytea
         AND c.trust_bundle_hash = ?::bytea AND c.catalog_writer_generation = ?::uuid AND c.pending_projection_token IS NULL
 """.trimIndent()
 
