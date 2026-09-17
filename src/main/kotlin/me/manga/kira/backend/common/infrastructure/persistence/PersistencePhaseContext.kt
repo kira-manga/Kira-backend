@@ -438,73 +438,70 @@ internal class PersistencePhaseContext(
 
     internal fun commit() {
         requireParticipation()
-        requireCompletedOperation()
+        // Preserve the existing source-only participation contract.
+        if (!completedOperation()) refuse(PersistencePhaseFailureCode.WORK_FAILED) // No skipped check, unspent charge or incomplete insert can commit.
         stage = Stage.COMMITTING
         manager.commit(requireNotNull(rootStatus))
         if (databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) refuse(PersistencePhaseFailureCode.COMPLETION_FAILED)
         requireWork()
     }
 
-    private fun requireCompletedOperation() {
-        // Preserve the existing source-only participation contract.
-        val complete = when (path) {
-            PersistencePhasePath.SOURCE_GRANT_CLEANUP -> true
+    private fun completedOperation(): Boolean = when (path) {
+        PersistencePhasePath.SOURCE_GRANT_CLEANUP -> true
 
-            PersistencePhasePath.COMPLAINT_GRANT_CLEANUP -> complaintBatch?.completedCount(this) != null
+        PersistencePhasePath.COMPLAINT_GRANT_CLEANUP -> complaintBatch?.completedCount(this) != null
 
-            PersistencePhasePath.SOURCE_STEP_UP_SNAPSHOT, PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT -> stepUpSnapshot != null
+        PersistencePhasePath.SOURCE_STEP_UP_SNAPSHOT, PersistencePhasePath.COMPLAINT_STEP_UP_SNAPSHOT -> stepUpSnapshot != null
 
-            PersistencePhasePath.SOURCE_STEP_UP_ISSUANCE, PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE -> stepUpIssuance?.completedFor(this) == true
+        PersistencePhasePath.SOURCE_STEP_UP_ISSUANCE, PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE -> stepUpIssuance?.completedFor(this) == true
 
-            PersistencePhasePath.COMPLAINT_ADMIN_AUDIT,
-            PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
-            -> complaintConsumption?.completedFor(this) == true
+        PersistencePhasePath.COMPLAINT_ADMIN_AUDIT,
+        PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
+        -> complaintConsumption?.completedFor(this) == true
 
-            PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT -> recoverySettlement.completed()
+        PersistencePhasePath.COMPLAINT_RECOVERY_SETTLEMENT -> recoverySettlement.completed()
 
-            PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND -> testReserveSpend.completed()
+        PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND -> testReserveSpend.completed()
 
-            PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
+        PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
 
-            PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
-            PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
-            -> installationSession.completed()
+        PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
+        PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_REFRESH,
+        -> installationSession.completed()
 
-            PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT -> installationDeletionPreflight.completed()
+        PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT -> installationDeletionPreflight.completed()
 
-            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
-            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
-            -> ownerDeleteAll.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
+        PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
+        -> ownerDeleteAll.completed()
 
-            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY -> ownerDeleteAllVerification.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY -> ownerDeleteAllVerification.completed()
 
-            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY -> ownerDeleteAllApply.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY -> ownerDeleteAllApply.completed()
 
-            PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE -> installationCurrentState.completed()
+        PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE -> installationCurrentState.completed()
 
-            PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
-            PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
-            -> ownerHistory.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
+        PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
+        -> ownerHistory.completed()
 
-            PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> ownerOperation.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> ownerOperation.completed()
 
-            PersistencePhasePath.COMPLAINT_OWNER_CREATE, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS -> ownerOperation.completed()
+        PersistencePhasePath.COMPLAINT_OWNER_CREATE, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS -> ownerOperation.completed()
 
-            PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
+        PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
 
-            PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX -> selectedHolder.fenceAccepted()
+        PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX -> selectedHolder.fenceAccepted()
 
-            PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT -> selectedHolder.controlSnapshotCaptured()
+        PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT -> selectedHolder.controlSnapshotCaptured()
 
-            PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> catalogSnapshot.completed()
+        PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> catalogSnapshot.completed()
 
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
-            -> catalogGenesis.completed()
-        }
-        if (!complete) refuse(PersistencePhaseFailureCode.WORK_FAILED) // No skipped check, unspent charge or incomplete insert can commit.
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
+        -> catalogGenesis.completed()
     }
 
     // Root completion must match its commit/rollback stage with no overlapping completion dispatch.
