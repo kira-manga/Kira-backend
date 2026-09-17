@@ -27,6 +27,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurr
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintRecoverySettlementOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintTestReserveSpendOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
@@ -1069,6 +1070,9 @@ internal class PersistencePhaseContext(
             }
             requireSuccessfulResult()
         }
+
+        /** Resource identity only, usable after the separate committed/released proof as well as during work. */
+        override fun requireProcessBinding(binding: CatalogGenesisInitialLiveBinding, jdbc: JdbcTemplate) = binding.requirePersistence(ownership, jdbc)
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
     }

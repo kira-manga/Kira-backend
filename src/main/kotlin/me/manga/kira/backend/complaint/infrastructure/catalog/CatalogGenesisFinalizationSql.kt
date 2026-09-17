@@ -115,6 +115,8 @@ private val GENESIS_ACCEPTED_CONTROL = """
 internal val READ_GENESIS_FINAL_CONTROL = """
     $GENESIS_CONTROL_EXPECTED
     SELECT ($GENESIS_INITIAL_CONTROL) IS TRUE AS initial_matches,
+        (c.desired_configuration_hash IS NOT NULL
+            AND c.desired_configuration_hash = e.desired_configuration_hash) IS TRUE AS current_process_matches,
         ($GENESIS_EMPTY_CONTROL) IS TRUE AS head_absent,
         ($GENESIS_ACCEPTED_CONTROL AND c.pending_projection_token = e.token) IS TRUE AS head_pending,
         ($GENESIS_ACCEPTED_CONTROL AND c.pending_projection_token IS NULL) IS TRUE AS head_projected,

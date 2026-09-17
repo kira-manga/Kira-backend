@@ -7,12 +7,12 @@ import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
-/** Genuine raw readback plus independently supplied declarations; never diagnostic results or activation authority. */
+/** Genuine raw readback plus explicit legacy declarations or the retained process; never diagnostic-result promotion. */
 internal class CatalogGenesisFinalizationInput private constructor(
-    readback: CatalogDualLocationVerifier.GenesisReadback,
-    expected: CatalogGenesisInitialLiveBinding,
+    internal val readback: CatalogDualLocationVerifier.GenesisReadback,
+    internal val binding: CatalogGenesisInitialLiveBinding,
 ) {
-    private val manifest = readback.manifest().also { expected.requireMatchingRegistry(it.initialWriterRegistry) }
+    private val manifest = readback.manifest().also { binding.requireMatchingRegistry(it.initialWriterRegistry) }
     private val token = UUID.fromString(manifest.operationToken)
     private val writer = UUID.fromString(manifest.catalogWriterGenerationId)
     private val envelopeHash = HexFormat.of().parseHex(readback.envelopeSha256)
@@ -20,9 +20,9 @@ internal class CatalogGenesisFinalizationInput private constructor(
     private val databaseIdentity = UUID.fromString(manifest.initialWriterRegistry.databaseIdentity)
     private val restoreIdentity = UUID.fromString(manifest.initialWriterRegistry.restoreIdentity)
     private val eventWriter = UUID.fromString(manifest.initialWriterRegistry.eventWriter.generationId)
-    private val implementationSchema = expected.implementationSchema
-    private val desiredGeneration = expected.desiredGeneration
-    private val desiredConfigurationHash = expected.desiredConfigurationHashBytes()
+    private val implementationSchema = binding.implementationSchema
+    private val desiredGeneration = binding.desiredGeneration
+    private val desiredConfigurationHash = binding.desiredConfigurationHashBytes()
     private val version = readback.objectVersion
     private val retainUntil = Instant.ofEpochSecond(readback.retainUntilEpochSecond)
     private val primary = readback.primaryEvidenceBytes()
