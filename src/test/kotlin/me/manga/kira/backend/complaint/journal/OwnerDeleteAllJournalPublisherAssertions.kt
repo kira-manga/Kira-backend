@@ -109,11 +109,7 @@ internal object OwnerDeleteAllJournalPublisherAssertions {
         }
     }
 
-    fun assertRealCrypto(
-        fixture: OwnerDeleteAllJournalPublisherFixture,
-        work: CommittedOwnerDeleteAllWork.Prepared,
-        original: JournalPublisherObject,
-    ) {
+    fun assertRealCrypto(fixture: OwnerDeleteAllJournalPublisherFixture, work: CommittedOwnerDeleteAllWork.Prepared, original: JournalPublisherObject) {
         for (mode in listOf("OTHER_TARGETS", "WRONG_TUPLE", "TAMPERED_TAG")) {
             fixture.reset()
             val bytes = when (mode) {
@@ -166,12 +162,7 @@ internal object OwnerDeleteAllJournalPublisherAssertions {
         assertEquals(listOf("LIST", "GET"), fixture.requests.map { it.kind })
     }
 
-    fun assertListReply(
-        fixture: OwnerDeleteAllJournalPublisherFixture,
-        work: CommittedOwnerDeleteAllWork.Prepared,
-        reply: S3CatalogReply,
-        accepted: Boolean,
-    ) {
+    fun assertListReply(fixture: OwnerDeleteAllJournalPublisherFixture, work: CommittedOwnerDeleteAllWork.Prepared, reply: S3CatalogReply, accepted: Boolean) {
         fixture.reset()
         var used = false
         val generated = fixture.generated()
@@ -191,12 +182,7 @@ internal object OwnerDeleteAllJournalPublisherAssertions {
         fixture.assertClosedExchanges()
     }
 
-    fun assertPutError(
-        fixture: OwnerDeleteAllJournalPublisherFixture,
-        work: CommittedOwnerDeleteAllWork.Prepared,
-        reply: S3CatalogReply,
-        accepted: Boolean,
-    ) {
+    fun assertPutError(fixture: OwnerDeleteAllJournalPublisherFixture, work: CommittedOwnerDeleteAllWork.Prepared, reply: S3CatalogReply, accepted: Boolean) {
         fixture.reset()
         var used = false
         fixture.respond = { request ->
