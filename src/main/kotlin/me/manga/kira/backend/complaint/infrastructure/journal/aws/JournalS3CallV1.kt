@@ -3,6 +3,7 @@ package me.manga.kira.backend.complaint.infrastructure.journal.aws
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFailureV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
@@ -20,8 +21,29 @@ internal class JournalS3BindingV1 private constructor(
     val routing: VersionBoundComplaintJournalRouting,
     val event: OwnerDeleteAllJournalEventV1,
     val attempt: JournalCodecAttemptV1,
+    private val receiptless: ReleasedCutoffPublicationV1? = null,
 ) {
+    internal fun requirePublicationStart() {
+        receiptless?.let {
+            check(it.requireEvent(routing) === event)
+            it.requireAttempt(attempt)
+        }
+    }
+
     companion object {
+        internal fun receiptless(
+            work: ReleasedCutoffPublicationV1,
+            routing: VersionBoundComplaintJournalRouting,
+            attempt: JournalCodecAttemptV1,
+        ): JournalS3BindingV1 {
+            requireConnectionFree()
+            val event = work.requireEvent(routing)
+            work.requireAttempt(attempt)
+            attempt.requireOwner(routing)
+            attempt.remainingMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis)
+            return JournalS3BindingV1(routing, event, attempt, work)
+        }
+
         fun released(
             store: JdbcComplaintOwnerDeleteAllStore,
             work: CommittedOwnerDeleteAllWork.Prepared,
@@ -60,6 +82,7 @@ internal class JournalS3CallV1 private constructor(
     fun remainingMillis(): Int {
         requireConnectionFree()
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
+        binding.requirePublicationStart()
         binding.attempt.requireOwner(binding.routing)
         val total = binding.attempt.remainingMillis(declaration.limits.deadlines.s3CallMillis)
         val elapsed = nanoTime() - started

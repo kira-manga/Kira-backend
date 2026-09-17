@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.journal
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalPutObservationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalS3BindingV1
@@ -28,7 +29,7 @@ import java.util.concurrent.atomic.AtomicReference
  * reload/new attempt. It never releases a local publication slot while native/KMS cleanup is uncertain.
  */
 internal class OwnerDeleteAllJournalPublisherV1 private constructor(
-    private val store: JdbcComplaintOwnerDeleteAllStore,
+    private val store: JdbcComplaintOwnerDeleteAllStore?,
     private val routing: VersionBoundComplaintJournalRouting,
     private val codec: OwnerDeleteAllJournalCodecV1,
     private val dataKeys: AwsJournalDataKeyAdapter,
@@ -48,13 +49,13 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
         journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
             requireConnectionFree()
             // Private SQL issuer and actual connection/lock release are checked before ANY S3 probe or key operation.
-            requireJournalPublication(store.preparedEvent(work).belongsTo(routing))
+            requireJournalPublication(checkNotNull(store).preparedEvent(work).belongsTo(routing))
             synchronized(lifecycle) { requireJournalPublication(!closed.get() && !retired.get() && busy.compareAndSet(false, true)) }
             val result = runCatching {
                 // The connected owner starts before SDK construction; standalone callers keep the old lower API.
                 val attempt = suppliedAttempt ?: codec.startAttempt()
                 attempt.requireOwner(routing)
-                val binding = JournalS3BindingV1.released(store, work, routing, attempt)
+                val binding = JournalS3BindingV1.released(checkNotNull(store), work, routing, attempt)
                 val observed = reconcile(binding)
                 checkAttempt(binding)
                 synchronized(lifecycle) {
@@ -65,6 +66,29 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
                 }
             }
             if (result.isFailure) retired.set(true) // Includes ambiguous key cleanup; never infer its quiescence from a thrown exception.
+            result.getOrThrow()
+        }
+
+    /** Separate genuine released-row input. It is never converted into an installation API Prepared receipt. */
+    internal fun publishCutoff(work: ReleasedCutoffPublicationV1, attempt: JournalCodecAttemptV1): OwnerDeleteAllJournalReadbackV1 =
+        journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+            requireConnectionFree()
+            work.requireEvent(routing) // Actual committed/released row and current campaign before ANY remote call.
+            work.requireAttempt(attempt)
+            synchronized(lifecycle) { requireJournalPublication(!closed.get() && !retired.get() && busy.compareAndSet(false, true)) }
+            val result = runCatching {
+                attempt.requireOwner(routing)
+                val binding = JournalS3BindingV1.receiptless(work, routing, attempt)
+                val observed = reconcile(binding)
+                checkAttempt(binding)
+                synchronized(lifecycle) {
+                    requireJournalPublication(!closed.get() && !retired.get())
+                    checkAttempt(binding)
+                    busy.set(false)
+                    observed
+                }
+            }
+            if (result.isFailure) retired.set(true)
             result.getOrThrow()
         }
 
@@ -99,6 +123,7 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
     private fun checkAttempt(binding: JournalS3BindingV1) {
         requireConnectionFree()
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
+        binding.requirePublicationStart()
         binding.attempt.remainingMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis)
     }
 
@@ -127,7 +152,7 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
         private var closeFailure: Throwable? = null
 
         internal fun open(
-            store: JdbcComplaintOwnerDeleteAllStore,
+            store: JdbcComplaintOwnerDeleteAllStore?,
             routing: VersionBoundComplaintJournalRouting,
             credentials: AwsSessionCredentials,
             s3HttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
@@ -210,7 +235,7 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
         )
 
         internal fun openOwned(
-            store: JdbcComplaintOwnerDeleteAllStore,
+            store: JdbcComplaintOwnerDeleteAllStore?,
             routing: VersionBoundComplaintJournalRouting,
             credentials: AwsSessionCredentials,
             s3HttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
