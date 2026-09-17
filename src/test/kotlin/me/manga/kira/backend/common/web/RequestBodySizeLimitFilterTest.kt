@@ -5,6 +5,7 @@ import jakarta.servlet.FilterChain
 import jakarta.servlet.ReadListener
 import jakarta.servlet.ServletInputStream
 import jakarta.servlet.http.HttpServletRequest
+import me.manga.kira.backend.complaint.parsing.InstallationDeletionRequestParser
 import me.manga.kira.backend.complaint.parsing.InstallationSessionRequestParser
 import me.manga.kira.backend.config.WebDiagnosticsConfig
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -106,12 +107,13 @@ class RequestBodySizeLimitFilterTest {
     }
 
     @Test
-    fun `session accepts exactly four KiB declared unknown and chunked and replays the strict JSON unchanged`() {
-        val prefix = SESSION_JSON.toByteArray()
+    fun `installation session and delete-all accept exactly four KiB with declared unknown and chunked framing`() = FOUR_KIB_PATHS.forEach { path ->
+        val prefix = (if (path == RequestBodySizeLimitFilter.SESSION_PATH) SESSION_JSON else DELETE_ALL_JSON).toByteArray()
         val expected = prefix + ByteArray(4096 - prefix.size) { 32 }
         assertEquals(InstallationSessionRequestParser.MAX_BODY_BYTES, RequestBodySizeLimitFilter.MAX_SESSION_BODY_BYTES)
+        assertEquals(InstallationDeletionRequestParser.MAX_BODY_BYTES, RequestBodySizeLimitFilter.MAX_DELETE_ALL_BODY_BYTES)
         listOf("declared", "unknown", "chunked").forEach { framing ->
-            val request = GeneratedBodyRequest(4096, declaredLength = if (framing == "declared") 4096 else -1, prefix = prefix)
+            val request = GeneratedBodyRequest(4096, declaredLength = if (framing == "declared") 4096 else -1, path = path, prefix = prefix)
             if (framing == "chunked") request.addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
             val response = MockHttpServletResponse()
             var invoked = false
@@ -127,8 +129,15 @@ class RequestBodySizeLimitFilterTest {
                     assertArrayEquals(expected, replay.inputStream.readAllBytes())
                     assertArrayEquals(expected, replay.inputStream.readAllBytes())
                     assertEquals(expected.toString(Charsets.UTF_8), replay.reader.readText())
-                    val candidate = InstallationSessionRequestParser.parse(replay.inputStream.readAllBytes())
-                    assertEquals(SESSION_ID, candidate.installation.id.toString())
+                    if (path == RequestBodySizeLimitFilter.SESSION_PATH) {
+                        val candidate = InstallationSessionRequestParser.parse(replay.inputStream.readAllBytes())
+                        assertEquals(SESSION_ID, candidate.installation.id.toString())
+                    } else {
+                        val candidate = InstallationDeletionRequestParser.parse(replay.inputStream.readAllBytes(), DELETE_ALL_KEY)
+                        assertEquals(SESSION_ID, candidate.installation.id.toString())
+                        assertEquals(1L, candidate.credentialVersion)
+                        assertEquals(DELETE_ALL_KEY, candidate.operationKey.toString())
+                    }
                 },
             )
 
@@ -140,10 +149,10 @@ class RequestBodySizeLimitFilterTest {
     }
 
     @Test
-    fun `session accepts JSON with optional UTF-8 charset and identity encoding`() {
+    fun `installation session and delete-all accept JSON with optional UTF-8 charset and identity encoding`() = FOUR_KIB_PATHS.forEach { path ->
         listOf("application/json", "Application/JSON ; charset = UTF-8", "application/json; charset=\"utf-8\"").forEach { media ->
             val request =
-                GeneratedBodyRequest(2, prefix = "{}".toByteArray(), rawContentTypes = listOf(media)).apply {
+                GeneratedBodyRequest(2, path = path, prefix = "{}".toByteArray(), rawContentTypes = listOf(media)).apply {
                     addHeader(HttpHeaders.CONTENT_ENCODING, " Identity \t")
                 }
             assertEquals(listOf(media), request.getHeaders(HttpHeaders.CONTENT_TYPE).asSequence().toList())
@@ -155,55 +164,55 @@ class RequestBodySizeLimitFilterTest {
     }
 
     @Test
-    fun `session unknown chunked and falsely small declarations stop at the one-byte-over boundary`() {
-        assertSessionRejected(GeneratedBodyRequest(4097), 413, "PAYLOAD_TOO_LARGE", consumed = 4097)
+    fun `installation session and delete-all stop unknown chunked and false small bodies at one byte over`() = FOUR_KIB_PATHS.forEach { path ->
+        assertInstallationRejected(GeneratedBodyRequest(4097, path = path), 413, "PAYLOAD_TOO_LARGE", consumed = 4097)
         listOf("unknown", "chunked", "zero", "small").forEach { framing ->
             val declaredLength = when (framing) {
                 "zero" -> 0L
                 "small" -> 2L
                 else -> -1L
             }
-            val request = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength, prefix = SUBMITTED_VALUE.toByteArray())
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength, path = path, prefix = SUBMITTED_VALUE.toByteArray())
             if (framing == "chunked") request.addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
-            assertSessionRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 4097)
+            assertInstallationRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 4097)
         }
     }
 
     @Test
-    fun `session oversized numeric declarations are refused without acquiring the stream`() {
+    fun `installation session and delete-all refuse oversized numeric declarations before acquiring the stream`() = FOUR_KIB_PATHS.forEach { path ->
         listOf("4097", Long.MAX_VALUE.toString(), "999999999999999999999999999999999").forEach { length ->
-            val request = GeneratedBodyRequest(Int.MAX_VALUE).apply { addHeader(HttpHeaders.CONTENT_LENGTH, length) }
-            assertSessionRejected(request, 413, "PAYLOAD_TOO_LARGE")
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path).apply { addHeader(HttpHeaders.CONTENT_LENGTH, length) }
+            assertInstallationRejected(request, 413, "PAYLOAD_TOO_LARGE")
         }
     }
 
     @Test
-    fun `session unsupported media precedes oversized declarations without acquiring the stream`() {
+    fun `installation session and delete-all reject unsupported media before oversized declarations or reads`() = FOUR_KIB_PATHS.forEach { path ->
         listOf(
             null, "", "text/plain", "application/*", "application/problem+json", "application/json, application/json",
             "application/json; charset=UTF-16", "application/json; charset=utf-8; charset=utf-8",
             "application/json; extra=value", "application/json; charset=\"utf-8", "application/json;$SUBMITTED_VALUE", "appl\u0131cation/json",
         ).forEach { media ->
-            val request = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength = 4097).apply {
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength = 4097, path = path).apply {
                 removeHeader(HttpHeaders.CONTENT_TYPE)
                 if (media != null) addHeader(HttpHeaders.CONTENT_TYPE, media)
             }
-            assertSessionRejected(request, 415, "UNSUPPORTED_MEDIA_TYPE")
+            assertInstallationRejected(request, 415, "UNSUPPORTED_MEDIA_TYPE")
         }
     }
 
     @Test
-    fun `session non-identity or malformed encoding is refused before buffering or size rejection`() {
+    fun `installation session and delete-all reject non-identity encoding before buffering or size rejection`() = FOUR_KIB_PATHS.forEach { path ->
         listOf("gzip", "br", "identity, identity", "", "\"identity\"", "\u0131dentity", SUBMITTED_VALUE).forEach { encoding ->
-            val request = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength = 4097).apply {
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength = 4097, path = path).apply {
                 addHeader(HttpHeaders.CONTENT_ENCODING, encoding)
             }
-            assertSessionRejected(request, 415, "UNSUPPORTED_MEDIA_TYPE")
+            assertInstallationRejected(request, 415, "UNSUPPORTED_MEDIA_TYPE")
         }
     }
 
     @Test
-    fun `session duplicate visible content and framing fields are rejected before buffering`() {
+    fun `installation session and delete-all reject duplicate visible content and framing fields before buffering`() = FOUR_KIB_PATHS.forEach { path ->
         mapOf(
             HttpHeaders.CONTENT_TYPE to "application/json",
             HttpHeaders.CONTENT_ENCODING to "identity",
@@ -213,6 +222,7 @@ class RequestBodySizeLimitFilterTest {
             val request =
                 GeneratedBodyRequest(
                     Int.MAX_VALUE,
+                    path = path,
                     rawContentTypes = if (name == HttpHeaders.CONTENT_TYPE) listOf(value, value) else null,
                 ).apply {
                     if (name != HttpHeaders.CONTENT_TYPE) {
@@ -222,54 +232,62 @@ class RequestBodySizeLimitFilterTest {
                     }
                 }
             assertEquals(2, request.getHeaders(name).asSequence().count())
-            assertSessionRejected(request, 400, "BAD_REQUEST")
+            assertInstallationRejected(request, 400, "BAD_REQUEST")
         }
     }
 
     @Test
-    fun `session observable conflicting malformed and unsupported framing is refused before buffering`() {
+    fun `installation session and delete-all reject conflicting malformed and unsupported framing before buffering`() = FOUR_KIB_PATHS.forEach { path ->
         listOf("", "-1", "+1", "1, 1", "1 0", "1x", "\u0661").forEach { length ->
-            val request = GeneratedBodyRequest(Int.MAX_VALUE).apply { addHeader(HttpHeaders.CONTENT_LENGTH, length) }
-            assertSessionRejected(request, 400, "BAD_REQUEST")
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path).apply { addHeader(HttpHeaders.CONTENT_LENGTH, length) }
+            assertInstallationRejected(request, 400, "BAD_REQUEST")
         }
         listOf("", "gzip", "chunked, chunked", "gzip, chunked", "chunked;extension").forEach { transfer ->
-            val request = GeneratedBodyRequest(Int.MAX_VALUE).apply { addHeader(HttpHeaders.TRANSFER_ENCODING, transfer) }
-            assertSessionRejected(request, 400, "BAD_REQUEST")
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path).apply { addHeader(HttpHeaders.TRANSFER_ENCODING, transfer) }
+            assertInstallationRejected(request, 400, "BAD_REQUEST")
         }
-        val conflict = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength = 4097).apply {
+        val conflict = GeneratedBodyRequest(Int.MAX_VALUE, declaredLength = 4097, path = path).apply {
             contentType = "text/plain"
             addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
         }
-        assertSessionRejected(conflict, 400, "BAD_REQUEST")
+        assertInstallationRejected(conflict, 400, "BAD_REQUEST")
     }
 
     @Test
-    fun `session detects shorter and longer observable bodies even below the cap`() {
-        assertSessionRejected(GeneratedBodyRequest(2, declaredLength = 3), 400, "BAD_REQUEST", consumed = 2)
-        assertSessionRejected(GeneratedBodyRequest(3, declaredLength = 2), 400, "BAD_REQUEST", consumed = 3)
+    fun `installation session and delete-all detect shorter and longer observable bodies below the cap`() = FOUR_KIB_PATHS.forEach { path ->
+        assertInstallationRejected(GeneratedBodyRequest(2, declaredLength = 3, path = path), 400, "BAD_REQUEST", consumed = 2)
+        assertInstallationRejected(GeneratedBodyRequest(3, declaredLength = 2, path = path), 400, "BAD_REQUEST", consumed = 3)
     }
 
     @Test
-    fun `session context path encoded segments and path parameters cannot bypass the streamed cap`() {
+    fun `installation session and delete-all context paths encoded segments and parameters cannot bypass the cap`() {
         listOf(
             "" to "/api/v1/installations/%73ession",
             "/kira" to "/kira/api/v1/installations/session",
             "/kira" to "/kira/api/v1/%69nstallations/%73ession",
             "" to "/api/v1/installations/session;parameter=value",
+            "" to "/api/v1/installations/%64elete-all",
+            "/kira" to "/kira/api/v1/installations/delete-all",
+            "/kira" to "/kira/api/v1/%69nstallations/%64elete-all",
+            "" to "/api/v1/installations/delete-all;parameter=value",
         ).forEach { (context, path) ->
             val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path).apply { contextPath = context }
-            assertSessionRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 4097)
+            assertInstallationRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 4097)
         }
     }
 
     @Test
-    fun `unrelated paths session siblings and other methods retain the generic cap and media behavior`() {
+    fun `unrelated paths installation siblings and other methods retain the generic cap and media behavior`() {
         listOf(
             "POST" to "/api/v1/auth/login",
             "POST" to "/api/v1/installations/session-extra",
             "POST" to "/api/v1/installations/session/child",
             "GET" to RequestBodySizeLimitFilter.SESSION_PATH,
             "PUT" to RequestBodySizeLimitFilter.SESSION_PATH,
+            "POST" to "/api/v1/installations/delete-all-extra",
+            "POST" to "/api/v1/installations/delete-all/child",
+            "GET" to RequestBodySizeLimitFilter.DELETE_ALL_PATH,
+            "PUT" to RequestBodySizeLimitFilter.DELETE_ALL_PATH,
         ).forEach { (method, path) ->
             val request = GeneratedBodyRequest(4097, path = path, method = method).apply { contentType = "text/plain" }
             val response = MockHttpServletResponse()
@@ -311,7 +329,7 @@ class RequestBodySizeLimitFilterTest {
         assertEquals(listOf("/*"), body.urlPatterns.toList())
     }
 
-    private fun assertSessionRejected(request: GeneratedBodyRequest, status: Int, code: String, consumed: Int = 0) {
+    private fun assertInstallationRejected(request: GeneratedBodyRequest, status: Int, code: String, consumed: Int = 0) {
         val response = MockHttpServletResponse().apply {
             addHeader(CONTRACT_HEADER, "old")
             addHeader(CONTRACT_HEADER, "duplicate")
@@ -411,5 +429,9 @@ class RequestBodySizeLimitFilterTest {
         const val SESSION_ID = "123e4567-e89b-42d3-a456-426614174000"
         const val SESSION_JSON = "{\"installationId\":\"$SESSION_ID\",\"secret\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"," +
             "\"expectedDataScopeId\":\"00000000-0000-0000-0000-000000000000\"}"
+        const val DELETE_ALL_KEY = "123e4567-e89b-42d3-a456-426614174001"
+        const val DELETE_ALL_JSON = "{\"installationId\":\"$SESSION_ID\",\"secret\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"," +
+            "\"credentialVersion\":1,\"dataScopeId\":\"00000000-0000-0000-0000-000000000000\"}"
+        val FOUR_KIB_PATHS = listOf(RequestBodySizeLimitFilter.SESSION_PATH, RequestBodySizeLimitFilter.DELETE_ALL_PATH)
     }
 }

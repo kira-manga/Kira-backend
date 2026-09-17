@@ -23,7 +23,7 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Enforces the HTTP body-size contract before MVC/Jackson/strict source parsing. The normal cap is
- * 256 KiB; import/multipart receive 5 MiB and POST installation enrollment/session receive 4 KiB. The body is
+ * 256 KiB; import/multipart receive 5 MiB and POST installation enrollment/session/delete-all receive 4 KiB. The body is
  * read at most `limit + 1` bytes and replayed from memory, so chunked or falsely-small Content-Length requests cannot bypass
  * the cap. An over-limit response is a bounded RFC-9457 problem and never echoes submitted content.
  * These protective installation boundaries do not activate routes or provide complaint ingress admission;
@@ -43,6 +43,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
             when (installation) {
                 InstallationBodyRoute.SESSION -> MAX_SESSION_BODY_BYTES
                 InstallationBodyRoute.ENROLLMENT -> MAX_ENROLLMENT_BODY_BYTES
+                InstallationBodyRoute.DELETE_ALL -> MAX_DELETE_ALL_BODY_BYTES
                 null -> limitFor(request)
             }
         val declaredLength = if (installation != null) installationDeclaredLength(request) else request.contentLengthLong
@@ -85,6 +86,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
             when {
                 sessionPath.matches(path) -> InstallationBodyRoute.SESSION
                 enrollmentPath.matches(path) -> InstallationBodyRoute.ENROLLMENT
+                deleteAllPath.matches(path) -> InstallationBodyRoute.DELETE_ALL
                 else -> null
             }
         } catch (ex: IllegalArgumentException) {
@@ -146,6 +148,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         val detail =
             when {
                 installation == InstallationBodyRoute.ENROLLMENT -> "request body exceeds the 4 KiB installation enrollment limit."
+                installation == InstallationBodyRoute.DELETE_ALL -> "request body exceeds the 4 KiB installation delete-all limit."
                 limit == MAX_IMPORT_BODY_BYTES -> "request body exceeds the 5 MiB import limit."
                 limit == MAX_SESSION_BODY_BYTES -> "request body exceeds the 4 KiB installation session limit."
                 else -> "request body exceeds the 256 KiB limit."
@@ -205,19 +208,22 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         }
     }
 
-    private enum class InstallationBodyRoute { SESSION, ENROLLMENT }
+    private enum class InstallationBodyRoute { SESSION, ENROLLMENT, DELETE_ALL }
 
     companion object {
         const val DEFAULT_MAX_BODY_BYTES = 256 * 1024
         const val MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_SESSION_BODY_BYTES = 4 * 1024
         const val MAX_ENROLLMENT_BODY_BYTES = MAX_SESSION_BODY_BYTES
+        const val MAX_DELETE_ALL_BODY_BYTES = MAX_SESSION_BODY_BYTES
         const val IMPORT_PATH = "/api/v1/admin/sources/import-bundled"
         const val TUTORIAL_MEDIA_PATH = "/api/v1/admin/tutorial-media"
         const val SESSION_PATH = "/api/v1/installations/session"
         const val ENROLLMENT_PATH = "/api/v1/installations"
+        const val DELETE_ALL_PATH = "/api/v1/installations/delete-all"
         private val sessionPath = PathPatternParser.defaultInstance.parse(SESSION_PATH)
         private val enrollmentPath = PathPatternParser.defaultInstance.parse(ENROLLMENT_PATH)
+        private val deleteAllPath = PathPatternParser.defaultInstance.parse(DELETE_ALL_PATH)
         private val installationMediaType = Regex(
             """application/json(?:[ \t]*;[ \t]*charset[ \t]*=[ \t]*(?:utf-8|"utf-8"))?""",
             RegexOption.IGNORE_CASE,
