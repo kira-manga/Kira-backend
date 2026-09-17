@@ -281,9 +281,11 @@ private class EpochRotationConnectionCalls(private val entry: PersistencePhysica
                     call.failedBeforeBoxing(wrapping)
                 }
             }
-        } catch (problem: Throwable) {
-            val actual = if (problem.javaClass === InvocationTargetException::class.java) (problem as InvocationTargetException).targetException else problem
+        } catch (problem: InvocationTargetException) {
+            val actual = if (problem.javaClass === InvocationTargetException::class.java) problem.targetException else problem
             throw call.failure(actual, wrapping)
+        } catch (problem: Throwable) {
+            throw call.failure(problem, wrapping)
         } finally {
             call.finish()
         }

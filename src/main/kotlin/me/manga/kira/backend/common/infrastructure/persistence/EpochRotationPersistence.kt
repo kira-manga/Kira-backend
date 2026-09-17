@@ -52,6 +52,8 @@ internal class EpochRotationPersistence private constructor(
     @Suppress("TooGenericExceptionCaught")
     internal fun capture(attempt: CatalogEpochRotationAttemptV1): CatalogEpochRotationCaptureOperation {
         var call: Capture? = null
+        var result: CatalogEpochRotationCaptureOperation? = null
+        var failure: PersistencePhaseException? = null
         try {
             requireConnectionFree()
             requireUnchangedConfiguration()
@@ -77,11 +79,9 @@ internal class EpochRotationPersistence private constructor(
             session.awaitRelease()
             attempt.requireCore(this) // The same original local lease/configuration and total deadline still apply.
             session.requireReleased(operation)
-            return operation
+            result = operation
         } catch (problem: Throwable) {
-            attempt.abort()
-            call?.session?.failed()
-            throw call?.session?.failure() ?: (problem as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+            failure = recordFailure(attempt, call, problem)
         } finally {
             val retained = call
             if (retained != null) {
@@ -91,10 +91,8 @@ internal class EpochRotationPersistence private constructor(
                 } finally {
                     try {
                         retained.session?.restoreAfterFailure()
-                    } catch (_: Throwable) {
-                        attempt.abort()
-                        retained.session?.failed()
-                        throw retained.session?.failure() ?: PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+                    } catch (problem: Throwable) {
+                        failure = recordFailure(attempt, retained, problem, failure)
                     } finally {
                         retained.bodyEnded.set(true)
                         retained.reconcileCaller()
@@ -102,6 +100,41 @@ internal class EpochRotationPersistence private constructor(
                 }
             }
         }
+        // The primary bounded failure wins; failed restoration still aborts and cannot turn a return into success.
+        failure?.let { throw it }
+        return result ?: throw PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+    }
+
+    /** Keep only bounded classification and the genuine DB/reclamation facts; never retain a raw cause or suppressed graph. */
+    private fun recordFailure(
+        attempt: CatalogEpochRotationAttemptV1,
+        retained: Capture?,
+        problem: Throwable,
+        prior: PersistencePhaseException? = null,
+    ): PersistencePhaseException {
+        attempt.abort()
+        retained?.session?.failed()
+        if (prior != null) return prior
+        val actual = retained?.session?.failure()
+        val reported = problem as? PersistencePhaseException
+        val code = when (problem) {
+            is PersistencePhaseException -> problem.code
+
+            is PersistenceBoundaryException -> if (problem.code === PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) {
+                PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED
+            } else {
+                PersistencePhaseFailureCode.RESOURCE_REFUSED
+            }
+
+            is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
+
+            else -> actual?.code ?: PersistencePhaseFailureCode.WORK_FAILED
+        }
+        return PersistencePhaseException(
+            code,
+            actual?.databaseOutcome ?: reported?.databaseOutcome ?: PersistenceDatabaseOutcome.NONE,
+            actual?.cleanupProven ?: (reported?.cleanupProven != false && retained?.request?.custodyEnded() != false),
+        )
     }
 
     /** No clock/JDBC/callback here: the original scanner only reconciles exact ended wrapper/physical facts. */
