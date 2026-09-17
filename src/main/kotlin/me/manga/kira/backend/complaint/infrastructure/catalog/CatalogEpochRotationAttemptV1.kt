@@ -30,7 +30,6 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
     private val caller = PersistenceOwnedFactoryCaller.capture()
     private val ownership = coordinator.ownership
     private val binding = campaign.binding
-    private val window = campaign.requireLocalWindow()
     private val arguments = binding.arguments()
     private val resource = binding.epochRotationResource()
     private val nonce = UUID.randomUUID() // Budget already exists, including on discovery-first attempts.
@@ -54,7 +53,7 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
         } catch (problem: PersistenceBoundaryException) {
             throw boundedEpochRotationFailure(problem)
         }
-        campaign.requireSameWindow(window)
+        campaign.requireLocalWindow() // A genuine same-campaign renewal may advance its window, never this attempt's J budget.
         binding.requirePersistence(ownership, jdbc)
         binding.requireEpochRotation(resource)
     }
