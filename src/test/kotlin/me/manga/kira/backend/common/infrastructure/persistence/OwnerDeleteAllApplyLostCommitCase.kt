@@ -162,7 +162,7 @@ private fun assertApplyCommittedWhileReplyHeld(
         assertEquals(at, row.getTimestamp(12).toInstant())
         assertEquals("DELETED", row.getString(13))
         assertEquals(f.candidate.credentialVersion + 1, row.getLong(14))
-        assertEquals(2L, row.getLong(15))
+        assertEquals(Math.addExact(f.credentialRowVersion, 1L), row.getLong(15))
         assertArrayEquals(f.candidate.credential.verifierBytes(), row.getBytes(16))
         assertEquals(at, row.getTimestamp(17).toInstant())
         assertEquals(at.plus(Duration.ofHours(192)), row.getTimestamp(18).toInstant())

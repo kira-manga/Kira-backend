@@ -52,6 +52,7 @@ internal class OwnerDeleteAllApplyFixture(
 ) {
     val verification = OwnerDeleteAllVerificationFixture(auth, candidate, targets)
     val proof: CommittedOwnerDeleteAllVerificationV1
+    val credentialRowVersion: Long
     val jdbc = OwnerDeleteAllApplyFixtureJdbc(this)
     val capacity = JdbcComplaintCapacityStore(jdbc, auth.policy.digestBytes())
     val auditIds = CopyOnWriteArrayList<Long>()
@@ -100,6 +101,10 @@ internal class OwnerDeleteAllApplyFixture(
             }
         }
         proof = verification.phases.verify(verification.readback())
+        requireConnectionFree()
+        credentialRowVersion = checkNotNull(
+            auth.observer.queryForObject("SELECT version FROM app_installations WHERE id = ?", Long::class.java, candidate.installation.id),
+        )
     }
 
     fun newStore(
@@ -176,7 +181,7 @@ internal class OwnerDeleteAllApplyFixture(
         assertEquals(
             true,
             auth.observer.queryForObject(
-                "SELECT i.state = 'DELETED' AND i.terminal_at = ? AND c.state = 'DELETED' AND c.credential_version = ? AND c.version = 2 " +
+                "SELECT i.state = 'DELETED' AND i.terminal_at = ? AND c.state = 'DELETED' AND c.credential_version = ? AND c.version = ? " +
                     "AND c.secret_verifier = ? AND c.platform IS NULL AND c.owner_reference IS NULL AND c.last_authenticated_at IS NULL " +
                     "AND c.deleted_at = i.terminal_at AND c.verifier_expires_at = ? AND d.state = 'COMPLETED' AND d.outcome = 'APPLIED' " +
                     "AND d.response_status = 204 AND d.completed_at = c.deleted_at AND d.expires_at = c.verifier_expires_at " +
@@ -188,7 +193,8 @@ internal class OwnerDeleteAllApplyFixture(
                     "JOIN installation_deletion_receipts d ON d.installation_id = i.id " +
                     "JOIN complaint_journal_publications p ON p.event_id = d.publication_ref " +
                     "JOIN complaint_deletion_journal_applied a ON a.object_key = p.object_key AND a.object_version = p.object_version WHERE i.id = ?",
-                Boolean::class.java, Timestamp.from(result.completedAt), candidate.credentialVersion + 1, candidate.credential.verifierBytes(),
+                Boolean::class.java, Timestamp.from(result.completedAt), candidate.credentialVersion + 1, Math.addExact(credentialRowVersion, 1L),
+                candidate.credential.verifierBytes(),
                 Timestamp.from(result.expiresAt), proof.verificationBytes(), proof.verificationHash(), candidate.installation.id,
             ),
         )

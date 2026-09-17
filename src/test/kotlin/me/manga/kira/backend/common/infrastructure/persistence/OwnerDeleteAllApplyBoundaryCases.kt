@@ -68,15 +68,26 @@ internal fun assertOwnerDeleteAllApplyCorruption(f: OwnerDeleteAllApplyFixture) 
             )
         },
     )
+    requireConnectionFree()
+    val (credentialVersion, credentialRowVersion) = checkNotNull(
+        f.auth.observer.queryForObject(
+            "SELECT credential_version, version FROM app_installations WHERE id = ?",
+            { row, _ -> row.getLong(1) to row.getLong(2) }, f.candidate.installation.id,
+        ),
+    )
     corruptApplyRow(
         f,
-        { f.auth.observer.update("UPDATE app_installations SET credential_version = 2 WHERE id = ?", f.candidate.installation.id) },
-        { f.auth.observer.update("UPDATE app_installations SET credential_version = 1 WHERE id = ?", f.candidate.installation.id) },
+        {
+            f.auth.observer.update(
+                "UPDATE app_installations SET credential_version = ? WHERE id = ?", Math.addExact(credentialVersion, 1L), f.candidate.installation.id,
+            )
+        },
+        { f.auth.observer.update("UPDATE app_installations SET credential_version = ? WHERE id = ?", credentialVersion, f.candidate.installation.id) },
     )
     corruptApplyRow(
         f,
         { f.auth.observer.update("UPDATE app_installations SET version = ? WHERE id = ?", Long.MAX_VALUE, f.candidate.installation.id) },
-        { f.auth.observer.update("UPDATE app_installations SET version = 1 WHERE id = ?", f.candidate.installation.id) },
+        { f.auth.observer.update("UPDATE app_installations SET version = ? WHERE id = ?", credentialRowVersion, f.candidate.installation.id) },
     )
     f.apply()
     corruptApplyRow(
