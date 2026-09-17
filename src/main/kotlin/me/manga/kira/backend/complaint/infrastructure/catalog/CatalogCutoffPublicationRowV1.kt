@@ -1,9 +1,11 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationRecordV1
+import me.manga.kira.backend.security.JournalCodecAttemptV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
@@ -23,8 +25,8 @@ internal class CatalogCutoffPublicationRowV1 private constructor(
     val targets: Int,
     val routingKeyId: String,
     val objectKey: String,
-    val bytes: ByteArray,
-    val semanticHash: ByteArray,
+    private val bytes: ByteArray,
+    private val semanticHash: ByteArray,
     val createdAt: Instant,
     val state: String,
     val proof: Proof?,
@@ -56,9 +58,10 @@ internal class CatalogCutoffPublicationRowV1 private constructor(
         kind == other.kind && targets == other.targets && routingKeyId == other.routingKeyId && objectKey == other.objectKey &&
         createdAt == other.createdAt && bytes.contentEquals(other.bytes) && semanticHash.contentEquals(other.semanticHash)
 
-    internal fun immutableArguments(): Array<Any?> = arrayOf(
-        eventId, writer, epoch, kind, targets, routingKeyId, objectKey, bytes, semanticHash, Timestamp.from(createdAt),
-    )
+    internal fun immutableArguments(): Array<Any?> {
+        requireConnectionFree()
+        return arrayOf(eventId, writer, epoch, kind, targets, routingKeyId, objectKey, bytes.copyOf(), semanticHash.copyOf(), Timestamp.from(createdAt))
+    }
 
     override fun toString(): String = "CatalogCutoffPublicationRowV1(detached,redacted,no-authority)"
 
@@ -99,6 +102,18 @@ internal class ReleasedCutoffPublicationV1 private constructor(
     internal val row: CatalogCutoffPublicationRowV1,
     private val event: OwnerDeleteAllJournalEventV1,
 ) {
+    private var publicationAttempt: JournalCodecAttemptV1? = null
+
+    internal fun startAttempt(routing: VersionBoundComplaintJournalRouting, nanoTime: () -> Long, budget: PersistenceTimeBudget): JournalCodecAttemptV1 {
+        requireEvent(routing)
+        check(budget === operation.attempt.budget && publicationAttempt == null)
+        return JournalCodecAttemptV1(routing, nanoTime, budget).also { publicationAttempt = it }
+    }
+
+    internal fun requireAttempt(attempt: JournalCodecAttemptV1) {
+        check(publicationAttempt === attempt)
+    }
+
     internal fun requireEvent(routing: VersionBoundComplaintJournalRouting): OwnerDeleteAllJournalEventV1 {
         requireConnectionFree()
         operation.requireReleased()
@@ -117,6 +132,8 @@ internal class ReleasedCutoffPublicationV1 private constructor(
     }
 
     internal fun belongsTo(attempt: CatalogCutoffAttemptV1): Boolean = operation.attempt === attempt
+
+    internal fun owns(selected: OwnerDeleteAllJournalEventV1, attempt: CatalogCutoffAttemptV1): Boolean = event === selected && belongsTo(attempt)
 
     override fun toString(): String = "ReleasedCutoffPublicationV1(private-row-handoff,no-API-receipt)"
 
@@ -138,6 +155,7 @@ internal class CapturedCutoffVerificationV1 private constructor(
     private val bytes: ByteArray,
 ) {
     val row: CatalogCutoffPublicationRowV1 get() = released.row
+    private val immutable = row.immutableArguments()
     private val hash = MessageDigest.getInstance("SHA-256").digest(bytes)
     private val ciphertextHash = HexFormat.of().parseHex(record.ciphertextSha256)
     private val createdAt = Instant.parse(record.objectCreatedAt)
@@ -151,7 +169,7 @@ internal class CapturedCutoffVerificationV1 private constructor(
 
     internal fun arguments(): Array<Any?> = arrayOf(
         record.objectVersion, ciphertextHash, Timestamp.from(createdAt), Timestamp.from(retainUntil), Timestamp.from(verifiedAt), bytes, hash,
-        *row.immutableArguments(),
+        *immutable,
     )
 
     /** Only comparisons/copies under the lock: no parser, routing HMAC, serialization or provider work. */
@@ -181,7 +199,7 @@ internal class CapturedCutoffVerificationV1 private constructor(
             readback: OwnerDeleteAllJournalReadbackV1,
             attempt: CatalogCutoffAttemptV1,
         ): CapturedCutoffVerificationV1 {
-            check(released.belongsTo(attempt) && readback.event === event)
+            check(released.owns(event, attempt) && readback.event === event)
             val codec = OwnerDeleteAllVerificationCodecV1(attempt.routing)
             val record = codec.observed(readback)
             return CapturedCutoffVerificationV1(released, event, attempt, record, codec.canonicalBytes(record))

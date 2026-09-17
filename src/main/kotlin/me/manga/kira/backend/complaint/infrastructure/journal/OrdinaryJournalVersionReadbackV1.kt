@@ -135,6 +135,7 @@ internal class OrdinaryJournalVersionReadbackV1(
     }
 
     private fun checkAttempt(binding: JournalS3BindingV1) {
+        binding.requirePublicationStart()
         binding.attempt.remainingMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis)
     }
 
