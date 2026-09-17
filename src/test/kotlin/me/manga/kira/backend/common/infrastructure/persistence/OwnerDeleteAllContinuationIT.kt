@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJour
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.ComplaintIngressContext
+import me.manga.kira.backend.security.historyTestRequest
 import me.manga.kira.backend.security.ownerCreateTestIngress
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals

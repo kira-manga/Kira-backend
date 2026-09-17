@@ -29,6 +29,7 @@ import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.CurrentUser
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
+import me.manga.kira.backend.security.historyTestRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
