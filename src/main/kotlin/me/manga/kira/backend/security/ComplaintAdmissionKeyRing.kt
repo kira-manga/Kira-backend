@@ -56,11 +56,19 @@ internal class ComplaintAdmissionForbiddenFamily private constructor(val name: S
 }
 
 /** No binding, keys from another profile, missing-family guess or runtime history supplied by a caller. */
-internal class ComplaintAdmissionKeyConfiguration(
+internal class ComplaintAdmissionKeyConfiguration private constructor(
     current: ComplaintAdmissionKey,
     previous: ComplaintAdmissionKey?,
     forbiddenFamilies: List<ComplaintAdmissionForbiddenFamily>,
+    internal val fixedBinding: Boolean,
 ) {
+    /** Existing dynamic rotation seam; no immutable acquisition binding is asserted by this constructor. */
+    constructor(
+        current: ComplaintAdmissionKey,
+        previous: ComplaintAdmissionKey?,
+        forbiddenFamilies: List<ComplaintAdmissionForbiddenFamily>,
+    ) : this(current, previous, forbiddenFamilies, false)
+
     private val current = current.snapshot()
     private val previous = previous?.snapshot()
     private val forbidden = boundedAdmissionCopy(forbiddenFamilies) { it.snapshot() }
@@ -81,11 +89,22 @@ internal class ComplaintAdmissionKeyConfiguration(
     }
 
     override fun toString(): String = "ComplaintAdmissionKeyConfiguration(redacted)"
+
+    companion object {
+        /** A retained configuration may not drift behind its version descriptors, including by retirement. */
+        internal fun fixed(
+            current: ComplaintAdmissionKey,
+            previous: ComplaintAdmissionKey?,
+            forbiddenFamilies: List<ComplaintAdmissionForbiddenFamily>,
+        ): ComplaintAdmissionKeyConfiguration =
+            ComplaintAdmissionKeyConfiguration(current, previous, forbiddenFamilies, true)
+    }
 }
 
 /** Owner serializes all calls and drains ingress before changing this ring. No durable history claim. */
 internal class ComplaintAdmissionKeyRing(configuration: ComplaintAdmissionKeyConfiguration) {
     private val forbidden = configuration.copiedForbiddenFamilies()
+    private val fixedBinding = configuration.fixedBinding
     private var current: ComplaintAdmissionKey
     private var previous: ComplaintAdmissionKey?
     private var overlapStartedAt: Long?
@@ -102,6 +121,7 @@ internal class ComplaintAdmissionKeyRing(configuration: ComplaintAdmissionKeyCon
     internal fun keys(): List<ComplaintAdmissionKey> = listOfNotNull(current, previous)
 
     internal fun rotate(candidate: ComplaintAdmissionKey, now: Long) {
+        requireDynamicRotation()
         if (previous != null) refuseComplaintAdmission(ComplaintAdmissionFailure.ROTATION_REFUSED)
         val copied = candidate.snapshot()
         require(forbidden.none { it.forbids(copied) }) { INVALID_ADMISSION_CONFIGURATION }
@@ -114,6 +134,7 @@ internal class ComplaintAdmissionKeyRing(configuration: ComplaintAdmissionKeyCon
     }
 
     internal fun retirePrevious(now: Long): String {
+        requireDynamicRotation()
         val old = previous ?: refuseComplaintAdmission(ComplaintAdmissionFailure.ROTATION_REFUSED)
         val started = overlapStartedAt ?: refuseComplaintAdmission(ComplaintAdmissionFailure.ROTATION_REFUSED)
         if (now - started < ComplaintAdmissionPolicy.PREVIOUS_RETENTION_NANOS) refuseComplaintAdmission(ComplaintAdmissionFailure.ROTATION_REFUSED)
@@ -123,6 +144,10 @@ internal class ComplaintAdmissionKeyRing(configuration: ComplaintAdmissionKeyCon
         generation = next
         old.destroy()
         return old.id
+    }
+
+    private fun requireDynamicRotation() {
+        if (fixedBinding) refuseComplaintAdmission(ComplaintAdmissionFailure.ROTATION_REFUSED)
     }
 
     override fun toString(): String = "ComplaintAdmissionKeyRing(redacted)"

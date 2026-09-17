@@ -22,12 +22,13 @@ import javax.crypto.spec.SecretKeySpec
 
 /** Fixed owner-list codec. Explicit retained keys are not deployment/rotation provenance. No bean. */
 internal class ComplaintOwnerCursorCodec(
-    private val activeKeyId: String,
+    val activeKeyId: String,
     verificationKeys: Map<String, ByteArray>,
     forbiddenKeys: List<ByteArray>,
     private val clock: Clock,
 ) {
     private val keys: Map<String, ByteArray>
+    val protocol: ComplaintOwnerCursorProtocol get() = ComplaintOwnerCursorProtocol
 
     init {
         require(verificationKeys.size in 1..8 && forbiddenKeys.size in 1..64) { CONFIGURATION }
@@ -42,39 +43,46 @@ internal class ComplaintOwnerCursorCodec(
         keys = copied.toMap()
     }
 
+    /** Only the actual immutable verifier map is projected; never a second caller-supplied key list. */
+    internal fun verificationKeyIds(): Set<String> = keys.keys.toSet()
+
     fun encode(actor: ScopedInstallationId, limit: Int, position: ComplaintOwnerHistoryPosition): String {
         requireConnectionFree()
-        require(limit in 1..50) { CONFIGURATION }
+        require(limit in 1..protocol.MAX_PAGE_LIMIT) { CONFIGURATION }
         val output = ByteArrayOutputStream(256)
         DataOutputStream(output).use { data ->
-            field(data, ascii(ROUTE))
-            field(data, ascii(DIRECTION))
+            field(data, ascii(protocol.ROUTE))
+            field(data, ascii(protocol.DIRECTION))
             field(data, selection(actor, limit))
             data.writeLong(position.createdAt.epochSecond)
             data.writeInt(position.createdAt.nano)
             data.writeLong(position.id.mostSignificantBits)
             data.writeLong(position.id.leastSignificantBits)
-            data.writeLong(clock.instant().plusSeconds(TTL_SECONDS).epochSecond)
+            data.writeLong(clock.instant().plusSeconds(protocol.TTL_SECONDS).epochSecond)
             field(data, ascii(activeKeyId))
         }
         val payload = output.toByteArray()
-        return "v1.${base64(payload)}.${base64(mac(checkNotNull(keys[activeKeyId]), frame(actor, payload)))}"
+        return "${protocol.ENVELOPE_VERSION}.${base64(payload)}.${base64(mac(checkNotNull(keys[activeKeyId]), frame(actor, payload)))}"
     }
 
     @Suppress("SwallowedException") // Input-bearing decoder/provider diagnostics must not escape.
     fun decode(value: String, actor: ScopedInstallationId, limit: Int): ComplaintOwnerHistoryPosition {
         requireConnectionFree()
         return try {
-            if (limit !in 1..50 || value.length > 2048 || !CURSOR.matches(value)) invalid()
+            if (limit !in 1..protocol.MAX_PAGE_LIMIT || value.length > protocol.MAX_CURSOR_CHARACTERS || !CURSOR.matches(value)) invalid()
             val parts = value.split('.')
-            val payload = decodePart(parts[1], 512)
-            val signature = decodePart(parts[2], 32)
-            if (signature.size != 32) invalid()
+            val payload = decodePart(parts[1], protocol.MAX_PAYLOAD_BYTES)
+            val signature = decodePart(parts[2], protocol.SIGNATURE_BYTES)
+            if (signature.size != protocol.SIGNATURE_BYTES) invalid()
             val decoded = payload(payload, actor, limit)
             val key = keys[decoded.keyId] ?: invalid()
             if (!MessageDigest.isEqual(signature, mac(key, frame(actor, payload)))) invalid()
             val now = clock.instant()
-            if (!decoded.expiry.isAfter(now) || decoded.expiry.isAfter(now.plusSeconds(TTL_SECONDS + 60))) invalid()
+            if (!decoded.expiry.isAfter(now) ||
+                decoded.expiry.isAfter(now.plusSeconds(protocol.TTL_SECONDS + protocol.FUTURE_SKEW_SECONDS))
+            ) {
+                invalid()
+            }
             decoded.position
         } catch (ex: IOException) {
             invalid()
@@ -90,7 +98,7 @@ internal class ComplaintOwnerCursorCodec(
     }
 
     private fun payload(bytes: ByteArray, actor: ScopedInstallationId, limit: Int): Payload = DataInputStream(ByteArrayInputStream(bytes)).use { data ->
-        if (!MessageDigest.isEqual(field(data, 64), ascii(ROUTE)) || !MessageDigest.isEqual(field(data, 16), ascii(DIRECTION))) invalid()
+        if (!MessageDigest.isEqual(field(data, 64), ascii(protocol.ROUTE)) || !MessageDigest.isEqual(field(data, 16), ascii(protocol.DIRECTION))) invalid()
         if (!MessageDigest.isEqual(field(data, 32), selection(actor, limit))) invalid()
         val seconds = data.readLong()
         val nanos = data.readInt()
@@ -103,13 +111,13 @@ internal class ComplaintOwnerCursorCodec(
     }
 
     private fun selection(actor: ScopedInstallationId, limit: Int): ByteArray = MessageDigest.getInstance("SHA-256")
-        .digest(ascii("owner-list-v1:${actor.scope.id}:$limit"))
+        .digest(ascii("${protocol.SELECTION_DOMAIN}:${actor.scope.id}:$limit"))
 
     private fun frame(actor: ScopedInstallationId, payload: ByteArray): ByteArray {
         val output = ByteArrayOutputStream(640)
         DataOutputStream(output).use { data ->
-            field(data, ascii("kira-complaint-owner-cursor-v1"))
-            field(data, ascii("INSTALLATION"))
+            field(data, ascii(protocol.MAC_DOMAIN))
+            field(data, ascii(protocol.ACTOR_KIND))
             field(data, ascii(actor.id.toString()))
             field(data, payload)
         }
@@ -152,10 +160,23 @@ internal class ComplaintOwnerCursorCodec(
 
     private companion object {
         const val CONFIGURATION = "Invalid owner cursor configuration."
-        const val TTL_SECONDS = 900L
-        const val ROUTE = "GET:/api/v1/complaints"
-        const val DIRECTION = "DESC"
         val KEY_ID = Regex("[A-Za-z0-9._-]{1,64}")
-        val CURSOR = Regex("v1\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")
+        val CURSOR = Regex("${ComplaintOwnerCursorProtocol.ENVELOPE_VERSION}\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+")
     }
+}
+
+/** Existing codec constants, not a new serialized configuration protocol, digest or activation proof. */
+internal object ComplaintOwnerCursorProtocol {
+    const val ENVELOPE_VERSION = "v1"
+    const val SELECTION_DOMAIN = "owner-list-v1"
+    const val MAC_DOMAIN = "kira-complaint-owner-cursor-v1"
+    const val ACTOR_KIND = "INSTALLATION"
+    const val ROUTE = "GET:/api/v1/complaints"
+    const val DIRECTION = "DESC"
+    const val TTL_SECONDS = 900L
+    const val FUTURE_SKEW_SECONDS = 60L
+    const val MAX_PAGE_LIMIT = 50
+    const val MAX_CURSOR_CHARACTERS = 2048
+    const val MAX_PAYLOAD_BYTES = 512
+    const val SIGNATURE_BYTES = 32
 }
