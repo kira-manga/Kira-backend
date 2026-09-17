@@ -32,8 +32,8 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     fun `fresh UTF8 PostgreSQL 17 6 installs all objects with closed seeds and no trusted head`() = database.schema { schema ->
         assertEquals(listOf("170006"), schema.strings("SHOW server_version_num"))
         assertEquals(listOf("UTF8"), schema.strings("SHOW server_encoding"))
-        assertEquals(15, schema.flyway().migrate().migrationsExecuted)
-        assertEquals((1..15).map(Int::toString), schema.history())
+        assertEquals(17, schema.flyway().migrate().migrationsExecuted)
+        assertEquals((1..17).map(Int::toString), schema.history())
         schema.connection().use { connection ->
             connection.assertClosedComplaintSeeds()
             val actual = connection.strings(
@@ -47,7 +47,7 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     }
 
     @ParameterizedTest
-    @ValueSource(ints = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13])
+    @ValueSource(ints = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
     fun `every prior target upgrades without dropping old values and matches a fresh schema`(version: Int) = database.schema { upgraded ->
         upgraded.flyway(version).migrate()
         upgraded.exec(
@@ -60,8 +60,8 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
         )
         val before = upgraded.connection().use { it.tableSnapshots() }
         val sequences = upgraded.connection().use { it.sequenceValues() }
-        assertEquals(15 - version, upgraded.flyway().migrate().migrationsExecuted)
-        assertEquals((1..15).map(Int::toString), upgraded.history())
+        assertEquals(17 - version, upgraded.flyway().migrate().migrationsExecuted)
+        assertEquals((1..17).map(Int::toString), upgraded.history())
         upgraded.connection().use { it.assertPreserved(before) }
         upgraded.connection().use { after ->
             for ((name, value) in sequences) assertEquals(value, after.sequenceValues()[name], "Sequence $name")
