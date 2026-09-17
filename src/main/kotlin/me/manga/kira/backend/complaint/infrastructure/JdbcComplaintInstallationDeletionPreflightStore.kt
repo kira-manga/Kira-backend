@@ -91,15 +91,15 @@ internal class ComplaintInstallationDeletionPreflightOperation private construct
 
     /** No retained phase, connection, lock, mutable success setter or raw secret escapes in a continuation. */
     private abstract class ReleasedTuple(
-        private val candidate: InstallationDeletionCandidate,
+        candidate: InstallationDeletionCandidate,
         final override val fingerprint: ComplaintDeleteAllFingerprint,
         private val issuer: Any,
         private val ownerIdentity: Any,
     ) : InstallationDeletionPreflightTuple {
         private val caller = Thread.currentThread()
-        final override val installation get() = candidate.installation
-        final override val submittedCredentialVersion get() = candidate.credentialVersion
-        final override val operationKey get() = candidate.operationKey
+        final override val installation = candidate.installation
+        final override val submittedCredentialVersion = candidate.credentialVersion
+        final override val operationKey = candidate.operationKey
 
         fun requireOwned(selectedIssuer: Any, selectedOwner: Any) {
             if (issuer !== selectedIssuer || ownerIdentity !== selectedOwner || caller !== Thread.currentThread()) {

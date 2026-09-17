@@ -20,7 +20,11 @@ internal sealed interface InstallationDeletionPreflightResult {
         val publicationReference: String
     }
 
-    /** Exact immutable receipt replay, not evidence that this read performed erasure or provider I/O. */
+    /**
+     * Exact stored-204-receipt comparison only, NOT independent HTTP204/apply authority. The actual
+     * service still needs trusted writer/activation provenance and the same-J canonical event binding;
+     * this slice neither parses that event nor authenticates provider evidence from stored labels.
+     */
     interface Completed : InstallationDeletionPreflightResult, InstallationDeletionPreflightTuple {
         val publicationReference: String
     }

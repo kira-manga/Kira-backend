@@ -105,7 +105,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
             }
         }
         // PURGED must not retain a credential or receipt; a terminal label cannot hide this residue.
-        if (run is ComplaintInstallationRunObservation.Present && run.state === ComplaintInstallationRunState.PURGED) {
+        if (run is ComplaintInstallationRunObservation.Present && run.state === ComplaintInstallationRunState.PURGED && identity?.scope == run.scope) {
             check(credential == null && receipt == null)
         }
     }
@@ -191,16 +191,16 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
             )
         }
 
-        private fun requirePublication(row: ResultSet, state: ReceiptState, scope: ComplaintDataScope, reference: String) {
+        private fun requirePublication(row: ResultSet, state: ReceiptState, expectedScope: ComplaintDataScope, reference: String) {
             check(row.getString("publication_id") == reference && requiredBoolean(row, "publication_valid"))
-            check(scope(row, "publication_scope") == scope)
+            check(scope(row, "publication_scope") == expectedScope)
             if (state === ReceiptState.AUTHORIZED_DELETE) {
                 check(row.getString("publication_state") in setOf("PREPARED", "VERIFIED"))
                 check(row.getString("applied_event_id") == null)
             } else {
                 check(row.getString("publication_state") == "APPLIED")
                 check(row.getString("external_event_id") == reference && row.getString("applied_event_id") == reference)
-                check(requiredBoolean(row, "applied_valid") && scope(row, "applied_scope") == scope)
+                check(requiredBoolean(row, "applied_valid") && scope(row, "applied_scope") == expectedScope)
                 check(row.getString("applied_object_key") == row.getString("publication_object_key"))
                 check(row.getObject("applied_writer", UUID::class.java) == row.getObject("publication_writer", UUID::class.java))
                 check(requiredLong(row, "external_epoch") == requiredLong(row, "publication_epoch"))
