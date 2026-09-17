@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainProtoco
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogLocationV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundlePolicy
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.OfflineTrustBundleVerifier
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
@@ -108,9 +109,9 @@ internal class S3CatalogReadbackAdapter private constructor(
     override fun toString(): String = "S3CatalogReadbackAdapter(read-only,redacted,no-admission-authority)"
 
     /** Two concrete location owners retained by the refresh lane BEFORE constructing either client. */
-    internal class Construction : AutoCloseable {
-        private val primary = S3CatalogReadbackClient.Construction()
-        private val replica = S3CatalogReadbackClient.Construction()
+    internal class Construction(attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null) : AutoCloseable {
+        private val primary = S3CatalogReadbackClient.Construction(attempt)
+        private val replica = S3CatalogReadbackClient.Construction(attempt)
         private var opened = false
         private var closed = false
         private var closeFailure: Throwable? = null
