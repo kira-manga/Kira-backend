@@ -266,6 +266,11 @@ internal class OwnerDeleteAllAuthorizationFixture(val base: OrdinaryComplaintIns
         "receipts" to rows("installation_deletion_receipts", "installation_id = ANY (?::uuid[])", uuidArray(base.ids)),
         "publications" to rows("complaint_journal_publications", "event_id = ANY (?::text[])", textArray(events)),
         "reservations" to rows("complaint_recovery_capacity_reservations", "event_id = ANY (?::text[])", textArray(events)),
+        "applied" to rows("complaint_deletion_journal_applied", "event_id = ANY (?::text[])", textArray(events)),
+        "retirements" to rows(
+            "complaint_deletion_journal_retirements", "object_key IN (SELECT object_key FROM complaint_deletion_journal_applied WHERE event_id = ANY (?::text[]))",
+            textArray(events),
+        ),
         "audits" to rows("audit_log", "id = ANY (?::bigint[])", base.auditIds.joinToString(",", "{", "}")),
         "counters" to rows("complaint_capacity_counters", "true"),
         "control" to listOf(controlRow()),

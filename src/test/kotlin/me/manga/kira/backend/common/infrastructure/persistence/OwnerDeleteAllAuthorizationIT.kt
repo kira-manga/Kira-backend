@@ -7,12 +7,15 @@ import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightResult
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllCoordinator
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllPreparation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllPhaseExecutor
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.ComplaintAdmissionRejected
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
+import me.manga.kira.backend.security.historyTestRequest
+import me.manga.kira.backend.security.ownerCreateTestIngress
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -45,6 +48,14 @@ class OwnerDeleteAllAuthorizationIT {
     fun closeDatabase() {
         if (database.isInitialized()) database.value.close()
     }
+
+    @Test
+    fun `withheld real COMMIT acknowledgement releases no work but a fresh exact authenticated reload recovers the committed bytes`() =
+        assertOwnerDeleteAllLostCommitResponse(database.value)
+
+    @Test
+    fun `every newly charged row has a pinned full-lifecycle heap and index envelope and reserved vectors are not recursively charged`() =
+        withFixture(::assertOwnerDeleteAllCapacityEnvelopes)
 
     @Test
     fun `empty and hundred-target authorization commits one immutable paid snapshot and releases work only after actual cleanup`() {
@@ -272,6 +283,7 @@ class OwnerDeleteAllAuthorizationIT {
         assertArrayEquals(work.canonicalBytes(), reloaded.canonicalBytes())
         assertEquals(beforeReload, f.state())
         assertEquals(0, f.dataKeys.calls.get())
+        assertSemanticBypass(f, first, second)
     }
 
     @Test
@@ -474,6 +486,69 @@ class OwnerDeleteAllAuthorizationIT {
             Boolean::class.java, candidate.credentialVersion, candidate.installation.id,
         )
         return id == "ACTIVE" && credential == true
+    }
+
+    private fun assertSemanticBypass(f: OwnerDeleteAllAuthorizationFixture, authorized: InstallationDeletionCandidate, active: InstallationDeletionCandidate) {
+        val ingress = ownerCreateTestIngress() // Delete-all semantic policy is genuinely Disabled, not a pre-consumed synthetic bucket.
+        val coordinator = ComplaintOwnerDeleteAllCoordinator(ingress, f.preflights, f.phases)
+        fun attempt(candidate: InstallationDeletionCandidate) = ingress.withIngress(historyTestRequest()) { context -> coordinator.prepare(context, candidate) }
+        var before = f.state()
+        assertInstanceOf(OwnerDeleteAllPreparation.Durable::class.java, attempt(authorized))
+        assertEquals(before, f.state())
+        val phases = f.observations.size
+        assertThrows<ComplaintAdmissionRejected> { attempt(active) }
+        assertEquals(phases, f.observations.size)
+        assertEquals(before, f.state())
+        syntheticCompletedComparison(f, authorized)
+        before = f.state()
+        val completedPhases = f.observations.size
+        OwnedCallerTestScope().use { callers ->
+            val held = callers.gate()
+            val busy = callers.launch {
+                val permits = List(4) { checkNotNull(f.admission.tryPrivacyDeletion()) }
+                try { held.hold() } finally { permits.forEach { assertTrue(it.releaseAfterQuiescence()) } }
+                true
+            }
+            held.awaitEntered()
+            try {
+                f.transaction { selected ->
+                    selected.execute("SELECT pg_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))")
+                    assertInstanceOf(OwnerDeleteAllPreparation.Replay::class.java, attempt(authorized))
+                }
+            } finally {
+                held.release()
+            }
+            assertTrue(busy.value())
+        }
+        assertEquals(completedPhases, f.observations.size) // No deletion slot/fence/SQL, despite all slots and the exclusive fence being held.
+        assertEquals(before, f.state())
+        f.assertReleased()
+    }
+
+    /** Structural COMPLETED comparison fixture only; not an apply producer, converted accounting, provider proof or erasure claim. */
+    private fun syntheticCompletedComparison(f: OwnerDeleteAllAuthorizationFixture, candidate: InstallationDeletionCandidate) = f.transaction { selected ->
+        selected.update(
+            "UPDATE complaint_journal_publications SET state = 'APPLIED', applied_at = now() WHERE event_id = " +
+                "(SELECT publication_ref FROM installation_deletion_receipts WHERE installation_id = ?)", candidate.installation.id,
+        )
+        selected.update(
+            "INSERT INTO complaint_deletion_journal_applied (object_key, object_version, event_id, ciphertext_hash, writer_generation, journal_epoch, " +
+                "event_kind, target_count, data_scope_id, test_only, applied_at) SELECT object_key, object_version, event_id, ciphertext_hash, writer_generation, " +
+                "journal_epoch, event_kind, target_count, data_scope_id, test_only, applied_at FROM complaint_journal_publications WHERE event_id = " +
+                "(SELECT publication_ref FROM installation_deletion_receipts WHERE installation_id = ?)", candidate.installation.id,
+        )
+        selected.update(
+            "UPDATE installation_deletion_receipts d SET state = 'COMPLETED', outcome = 'APPLIED', response_status = 204, external_event_id = p.event_id, " +
+                "external_epoch = p.journal_epoch, external_object_version = p.object_version, external_ciphertext_hash = p.ciphertext_hash, " +
+                "completed_at = now(), expires_at = now() + interval '192 hours' FROM complaint_journal_publications p " +
+                "WHERE d.installation_id = ? AND p.event_id = d.publication_ref", candidate.installation.id,
+        )
+        selected.update(
+            "UPDATE app_installations SET state = 'DELETED', credential_version = credential_version + 1, version = version + 1, platform = NULL, " +
+                "owner_reference = NULL, last_authenticated_at = NULL, deleted_at = now(), verifier_expires_at = now() + interval '192 hours' WHERE id = ?",
+            candidate.installation.id,
+        )
+        selected.update("UPDATE complaint_installation_ids SET state = 'DELETED', terminal_at = now() WHERE id = ?", candidate.installation.id)
     }
 
     private fun insertInProgress(f: OwnerDeleteAllAuthorizationFixture, candidate: InstallationDeletionCandidate, key: UUID) {
