@@ -162,7 +162,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
         ) {
             actor
         } else {
-            actor + arrayOf(selected.installation.scope.id, selected.targetId, selected.fingerprintBytes(), selected.key)
+            actor.plus(elements = arrayOf<Any?>(selected.installation.scope.id, selected.targetId, selected.fingerprintBytes(), selected.key))
         }
         return jdbc.query(if (selected == null) AUTH_SQL else OBSERVE_SQL, { row, _ ->
             val platform = row.getString("platform")?.let(ComplaintPlatform::valueOf)
@@ -308,10 +308,13 @@ internal class ComplaintOwnerCreateOperation private constructor(
         check(checkNotNull(allocation).completedFor(this, receipt))
         phase.ownerOperation.checkCreateWrite(this, jdbc)
         stage = Stage.COMPLETING
-        val arguments = when (receipt) {
+        val outcomeArguments = when (receipt) {
             is ComplaintOwnerReceipt.Applied -> arrayOf<Any?>(receipt.id, receipt.version, receipt.location, receipt.etag)
             is ComplaintOwnerReceipt.Rejected -> arrayOf<Any?>(receipt.code.name)
-        } + arrayOf(selected.installation.id, selected.key, selected.installation.scope.id, selected.targetId, selected.fingerprintBytes())
+        }
+        val arguments = outcomeArguments.plus(
+            elements = arrayOf<Any?>(selected.installation.id, selected.key, selected.installation.scope.id, selected.targetId, selected.fingerprintBytes()),
+        )
         check(jdbc.update(if (receipt is ComplaintOwnerReceipt.Applied) COMPLETE_APPLIED else COMPLETE_REJECTED, *arguments) == 1)
     }
 
