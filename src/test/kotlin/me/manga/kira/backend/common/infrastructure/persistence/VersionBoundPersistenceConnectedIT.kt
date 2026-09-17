@@ -212,11 +212,14 @@ class VersionBoundPersistenceConnectedIT {
         withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseBoundaryCases(it).sealedResultsCommitAndReleaseFailures() } }
 
     /** A test-only contention pair, not a supported multi-instance deployment or another database lifecycle. */
-    private fun withPairedFixture(test: (VersionBoundPersistenceConnectedFixture, VersionBoundPersistenceConnectedFixture) -> Unit) {
-        val first = VersionBoundPersistenceConnectedFixture(database.value)
+    private fun withPairedFixture(
+        epochRotation: Boolean = false,
+        test: (VersionBoundPersistenceConnectedFixture, VersionBoundPersistenceConnectedFixture) -> Unit,
+    ) {
+        val first = VersionBoundPersistenceConnectedFixture(database.value, epochRotation = epochRotation)
         var second: VersionBoundPersistenceConnectedFixture? = null
         AutoCloseable { second?.let(first::closeWith) ?: first.close() }.use {
-            val peer = VersionBoundPersistenceConnectedFixture(database.value)
+            val peer = VersionBoundPersistenceConnectedFixture(database.value, epochRotation = epochRotation)
             second = peer // Cleanup owns both roots before either can bind or start.
             first.bind()
             peer.bind()
@@ -227,8 +230,9 @@ class VersionBoundPersistenceConnectedIT {
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
         profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,
+        epochRotation: Boolean = false,
         test: (VersionBoundPersistenceConnectedFixture) -> Unit,
-    ) = VersionBoundPersistenceConnectedFixture(database.value, client).use { fixture ->
+    ) = VersionBoundPersistenceConnectedFixture(database.value, client, epochRotation).use { fixture ->
         fixture.bind(profile)
         test(fixture)
     }
