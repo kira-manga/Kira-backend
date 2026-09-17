@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
