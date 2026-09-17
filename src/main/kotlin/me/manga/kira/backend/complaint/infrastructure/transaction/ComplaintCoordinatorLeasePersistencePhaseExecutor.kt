@@ -87,13 +87,13 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
     @Suppress("TooGenericExceptionCaught")
     private fun persist(attempt: CatalogCoordinatorLeaseCustodyV1.Attempt): CatalogCoordinatorLeaseOperation {
         attempt.requireRunning(jdbc)
+        val store = JdbcCatalogCoordinatorLeaseStore(jdbc)
         val phase = when (attempt.path) {
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> ownership.enterComplaintCoordinatorLeaseAcquire()
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> ownership.enterComplaintCoordinatorLeaseRenew()
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH -> ownership.enterComplaintCoordinatorLeaseRelinquish()
             else -> error("Unsupported coordinator lease phase.")
         }
-        val store = JdbcCatalogCoordinatorLeaseStore(jdbc)
         var completed: CatalogCoordinatorLeaseOperation? = null
         try {
             phase.begin() // Limits and original holder only: these three named paths deliberately have NO epoch fence.

@@ -76,6 +76,7 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
     }
 
     internal fun returnFailure(problem: Throwable): PersistencePhaseException {
+        attempt.abort()
         stage = Stage.FAILED
         phase.recordFailure(problem)
         return phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
@@ -180,7 +181,10 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             attempt: CatalogCoordinatorLeaseCustodyV1.Attempt,
             expected: PersistencePhasePath,
         ): CatalogCoordinatorLeaseOperation {
-            val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            val phase = PersistencePhaseOwnership.current() ?: run {
+                attempt.abort()
+                throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            }
             try {
                 phase.coordinatorLease.requireOperation(jdbc, expected)
                 check(attempt.path === expected)

@@ -172,6 +172,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         }
 
         /** Only local attempt bookkeeping; the original PersistencePhaseContext still owns all JDBC/quarantine cleanup. */
+        @Suppress("TooGenericExceptionCaught")
         internal fun finish() {
             try {
                 if (!successful || failed) {
@@ -179,7 +180,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
                 } else if (path !== PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH) {
                     (acquired ?: checkNotNull(prior)).requireLocalWindow() // Consume completion/response delay too.
                 }
-            } catch (problem: PersistencePhaseException) {
+            } catch (problem: Throwable) {
                 abort()
                 throw problem
             } finally {
@@ -214,31 +215,41 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
         return current
     }
 
+    @Suppress("TooGenericExceptionCaught")
     internal fun requireSameWindow(expected: Window) {
         try {
             if (window.get() !== expected || !custody.isActive(this)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             if (Thread.currentThread().isInterrupted) refuse(PersistencePhaseFailureCode.INTERRUPTED)
             requireLeaseWindow(clock.nanoTime() - expected.startedAtNanos)
-        } catch (problem: PersistencePhaseException) {
+        } catch (problem: Throwable) {
             close()
             throw problem
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
     internal fun renewWindow(operation: CatalogCoordinatorLeaseOperation) {
-        val (expected, startedAtNanos) = operation.requireReleasedRenewal(this)
-        requireSameWindow(expected)
-        requireLeaseWindow(clock.nanoTime() - startedAtNanos)
-        if (!window.compareAndSet(expected, Window(startedAtNanos))) {
+        try {
+            val (expected, startedAtNanos) = operation.requireReleasedRenewal(this)
+            requireSameWindow(expected)
+            requireLeaseWindow(clock.nanoTime() - startedAtNanos)
+            if (!window.compareAndSet(expected, Window(startedAtNanos))) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        } catch (problem: Throwable) {
             close()
-            refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            throw problem
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
     internal fun retireIfExpired() {
-        val current = window.get() ?: return
-        val elapsed = clock.nanoTime() - current.startedAtNanos
-        if (elapsed !in 0 until COORDINATOR_LEASE_NANOS) close()
+        try {
+            val current = window.get() ?: return
+            val elapsed = clock.nanoTime() - current.startedAtNanos
+            if (elapsed !in 0 until COORDINATOR_LEASE_NANOS) close()
+        } catch (problem: Throwable) {
+            close()
+            throw problem
+        }
     }
 
     internal fun claimRelinquishment() {
