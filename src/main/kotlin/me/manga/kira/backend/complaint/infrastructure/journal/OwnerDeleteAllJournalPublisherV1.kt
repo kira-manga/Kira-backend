@@ -8,9 +8,11 @@ import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalS3Bindi
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalS3CandidateV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.S3OrdinaryJournalClientV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalS3UrlConnectionClient
+import me.manga.kira.backend.security.JournalCodecAttemptV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapter
+import me.manga.kira.backend.security.aws.journalKmsUrlConnectionClient
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
@@ -20,7 +22,8 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Dormant ordinary LIVE publisher. Genuine released Prepared custody is necessary, not full-D/current
  * runtime authority. There is no bean, route, apply transaction or activation switch here. The actual
- * global J lane, stronger restore-horizon authority and hard-native deadline qualification are missing.
+ * shared in-process J owner is supplied by the connected factory, not these standalone lower APIs.
+ * Stronger restore-horizon/current authority and hard-native deadline qualification remain missing.
  * A failed attempt retires this local owner conservatively; close it before an independently scheduled
  * reload/new attempt. It never releases a local publication slot while native/KMS cleanup is uncertain.
  */
@@ -39,14 +42,18 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
     private val closeFailure = AtomicReference<Throwable?>()
     private val readback = OrdinaryJournalVersionReadbackV1(routing, codec, s3, retention)
 
-    fun publish(work: CommittedOwnerDeleteAllWork.Prepared): OwnerDeleteAllJournalReadbackV1 =
+    fun publish(work: CommittedOwnerDeleteAllWork.Prepared): OwnerDeleteAllJournalReadbackV1 = publish(work, null)
+
+    internal fun publish(work: CommittedOwnerDeleteAllWork.Prepared, suppliedAttempt: JournalCodecAttemptV1?): OwnerDeleteAllJournalReadbackV1 =
         journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
             requireConnectionFree()
             // Private SQL issuer and actual connection/lock release are checked before ANY S3 probe or key operation.
             requireJournalPublication(store.preparedEvent(work).belongsTo(routing))
             synchronized(lifecycle) { requireJournalPublication(!closed.get() && !retired.get() && busy.compareAndSet(false, true)) }
             val result = runCatching {
-                val attempt = codec.startAttempt() // Exactly once, shared by every LIST/seal/PUT/GET/open/cleanup check.
+                // The connected owner starts before SDK construction; standalone callers keep the old lower API.
+                val attempt = suppliedAttempt ?: codec.startAttempt()
+                attempt.requireOwner(routing)
                 val binding = JournalS3BindingV1.released(store, work, routing, attempt)
                 val observed = reconcile(binding)
                 checkAttempt(binding)
@@ -110,14 +117,70 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
 
     override fun toString(): String = "OwnerDeleteAllJournalPublisherV1(dormant,released-custody-only,redacted,no-runtime-authority)"
 
+    /** Fixed concrete partial-construction custody; retained by the shared reservation before open. */
+    internal class Construction : AutoCloseable {
+        private val keys = AwsJournalDataKeyAdapter.Construction()
+        private val s3 = S3OrdinaryJournalClientV1.Construction()
+        private var owner: OwnerDeleteAllJournalPublisherV1? = null
+        private var opened = false
+        private var closed = false
+        private var closeFailure: Throwable? = null
+
+        internal fun open(
+            store: JdbcComplaintOwnerDeleteAllStore,
+            routing: VersionBoundComplaintJournalRouting,
+            credentials: AwsSessionCredentials,
+            s3HttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            kmsHttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            clock: Clock,
+            nanoTime: () -> Long,
+            attempt: JournalCodecAttemptV1?,
+        ): OwnerDeleteAllJournalPublisherV1 = journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+            requireConnectionFree()
+            requireJournalPublication(!opened && !closed)
+            opened = true
+            val result = runCatching {
+                attempt?.requireOwner(routing)
+                attempt?.remainingMillis(1)
+                val dataKeys = keys.open(routing.journalConfiguration, credentials, kmsHttpFactory, nanoTime, attempt)
+                requireJournalPublication(dataKeys.journal === routing.journalConfiguration)
+                attempt?.remainingMillis(1)
+                val client = s3.open(routing, credentials, s3HttpFactory, nanoTime, attempt)
+                attempt?.remainingMillis(1)
+                val codec = OwnerDeleteAllJournalCodecV1(routing, dataKeys, nanoTime = nanoTime)
+                OwnerDeleteAllJournalPublisherV1(store, routing, codec, dataKeys, client, OrdinaryJournalRetentionV1(routing, clock))
+                    .also { owner = it }
+            }
+            if (result.isFailure) return@journalPublicationCall withJournalPublicationCleanup({ result.getOrThrow() }, ::close)
+            result.getOrThrow()
+        }
+
+        @Synchronized
+        override fun close() {
+            closed = true
+            val failure = runCatching {
+                val publisher = owner
+                if (publisher != null) {
+                    publisher.close()
+                } else {
+                    withJournalPublicationCleanup({ journalPublicationClose { s3.close() } }) { journalPublicationClose { keys.close() } }
+                }
+            }.exceptionOrNull()
+            if (failure != null && replaceJournalPublicationFailure(closeFailure, failure)) closeFailure = failure
+            closeFailure?.let { throw it }
+        }
+
+        override fun toString(): String = "OwnerDeleteAllJournalConstructionV1(concrete,redacted)"
+    }
+
     companion object {
         fun open(
             store: JdbcComplaintOwnerDeleteAllStore,
             routing: VersionBoundComplaintJournalRouting,
             ordinaryCredentials: AwsSessionCredentials,
-        ): OwnerDeleteAllJournalPublisherV1 = create(store, routing, ordinaryCredentials, Clock.systemUTC(), System::nanoTime, ::journalS3UrlConnectionClient) {
-            AwsJournalDataKeyAdapter.open(routing.journalConfiguration, ordinaryCredentials)
-        }
+        ): OwnerDeleteAllJournalPublisherV1 = Construction().open(
+            store, routing, ordinaryCredentials, ::journalS3UrlConnectionClient, ::journalKmsUrlConnectionClient, Clock.systemUTC(), System::nanoTime, null,
+        )
 
         /** Only raw HTTP SPI substitution. The same genuine SQL handoff, S3 SDK, codec and KMS SDK are retained. */
         fun withHttpFixture(
@@ -128,37 +191,20 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
             kmsHttpFactory: () -> SdkHttpClient,
             clock: Clock,
             nanoTime: () -> Long,
-        ): OwnerDeleteAllJournalPublisherV1 = create(store, routing, ordinaryCredentials, clock, nanoTime, { s3HttpFactory() }) {
-            AwsJournalDataKeyAdapter.withHttpFixture(routing.journalConfiguration, ordinaryCredentials, kmsHttpFactory, nanoTime)
-        }
+        ): OwnerDeleteAllJournalPublisherV1 = Construction().open(
+            store, routing, ordinaryCredentials, { s3HttpFactory() }, { kmsHttpFactory() }, clock, nanoTime, null,
+        )
 
-        private fun create(
+        internal fun openOwned(
             store: JdbcComplaintOwnerDeleteAllStore,
             routing: VersionBoundComplaintJournalRouting,
             credentials: AwsSessionCredentials,
+            s3HttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            kmsHttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
             clock: Clock,
             nanoTime: () -> Long,
-            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
-            dataKeyFactory: () -> AwsJournalDataKeyAdapter,
-        ): OwnerDeleteAllJournalPublisherV1 = journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
-            requireConnectionFree()
-            val keys = dataKeyFactory()
-            val client = runCatching {
-                requireJournalPublication(keys.journal === routing.journalConfiguration)
-                S3OrdinaryJournalClientV1.create(routing, credentials, httpFactory, nanoTime)
-            }
-            client.exceptionOrNull()?.let { failure -> return@journalPublicationCall withJournalPublicationCleanup({ throw failure }, keys::close) }
-            val s3 = client.getOrThrow()
-            val publisher = runCatching {
-                val codec = OwnerDeleteAllJournalCodecV1(routing, keys, nanoTime = nanoTime)
-                OwnerDeleteAllJournalPublisherV1(store, routing, codec, keys, s3, OrdinaryJournalRetentionV1(routing, clock))
-            }
-            publisher.exceptionOrNull()?.let { failure ->
-                return@journalPublicationCall withJournalPublicationCleanup({ throw failure }) {
-                    withJournalPublicationCleanup(s3::close, keys::close)
-                }
-            }
-            publisher.getOrThrow()
-        }
+            custody: Construction,
+            attempt: JournalCodecAttemptV1,
+        ): OwnerDeleteAllJournalPublisherV1 = custody.open(store, routing, credentials, s3HttpFactory, kmsHttpFactory, clock, nanoTime, attempt)
     }
 }

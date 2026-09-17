@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.journalPublication
 import me.manga.kira.backend.complaint.infrastructure.journal.replaceJournalPublicationFailure
 import me.manga.kira.backend.complaint.infrastructure.journal.requireJournalPublication
 import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublicationCleanup
+import me.manga.kira.backend.security.JournalCodecAttemptV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
@@ -227,25 +228,51 @@ internal class S3OrdinaryJournalClientV1 private constructor(
 
     override fun toString(): String = "S3OrdinaryJournalClientV1(dormant,J-bound,redacted)"
 
-    companion object {
-        fun create(
+    /** Fixed construction custody for the original returned raw transport, SDK and S3 owner. */
+    internal class Construction : AutoCloseable {
+        private var stage = ConstructionStage.NEW
+        private var opened = false
+        private var closed = false
+        private var raw: SdkHttpClient? = null
+        private var transport: BoundedJournalSdkHttpClientV1? = null
+        private var sdk: S3Client? = null
+        private var owner: S3OrdinaryJournalClientV1? = null
+        private var rawCloseIssued = false
+        private var sdkCloseIssued = false
+        private var closeFailure: Throwable? = null
+
+        internal fun open(
             routing: VersionBoundComplaintJournalRouting,
             credentials: AwsSessionCredentials,
             httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
             nanoTime: () -> Long,
+            attempt: JournalCodecAttemptV1?,
         ): S3OrdinaryJournalClientV1 = journalPublicationSdkCall {
             requireConnectionFree()
-            val location = routing.journalConfiguration.declaration().journalLocation
-            validateCredentials(credentials)
-            requireJournalPublication(ambient(SdkSystemSetting.AWS_PARTITIONS_FILE).all { it == null })
-            requireJournalPublication(!location.bucket.endsWith("--x-s3")) // No S3 Express CreateSession/alternate credential machinery.
-            val region = Region.regions().singleOrNull { it.id() == location.region }
-            requireJournalPublication(region != null)
-            val emptyProfile = ProfileFile.aggregator().build()
-            val endpoint = regionalEndpoint(checkNotNull(region), emptyProfile)
-            val transport = BoundedJournalSdkHttpClientV1(endpoint, credentials.accessKeyId(), credentials.sessionToken(), httpFactory)
-            val built = runCatching {
-                S3Client.builder().region(region).credentialsProvider(StaticCredentialsProvider.create(credentials))
+            requireJournalPublication(!opened && !closed)
+            opened = true
+            val result = runCatching {
+                attempt?.requireOwner(routing)
+                attempt?.remainingMillis(1)
+                val location = routing.journalConfiguration.declaration().journalLocation
+                validateCredentials(credentials)
+                requireJournalPublication(ambient(SdkSystemSetting.AWS_PARTITIONS_FILE).all { it == null })
+                requireJournalPublication(!location.bucket.endsWith("--x-s3")) // No S3 Express CreateSession/alternate credential machinery.
+                val region = Region.regions().singleOrNull { it.id() == location.region }
+                requireJournalPublication(region != null)
+                val emptyProfile = ProfileFile.aggregator().build()
+                val endpoint = regionalEndpoint(checkNotNull(region), emptyProfile)
+                attempt?.remainingMillis(1)
+                val transport = BoundedJournalSdkHttpClientV1(endpoint, credentials.accessKeyId(), credentials.sessionToken()) { remaining ->
+                    stage = ConstructionStage.OPENING_HTTP
+                    httpFactory(remaining).also {
+                        raw = it
+                        stage = ConstructionStage.HTTP_RETURNED
+                    }
+                }.also { this.transport = it }
+                attempt?.remainingMillis(1)
+                stage = ConstructionStage.OPENING_SDK
+                val sdk = S3Client.builder().region(region).credentialsProvider(StaticCredentialsProvider.create(credentials))
                     .defaultsMode(DefaultsMode.STANDARD).dualstackEnabled(false).fipsEnabled(false).crossRegionAccessEnabled(false)
                     .endpointOverride(endpoint).httpClient(transport)
                     .serviceConfiguration(
@@ -268,11 +295,69 @@ internal class S3OrdinaryJournalClientV1 private constructor(
                             .apiCallAttemptTimeout(
                                 Duration.ofMillis(routing.journalConfiguration.declaration().limits.deadlines.s3CallMillis.toLong()),
                             ).build(),
-                    ).build()
+                    ).build().also {
+                        this.sdk = it
+                        stage = ConstructionStage.SDK_RETURNED
+                    }
+                attempt?.remainingMillis(1)
+                S3OrdinaryJournalClientV1(routing, sdk, transport, nanoTime).also { owner = it }
             }
-            built.exceptionOrNull()?.let { failure -> return@journalPublicationSdkCall withJournalPublicationCleanup({ throw failure }, transport::close) }
-            S3OrdinaryJournalClientV1(routing, built.getOrThrow(), transport, nanoTime)
+            if (result.isFailure) return@journalPublicationSdkCall withJournalPublicationCleanup({ result.getOrThrow() }, ::close)
+            result.getOrThrow()
         }
+
+        @Synchronized
+        override fun close() {
+            closed = true
+            val failure = runCatching {
+                journalPublicationClose {
+                    val client = owner
+                    if (client != null) {
+                        client.close()
+                    } else {
+                        withJournalPublicationCleanup(
+                            {
+                                val wrapper = transport
+                                if (wrapper != null) wrapper.close() else raw?.let {
+                                    if (!rawCloseIssued) {
+                                        rawCloseIssued = true
+                                        journalPublicationClose(it::close)
+                                    }
+                                }
+                            },
+                            {
+                                sdk?.let {
+                                    if (!sdkCloseIssued) {
+                                        sdkCloseIssued = true
+                                        journalPublicationClose(it::close)
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    // No returned owner means factory/build internals cannot be observed as quiescent.
+                    requireJournalPublication(
+                        stage != ConstructionStage.OPENING_HTTP && stage != ConstructionStage.OPENING_SDK,
+                        JournalPublicationFailureV1.CLEANUP_FAILURE,
+                    )
+                }
+            }.exceptionOrNull()
+            if (failure != null && replaceJournalPublicationFailure(closeFailure, failure)) closeFailure = failure
+            closeFailure?.let { throw it }
+        }
+
+        override fun toString(): String = "JournalS3ConstructionV1(concrete,redacted)"
+
+        private enum class ConstructionStage { NEW, OPENING_HTTP, HTTP_RETURNED, OPENING_SDK, SDK_RETURNED }
+    }
+
+    companion object {
+        fun create(
+            routing: VersionBoundComplaintJournalRouting,
+            credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long,
+        ): S3OrdinaryJournalClientV1 = Construction().open(routing, credentials, httpFactory, nanoTime, null)
 
         private fun overrides(call: JournalS3CallV1): AwsRequestOverrideConfiguration {
             val remaining = Duration.ofMillis(call.remainingMillis().toLong())

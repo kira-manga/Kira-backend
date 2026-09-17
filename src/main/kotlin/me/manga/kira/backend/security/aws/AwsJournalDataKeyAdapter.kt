@@ -2,6 +2,7 @@ package me.manga.kira.backend.security.aws
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
+import me.manga.kira.backend.security.JournalCodecAttemptV1
 import me.manga.kira.backend.security.JournalDataKeyPortV1
 import me.manga.kira.backend.security.JournalDataKeyRequestV1
 import me.manga.kira.backend.security.JournalGeneratedDataKeyV1
@@ -221,9 +222,119 @@ internal class AwsJournalDataKeyAdapter private constructor(
 
     override fun toString(): String = "AwsJournalDataKeyAdapter(J-bound,redacted,no-activation-authority)"
 
+    /** Actual returned resources stay reachable even when a later constructor or its cleanup throws. */
+    internal class Construction : AutoCloseable {
+        private var stage = ConstructionStage.NEW
+        private var opened = false
+        private var closed = false
+        private var raw: SdkHttpClient? = null
+        private var transport: BoundedJournalKmsSdkHttpClient? = null
+        private var sdk: KmsClient? = null
+        private var owner: AwsJournalDataKeyAdapter? = null
+        private var rawCloseIssued = false
+        private var sdkCloseIssued = false
+        private var closeFailure: Throwable? = null
+
+        internal fun open(
+            journal: ComplaintJournalConfigurationV1,
+            credentials: AwsSessionCredentials,
+            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long,
+            attempt: JournalCodecAttemptV1?,
+        ): AwsJournalDataKeyAdapter {
+            requireConnectionFree()
+            return journalKmsSdkCall {
+                requireJournalKms(!opened && !closed)
+                opened = true
+                val result = runCatching {
+                    attempt?.remainingMillis(1)
+                    val profile = JournalKmsRequestProfile(journal)
+                    validateCredentials(credentials)
+                    requireJournalKms(
+                        System.getProperty(SdkSystemSetting.AWS_PARTITIONS_FILE.property()) == null &&
+                            System.getenv(SdkSystemSetting.AWS_PARTITIONS_FILE.environmentVariable()) == null,
+                    )
+                    val region = Region.regions().singleOrNull { it.id() == profile.region }
+                    requireJournalKms(region != null)
+                    val emptyProfile = ProfileFile.aggregator().build()
+                    val endpoint = regionalEndpoint(checkNotNull(region), emptyProfile)
+                    attempt?.remainingMillis(1)
+                    val transport = BoundedJournalKmsSdkHttpClient(
+                        profile.region, endpoint, credentials.accessKeyId(), credentials.sessionToken(),
+                    ) { remaining ->
+                        stage = ConstructionStage.OPENING_HTTP
+                        httpFactory(remaining).also {
+                            raw = it
+                            stage = ConstructionStage.HTTP_RETURNED
+                        }
+                    }.also { this.transport = it }
+                    attempt?.remainingMillis(1)
+                    stage = ConstructionStage.OPENING_SDK
+                    val sdk = KmsClient.builder().region(region).credentialsProvider(StaticCredentialsProvider.create(credentials))
+                        .defaultsMode(DefaultsMode.STANDARD).dualstackEnabled(false).fipsEnabled(false).endpointOverride(endpoint)
+                        .httpClient(transport).overrideConfiguration(
+                            ClientOverrideConfiguration.builder().defaultProfileFile(emptyProfile).defaultProfileName(PROFILE_NAME)
+                                .retryStrategy(StandardRetryStrategy.builder().maxAttempts(1).build())
+                                .apiCallTimeout(Duration.ofMillis(profile.callLimitMillis.toLong()))
+                                .apiCallAttemptTimeout(Duration.ofMillis(profile.callLimitMillis.toLong())).build(),
+                        ).build().also {
+                            this.sdk = it
+                            stage = ConstructionStage.SDK_RETURNED
+                        }
+                    attempt?.remainingMillis(1)
+                    AwsJournalDataKeyAdapter(journal, profile, sdk, transport, nanoTime).also { owner = it }
+                }
+                if (result.isFailure) return@journalKmsSdkCall withJournalKmsCleanup({ result.getOrThrow() }, ::close)
+                result.getOrThrow()
+            }
+        }
+
+        @Synchronized
+        override fun close() {
+            closed = true
+            val failure = runCatching {
+                journalKmsClose {
+                    val adapter = owner
+                    if (adapter != null) {
+                        adapter.close()
+                    } else {
+                        withJournalKmsCleanup(
+                            {
+                                val wrapper = transport
+                                if (wrapper != null) wrapper.close() else raw?.let {
+                                    if (!rawCloseIssued) {
+                                        rawCloseIssued = true
+                                        journalKmsClose(it::close)
+                                    }
+                                }
+                            },
+                            {
+                                sdk?.let {
+                                    if (!sdkCloseIssued) {
+                                        sdkCloseIssued = true
+                                        journalKmsClose(it::close)
+                                    }
+                                }
+                            },
+                        )
+                    }
+                    // A factory/build that threw without returning its owner has unobservable internals.
+                    // Close every returned resource, but never turn that absence into a quiescence claim.
+                    requireJournalKms(stage != ConstructionStage.OPENING_HTTP && stage != ConstructionStage.OPENING_SDK)
+                }
+            }.exceptionOrNull()
+            if (failure != null && replaceJournalKmsFailure(closeFailure, failure)) closeFailure = failure
+            closeFailure?.let { throw it }
+        }
+
+        override fun toString(): String = "JournalKmsConstruction(concrete,redacted)"
+
+        private enum class ConstructionStage { NEW, OPENING_HTTP, HTTP_RETURNED, OPENING_SDK, SDK_RETURNED }
+    }
+
     companion object {
         fun open(journal: ComplaintJournalConfigurationV1, credentials: AwsSessionCredentials): AwsJournalDataKeyAdapter =
-            create(journal, credentials, ::journalKmsUrlConnectionClient, System::nanoTime)
+            Construction().open(journal, credentials, ::journalKmsUrlConnectionClient, System::nanoTime, null)
 
         /** The only substitution is the public HTTP SPI; the genuine KmsClient still signs, marshals and decodes. */
         fun withHttpFixture(
@@ -231,54 +342,7 @@ internal class AwsJournalDataKeyAdapter private constructor(
             credentials: AwsSessionCredentials,
             httpFactory: () -> SdkHttpClient,
             nanoTime: () -> Long = System::nanoTime,
-        ): AwsJournalDataKeyAdapter = create(journal, credentials, { httpFactory() }, nanoTime)
-
-        private fun create(
-            journal: ComplaintJournalConfigurationV1,
-            credentials: AwsSessionCredentials,
-            httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
-            nanoTime: () -> Long,
-        ): AwsJournalDataKeyAdapter {
-            requireConnectionFree()
-            return journalKmsSdkCall {
-                val profile = JournalKmsRequestProfile(journal)
-                validateCredentials(credentials)
-                requireJournalKms(
-                    System.getProperty(SdkSystemSetting.AWS_PARTITIONS_FILE.property()) == null &&
-                        System.getenv(SdkSystemSetting.AWS_PARTITIONS_FILE.environmentVariable()) == null,
-                )
-                val region = Region.regions().singleOrNull { it.id() == profile.region }
-                requireJournalKms(region != null)
-                val emptyProfile = ProfileFile.aggregator().build()
-                val endpoint = regionalEndpoint(checkNotNull(region), emptyProfile)
-                val transport = BoundedJournalKmsSdkHttpClient(
-                    profile.region,
-                    endpoint,
-                    credentials.accessKeyId(),
-                    credentials.sessionToken(),
-                    httpFactory,
-                )
-                val built = runCatching {
-                    KmsClient.builder().region(region).credentialsProvider(StaticCredentialsProvider.create(credentials))
-                        .defaultsMode(DefaultsMode.STANDARD).dualstackEnabled(false).fipsEnabled(false).endpointOverride(endpoint)
-                        .httpClient(transport).overrideConfiguration(
-                            ClientOverrideConfiguration.builder().defaultProfileFile(emptyProfile).defaultProfileName(PROFILE_NAME)
-                                .retryStrategy(StandardRetryStrategy.builder().maxAttempts(1).build())
-                                .apiCallTimeout(Duration.ofMillis(profile.callLimitMillis.toLong()))
-                                .apiCallAttemptTimeout(Duration.ofMillis(profile.callLimitMillis.toLong())).build(),
-                        ).build()
-                }
-                built.exceptionOrNull()?.let { failure -> return@journalKmsSdkCall withJournalKmsCleanup({ throw failure }, transport::close) }
-                val sdk = built.getOrThrow()
-                val owner = runCatching { AwsJournalDataKeyAdapter(journal, profile, sdk, transport, nanoTime) }
-                owner.exceptionOrNull()?.let { failure ->
-                    return@journalKmsSdkCall withJournalKmsCleanup({ throw failure }) {
-                        withJournalKmsCleanup(transport::close) { journalKmsClose { sdk.close() } }
-                    }
-                }
-                owner.getOrThrow()
-            }
-        }
+        ): AwsJournalDataKeyAdapter = Construction().open(journal, credentials, { httpFactory() }, nanoTime, null)
 
         private fun regionalEndpoint(region: Region, emptyProfile: ProfileFile): URI {
             val metadata = KmsClient.serviceMetadata().reconfigure(
