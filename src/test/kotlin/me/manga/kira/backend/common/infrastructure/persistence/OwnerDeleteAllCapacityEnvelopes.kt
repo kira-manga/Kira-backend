@@ -216,6 +216,7 @@ private val PUBLICATION = DeleteAllEnvelopeProfile(
         "uq_complaint_publication_key" to "object_key",
         "idx_complaint_publication_pending" to "state,created_at,event_id",
         "idx_complaint_publication_epoch" to "data_scope_id,writer_generation,journal_epoch,event_id",
+        "idx_complaint_publication_manifest" to "data_scope_id,writer_generation,object_key",
     ),
 )
 

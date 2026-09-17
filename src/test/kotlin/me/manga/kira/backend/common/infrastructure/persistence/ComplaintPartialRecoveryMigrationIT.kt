@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.database.complaint.assertCutoffManifestMigration
 import me.manga.kira.backend.database.complaint.assertPartialRecoveryMigration
 import me.manga.kira.backend.database.complaint.assertRotationSlotMigration
 import org.junit.jupiter.api.AfterAll
@@ -32,5 +33,15 @@ class ComplaintPartialRecoveryMigrationIT {
     @Test
     fun `populated V16 to V17 preserves every old value and adds only an empty rotation slot`() {
         assertRotationSlotMigration(ordinaryCleanupReader(database.value), populated = true)
+    }
+
+    @Test
+    fun `fresh V18 adds only the all-state ordered manifest index and keeps closed seeds`() {
+        assertCutoffManifestMigration(ordinaryCleanupReader(database.value), populated = false)
+    }
+
+    @Test
+    fun `populated V17 to V18 preserves all values and pending verified and applied manifest members`() {
+        assertCutoffManifestMigration(ordinaryCleanupReader(database.value), populated = true)
     }
 }
