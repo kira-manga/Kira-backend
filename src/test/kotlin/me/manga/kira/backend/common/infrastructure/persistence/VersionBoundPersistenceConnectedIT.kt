@@ -1,6 +1,8 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
+import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
@@ -182,6 +184,18 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `owned G1 refresh cleanup failure retains original coordinator custody against replacement`() =
         withFixture { tls -> withCurrentAcceptedCatalogRefresh(tls) { it.failedProviderCleanupPoisonsOriginalCoordinator() } }
+
+    @Test
+    fun `owned coordinator lease uses exact thirty second DB intervals and preserves nonlease state through renew release and reacquire`() =
+        withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseCases(it).lifecycleAndUnrelatedState() } }
+
+    @Test
+    fun `owned coordinator lease separates local contention from DB expiry takeover and stale handles cannot change successors or wrap tokens`() =
+        withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseCases(it).contendersExpiryStaleHandlesAndOverflow() } }
+
+    @Test
+    fun `owned coordinator lease rechecks every retained LIVE binding field and failed or substituted campaigns cannot revive`() =
+        withFixture { tls -> withCoordinatorLease(tls) { CoordinatorLeaseCases(it).exactBindingAndFailedRenewalCannotRevive() } }
 
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
