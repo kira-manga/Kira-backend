@@ -73,7 +73,7 @@ internal class OwnedPersistencePublicTrust private constructor(private val bytes
         requireConnectionFree()
         if (root.ownershipLockHeld()) return PersistencePublicTrustRelease.RETAINED
         return synchronized(custody) {
-            if (owner !== root || !root.shutdown.get() || root.shutdownObservation() !== PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED) {
+            if (owner !== root || !root.publicTrustReleaseReady()) {
                 return@synchronized PersistencePublicTrustRelease.RETAINED
             }
             if (state === State.RELEASED) return@synchronized PersistencePublicTrustRelease.RELEASED

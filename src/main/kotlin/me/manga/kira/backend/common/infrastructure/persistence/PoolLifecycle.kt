@@ -11,8 +11,16 @@ internal class PoolLifecycle private constructor(
     private val owner: PersistenceJdbcLifecycleOwner,
     private val shutdownScope: ShutdownScope,
     private val ordinaryCompatibility: Boolean = false,
+    private val versionBound: VersionBoundPersistencePoolBinding? = null,
 ) {
     constructor(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner) : this(pool, owner, ShutdownScope.ROOT)
+
+    init {
+        if (versionBound == null && owner.versionBoundPools != null) {
+            rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        }
+        versionBound?.requireRetainedPool(owner, pool)
+    }
 
     private val issuance = Any()
     private val gate = Any()
@@ -82,7 +90,8 @@ internal class PoolLifecycle private constructor(
     private fun profileSupported(installed: Boolean): Boolean {
         var supported = false
         try {
-            supported = if (ordinaryCompatibility) actors.ordinaryProfileSupported(pool, installed) else actors.profileSupported(pool, installed)
+            supported = (if (ordinaryCompatibility) actors.ordinaryProfileSupported(pool, installed) else actors.profileSupported(pool, installed)) &&
+                versionBound?.configurationMatches() != false
             return supported
         } finally {
             if (!supported) synchronized(gate) { actors.failLocked(PoolActorFault.UNSUPPORTED_PROFILE) }
@@ -126,11 +135,14 @@ internal class PoolLifecycle private constructor(
         return shared
     }
 
-    fun requestShutdown(): ShutdownReceipt? = requestShutdown(null)
-
     /** Shutdown admission is not factory sealing: the authentic close still needs its late assassin/inline work. */
-    fun requestShutdown(budget: PersistenceTimeBudget?): ShutdownReceipt? {
-        if (shutdownScope === ShutdownScope.CATALOG_COORDINATOR && !owner.ownsCatalogLifecycle(this)) return null
+    @JvmOverloads
+    fun requestShutdown(budget: PersistenceTimeBudget? = null): ShutdownReceipt? {
+        if (shutdownScope === ShutdownScope.CATALOG_COORDINATOR && !owner.ownsCatalogLifecycle(this) &&
+            owner.versionBoundPools?.ownsCatalogLifecycle(this) != true
+        ) {
+            return null
+        }
         if (owner.ownershipLockHeld()) return null
         val original = synchronized(gate) { shutdownBudget } ?: budget ?: PersistenceTimeBudget.start(10_000)
         synchronized(gate) {
@@ -496,6 +508,31 @@ internal class PoolLifecycle private constructor(
             !attempt.ended.get() -> PoolShutdownObservation.PENDING
             !synchronized(gate) { closedPopulationReadyLocked() } -> PoolShutdownObservation.PENDING
             else -> observeEndedPool(attempt)
+        }
+    }
+
+    /**
+     * One nonwaiting local-only proof for the owning version-bound root's trust release. Reuses actual close/creator/actor
+     * custody, never invokes a managed/native observer and never treats a raw isClosed flag or standalone zero as authority.
+     */
+    internal fun localShutdownForTrust(): PoolActorObservation {
+        if (versionBound == null || ordinaryCompatibility) return PoolActorObservation.UNPROVEN
+        if (PoolCallFrames.current() != null || PoolActorCustody.currentThreadOwnsActorFrame() || owner.ownershipLockHeld()) {
+            return PoolActorObservation.PENDING
+        }
+        val attempt = firstClose.get() ?: return PoolActorObservation.PENDING
+        if (!accepted.get() || !attempt.ended.get() || !synchronized(gate) { closedPopulationReadyLocked() }) return PoolActorObservation.PENDING
+        actors.observeTerminations()
+        val state = synchronized(gate) { actors.observationLocked() }
+        return when {
+            state === PoolActorObservation.PENDING -> state
+
+            attempt.outcome.get() !== PersistenceTerminalCall.RETURNED || attempt.interrupted.get() || attempt.bookkeepingFailed.get() ->
+                PoolActorObservation.UNKNOWN
+
+            synchronized(gate) { installation !== Installation.INSTALLED } -> PoolActorObservation.UNPROVEN
+
+            else -> state
         }
     }
 
@@ -892,6 +929,15 @@ internal class PoolLifecycle private constructor(
 
         internal fun sourceOnly(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner): PoolLifecycle =
             PoolLifecycle(pool, owner, ShutdownScope.ROOT, ordinaryCompatibility = true)
+
+        internal fun versionBound(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner, binding: VersionBoundPersistencePoolBinding): PoolLifecycle {
+            val scope = when (binding.material.role) {
+                PersistenceJdbcParticipantRole.ORDINARY -> ShutdownScope.ROOT
+                PersistenceJdbcParticipantRole.DELETION -> ShutdownScope.DELETION
+                PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> ShutdownScope.CATALOG_COORDINATOR
+            }
+            return PoolLifecycle(pool, owner, scope, versionBound = binding)
+        }
 
         internal fun deletion(pool: HikariDataSource, owner: PersistenceJdbcLifecycleOwner): PoolLifecycle = PoolLifecycle(pool, owner, ShutdownScope.DELETION)
 

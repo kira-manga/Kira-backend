@@ -25,8 +25,7 @@ internal class PersistencePgDriverOpening private constructor(
         try {
             result = runCatching {
                 try {
-                    val properties = endpoint.driverProperties()
-                    if (image != null) properties.setProperty("socketFactory", TrackedPgSocketFactory::class.java.name)
+                    val properties = effectiveDriverProperties(endpoint, policy)
                     entry.driverScope?.enter()
                     // Independent of the transport image, including ORIGINAL_PROVIDER. Retain before arm/connect.
                     entry.driverCut.begin(driver, cut)
@@ -185,6 +184,50 @@ internal class PersistencePgDriverOpening private constructor(
 
     override fun toString(): String = "PersistencePgDriverOpening(redacted)"
 
+    /** Cold effective recipe. The same retained selection supplies descriptors and actual driver.connect properties. */
+    internal class Configuration private constructor(private val endpoint: ResolvedPersistenceEndpoint, val policy: PersistenceDriverAttemptPolicy) {
+        val loginPolicy: PersistenceLoginPolicy = endpoint.loginPolicy
+        val driverUrl: String = endpoint.driverUrl
+
+        fun publicDriverProperties(): Map<String, String> = effectiveDriverProperties(endpoint, policy).let { properties ->
+            properties.stringPropertyNames().filterNot { it == "password" || it == "sslrootcert" }
+                .associateWith { properties.getProperty(it) }
+        }
+
+        internal fun prepareRetained(retained: PersistenceRetainedPgDriver, timer: PersistenceDriverTimer?): PersistencePgDriverOpening {
+            requireDisabledLoginThread()
+            val driver = retained.forOpening()
+            val cut = retained.cutAccess()
+            val image = image(driver)
+            if (policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) checkNotNull(timer)
+            return PersistencePgDriverOpening(driver, endpoint, policy, image, cut, timer)
+        }
+
+        internal fun prepare(prepared: PreparedPersistenceDriver): PersistencePgDriverOpening {
+            requireDisabledLoginThread()
+            val driver = prepared.construct()
+            val cut = PersistencePgOwnedCutAccess.prepare(prepared, driver.javaClass)
+            return PersistencePgDriverOpening(driver, endpoint, policy, image(driver), cut)
+        }
+
+        private fun image(driver: Driver): PersistencePgDriverImage? =
+            if (policy.recipe === PersistenceDriverExecutionRecipe.TRACKED_STANDARD) PersistencePgDriverImage.prepare(driver.javaClass) else null
+
+        private fun requireDisabledLoginThread() {
+            if (endpoint.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
+        }
+
+        override fun toString(): String = "PersistencePgDriverConfiguration(redacted)"
+
+        companion object {
+            internal fun resolve(
+                endpoint: ResolvedPersistenceEndpoint,
+                policy: PersistenceDriverAttemptPolicy,
+                pathStyle: PersistencePathStyle,
+            ): Configuration = Configuration(selectEndpoint(endpoint, policy, pathStyle), policy)
+        }
+    }
+
     companion object {
         /** Only the root-preowned guarded handle can supply the integrated Driver. Existing standalone preparation survives. */
         fun prepareRetained(
@@ -195,13 +238,17 @@ internal class PersistencePgDriverOpening private constructor(
             timer: PersistenceDriverTimer? = null,
         ): PersistencePgDriverOpening = persistenceBootstrapBoundary {
             PersistenceOpeningEvidence.prepareRuntime()
-            val selected = selectEndpoint(endpoint, policy, pathStyle)
-            if (selected.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
-            val driver = retained.forOpening()
-            val cut = retained.cutAccess()
-            val image = if (policy.recipe === PersistenceDriverExecutionRecipe.TRACKED_STANDARD) PersistencePgDriverImage.prepare(driver.javaClass) else null
-            if (policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) checkNotNull(timer)
-            PersistencePgDriverOpening(driver, selected, policy, image, cut, timer)
+            Configuration.resolve(endpoint, policy, pathStyle).prepareRetained(retained, timer)
+        }
+
+        /** A bound role uses its retained cold selection, never a separately supplied endpoint or settings map. */
+        internal fun prepareRetained(
+            retained: PersistenceRetainedPgDriver,
+            configuration: Configuration,
+            timer: PersistenceDriverTimer? = null,
+        ): PersistencePgDriverOpening = persistenceBootstrapBoundary {
+            PersistenceOpeningEvidence.prepareRuntime()
+            configuration.prepareRetained(retained, timer)
         }
 
         fun prepare(
@@ -211,13 +258,15 @@ internal class PersistencePgDriverOpening private constructor(
             pathStyle: PersistencePathStyle,
         ): PersistencePgDriverOpening = persistenceBootstrapBoundary {
             PersistenceOpeningEvidence.prepareRuntime()
-            val selected = selectEndpoint(endpoint, policy, pathStyle)
-            if (selected.driverProperties().getProperty("loginTimeout") != "0") rejectPersistenceBoundary(PersistenceBoundaryFailureCode.INVALID_LOGIN_POLICY)
-            val driver = prepared.construct()
-            val cut = PersistencePgOwnedCutAccess.prepare(prepared, driver.javaClass)
-            val image = if (policy.recipe === PersistenceDriverExecutionRecipe.TRACKED_STANDARD) PersistencePgDriverImage.prepare(driver.javaClass) else null
-            PersistencePgDriverOpening(driver, selected, policy, image, cut)
+            Configuration.resolve(endpoint, policy, pathStyle).prepare(prepared)
         }
+
+        private fun effectiveDriverProperties(endpoint: ResolvedPersistenceEndpoint, policy: PersistenceDriverAttemptPolicy): Properties =
+            endpoint.driverProperties().apply {
+                if (policy.recipe === PersistenceDriverExecutionRecipe.TRACKED_STANDARD) {
+                    setProperty("socketFactory", TrackedPgSocketFactory::class.java.name)
+                }
+            }
 
         private fun selectEndpoint(
             endpoint: ResolvedPersistenceEndpoint,

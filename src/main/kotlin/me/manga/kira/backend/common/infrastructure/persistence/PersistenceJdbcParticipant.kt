@@ -9,7 +9,8 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
         this(root, capacity, if (deletion) PersistenceJdbcParticipantRole.DELETION else PersistenceJdbcParticipantRole.ORDINARY)
 
     private val binding = PersistencePhysicalFactoryBinding(capacity, root.shutdown, this)
-    private val loginPolicy = when (role) {
+    private val versionBoundMaterial = root.versionBoundPools?.material(role)
+    private val loginPolicy = versionBoundMaterial?.loginPolicy ?: when (role) {
         PersistenceJdbcParticipantRole.ORDINARY -> root.endpoint.loginPolicy
         PersistenceJdbcParticipantRole.DELETION -> PersistenceNativeSettings.deletionLoginPolicy
         PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> PersistenceNativeSettings.catalogCoordinatorLoginPolicy
@@ -215,13 +216,15 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
         controller.startPhase() === PersistenceThreadStartPhase.RETURNED && !controller.hasBodyEnded() &&
         root.scannerReady() && !worker.ownedBodyFailed() && runners.all(PersistenceTerminalRunner::isReady)
 
-    private fun opening(policy: PersistenceDriverAttemptPolicy): PersistencePgDriverOpening = PersistencePgDriverOpening.prepareRetained(
-        root.retainedDriver,
-        root.endpoint,
-        policy,
-        root.pathStyle,
-        if (policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) root.timer else null,
-    )
+    private fun opening(policy: PersistenceDriverAttemptPolicy): PersistencePgDriverOpening {
+        val timer = if (policy.evidence === PersistenceDriverEvidencePolicy.TRACKED_CONJUNCTION) root.timer else null
+        val configured = versionBoundMaterial?.opening(policy)
+        return if (configured == null) {
+            PersistencePgDriverOpening.prepareRetained(root.retainedDriver, root.endpoint, policy, root.pathStyle, timer)
+        } else {
+            PersistencePgDriverOpening.prepareRetained(root.retainedDriver, configured, timer)
+        }
+    }
 
     private inline fun <T> optional(operation: () -> T): T? = runCatching(operation).getOrElse { failure ->
         if (failure is InterruptedException) Thread.currentThread().interrupt()

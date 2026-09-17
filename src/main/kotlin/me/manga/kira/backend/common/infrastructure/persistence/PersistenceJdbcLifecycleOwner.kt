@@ -8,10 +8,18 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
         this(PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, pathStyle))
 
     internal val sourceOnly: Boolean get() = root.sourceOnly
+    internal val versionBoundPools: VersionBoundPersistencePools? get() = root.versionBoundPools
     internal val complaintContainment = PersistenceComplaintContainment()
     private val catalogBindingClaimed = AtomicBoolean()
 
     @Volatile private var catalogResources: CatalogCoordinatorPersistence? = null
+
+    /** Retain this owner first. The fixed composition/shells remain owned here even if cold construction throws. */
+    internal fun bindVersionBoundPools(
+        launchProfile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.UNKNOWN,
+        nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+    ): VersionBoundPersistencePools =
+        (versionBoundPools ?: rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)).bind(this, launchProfile, nanoClock)
 
     /** One inert exact composition on THIS owner. No endpoint/capacity override, replacement or implicit start. */
     internal fun bindCatalogCoordinator(
@@ -22,10 +30,11 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
         if (sourceOnly || ownershipLockHeld() || root.shutdown.get()) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
+        versionBoundPools?.requireCatalogConstruction()
         if (!catalogBindingClaimed.compareAndSet(false, true)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
-        val prepared = CatalogCoordinatorPersistence.prepare(this, root.endpoint, launchProfile)
+        val prepared = versionBoundPools?.prepareCatalog(this, launchProfile) ?: CatalogCoordinatorPersistence.prepare(this, root.endpoint, launchProfile)
         catalogResources = prepared // Retain before phase/resource binding can fail; never replace a failed composition.
         prepared.bindOwnership(nanoClock)
         return prepared

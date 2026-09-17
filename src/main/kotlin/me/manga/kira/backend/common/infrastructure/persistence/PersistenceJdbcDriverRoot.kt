@@ -12,6 +12,7 @@ internal class PersistenceJdbcDriverRoot(
 ) {
     private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly)
     val shutdown = AtomicBoolean()
+    internal val versionBoundPools = versionBound?.createPools(this)
     val retainedDriver = PersistenceRetainedPgDriver()
     val ordinary = PersistenceJdbcParticipant(this, capacity, deletion = false)
     val deletion = PersistenceJdbcParticipant(this, 4, deletion = true)
@@ -88,6 +89,10 @@ internal class PersistenceJdbcDriverRoot(
 
     /** Only this exact root's permanent, strong all-role drain can authorize its trust-file disposal. */
     internal fun releasePublicTrustAfterShutdown(): PersistencePublicTrustRelease = publicTrust?.release(this) ?: PersistencePublicTrustRelease.NOT_REQUIRED
+
+    /** Exact driver-root conjunction AND every retained bound pool's own local custody; never a recursive pool receipt. */
+    internal fun publicTrustReleaseReady(): Boolean = shutdown.get() &&
+        shutdownObservation() === PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED && versionBoundPools?.poolsEndedForTrust() != false
 
     /** Stop only the existing deletion participant; the shared scanner/Timer remain owned by this root. */
     fun requestDeletionShutdown(): Boolean = deletion.forbidStarts()

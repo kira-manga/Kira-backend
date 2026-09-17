@@ -20,6 +20,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     authenticationPassword: VersionedSecretBinding,
 ) {
     val descriptor = EndpointDescriptor(endpoint, authenticationPassword, trust.sha256, trust.byteCount, trust.certificateCount)
+    private var adoptedRoot: PersistenceJdbcDriverRoot? = null
 
     fun bindLifecycleOwner(): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner.versionBound(this)
 
@@ -36,7 +37,13 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         trust.adopt(root)
+        adoptedRoot = root
         return trust
+    }
+
+    internal fun createPools(root: PersistenceJdbcDriverRoot): VersionBoundPersistencePools {
+        requireConfiguration(adoptedRoot === root)
+        return VersionBoundPersistencePools.create(root, endpoint, ordinaryCapacity, descriptor)
     }
 
     /**

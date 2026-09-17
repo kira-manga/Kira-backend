@@ -21,6 +21,7 @@ internal class GuardedDataSource private constructor(
     private val launchProfile: PersistencePoolLaunchProfile,
     private val route: Route,
     ordinarySettings: HikariConfig? = null,
+    versionBound: VersionBoundPersistencePoolBinding? = null,
 ) : DataSource,
     AutoCloseable {
     constructor(
@@ -31,12 +32,22 @@ internal class GuardedDataSource private constructor(
     ) : this(owner, endpoint, maximumPoolSize, launchProfile, Route.ORDINARY)
 
     private val sourceOnly = ordinarySettings != null
-    private val pool = HikariDataSource()
-    private val lifecycle = when (route) {
+    private val pool = if (versionBound == null) {
+        if (owner.versionBoundPools != null) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        HikariDataSource()
+    } else {
+        versionBound.newPool(owner, endpoint, maximumPoolSize, route.participantRole(), ordinarySettings)
+    }
+    private val lifecycle = versionBound?.let { PoolLifecycle.versionBound(pool, owner, it) } ?: when (route) {
         Route.ORDINARY -> if (sourceOnly) PoolLifecycle.sourceOnly(pool, owner) else PoolLifecycle(pool, owner)
         Route.DELETION -> PoolLifecycle.deletion(pool, owner)
         Route.CATALOG_COORDINATOR -> PoolLifecycle.catalogCoordinator(pool, owner)
     }
+
+    init {
+        versionBound?.retain(this, lifecycle) // Before lower-source/preparation allocation, validation or factory installation can fail.
+    }
+
     private val lower = when (route) {
         Route.ORDINARY -> PrivateJdbcDataSource(owner, endpoint, lifecycle)
         Route.DELETION -> PrivateJdbcDataSource.deletion(owner, endpoint, lifecycle)
@@ -44,12 +55,12 @@ internal class GuardedDataSource private constructor(
     }
     private val deletionPreparation = if (route === Route.DELETION) DeletionPoolPreparation(owner, pool, lifecycle) else null
     private val catalogPreparation = if (route === Route.CATALOG_COORDINATOR) CatalogCoordinatorPoolPreparation(owner, pool, lifecycle) else null
-    private val loginPolicy = when (route) {
+    private val loginPolicy = versionBound?.material?.loginPolicy ?: when (route) {
         Route.ORDINARY -> endpoint.loginPolicy
         Route.DELETION -> PersistenceNativeSettings.deletionLoginPolicy
         Route.CATALOG_COORDINATOR -> PersistenceNativeSettings.catalogCoordinatorLoginPolicy
     }
-    private val checkoutMillis = when {
+    private val checkoutMillis = versionBound?.material?.checkoutMillis ?: when {
         route === Route.DELETION -> 500L
         route === Route.CATALOG_COORDINATOR -> 250L
         ordinarySettings != null -> ordinarySettings.connectionTimeout
@@ -59,7 +70,9 @@ internal class GuardedDataSource private constructor(
 
     init {
         require(maximumPoolSize > 0)
-        if (ordinarySettings != null) {
+        if (versionBound != null) {
+            versionBound.configure(lower)
+        } else if (ordinarySettings != null) {
             check(route === Route.ORDINARY && owner.sourceOnly)
             ordinarySettings.copyStateTo(pool) // Public Hikari API; endpoint/credentials were already removed.
         } else {
@@ -82,7 +95,8 @@ internal class GuardedDataSource private constructor(
         // Source-only settings preserve Boot's ordinary defaults/customizations, not the test
         // fixture's minIdle=0/failFast=-1 profile. Neither route grants native qualification.
         if (sourceOnly) pool.validate()
-        if ((sourceOnly || launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) && !lifecycle.installThreadFactory()) {
+        val requiresThreadFactory = versionBound != null || sourceOnly || launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY
+        if (requiresThreadFactory && !lifecycle.installThreadFactory()) {
             throw SQLException("Private persistence pool profile refused.")
         }
     }
@@ -242,9 +256,36 @@ internal class GuardedDataSource private constructor(
     }
     override fun toString(): String = "GuardedDataSource(redacted)"
 
-    private enum class Route { ORDINARY, DELETION, CATALOG_COORDINATOR }
+    private enum class Route {
+        ORDINARY,
+        DELETION,
+        CATALOG_COORDINATOR,
+        ;
+
+        fun participantRole(): PersistenceJdbcParticipantRole = when (this) {
+            ORDINARY -> PersistenceJdbcParticipantRole.ORDINARY
+            DELETION -> PersistenceJdbcParticipantRole.DELETION
+            CATALOG_COORDINATOR -> PersistenceJdbcParticipantRole.CATALOG_COORDINATOR
+        }
+    }
 
     companion object {
+        internal fun versionBound(
+            owner: PersistenceJdbcLifecycleOwner,
+            endpoint: ResolvedPersistenceEndpoint,
+            capacity: Int,
+            role: PersistenceJdbcParticipantRole,
+            binding: VersionBoundPersistencePoolBinding,
+            launchProfile: PersistencePoolLaunchProfile,
+        ): GuardedDataSource {
+            val route = when (role) {
+                PersistenceJdbcParticipantRole.ORDINARY -> Route.ORDINARY
+                PersistenceJdbcParticipantRole.DELETION -> Route.DELETION
+                PersistenceJdbcParticipantRole.CATALOG_COORDINATOR -> Route.CATALOG_COORDINATOR
+            }
+            return GuardedDataSource(owner, endpoint, capacity, launchProfile, route, versionBound = binding)
+        }
+
         internal fun sourceOnly(owner: PersistenceJdbcLifecycleOwner, endpoint: ResolvedPersistenceEndpoint, settings: HikariConfig): GuardedDataSource =
             GuardedDataSource(owner, endpoint, settings.maximumPoolSize, PersistencePoolLaunchProfile.UNKNOWN, Route.ORDINARY, settings)
 

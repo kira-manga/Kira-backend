@@ -140,3 +140,82 @@ Partial/ambiguous creation or failed deletion retains custody and reports a
 sanitized result, not an inferred successful cleanup. No automatic reprepare or
 process-exit/crash cleanup is supplied. No provider-provenance, production wiring,
 native qualification, complete-D or runtime-route activation claim is added.
+
+## Cold version-bound role/pool construction
+
+After retaining the version-bound owner, `owner.bindVersionBoundPools()` constructs
+one fixed ordinary/deletion/catalog-coordinator composition. No caller supplies a
+second endpoint, capacity, Hikari configuration, descriptor, or role label. The
+ordinary capacity comes from the adopted configuration; deletion has four slots
+and catalog coordination has one. The actual catalog datasource/manager/phase
+tuple uses the same existing catalog-owner binding. The returned resources are
+guarded sources and the catalog tuple, never raw Hikari pools or lower factories.
+
+Each actual physical participant retains its root's exact immutable role material.
+That material resolves the effective endpoint recipes through the existing native
+settings derivation, and those same objects supply `driver.connect` properties:
+ordinary original-provider/weak-tracked/strong-tracked choices, strong deletion,
+and strong coordinator. The descriptor distinguishes original and tracked socket
+factory settings instead of pretending the original endpoint describes every
+attempt. Runtime selection and evidence fallback rules are unchanged. Password
+bytes still come from the original acquisition; public trust still identifies the
+captured bytes, not the generation-local path.
+
+The composition configures and validates each **actual retained cold Hikari
+shell**, then captures its effective scalar settings. Ordinary minimum-idle is
+zero; deletion/coordinator minimum-idle equal their fixed capacities. Checkout
+budgets are 2000/500/250 ms and validation budgets are 2000/250/250 ms. This narrow
+profile fixes initialization-fail-timeout at -1, idle-timeout at 600000 ms,
+max-lifetime at 1800000 ms, keepalive at 120000 ms, leak detection off, auto-commit
+on, read-only/internal-query isolation off, and no custom schema/catalog/isolation
+or init/validation SQL. There is no independent URL, credential, datasource class,
+JNDI, property map, metrics/health callback, scheduler, exception override, JMX or
+pool suspension. The existing actor owner installs its exact thread factory.
+`hikaricp.configurationFile` must be absent before Hikari construction, not merely
+cleared afterward. These are current-value checks, not immutable-launch provenance.
+
+`pools.descriptors()` reads only a successfully completed composition and rechecks
+the retained actual scalar settings, lower-source identity and actor profile;
+pool admission repeats the same binding check. Returned nested values
+and copied public properties contain no password, password fingerprint, trust
+filename, raw resource, mutable HikariConfig or generated pool name. Descriptors
+are **non-authoritative input for a future complete-D producer**, not a digest or
+proof of a deployed process's configuration. No complete-D schema is defined here.
+
+The default launch profile remains `UNKNOWN`: construction installs custody but
+does not start Hikari/JDBC or make the sources usable. `CONTROLLED_TEST_ONLY`
+retains its existing fixture-only meaning, never production/native qualification.
+The ordinary Boot `sourceOnly` path and legacy test path remain selected as before.
+Their constructors refuse a version-bound owner, preventing an alternate pool
+with an independently swapped endpoint/capacity/configuration. There is no new
+bean, environment switch, route activation or production wiring.
+
+Raw `PoolLifecycle` constructors also refuse that owner: only its exact retained
+shell can receive the version-bound lifecycle. An unregistered legacy lifecycle
+therefore cannot create an undisclosed sibling pool under the same trust custody.
+
+Partial-shell custody begins before the inert Hikari constructor is entered. The
+actual shell is retained before lifecycle/lower-source construction and validation;
+the lifecycle is retained before further configuration can throw. This also covers
+catalog construction before the enclosing tuple can be returned. Failed or pending
+construction cannot be retried, replaced, described as a complete composition, or
+silently treated as absence. The owner retains `versionBoundPools` even if binding
+throws; its explicit `close()` attempts every retained lifecycle, including partial
+catalog custody. It never directly closes a raw shell or claims that a close return
+completed its workers. Ambiguous construction remains a material-retention hold.
+
+Trust release now requires the exact sealed driver-root `TRACKED_LOCAL_ENDED`
+conjunction **and** every actually bound pool's independent local shutdown proof:
+the genuine owned close frame and bookkeeping must have ended successfully, the
+installed actor factory's creator/return-entitlement population must be closed,
+and every retained worker must have conclusively ended. A raw Hikari `isClosed`
+flag, zero counters, a different role's close, or the native root result alone is
+insufficient. This local-only observation performs no managed/native observation,
+so there is no root-to-pool-to-root recursion. An unentered composition is inert
+only after the same root's permanent seal makes future construction impossible;
+an entered incomplete composition remains retained. Observers still do no material
+filesystem work and only the explicit release operation can remove owned files.
+
+Actual new-profile TLS/native execution, provider and immutable-launch provenance,
+full configuration D, connected complaint consumers and deployment activation are
+still separate requirements. Cold construction/close checks do not satisfy them.

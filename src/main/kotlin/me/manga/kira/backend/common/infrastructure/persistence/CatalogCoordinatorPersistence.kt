@@ -10,10 +10,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** Fixed dormant coordinator tuple. Its sole permit never comes from an ordinary/deletion budget. */
 internal class CatalogCoordinatorPersistence private constructor(
     private val owner: PersistenceJdbcLifecycleOwner,
-    endpoint: ResolvedPersistenceEndpoint,
-    launchProfile: PersistencePoolLaunchProfile,
+    internal val dataSource: GuardedDataSource,
 ) : AutoCloseable {
-    internal val dataSource = GuardedDataSource.catalogCoordinator(owner, endpoint, launchProfile)
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     private val admitted = AtomicBoolean()
     private val bindingClaimed = AtomicBoolean()
@@ -72,6 +70,12 @@ internal class CatalogCoordinatorPersistence private constructor(
             owner: PersistenceJdbcLifecycleOwner,
             endpoint: ResolvedPersistenceEndpoint,
             launchProfile: PersistencePoolLaunchProfile,
-        ): CatalogCoordinatorPersistence = CatalogCoordinatorPersistence(owner, endpoint, launchProfile)
+        ): CatalogCoordinatorPersistence = CatalogCoordinatorPersistence(owner, GuardedDataSource.catalogCoordinator(owner, endpoint, launchProfile))
+
+        internal fun versionBound(
+            owner: PersistenceJdbcLifecycleOwner,
+            binding: VersionBoundPersistencePoolBinding,
+            launchProfile: PersistencePoolLaunchProfile,
+        ): CatalogCoordinatorPersistence = CatalogCoordinatorPersistence(owner, binding.construct(owner, launchProfile))
     }
 }
