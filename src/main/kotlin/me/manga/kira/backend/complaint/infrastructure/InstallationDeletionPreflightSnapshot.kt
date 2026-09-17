@@ -60,7 +60,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
                 ReceiptState.AUTHORIZED_DELETE -> Comparison.Authorized(fingerprint, retained.publicationReference)
 
                 ReceiptState.COMPLETED -> if (observedAt.isBefore(checkNotNull(retained.expiresAt))) {
-                    Comparison.Completed(fingerprint, retained.publicationReference)
+                    Comparison.Completed(fingerprint, retained.publicationReference, checkNotNull(retained.replay))
                 } else {
                     rejected(InstallationDeletionPreflightRejection.INSTALLATION_DELETED)
                 }
@@ -117,7 +117,11 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
         class Rejected(val reason: InstallationDeletionPreflightRejection) : Comparison
         class Active(val fingerprint: ComplaintDeleteAllFingerprint) : Comparison
         class Authorized(val fingerprint: ComplaintDeleteAllFingerprint, val publicationReference: String) : Comparison
-        class Completed(val fingerprint: ComplaintDeleteAllFingerprint, val publicationReference: String) : Comparison
+        class Completed(
+            val fingerprint: ComplaintDeleteAllFingerprint,
+            val publicationReference: String,
+            val replay: InstallationDeletionCompletedReplaySnapshot,
+        ) : Comparison
     }
 
     private class Identity(val scope: ComplaintDataScope, val state: InstallationIdentityState)
@@ -138,6 +142,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
         val state: ReceiptState,
         val publicationReference: String,
         val expiresAt: Instant?,
+        val replay: InstallationDeletionCompletedReplaySnapshot?,
     )
 
     private enum class ReceiptState { AUTHORIZED_DELETE, COMPLETED }
@@ -191,6 +196,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
                 state,
                 publication,
                 row.getTimestamp("receipt_expires_at")?.toInstant(),
+                if (state === ReceiptState.COMPLETED) InstallationDeletionCompletedReplaySnapshot.read(row) else null,
             )
         }
 
@@ -229,14 +235,14 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
         val SQL = """
             WITH deletion_time AS MATERIALIZED (SELECT clock_timestamp() AS observed_at)
             SELECT t.observed_at, isfinite(t.observed_at) AS finite_observed_at,
-                i.id AS identity_id, i.data_scope_id AS identity_scope, i.state AS identity_state,
+                i.id AS identity_id, i.data_scope_id AS identity_scope, i.state AS identity_state, i.terminal_at AS identity_terminal_at,
                 (complaint_is_v4(i.id) AND complaint_scope_valid(i.data_scope_id, i.test_only) AND i.created_at IS NOT NULL
                     AND ((i.state IN ('ACTIVE','DELETION_PENDING','RECOVERY_RESERVED') AND i.terminal_at IS NULL)
                         OR (i.state IN ('RETIRED','DELETED') AND i.terminal_at IS NOT NULL))
                     AND complaint_finite_times(i.created_at, i.terminal_at)) IS TRUE AS identity_valid,
                 c.id AS credential_id, c.data_scope_id AS credential_scope, c.state AS credential_state,
                 CASE WHEN octet_length(c.secret_verifier) = 32 THEN c.secret_verifier END AS secret_verifier,
-                c.credential_version, c.verifier_expires_at,
+                c.credential_version, c.verifier_expires_at, c.deleted_at AS credential_deleted_at,
                 (complaint_scope_valid(c.data_scope_id, c.test_only) AND c.credential_version > 0 AND c.version > 0
                     AND complaint_digest_valid(c.secret_verifier) AND c.created_at IS NOT NULL
                     AND ((c.state IN ('ACTIVE','DELETION_PENDING') AND c.platform IN ('ANDROID','IOS')
@@ -251,7 +257,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
                 d.external_event_id, d.external_epoch,
                 CASE WHEN complaint_opaque_valid(d.external_object_version, 1024) THEN d.external_object_version END AS external_object_version,
                 CASE WHEN octet_length(d.external_ciphertext_hash) = 32 THEN d.external_ciphertext_hash END AS external_ciphertext_hash,
-                d.expires_at AS receipt_expires_at,
+                d.authorized_at AS receipt_authorized_at, d.completed_at AS receipt_completed_at, d.expires_at AS receipt_expires_at,
                 (complaint_is_v4(d.installation_id) AND complaint_is_v4(d.deletion_key) AND d.submitted_credential_version > 0
                     AND complaint_digest_valid(d.fingerprint) AND complaint_scope_valid(d.data_scope_id, d.test_only)
                     AND d.created_at IS NOT NULL AND d.authorized_at IS NOT NULL AND d.publication_ref IS NOT NULL
@@ -266,9 +272,16 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
                     AND complaint_finite_times(d.created_at, d.authorized_at, d.completed_at, d.expires_at)) IS TRUE AS receipt_valid,
                 p.event_id AS publication_id, p.data_scope_id AS publication_scope, p.state AS publication_state,
                 p.writer_generation AS publication_writer, p.journal_epoch AS publication_epoch, p.target_count AS publication_target_count,
+                CASE WHEN complaint_ascii_valid(p.routing_key_id, 128) THEN p.routing_key_id END AS publication_routing_key_id,
                 CASE WHEN complaint_ascii_valid(p.object_key, 1024) THEN p.object_key END AS publication_object_key,
+                CASE WHEN complaint_bytes_match(p.event_bytes, p.semantic_hash, 65536) THEN p.event_bytes END AS publication_event_bytes,
+                CASE WHEN octet_length(p.semantic_hash) = 32 THEN p.semantic_hash END AS publication_semantic_hash,
                 CASE WHEN complaint_opaque_valid(p.object_version, 1024) THEN p.object_version END AS publication_object_version,
                 CASE WHEN octet_length(p.ciphertext_hash) = 32 THEN p.ciphertext_hash END AS publication_ciphertext_hash,
+                CASE WHEN complaint_bytes_match(p.verification_bytes, p.verification_hash, 65536) THEN p.verification_bytes END AS publication_verification_bytes,
+                CASE WHEN octet_length(p.verification_hash) = 32 THEN p.verification_hash END AS publication_verification_hash,
+                p.created_at AS publication_created_at, p.object_created_at AS publication_object_created_at,
+                p.retain_until AS publication_retain_until, p.verified_at AS publication_verified_at, p.applied_at AS publication_applied_at,
                 (complaint_event_id_valid(p.event_id) AND complaint_scope_valid(p.data_scope_id, p.test_only)
                     AND complaint_is_v4(p.writer_generation) AND p.journal_epoch > 0 AND p.event_kind = 'OWNER_DELETE_ALL'
                     AND p.target_count BETWEEN 0 AND 100 AND complaint_ascii_valid(p.routing_key_id, 128)
@@ -288,6 +301,7 @@ internal class InstallationDeletionPreflightSnapshot private constructor(
                 CASE WHEN complaint_opaque_valid(a.object_key, 1024) THEN a.object_key END AS applied_object_key,
                 CASE WHEN complaint_opaque_valid(a.object_version, 1024) THEN a.object_version END AS applied_object_version,
                 CASE WHEN octet_length(a.ciphertext_hash) = 32 THEN a.ciphertext_hash END AS applied_ciphertext_hash,
+                a.applied_at,
                 (complaint_event_id_valid(a.event_id) AND complaint_scope_valid(a.data_scope_id, a.test_only)
                     AND complaint_is_v4(a.writer_generation) AND a.journal_epoch > 0 AND a.event_kind = 'OWNER_DELETE_ALL'
                     AND a.target_count BETWEEN 0 AND 100 AND complaint_opaque_valid(a.object_key, 1024)
