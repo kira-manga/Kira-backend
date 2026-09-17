@@ -25,6 +25,7 @@ internal class ComplaintAdmissionPolicy(
         const val INGRESS_WINDOW_NANOS = 60 * SECOND_NANOS
         const val INGRESS_IDLE_NANOS = 120 * SECOND_NANOS
         const val SESSION_WINDOW_NANOS = 3600 * SECOND_NANOS
+        const val DELETE_ALL_WINDOW_NANOS = 24 * SESSION_WINDOW_NANOS
         const val PREVIOUS_RETENTION_NANOS = 25 * 3600 * SECOND_NANOS
         const val ADMISSION_LIFETIME_NANOS = 5 * SECOND_NANOS
         const val SESSION_ACTOR_LIMIT = 30
@@ -49,7 +50,7 @@ internal class ComplaintAdmissionRejected(val code: ComplaintAdmissionFailure, v
     RuntimeException("Complaint admission refused") {
     init {
         require((code == ComplaintAdmissionFailure.RATE_LIMITED) == (retryAfterSeconds != null))
-        require(retryAfterSeconds == null || retryAfterSeconds in 1..3600)
+        require(retryAfterSeconds == null || retryAfterSeconds in 1..86400)
     }
 
     val status: Int get() = if (code == ComplaintAdmissionFailure.RATE_LIMITED) 429 else 503

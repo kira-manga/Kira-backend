@@ -24,6 +24,12 @@ class ComplaintCapacityLedger(val configuration: ComplaintCapacityConfiguration,
         return next(balance.copy(free = balance.free - promised, recoveryReserved = balance.recoveryReserved + promised))
     }
 
+    /** Immediate privacy bookkeeping uses unpromised hard-limit units, independently of creation closure. */
+    fun chargePrivacyActual(expectedDigest: ByteArray, charge: ComplaintCapacityVector): ComplaintCapacityLedger {
+        configuration.requireMatching(expectedDigest)
+        return next(balance.copy(free = balance.free - charge, actual = balance.actual + charge))
+    }
+
     /**
      * Convert the locked event's original promise once; release only its proved-unused remainder.
      * The physical reservation row was charged separately and is not part of this future-work vector.

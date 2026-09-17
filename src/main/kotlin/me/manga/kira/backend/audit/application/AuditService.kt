@@ -10,6 +10,7 @@ import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
 import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
+import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
 import me.manga.kira.backend.audit.domain.scalarDetails
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -83,6 +84,14 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
         requireComplaintAuditPayloadSize(detailJson)
         val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
         counted.recordInstallationEnrollment(CountedInstallationEnrollmentAuditEntry(scope, detailJson, at), allocation)
+    }
+
+    /** Scope-only fixed authorization event. Actual receipt/pending writes and prepaid custody are checked by the shared adapter. */
+    internal fun recordInstallationDeleteAuthorization(submittedVersion: Long, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(mapOf("version" to submittedVersion))
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordInstallationDeleteAuthorization(CountedInstallationDeleteAuthorizationAuditEntry(submittedVersion, detailJson, at), allocation)
     }
 
     private class PreparedMutationAudit(mutation: ComplaintAuditMutation, override val detailJson: String, override val createdAt: Instant) :
