@@ -7,14 +7,20 @@ import me.manga.kira.backend.security.JournalDataKeyRequestV1
 import java.nio.ByteBuffer
 import java.util.Base64
 
-/** This adapter implements only the adopted ordinary OWNER_DELETE_ALL context, never arbitrary KMS use. */
-internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurationV1) {
+/** Exactly one fixed profile per client; ordinary and seal contexts are never interchangeable. */
+internal class JournalKmsRequestProfile private constructor(val journal: ComplaintJournalConfigurationV1, private val epochSeal: Boolean) {
+    constructor(journal: ComplaintJournalConfigurationV1) : this(journal, false)
+
     private val declaration = journal.declaration()
     val keyArn: String = declaration.encryption.keyArn
     val region: String = declaration.journalLocation.region
     val callLimitMillis: Int = declaration.limits.deadlines.kmsCallMillis
     private val wrappedLimit = declaration.limits.decoder.maximumWrappedKeyBytes
-    private val prefix = OfflineBootstrapGrammar.ordinaryPrefix(declaration.writer.generationId)
+    private val prefix = if (epochSeal) {
+        OfflineBootstrapGrammar.sealTerminalPrefix(declaration.writer.generationId)
+    } else {
+        OfflineBootstrapGrammar.ordinaryPrefix(declaration.writer.generationId)
+    }
     private val routingIds = declaration.routing.keys.map { it.keyId }.toSet()
 
     fun prepare(request: JournalDataKeyRequestV1, operation: JournalKmsOperation, wrapped: ByteArray?, started: Long, nanoTime: () -> Long): JournalKmsCall {
@@ -31,7 +37,7 @@ internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurati
         val decoded = canonicalUrlBytes(value)
         try {
             val fields = frameFields(decoded)
-            validateHeader(fields)
+            if (epochSeal) validateSealHeader(fields) else validateHeader(fields)
         } finally {
             decoded.fill(0)
         }
@@ -46,11 +52,13 @@ internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurati
 
     private fun frameFields(bytes: ByteArray): List<String> {
         val input = ByteBuffer.wrap(bytes)
-        val fields = ArrayList<String>(20)
-        repeat(20) {
+        val fieldCount = if (epochSeal) 22 else 20
+        val fields = ArrayList<String>(fieldCount)
+        repeat(fieldCount) { index ->
             requireJournalKms(input.remaining() >= 4)
             val count = input.int.toLong() and 0xffff_ffffL
-            requireJournalKms(count in 1L..4096L && count <= input.remaining().toLong())
+            val minimum = if (epochSeal && index == 20) 0L else 1L // Only the initial seal predecessor may be empty.
+            requireJournalKms(count in minimum..4096L && count <= input.remaining().toLong())
             val start = input.position()
             repeat(count.toInt()) { requireJournalKms(input.get().toInt() in 32..126) }
             fields.add(String(bytes, start, count.toInt(), Charsets.US_ASCII))
@@ -60,13 +68,41 @@ internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurati
     }
 
     private fun validateHeader(fields: List<String>) {
+        validateFixedHeader(fields, "OWNER_DELETE_ALL")
+        val epoch = fields[16].toLongOrNull()
+        requireJournalKms(epoch != null && epoch > 0 && epoch.toString() == fields[16])
+        requireJournalKms(fields[17] in routingIds)
+        val objectPrefix = "${prefix}writer/${declaration.writer.generationId}/epoch/${fields[16].padStart(19, '0')}/${fields[17]}/"
+        requireJournalKms(fields[11].startsWith(objectPrefix))
+        requireUrlSize(fields[11].removePrefix(objectPrefix), 32)
+        requireUrlSize(fields[18], 32)
+        requireUrlSize(fields[19], 12)
+    }
+
+    private fun validateSealHeader(fields: List<String>) {
+        validateFixedHeader(fields, "EPOCH_SEAL")
+        val start = fields[16].toLongOrNull()
+        val end = fields[17].toLongOrNull()
+        requireJournalKms(start != null && start > 0 && start.toString() == fields[16])
+        requireJournalKms(end != null && end >= checkNotNull(start) && end.toString() == fields[17])
+        requireJournalKms(fields[18] in routingIds)
+        val objectPrefix = "${prefix}writer/${declaration.writer.generationId}/epoch/${fields[17].padStart(19, '0')}/${fields[18]}/"
+        requireJournalKms(fields[11].startsWith(objectPrefix))
+        requireUrlSize(fields[11].removePrefix(objectPrefix), 32)
+        requireUrlSize(fields[19], 32)
+        val predecessor = fields[20]
+        requireJournalKms(if (start == 1L) predecessor.isEmpty() else predecessor.matches(Regex("[0-9a-f]{64}")))
+        requireUrlSize(fields[21], 12)
+    }
+
+    private fun validateFixedHeader(fields: List<String>, objectKind: String) {
         val fixed = mapOf(
             0 to CONTEXT_DOMAIN,
             1 to "1",
             2 to "1",
             3 to "1",
             4 to "kcj-1",
-            5 to "OWNER_DELETE_ALL",
+            5 to objectKind,
             6 to "AES-256-GCM",
             7 to "FRESH_PER_OBJECT_KMS_WRAPPED",
             8 to declaration.encryption.keyId,
@@ -78,14 +114,6 @@ internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurati
             15 to OfflineBootstrapGrammar.LIVE_SCOPE_ID,
         )
         requireJournalKms(fixed.all { (index, expected) -> fields[index] == expected })
-        val epoch = fields[16].toLongOrNull()
-        requireJournalKms(epoch != null && epoch > 0 && epoch.toString() == fields[16])
-        requireJournalKms(fields[17] in routingIds)
-        val objectPrefix = "${prefix}writer/${declaration.writer.generationId}/epoch/${fields[16].padStart(19, '0')}/${fields[17]}/"
-        requireJournalKms(fields[11].startsWith(objectPrefix))
-        requireUrlSize(fields[11].removePrefix(objectPrefix), 32)
-        requireUrlSize(fields[18], 32)
-        requireUrlSize(fields[19], 12)
     }
 
     private fun requireUrlSize(value: String, size: Int) {
@@ -113,6 +141,8 @@ internal class JournalKmsRequestProfile(val journal: ComplaintJournalConfigurati
     override fun toString(): String = "JournalKmsRequestProfile(J-bound,redacted,no-authority)"
 
     companion object {
+        fun epochSeal(journal: ComplaintJournalConfigurationV1): JournalKmsRequestProfile = JournalKmsRequestProfile(journal, true)
+
         const val MAX_WRAPPED_BYTES = 6144
         const val MAX_CONTEXT_BYTES = 8192
         const val CONTEXT_KEY = "kira-complaint-journal-context-v1"
