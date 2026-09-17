@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBearerAuthenticator
 import org.springframework.http.server.RequestPath
@@ -39,6 +40,7 @@ internal class ComplaintInstallationSecurityChainFactory(
     private val me: ComplaintInstallationMeHttpHandler,
     private val history: ComplaintOwnerHistoryHttpHandler,
     private val create: ComplaintOwnerCreateHttpHandler,
+    private val deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
 ) {
     private val entryPoint = AuthenticationEntryPoint { request, response, _ ->
         ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAUTHORIZED)
@@ -87,7 +89,7 @@ internal class ComplaintInstallationSecurityChainFactory(
     /** Fixed dispatch only. The existing producers reverify bearer facts and current rows themselves. */
     val handler = HttpRequestHandler { request, response ->
         val context = bridge.claimHandler(request)
-        if (!ComplaintInstallationRoutes.implemented(request)) {
+        if (!implemented(request)) {
             ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.NOT_FOUND)
         } else if (ComplaintInstallationRoutes.requiresBearer(request) &&
             !authentication.belongsTo(context, SecurityContextHolder.getContext().authentication)
@@ -101,6 +103,8 @@ internal class ComplaintInstallationSecurityChainFactory(
 
                 ComplaintInstallationRoutes.STATUS -> create.handleWithinIngress(request, response, context)
 
+                ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(deleteAll).handleWithinIngress(request, response, context)
+
                 else -> if (request.method == "GET") {
                     history.handleWithinIngress(request, response, context)
                 } else {
@@ -112,9 +116,13 @@ internal class ComplaintInstallationSecurityChainFactory(
 
     override fun toString(): String = "ComplaintInstallationSecurityChainFactory(dormant,explicit-TEST-only)"
 
-    private class ClosedUnimplementedRoutes : OncePerRequestFilter() {
+    /** Concrete optional composition only; no public readiness flag can open this route. */
+    private fun implemented(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.implemented(request) ||
+        (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL)
+
+    private inner class ClosedUnimplementedRoutes : OncePerRequestFilter() {
         override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
-            if (!ComplaintInstallationRoutes.implemented(request)) {
+            if (!implemented(request)) {
                 ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.NOT_FOUND)
             } else {
                 filterChain.doFilter(request, response)
@@ -127,10 +135,11 @@ internal class ComplaintInstallationSecurityChainFactory(
 internal object ComplaintInstallationRoutes : RequestMatcher {
     const val ENROLLMENT = "/api/v1/installations"
     const val SESSION = "/api/v1/installations/session"
+    const val DELETE_ALL = "/api/v1/installations/delete-all"
     const val ME = "/api/v1/installations/me"
     const val HISTORY = "/api/v1/complaints"
     const val STATUS = "/api/v1/complaint-operations/status"
-    private val publicPaths = setOf(ENROLLMENT, SESSION, "/api/v1/installations/bootstrap", "/api/v1/installations/delete-all")
+    private val publicPaths = setOf(ENROLLMENT, SESSION, "/api/v1/installations/bootstrap", DELETE_ALL)
     private val patterns = (
         publicPaths + setOf(ME, HISTORY, STATUS, "$HISTORY/{id}", "$HISTORY/{id}/replies", "$HISTORY/{id}/content")
         ).flatMap { listOf(it, "$it/") }.map(PathPatternParser()::parse)

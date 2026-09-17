@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequestWrapper
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.config.KiraSecurityProperties
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -15,7 +17,9 @@ import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.IOException
+import java.io.InterruptedIOException
 import java.security.ProviderException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -94,7 +98,12 @@ class ComplaintIngressAdmissionTest {
 
     @Test
     fun `HTTP bridge never appends a problem after buffered delivery or leaks its reservation on failure`() {
-        for (failure in listOf(IOException("synthetic"), ComplaintSecurityRejected(ComplaintSecurityFailure.UNAVAILABLE))) {
+        for (failure in listOf(
+            IOException("synthetic"),
+            ComplaintSecurityRejected(ComplaintSecurityFailure.UNAVAILABLE),
+            IllegalStateException("synthetic"),
+            OutOfMemoryError("synthetic"),
+        )) {
             val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1))
             val bridge = ComplaintHttpIngressBridge(guard)
             val input = request().apply {
@@ -112,6 +121,104 @@ class ComplaintIngressAdmissionTest {
             guard.withIngress(input) {}
             assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(input) }
         }
+    }
+
+    @Test
+    fun `HTTP bridge preserves cancellation interruption and non OOM Error without response substitution`() {
+        for (failure in listOf(
+            CancellationException("synthetic"),
+            InterruptedException("synthetic"),
+            InterruptedIOException("synthetic"),
+            AssertionError("synthetic"),
+        )) {
+            val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1))
+            val bridge = ComplaintHttpIngressBridge(guard)
+            val input = request().apply {
+                method = "POST"
+                requestURI = ComplaintInstallationRoutes.DELETE_ALL
+            }
+            val response = MockHttpServletResponse()
+            try {
+                val escaped = assertThrows(failure.javaClass) {
+                    bridge.doFilter(input, response) { admitted, _ ->
+                        guard.requireLiveContext(bridge.claimHandler(admitted as HttpServletRequest))
+                        throw failure
+                    }
+                }
+                assertSame(failure, escaped)
+                assertEquals(failure is InterruptedException || failure is InterruptedIOException, Thread.currentThread().isInterrupted)
+            } finally {
+                Thread.interrupted()
+            }
+            assertEquals(0, response.contentAsByteArray.size)
+            assertEquals(200, response.status) // Unsent servlet default, not a handler success result.
+            assertNull(response.getHeader("Retry-After"))
+            guard.withIngress(input) {}
+            assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(input) }
+        }
+    }
+
+    @Test
+    fun `HTTP bridge interrupt flag prevents ordinary response fallback even after a buffered prefix`() {
+        for (prefix in listOf(false, true)) {
+            for (failure in listOf(
+                null,
+                IllegalStateException("synthetic"),
+                IOException("synthetic"),
+                ComplaintSecurityRejected(ComplaintSecurityFailure.UNAVAILABLE),
+            )) {
+                val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1))
+                val bridge = ComplaintHttpIngressBridge(guard)
+                val input = request().apply {
+                    method = "POST"
+                    requestURI = ComplaintInstallationRoutes.DELETE_ALL
+                }
+                val response = MockHttpServletResponse()
+                try {
+                    assertThrows(InterruptedException::class.java) {
+                        bridge.doFilter(input, response) { _, output ->
+                            if (prefix) output.outputStream.write("prefix".toByteArray())
+                            Thread.currentThread().interrupt()
+                            if (failure != null) throw failure
+                        }
+                    }
+                    assertTrue(Thread.currentThread().isInterrupted)
+                } finally {
+                    Thread.interrupted()
+                }
+                assertEquals(if (prefix) "prefix" else "", response.contentAsString)
+                assertNull(response.getHeader("Retry-After"))
+                guard.withIngress(input) {}
+                assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(input) }
+            }
+        }
+    }
+
+    @Test
+    fun `HTTP bridge refuses even a problem while Spring resource ownership is unresolved`() {
+        val guard = newGuard(MutableAdmissionTestClock(), admissionTestPolicy(concurrent = 1))
+        val bridge = ComplaintHttpIngressBridge(guard)
+        val input = request().apply {
+            method = "POST"
+            requestURI = ComplaintInstallationRoutes.DELETE_ALL
+        }
+        val response = MockHttpServletResponse()
+        val resource = Any()
+        try {
+            assertThrows(PersistencePhaseException::class.java) {
+                bridge.doFilter(input, response) { _, _ ->
+                    TransactionSynchronizationManager.bindResource(resource, Any())
+                    throw ComplaintSecurityRejected(ComplaintSecurityFailure.UNAVAILABLE)
+                }
+            }
+            assertFalse(TransactionSynchronizationManager.getResourceMap().isEmpty())
+            assertEquals(0, response.contentAsByteArray.size)
+            assertNull(response.getHeader("Retry-After"))
+        } finally {
+            TransactionSynchronizationManager.unbindResourceIfPossible(resource)
+        }
+        guard.withIngress(input) {}
+        assertThrows(ComplaintSecurityRejected::class.java) { bridge.authenticationContext(input) }
     }
 
     @Test

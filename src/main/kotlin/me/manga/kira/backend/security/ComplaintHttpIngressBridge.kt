@@ -12,6 +12,8 @@ import jakarta.servlet.http.HttpServletResponse
 import jakarta.servlet.http.HttpServletResponseWrapper
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import java.io.IOException
+import java.io.InterruptedIOException
+import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -83,15 +85,27 @@ internal class ComplaintHttpIngressBridge(private val ingress: ComplaintIngressA
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
     private fun respond(request: HttpServletRequest, response: DeliveryResponse, operation: () -> Unit) {
         try {
+            requireNotInterrupted()
             operation()
+            requireNotInterrupted()
         } catch (failure: ComplaintAdmissionRejected) {
             val kind = if (failure.status == 429) ComplaintSecurityFailure.RATE_LIMITED else ComplaintSecurityFailure.UNAVAILABLE
             fail(request, response, kind, failure.retryAfterSeconds)
         } catch (failure: ComplaintSecurityRejected) {
             fail(request, response, failure.failure)
+        } catch (failure: CancellationException) {
+            throw failure
+        } catch (failure: InterruptedIOException) {
+            Thread.currentThread().interrupt()
+            throw failure
+        } catch (failure: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw failure
         } catch (failure: IOException) {
+            requireNotInterrupted()
             throw IOException(ComplaintSecurityResponses.DELIVERY_FAILURE)
         } catch (failure: RuntimeException) {
+            requireNotInterrupted()
             closed.set(true)
             fail(request, response, ComplaintSecurityFailure.INTERNAL)
         } catch (failure: OutOfMemoryError) {
@@ -101,9 +115,14 @@ internal class ComplaintHttpIngressBridge(private val ingress: ComplaintIngressA
     }
 
     private fun fail(request: HttpServletRequest, response: DeliveryResponse, failure: ComplaintSecurityFailure, retry: Long? = null) {
+        requireNotInterrupted()
         // Even a not-yet-committed container buffer can already contain success bytes. Never append a problem.
         if (response.deliveryStarted) throw IOException(ComplaintSecurityResponses.DELIVERY_FAILURE)
         ComplaintSecurityResponses.problem(request, response, failure, retry)
+    }
+
+    private fun requireNotInterrupted() {
+        if (Thread.currentThread().isInterrupted) throw InterruptedException("Complaint security request interrupted.")
     }
 
     override fun toString(): String = "ComplaintHttpIngressBridge(dormant,synchronous)"

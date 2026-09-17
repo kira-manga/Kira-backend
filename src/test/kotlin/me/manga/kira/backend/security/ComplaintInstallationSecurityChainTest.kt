@@ -11,6 +11,7 @@ import me.manga.kira.backend.common.web.RequestBodySizeLimitFilter
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -24,6 +25,7 @@ import me.manga.kira.backend.user.domain.UserRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
@@ -82,7 +84,7 @@ class ComplaintInstallationSecurityChainTest {
         }
         for ((method, path) in listOf(
             "GET" to "/api/v1/installations/bootstrap",
-            "POST" to "/api/v1/installations/delete-all",
+            "POST" to ComplaintInstallationRoutes.DELETE_ALL,
             "DELETE" to ComplaintInstallationRoutes.ENROLLMENT,
             "POST" to ComplaintInstallationRoutes.ME,
             "GET" to "/api/v1/complaints/${f.id}",
@@ -91,7 +93,13 @@ class ComplaintInstallationSecurityChainTest {
         )) {
             // Containers decode servletPath; requestURI retains this explicit raw unreserved alias.
             val decodedPath = if (path == "/api/v1/installations/%6de") ComplaintInstallationRoutes.ME else path
-            val response = f.request(method, path, "not-a-token", decodedServletPath = decodedPath)
+            val response = f.request(
+                method,
+                path,
+                "not-a-token",
+                content = if (path == ComplaintInstallationRoutes.DELETE_ALL) "{}" else null,
+                decodedServletPath = decodedPath,
+            )
             assertEquals(404, response.status, "$method $path")
             assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
             assertNull(response.getHeader("WWW-Authenticate"))
@@ -107,6 +115,42 @@ class ComplaintInstallationSecurityChainTest {
         val unrelated = f.request("GET", "/api/v1/installations-other")
         assertEquals(401, unrelated.status)
         assertNull(unrelated.getHeader("X-Kira-Complaint-Contract"))
+    }
+
+    @Test
+    fun `optional delete-all dispatch shares ingress ignores bearer and keeps aliases closed`() = Fixture(includeDeleteAll = true).use { f ->
+        for (token in listOf(null, "not-a-token", f.userToken)) {
+            val response = f.request("POST", ComplaintInstallationRoutes.DELETE_ALL, token, "{}")
+            assertEquals(204, response.status) // Inert handler proves dispatch only, not deletion or a private outcome.
+            assertNull(response.getHeader("WWW-Authenticate"))
+            assertNull(f.observed)
+            assertNull(f.observedUser)
+            assertNull(f.observedMdcUser)
+        }
+        assertEquals(3, f.deleteAllCalls)
+        val oversized = f.request("POST", ComplaintInstallationRoutes.DELETE_ALL, f.userToken, " ".repeat(4097))
+        assertEquals(413, oversized.status)
+        assertEquals("1", oversized.getHeader("X-Kira-Complaint-Contract"))
+        assertNull(oversized.getHeader("WWW-Authenticate"))
+        for ((method, path) in listOf(
+            "GET" to ComplaintInstallationRoutes.DELETE_ALL,
+            "PUT" to ComplaintInstallationRoutes.DELETE_ALL,
+            "DELETE" to ComplaintInstallationRoutes.DELETE_ALL,
+            "POST" to "${ComplaintInstallationRoutes.DELETE_ALL}/",
+            "POST" to "/api/v1/installations/%64elete-all",
+        )) {
+            val decodedPath = if (path.contains("%64")) ComplaintInstallationRoutes.DELETE_ALL else path
+            val response = f.request(method, path, "not-a-token", "{}", decodedServletPath = decodedPath)
+            assertEquals(404, response.status, "$method $path")
+            assertNull(response.getHeader("WWW-Authenticate"))
+            assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
+        }
+        assertEquals(3, f.deleteAllCalls)
+        assertEquals(0, f.currentReads)
+        assertEquals(0, f.userReads)
+        assertEquals(0, f.semanticStarts)
+        assertThrows<ComplaintSecurityRejected> { f.bridge.authenticationContext(f.lastRequest) }
+        requireConnectionFree()
     }
 
     @Test
@@ -134,7 +178,7 @@ class ComplaintInstallationSecurityChainTest {
         requireConnectionFree()
     }
 
-    private class Fixture : AutoCloseable {
+    private class Fixture(includeDeleteAll: Boolean = false) : AutoCloseable {
         val ingress = historyTestIngress()
         val bridge = ComplaintHttpIngressBridge(ingress)
         val id: UUID = UUID.randomUUID()
@@ -146,12 +190,14 @@ class ComplaintInstallationSecurityChainTest {
         var currentReads = 0
         var userReads = 0
         var semanticStarts = 0
+        var deleteAllCalls = 0
         var active = true
         var phaseUnavailable = false
         var observed: Authentication? = null
         var observedUser: AuthenticatedUser? = null
         var observedMdcUser: String? = null
         lateinit var lastRequest: MockHttpServletRequest
+        private var bodyContext: ComplaintIngressContext? = null
         private val users = mock(UserRepository::class.java) { call ->
             if (call.method.name == "findById") {
                 userReads += 1
@@ -193,16 +239,36 @@ class ComplaintInstallationSecurityChainTest {
         }
         private val history = mock(ComplaintOwnerHistoryHttpHandler::class.java)
         private val create = mock(ComplaintOwnerCreateHttpHandler::class.java)
+        private val deleteAll = if (includeDeleteAll) {
+            mock(ComplaintOwnerDeleteAllHttpHandler::class.java) { call ->
+                if (call.method.name.substringBefore('$') == "handleWithinIngress") {
+                    val admitted = call.getArgument<ComplaintIngressContext>(2)
+                    ingress.requireLiveContext(admitted)
+                    assertSame(bodyContext, admitted)
+                    deleteAllCalls += 1
+                    capture(call.getArgument(0), call.getArgument(1))
+                    null
+                } else {
+                    Answers.RETURNS_DEFAULTS.answer(call)
+                }
+            }
+        } else {
+            null
+        }
         private val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt, phases, ingress)
-        private val factory = ComplaintInstallationSecurityChainFactory(bridge, authentication, installations, me, history, create)
+        private val factory = ComplaintInstallationSecurityChainFactory(bridge, authentication, installations, me, history, create, deleteAll)
         private val context = complaintSpringSecurityContext(factory, users)
         private val proxy = context.getBean(FilterChainProxy::class.java)
         private val body = RequestBodySizeLimitFilter(ObjectMapper())
 
         fun request(method: String, path: String, token: String? = null, content: String? = null, decodedServletPath: String = path): MockHttpServletResponse {
+            bodyContext = null
             lastRequest = object : MockHttpServletRequest(method, path) {
                 override fun getInputStream(): jakarta.servlet.ServletInputStream {
-                    if (ComplaintInstallationRoutes.matches(this)) ingress.requireLiveContext(bridge.authenticationContext(this))
+                    if (ComplaintInstallationRoutes.matches(this)) {
+                        bodyContext = bridge.authenticationContext(this)
+                        ingress.requireLiveContext(checkNotNull(bodyContext))
+                    }
                     return super.getInputStream()
                 }
             }.apply {
