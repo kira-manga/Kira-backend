@@ -663,12 +663,7 @@ class OwnerDeleteAllAuthorizationIT {
     private fun withFixture(test: (OwnerDeleteAllAuthorizationFixture) -> Unit) = withOwnerDeleteAllAuthorization(database.value, test = test)
 }
 
-private fun assertPersisted(
-    f: OwnerDeleteAllAuthorizationFixture,
-    candidate: InstallationDeletionCandidate,
-    event: OwnerDeleteAllJournalEventV1,
-    count: Int,
-) {
+private fun assertPersisted(f: OwnerDeleteAllAuthorizationFixture, candidate: InstallationDeletionCandidate, event: OwnerDeleteAllJournalEventV1, count: Int) {
     val row = f.observer.queryForMap(
         "SELECT d.*, p.event_bytes, p.semantic_hash, p.target_count, p.state AS publication_state, p.object_version, " +
             "p.verification_bytes, i.state AS identity_state, c.state AS credential_state, c.credential_version, c.version AS optimistic_version, " +
