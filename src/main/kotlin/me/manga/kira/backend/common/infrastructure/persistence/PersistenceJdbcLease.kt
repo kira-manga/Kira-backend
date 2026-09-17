@@ -131,8 +131,14 @@ internal class PersistenceJdbcLease private constructor(
         // In particular, a consented old return tail has no authority over its successor.
         if (phase.get() !== Phase.OPEN || transfer?.consented() == true) return
         try {
-            closeActual(scope.cleanupBudget(), retire = true)
+            closeActual(scope.transferCleanupBudget(), retire = true)
         } catch (problem: Throwable) {
+            // In particular, an expired original rotation budget cannot prevent physical retirement.
+            // Logical Spring/RETURN custody is still retained; this is not a refund or close receipt.
+            if (transfer?.consented() != true) {
+                ownership.requestRetirement(state.epoch)
+                state.epoch.sealForTerminal()
+            }
             scope.ownerDeleteAllApply.observeFailure(problem)
             scope.jdbcFailure()
             // The original operation/entitlement and terminal receipt, not this catch, decide completion.

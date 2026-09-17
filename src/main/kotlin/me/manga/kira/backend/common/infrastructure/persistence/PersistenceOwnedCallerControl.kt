@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -7,7 +8,11 @@ import java.util.concurrent.atomic.AtomicReference
  * Authoritative one-shot logical caller disposition. Only the exact caller can write it.
  * ABANDONED is not a physical fence, resource disposal, worker exit or processing completion.
  */
-internal class PersistenceOwnedCallerControl private constructor(val budget: PersistenceTimeBudget, val caller: PersistenceOwnedFactoryCaller) {
+internal class PersistenceOwnedCallerControl private constructor(
+    val budget: PersistenceTimeBudget,
+    val caller: PersistenceOwnedFactoryCaller,
+    private val epochRotation: EpochRotationCallerBinding? = null,
+) {
     val processing = PersistenceFactoryProcessingCell()
     val receipt: PersistenceFactoryReceipt = processing.receipt
     private val prepared = OwnedCallerState(PersistenceOwnedCallerDisposition.PREPARED)
@@ -38,6 +43,10 @@ internal class PersistenceOwnedCallerControl private constructor(val budget: Per
     }
 
     fun matchesRecord(value: PersistencePhysicalRecord): Boolean = record === value
+
+    /** Fixed identity comparisons at F→G, not a clock/campaign callback or independently supplied authority. */
+    internal fun matchesEpochRotation(resource: EpochRotationPersistence, attempt: CatalogEpochRotationAttemptV1, total: PersistenceTimeBudget): Boolean =
+        epochRotation?.let { it.resource === resource && it.attempt === attempt && it.total === total } == true
 
     /** The concrete binding calls this only at its exact successful F→G admission. */
     fun attach(): Boolean = caller.isCurrent() && disposition.compareAndSet(prepared, attached)
@@ -76,12 +85,14 @@ internal class PersistenceOwnedCallerControl private constructor(val budget: Per
 
     companion object {
         internal fun forEpochRotation(
-            attempt: me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1,
+            resource: EpochRotationPersistence,
+            attempt: CatalogEpochRotationAttemptV1,
             loginMillis: Long,
-        ): PersistenceOwnedCallerControl = PersistenceOwnedCallerControl(
-            attempt.budget.systemCappedSnapshot(loginMillis),
-            PersistenceOwnedFactoryCaller.capture(),
-        )
+        ): PersistenceOwnedCallerControl {
+            val total = attempt.budget
+            val budget = total.systemCappedSnapshot(loginMillis)
+            return PersistenceOwnedCallerControl(budget, PersistenceOwnedFactoryCaller.capture(), EpochRotationCallerBinding(resource, attempt, total))
+        }
 
         fun prepare(allowanceMillis: Long): PersistenceOwnedCallerControl {
             // The same original system budget covers metadata, reservation, admission, packaging and claim.
@@ -94,6 +105,8 @@ internal class PersistenceOwnedCallerControl private constructor(val budget: Per
         }
     }
 }
+
+private class EpochRotationCallerBinding(val resource: EpochRotationPersistence, val attempt: CatalogEpochRotationAttemptV1, val total: PersistenceTimeBudget)
 
 /** Prebuilt before reservation. This detached cell can contain only a disposition and immutable refusal. */
 private class OwnedCallerState(val value: PersistenceOwnedCallerDisposition, val refusal: PersistenceFactoryResult.Refused? = null)

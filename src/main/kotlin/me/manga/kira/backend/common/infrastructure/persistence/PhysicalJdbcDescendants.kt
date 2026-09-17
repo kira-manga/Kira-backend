@@ -102,7 +102,7 @@ internal class PhysicalJdbcDescendants(
             } else if (value is Collection<*>) {
                 value.forEach(::validate)
             } else if (isCallerOwnedCallback(value)) {
-                if (context.hasPhase()) PersistenceJdbcGuardContext.refuse()
+                if (context.requiresClosedInputs()) PersistenceJdbcGuardContext.refuse()
                 // Ordinary caller-owned callbacks retain their normal dispatch, never strict credit.
                 context.ordinaryCompatibilityOnly()
             }

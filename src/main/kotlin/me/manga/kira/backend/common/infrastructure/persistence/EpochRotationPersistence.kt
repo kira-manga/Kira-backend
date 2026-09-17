@@ -76,6 +76,7 @@ internal class EpochRotationPersistence private constructor(
             session.finish()
             session.awaitRelease()
             attempt.requireCore(this) // The same original local lease/configuration and total deadline still apply.
+            session.requireReleased(operation)
             return operation
         } catch (problem: Throwable) {
             attempt.abort()
@@ -88,8 +89,16 @@ internal class EpochRotationPersistence private constructor(
                     retained.session?.finish()
                     retained.request?.requestRetirement()
                 } finally {
-                    retained.bodyEnded.set(true)
-                    retained.reconcileCaller()
+                    try {
+                        retained.session?.restoreAfterFailure()
+                    } catch (_: Throwable) {
+                        attempt.abort()
+                        retained.session?.failed()
+                        throw retained.session?.failure() ?: PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED)
+                    } finally {
+                        retained.bodyEnded.set(true)
+                        retained.reconcileCaller()
+                    }
                 }
             }
         }

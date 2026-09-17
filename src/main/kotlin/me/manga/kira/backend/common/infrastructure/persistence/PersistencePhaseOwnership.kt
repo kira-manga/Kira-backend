@@ -3,8 +3,8 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import jakarta.persistence.EntityManagerFactory
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
-import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import org.springframework.transaction.PlatformTransactionManager
@@ -296,6 +296,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+                PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
+                PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
                 -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
         }
