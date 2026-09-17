@@ -253,7 +253,7 @@ internal class CleanupPgSleepObserver(reader: DriverManagerDataSource) : AutoClo
     }
 }
 
-private fun ordinaryCleanupFactory(selected: DataSource, includeAuditEntities: Boolean = false): LocalContainerEntityManagerFactoryBean =
+internal fun ordinaryCleanupFactory(selected: DataSource, includeAuditEntities: Boolean = false): LocalContainerEntityManagerFactoryBean =
     LocalContainerEntityManagerFactoryBean().apply {
         dataSource = selected
         val packages = if (includeAuditEntities) {
@@ -276,7 +276,7 @@ private fun ordinaryCleanupFactory(selected: DataSource, includeAuditEntities: B
         )
     }
 
-private fun ordinaryCleanupReader(database: PgLifecycleDatabaseFixture): DriverManagerDataSource = DriverManagerDataSource().apply {
+internal fun ordinaryCleanupReader(database: PgLifecycleDatabaseFixture): DriverManagerDataSource = DriverManagerDataSource().apply {
     setUrl("jdbc:postgresql://${database.host}:${database.port}/${PgLifecycleDatabaseSettings.DATABASE}")
     username = PgLifecycleDatabaseSettings.OBSERVER
     password = PgLifecycleDatabaseSettings.OBSERVER_PASSWORD

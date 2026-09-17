@@ -4,8 +4,9 @@ import java.util.concurrent.locks.LockSupport
 import kotlin.concurrent.withLock
 
 /** Actual lifecycle-owner activation/retirement only. Read-only own-project reflection is assertion evidence, not admission authority. */
-internal class PgLifecycleTestScope(endpoint: ResolvedPersistenceEndpoint, capacity: Int = 1) : AutoCloseable {
-    val owner = PersistenceJdbcLifecycleOwner(endpoint, capacity, PersistencePathStyle.POSIX)
+internal class PgLifecycleTestScope(val owner: PersistenceJdbcLifecycleOwner) : AutoCloseable {
+    constructor(endpoint: ResolvedPersistenceEndpoint, capacity: Int = 1) : this(PersistenceJdbcLifecycleOwner(endpoint, capacity, PersistencePathStyle.POSIX))
+
     val root = lifecycleField(owner, "root") as PersistenceJdbcDriverRoot
     var expectedUnknown = false
 

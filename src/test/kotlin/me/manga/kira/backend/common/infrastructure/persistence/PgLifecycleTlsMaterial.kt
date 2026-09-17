@@ -1,18 +1,26 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import java.nio.ByteBuffer
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.OpenOption
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption.CREATE_NEW
+import java.nio.file.StandardOpenOption.WRITE
+import java.nio.file.attribute.PosixFilePermissions
 import java.security.KeyStore
 import java.security.PrivateKey
 import java.security.Signature
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.util.Base64
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 
 /** Child-side owner of this run's ephemeral server key and four public certificates. No resource/private-key constants. */
-internal class PgLifecycleTlsMaterial private constructor(private val files: PgLifecycleTlsFiles) : AutoCloseable {
+internal class PgLifecycleTlsMaterial private constructor(private val files: PgLifecycleTlsFiles, private val removeOnClose: Boolean = true) : AutoCloseable {
     private val closed = AtomicBoolean()
 
     fun rootCertificate(wrong: Boolean): Path {
@@ -41,6 +49,65 @@ internal class PgLifecycleTlsMaterial private constructor(private val files: PgL
             return SSLContext.getInstance("TLS").also { it.init(keys.keyManagers, trust.trustManagers, null) }
         } finally {
             password.fill('\u0000')
+        }
+    }
+
+    /** Existing generated material only. The database fixture retains both destination files before this call. */
+    fun exportPostgresqlServer(certificatePath: Path, privateKeyPath: Path) {
+        check(!closed.get())
+        val root = certificate(PgLifecycleTlsAsset.ROOT_CA)
+        val wrongRoot = certificate(PgLifecycleTlsAsset.WRONG_CA)
+        val matched = certificate(PgLifecycleTlsAsset.SERVER)
+        val wrongHost = certificate(PgLifecycleTlsAsset.WRONG_HOST)
+        PgLifecycleTlsCertificateChecks.verify(root, wrongRoot, matched, wrongHost)
+        val password = PgLifecycleTlsFiles.STORE_PASSWORD.toCharArray()
+        try {
+            val key = serverKey(password, matched)
+            check(key.format == "PKCS#8")
+            val encoded = key.encoded
+            val body = Base64.getMimeEncoder(64, byteArrayOf(10)).encode(encoded)
+            val header = "-----BEGIN PRIVATE KEY-----\n".toByteArray(Charsets.US_ASCII)
+            val footer = "\n-----END PRIVATE KEY-----\n".toByteArray(Charsets.US_ASCII)
+            val pem = ByteArray(header.size + body.size + footer.size)
+            header.copyInto(pem)
+            body.copyInto(pem, header.size)
+            footer.copyInto(pem, header.size + body.size)
+            try {
+                writePrivateFile(certificatePath, files.readVerified(PgLifecycleTlsAsset.SERVER))
+                writePrivateFile(privateKeyPath, pem)
+            } finally {
+                encoded.fill(0)
+                body.fill(0)
+                pem.fill(0)
+            }
+        } finally {
+            password.fill('\u0000')
+        }
+    }
+
+    /** Material checks only; this neither starts a TLS peer nor attests a PostgreSQL connection. */
+    fun verifyPostgresqlMaterial() {
+        check(!closed.get())
+        val matched = certificate(PgLifecycleTlsAsset.SERVER)
+        PgLifecycleTlsCertificateChecks.verify(
+            certificate(PgLifecycleTlsAsset.ROOT_CA),
+            certificate(PgLifecycleTlsAsset.WRONG_CA),
+            matched,
+            certificate(PgLifecycleTlsAsset.WRONG_HOST),
+        )
+        val password = PgLifecycleTlsFiles.STORE_PASSWORD.toCharArray()
+        try {
+            serverKey(password, matched)
+        } finally {
+            password.fill('\u0000')
+        }
+    }
+
+    private fun writePrivateFile(path: Path, bytes: ByteArray) {
+        val options = setOf<OpenOption>(CREATE_NEW, WRITE, NOFOLLOW_LINKS)
+        Files.newByteChannel(path, options, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))).use { output ->
+            val buffer = ByteBuffer.wrap(bytes)
+            while (buffer.hasRemaining()) check(output.write(buffer) > 0)
         }
     }
 
@@ -84,11 +151,16 @@ internal class PgLifecycleTlsMaterial private constructor(private val files: PgL
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        files.removeAll()
-        println("PG_LIFECYCLE_TLS_MATERIAL_CLEANUP ephemeral_files=5 removed=true")
+        if (removeOnClose) {
+            files.removeAll()
+            println("PG_LIFECYCLE_TLS_MATERIAL_CLEANUP ephemeral_files=5 removed=true")
+        }
     }
 
     companion object {
+        /** Caller keeps the actual filesystem owner; opening this view does not transfer cleanup authority. */
+        fun fromPrepared(root: Path): PgLifecycleTlsMaterial = PgLifecycleTlsMaterial(PgLifecycleTlsFiles(root), removeOnClose = false)
+
         fun inChild(): PgLifecycleTlsMaterial {
             val home = Path.of(System.getProperty("user.home"))
             check(home.isAbsolute && home.fileName.toString() == "home")

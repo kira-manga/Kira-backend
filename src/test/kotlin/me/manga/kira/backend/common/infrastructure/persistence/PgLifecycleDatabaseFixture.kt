@@ -15,6 +15,7 @@ import java.util.UUID
 /** JUnit owns its container; an explicitly bound local server remains controller-owned. No arbitrary external datasource. */
 internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : AutoCloseable {
     private val local = PgLifecycleControllerOwnedServer.load(fixtureClass)
+    private val tls = PgLifecycleDatabaseTls.forFixture(fixtureClass, local?.tlsRoot())
     private val postgres = if (local == null) newPostgres() else null
     private lateinit var generation: Instant
     private var localVerified = false
@@ -32,7 +33,11 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
 
     fun start() {
         try {
-            postgres?.start()
+            tls?.prepare()
+            postgres?.let { server ->
+                tls?.configureContainer(server)
+                server.start()
+            }
             connection("w03o_bootstrap").use { connection ->
                 connection.createStatement().use { statement ->
                     statement.queryTimeout = 2
@@ -49,9 +54,11 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
                     statement.execute(
                         "CREATE ROLE ${PgLifecycleDatabaseSettings.CANDIDATE} LOGIN PASSWORD '${PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD}'",
                     )
+                    tls?.verifyServer(statement, local?.tlsData())
                 }
             }
             localVerified = local != null
+            if (tls != null) verifySecondLoopback()
         } catch (failure: Throwable) {
             runCatching { close() }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
@@ -64,7 +71,29 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
         return PgLifecycleDatabaseObserver(connection("w03o_$nonce"), generation)
     }
 
-    private fun connection(application: String): Connection {
+    fun versionBoundTls(): PgLifecycleDatabaseTls {
+        check(::generation.isInitialized && (local == null || localVerified))
+        return checkNotNull(tls)
+    }
+
+    /** Real same-generation endpoint control: hostname-negative clients must not merely hit an unopened address. */
+    private fun verifySecondLoopback() {
+        check(host == "127.0.0.1" || host == "localhost")
+        connection("w03o_tls_second_loopback", "127.0.0.2").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.queryTimeout = 2
+                statement.executeQuery("SELECT pg_postmaster_start_time(), current_database(), current_user, host(inet_server_addr())").use { row ->
+                    check(row.next() && row.getTimestamp(1).toInstant() == generation)
+                    check(row.getString(2) == PgLifecycleDatabaseSettings.DATABASE && row.getString(3) == PgLifecycleDatabaseSettings.OBSERVER)
+                    if (local != null) check(row.getString(4) == "127.0.0.2")
+                    check(!row.next())
+                }
+                checkNotNull(tls).verifyServer(statement, local?.tlsData())
+            }
+        }
+    }
+
+    private fun connection(application: String, selectedHost: String? = null): Connection {
         val properties = Properties().apply {
             setProperty("user", PgLifecycleDatabaseSettings.OBSERVER)
             setProperty("password", PgLifecycleDatabaseSettings.OBSERVER_PASSWORD)
@@ -79,7 +108,11 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
             setProperty("socketTimeout", "2")
             setProperty("queryTimeout", "0") // Constructor control; observer statement timeouts are set only after actual connection return.
         }
-        val url = postgres?.jdbcUrl ?: "jdbc:postgresql://127.0.0.1:${requireNotNull(local).port}/${PgLifecycleDatabaseSettings.DATABASE}"
+        val url = if (selectedHost != null) {
+            "jdbc:postgresql://$selectedHost:$port/${PgLifecycleDatabaseSettings.DATABASE}"
+        } else {
+            postgres?.jdbcUrl ?: "jdbc:postgresql://127.0.0.1:${requireNotNull(local).port}/${PgLifecycleDatabaseSettings.DATABASE}"
+        }
         val connection = DriverManager.getConnection(url, properties)
         try {
             connection.autoCommit = true
@@ -94,6 +127,7 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
     override fun close() {
         localVerified = false
         postgres?.stop() // Local close revokes this fixture's endpoint; only the controller stops/deletes its server.
+        tls?.close() // Never remove server material if the owned container's stop failed; local material stays controller-owned.
     }
 
     private fun newPostgres(): PostgreSQLContainer<*> = PostgreSQLContainer(DockerImageName.parse("postgres:17.6-alpine"))
@@ -117,11 +151,24 @@ private class PgLifecycleControllerOwnedServer(
     private val generation: Instant,
     private val data: Path,
 ) {
+    fun tlsRoot(): Path? = if (className == PgLifecycleDatabaseTls.CLASS_NAME) {
+        Path.of("/tmp/kcg-$run/VersionBoundPersistenceConnectedIT-tls")
+    } else {
+        null
+    }
+
+    fun tlsData(): Path? = if (className == PgLifecycleDatabaseTls.CLASS_NAME) data else null
+
     fun verify(statement: Statement, actualGeneration: Instant) {
         check(actualGeneration == generation)
         requireOwnedPath(data.parent, 1_000, directory = true)
         requireOwnedPath(data, 1_000, directory = true)
         requireOwnedPath(data.parent.resolve("sockets"), 1_000, directory = true)
+        tlsRoot()?.let { root ->
+            requireOwnedPath(root, 0, directory = true)
+            requireOwnedPath(data.resolve("server.crt"), 1_000, directory = false)
+            requireOwnedPath(data.resolve("server.key"), 1_000, directory = false)
+        }
         val postmaster = readOwnedFile(data.resolve("postmaster.pid"), 1_000)
         val lines = postmaster.removeSuffix("\n").split('\n')
         check(lines.size == 8)
@@ -174,6 +221,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgOwnedCutIntegrationTest",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgNativePhysicalCloseIT",
+                    PgLifecycleDatabaseTls.CLASS_NAME,
                 ),
             )
             val root = Path.of("/tmp/kcg-$run")
