@@ -70,7 +70,7 @@ internal class CatalogEpochRotationCustodyV1(private val coordinator: CatalogCoo
         try {
             requireConnectionFree()
             requireCampaign(attempt.campaign, jdbc)
-            if (attempt.custody !== this || attempt.jdbc !== jdbc || active.get() !== attempt || !inFlight.compareAndSet(null, attempt)) refuse()
+            if (!hasRetainedAttempt(attempt, jdbc) || !inFlight.compareAndSet(null, attempt)) refuse()
             try {
                 attempt.beginCapture()
             } catch (problem: Throwable) {
@@ -84,14 +84,20 @@ internal class CatalogEpochRotationCustodyV1(private val coordinator: CatalogCoo
         }
     }
 
+    private fun hasRetainedAttempt(attempt: CatalogEpochRotationAttemptV1, jdbc: JdbcTemplate): Boolean =
+        attempt.custody === this && attempt.jdbc === jdbc && active.get() === attempt
+
     private fun requireCampaign(campaign: CatalogCoordinatorLeaseCampaignV1, jdbc: JdbcTemplate) {
-        if (coordinator.epochRotationCustody !== this || campaign.custody !== coordinator.leaseCustody || campaign.jdbc !== jdbc ||
-            campaign.binding.coordinator !== coordinator || !coordinator.leaseCustody.isActive(campaign)
+        if (!hasOriginalCampaignResources(campaign, jdbc) || campaign.binding.coordinator !== coordinator ||
+            !coordinator.leaseCustody.isActive(campaign)
         ) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         campaign.binding.requirePersistence(coordinator.ownership, jdbc)
     }
+
+    private fun hasOriginalCampaignResources(campaign: CatalogCoordinatorLeaseCampaignV1, jdbc: JdbcTemplate): Boolean =
+        coordinator.epochRotationCustody === this && campaign.custody === coordinator.leaseCustody && campaign.jdbc === jdbc
 
     internal fun ownsCall(attempt: CatalogEpochRotationAttemptV1): Boolean =
         coordinator.epochRotationCustody === this && active.get() === attempt && inFlight.get() === attempt
