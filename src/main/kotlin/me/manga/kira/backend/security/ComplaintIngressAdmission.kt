@@ -53,6 +53,7 @@ internal class ComplaintIngressAdmission(
         ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS,
         ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS,
     )
+
     // Separately bounded minute store: never reinterpret the existing hourly session/enrollment budget.
     private val ownerReads = ComplaintAdmissionWindowStore(
         policy.semanticBucketLimit,

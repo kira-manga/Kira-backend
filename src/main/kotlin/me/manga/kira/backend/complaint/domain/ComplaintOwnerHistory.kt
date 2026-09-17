@@ -98,7 +98,7 @@ internal class ComplaintOwnerHistoryPage(notices: List<ComplaintOwnerHistoryNoti
         val ids = this.items.map { it.id } + this.notices.map { it.id }
         require(ids.toSet().size == ids.size && this.notices.map { it.noticeKey }.toSet().size == this.notices.size) { "Invalid history page." }
         require(
-            this.items.zipWithNext().all { (a, b) -> a.createdAt > b.createdAt || a.createdAt == b.createdAt && a.id.toString() > b.id.toString() },
+            this.items.zipWithNext().all { (a, b) -> a.createdAt > b.createdAt || (a.createdAt == b.createdAt && a.id.toString() > b.id.toString()) },
         ) { "Invalid history page." }
         if (nextCursor != null) {
             require(this.items.isNotEmpty()) { "Invalid history page." }
@@ -121,8 +121,7 @@ internal enum class ComplaintOwnerHistoryFailure(val status: Int, val code: Stri
 }
 
 /** No original cause, content, identifiers, cursor or JWT reaches an exception/log boundary. */
-internal class ComplaintOwnerHistoryRejected(val failure: ComplaintOwnerHistoryFailure) :
-    RuntimeException("Complaint history refused.", null, false, false)
+internal class ComplaintOwnerHistoryRejected(val failure: ComplaintOwnerHistoryFailure) : RuntimeException("Complaint history refused.", null, false, false)
 
 internal fun rejectOwnerHistory(failure: ComplaintOwnerHistoryFailure): Nothing = throw ComplaintOwnerHistoryRejected(failure)
 

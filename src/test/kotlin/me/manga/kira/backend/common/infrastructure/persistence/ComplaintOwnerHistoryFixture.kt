@@ -28,10 +28,8 @@ import java.time.Instant
 import java.util.UUID
 
 /** Thin owned rows on the existing PG/ordinary fixture. Synthetic data is not mode/restore/import authority. */
-internal class ComplaintOwnerHistoryFixture(
-    val base: OrdinaryComplaintInstallationEnrollmentFixture,
-    val run: OrdinaryComplaintTestInstallationFixture,
-) : AutoCloseable {
+internal class ComplaintOwnerHistoryFixture(val base: OrdinaryComplaintInstallationEnrollmentFixture, val run: OrdinaryComplaintTestInstallationFixture) :
+    AutoCloseable {
     val ordinary = base.ordinary
     val observer = base.observer
     val jwt = historyTestJwt()
@@ -104,7 +102,12 @@ internal class ComplaintOwnerHistoryFixture(
             observer.update(
                 "INSERT INTO complaints (id, data_scope_id, test_only, ownership, kind, status, notice_key, created_at, updated_at, version) " +
                     "VALUES (?, ?, ?, 'SYSTEM', 'NOTICE', 'PINNED', ?, ?, ?, 1)",
-                id, scope.id, scope.testOnly, key, Timestamp.from(ordinary.cutoff), Timestamp.from(ordinary.cutoff),
+                id,
+                scope.id,
+                scope.testOnly,
+                key,
+                Timestamp.from(ordinary.cutoff),
+                Timestamp.from(ordinary.cutoff),
             ),
         )
         return id
@@ -122,8 +125,12 @@ internal class ComplaintOwnerHistoryFixture(
                     "created_at, updated_at, version) " +
                     "VALUES (?, ?, false, 'LEGACY_UNCLAIMED', 'REPORT', 'TECHNICAL', 'UNKNOWN', 'Synthetic legacy', 'Synthetic exclusion', " +
                     "'HISTORY_FIXTURE', 'synthetic-history', ?, ?, 'MAPPED', ?, ?, 1)",
-                id, ComplaintDataScope.LIVE.id, ByteArray(32) { 7 }, ByteArray(32) { 11 },
-                Timestamp.from(ordinary.cutoff), Timestamp.from(ordinary.cutoff),
+                id,
+                ComplaintDataScope.LIVE.id,
+                ByteArray(32) { 7 },
+                ByteArray(32) { 11 },
+                Timestamp.from(ordinary.cutoff),
+                Timestamp.from(ordinary.cutoff),
             ),
         )
         return id
@@ -145,10 +152,7 @@ internal class ComplaintOwnerHistoryFixture(
             }
         }
 
-    fun <T> withPhase(
-        enter: () -> PersistencePhaseContext = ordinary.ownership::enterComplaintOwnerHistoryPage,
-        work: (PersistencePhaseContext) -> T,
-    ): T {
+    fun <T> withPhase(enter: () -> PersistencePhaseContext = ordinary.ownership::enterComplaintOwnerHistoryPage, work: (PersistencePhaseContext) -> T): T {
         val phase = enter()
         try {
             phase.begin()
@@ -175,7 +179,11 @@ internal class ComplaintOwnerHistoryFixture(
             1,
             observer.update(
                 "INSERT INTO complaint_resource_ids (id, data_scope_id, test_only, state, created_at) VALUES (?, ?, ?, ?, ?)",
-                id, scope.id, scope.testOnly, state, Timestamp.from(at),
+                id,
+                scope.id,
+                scope.testOnly,
+                state,
+                Timestamp.from(at),
             ),
         )
     }

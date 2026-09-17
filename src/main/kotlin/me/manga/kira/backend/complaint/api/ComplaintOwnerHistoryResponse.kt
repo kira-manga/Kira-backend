@@ -31,7 +31,8 @@ internal class ComplaintOwnerHistoryResponses {
 
     fun isOpen(): Boolean = !closed.get()
 
-    @Suppress("TooGenericExceptionCaught", "SwallowedException")
+    // Keep every bounded-writer guard and cleanup/rethrow branch explicit.
+    @Suppress("TooGenericExceptionCaught", "SwallowedException", "ThrowsCount")
     fun encode(permit: Permit, page: ComplaintOwnerHistoryPage): ComplaintHistoryEncodedBody {
         if (!permit.belongsTo(semaphore) || !isOpen()) throw ComplaintHistorySerializationFailure()
         if (page.items.size > 50 || page.notices.size > 16) throw ComplaintHistorySerializationFailure()

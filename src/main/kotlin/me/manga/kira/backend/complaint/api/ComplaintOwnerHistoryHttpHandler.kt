@@ -136,8 +136,10 @@ internal class ComplaintOwnerHistoryHttpHandler(
     private companion object {
         const val PATH = "/api/v1/complaints"
         val PROBLEMS = ComplaintOwnerHistoryFailure.entries.associateWith { failure ->
-            ("""{"type":"about:blank","title":"${failure.title}","status":${failure.status},"errors":[""" +
-                """{"code":"${failure.code}","message":"Complaint request refused."}]}""").toByteArray(Charsets.UTF_8)
+            (
+                """{"type":"about:blank","title":"${failure.title}","status":${failure.status},"errors":[""" +
+                    """{"code":"${failure.code}","message":"Complaint request refused."}]}"""
+                ).toByteArray(Charsets.UTF_8)
         }
     }
 }

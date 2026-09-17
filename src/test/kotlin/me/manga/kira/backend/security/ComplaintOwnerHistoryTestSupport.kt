@@ -16,7 +16,9 @@ internal fun historyTestJwt(clock: Clock = Clock.systemUTC()): InstallationJwtCo
         "history-installation",
         listOf(InstallationJwtKeyMaterial("history-installation", historyTestJwtKey())),
         InstallationJwtForbiddenFamily(
-            JwtTestSupport.ISSUER, JwtTestSupport.AUDIENCE, listOf(InstallationJwtKeyMaterial("history-user", historyTestUserKey())),
+            JwtTestSupport.ISSUER,
+            JwtTestSupport.AUDIENCE,
+            listOf(InstallationJwtKeyMaterial("history-user", historyTestUserKey())),
         ),
     ),
     clock,

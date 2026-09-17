@@ -129,7 +129,11 @@ internal class ComplaintOwnerHistoryReadOperation private constructor(
                 check(notices.size < 16)
                 notices.add(
                     ComplaintOwnerHistoryNotice(
-                        id, checkNotNull(row.getString("notice_key")), instant(row, "created_at"), instant(row, "updated_at"), row.getLong("version"),
+                        id,
+                        checkNotNull(row.getString("notice_key")),
+                        instant(row, "created_at"),
+                        instant(row, "updated_at"),
+                        row.getLong("version"),
                     ),
                 )
             } else {

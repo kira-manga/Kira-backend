@@ -158,7 +158,9 @@ class ComplaintOwnerHistoryIT {
                 1,
                 f.observer.update(
                     "UPDATE complaint_installation_ids SET state = ?, terminal_at = CASE WHEN ? IN ('RETIRED','DELETED') THEN now() END WHERE id = ?",
-                    state, state, f.actor.id,
+                    state,
+                    state,
+                    f.actor.id,
                 ),
             )
             val response = f.request()

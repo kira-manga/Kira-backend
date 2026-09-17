@@ -195,7 +195,7 @@ class ComplaintOwnerHistoryHttpTest {
                 override fun write(bytes: ByteArray, offset: Int, count: Int) {
                     calls++
                     sent.write(bytes, offset, minOf(count, 8))
-                    throw IllegalStateException("Synthetic container buffer failure")
+                    error("Synthetic container buffer failure")
                 }
             }
         }
@@ -216,7 +216,10 @@ class ComplaintOwnerHistoryHttpTest {
             assertEquals(503, fixture.request().status)
             assertTrue(fixture.port.events.isEmpty())
         } finally {
-            held.forEach { it.close(); it.close() }
+            held.forEach {
+                it.close()
+                it.close()
+            }
         }
         assertEquals(200, fixture.request().status)
         val again = List(8) { checkNotNull(fixture.responses.acquire()) }
@@ -290,10 +293,14 @@ class ComplaintOwnerHistoryHttpTest {
     fun `registered closed filter still rejects before constructing the dormant producer`() {
         var allocated = false
         val response = MockHttpServletResponse()
-        DisabledComplaintRoutesFilter().doFilter(historyTestRequest(), response, FilterChain { request, result ->
-            allocated = true
-            Fixture().handler.handleRequest(request as MockHttpServletRequest, result as MockHttpServletResponse)
-        })
+        DisabledComplaintRoutesFilter().doFilter(
+            historyTestRequest(),
+            response,
+            FilterChain { request, result ->
+                allocated = true
+                Fixture().handler.handleRequest(request as MockHttpServletRequest, result as MockHttpServletResponse)
+            },
+        )
         assertEquals(404, response.status)
         assertFalse(allocated)
     }

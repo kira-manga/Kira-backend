@@ -57,13 +57,16 @@ internal class ComplaintOwnerHistoryReadAdapter(
         return Authenticated(this, Thread.currentThread(), ingress, identity, query, position)
     }
 
+    // Persistence failures must not carry SQL or identity content across the boundary.
+    @Suppress("SwallowedException")
     override fun read(context: ComplaintOwnerHistoryRequestContext, authentication: ComplaintOwnerHistoryAuthentication): ComplaintOwnerHistoryPage {
         requireConnectionFree()
         val selected = authentication as? Authenticated ?: rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAUTHORIZED)
         val ingress = context as? ComplaintIngressContext ?: rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAVAILABLE)
-        if (selected.owner !== this || selected.caller !== Thread.currentThread() || selected.context !== ingress || selected.consumed) {
+        if (selected.owner !== this || selected.caller !== Thread.currentThread() || selected.context !== ingress) {
             rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAUTHORIZED)
         }
+        if (selected.consumed) rejectOwnerHistory(ComplaintOwnerHistoryFailure.UNAUTHORIZED)
         selected.identity.requireCurrent()
         selected.consumed = true
         // The current-row preflight has committed and actually released before either counter operation.
