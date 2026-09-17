@@ -136,8 +136,7 @@ private fun Connection.rejectPartialChange(set: String, constraint: String = REC
     expectSqlFailure(recoveryUpdate(set), constraint = constraint)
 }
 
-private fun recoveryUpdate(set: String): String =
-    "UPDATE complaint_recovery_capacity_reservations SET $set WHERE event_id=$FIXTURE_EVENT"
+private fun recoveryUpdate(set: String): String = "UPDATE complaint_recovery_capacity_reservations SET $set WHERE event_id=$FIXTURE_EVENT"
 
 private const val RECOVERY_STATE_CONSTRAINT = "chk_complaint_recovery_state"
 private const val SPARSE_USE = "array_prepend(10::bigint,array_fill(0::bigint,ARRAY[21]))"

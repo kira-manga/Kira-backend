@@ -24,10 +24,7 @@ import java.util.UUID
  * preflight, canonical-event custody, raw record or caller's success flag. No APPLY/route/runtime
  * authority or new accounting is supplied. Existing authorization/reload semantics are unchanged.
  */
-internal class JdbcComplaintOwnerDeleteAllVerificationStore(
-    private val jdbc: JdbcTemplate,
-    private val routing: VersionBoundComplaintJournalRouting,
-) {
+internal class JdbcComplaintOwnerDeleteAllVerificationStore(private val jdbc: JdbcTemplate, private val routing: VersionBoundComplaintJournalRouting) {
     private val issuer = Any()
     private val codec = OwnerDeleteAllVerificationCodecV1(routing)
 
@@ -163,13 +160,14 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
     private fun verification(publication: Publication): StoredVerification {
         requireEvent(publication)
         check(!publication.prepared)
-        val bytes = checkNotNull(publication.verificationBytes)
+        val columns = publication.verification
+        val bytes = checkNotNull(columns.verificationBytes)
         val record = codec.parse(bytes, observed.event)
-        check(record.objectVersion == publication.objectVersion)
-        check(record.ciphertextSha256 == HexFormat.of().formatHex(checkNotNull(publication.ciphertextHash)))
-        check(Instant.parse(record.objectCreatedAt) == publication.objectCreatedAt)
-        check(Instant.parse(record.retainUntil) == publication.retainUntil && Instant.parse(record.verifiedAt) == publication.verifiedAt)
-        return StoredVerification(record, bytes, checkNotNull(publication.verificationHash))
+        check(record.objectVersion == columns.objectVersion)
+        check(record.ciphertextSha256 == HexFormat.of().formatHex(checkNotNull(columns.ciphertextHash)))
+        check(Instant.parse(record.objectCreatedAt) == columns.objectCreatedAt)
+        check(Instant.parse(record.retainUntil) == columns.retainUntil && Instant.parse(record.verifiedAt) == columns.verifiedAt)
+        return StoredVerification(record, bytes, checkNotNull(columns.verificationHash))
     }
 
     private fun requireEvent(publication: Publication) {
@@ -214,6 +212,11 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         val semanticHash: ByteArray,
         val prepared: Boolean,
         val createdAt: Instant,
+        val verification: VerificationColumns,
+    )
+
+    /** Nullable raw SQL columns; verification() retains all presence and binding checks. */
+    private class VerificationColumns(
         val objectVersion: String?,
         val ciphertextHash: ByteArray?,
         val objectCreatedAt: Instant?,
@@ -268,9 +271,12 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         private fun receipt(row: ResultSet): Receipt {
             check(requiredBoolean(row, "live") && requiredBoolean(row, "valid"))
             return Receipt(
-                row.getObject("installation_id", UUID::class.java), row.getObject("deletion_key", UUID::class.java),
-                requiredLong(row, "submitted_credential_version"), checkNotNull(row.getBytes("fingerprint")),
-                checkNotNull(row.getString("publication_ref")), checkNotNull(row.getTimestamp("authorized_at")).toInstant(),
+                row.getObject("installation_id", UUID::class.java),
+                row.getObject("deletion_key", UUID::class.java),
+                requiredLong(row, "submitted_credential_version"),
+                checkNotNull(row.getBytes("fingerprint")),
+                checkNotNull(row.getString("publication_ref")),
+                checkNotNull(row.getTimestamp("authorized_at")).toInstant(),
             )
         }
 
@@ -284,9 +290,16 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
                 checkNotNull(row.getString("routing_key_id")), checkNotNull(row.getString("object_key")),
                 row.getInt("target_count").also { check(!row.wasNull() && it in 0..100) },
                 checkNotNull(row.getBytes("event_bytes")), checkNotNull(row.getBytes("semantic_hash")), state == "PREPARED",
-                checkNotNull(row.getTimestamp("created_at")).toInstant(), row.getString("object_version"), row.getBytes("ciphertext_hash"),
-                row.getTimestamp("object_created_at")?.toInstant(), row.getTimestamp("retain_until")?.toInstant(), row.getTimestamp("verified_at")?.toInstant(),
-                row.getBytes("verification_bytes"), row.getBytes("verification_hash"),
+                checkNotNull(row.getTimestamp("created_at")).toInstant(),
+                VerificationColumns(
+                    row.getString("object_version"),
+                    row.getBytes("ciphertext_hash"),
+                    row.getTimestamp("object_created_at")?.toInstant(),
+                    row.getTimestamp("retain_until")?.toInstant(),
+                    row.getTimestamp("verified_at")?.toInstant(),
+                    row.getBytes("verification_bytes"),
+                    row.getBytes("verification_hash"),
+                ),
             )
         }
 
