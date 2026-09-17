@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecy
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhysicalEntry
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhysicalFactoryBinding
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSettings
+import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSession
 import me.manga.kira.backend.common.infrastructure.persistence.PoolLifecycle
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
@@ -64,7 +65,8 @@ internal class EpochRotationTestFixture(
     val resource = checkNotNull(process.pools.epochRotation)
     val protocol = coordinator.epochRotation
     val binding = CatalogCoordinatorLeaseBindingV1.fromRetained(process, refresh)
-    val pooledPids = listOf(process.pools.ordinary, process.pools.deletion, coordinator.dataSource).map(tls::tlsPid).toSet()
+    val pooledPids: Set<Int>
+        get() = listOf(process.pools.ordinary, process.pools.deletion, coordinator.dataSource).map(tls::tlsPid).toSet()
     private val campaigns = mutableListOf<CatalogCoordinatorLeaseCampaignV1>()
     private val participant = poolTestField<PersistenceJdbcParticipant>(tls.scope.root, "epochRotationParticipant")
     private val physicalBinding = poolTestField<PersistencePhysicalFactoryBinding>(participant, "binding")
@@ -134,20 +136,20 @@ internal class EpochRotationTestFixture(
         action(connection, jdbc, pid)
     }
 
-    fun waitingCapture(holderPid: Int): Pair<Int, PersistencePhysicalEntry> {
-        var pid: Int? = null
+    fun waitingCapture(holderPid: Int): Pair<PgLifecycleDatabaseSession, PersistencePhysicalEntry> {
+        var session: PgLifecycleDatabaseSession? = null
         awaitLifecycleFact(2_000) {
-            pid = observer.queryForList(
-                "SELECT a.pid FROM pg_stat_activity a WHERE a.datname = current_database() AND a.usename = ? " +
+            session = observer.query(
+                "SELECT a.pid, a.backend_start FROM pg_stat_activity a WHERE a.datname = current_database() AND a.usename = ? " +
                     "AND ? = ANY(pg_blocking_pids(a.pid)) AND EXISTS " +
                     "(SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.locktype = 'advisory' AND NOT l.granted)",
-                Int::class.java,
+                { row, _ -> PgLifecycleDatabaseSession(row.getInt(1), row.getTimestamp(2).toInstant()) },
                 PgLifecycleDatabaseSettings.CANDIDATE,
                 holderPid,
             ).singleOrNull()
-            pid != null
+            session != null
         }
-        return checkNotNull(pid) to entries().single()
+        return checkNotNull(session) to entries().single()
     }
 
     /** A fixture-owned deferred FK makes the actual PG COMMIT fail; no driver/commit-result proxy or production callback. */
