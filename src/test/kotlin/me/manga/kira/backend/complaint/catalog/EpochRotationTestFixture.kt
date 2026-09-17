@@ -4,8 +4,8 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcPa
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhysicalEntry
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhysicalFactoryBinding
-import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSettings
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSession
+import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSettings
 import me.manga.kira.backend.common.infrastructure.persistence.PoolLifecycle
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
