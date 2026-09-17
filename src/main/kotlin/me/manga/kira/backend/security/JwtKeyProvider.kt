@@ -3,6 +3,7 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.config.KiraSecurityProperties
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
+import java.time.Duration
 import java.util.Base64
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
@@ -30,6 +31,12 @@ class JwtKeyProvider private constructor(val secretKey: SecretKey, private val v
     }
 
     internal fun immutableVersionBinding(): VersionedSecretBinding = requireVersionBound().binding
+
+    /** Immutable settings of this actual acquired signer/verifier owner, never another supplied properties bag. */
+    internal val versionBoundIssuer: String get() = requireVersionBound().issuer
+    internal val versionBoundAudience: String get() = requireVersionBound().audience
+    internal val versionBoundAccessTokenTtl: Duration get() = requireVersionBound().ttl
+    internal val versionBoundClockSkew: Duration get() = requireVersionBound().skew
 
     /** The actual signer/verifier owns exactly one key. No caller supplies another retained-key list or key ID. */
     internal fun installationUserFamily(): InstallationJwtForbiddenFamily {
@@ -99,8 +106,8 @@ class JwtKeyProvider private constructor(val secretKey: SecretKey, private val v
     private class VersionBoundInputs(val binding: VersionedSecretBinding, properties: KiraSecurityProperties) {
         val issuer = properties.issuer
         val audience = properties.audience
-        private val ttl = properties.accessTokenTtl
-        private val skew = properties.clockSkew
+        val ttl = properties.accessTokenTtl
+        val skew = properties.clockSkew
 
         init {
             // @NotBlank is Spring binding validation, not a guard on this explicit non-Spring path.
