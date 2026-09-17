@@ -69,29 +69,7 @@ class OwnerDeleteAllAuthorizationIT {
                 var operation: ComplaintOwnerDeleteAllOperation? = null
                 f.afterStep = { step ->
                     if (step == DeleteAllStep.AUDIT) {
-                        val held = f.observations.last().second
-                        val holders = TransactionSynchronizationManager.getResourceMap()
-                        assertEquals(setOf(f.pool), holders.keys)
-                        // Observer JdbcTemplate work must not bind a second holder to the synchronized phase caller.
-                        OwnedCallerTestScope().use { observers ->
-                            observers.launch {
-                                requireConnectionFree()
-                                assertEquals(before, f.state()) // Independent PG connection cannot see any portion before commit.
-                                assertEquals(
-                                    true,
-                                    f.observer.queryForObject(
-                                        "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory' " +
-                                            "AND mode = 'ShareLock' AND granted)",
-                                        Boolean::class.java,
-                                        held.identity.first,
-                                    ),
-                                )
-                                requireConnectionFree()
-                            }.value()
-                        }
-                        assertEquals(holders, TransactionSynchronizationManager.getResourceMap())
-                        assertEquals(held.identity.second, f.jdbc.queryForObject("SELECT txid_current()", Long::class.java))
-                        assertEquals(1, f.admission.activeOwners().privacyOwners)
+                        assertUncommittedOwnerDeleteAll(f, before)
                     }
                 }
                 f.admitted(candidate) { observed, admission ->
@@ -672,6 +650,32 @@ class OwnerDeleteAllAuthorizationIT {
     }
 
     private fun withFixture(test: (OwnerDeleteAllAuthorizationFixture) -> Unit) = withOwnerDeleteAllAuthorization(database.value, test = test)
+}
+
+private fun assertUncommittedOwnerDeleteAll(f: OwnerDeleteAllAuthorizationFixture, before: Map<String, List<String>>) {
+    val held = f.observations.last().second
+    val holders = TransactionSynchronizationManager.getResourceMap()
+    assertEquals(setOf(f.pool), holders.keys)
+    // Observer JdbcTemplate work must not bind a second holder to the synchronized phase caller.
+    OwnedCallerTestScope().use { observers ->
+        observers.launch {
+            requireConnectionFree()
+            assertEquals(before, f.state()) // Independent PG connection cannot see any portion before commit.
+            assertEquals(
+                true,
+                f.observer.queryForObject(
+                    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory' " +
+                        "AND mode = 'ShareLock' AND granted)",
+                    Boolean::class.java,
+                    held.identity.first,
+                ),
+            )
+            requireConnectionFree()
+        }.value()
+    }
+    assertEquals(holders, TransactionSynchronizationManager.getResourceMap())
+    assertEquals(held.identity.second, f.jdbc.queryForObject("SELECT txid_current()", Long::class.java))
+    assertEquals(1, f.admission.activeOwners().privacyOwners)
 }
 
 private fun assertPersisted(f: OwnerDeleteAllAuthorizationFixture, candidate: InstallationDeletionCandidate, event: OwnerDeleteAllJournalEventV1, count: Int) {
