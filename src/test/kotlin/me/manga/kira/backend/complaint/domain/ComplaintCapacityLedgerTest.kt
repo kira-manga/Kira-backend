@@ -68,6 +68,66 @@ class ComplaintCapacityLedgerTest {
     }
 
     @Test
+    fun `partial recovery spending preserves future and other event reserves without freeing capacity`() {
+        val originalPromise = vector(30)
+        val previousUse = vector(10)
+        val otherEventRemaining = vector(40)
+        val remaining = originalPromise - previousUse
+        val initial = ledger(hard = 100, creation = 50, actual = 10, recovery = 60, test = 5, closed = true)
+        assertEquals(remaining + otherEventRemaining, initial.balance.recoveryReserved)
+
+        val usedNow = vector(12)
+        val spent = initial.spendRecovery(digest, remaining, usedNow)
+        val futureRemaining = originalPromise - (previousUse + usedNow)
+        assertBalance(spent, free = 25, actual = 22, recovery = 48, test = 5)
+        assertEquals(futureRemaining + otherEventRemaining, spent.balance.recoveryReserved)
+
+        // The caller supplies the newly locked remainder; arithmetic alone is not replay/ownership proof.
+        val usedLater = vector(3)
+        val later = spent.spendRecovery(digest, futureRemaining, usedLater)
+        assertBalance(later, free = 25, actual = 25, recovery = 45, test = 5)
+        assertEquals((futureRemaining - usedLater) + otherEventRemaining, later.balance.recoveryReserved)
+        assertBalance(initial, free = 25, actual = 10, recovery = 60, test = 5)
+        assertSame(initial.configuration, spent.configuration)
+        assertNotSame(initial, spent)
+    }
+
+    @Test
+    fun `partial recovery spending rejects event overspend corrupt aggregate and configuration mismatch`() {
+        val initial = ledger(hard = 100, creation = 50, actual = 10, recovery = 60, test = 5, closed = true)
+        val remaining = vector(20)
+        assertFailure(ComplaintCapacityFailureCode.RESERVATION_EXCEEDED) {
+            initial.spendRecovery(digest, remaining, vector(1).with(ComplaintCapacityCounter.TEST_RUNS, 21))
+        }
+        // Even a small use cannot bless a locked event remainder larger than the aggregate reserve.
+        assertFailure(ComplaintCapacityFailureCode.INSUFFICIENT_UNITS) {
+            initial.spendRecovery(digest, remaining.with(ComplaintCapacityCounter.TEST_RUNS, 61), vector(1))
+        }
+        assertFailure(ComplaintCapacityFailureCode.CONFIGURATION_MISMATCH) {
+            initial.spendRecovery(ByteArray(32), remaining, vector(1))
+        }
+        assertFailure(ComplaintCapacityFailureCode.INVALID_CONFIGURATION) {
+            initial.spendRecovery(ByteArray(31), remaining, vector(1))
+        }
+        val unconfigured = ComplaintCapacityLedger(ComplaintCapacityConfiguration.of(null, true), initial.balance)
+        assertFailure(ComplaintCapacityFailureCode.CONFIGURATION_MISMATCH) {
+            unconfigured.spendRecovery(digest, remaining, vector(1))
+        }
+        assertSame(initial.balance, unconfigured.balance)
+        assertBalance(initial, free = 25, actual = 10, recovery = 60, test = 5)
+    }
+
+    @Test
+    fun `partial recovery spending at maximum transfers exact units without overflow`() {
+        val initial = ledger(hard = Long.MAX_VALUE, creation = 0, recovery = Long.MAX_VALUE, closed = true)
+        val spent = initial.spendRecovery(digest, remaining = vector(Long.MAX_VALUE), actualUse = vector(Long.MAX_VALUE - 1))
+        assertBalance(spent, free = 0, actual = Long.MAX_VALUE - 1, recovery = 1, test = 0)
+        val last = spent.spendRecovery(digest, remaining = vector(1), actualUse = vector(1))
+        assertBalance(last, free = 0, actual = Long.MAX_VALUE, recovery = 0, test = 0)
+        assertBalance(initial, free = 0, actual = 0, recovery = Long.MAX_VALUE, test = 0)
+    }
+
+    @Test
     fun `proved unused recovery capacity returns to free even while creation is closed`() {
         val initial = ledger(hard = 100, creation = 50, actual = 10, recovery = 40, closed = true)
         val released = initial.releaseRecovery(digest, vector(15))
