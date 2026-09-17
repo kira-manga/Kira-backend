@@ -186,6 +186,8 @@ class OwnerDeleteAllContinuationIT {
                 assertEquals("AUTHORIZED_DELETE", f.receiptState())
                 assertEquals("PREPARED", f.publicationState())
                 assertTrue(f.statements.isEmpty())
+                val retained = if (point in setOf("CLOSE", "BOTH_FATAL")) 1L else 0L
+                assertEquals(retained, f.journalLanes.activeOwners().totalOwners)
                 f.assertReleased()
                 f.auth.afterStep = {}
                 f.publisher.respond = f.publisher::statefulReply
@@ -194,6 +196,7 @@ class OwnerDeleteAllContinuationIT {
                 val result = assertInstanceOf(CommittedOwnerDeleteAllApplyV1::class.java, f.complete())
                 f.assertAccounting(before, newAuthorization = false)
                 f.assertCompleted(result)
+                assertEquals(retained, f.journalLanes.activeOwners().totalOwners) // Retry used another admitted slot, never replaced failed cleanup.
                 f.assertReleased()
             }
         }

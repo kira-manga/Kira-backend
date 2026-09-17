@@ -40,6 +40,7 @@ import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import software.amazon.awssdk.http.SdkHttpClient
 import java.sql.Timestamp
 import java.time.Clock
 import java.time.Duration
@@ -95,6 +96,8 @@ internal class OwnerDeleteAllContinuationFixture(
         store: JdbcComplaintOwnerDeleteAllStore = auth.store,
         routing: VersionBoundComplaintJournalRouting = auth.routing,
         lanes: JournalPublicationLanesV1 = journalLanes,
+        s3HttpFactory: () -> SdkHttpClient = publisher::httpClient,
+        kmsHttpFactory: () -> SdkHttpClient = publisher.kms::httpClient,
     ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1.withHttpFixture(
         lanes,
         store,
@@ -104,9 +107,9 @@ internal class OwnerDeleteAllContinuationFixture(
             requireConnectionFree()
             // Sample only after the real authorization/reload, never before publication.created_at.
             publisher.wall = checkNotNull(auth.observer.queryForObject("SELECT clock_timestamp()", Timestamp::class.java)).toInstant()
-            publisher.httpClient()
+            s3HttpFactory()
         },
-        publisher.kms::httpClient,
+        kmsHttpFactory,
         publisher.clock,
         { publisher.nanos },
     )
