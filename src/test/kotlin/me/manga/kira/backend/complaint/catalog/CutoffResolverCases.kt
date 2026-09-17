@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CapturedCutoffMani
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCampaignV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffPublicationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.PreparedEpochSealV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
@@ -175,6 +176,24 @@ internal class CutoffResolverCases(val f: EpochRotationTestFixture, val publicat
             ).use { factory -> f.coordinator.cutoffPublications.resolve(campaign, factory) }
         }
         assertionFailure.get()?.let { throw it } // A sanitized production refusal must not conceal a fixture boundary assertion.
+        return outcome.getOrThrow()
+    }
+
+    /** The fixed producer receives only the genuine campaign and original shared-J ordinary factory, never a supplied manifest. */
+    fun prepareCapturedLive(campaign: CatalogCoordinatorLeaseCampaignV1): PreparedEpochSealV1 {
+        publications.sampleWall()
+        val outcome = runCatching {
+            OwnerDeleteAllJournalPublisherFactoryV1.cutoffWithHttpFixture(
+                lanes,
+                publications.routing,
+                OwnerDeleteAllJournalPublisherFixture.CREDENTIALS,
+                wire::httpClient,
+                wire.kms::httpClient,
+                wire.clock,
+                System::nanoTime,
+            ).use { factory -> f.coordinator.cutoffPublications.prepareCapturedLive(campaign, factory) }
+        }
+        assertionFailure.get()?.let { throw it }
         return outcome.getOrThrow()
     }
 

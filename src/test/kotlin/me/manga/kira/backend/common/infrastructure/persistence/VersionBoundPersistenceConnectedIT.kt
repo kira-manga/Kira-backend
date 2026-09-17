@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochRotationCases
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
+import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
@@ -260,6 +261,22 @@ class VersionBoundPersistenceConnectedIT {
         withFixture(epochRotation = true) { tls ->
             withCutoffResolverHistory(tls) { rotation, history ->
                 CutoffResolverCases(rotation, history).use { it.currentBindingAndLeaseLoss() }
+            }
+        }
+
+    @Test
+    fun `owned canonical seal links a complete nonempty cutoff preserves original successor intent and refuses stale entry authority`() =
+        withFixture(epochRotation = true) { tls ->
+            withCutoffResolverHistory(tls, cutoffCount = 2, higherEpoch = true) { rotation, history ->
+                CutoffResolverCases(rotation, history).use { SealCanonicalCases(it).nonemptyIntentAndSuccessor() }
+            }
+        }
+
+    @Test
+    fun `owned canonical seal emits no result after actual control COMMIT refusal and a genuine successor rereads stored history`() =
+        withFixture(epochRotation = true) { tls ->
+            withCutoffResolverHistory(tls) { rotation, history ->
+                CutoffResolverCases(rotation, history).use { SealCanonicalCases(it).deferredCommitRefusalAndSuccessor() }
             }
         }
 

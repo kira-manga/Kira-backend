@@ -53,7 +53,7 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
             assertEquals(3, f.pooledPids.size) // Reobserve the current original pools after failures, not an assumed old PID.
         }
 
-        controlRefusal(leader.campaign, ::expire)
+        controlRefusal(leader.campaign, change = ::expire)
         assertEquals(prepared, publications.row(event))
         val afterExpiredDiscovery = f.acquire() // Genuine acquisition of the expired row; no supplied token or lease receipt.
         assertTrue(afterExpiredDiscovery.receipt.token > leader.receipt.token)
@@ -76,7 +76,25 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
         cases.assertReleased()
     }
 
-    private fun controlRefusal(campaign: CatalogCoordinatorLeaseCampaignV1, change: (JdbcTemplate) -> Unit) = independentTransaction { blocker, selected ->
+    /** Entry renewal/discovery wait only; these do NOT claim the later named canonical PREPARE phase was reached. */
+    fun canonicalEntryBindingRefusal(campaign: CatalogCoordinatorLeaseCampaignV1) = controlRefusal(campaign, canonical = true) { selected ->
+        assertEquals(
+            1,
+            selected.update(
+                "UPDATE complaint_journal_control SET desired_configuration_hash = ? WHERE data_scope_id = ? AND seal_state = 'SEAL_PREPARED'",
+                ByteArray(32) { 94 },
+                ComplaintDataScope.LIVE.id,
+            ),
+        )
+    }
+
+    fun canonicalEntryLeaseRefusal(campaign: CatalogCoordinatorLeaseCampaignV1) = controlRefusal(campaign, canonical = true, change = ::expire)
+
+    private fun controlRefusal(
+        campaign: CatalogCoordinatorLeaseCampaignV1,
+        canonical: Boolean = false,
+        change: (JdbcTemplate) -> Unit,
+    ) = independentTransaction { blocker, selected ->
         assertEquals(
             ComplaintDataScope.LIVE.id,
             selected.queryForObject(
@@ -86,13 +104,16 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
             ),
         )
         val holder = checkNotNull(selected.queryForObject("SELECT pg_backend_pid()", Int::class.java))
+        val traffic = wire.requests.size to wire.kms.requests.size
         OwnedCallerTestScope().use { callers ->
-            val worker = callers.launch { runCatching { cases.resolve(campaign) } }
+            val worker = callers.launch {
+                runCatching { if (canonical) cases.prepareCapturedLive(campaign) else cases.resolve(campaign) }
+            }
             val observation = runCatching {
                 try {
                     val waiting = awaiting(selected, holder, "complaint_journal_control", "complaint_journal_publications")
                     assertWait(waiting)
-                    assertTrue(wire.requests.isEmpty() && wire.kms.requests.isEmpty())
+                    assertEquals(traffic, wire.requests.size to wire.kms.requests.size)
                     change(selected)
                     assertPromptRelease(waiting, selected)
                     blocker.commit()
@@ -101,6 +122,7 @@ internal class CutoffResolverLockCases(private val cases: CutoffResolverCases) {
                 }
             }
             assertObservedRefusal(observation, worker.value())
+            assertEquals(traffic, wire.requests.size to wire.kms.requests.size)
             cases.assertReleased()
         }
     }
