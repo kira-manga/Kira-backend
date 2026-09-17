@@ -2,11 +2,13 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
+import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochRotationCases
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
+import me.manga.kira.backend.complaint.catalog.withCutoffResolverHistory
 import me.manga.kira.backend.complaint.catalog.withEpochRotation
 import me.manga.kira.backend.complaint.catalog.withProcessBoundCatalogGenesis
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
@@ -228,6 +230,38 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `owned epoch rotation shares one discovery deadline and failed requests cannot revive after cleanup`() =
         withFixture(epochRotation = true) { tls -> withEpochRotation(tls) { EpochRotationCases(it).discoveryDeadlineAndNonrevival() } }
+
+    @Test
+    fun `owned cutoff resolver includes every bounded historical publication and preserves APPLIED first proof in a stable manifest`() =
+        withFixture(epochRotation = true) { tls ->
+            withCutoffResolverHistory(tls, cutoffCount = 33, higherEpoch = true) { rotation, history ->
+                CutoffResolverCases(rotation, history).use { it.nonemptyPagesAndAppliedFirstProof() }
+            }
+        }
+
+    @Test
+    fun `owned cutoff resolver retains unknown dispatch PREPARED and a genuine successor reads the same frozen key`() =
+        withFixture(epochRotation = true) { tls ->
+            withCutoffResolverHistory(tls) { rotation, history ->
+                CutoffResolverCases(rotation, history).use { it.unknownDispatchAndFrozenKeySuccessor() }
+            }
+        }
+
+    @Test
+    fun `owned cutoff resolver refuses an encountered unsupported LIVE family rather than returning a partial manifest`() =
+        withFixture(epochRotation = true) { tls ->
+            withCutoffResolverHistory(tls, cutoffCount = 3) { rotation, history ->
+                CutoffResolverCases(rotation, history).use { it.unsupportedFamilyRefusesWholeRange() }
+            }
+        }
+
+    @Test
+    fun `owned cutoff resolver rechecks full binding and DB lease across actual control and publication lock waits`() =
+        withFixture(epochRotation = true) { tls ->
+            withCutoffResolverHistory(tls) { rotation, history ->
+                CutoffResolverCases(rotation, history).use { it.currentBindingAndLeaseLoss() }
+            }
+        }
 
     /** A test-only contention pair, not a supported multi-instance deployment or another database lifecycle. */
     private fun withPairedFixture(

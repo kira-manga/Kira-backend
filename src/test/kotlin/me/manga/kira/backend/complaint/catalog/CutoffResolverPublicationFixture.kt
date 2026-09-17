@@ -158,6 +158,14 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
         ),
     )
 
+    fun eventIdentity(event: OwnerDeleteAllJournalEventV1): String = checkNotNull(
+        observer.queryForObject(
+            "SELECT (to_jsonb(p) - ARRAY['state','object_version','ciphertext_hash','object_created_at','retain_until'," +
+                "'verified_at','verification_bytes','verification_hash','applied_at'])::text FROM complaint_journal_publications p WHERE event_id = ?",
+            String::class.java, event.route.eventId,
+        ),
+    )
+
     /** Historical APPLIED state only AFTER real resolver verification. No erasure/apply/capacity authority is claimed. */
     fun advanceAppliedStateForTest(event: OwnerDeleteAllJournalEventV1) {
         val before = immutableRow(event)
@@ -176,7 +184,9 @@ internal class CutoffResolverPublicationFixture(private val genesis: ProcessBoun
     fun unsupportedFamilyForTest(event: OwnerDeleteAllJournalEventV1) {
         assertEquals(
             1,
-            observer.update("UPDATE complaint_journal_publications SET event_kind = 'RETENTION' WHERE event_id = ? AND state = 'PREPARED'", event.route.eventId),
+            observer.update(
+                "UPDATE complaint_journal_publications SET event_kind = 'RETENTION' WHERE event_id = ? AND state = 'PREPARED'", event.route.eventId,
+            ),
         )
     }
 
