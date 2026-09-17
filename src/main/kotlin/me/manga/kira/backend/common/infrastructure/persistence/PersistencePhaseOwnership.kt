@@ -91,6 +91,9 @@ internal class PersistencePhaseOwnership private constructor(
     /** Private publisher readback persistence only: receipt -> publication, deliberately no epoch fence. */
     internal fun enterComplaintOwnerDeleteAllVerify(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY)
 
+    /** Fixed erasure of a privately verified continuation, not another authorization/admission attempt. */
+    internal fun enterComplaintOwnerDeleteAllApply(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)
+
     /** Read-only diagnostics, never current-mode, catalog, restore or TEST admission authority. */
     internal fun enterComplaintInstallationCurrentState(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
 
@@ -247,6 +250,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
@@ -270,6 +274,7 @@ internal class PersistencePhaseOwnership private constructor(
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
+                    PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
                     -> admission.tryPrivacyDeletion()
 
                     else -> admission.tryRoutineDeletion()
@@ -309,6 +314,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
         )
         private val current = ThreadLocal<PersistencePhaseContext?>()
         private val loans = ThreadLocal<PersistenceLeaseCompletion?>()
@@ -392,6 +398,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
     COMPLAINT_OWNER_DELETE_ALL_RELOAD,
     COMPLAINT_OWNER_DELETE_ALL_VERIFY,
+    COMPLAINT_OWNER_DELETE_ALL_APPLY,
     COMPLAINT_INSTALLATION_CURRENT_STATE,
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,

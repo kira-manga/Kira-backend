@@ -9,6 +9,7 @@ import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
 import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
 import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
+import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAllAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
 import org.springframework.data.domain.PageRequest
 import org.springframework.data.domain.Sort
@@ -31,6 +32,9 @@ internal class JpaAuditRepositoryAdapter(private val jpa: SpringDataAuditLogRepo
 
     override fun recordInstallationDeleteAuthorization(entry: CountedInstallationDeleteAuthorizationAuditEntry, allocation: ComplaintAuditAllocation) =
         ComplaintInstallationDeleteAuthorizationAuditInsertion.insert(entry, allocation)
+
+    override fun recordOwnerDeleteAll(entry: CountedOwnerDeleteAllAuditEntry, allocation: ComplaintAuditAllocation) =
+        ComplaintOwnerDeleteAllAuditInsertion.insert(entry, allocation)
 
     override fun record(entry: NewAuditEntry) {
         // Fail closed for the entire raw namespace, including unknown and W06-excluded identities.

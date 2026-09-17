@@ -11,7 +11,9 @@ import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
 import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
 import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
+import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAllAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
+import me.manga.kira.backend.audit.domain.OwnerDeleteAllAuditOutcome
 import me.manga.kira.backend.audit.domain.scalarDetails
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.security.CurrentUser
@@ -92,6 +94,14 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
         requireComplaintAuditPayloadSize(detailJson)
         val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
         counted.recordInstallationDeleteAuthorization(CountedInstallationDeleteAuthorizationAuditEntry(submittedVersion, detailJson, at), allocation)
+    }
+
+    /** Actual removed resources only, then one aggregate installation completion; allocation binds the locked outcome. */
+    internal fun recordOwnerDeleteAll(outcome: OwnerDeleteAllAuditOutcome, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(outcome.scalarDetails())
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordOwnerDeleteAll(CountedOwnerDeleteAllAuditEntry(outcome, detailJson, at), allocation)
     }
 
     private class PreparedMutationAudit(mutation: ComplaintAuditMutation, override val detailJson: String, override val createdAt: Instant) :
