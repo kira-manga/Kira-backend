@@ -177,7 +177,8 @@ internal class PersistencePhaseOwnership private constructor(
             throw failure
         }
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
-        rotationAttempt?.budget?.remainingMillis(EpochRotationLimits.MAXIMUM_ROTATION_MILLIS)
+        // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
+        val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -193,7 +194,16 @@ internal class PersistencePhaseOwnership private constructor(
             }
             val slot = (0 until phases.length()).firstOrNull { phases.get(it) == null }
                 ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
-            val prepared = PersistencePhaseContext(this, slot, caller, path, deletionScope, enrollmentOwnerReference, rotationAttempt)
+            val prepared = PersistencePhaseContext(
+                this,
+                slot,
+                caller,
+                path,
+                deletionScope,
+                enrollmentOwnerReference,
+                rotationAttempt,
+                rotationWork,
+            )
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
             current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
