@@ -7,6 +7,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecy
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhysicalEntry
+import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSession
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCampaignV1
@@ -76,7 +77,7 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
         val third = f.successor(second.campaign)
         val recovered = captureWhileShared(third.campaign)
         assertEquals(failed.requested, recovered.requested)
-        assertNotEquals(failed.pid, recovered.pid, "A successor capture gets a fresh backend, not a returned rotation pool lease.")
+        assertNotEquals(failed.session, recovered.session, "A successor capture gets a fresh backend identity, not a returned rotation pool lease.")
         assertNotSame(failed.entry, recovered.entry)
         val cutoff = recovered.outcome.getOrThrow()
         assertCutoff(cutoff, f.row())
@@ -172,6 +173,8 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
         whileWaiting: () -> Unit = {},
         afterFailedCleanup: () -> Unit = {},
     ): CaptureTrace = f.sharedEpochHolder { blocker, observer, holderPid ->
+        // A genuine earlier COMMIT failure may have replaced a pooled backend; observe the current original pools now.
+        val pooledPids = f.pooledPids
         OwnedCallerTestScope().use { callers ->
             val returnedRequest = AtomicReference<CatalogEpochRotationV1.Request?>()
             val returnedCutoff = AtomicReference<CatalogEpochRotationV1.Cutoff?>()
@@ -196,7 +199,7 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
                 f.released()
                 outcome
             }
-            var selected: Pair<Int, PersistencePhysicalEntry>? = null
+            var selected: Pair<PgLifecycleDatabaseSession, PersistencePhysicalEntry>? = null
             var requested: EpochRotationObservedRow? = null
             try {
                 val waiting = f.waitingCapture(holderPid)
@@ -213,8 +216,8 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
                 assertEquals(1, f.resource.descriptor().capacity)
                 assertFalse(f.resource.descriptor().pooled)
                 assertEquals(PersistenceDriverAttemptPolicy.TRACKED_EPOCH_ROTATION_CONJUNCTION, waiting.second.policy)
-                assertFalse(waiting.first in f.pooledPids)
-                assertEquals(waiting.first, f.tls.observeTlsPid(waiting.first))
+                assertFalse(waiting.first.pid in pooledPids)
+                assertEquals(waiting.first.pid, f.tls.observeTlsPid(waiting.first.pid))
                 f.released()
                 assertEquals(
                     0L,
@@ -222,7 +225,7 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
                         "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE l.pid = ? " +
                             "AND c.relname IN ('complaint_journal_control','complaint_catalog_mutations','complaint_capacity_counters')",
                         Long::class.java,
-                        waiting.first,
+                        waiting.first.pid,
                     ),
                     "No control/catalog/counter lock may be held while the fresh session waits for the exclusive fence.",
                 )
@@ -270,7 +273,7 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
     }
 
     private data class CaptureTrace(
-        val pid: Int,
+        val session: PgLifecycleDatabaseSession,
         val entry: PersistencePhysicalEntry,
         val requested: EpochRotationObservedRow,
         val outcome: Result<CatalogEpochRotationV1.Cutoff>,
