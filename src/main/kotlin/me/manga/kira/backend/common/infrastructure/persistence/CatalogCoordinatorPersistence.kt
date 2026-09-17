@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffPublicationsV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationV1
@@ -28,12 +29,14 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var genesisExecutor: ComplaintCatalogGenesisPersistencePhaseExecutor? = null
     private var leaseExecutor: ComplaintCoordinatorLeasePersistencePhaseExecutor? = null
     private var rotationExecutor: CatalogEpochRotationV1? = null
+    private var cutoffExecutor: CatalogCutoffPublicationsV1? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
     internal val genesis: ComplaintCatalogGenesisPersistencePhaseExecutor get() = checkNotNull(genesisExecutor)
     internal val lease: ComplaintCoordinatorLeasePersistencePhaseExecutor get() = checkNotNull(leaseExecutor)
     internal val epochRotation: CatalogEpochRotationV1 get() = checkNotNull(rotationExecutor)
+    internal val cutoffPublications: CatalogCutoffPublicationsV1 get() = checkNotNull(cutoffExecutor)
 
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
@@ -45,6 +48,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
         rotationExecutor = CatalogEpochRotationV1(this, jdbc)
+        cutoffExecutor = CatalogCutoffPublicationsV1(this, jdbc)
     }
 
     internal fun requireResources() {

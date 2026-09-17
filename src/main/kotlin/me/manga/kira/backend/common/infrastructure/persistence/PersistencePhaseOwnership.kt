@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import jakarta.persistence.EntityManagerFactory
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
@@ -163,12 +164,26 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintEpochRotationResume(attempt: CatalogEpochRotationAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME, rotationAttempt = attempt)
 
+    internal fun enterComplaintCutoffControl(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL, cutoffAttempt = attempt)
+
+    internal fun enterComplaintCutoffPage(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CUTOFF_PAGE, cutoffAttempt = attempt)
+
+    internal fun enterComplaintCutoffVerify(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY, cutoffAttempt = attempt)
+
+    /** Actual locked renewal on the SAME lease path, bounded by this original seal attempt. */
+    internal fun enterComplaintCutoffRenew(attempt: CatalogCutoffAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW, cutoffAttempt = attempt)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught")
     private fun enter(
         path: PersistencePhasePath,
         deletionScope: ComplaintDataScope? = null,
         rotationAttempt: CatalogEpochRotationAttemptV1? = null,
+        cutoffAttempt: CatalogCutoffAttemptV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -179,6 +194,7 @@ internal class PersistencePhaseOwnership private constructor(
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
+        val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -203,6 +219,8 @@ internal class PersistencePhaseOwnership private constructor(
                 enrollmentOwnerReference,
                 rotationAttempt,
                 rotationWork,
+                cutoffAttempt,
+                cutoffWork,
             )
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
@@ -308,6 +326,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
                 PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
                 PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
+                PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
+                PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
+                PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
                 -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
         }
@@ -362,6 +383,9 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
             PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_REQUEST,
             PersistencePhasePath.COMPLAINT_EPOCH_ROTATION_RESUME,
+            PersistencePhasePath.COMPLAINT_CUTOFF_CONTROL,
+            PersistencePhasePath.COMPLAINT_CUTOFF_PAGE,
+            PersistencePhasePath.COMPLAINT_CUTOFF_VERIFY,
         )
         private val DELETION_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
@@ -477,6 +501,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
     COMPLAINT_EPOCH_ROTATION_REQUEST,
     COMPLAINT_EPOCH_ROTATION_RESUME,
+    COMPLAINT_CUTOFF_CONTROL,
+    COMPLAINT_CUTOFF_PAGE,
+    COMPLAINT_CUTOFF_VERIFY,
     ;
 
     internal val source: Boolean
@@ -493,6 +520,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_STATUS,
             COMPLAINT_CATALOG_SNAPSHOT,
+            COMPLAINT_CUTOFF_PAGE,
             -> true
 
             else -> false

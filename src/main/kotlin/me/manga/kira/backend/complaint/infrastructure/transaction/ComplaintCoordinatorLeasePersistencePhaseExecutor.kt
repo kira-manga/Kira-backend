@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseE
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseBindingV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseCampaignV1
@@ -38,15 +39,22 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         }
     }
 
+    fun renew(campaign: CatalogCoordinatorLeaseCampaignV1): CatalogCoordinatorLeaseReceiptV1 = renew(campaign, null)
+
+    internal fun renewForCutoff(original: CatalogCutoffAttemptV1): CatalogCoordinatorLeaseReceiptV1 {
+        original.requirePersistence(ownership, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW)
+        return renew(original.campaign, original).also { original.requireRunning() }
+    }
+
     @Suppress("TooGenericExceptionCaught")
-    fun renew(campaign: CatalogCoordinatorLeaseCampaignV1): CatalogCoordinatorLeaseReceiptV1 {
+    private fun renew(campaign: CatalogCoordinatorLeaseCampaignV1, original: CatalogCutoffAttemptV1?): CatalogCoordinatorLeaseReceiptV1 {
         var attempt: CatalogCoordinatorLeaseCustodyV1.Attempt? = null
         try {
             requireEntryResources()
             val retained = custody.renew(campaign, jdbc)
             attempt = retained
             try {
-                return persist(retained).renewedReceipt()
+                return persist(retained, original).renewedReceipt()
             } finally {
                 retained.finish()
             }
@@ -86,12 +94,13 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         coordinator.ownership === ownership && coordinator.manager === manager && coordinator.dataSource === source
 
     @Suppress("TooGenericExceptionCaught")
-    private fun persist(attempt: CatalogCoordinatorLeaseCustodyV1.Attempt): CatalogCoordinatorLeaseOperation {
+    private fun persist(attempt: CatalogCoordinatorLeaseCustodyV1.Attempt, original: CatalogCutoffAttemptV1? = null): CatalogCoordinatorLeaseOperation {
         attempt.requireRunning(jdbc)
         val store = JdbcCatalogCoordinatorLeaseStore(jdbc)
         val phase = when (attempt.path) {
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> ownership.enterComplaintCoordinatorLeaseAcquire()
-            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> ownership.enterComplaintCoordinatorLeaseRenew()
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> original?.let(ownership::enterComplaintCutoffRenew)
+                ?: ownership.enterComplaintCoordinatorLeaseRenew()
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH -> ownership.enterComplaintCoordinatorLeaseRelinquish()
             else -> error("Unsupported coordinator lease phase.")
         }

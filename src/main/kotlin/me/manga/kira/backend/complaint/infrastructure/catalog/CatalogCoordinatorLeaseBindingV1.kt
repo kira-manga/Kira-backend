@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
+import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.HexFormat
 import java.util.UUID
@@ -90,6 +91,20 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         val budget = PersistenceTimeBudget.start(epochRotationMillis.toLong(), ownership.nanoClock)
         requireUnchangedConfiguration()
         return budget
+    }
+
+    /** A NEW seal attempt has its own original same-J deadline, never rotation's spent budget. */
+    internal fun startEpochSealBudget(): PersistenceTimeBudget {
+        requireConnectionFree()
+        val millis = journal.declaration().limits.deadlines.epochSealMillis
+        val budget = PersistenceTimeBudget.start(millis.toLong(), ownership.nanoClock)
+        requireUnchangedConfiguration()
+        return budget
+    }
+
+    internal fun cutoffRouting(): VersionBoundComplaintJournalRouting {
+        requireUnchangedConfiguration()
+        return process.consumers.journalRouting.also { check(it.journalConfiguration === journal) }
     }
 
     /** Only the actual retained D3 resource; a fourth pool or independently assembled descriptor is not accepted. */

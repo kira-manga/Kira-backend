@@ -125,7 +125,7 @@ internal class GuardedDataSource private constructor(
         catalogPreparation?.observation() ?: deletionPreparation?.observation() ?: owner.observeOrdinaryPreparation()
 
     override fun getConnection(): Connection {
-        val budget = PersistencePhaseOwnership.current()?.epochRotationCheckoutBudget(checkoutMillis) ?: PersistenceTimeBudget.start(checkoutMillis)
+        val budget = PersistencePhaseOwnership.current()?.retainedPhaseCheckoutBudget(checkoutMillis) ?: PersistenceTimeBudget.start(checkoutMillis)
         if (!businessReady()) PersistenceJdbcGuardContext.refuse()
         val acquisition = lifecycle.prepareAcquisition(budget)
         val completion = PersistencePhaseOwnership.prepareAcquisition(this, acquisition)
