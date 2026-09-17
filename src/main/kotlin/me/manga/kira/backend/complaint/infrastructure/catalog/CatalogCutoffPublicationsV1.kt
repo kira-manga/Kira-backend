@@ -10,9 +10,9 @@ import org.springframework.jdbc.core.JdbcTemplate
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Dormant step1 only: resolve every committed new-backend <=cutoff row and derive a complete manifest.
- * Genuine CAPTURED/full-B discovery and final validation use the original coordinator. This is NOT a
- * seal producer, scanner, checkpoint, activation or W06/legacy import. No slot is cleared or advanced.
+ * Dormant fixed cutoff resolution and optional canonical-only SEAL_PREPARED continuation.
+ * Genuine CAPTURED/full-B discovery, final validation and canonical storage use the original coordinator.
+ * No seal encryption, dispatch, verification, scan, checkpoint, activation or W06/legacy import. No slot is cleared or advanced.
  */
 internal class CatalogCutoffPublicationsV1 internal constructor(private val coordinator: CatalogCoordinatorPersistence, private val jdbc: JdbcTemplate) {
     private val ownership = coordinator.ownership
@@ -22,10 +22,23 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
     private val lanes = AtomicReference<JournalPublicationLanesV1?>()
     private val persistence = CatalogCutoffPersistenceExecutorV1(coordinator, jdbc)
 
+    internal fun resolve(campaign: CatalogCoordinatorLeaseCampaignV1, ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1): CapturedCutoffManifestV1 =
+        run(campaign, ordinaryFactory, CatalogCutoffCompletionV1.MANIFEST).manifest
+
+    /** No supplied manifest/token/key/SQL/ready flag. The actual resolver continues before its original attempt finishes. */
+    internal fun prepareCapturedLive(
+        campaign: CatalogCoordinatorLeaseCampaignV1,
+        ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1,
+    ): PreparedEpochSealV1 = checkNotNull(run(campaign, ordinaryFactory, CatalogCutoffCompletionV1.CANONICAL_PREPARED).prepared)
+
     @Suppress("TooGenericExceptionCaught")
-    internal fun resolve(campaign: CatalogCoordinatorLeaseCampaignV1, ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1): CapturedCutoffManifestV1 {
+    private fun run(
+        campaign: CatalogCoordinatorLeaseCampaignV1,
+        ordinaryFactory: OwnerDeleteAllJournalPublisherFactoryV1,
+        completion: CatalogCutoffCompletionV1,
+    ): Outcome {
         var attempt: CatalogCutoffAttemptV1? = null
-        var result: CapturedCutoffManifestV1? = null
+        var result: Outcome? = null
         var failure: PersistencePhaseException? = null
         try {
             requireResources()
@@ -33,7 +46,7 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
             // This is a NEW seal budget, not rotation's previously consumed allowance.
             val originalBudget = campaign.binding.startEpochSealBudget()
             campaign.claimCutoffResolution()
-            val retained = CatalogCutoffAttemptV1(this, campaign, jdbc, originalBudget)
+            val retained = CatalogCutoffAttemptV1(this, campaign, jdbc, originalBudget, completion)
             attempt = retained
             check(active.compareAndSet(null, retained))
             val shared = ordinaryFactory.cutoffLanes(retained.routing)
@@ -50,7 +63,17 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
             renew(retained)
             val final = persistence.control(retained)
             retained.acceptControl(final)
-            result = CapturedCutoffManifestV1.fromReleased(final)
+            val manifest = CapturedCutoffManifestV1.fromReleased(final)
+            val prepared = if (completion === CatalogCutoffCompletionV1.CANONICAL_PREPARED) {
+                retained.captureCanonical(final) // Uses retained manifest/codec attempt, NEVER the historical DTO above.
+                renew(retained)
+                val preparation = persistence.prepare(retained)
+                retained.acceptPrepared(preparation)
+                PreparedEpochSealV1.fromReleased(preparation)
+            } else {
+                null
+            }
+            result = Outcome(manifest, prepared)
         } catch (problem: Throwable) {
             campaign.close()
             attempt?.abort()
@@ -119,7 +142,9 @@ internal class CatalogCutoffPublicationsV1 internal constructor(private val coor
     private fun hasOriginalCoordinatorResources(): Boolean =
         coordinator.ownership === ownership && coordinator.manager === manager && coordinator.dataSource === source
 
-    override fun toString(): String = "CatalogCutoffPublicationsV1(dormant,bounded-receiptless-resolution,NO-seal-checkpoint-or-activation)"
+    override fun toString(): String = "CatalogCutoffPublicationsV1(dormant,bounded-canonical-only,NO-wire-dispatch-checkpoint-or-activation)"
+
+    private class Outcome(val manifest: CapturedCutoffManifestV1, val prepared: PreparedEpochSealV1?)
 }
 
 /** Historical completed manifest only. It cannot supply current fencing, seal evidence or slot-replacement permission. */
