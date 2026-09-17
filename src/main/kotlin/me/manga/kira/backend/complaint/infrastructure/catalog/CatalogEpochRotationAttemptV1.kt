@@ -48,14 +48,21 @@ internal class CatalogEpochRotationAttemptV1 internal constructor(
     internal fun requireRunning() {
         if (!caller.isCurrent() || failed.get() || !custody.ownsCall(this)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
         if (caller.sampleActualFlag() != null) refuse(PersistencePhaseFailureCode.INTERRUPTED)
+        requireDeadline()
+        campaign.requireLocalWindow() // A genuine same-campaign renewal may advance its window, never this attempt's J budget.
+        binding.requirePersistence(ownership, jdbc)
+        binding.requireEpochRotation(resource)
+        // Charge readbacks too; a late/interrupting caller override must not escape the final return check.
+        requireDeadline()
+        if (caller.sampleActualFlag() != null) refuse(PersistencePhaseFailureCode.INTERRUPTED)
+    }
+
+    private fun requireDeadline() {
         try {
             budget.remainingMillis(10_000)
         } catch (problem: PersistenceBoundaryException) {
             throw boundedEpochRotationFailure(problem)
         }
-        campaign.requireLocalWindow() // A genuine same-campaign renewal may advance its window, never this attempt's J budget.
-        binding.requirePersistence(ownership, jdbc)
-        binding.requireEpochRotation(resource)
     }
 
     /** Identity/configuration checks only; deliberately safe inside a pooled or nonpooled phase. */
