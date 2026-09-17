@@ -116,10 +116,10 @@ internal class OwnerDeleteAllJournalCodecV1(
             val parts = split(wire, buffers)
             val header = json.header(parts.header)
             val nonce = buffers.own(bindHeader(header, expectedBucket, expectedObjectKey))
-            val request = request(header, limits.maximumWrappedKeyBytes, attempt, buffers)
             val associatedData = buffers.own(aad(header, parts.header.size, parts.wrapped, parts.ciphertext.size))
             val wrappedForPort = buffers.own(parts.wrapped.copyOf())
             requireConnectionFree()
+            val request = request(header, limits.maximumWrappedKeyBytes, attempt, buffers)
             val lease = try {
                 journalKeyCall { dataKeys.unwrap(request, wrappedForPort) }
             } finally {
