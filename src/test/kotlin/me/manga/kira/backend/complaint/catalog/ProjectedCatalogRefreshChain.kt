@@ -10,7 +10,11 @@ import me.manga.kira.backend.security.VersionBoundComplaintConsumerConfiguration
 import java.time.Instant
 
 /** Genuine synthetic signatures over the actual test J; logical source/copy claims do not supply physical backup acceptance. */
-internal class ProjectedCatalogRefreshChain(consumers: VersionBoundComplaintConsumerConfiguration, val overlap: Boolean = false) {
+internal class ProjectedCatalogRefreshChain(
+    consumers: VersionBoundComplaintConsumerConfiguration,
+    val overlap: Boolean = false,
+    additionalCopies: List<String> = emptyList(),
+) {
     private val writer = consumers.journalConfiguration.declaration().writer
     private val registry = OfflineTrustBundleFixture.registry().copy(
         databaseIdentity = writer.databaseIdentity,
@@ -24,7 +28,7 @@ internal class ProjectedCatalogRefreshChain(consumers: VersionBoundComplaintCons
         ),
     )
     val rotations = OfflineCatalogRotationFixture.chain(registry = registry)
-    val inventory = OfflineCatalogInventoryFixture.chain(base = rotations)
+    val inventory = appendCopies(OfflineCatalogInventoryFixture.chain(base = rotations), additionalCopies.toList())
     val bytes: List<ByteArray> = if (overlap) rotations.bytes().take(2) else inventory.bytes()
     val generation: Long = bytes.size.toLong()
     val initial: ByteArray = OfflineTrustBundleFixture.bytes(rotations.initial)
@@ -58,7 +62,7 @@ internal class ProjectedCatalogRefreshChain(consumers: VersionBoundComplaintCons
     fun successor(): ByteArray {
         check(!overlap)
         val previous = inventory.generations.last().manifest.restoreInventory
-        val extra = OfflineCatalogInventoryFixture.copy(previous.sources.single(), 3)
+        val extra = OfflineCatalogInventoryFixture.copy(previous.sources.single(), previous.copies.size + 1)
         return OfflineCatalogInventoryFixture.bytes(
             OfflineCatalogInventoryFixture.signed(
                 OfflineCatalogInventoryFixture.manifest(
@@ -71,6 +75,29 @@ internal class ProjectedCatalogRefreshChain(consumers: VersionBoundComplaintCons
                 ),
             ),
         )
+    }
+
+    /** Test-only extra signed generations; defaults keep the original two-copy bytes/behavior untouched. */
+    private fun appendCopies(base: InventoryChainFixture, classes: List<String>): InventoryChainFixture {
+        require(classes.size <= 2 && classes.distinct().size == classes.size && classes.all { it in setOf("OPERATOR", "OFFSITE") })
+        require(!overlap || classes.isEmpty())
+        val generations = base.generations.toMutableList()
+        classes.forEach { locationClass ->
+            val previous = generations.last()
+            val inventory = previous.manifest.restoreInventory
+            val copy = OfflineCatalogInventoryFixture.copy(inventory.sources.single(), inventory.copies.size + 1).copy(locationClass = locationClass)
+            generations += OfflineCatalogInventoryFixture.signed(
+                OfflineCatalogInventoryFixture.manifest(
+                    rotations.genesis,
+                    previous.manifest.generation + 1,
+                    OfflineCatalogInventoryFixture.bytes(previous),
+                    "ADD_COPY",
+                    inventory.copy(copies = inventory.copies + copy),
+                    CatalogInventoryDeltaV1(emptyList(), listOf(copy.copyId)),
+                ),
+            )
+        }
+        return base.copy(generations = generations)
     }
 
     companion object {

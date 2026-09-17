@@ -6,8 +6,12 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceTestInputs
 import me.manga.kira.backend.common.infrastructure.persistence.actualPool
+import me.manga.kira.backend.complaint.catalog.HeldEpochSealClock
+import me.manga.kira.backend.complaint.catalog.HeldEpochSealHttpFixture
+import me.manga.kira.backend.complaint.catalog.VersionBoundCatalogReadbackTestFixture
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -15,11 +19,20 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationCurrentStateA
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationCurrentStatePolicy
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
+import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
+import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentProjectedCatalogRefreshV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalPolicyDeploymentV1
+import me.manga.kira.backend.complaint.infrastructure.journal.VersionBoundLiveJournalCoverageV1
+import me.manga.kira.backend.complaint.journal.liveJournalPolicy
+import me.manga.kira.backend.complaint.journal.replaceLiveJournalPolicy
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.security.BoundComplaintConsumerFixture
 import me.manga.kira.backend.security.JwtKeyProvider
 import me.manga.kira.backend.security.JwtService
 import me.manga.kira.backend.security.SecurityConfig
+import me.manga.kira.backend.security.VersionBoundComplaintConsumerConfiguration
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import me.manga.kira.backend.security.VersionBoundInstallationJwtConfiguration
 import me.manga.kira.backend.security.boundConsumerTestSettings
@@ -29,15 +42,21 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.condition.EnabledOnOs
 import org.junit.jupiter.api.condition.OS
 import org.springframework.mock.env.MockEnvironment
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
+import java.time.ZoneId
+import java.time.ZoneOffset
 import java.util.Base64
 import java.util.HexFormat
+import java.util.UUID
 
 /** Actual cold owners only. Matching D is not live pool, current catalog, scope or activation proof. */
 @EnabledOnOs(OS.LINUX, OS.MAC)
@@ -237,6 +256,221 @@ class VersionBoundComplaintProcessConfigurationTest {
                 assertFalse(initial.contentEquals(processConfiguration(actual, pools).configurationHashBytes()))
             }
         }
+
+    @Test
+    fun `D6 full independent goldens preserve previous inventories and explicit G1 versus projected reader without observing clocks`() =
+        withLiveProcessOwners { consumers, pools, wire ->
+            val lanes = wire.lanes
+            val sealer = wire.acquisition
+            val clock = object : Clock() {
+                override fun getZone(): ZoneId = ZoneOffset.UTC
+                override fun withZone(zone: ZoneId): Clock = this
+                override fun instant(): Instant = error("Cold D6 composition must not sample UTC.")
+            }
+            val writer = consumers.journalConfiguration.declaration().writer
+            val g1 = VersionBoundCatalogReadbackTestFixture.settings()
+            for (reader in listOf(g1, projectedSettings(g1))) {
+                fun previous() = VersionBoundComplaintProcessConfiguration.fromRetainedWithEpochSealAcquisition(
+                    consumers, pools, 1, 7, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity), reader, lanes, sealer,
+                )
+                val before = previous()
+                val beforeBytes = before.canonicalBytes()
+                val coverage = VersionBoundLiveJournalCoverageV1.withClockFixture(
+                    consumers.journalRouting,
+                    reader,
+                    lanes,
+                    liveJournalPolicy(consumers.journalRouting, reader),
+                    clock,
+                    { error("Cold D6 composition must not sample monotonic time.") },
+                )
+                val actual = liveProcessConfiguration(consumers, pools, reader, lanes, sealer, coverage)
+                val expected = ComplaintLivePolicyGolden.bytes(reader.projectedCurrent)
+                val hash = if (reader.projectedCurrent) ComplaintLivePolicyGolden.PROJECTED_SHA256 else ComplaintLivePolicyGolden.G1_SHA256
+                assertArrayEquals(expected, actual.canonicalBytes())
+                assertEquals(hash, Sha256.hex(expected))
+                assertArrayEquals(HexFormat.of().parseHex(hash), actual.configurationHashBytes())
+                assertSame(coverage, actual.liveCoverage)
+                assertSame(reader, actual.catalogReadback)
+                assertSame(sealer, actual.epochSealAcquisition)
+                assertEquals(
+                    document(before).filterKeys { it !in setOf("schemaVersion", "profile") },
+                    document(actual).filterKeys { it !in setOf("schemaVersion", "profile", "liveCoverage") },
+                )
+                assertArrayEquals(beforeBytes, previous().canonicalBytes()) // D4/D5 do not inherit a policy merely because it was constructed.
+                assertEquals(if (reader.projectedCurrent) "5" else "4", document(before).getValue("schemaVersion").jsonPrimitive.content)
+                actual.canonicalBytes().fill(0)
+                actual.configurationHashBytes().fill(0)
+                actual.requireUnchangedConfiguration()
+                assertArrayEquals(expected, actual.canonicalBytes())
+                if (!reader.projectedCurrent) {
+                    assertThrows<CatalogReadbackException> {
+                        CurrentProjectedCatalogRefreshV1.ordinary(
+                            actual,
+                            AwsSessionCredentials.create("synthetic", "synthetic", "synthetic"),
+                            AwsSessionCredentials.create("synthetic", "synthetic", "synthetic"),
+                        )
+                    }
+                }
+            }
+            assertTrue(wire.requests.isEmpty())
+            assertEquals(0, wire.stsFactories)
+            assertEquals(0, wire.kmsFactories)
+            assertEquals(0L, lanes.activeOwners().totalOwners)
+            listOf(pools.ordinary, pools.deletion, pools.catalogCoordinator.dataSource).forEach { assertFalse(actualPool(it).isRunning) }
+        }
+
+    @Test
+    fun `D6 policy trust and age drift alter independent D but collection order clock and refreshed transport secrets cannot`() =
+        withLiveProcessOwners { consumers, pools, wire ->
+            val lanes = wire.lanes
+            val sealer = wire.acquisition
+            val reader = projectedSettings(VersionBoundCatalogReadbackTestFixture.settings())
+            val policy = liveJournalPolicy(consumers.journalRouting, reader)
+            fun compose(selected: LiveJournalPolicyDeploymentV1) = liveProcessConfiguration(
+                consumers,
+                pools,
+                reader,
+                lanes,
+                sealer,
+                VersionBoundLiveJournalCoverageV1.fromIndependentInputs(consumers.journalRouting, reader, lanes, selected),
+            )
+            val original = compose(policy)
+            val bytes = original.canonicalBytes()
+            assertEquals(ComplaintLivePolicyGolden.PROJECTED_SHA256, Sha256.hex(bytes))
+            val first = policy.copyPolicies.first()
+            val copies = listOf(
+                first.copy(accountId = "444444444444"),
+                first.copy(region = "eu-west-1"),
+                first.copy(bucket = "another-backup"),
+                first.copy(prefix = "another-prefix/"),
+                first.copy(maximumAgeSeconds = first.maximumAgeSeconds - 1),
+                first.copy(policy = first.policy.copy(policyId = "other-age-policy")),
+                first.copy(policy = first.policy.copy(version = 2)),
+                first.copy(policy = first.policy.copy(sha256 = "b".repeat(64))),
+            ).map { replacement -> replaceLiveJournalPolicy(policy, copies = listOf(replacement) + policy.copyPolicies.drop(1)) }
+            val otherPolicies = listOf(
+                replaceLiveJournalPolicy(policy, lock = policy.journalLock.copy(policy = policy.journalLock.policy.copy(version = 2))),
+                replaceLiveJournalPolicy(policy, hmac = policy.hmacKeys.map { it.copy(policy = it.policy.copy(version = 2)) }),
+                replaceLiveJournalPolicy(policy, kms = policy.kmsKeys.map { it.copy(policy = it.policy.copy(version = 2)) }),
+                replaceLiveJournalPolicy(policy, late = policy.acceptedRequestLateArrival.copy(maximumMillis = 120_001)),
+                replaceLiveJournalPolicy(policy, late = policy.acceptedRequestLateArrival.copy(profileId = "other-late-profile")),
+                replaceLiveJournalPolicy(
+                    policy,
+                    late = policy.acceptedRequestLateArrival.copy(policy = policy.acceptedRequestLateArrival.policy.copy(version = 2)),
+                ),
+                replaceLiveJournalPolicy(policy, utc = policy.utcUncertainty.copy(maximumMillis = 251)),
+                replaceLiveJournalPolicy(policy, utc = policy.utcUncertainty.copy(profileId = "other-utc-profile")),
+                replaceLiveJournalPolicy(policy, utc = policy.utcUncertainty.copy(policy = policy.utcUncertainty.policy.copy(version = 2))),
+            )
+            (copies + otherPolicies).forEach { changed ->
+                assertFalse(original.configurationHashBytes().contentEquals(compose(changed).configurationHashBytes()))
+            }
+            assertArrayEquals(
+                bytes,
+                compose(
+                    replaceLiveJournalPolicy(
+                        policy,
+                        copies = policy.copyPolicies.reversed(),
+                        hmac = policy.hmacKeys.reversed(),
+                        kms = policy.kmsKeys.reversed(),
+                    ),
+                ).canonicalBytes(),
+            )
+            val changedTrust = projectedSettings(
+                VersionBoundCatalogReadbackTestFixture.settings(
+                    policy = VersionBoundCatalogReadbackTestFixture.chainPolicy(
+                        trust = VersionBoundCatalogReadbackTestFixture.trustPolicy(minimumVersion = 8),
+                    ),
+                ),
+            )
+            val trustOwner = VersionBoundLiveJournalCoverageV1.fromIndependentInputs(consumers.journalRouting, changedTrust, lanes, policy)
+            assertFalse(
+                original.configurationHashBytes().contentEquals(
+                    liveProcessConfiguration(consumers, pools, changedTrust, lanes, sealer, trustOwner).configurationHashBytes(),
+                ),
+            )
+            val credentials = AwsSessionCredentials.create("D6SYNTHETICREFRESH", "d6-refreshed-secret", "d6-refreshed-token")
+            VersionBoundEpochSealAcquisitionV1.fromIndependentInputs(
+                consumers.journalRouting,
+                lanes,
+                sealer.descriptor().deployment,
+                credentials,
+                "d6-refreshed-session",
+            ).use { refreshed ->
+                val differentClocks = VersionBoundLiveJournalCoverageV1.withClockFixture(
+                    consumers.journalRouting,
+                    reader,
+                    lanes,
+                    policy,
+                    Clock.fixed(Instant.EPOCH, ZoneOffset.UTC),
+                    { Long.MIN_VALUE },
+                )
+                val rebuilt = liveProcessConfiguration(consumers, pools, reader, lanes, refreshed, differentClocks)
+                assertArrayEquals(bytes, rebuilt.canonicalBytes())
+                listOf(
+                    credentials.accessKeyId(),
+                    credentials.secretAccessKey(),
+                    credentials.sessionToken(),
+                    "d6-refreshed-session",
+                    Instant.EPOCH.toString(),
+                ).forEach {
+                    assertFalse(rebuilt.canonicalBytes().decodeToString().contains(it))
+                }
+            }
+            assertArrayEquals(bytes, original.canonicalBytes())
+            assertTrue(wire.requests.isEmpty())
+            assertEquals(0L, lanes.activeOwners().totalOwners)
+        }
+
+    @Test
+    fun `D6 requires actual complete graph and rejects same byte reader routing lanes or closed sealer substitution`() {
+        for (rotation in listOf(false, true)) {
+            withLiveProcessOwners(epochRotation = rotation) { consumers, pools, wire ->
+                val lanes = wire.lanes
+                val sealer = wire.acquisition
+                val reader = VersionBoundCatalogReadbackTestFixture.settings()
+                val declaration = liveJournalPolicy(consumers.journalRouting, reader)
+                val coverage = VersionBoundLiveJournalCoverageV1.fromIndependentInputs(consumers.journalRouting, reader, lanes, declaration)
+                if (!rotation) {
+                    assertThrows<IllegalArgumentException> { liveProcessConfiguration(consumers, pools, reader, lanes, sealer, coverage) }
+                } else {
+                    val process = liveProcessConfiguration(consumers, pools, reader, lanes, sealer, coverage)
+                    assertThrows<IllegalArgumentException> {
+                        liveProcessConfiguration(consumers, pools, VersionBoundCatalogReadbackTestFixture.settings(), lanes, sealer, coverage)
+                    }
+                    assertThrows<IllegalArgumentException> {
+                        liveProcessConfiguration(BoundComplaintConsumerFixture().configuration(), pools, reader, lanes, sealer, coverage)
+                    }
+                    JournalPublicationLanesV1(consumers.journalConfiguration).use { replacement ->
+                        assertThrows<IllegalArgumentException> { liveProcessConfiguration(consumers, pools, reader, replacement, sealer, coverage) }
+                        val other = VersionBoundLiveJournalCoverageV1.fromIndependentInputs(consumers.journalRouting, reader, replacement, declaration)
+                        assertThrows<IllegalArgumentException> { liveProcessConfiguration(consumers, pools, reader, lanes, sealer, other) }
+                        assertThrows<IllegalArgumentException> { liveProcessConfiguration(consumers, pools, reader, replacement, sealer, other) }
+                    }
+                    sealer.close()
+                    assertThrows<IllegalArgumentException> { process.requireUnchangedConfiguration() }
+                    assertThrows<IllegalArgumentException> { process.desiredSettings() }
+                }
+                assertTrue(wire.requests.isEmpty())
+                assertEquals(0L, lanes.activeOwners().totalOwners)
+            }
+        }
+    }
+
+    /** Same cold owners and close order as the explicit scopes; assertions retain the actual fixture instances. */
+    private fun withLiveProcessOwners(
+        epochRotation: Boolean = true,
+        test: (VersionBoundComplaintConsumerConfiguration, VersionBoundPersistencePools, HeldEpochSealHttpFixture) -> Unit,
+    ) = ComplaintProcessPoolFixture(epochRotation = epochRotation).use { database ->
+        val consumers = BoundComplaintConsumerFixture().configuration()
+        val pools = database.bind()
+        val wire = HeldEpochSealHttpFixture(consumers, HeldEpochSealClock())
+        wire.lanes.use {
+            wire.acquisition.use {
+                test(consumers, pools, wire)
+            }
+        }
+    }
 
     private fun document(configuration: VersionBoundComplaintProcessConfiguration): JsonObject =
         Json.parseToJsonElement(configuration.canonicalBytes().toString(Charsets.UTF_8)).jsonObject

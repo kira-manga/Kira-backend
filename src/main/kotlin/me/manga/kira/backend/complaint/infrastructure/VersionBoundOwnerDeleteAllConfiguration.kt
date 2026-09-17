@@ -7,7 +7,9 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentAcceptedCatalogRefreshV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentProjectedCatalogRefreshV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.journal.VersionBoundLiveJournalCoverageV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationDeletionPreflightPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllApplyPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteAllPhaseExecutor
@@ -22,17 +24,30 @@ import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
  * required, not equivalent descriptors. Computed D is necessary, never positive runtime authority.
  * No bean, route, desired/control write, provider construction or activation is performed here.
  */
-internal class VersionBoundOwnerDeleteAllConfiguration(
+internal class VersionBoundOwnerDeleteAllConfiguration private constructor(
     val process: VersionBoundComplaintProcessConfiguration,
     ordinaryOwnership: PersistencePhaseOwnership,
     deletionOwnership: PersistencePhaseOwnership,
     audit: AuditService,
     catalog: CatalogCommonHeadEvidence,
     dataKeys: JournalDataKeyPortV1,
+    val liveCoverage: VersionBoundLiveJournalCoverageV1.Binding?,
 ) {
+    /** Necessary legacy/diagnostic composition only; it cannot silently supply D6 with a J-only policy. */
+    constructor(
+        process: VersionBoundComplaintProcessConfiguration,
+        ordinaryOwnership: PersistencePhaseOwnership,
+        deletionOwnership: PersistencePhaseOwnership,
+        audit: AuditService,
+        catalog: CatalogCommonHeadEvidence,
+        dataKeys: JournalDataKeyPortV1,
+    ) : this(process, ordinaryOwnership, deletionOwnership, audit, catalog, dataKeys, null)
+
     init {
         requireConnectionFree()
         process.requireUnchangedConfiguration()
+        require((process.liveCoverage == null) == (liveCoverage == null)) { "Invalid ordinary LIVE coverage binding" }
+        liveCoverage?.let { require(it.catalogFor(process) === catalog) { "Invalid ordinary LIVE coverage binding" } }
         ordinaryOwnership.requireBoundComplaintComposition(process.pools, deletionOwnership)
     }
 
@@ -64,7 +79,7 @@ internal class VersionBoundOwnerDeleteAllConfiguration(
     fun continuation(publishers: OwnerDeleteAllJournalPublisherFactoryV1): ComplaintOwnerDeleteAllContinuation {
         requireConnectionFree()
         process.requireUnchangedConfiguration()
-        publishers.requireBinding(authorizationStore, routing)
+        publishers.requireBinding(authorizationStore, routing, liveCoverage)
         return ComplaintOwnerDeleteAllContinuation(ingress, coordinator, publishers, verificationStore, verification, application, routing, codec)
     }
 
@@ -88,6 +103,28 @@ internal class VersionBoundOwnerDeleteAllConfiguration(
             catalog.catalogFor(process),
             dataKeys,
         )
+
+        /** Actual D6 policy and same-process projected result; historical provenance never replaces locked current full-B checks. */
+        fun fromProjectedCatalogRefresh(
+            process: VersionBoundComplaintProcessConfiguration,
+            ordinaryOwnership: PersistencePhaseOwnership,
+            deletionOwnership: PersistencePhaseOwnership,
+            audit: AuditService,
+            catalog: CurrentProjectedCatalogRefreshV1.Result,
+            dataKeys: JournalDataKeyPortV1,
+        ): VersionBoundOwnerDeleteAllConfiguration {
+            requireConnectionFree()
+            val coverage = requireNotNull(process.liveCoverage) { "Missing retained ordinary LIVE coverage policy" }.bind(process, catalog)
+            return VersionBoundOwnerDeleteAllConfiguration(
+                process,
+                ordinaryOwnership,
+                deletionOwnership,
+                audit,
+                coverage.catalogFor(process),
+                dataKeys,
+                coverage,
+            )
+        }
     }
 
     override fun toString(): String = "VersionBoundOwnerDeleteAllConfiguration(dormant,no-runtime-authority)"

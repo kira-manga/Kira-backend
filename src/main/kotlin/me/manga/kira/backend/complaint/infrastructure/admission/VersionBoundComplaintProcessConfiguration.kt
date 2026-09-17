@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealAcquisiti
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.VersionBoundLiveJournalCoverageV1
 import me.manga.kira.backend.security.VersionBoundComplaintConsumerConfiguration
 import java.security.MessageDigest
 import java.util.UUID
@@ -33,6 +34,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     val epochRotation: EpochRotationPersistence?,
     val epochSealAcquisition: VersionBoundEpochSealAcquisitionV1?,
     private val publicationLanes: JournalPublicationLanesV1?,
+    val liveCoverage: VersionBoundLiveJournalCoverageV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val retainedRotation: VersionBoundEpochRotationDescriptor?
@@ -45,7 +47,21 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         retainedPools = pools.descriptors()
         retainedRotation = epochRotation?.descriptor()
         retainedEpochSealAcquisition = epochSealAcquisition?.descriptor()
-        canonical = if (catalogReadback?.projectedCurrent == true) {
+        canonical = if (liveCoverage != null) {
+            ComplaintEffectiveConfigurationV6.encode(
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                checkNotNull(catalogReadback),
+                checkNotNull(epochRotation),
+                checkNotNull(publicationLanes),
+                checkNotNull(epochSealAcquisition),
+                liveCoverage,
+            )
+        } else if (catalogReadback?.projectedCurrent == true) {
             ComplaintEffectiveConfigurationV5.encode(
                 consumers,
                 pools,
@@ -134,6 +150,12 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     }
 
     private fun requireGraph() {
+        liveCoverage?.let { coverage ->
+            require(catalogReadback != null && epochRotation != null && epochSealAcquisition != null && publicationLanes != null) {
+                INVALID_COMPLAINT_PROCESS_CONFIGURATION
+            }
+            coverage.requireRetained(consumers.journalRouting, checkNotNull(catalogReadback), checkNotNull(publicationLanes))
+        }
         require((epochSealAcquisition == null) == (publicationLanes == null)) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
         epochSealAcquisition?.let { acquisition ->
             require(catalogReadback != null && epochRotation != null) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
@@ -186,6 +208,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 null,
                 null,
                 null,
+                null,
             )
         }
 
@@ -210,6 +233,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 restoreIdentity,
                 catalogReadback,
                 rotation,
+                null,
                 null,
                 null,
             )
@@ -240,6 +264,37 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 rotation,
                 epochSealAcquisition,
                 publicationLanes,
+                null,
+            )
+        }
+
+        /** Explicit D6 cold policy opt-in. No retrofit into D1-D5 and no installation/current-source/backup authority. */
+        fun fromRetainedWithLiveCoverage(
+            consumers: VersionBoundComplaintConsumerConfiguration,
+            pools: VersionBoundPersistencePools,
+            implementationSchema: Int,
+            desiredGeneration: Long,
+            databaseIdentity: UUID,
+            restoreIdentity: UUID,
+            catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+            publicationLanes: JournalPublicationLanesV1,
+            epochSealAcquisition: VersionBoundEpochSealAcquisitionV1,
+            liveCoverage: VersionBoundLiveJournalCoverageV1,
+        ): VersionBoundComplaintProcessConfiguration {
+            requireConnectionFree()
+            val rotation = requireNotNull(pools.epochRotation) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+            return VersionBoundComplaintProcessConfiguration(
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                catalogReadback,
+                rotation,
+                epochSealAcquisition,
+                publicationLanes,
+                liveCoverage,
             )
         }
 

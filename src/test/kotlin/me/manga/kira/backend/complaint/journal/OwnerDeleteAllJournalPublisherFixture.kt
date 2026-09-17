@@ -6,6 +6,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.catalog.S3CatalogReply
 import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
+import me.manga.kira.backend.complaint.infrastructure.VersionBoundOwnerDeleteAllConfiguration
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalPublisherV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionTupleV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalCodecV1
@@ -29,6 +32,7 @@ import software.amazon.awssdk.http.SdkHttpRequest
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.sql.Timestamp
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneId
@@ -104,6 +108,28 @@ internal class OwnerDeleteAllJournalPublisherFixture private constructor(
         kms::httpClient,
         clock,
         { nanos },
+    )
+
+    /** Same genuine D6 binding/store/lanes and raw clients; the policy clock remains its original retained source. */
+    fun livePublishers(
+        configuration: VersionBoundOwnerDeleteAllConfiguration,
+        lanes: JournalPublicationLanesV1,
+        credentials: AwsSessionCredentials = CREDENTIALS,
+    ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1.withLiveCoverageHttpFixture(
+        lanes,
+        configuration.authorizationStore,
+        routing,
+        credentials,
+        {
+            requireConnectionFree()
+            // Synthetic provider Last-Modified only, sampled after actual AUTH/reload. Never a policy-date input.
+            wall = checkNotNull(auth.observer.queryForObject("SELECT clock_timestamp()", Timestamp::class.java)).toInstant()
+            httpClient()
+        },
+        kms::httpClient,
+        clock,
+        { nanos },
+        checkNotNull(configuration.liveCoverage),
     )
 
     fun httpClient(): SdkHttpClient {

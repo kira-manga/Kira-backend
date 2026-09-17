@@ -24,7 +24,8 @@ import java.util.concurrent.atomic.AtomicReference
  * Dormant ordinary LIVE publisher. Genuine released Prepared custody is necessary, not full-D/current
  * runtime authority. There is no bean, route, apply transaction or activation switch here. The actual
  * shared in-process J owner is supplied by the connected factory, not these standalone lower APIs.
- * Stronger restore-horizon/current authority and hard-native deadline qualification remain missing.
+ * Only the connected D6 factory supplies the genuine conservative logical coverage binding. The
+ * standalone lower remains J-only; full backup acceptance and hard-native qualification remain missing.
  * A failed attempt retires this local owner conservatively; close it before an independently scheduled
  * reload/new attempt. It never releases a local publication slot while native/KMS cleanup is uncertain.
  */
@@ -96,9 +97,10 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
         val existing = s3.listExact(binding)
         if (existing != null) return readback.verify(binding, existing, null) // Restart never generates a replacement data key.
         checkAttempt(binding)
+        val retainUntil = retention.forNewObject(binding.attempt) // Fail closed before new encryption; freeze once for both conditional attempts.
         val envelope = codec.seal(binding.event, binding.attempt)
         checkAttempt(binding)
-        val candidate = JournalS3CandidateV1.sealed(binding, envelope, retention.forNewObject(binding.attempt))
+        val candidate = JournalS3CandidateV1.sealed(binding, envelope, retainUntil)
         return withJournalPublicationCleanup(
             {
                 val first = s3.putIfAbsent(binding, candidate)
@@ -160,9 +162,10 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
             clock: Clock,
             nanoTime: () -> Long,
             attempt: JournalCodecAttemptV1?,
+            coverage: VersionBoundLiveJournalCoverageV1.Binding? = null,
         ): OwnerDeleteAllJournalPublisherV1 = journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
             requireConnectionFree()
-            requireJournalPublication(!opened && !closed)
+            requireJournalPublication(!opened && !closed && (coverage == null || attempt != null))
             opened = true
             val result = runCatching {
                 attempt?.requireOwner(routing)
@@ -173,7 +176,8 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
                 val client = s3.open(routing, credentials, s3HttpFactory, nanoTime, attempt)
                 attempt?.remainingMillis(1)
                 val codec = OwnerDeleteAllJournalCodecV1(routing, dataKeys, nanoTime = nanoTime)
-                OwnerDeleteAllJournalPublisherV1(store, routing, codec, dataKeys, client, OrdinaryJournalRetentionV1(routing, clock))
+                val retention = if (coverage == null) OrdinaryJournalRetentionV1(routing, clock) else OrdinaryJournalRetentionV1.withCoverage(routing, coverage)
+                OwnerDeleteAllJournalPublisherV1(store, routing, codec, dataKeys, client, retention)
                     .also { owner = it }
             }
             if (result.isFailure) return@journalPublicationCall withJournalPublicationCleanup({ result.getOrThrow() }, ::close)
@@ -244,6 +248,7 @@ internal class OwnerDeleteAllJournalPublisherV1 private constructor(
             nanoTime: () -> Long,
             custody: Construction,
             attempt: JournalCodecAttemptV1,
-        ): OwnerDeleteAllJournalPublisherV1 = custody.open(store, routing, credentials, s3HttpFactory, kmsHttpFactory, clock, nanoTime, attempt)
+            coverage: VersionBoundLiveJournalCoverageV1.Binding?,
+        ): OwnerDeleteAllJournalPublisherV1 = custody.open(store, routing, credentials, s3HttpFactory, kmsHttpFactory, clock, nanoTime, attempt, coverage)
     }
 }

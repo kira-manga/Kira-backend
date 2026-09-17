@@ -16,7 +16,11 @@ import java.security.MessageDigest
 import java.time.Instant
 import java.util.Base64
 
-/** No HEAD, unversioned GET, repair or ETag trust. Every cheap check and S3 close precedes codec/KMS open. */
+/**
+ * No HEAD, unversioned GET, repair or ETag trust. Every cheap check and S3 close precedes codec/KMS
+ * open. D6's concrete retention binding is the SAME one here and after decrypt; no local J-only
+ * reconstruction can discard its fresh logical age/horizon checks or immutable requested metadata.
+ */
 internal class OrdinaryJournalVersionReadbackV1(
     private val routing: VersionBoundComplaintJournalRouting,
     private val codec: OwnerDeleteAllJournalCodecV1,
@@ -57,7 +61,7 @@ internal class OrdinaryJournalVersionReadbackV1(
                     actual.fill(0)
                 }
                 checkAttempt(binding)
-                val verifiedAt = retention.verify(facts.lastModified, facts.retainUntil, facts.requestedRetention)
+                val verifiedAt = retention.verify(facts.lastModified, facts.retainUntil, facts.requestedRetention) // Recheck after KMS/codec time elapsed.
                 checkAttempt(binding)
                 Observed(binding.event, listed.versionId, facts.wireSha256, facts.lastModified, facts.retainUntil, verifiedAt)
             },

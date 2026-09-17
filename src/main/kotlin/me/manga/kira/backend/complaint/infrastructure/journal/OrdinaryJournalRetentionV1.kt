@@ -6,26 +6,31 @@ import java.time.Clock
 import java.time.Instant
 
 /**
- * Necessary J-relative object checks only. No actual backup/restore-horizon policy owner exists in
- * this slice. A future genuine authority must raise both write/read floors before activation;
- * accepting a caller's optional date or treating J as proof of that authority would be unsafe.
+ * The explicit D6 path delegates to its actual retained logical coverage binding. Legacy lower
+ * construction remains J-relative only and cannot back the D6 continuation. Neither branch accepts
+ * a caller retain-until/horizon callback or claims independent policy installation/backup acceptance.
  */
-internal class OrdinaryJournalRetentionV1(routing: VersionBoundComplaintJournalRouting, private val clock: Clock) {
+internal class OrdinaryJournalRetentionV1 private constructor(
+    routing: VersionBoundComplaintJournalRouting,
+    private val clock: Clock?,
+    private val coverage: VersionBoundLiveJournalCoverageV1.Binding?,
+) {
+    constructor(routing: VersionBoundComplaintJournalRouting, clock: Clock) : this(routing, clock, null)
+
     private val declaration = routing.journalConfiguration.declaration()
     private val duration = declaration.limits.retention.ordinaryRetentionSeconds
 
-    fun forNewObject(attempt: JournalCodecAttemptV1): Instant = journalPublicationCall(JournalPublicationFailureV1.RETENTION_MISMATCH) {
-        val now = now()
-        // remainingMillis floors; the extra millisecond conservatively covers its discarded fraction.
-        val remaining = attempt.remainingMillis(declaration.limits.deadlines.publicationAttemptMillis).toLong() + 1
-        val proposed = now.plusSeconds(duration).plusMillis(remaining)
-        val rounded = if (proposed.nano == 0) proposed else Instant.ofEpochSecond(Math.addExact(proposed.epochSecond, 1))
-        requireInstant(rounded, wholeSecond = true)
-        rounded
-    }
+    fun forNewObject(attempt: JournalCodecAttemptV1): Instant =
+        coverage?.forNewObject(attempt) ?: journalPublicationCall(JournalPublicationFailureV1.RETENTION_MISMATCH) {
+            val now = now()
+            // remainingMillis floors; the extra millisecond conservatively covers its discarded fraction.
+            val remaining = attempt.remainingMillis(declaration.limits.deadlines.publicationAttemptMillis).toLong() + 1
+            val proposed = now.plusSeconds(duration).plusMillis(remaining)
+            ceilingSecond(proposed)
+        }
 
     fun verify(lastModified: Instant, retainUntil: Instant, requestedRetention: String): Instant =
-        journalPublicationCall(JournalPublicationFailureV1.RETENTION_MISMATCH) {
+        coverage?.verify(lastModified, retainUntil, requestedRetention) ?: journalPublicationCall(JournalPublicationFailureV1.RETENTION_MISMATCH) {
             val now = now()
             requireInstant(lastModified, wholeSecond = true)
             requireInstant(retainUntil, wholeSecond = true)
@@ -39,10 +44,15 @@ internal class OrdinaryJournalRetentionV1(routing: VersionBoundComplaintJournalR
             now
         }
 
-    private fun now(): Instant = clock.instant().also { requireInstant(it, wholeSecond = false) }
+    private fun now(): Instant = checkNotNull(clock).instant().also { requireInstant(it, wholeSecond = false) }
 
     companion object {
         private const val LAST_EPOCH_SECOND = 253_402_300_799L
+
+        internal fun withCoverage(
+            routing: VersionBoundComplaintJournalRouting,
+            coverage: VersionBoundLiveJournalCoverageV1.Binding,
+        ): OrdinaryJournalRetentionV1 = OrdinaryJournalRetentionV1(routing, null, coverage)
 
         fun canonicalInstant(value: String): Instant = journalPublicationCall(JournalPublicationFailureV1.RETENTION_MISMATCH) {
             requireJournalPublication(value.length == 20, JournalPublicationFailureV1.RETENTION_MISMATCH)
@@ -52,7 +62,14 @@ internal class OrdinaryJournalRetentionV1(routing: VersionBoundComplaintJournalR
             parsed
         }
 
-        private fun requireInstant(value: Instant, wholeSecond: Boolean) {
+        internal fun ceilingSecond(value: Instant): Instant {
+            requireInstant(value, wholeSecond = false)
+            val rounded = if (value.nano == 0) value else Instant.ofEpochSecond(Math.addExact(value.epochSecond, 1))
+            requireInstant(rounded, wholeSecond = true)
+            return rounded
+        }
+
+        internal fun requireInstant(value: Instant, wholeSecond: Boolean) {
             requireJournalPublication(
                 value.epochSecond in 0..LAST_EPOCH_SECOND && (!wholeSecond || value.nano == 0),
                 JournalPublicationFailureV1.RETENTION_MISMATCH,

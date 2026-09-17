@@ -26,11 +26,13 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
     private val kmsHttpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
     private val clock: Clock,
     private val nanoTime: () -> Long,
+    private val coverage: VersionBoundLiveJournalCoverageV1.Binding? = null,
 ) : AutoCloseable {
     private val closed = AtomicBoolean()
 
     init {
         lanes.requireJournal(routing.journalConfiguration)
+        coverage?.requireBinding(routing, lanes)
     }
 
     /** No SDK construction here; reserve after semantic admission and before a new AUTH. */
@@ -38,6 +40,7 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
 
     fun tryReserve(): OwnerDeleteAllReservation? {
         requireJournalPublication(store != null)
+        coverage?.requireBinding(routing, lanes)
         return lanes.tryOwnerDeleteAll(this)
     }
 
@@ -53,8 +56,13 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
     }
 
     /** A bound process graph cannot adopt a same-J publisher whose private work issuer is different. */
-    internal fun requireBinding(selectedStore: JdbcComplaintOwnerDeleteAllStore, selectedRouting: VersionBoundComplaintJournalRouting) {
-        requireJournalPublication(store === selectedStore && routing === selectedRouting)
+    internal fun requireBinding(
+        selectedStore: JdbcComplaintOwnerDeleteAllStore,
+        selectedRouting: VersionBoundComplaintJournalRouting,
+        selectedCoverage: VersionBoundLiveJournalCoverageV1.Binding? = null,
+    ) {
+        requireJournalPublication(store === selectedStore && routing === selectedRouting && coverage === selectedCoverage && !closed.get())
+        coverage?.requireBinding(routing, lanes)
     }
 
     internal fun isClosed(): Boolean = closed.get()
@@ -70,6 +78,7 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
 
     internal fun startAttempt(enclosingBudget: PersistenceTimeBudget? = null): JournalCodecAttemptV1 {
         requireConnectionFree()
+        coverage?.requireBinding(routing, lanes)
         return JournalCodecAttemptV1(routing, nanoTime, enclosingBudget)
     }
 
@@ -82,7 +91,10 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
         attempt: JournalCodecAttemptV1,
     ): OwnerDeleteAllJournalPublisherV1 {
         owner.requireConstructing(this, custody, attempt)
-        return OwnerDeleteAllJournalPublisherV1.openOwned(store, routing, credentials, s3HttpFactory, kmsHttpFactory, clock, nanoTime, custody, attempt)
+        coverage?.requireBinding(routing, lanes)
+        return OwnerDeleteAllJournalPublisherV1.openOwned(
+            store, routing, credentials, s3HttpFactory, kmsHttpFactory, clock, nanoTime, custody, attempt, coverage,
+        )
     }
 
     override fun close() {
@@ -93,6 +105,25 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
     override fun toString(): String = "OwnerDeleteAllJournalPublisherFactoryV1(dormant,shared-J,no-runtime-authority)"
 
     companion object {
+        /** The fixed genuine projected binding, never a supplied inventory/date or a J-only substitute for D6. */
+        fun ordinaryWithLiveCoverage(
+            lanes: JournalPublicationLanesV1,
+            store: JdbcComplaintOwnerDeleteAllStore,
+            routing: VersionBoundComplaintJournalRouting,
+            credentials: AwsSessionCredentials,
+            coverage: VersionBoundLiveJournalCoverageV1.Binding,
+        ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1(
+            lanes,
+            store,
+            routing,
+            credentials,
+            ::journalS3UrlConnectionClient,
+            ::journalKmsUrlConnectionClient,
+            Clock.systemUTC(),
+            System::nanoTime,
+            coverage,
+        )
+
         fun ordinary(
             lanes: JournalPublicationLanesV1,
             store: JdbcComplaintOwnerDeleteAllStore,
@@ -164,6 +195,29 @@ internal class OwnerDeleteAllJournalPublisherFactoryV1 private constructor(
             { kmsHttpFactory() },
             clock,
             nanoTime,
+        )
+
+        /** Raw HTTP/clocks only; the same D6 binding, original attempt, genuine SQL issuer and shared lanes are mandatory. */
+        fun withLiveCoverageHttpFixture(
+            lanes: JournalPublicationLanesV1,
+            store: JdbcComplaintOwnerDeleteAllStore,
+            routing: VersionBoundComplaintJournalRouting,
+            credentials: AwsSessionCredentials,
+            s3HttpFactory: () -> SdkHttpClient,
+            kmsHttpFactory: () -> SdkHttpClient,
+            clock: Clock,
+            nanoTime: () -> Long,
+            coverage: VersionBoundLiveJournalCoverageV1.Binding,
+        ): OwnerDeleteAllJournalPublisherFactoryV1 = OwnerDeleteAllJournalPublisherFactoryV1(
+            lanes,
+            store,
+            routing,
+            credentials,
+            { s3HttpFactory() },
+            { kmsHttpFactory() },
+            clock,
+            nanoTime,
+            coverage,
         )
     }
 }
