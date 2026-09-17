@@ -55,11 +55,11 @@ internal sealed interface OwnerDeleteAllPreparation {
         override fun toString(): String = "OwnerDeleteAllPreparation.Durable(custody-only)"
     }
 
-    class Replay(val comparison: InstallationDeletionPreflightResult.Completed) : OwnerDeleteAllPreparation {
+    class Replay(val comparison: InstallationDeletionPreflightResult.Completed) : OwnerDeleteAllPreparation, OwnerDeleteAllOutcome {
         override fun toString(): String = "OwnerDeleteAllPreparation.Replay(no-runtime-authority)"
     }
 
-    class Rejected(val comparison: InstallationDeletionPreflightResult.Rejected) : OwnerDeleteAllPreparation {
+    class Rejected(val comparison: InstallationDeletionPreflightResult.Rejected) : OwnerDeleteAllPreparation, OwnerDeleteAllOutcome {
         override fun toString(): String = "OwnerDeleteAllPreparation.Rejected(redacted)"
     }
 }

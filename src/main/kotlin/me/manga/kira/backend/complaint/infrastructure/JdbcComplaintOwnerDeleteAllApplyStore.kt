@@ -88,7 +88,7 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore(
 internal sealed interface OwnerDeleteAllApplyInputV1
 
 /** Released only after the original caller's known commit AND original-holder cleanup. No content/identity is returned. */
-internal sealed interface CommittedOwnerDeleteAllApplyV1 {
+internal sealed interface CommittedOwnerDeleteAllApplyV1 : OwnerDeleteAllOutcome {
     val completedAt: Instant
     val expiresAt: Instant
     val responseStatus: Int get() = 204
