@@ -17,6 +17,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
 import me.manga.kira.backend.common.infrastructure.persistence.catalogAuthorTestPasswordBinding
+import me.manga.kira.backend.common.infrastructure.persistence.ended
 import me.manga.kira.backend.common.infrastructure.persistence.ordinaryCleanupReader
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
