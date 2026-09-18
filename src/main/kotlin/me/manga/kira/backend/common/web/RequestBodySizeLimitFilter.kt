@@ -100,7 +100,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
             writeOwnerFailure(response, OwnerFailure.INVALID)
             return
         }
-        val replayable = if (body.isEmpty()) request else CachedBodyRequest(request, body)
+        val replayable = if (body.isEmpty() && owner != OwnerBodyRoute.DELETE) request else CachedBodyRequest(request, body)
         filterChain.doFilter(replayable, response)
     }
 
