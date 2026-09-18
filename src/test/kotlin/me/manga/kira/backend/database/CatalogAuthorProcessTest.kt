@@ -228,7 +228,9 @@ internal object CatalogAuthorCustodyProcessFixture {
                 )
 
                 CatalogCustodyFixtureHalt.AUTHOR_FROZEN -> CatalogGenesisProcessV1.haltAuthor(CatalogGenesisExitV1.FROZEN)
+
                 CatalogCustodyFixtureHalt.AUTHOR_AWAITING -> CatalogGenesisProcessV1.haltAuthor(CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE)
+
                 CatalogCustodyFixtureHalt.TARGET_PROJECTED -> CatalogGenesisProcessV1.haltTargetFinalize(CatalogGenesisExitV1.PROJECTED)
             }
         }, "fixture-retained-custody").apply {

@@ -218,7 +218,10 @@ internal class CatalogGenesisTargetFinalizeFixture(val tls: VersionBoundPersiste
                 trust.expectedEnvironment, trust.expectedCatalogLocations, trust.minimumBundleVersion,
                 policy.currentWriterGenerationIds, policy.currentApproverIds,
                 CatalogAuthorChainLimitsV1(
-                    limits.maximumEnvelopeBytes, limits.maximumManifestRecords, limits.maximumGenerations, limits.maximumEncodedBytes,
+                    limits.maximumEnvelopeBytes,
+                    limits.maximumManifestRecords,
+                    limits.maximumGenerations,
+                    limits.maximumEncodedBytes,
                 ),
             ),
             HexFormat.of().formatHex(frozen.capacityDigest()),
@@ -227,8 +230,13 @@ internal class CatalogGenesisTargetFinalizeFixture(val tls: VersionBoundPersiste
         )
         val path = freeze.writeInput("original-author-command.json", Json.encodeToString(CatalogAuthorDocumentV1.serializer(), document).toByteArray())
         return arrayOf(
-            "finalize", "--manifest", path.toString(), "--target-deployment", request.targetDeployment.toString(),
-            "--genesis-pin", checkNotNull(frozen.independentPin).toString(),
+            "finalize",
+            "--manifest",
+            path.toString(),
+            "--target-deployment",
+            request.targetDeployment.toString(),
+            "--genesis-pin",
+            checkNotNull(frozen.independentPin).toString(),
         )
     }
 

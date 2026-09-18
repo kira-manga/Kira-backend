@@ -15,8 +15,7 @@ internal object CatalogGenesisProcessV1 {
     fun launchAuthor(args: Array<String>): CatalogGenesisProcessObservationV1 = launch(Stage.AUTHOR, args)
     fun launchTargetFinalize(args: Array<String>): CatalogGenesisProcessObservationV1 = launch(Stage.TARGET_FINALIZE, args)
 
-    internal fun observeAuthor(exit: CatalogGenesisExitV1, retired: Boolean): CatalogGenesisProcessObservationV1 =
-        Stage.AUTHOR.observe(exit, retired)
+    internal fun observeAuthor(exit: CatalogGenesisExitV1, retired: Boolean): CatalogGenesisProcessObservationV1 = Stage.AUTHOR.observe(exit, retired)
 
     internal fun observeTargetFinalize(exit: CatalogGenesisExitV1, retired: Boolean): CatalogGenesisProcessObservationV1 =
         Stage.TARGET_FINALIZE.observe(exit, retired)

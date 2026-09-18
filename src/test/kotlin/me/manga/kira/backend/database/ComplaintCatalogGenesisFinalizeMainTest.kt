@@ -200,28 +200,7 @@ class ComplaintCatalogGenesisFinalizeMainTest {
             System.setErr(err)
             for (retired in listOf(false, true)) {
                 for (exit in CatalogGenesisExitV1.entries) {
-                    output.reset()
-                    error.reset()
-                    val actual = ComplaintCatalogGenesisFinalizeMain.report(CatalogGenesisProcessObservationV1(exit, retired))
-                    val expected = when {
-                        !retired && exit !in setOf(CatalogGenesisExitV1.FATAL, CatalogGenesisExitV1.CANCELLED, CatalogGenesisExitV1.INTERRUPTED) ->
-                            CatalogGenesisExitV1.RETIREMENT_UNCONFIRMED
-
-                        exit in setOf(CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE) -> CatalogGenesisExitV1.FAILED
-                        else -> exit
-                    }
-                    if (expected === CatalogGenesisExitV1.PROJECTED) {
-                        assertEquals(0, actual)
-                        assertEquals("catalog-target-finalize PROJECTED; historical-only\n", output.toString(Charsets.UTF_8))
-                        assertEquals("", error.toString(Charsets.UTF_8))
-                    } else {
-                        assertEquals(expected.code, actual)
-                        assertTrue(actual != 0)
-                        assertEquals("", output.toString(Charsets.UTF_8))
-                        val retirement = if (retired) "" else "; retirement=UNCONFIRMED"
-                        assertEquals("catalog-target-finalize refused: ${expected.name}$retirement\n", error.toString(Charsets.UTF_8))
-                    }
-                    assertFalse(output.toString(Charsets.UTF_8).contains(CANARY) || error.toString(Charsets.UTF_8).contains(CANARY))
+                    assertReportedStatus(exit, retired, output, error)
                 }
             }
         } finally {
@@ -230,6 +209,32 @@ class ComplaintCatalogGenesisFinalizeMainTest {
             out.close()
             err.close()
         }
+    }
+
+    private fun assertReportedStatus(exit: CatalogGenesisExitV1, retired: Boolean, output: ByteArrayOutputStream, error: ByteArrayOutputStream) {
+        output.reset()
+        error.reset()
+        val actual = ComplaintCatalogGenesisFinalizeMain.report(CatalogGenesisProcessObservationV1(exit, retired))
+        val expected = when {
+            !retired && exit !in setOf(CatalogGenesisExitV1.FATAL, CatalogGenesisExitV1.CANCELLED, CatalogGenesisExitV1.INTERRUPTED) ->
+                CatalogGenesisExitV1.RETIREMENT_UNCONFIRMED
+
+            exit in setOf(CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE) -> CatalogGenesisExitV1.FAILED
+
+            else -> exit
+        }
+        if (expected === CatalogGenesisExitV1.PROJECTED) {
+            assertEquals(0, actual)
+            assertEquals("catalog-target-finalize PROJECTED; historical-only\n", output.toString(Charsets.UTF_8))
+            assertEquals("", error.toString(Charsets.UTF_8))
+        } else {
+            assertEquals(expected.code, actual)
+            assertTrue(actual != 0)
+            assertEquals("", output.toString(Charsets.UTF_8))
+            val retirement = if (retired) "" else "; retirement=UNCONFIRMED"
+            assertEquals("catalog-target-finalize refused: ${expected.name}$retirement\n", error.toString(Charsets.UTF_8))
+        }
+        assertFalse(output.toString(Charsets.UTF_8).contains(CANARY) || error.toString(Charsets.UTF_8).contains(CANARY))
     }
 
     private fun refused(action: () -> Unit) {
@@ -250,8 +255,13 @@ class ComplaintCatalogGenesisFinalizeMainTest {
     }
 
     private fun arguments(): Array<String> = arrayOf(
-        "finalize", "--manifest", "/not-read/$CANARY-author.json",
-        "--target-deployment", "/not-read/$CANARY-target.json", "--genesis-pin", "/not-read/$CANARY-independent.pin",
+        "finalize",
+        "--manifest",
+        "/not-read/$CANARY-author.json",
+        "--target-deployment",
+        "/not-read/$CANARY-target.json",
+        "--genesis-pin",
+        "/not-read/$CANARY-independent.pin",
     )
 
     private fun environment(): Map<String, String> = FAMILIES.flatMap { family ->
