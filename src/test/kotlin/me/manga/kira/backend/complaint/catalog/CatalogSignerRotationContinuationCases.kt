@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBounda
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
@@ -21,11 +22,12 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.nio.ByteBuffer
 import java.nio.file.Files
 import java.nio.file.StandardOpenOption.WRITE
 import java.nio.file.attribute.PosixFilePermissions
-import java.sql.Timestamp
+import java.sql.Connection
 import java.util.UUID
 
 /** Known-unattempted second Sign cases on the same genuine D7 process, campaign and immutable first-signature custody. */
@@ -222,20 +224,13 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
         val continued = f.invocation()
         var reads = 0
         var faulted: List<String>? = null
+        val returnedSteps = mutableListOf<String>()
         f.jdbc.beforeSql = { step ->
             if (step == "control" && ++reads == 2) {
-                val changed = if (expiredLease) {
-                    checkNotNull(f.observer.queryForObject("SELECT clock_timestamp() - interval '1 second'", Timestamp::class.java))
-                } else {
-                    UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
-                }
-                assertEquals(
-                    1,
-                    f.observer.update("UPDATE complaint_journal_control SET $column = ? WHERE data_scope_id = ?", changed, ComplaintDataScope.LIVE.id),
-                )
-                faulted = f.state()
+                faulted = changeAuthorityWithIndependentObserver(column, expiredLease)
             }
         }
+        f.jdbc.afterSql = { step -> if (reads == 2) returnedSteps.add(step) }
         try {
             core.refused { continued.continueSecondSign(previous) }
             assertEquals(2, reads)
@@ -247,7 +242,9 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
                 continued.phases.map { it.databaseOutcome() },
             )
             val lastSteps = f.jdbc.calls.filter { it.phase === continued.phases.last() }.map { it.step }
-            assertEquals(if (expiredLease) listOf("control", "current-lease") else listOf("control"), lastSteps)
+            val expectedSteps = if (expiredLease) listOf("control", "current-lease") else listOf("control")
+            assertEquals(expectedSteps, lastSteps)
+            assertEquals(expectedSteps, returnedSteps, "Each actual statement returned before its binding or DB-time lease predicate refused.")
             assertTrue(f.jdbc.steps.drop(calls).none { it == "prepare" || it == "signature" || it.startsWith("charge:") })
             assertEquals(checkNotNull(faulted), f.state())
             assertEquals(rowVersion, core.mutationRowVersion())
@@ -255,11 +252,48 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
             assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED))
         } finally {
             f.jdbc.beforeSql = {}
+            f.jdbc.afterSql = {}
             // Restore only the test-owned row fault for disposal, not renewal: no subsequent workflow is attempted.
             assertEquals(
                 1,
                 f.observer.update("UPDATE complaint_journal_control SET $column = ? WHERE data_scope_id = ?", original[column], ComplaintDataScope.LIVE.id),
             )
+        }
+    }
+
+    private fun changeAuthorityWithIndependentObserver(column: String, expiredLease: Boolean): List<String> {
+        val phase = checkNotNull(PersistencePhaseOwnership.current())
+        val resources = TransactionSynchronizationManager.getResourceMap().toMap()
+        assertEquals(setOf(f.coordinator.dataSource), resources.keys)
+        // Direct observer JDBC only: JdbcTemplate would enlist a second holder in the active caller's Spring synchronization.
+        val state = checkNotNull(f.observer.dataSource).connection.use { connection ->
+            assertTrue(connection.autoCommit)
+            val replacement = if (expiredLease) "clock_timestamp() - interval '1 second'" else "?::uuid"
+            connection.prepareStatement("UPDATE complaint_journal_control SET $column = $replacement WHERE data_scope_id = ?").use { statement ->
+                if (!expiredLease) statement.setObject(1, UUID.fromString("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"))
+                statement.setObject(if (expiredLease) 1 else 2, ComplaintDataScope.LIVE.id)
+                assertEquals(1, statement.executeUpdate())
+            }
+            observerState(connection)
+        }
+        assertSame(phase, PersistencePhaseOwnership.current())
+        val remaining = TransactionSynchronizationManager.getResourceMap()
+        assertEquals(resources.keys, remaining.keys)
+        resources.forEach { (resource, holder) -> assertSame(holder, remaining[resource]) }
+        return state
+    }
+
+    private fun observerState(connection: Connection): List<String> =
+        observerRows(connection, "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m ORDER BY operation_token") +
+            observerRows(connection, "SELECT to_jsonb(c)::text FROM complaint_capacity_counters c ORDER BY name") +
+            observerRows(connection, "SELECT to_jsonb(c)::text FROM complaint_journal_control c WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id).single()
+
+    private fun observerRows(connection: Connection, sql: String, vararg arguments: Any): List<String> = connection.prepareStatement(sql).use { statement ->
+        arguments.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+        statement.executeQuery().use { rows ->
+            buildList {
+                while (rows.next()) add(checkNotNull(rows.getString(1)))
+            }
         }
     }
 
