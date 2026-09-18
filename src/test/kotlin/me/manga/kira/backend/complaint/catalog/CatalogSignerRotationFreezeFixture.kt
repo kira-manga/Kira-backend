@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisApprovalV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisEnvelopeV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogRotationManifestV1
+import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseLeafV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
@@ -167,14 +168,17 @@ internal class CatalogSignerRotationFreezeFixture(tls: VersionBoundPersistenceCo
 }
 
 /** Raw G1-only HTTP for both genuine refresh and non-G1 authoring; real SDK/crypto/local snapshot/cleanup remain in place. */
-internal class CatalogSignerRotationReadbackHttpFixture(private val d7: CatalogSignerRotationD7Fixture) {
+internal class CatalogSignerRotationReadbackHttpFixture(
+    private val d7: CatalogSignerRotationD7Fixture,
+    private val process: VersionBoundComplaintProcessConfiguration = d7.process,
+) {
     val http = S3CatalogReadbackFixture()
     var beforeRequest: (SdkHttpRequest) -> Unit = {}
     var afterClientClose: (Int) -> Unit = {}
     var returnedCloses = 0
         private set
     private val assertion = AtomicReference<AssertionError?>()
-    private val settings = checkNotNull(d7.process.catalogReadback)
+    private val settings = checkNotNull(process.catalogReadback)
 
     init {
         http.respond = { request ->
@@ -263,6 +267,7 @@ internal class CatalogSignerRotationReadbackHttpFixture(private val d7: CatalogS
 
     private fun <T> observed(action: () -> T): T = try {
         d7.released()
+        assertEquals(0, process.pools.catalogCoordinator.activeSnapshotOwners())
         assertFalse(TransactionSynchronizationManager.isActualTransactionActive())
         assertFalse(TransactionSynchronizationManager.isSynchronizationActive())
         action()

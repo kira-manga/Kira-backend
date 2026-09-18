@@ -8,15 +8,21 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcLifecycleOwner
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcParticipant
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleActivation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleTestScope
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceTestInputs
 import me.manga.kira.backend.common.infrastructure.persistence.actualPool
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationD7Inputs
 import me.manga.kira.backend.complaint.catalog.OfflineTrustBundleFixture
+import me.manga.kira.backend.complaint.catalog.assertSignerRotationRecoveryPurpose
+import me.manga.kira.backend.complaint.catalog.signerRotationRecoveryAcquired
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -30,6 +36,40 @@ import java.sql.SQLException
 import java.util.HexFormat
 
 internal class ComplaintDesiredSignerRotationD7Test {
+    @Test
+    fun `fresh D7 recovery purpose stays TARGET only UNKNOWN and seals optional epoch even through controlled fixture construction`() {
+        withAssembly(CatalogSignerRotationD7Inputs.document().copy(epochRotation = true)) { inputs, ordinary ->
+            val canonical = ordinary.target.canonicalBytes()
+            assertThrows<CatalogSignerRotationFreezeExceptionV1> { CatalogSignerRotationPreparedRecoveryV1.begin(ordinary.target) }
+            for (controlled in listOf(false, true)) {
+                val clock = DesiredInstallationTestClock()
+                val assembly = if (controlled) {
+                    ComplaintDesiredProcessAssemblyV1.withControlledIntegrationFixture(clock)
+                } else {
+                    ComplaintDesiredProcessAssemblyV1()
+                }
+                try {
+                    assembly.assembleTargetSignerRotationRecovery(
+                        inputs,
+                        signerRotationRecoveryAcquired(inputs, VersionBoundPersistenceTestInputs.PASSWORD.toByteArray()),
+                        null,
+                    )
+                    assertArrayEquals(canonical, assembly.target.canonicalBytes())
+                    assertArrayEquals(ordinary.target.configurationHashBytes(), assembly.target.configurationHashBytes())
+                    assertSignerRotationRecoveryPurpose(assembly)
+                    assertEquals(PersistenceLifecycleObservation.UNAVAILABLE, checkNotNull(assembly.target.pools.epochRotation).prepare())
+                    val owner = ownedCutField(assembly, "targetOwner") as PersistenceJdbcLifecycleOwner
+                    val scope = PgLifecycleTestScope(owner)
+                    val epoch = ownedCutField(scope.root, "epochRotationParticipant") as PersistenceJdbcParticipant
+                    assertTrue((scope.actors() + scope.actors(epoch)).none { it.hasEntered() })
+                } finally {
+                    assembly.close()
+                    assembly.requireCleanup(PersistenceTimeBudget.start(2_000))
+                }
+            }
+        }
+    }
+
     @Test
     fun `raw D7 declares both immutable signer pins before genuine cold assembly without starting target actors`() {
         withAssembly(CatalogSignerRotationD7Inputs.document()) { inputs, assembly ->

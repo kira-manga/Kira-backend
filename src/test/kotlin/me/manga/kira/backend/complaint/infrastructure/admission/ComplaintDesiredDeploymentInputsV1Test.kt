@@ -239,11 +239,12 @@ internal object DesiredInstallationInputFixture {
         inputs: ComplaintDesiredDeploymentInputsV1,
         runtimePassword: ByteArray = VersionBoundPersistenceTestInputs.PASSWORD.toByteArray(Charsets.UTF_8),
         operatorPassword: ByteArray = "fixture-only-distinct-config-operator-password".toByteArray(Charsets.UTF_8),
+        targetOnly: Boolean = false,
     ): List<AcquiredVersionedSecret> {
         val fixture = BoundComplaintConsumerFixture()
         val hmac = listOf(fixture.userSecret, fixture.current, fixture.previous) +
             fixture.installationSecrets + fixture.cursorSecrets + fixture.journalSecrets
-        return inputs.allBindings().map { binding ->
+        return (if (targetOnly) inputs.targetBindings() else inputs.allBindings()).map { binding ->
             AcquiredVersionedSecret.acquire(binding) { version ->
                 when (binding) {
                     inputs.runtimePassword -> SecretVersionSnapshot(version, runtimePassword)

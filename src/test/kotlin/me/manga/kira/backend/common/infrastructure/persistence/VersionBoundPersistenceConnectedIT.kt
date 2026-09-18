@@ -8,6 +8,11 @@ import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationFreezeCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationPreparedRecoveryCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryIdentityCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryLeaseCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryProviderCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoverySqlCut
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
@@ -492,6 +497,51 @@ class VersionBoundPersistenceConnectedIT {
         CatalogSignerRotationContinuationCut.entries.forEach { cut ->
             withFixture { tls ->
                 withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationContinuationCases(it).continuationRefusals(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fresh TARGET D7 recovers both returned PREPARED2 with a new actual lease and no Sign`() {
+        for (identicalSql in listOf(false, true)) {
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).freshBothReturnedRecovery(identicalSql) }
+            }
+        }
+    }
+
+    @Test
+    fun `fresh PREPARED2 recovery refuses live historical regressed and maximum lease tokens before replay`() {
+        CatalogSignerRotationRecoveryLeaseCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).historicalLeaseRefusal(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fresh PREPARED2 recovery rejects missing custody changed D regressed signature and fenced capacity race`() {
+        CatalogSignerRotationRecoveryIdentityCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).custodyAndIdentityRefusal(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fresh PREPARED2 original SQL cleanup and ACQUIRE UNKNOWN remain sticky after physical retirement`() {
+        CatalogSignerRotationRecoverySqlCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).originalSqlUncertainty(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fresh PREPARED2 original budget provider close and post lease cancellation cannot mint replay success`() {
+        CatalogSignerRotationRecoveryProviderCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).originalBudgetAndProviderFailure(cut) }
             }
         }
     }

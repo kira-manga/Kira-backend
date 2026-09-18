@@ -23,6 +23,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxSignerRotatio
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_COORDINATOR_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_CURRENT_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.RELINQUISH_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.TRY_CATALOG_LOCK
 import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_SIGNATURE
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
@@ -34,6 +35,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.core.ResultSetExtractor
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
@@ -263,6 +265,15 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>): List<T> = observed(sql, emptyArray()) { super.query(sql, rowMapper) }
 
+    override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>): T? {
+        val path = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path") }
+        return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT) {
+            observed(sql, emptyArray()) { super.query(sql, rse) }
+        } else {
+            super.query(sql, rse) // RowMapper's no-argument overload already passes through observed; never double-count that dispatch.
+        }
+    }
+
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql, args) {
         super.query(sql, rowMapper, *args)
     }
@@ -286,7 +297,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         assertSame(coordinator.dataSource, dataSource)
         assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(1, coordinator.activeSnapshotOwners())
-        assertFalse(holder.connection.isReadOnly)
+        assertEquals(path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, holder.connection.isReadOnly)
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, holder.connection.transactionIsolation)
         assertEquals(sql.count { it == '?' }, arguments.size)
         if (phase !in observations) {
@@ -300,7 +311,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(3))
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(4))
                     assertTrue(row.getBoolean(5) && !row.wasNull())
-                    // The prerequisite lease intentionally stays row-only; only these three author phases take the shared epoch fence.
+                    // Snapshot is read-only and leases stay row-only; only rotation data phases take the shared epoch fence.
                     val sharedFence = expectedSharedFence(path)
                     assertEquals(sharedFence, row.getBoolean(6))
                     val found = row.getInt(1) to row.getLong(2)
@@ -310,7 +321,12 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
             }
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
-        val step = step(sql, arguments)
+        val step = if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT) {
+            assertTrue(sql.trimStart().startsWith("WITH control AS ("))
+            "snapshot"
+        } else {
+            step(sql, arguments)
+        }
         calls.add(CatalogSignerRotationSqlCall(phase, step, arguments))
         beforeSql(step)
         action().also {
@@ -323,7 +339,10 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
     }
 
     private fun expectedSharedFence(path: PersistencePhasePath): Boolean = when (path) {
-        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> false
+        PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+        -> false
 
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
@@ -350,6 +369,8 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         READ_COORDINATOR_LEASE_CONTROL -> "lease-read"
 
         ACQUIRE_COORDINATOR_LEASE -> "lease-acquire"
+
+        RELINQUISH_COORDINATOR_LEASE -> "lease-relinquish"
 
         LOCK_SIGNER_ROTATION_CONTROL -> "control"
 
