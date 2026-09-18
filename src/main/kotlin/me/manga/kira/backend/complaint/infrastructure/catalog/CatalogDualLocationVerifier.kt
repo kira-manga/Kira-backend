@@ -176,6 +176,7 @@ internal object CatalogDualLocationVerifier {
         enum class State { PREPARED_UNPUBLISHED, PREPARED_AWAIT_REPLICATION, PREPARED_DUAL_COPY, PROJECTION_PENDING_DUAL_COPY }
 
         val frozenEnvelopeSha256: String = Sha256.hex(frozenEnvelope)
+
         /** These copy observations belong to observedTail, which is still G1 when unpublished. */
         val objectVersion: String = metadata.requestBinding.versionId
         val retainUntilEpochSecond: Long = checkNotNull(metadata.retainUntilEpochSecond)
@@ -220,6 +221,7 @@ internal object CatalogDualLocationVerifier {
         override fun toString(): String = "Overlap2Readback(private-raw-fixed2,no-custody-or-PUT-or-SQL-or-current-authority)"
 
         companion object {
+            @Suppress("CyclomaticComplexMethod") // Keep the fixed four-state raw fold and exact local/tail admission together.
             internal fun verify(
                 provider: CatalogReadbackPort,
                 initialBundleBytes: ByteArray,
@@ -275,7 +277,10 @@ internal object CatalogDualLocationVerifier {
                     }
 
                     is CatalogReadbackResult.ProjectionResumeEvidence -> {
-                        requireCatalogReadback(local is LocalCatalogSnapshot.ProjectionPending && result.operationToken == token, CatalogReadbackFailure.HEAD_CONFLICT)
+                        requireCatalogReadback(
+                            local is LocalCatalogSnapshot.ProjectionPending && result.operationToken == token,
+                            CatalogReadbackFailure.HEAD_CONFLICT,
+                        )
                         Triple(State.PROJECTION_PENDING_DUAL_COPY, result.evidence, result.evidence.chain.tail)
                     }
 

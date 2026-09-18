@@ -65,7 +65,11 @@ class CatalogOverlap2ReadbackVerifierTest {
         assertClosed(provider, 2)
 
         val author = CatalogDualLocationVerifier.SignerRotationAuthorReadback.verify(
-            SyntheticCatalogReadbackPort(fixture.bytes.take(1)), fixture.initial, fixture.current, fixture.policy(), local,
+            SyntheticCatalogReadbackPort(fixture.bytes.take(1)),
+            fixture.initial,
+            fixture.current,
+            fixture.policy(),
+            local,
         )
         assertEquals(author.commonHeadEvidence().chain.tail, readback.observedTail)
         assertArrayEquals(author.genesisBytes(), readback.observedEnvelopeBytes())
@@ -153,8 +157,12 @@ class CatalogOverlap2ReadbackVerifierTest {
         val later = verify(
             provider(),
             policy = CatalogReadbackPolicy(
-                policy.chain, policy.expectedGenesisEnvelopeSha256, policy.evaluatedAtEpochSecond + 10,
-                policy.requiredRetainUntilEpochSecond, policy.pageSize, policy.maximumPagesPerLocation,
+                policy.chain,
+                policy.expectedGenesisEnvelopeSha256,
+                policy.evaluatedAtEpochSecond + 10,
+                policy.requiredRetainUntilEpochSecond,
+                policy.pageSize,
+                policy.maximumPagesPerLocation,
             ),
         )
         assertArrayEquals(readback.primaryEvidenceBytes(), later.primaryEvidenceBytes())
@@ -289,8 +297,11 @@ class CatalogOverlap2ReadbackVerifierTest {
         assertTrue(
             factories.single().parameterTypes.contentEquals(
                 arrayOf(
-                    CatalogReadbackPort::class.java, ByteArray::class.java, ByteArray::class.java,
-                    CatalogReadbackPolicy::class.java, LocalCatalogSnapshot::class.java,
+                    CatalogReadbackPort::class.java,
+                    ByteArray::class.java,
+                    ByteArray::class.java,
+                    CatalogReadbackPolicy::class.java,
+                    LocalCatalogSnapshot::class.java,
                 ),
             ),
         )
