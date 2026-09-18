@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateCandid
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerOperationIdentity
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerOperationObservation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerReplyCandidate
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateStore
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerCreate
 
@@ -25,6 +26,9 @@ internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: Persiste
 
     fun preflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerOperationObservation =
         read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT)
+
+    fun replyPreflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerOperationObservation =
+        read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT)
 
     fun status(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerOperationObservation =
         read(identity, tuple, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS)
@@ -38,6 +42,7 @@ internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: Persiste
         val phase = when (path) {
             PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION -> ownership.enterComplaintOwnerOperationAuthentication()
             PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> ownership.enterComplaintOwnerCreatePreflight()
+            PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT -> ownership.enterComplaintOwnerReplyPreflight()
             PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS -> ownership.enterComplaintOwnerOperationStatus()
             else -> throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
         }
@@ -47,6 +52,7 @@ internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: Persiste
             operation = when (path) {
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION -> store.authenticate(identity)
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT -> store.preflight(identity, checkNotNull(tuple))
+                PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT -> store.replyPreflight(identity, checkNotNull(tuple))
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS -> store.status(identity, checkNotNull(tuple))
                 else -> throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             }
@@ -59,20 +65,37 @@ internal class ComplaintOwnerCreatePhaseExecutor(private val ownership: Persiste
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
     }
 
-    @Suppress("TooGenericExceptionCaught")
     fun create(
         identity: ComplaintOwnerOperationIdentity,
         candidate: ComplaintOwnerCreateCandidate,
         platform: ComplaintPlatform,
         admission: ComplaintAdmittedOwnerCreate,
+    ): ComplaintOwnerOperationObservation = write(identity, candidate, null, platform, admission)
+
+    fun reply(
+        identity: ComplaintOwnerOperationIdentity,
+        candidate: ComplaintOwnerReplyCandidate,
+        platform: ComplaintPlatform,
+        admission: ComplaintAdmittedOwnerCreate,
+    ): ComplaintOwnerOperationObservation = write(identity, null, candidate, platform, admission)
+
+    /** Two concrete typed producers share the existing completion/release owner, never a caller callback. */
+    @Suppress("TooGenericExceptionCaught")
+    private fun write(
+        identity: ComplaintOwnerOperationIdentity,
+        create: ComplaintOwnerCreateCandidate?,
+        reply: ComplaintOwnerReplyCandidate?,
+        platform: ComplaintPlatform,
+        admission: ComplaintAdmittedOwnerCreate,
     ): ComplaintOwnerOperationObservation {
-        val phase = ownership.enterComplaintOwnerCreate()
+        check((create == null) != (reply == null))
+        val phase = if (reply != null) ownership.enterComplaintOwnerReply() else ownership.enterComplaintOwnerCreate()
         var operation: ComplaintOwnerCreateOperation? = null
         var refusal: ComplaintOwnerOperationFailure? = null
         try {
             phase.ownerOperation.bindCreate(admission)
             phase.begin()
-            operation = store.create(identity, candidate, platform)
+            operation = if (reply != null) store.reply(identity, reply, platform) else store.create(identity, checkNotNull(create), platform)
             phase.commit()
         } catch (problem: ComplaintOwnerClaimWaitTimeout) {
             phase.recordFailure(problem)

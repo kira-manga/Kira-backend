@@ -91,13 +91,14 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
         base.assertReleased()
     }
 
+    val historyPhases = ComplaintOwnerHistoryPhaseExecutor(base.ordinary.ownership, JdbcComplaintOwnerHistoryStore(base.ordinary.jdbc, run.scope))
     private val historyHandler = ComplaintOwnerHistoryHttpHandler(
         ComplaintOwnerHistoryService(
             ComplaintOwnerHistoryReadAdapter(
                 run.scope,
                 jwt,
                 historyTestCursors(),
-                ComplaintOwnerHistoryPhaseExecutor(base.ordinary.ownership, JdbcComplaintOwnerHistoryStore(base.ordinary.jdbc, run.scope)),
+                historyPhases,
                 ingress,
             ),
         ),
@@ -245,7 +246,7 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
     }
 
     /** Legal synthetic row staging for business count/collision cases, not producer/accounting evidence. */
-    fun resource(state: String = "LIVE", scope: ComplaintDataScope = run.scope): UUID = UUID.randomUUID().also { id ->
+    fun resource(state: String = "LIVE", scope: ComplaintDataScope = run.scope, id: UUID = UUID.randomUUID()): UUID = id.also {
         resources.add(id)
         assertEquals(
             1,
@@ -261,8 +262,8 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
         )
     }
 
-    fun content(pending: Boolean = false, parent: UUID? = null): UUID {
-        val id = resource(if (pending) "DELETION_PENDING" else "LIVE")
+    fun content(pending: Boolean = false, parent: UUID? = null, id: UUID = UUID.randomUUID()): UUID {
+        resource(if (pending) "DELETION_PENDING" else "LIVE", id = id)
         assertEquals(
             1,
             observer.update(
@@ -285,6 +286,10 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
             ),
         )
         return id
+    }
+
+    internal fun trackReplyResource(id: UUID) {
+        resources.addIfAbsent(id)
     }
 
     /** Legal committed deletion receipt shape only; not publication verification or an actual deletion producer. */
@@ -377,7 +382,10 @@ internal data class OwnerCreateFixtureState(
     val audits: List<String>,
 )
 
-internal enum class OwnerCreateFixtureStep { AUTH, OBSERVE, CLAIM, COUNTERS, CHARGE, RUN, OWNER, CREDENTIAL, COLLISION, RESOURCE, CONTENT, COMPLETE }
+internal enum class OwnerCreateFixtureStep {
+    AUTH, OBSERVE, CLAIM, COUNTERS, CHARGE, RUN, OWNER, CREDENTIAL, COLLISION,
+    PARENT_CANDIDATE, PARENT_RESOURCE, PARENT_CONTENT, DISCARD_RESOURCE, RESOURCE, CONTENT, COMPLETE,
+}
 
 /** Passive/fault hooks bracket genuine SQL. No result, commit state or physical-release flag is forged. */
 internal class OwnerCreateFixtureJdbc(private val fixture: ComplaintOwnerCreateFixture) : JdbcTemplate(fixture.base.ordinary.pool) {
@@ -422,6 +430,10 @@ internal class OwnerCreateFixtureJdbc(private val fixture: ComplaintOwnerCreateF
         sql.contains("FROM complaint_installation_ids WHERE") -> OwnerCreateFixtureStep.OWNER
         sql.contains("FROM app_installations WHERE") -> OwnerCreateFixtureStep.CREDENTIAL
         sql.startsWith("SELECT EXISTS (SELECT 1 FROM complaint_resource_ids") -> OwnerCreateFixtureStep.COLLISION
+        sql.startsWith("SELECT EXISTS") && sql.contains("FROM complaints c WHERE") -> OwnerCreateFixtureStep.PARENT_CANDIDATE
+        sql.startsWith("SELECT state FROM complaint_resource_ids") -> OwnerCreateFixtureStep.PARENT_RESOURCE
+        sql.contains("FROM complaints c WHERE") -> OwnerCreateFixtureStep.PARENT_CONTENT
+        sql.startsWith("DELETE FROM complaint_resource_ids") -> OwnerCreateFixtureStep.DISCARD_RESOURCE
         sql.startsWith("INSERT INTO complaint_resource_ids") -> OwnerCreateFixtureStep.RESOURCE
         sql.contains("INSERT INTO complaints") -> OwnerCreateFixtureStep.CONTENT
         sql.contains("UPDATE complaint_idempotency_receipts") -> OwnerCreateFixtureStep.COMPLETE

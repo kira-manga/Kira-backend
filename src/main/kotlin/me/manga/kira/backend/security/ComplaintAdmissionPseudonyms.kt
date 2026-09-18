@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -46,10 +47,10 @@ internal object ComplaintAdmissionPseudonyms {
             ascii("INSTALLATION"),
             uuid(tuple.installation.id),
             uuid(tuple.installation.scope.id),
-            ascii("OWNER_CREATE"),
+            ascii(tuple.operation.name),
             uuid(tuple.key),
-            tuple.fingerprintBytes(),
-        ),
+        ) + (if (tuple.operation === ComplaintOwnerCreationOperation.OWNER_REPLY) tuple.targetIds().map(::uuid) else emptyList()) +
+            listOf(tuple.fingerprintBytes()),
     )
 
     fun ownerDeleteAllIp(keys: List<ComplaintAdmissionKey>, canonicalIp: ByteArray): List<ComplaintAdmissionBucketKey> =
@@ -82,7 +83,8 @@ internal object ComplaintAdmissionPseudonyms {
         derive(keys, listOf(domain(), ascii("GLOBAL"), ascii("ENROLLMENT")))
 
     private fun derive(keys: List<ComplaintAdmissionKey>, parts: List<ByteArray>): List<ComplaintAdmissionBucketKey> {
-        require(keys.size in 1..2 && parts.size in 1..8 && parts.all { it.size in 1..64 }) { INVALID_ADMISSION_CONFIGURATION }
+        // The fixed reply member adds its two ordered IDs; existing create frames stay byte-identical.
+        require(keys.size in 1..2 && parts.size in 1..10 && parts.all { it.size in 1..64 }) { INVALID_ADMISSION_CONFIGURATION }
         val frame = ByteBuffer.allocate(parts.sumOf { 4 + it.size }).apply {
             parts.forEach { putInt(it.size).put(it) }
         }.array()

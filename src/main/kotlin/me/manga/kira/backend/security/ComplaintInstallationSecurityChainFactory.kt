@@ -43,6 +43,7 @@ internal class ComplaintInstallationSecurityChainFactory(
     private val create: ComplaintOwnerCreateHttpHandler,
     private val deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
     private val detail: ComplaintOwnerDetailHttpHandler? = null,
+    private val reply: ComplaintOwnerCreateHttpHandler? = null,
 ) {
     private val entryPoint = AuthenticationEntryPoint { request, response, _ ->
         ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAUTHORIZED)
@@ -113,7 +114,11 @@ internal class ComplaintInstallationSecurityChainFactory(
                     create.handleWithinIngress(request, response, context)
                 }
 
-                else -> checkNotNull(detail).handleWithinIngress(request, response, context)
+                else -> if (ComplaintInstallationRoutes.isReply(request)) {
+                    checkNotNull(reply).handleWithinIngress(request, response, context)
+                } else {
+                    checkNotNull(detail).handleWithinIngress(request, response, context)
+                }
             }
         }
     }
@@ -123,6 +128,7 @@ internal class ComplaintInstallationSecurityChainFactory(
     /** Concrete optional composition only; no public readiness flag can open this route. */
     private fun implemented(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.implemented(request) ||
         (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
+        (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request))
 
     private inner class ClosedUnimplementedRoutes : OncePerRequestFilter() {
@@ -151,6 +157,7 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     const val HISTORY = "/api/v1/complaints"
     const val STATUS = "/api/v1/complaint-operations/status"
     private val detailPath = Regex("$HISTORY/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+    private val replyPath = Regex("${detailPath.pattern}/replies")
     private val publicPaths = setOf(ENROLLMENT, SESSION, "/api/v1/installations/bootstrap", DELETE_ALL)
     private val patterns = (
         publicPaths + setOf(ME, HISTORY, STATUS, "$HISTORY/{id}", "$HISTORY/{id}/replies", "$HISTORY/{id}/content")
@@ -167,6 +174,8 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     fun path(request: HttpServletRequest): String = request.requestURI.removePrefix(request.contextPath)
 
     fun isDetail(request: HttpServletRequest): Boolean = detailPath.matches(path(request))
+
+    fun isReply(request: HttpServletRequest): Boolean = replyPath.matches(path(request))
 
     fun requiresBearer(request: HttpServletRequest): Boolean = path(request) !in publicPaths
 

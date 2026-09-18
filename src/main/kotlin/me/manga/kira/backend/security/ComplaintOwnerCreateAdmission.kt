@@ -5,7 +5,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 
-/** Private ingress implementation is the only producer; implementing this view grants no write. */
+/** Private ingress implementation owns both fixed report/reply creation; implementing this view grants no write. */
 internal interface ComplaintAdmittedOwnerCreate
 
 /** Independent P-based ceilings; this declaration grants neither mode nor TEST-run authority. */
@@ -16,7 +16,7 @@ internal sealed interface ComplaintOwnerCreateAdmissionPolicy {
         ComplaintOwnerCreateAdmissionPolicy {
         init {
             require(globalPerHour in 1..120 && memberLimit in 2..131072 && pruneBatch in 1..128) { INVALID_ADMISSION_CONFIGURATION }
-            // A full bounded create (including receipt/audit/storage) fits strictly more than the abuse ceiling.
+            // The shared report/reply lifecycle charge fits strictly more than the combined abuse ceiling.
             require(
                 ComplaintCapacityCounter.entries.all { counter ->
                     val unit = ComplaintCapacityCharges.OWNER_CREATE[counter]

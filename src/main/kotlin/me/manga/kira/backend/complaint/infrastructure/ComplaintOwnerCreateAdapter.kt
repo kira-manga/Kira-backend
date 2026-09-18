@@ -9,11 +9,15 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationPort
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerReplyInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerStatusQuery
+import me.manga.kira.backend.complaint.domain.ComplaintReplyFingerprint
+import me.manga.kira.backend.complaint.domain.ComplaintReplyRequest
 import me.manga.kira.backend.complaint.domain.ComplaintReportFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintReportIdentity
 import me.manga.kira.backend.complaint.domain.ComplaintReportRequest
 import me.manga.kira.backend.complaint.domain.ComplaintReportRequestResult
+import me.manga.kira.backend.complaint.domain.ComplaintReportTextRejected
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
@@ -31,6 +35,32 @@ internal class ComplaintOwnerCreateAdapter(
 ) : ComplaintOwnerOperationPort {
     init {
         require(testScope.testOnly) { "Dormant create requires TEST scope." }
+    }
+
+    @Suppress("SwallowedException")
+    override fun reply(context: ComplaintOwnerOperationContext, bearer: String, input: ComplaintOwnerReplyInput): ComplaintOwnerReceipt {
+        requireConnectionFree()
+        val ingress = ingress(context)
+        admission.startOwnerReply(ingress)
+        val identity = identity(bearer)
+        try {
+            val platform = checked(phases.authenticate(identity)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+            val normalizedIdentity = ComplaintReportIdentity.checked(input.id.toString(), input.key.toString(), testScope.id.toString())
+                ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+            val request = try {
+                ComplaintReplyRequest.normalize(normalizedIdentity, input.parentId, input.body, input.metadata)
+            } catch (failure: ComplaintReportTextRejected) {
+                rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+            }
+            val candidate = ComplaintOwnerReplyCandidate.prepare(identity.installation, request)
+            val preflight = checked(phases.replyPreflight(identity, candidate.tuple))
+            preflight.receipt?.let { return it } // Parent content may already be erased; replay never queries it.
+            val admitted = admission.admitOwnerReply(ingress, candidate.tuple)
+            return checked(phases.reply(identity, candidate, platform, admitted)).receipt
+                ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
+        } catch (failure: PersistencePhaseException) {
+            rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
+        }
     }
 
     @Suppress("SwallowedException")
@@ -65,7 +95,7 @@ internal class ComplaintOwnerCreateAdapter(
         val identity = identity(bearer)
         try {
             checked(phases.authenticate(identity))
-            val tuple = ComplaintOwnerOperationTuple(identity.installation, query.key, query.targetId, query.fingerprintBytes())
+            val tuple = ComplaintOwnerOperationTuple(identity.installation, query.key, query.operation, query.targetIds(), query.fingerprintBytes())
             val readAdmission = Any()
             admission.chargeOwnerStatus(ingress, identity.installation, readAdmission)
             admission.consumeOwnerStatus(ingress, readAdmission)
@@ -97,6 +127,26 @@ internal class ComplaintOwnerCreateAdapter(
     }
 
     override fun toString(): String = "ComplaintOwnerCreateAdapter(TEST-only,no-mode-authority)"
+}
+
+/** Fixed reply body/ordered tuple bound together BEFORE admission, never a caller-issued write capability. */
+internal class ComplaintOwnerReplyCandidate private constructor(val request: ComplaintReplyRequest, val tuple: ComplaintOwnerOperationTuple) {
+    override fun toString(): String = "ComplaintOwnerReplyCandidate(redacted)"
+
+    companion object {
+        fun prepare(installation: ScopedInstallationId, request: ComplaintReplyRequest): ComplaintOwnerReplyCandidate {
+            requireConnectionFree()
+            require(installation.scope == request.identity.dataScope)
+            val fingerprint = ComplaintReplyFingerprint.of(request)
+            return ComplaintOwnerReplyCandidate(
+                request,
+                ComplaintOwnerOperationTuple(
+                    installation, request.identity.key.value, request.operation,
+                    listOf(request.parentId, request.identity.clientId.value), fingerprint.bytes(),
+                ),
+            )
+        }
+    }
 }
 
 /** Binds the immutable accepted body to the exact tuple BEFORE admission/SQL; not a persistence authority. */

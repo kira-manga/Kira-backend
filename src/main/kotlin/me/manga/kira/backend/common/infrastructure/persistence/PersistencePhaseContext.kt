@@ -5,6 +5,7 @@ import me.manga.kira.backend.audit.infrastructure.ComplaintAuditSelectedHolder
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.ComplaintRecoverySettlementResult
 import me.manga.kira.backend.complaint.domain.ComplaintTestReserveSpendResult
@@ -593,6 +594,8 @@ constructor(
         PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE,
+        PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT,
+        PersistencePhasePath.COMPLAINT_OWNER_REPLY,
         PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
         -> ownerOperation.completed()
 
@@ -1866,7 +1869,7 @@ constructor(
         override fun completed(): Boolean = retained?.let { it.attempt === catalogPublisherAttempt && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
-    /** Four fixed operations; a write has a mandatory one-use ingress handoff, never a raw bypass. */
+    /** Six fixed operations; both creation writes require an exact-operation one-use handoff, never a raw bypass. */
     private inner class OwnerOperationBoundary : PersistenceOwnerOperation {
         private var issued = false
         private var retained: ComplaintOwnerCreateOperation? = null
@@ -1875,15 +1878,22 @@ constructor(
         private var claimed = false
         private var boundsChecked = false
 
+        private val writeOperation: ComplaintOwnerCreationOperation?
+            get() = when (path) {
+                PersistencePhasePath.COMPLAINT_OWNER_CREATE -> ComplaintOwnerCreationOperation.OWNER_CREATE
+                PersistencePhasePath.COMPLAINT_OWNER_REPLY -> ComplaintOwnerCreationOperation.OWNER_REPLY
+                else -> null
+            }
+
         override fun bindCreate(handoff: ComplaintAdmittedOwnerCreate) {
             requireCaller()
-            if (stage !== Stage.PREPARED || path !== PersistencePhasePath.COMPLAINT_OWNER_CREATE ||
+            if (stage !== Stage.PREPARED || writeOperation == null ||
                 admission != null
             ) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             admission = handoff
-            ComplaintIngressAdmission.bindOwnerCreate(handoff, admissionIdentity)
+            ComplaintIngressAdmission.bindOwnerCreate(handoff, admissionIdentity, checkNotNull(writeOperation))
         }
 
         override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
@@ -1891,13 +1901,15 @@ constructor(
                     PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
                     PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
                     PersistencePhasePath.COMPLAINT_OWNER_CREATE,
+                    PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT,
+                    PersistencePhasePath.COMPLAINT_OWNER_REPLY,
                     PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
                 )
             ) {
                 refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
             requireStepUpResource(jdbc, expected)
-            if (issued || (path === PersistencePhasePath.COMPLAINT_OWNER_CREATE && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (issued || (writeOperation != null && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             issued = true
             installLimits()
             requireWork()
@@ -1916,7 +1928,7 @@ constructor(
 
         override fun claimCreate(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerOperationTuple) {
             requireRetained(operation, jdbc)
-            if (path !== PersistencePhasePath.COMPLAINT_OWNER_CREATE || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (writeOperation !== tuple.operation || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             ComplaintIngressAdmission.claimOwnerCreate(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, tuple)
             claimed = true
         }
@@ -1945,7 +1957,7 @@ constructor(
         }
 
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true &&
-            (path !== PersistencePhasePath.COMPLAINT_OWNER_CREATE || claimed)
+            (writeOperation == null || claimed)
     }
 
     /** Fixed fenced LIVE authorizer/reloader; no callback or caller-minted result can complete it. */

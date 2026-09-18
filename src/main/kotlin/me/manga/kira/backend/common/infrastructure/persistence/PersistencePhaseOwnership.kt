@@ -141,6 +141,10 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintOwnerCreate(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_CREATE)
 
+    internal fun enterComplaintOwnerReplyPreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT)
+
+    internal fun enterComplaintOwnerReply(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_REPLY)
+
     internal fun enterComplaintOwnerOperationStatus(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS)
 
     /** Lower dormant mutation composition only; W04 fence/control/publication and provenance authority are unavailable. */
@@ -601,6 +605,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE,
+                PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_OWNER_REPLY,
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
                 -> admission.tryComplaintBoundary()
 
@@ -875,6 +881,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
     COMPLAINT_OWNER_CREATE_PREFLIGHT,
     COMPLAINT_OWNER_CREATE,
+    COMPLAINT_OWNER_REPLY_PREFLIGHT,
+    COMPLAINT_OWNER_REPLY,
     COMPLAINT_OWNER_OPERATION_STATUS,
     COMPLAINT_DELETION_MUTATION,
     COMPLAINT_DELETION_FENCE_PREFIX,
@@ -925,6 +933,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_OWNER_DETAIL,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
+            COMPLAINT_OWNER_REPLY_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_STATUS,
             COMPLAINT_CATALOG_SNAPSHOT,
             COMPLAINT_CUTOFF_PAGE,

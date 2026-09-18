@@ -17,11 +17,14 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRunObservation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateRejection
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerReplyRejection
 import me.manga.kira.backend.complaint.domain.ComplaintPlatform
+import me.manga.kira.backend.complaint.domain.ComplaintReplyRequest
 import me.manga.kira.backend.complaint.domain.ComplaintReportRequest
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
@@ -49,6 +52,9 @@ internal class JdbcComplaintOwnerCreateStore(
     fun preflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerCreateOperation =
         capture(PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT, identity, tuple)
 
+    fun replyPreflight(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerCreateOperation =
+        capture(PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT, identity, tuple)
+
     fun status(identity: ComplaintOwnerOperationIdentity, tuple: ComplaintOwnerOperationTuple): ComplaintOwnerCreateOperation =
         capture(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS, identity, tuple)
 
@@ -58,16 +64,25 @@ internal class JdbcComplaintOwnerCreateStore(
         platform: ComplaintPlatform,
     ): ComplaintOwnerCreateOperation = capture(PersistencePhasePath.COMPLAINT_OWNER_CREATE, identity, candidate.tuple, candidate, platform)
 
+    fun reply(
+        identity: ComplaintOwnerOperationIdentity,
+        candidate: ComplaintOwnerReplyCandidate,
+        platform: ComplaintPlatform,
+    ): ComplaintOwnerCreateOperation = capture(
+        PersistencePhasePath.COMPLAINT_OWNER_REPLY, identity, candidate.tuple, platform = platform, reply = candidate,
+    )
+
     private fun capture(
         path: PersistencePhasePath,
         identity: ComplaintOwnerOperationIdentity,
         tuple: ComplaintOwnerOperationTuple? = null,
         candidate: ComplaintOwnerCreateCandidate? = null,
         platform: ComplaintPlatform? = null,
+        reply: ComplaintOwnerReplyCandidate? = null,
     ): ComplaintOwnerCreateOperation {
         require(identity.installation.scope == binding.scope)
         return ComplaintOwnerCreateOperation.capture(
-            jdbc, capacity, audit, binding, desired.configurationHashBytes(), path, identity, tuple, candidate, platform,
+            jdbc, capacity, audit, binding, desired.configurationHashBytes(), path, identity, tuple, candidate, platform, reply,
         )
     }
 
@@ -118,6 +133,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
     private var chargedAudit: JdbcComplaintCapacityStore.ChargedComplaintAudit? = null
     private var mutation: ComplaintAuditMutation.Created? = null
     private var newClaim = false
+    private var provisionalReplyResource = false
 
     fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
 
@@ -136,10 +152,16 @@ internal class ComplaintOwnerCreateOperation private constructor(
         identity.requireCurrent()
     }
 
-    private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService, request: ComplaintReportRequest?, platform: ComplaintPlatform?) {
+    private fun execute(
+        capacity: JdbcComplaintCapacityStore,
+        audit: AuditService,
+        request: ComplaintReportRequest?,
+        platform: ComplaintPlatform?,
+        reply: ComplaintReplyRequest?,
+    ) {
         requireRetained()
-        captured = if (path === PersistencePhasePath.COMPLAINT_OWNER_CREATE) {
-            create(capacity, audit, checkNotNull(request), checkNotNull(platform))
+        captured = if (path === PersistencePhasePath.COMPLAINT_OWNER_CREATE || path === PersistencePhasePath.COMPLAINT_OWNER_REPLY) {
+            create(capacity, audit, request, checkNotNull(platform), reply)
         } else {
             observe()
         }
@@ -162,7 +184,11 @@ internal class ComplaintOwnerCreateOperation private constructor(
         ) {
             actor
         } else {
-            actor.plus(elements = arrayOf<Any?>(selected.installation.scope.id, selected.targetId, selected.fingerprintBytes(), selected.key))
+            actor.plus(
+                elements = arrayOf<Any?>(
+                    selected.installation.scope.id, selected.operation.name, targetArray(selected), selected.fingerprintBytes(), selected.key,
+                ),
+            )
         }
         return jdbc.query(if (selected == null) AUTH_SQL else OBSERVE_SQL, { row, _ ->
             val platform = row.getString("platform")?.let(ComplaintPlatform::valueOf)
@@ -173,15 +199,16 @@ internal class ComplaintOwnerCreateOperation private constructor(
             } else if (!row.getBoolean("visible")) {
                 ComplaintOwnerOperationObservation(platform)
             } else {
-                ComplaintOwnerOperationObservation(platform, decodeReceipt(row, selected.targetId))
+                ComplaintOwnerOperationObservation(platform, decodeReceipt(row, selected))
             }
         }, *arguments).single()
     }
 
-    private fun decodeReceipt(row: ResultSet, id: UUID): ComplaintOwnerReceipt {
+    private fun decodeReceipt(row: ResultSet, selected: ComplaintOwnerOperationTuple): ComplaintOwnerReceipt {
         check(row.getBoolean("valid_shape"))
         return when (row.getString("outcome")) {
             "APPLIED" -> {
+                val id = selected.targetId
                 check(row.getInt("response_status") == 201 && row.getObject("ack_id", UUID::class.java) == id)
                 val receipt = ComplaintOwnerReceipt.Applied(id, row.getLong("ack_version"))
                 check(row.getString("response_location") == receipt.location && row.getString("response_etag") == receipt.etag)
@@ -189,8 +216,16 @@ internal class ComplaintOwnerCreateOperation private constructor(
             }
 
             "REJECTED" -> {
-                check(row.getInt("response_status") == 409)
-                ComplaintOwnerReceipt.Rejected(ComplaintOwnerCreateRejection.valueOf(checkNotNull(row.getString("problem_code"))))
+                val code = checkNotNull(row.getString("problem_code"))
+                val ordinary = ComplaintOwnerCreateRejection.entries.singleOrNull { it.name == code }
+                val rejected = if (ordinary != null) {
+                    ComplaintOwnerReceipt.Rejected(ordinary)
+                } else {
+                    check(selected.operation === ComplaintOwnerCreationOperation.OWNER_REPLY)
+                    ComplaintOwnerReceipt.Rejected(ComplaintOwnerReplyRejection.valueOf(code))
+                }
+                check(row.getInt("response_status") == rejected.status)
+                rejected
             }
 
             else -> error("Stored complaint outcome refused.")
@@ -200,13 +235,16 @@ internal class ComplaintOwnerCreateOperation private constructor(
     private fun create(
         capacity: JdbcComplaintCapacityStore,
         audit: AuditService,
-        request: ComplaintReportRequest,
+        request: ComplaintReportRequest?,
         platform: ComplaintPlatform,
+        reply: ComplaintReplyRequest?,
     ): ComplaintOwnerOperationObservation {
         val selected = checkNotNull(tuple)
+        val requestIdentity = request?.identity ?: checkNotNull(reply).identity
         check(
-            request.identity.clientId.value == selected.targetId && request.identity.key.value == selected.key &&
-                request.identity.dataScope == selected.installation.scope && selected.installation == identity.installation,
+            requestIdentity.clientId.value == selected.targetId && requestIdentity.key.value == selected.key &&
+                requestIdentity.dataScope == selected.installation.scope && selected.installation == identity.installation &&
+                reply?.parentId == selected.parentId,
         )
         phase.ownerOperation.claimCreate(this, jdbc, selected)
         if (!claim(selected)) {
@@ -231,10 +269,21 @@ internal class ComplaintOwnerCreateOperation private constructor(
         } else {
             null
         }
-        if (rejection != null) return rejectBusiness(rejection, paid, platform)
+        if (rejection != null) return rejectBusiness(ComplaintOwnerReceipt.Rejected(rejection), paid, platform)
+        if (reply != null) return createReply(reply, paid, audit, platform)
+        return createReport(checkNotNull(request), paid, audit, platform)
+    }
+
+    private fun createReport(
+        request: ComplaintReportRequest,
+        paid: JdbcComplaintCapacityStore.LockedOwnerCreate,
+        audit: AuditService,
+        platform: ComplaintPlatform,
+    ): ComplaintOwnerOperationObservation {
+        val selected = checkNotNull(tuple)
         phase.ownerOperation.checkCreateWrite(this, jdbc)
         if (jdbc.update(INSERT_RESOURCE, selected.targetId, selected.installation.scope.id) != 1) {
-            return rejectBusiness(ComplaintOwnerCreateRejection.COMPLAINT_RESOURCE_ID_REUSED, paid, platform)
+            return rejectBusiness(ComplaintOwnerReceipt.Rejected(ComplaintOwnerCreateRejection.COMPLAINT_RESOURCE_ID_REUSED), paid, platform)
         }
         stage = Stage.RESOURCE
         phase.ownerOperation.checkCreateWrite(this, jdbc)
@@ -245,6 +294,16 @@ internal class ComplaintOwnerCreateOperation private constructor(
                 request.metadata.appVersion, platform.name, request.metadata.osVersion, request.metadata.manufacturer, request.metadata.deviceModel,
             ),
         )
+        return applied(paid, audit, platform, createdAt)
+    }
+
+    private fun applied(
+        paid: JdbcComplaintCapacityStore.LockedOwnerCreate,
+        audit: AuditService,
+        platform: ComplaintPlatform,
+        createdAt: Instant,
+    ): ComplaintOwnerOperationObservation {
+        val selected = checkNotNull(tuple)
         stage = Stage.CONTENT
         mutation = ComplaintAuditMutation.Created(
             ComplaintAuditResourceSubject.of(selected.installation.scope, selected.targetId.toString()),
@@ -259,8 +318,65 @@ internal class ComplaintOwnerCreateOperation private constructor(
         return ComplaintOwnerOperationObservation(platform, receipt)
     }
 
+    private fun createReply(
+        request: ComplaintReplyRequest,
+        paid: JdbcComplaintCapacityStore.LockedOwnerCreate,
+        audit: AuditService,
+        platform: ComplaintPlatform,
+    ): ComplaintOwnerOperationObservation {
+        val selected = checkNotNull(tuple)
+        // Discovery avoids locking a foreign owner's resource under only the caller's installation lock.
+        val parentArguments = arrayOf<Any?>(request.parentId, binding.scope.id, identity.installation.id)
+        if (jdbc.queryForObject(ComplaintOwnerReplyParentRows.candidate, Boolean::class.java, *parentArguments) != true) {
+            return rejectBusiness(ComplaintOwnerReceipt.Rejected(ComplaintOwnerReplyRejection.COMPLAINT_PARENT_NOT_FOUND), paid, platform)
+        }
+        var parentState: String? = null
+        // Canonical spelling has PostgreSQL's unsigned UUID order; UUID.compareTo uses signed longs.
+        for (id in selected.targetIds().sortedBy(UUID::toString)) {
+            phase.ownerOperation.checkCreateWrite(this, jdbc)
+            if (id == selected.targetId) {
+                if (jdbc.update(INSERT_RESOURCE, id, binding.scope.id) != 1) {
+                    requireTokenTime()
+                    return rejectBusiness(ComplaintOwnerReceipt.Rejected(ComplaintOwnerCreateRejection.COMPLAINT_RESOURCE_ID_REUSED), paid, platform)
+                }
+                provisionalReplyResource = true
+            } else {
+                parentState = jdbc.query(
+                    ComplaintOwnerReplyParentRows.resource, { row, _ -> row.getString("state") }, id, binding.scope.id,
+                ).singleOrNull()
+            }
+        }
+        // Resource reservations (including the new child) all precede the locked parent content.
+        val parent = jdbc.query(
+            ComplaintOwnerReplyParentRows.content, { row, _ -> ComplaintOwnerReplyParentRows.read(row) }, *parentArguments,
+        ).singleOrNull()
+        requireTokenTime() // Sampling inside a locking SELECT would precede its possible wait.
+        val rejected = when {
+            parent == null -> ComplaintOwnerReplyRejection.COMPLAINT_PARENT_NOT_FOUND
+            parentState == "DELETION_PENDING" -> ComplaintOwnerReplyRejection.COMPLAINT_DELETION_PENDING
+            parentState != "LIVE" -> ComplaintOwnerReplyRejection.COMPLAINT_PARENT_NOT_FOUND
+            else -> null
+        }
+        if (rejected != null) return rejectBusiness(ComplaintOwnerReceipt.Rejected(rejected), paid, platform)
+        val snapshot = checkNotNull(parent)
+        stage = Stage.RESOURCE
+        phase.ownerOperation.checkCreateWrite(this, jdbc)
+        val createdAt = checkNotNull(
+            jdbc.queryForObject(
+                INSERT_REPLY, { row, _ -> row.getTimestamp(1).toInstant() },
+                selected.targetId, binding.scope.id, identity.installation.id, snapshot.type.name, snapshot.subject, request.body,
+                snapshot.noticeKey, request.parentId, request.metadata.appVersion, platform.name,
+                request.metadata.osVersion, request.metadata.manufacturer, request.metadata.deviceModel,
+            ),
+        )
+        return applied(paid, audit, platform, createdAt)
+    }
+
     private fun claim(selected: ComplaintOwnerOperationTuple): Boolean = try {
-        jdbc.update(INSERT_CLAIM, selected.installation.id, selected.key, selected.fingerprintBytes(), selected.targetId, selected.installation.scope.id) == 1
+        jdbc.update(
+            INSERT_CLAIM, selected.installation.id, selected.key, selected.operation.name,
+            selected.fingerprintBytes(), targetArray(selected), selected.installation.scope.id,
+        ) == 1
     } catch (failure: DataAccessException) {
         // Only the exact unique-claim statement's real PostgreSQL lock timeout is the retryable409.
         if ((failure.cause as? SQLException)?.sqlState == "55P03") throw ComplaintOwnerClaimWaitTimeout()
@@ -282,22 +398,34 @@ internal class ComplaintOwnerCreateOperation private constructor(
                 row.getLong("credential_version") == identity.credentialVersion && row.getString("platform") == platform.name
         }, identity.installation.id).singleOrNull() == true
         // A volatile projection of a locking SELECT can have run before its lock wait. Sample AFTER both waits.
-        val timeValid = jdbc.queryForObject(TOKEN_TIME_SQL, Boolean::class.java, Timestamp.from(identity.issuedAt), Timestamp.from(identity.expiresAt)) == true
-        if (!reserved || !credential || !timeValid) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+        requireTokenTime()
+        if (!reserved || !credential) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
         phase.ownerOperation.checkCreateWrite(this, jdbc)
+    }
+
+    private fun requireTokenTime() {
+        requireRetained()
+        if (jdbc.queryForObject(TOKEN_TIME_SQL, Boolean::class.java, Timestamp.from(identity.issuedAt), Timestamp.from(identity.expiresAt)) != true) {
+            rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+        }
     }
 
     private fun ownerCount(): Int = checkNotNull(jdbc.queryForObject(OWNER_COUNT, Int::class.java, identity.installation.id, binding.scope.id))
 
     private fun rejectBusiness(
-        rejection: ComplaintOwnerCreateRejection,
+        receipt: ComplaintOwnerReceipt.Rejected,
         paid: JdbcComplaintCapacityStore.LockedOwnerCreate,
         platform: ComplaintPlatform,
     ): ComplaintOwnerOperationObservation {
         check(stage === Stage.DOMAIN)
         stage = Stage.REJECTING
+        if (provisionalReplyResource) {
+            // Only this transaction's never-published child reservation; its lock is already held.
+            phase.ownerOperation.checkCreateWrite(this, jdbc)
+            check(jdbc.update(DISCARD_REPLY_RESOURCE, checkNotNull(tuple).targetId, binding.scope.id) == 1)
+            provisionalReplyResource = false
+        }
         paid.keepReceiptOnly(this)
-        val receipt = ComplaintOwnerReceipt.Rejected(rejection)
         complete(receipt)
         return ComplaintOwnerOperationObservation(platform, receipt)
     }
@@ -310,10 +438,13 @@ internal class ComplaintOwnerCreateOperation private constructor(
         stage = Stage.COMPLETING
         val outcomeArguments = when (receipt) {
             is ComplaintOwnerReceipt.Applied -> arrayOf<Any?>(receipt.id, receipt.version, receipt.location, receipt.etag)
-            is ComplaintOwnerReceipt.Rejected -> arrayOf<Any?>(receipt.code.name)
+            is ComplaintOwnerReceipt.Rejected -> arrayOf<Any?>(receipt.status, receipt.problemCode)
         }
         val arguments = outcomeArguments.plus(
-            elements = arrayOf<Any?>(selected.installation.id, selected.key, selected.installation.scope.id, selected.targetId, selected.fingerprintBytes()),
+            elements = arrayOf<Any?>(
+                selected.installation.id, selected.key, selected.installation.scope.id,
+                selected.operation.name, targetArray(selected), selected.fingerprintBytes(),
+            ),
         )
         check(jdbc.update(if (receipt is ComplaintOwnerReceipt.Applied) COMPLETE_APPLIED else COMPLETE_REJECTED, *arguments) == 1)
     }
@@ -377,6 +508,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
             tuple: ComplaintOwnerOperationTuple?,
             candidate: ComplaintOwnerCreateCandidate?,
             platform: ComplaintPlatform?,
+            reply: ComplaintOwnerReplyCandidate? = null,
         ): ComplaintOwnerCreateOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
@@ -384,10 +516,21 @@ internal class ComplaintOwnerCreateOperation private constructor(
                 check((path === PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION) == (tuple == null))
                 check(tuple == null || tuple.installation == identity.installation)
                 check((path === PersistencePhasePath.COMPLAINT_OWNER_CREATE) == (candidate != null))
+                check((path === PersistencePhasePath.COMPLAINT_OWNER_REPLY) == (reply != null))
                 check(candidate == null || candidate.tuple === tuple)
+                check(reply == null || reply.tuple === tuple)
+                when (path) {
+                    PersistencePhasePath.COMPLAINT_OWNER_CREATE, PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT ->
+                        check(tuple?.operation === ComplaintOwnerCreationOperation.OWNER_CREATE)
+
+                    PersistencePhasePath.COMPLAINT_OWNER_REPLY, PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT ->
+                        check(tuple?.operation === ComplaintOwnerCreationOperation.OWNER_REPLY)
+
+                    else -> Unit
+                }
                 val operation = ComplaintOwnerCreateOperation(phase, jdbc, binding, desiredHash.copyOf(), path, identity, tuple)
                 phase.ownerOperation.retain(operation, jdbc)
-                operation.execute(capacity, audit, candidate?.request, platform)
+                operation.execute(capacity, audit, candidate?.request, platform, reply?.request)
                 return operation
             } catch (problem: ComplaintOwnerClaimWaitTimeout) {
                 phase.recordFailure(problem)
@@ -419,8 +562,8 @@ internal class ComplaintOwnerCreateOperation private constructor(
             SELECT actor.platform,
                 r.actor_id IS NOT NULL AND (r.state <> 'COMPLETED' OR r.expires_at > receipt_time.at) AS comparable,
                 r.state = 'COMPLETED' AND r.expires_at > receipt_time.at AS visible,
-                r.data_scope_id = ?::uuid AND r.test_only AND r.operation = 'OWNER_CREATE'
-                    AND r.target_ids = ARRAY[?::uuid] AND r.fingerprint = ? AS tuple_matches,
+                r.data_scope_id = ?::uuid AND r.test_only AND r.operation = ?
+                    AND r.target_ids = ?::uuid[] AND r.fingerprint = ? AS tuple_matches,
                 r.outcome, r.response_status,
                 CASE WHEN cardinality(r.ack_ids) = 1 THEN r.ack_ids[1] END AS ack_id,
                 CASE WHEN cardinality(r.ack_versions) = 1 THEN r.ack_versions[1] END AS ack_version,
@@ -441,7 +584,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
         private val INSERT_CLAIM = """
             INSERT INTO complaint_idempotency_receipts
                 (actor_kind, actor_id, idempotency_key, operation, fingerprint, target_ids, data_scope_id, test_only, state, created_at)
-            VALUES ('INSTALLATION', ?, ?, 'OWNER_CREATE', ?, ARRAY[?::uuid], ?, true, 'IN_PROGRESS', clock_timestamp())
+            VALUES ('INSTALLATION', ?, ?, ?, ?, ?::uuid[], ?, true, 'IN_PROGRESS', clock_timestamp())
             ON CONFLICT (actor_kind, actor_id, idempotency_key) DO NOTHING
         """.trimIndent()
         private const val LOCK_RESERVATION = "SELECT data_scope_id, test_only, state FROM complaint_installation_ids WHERE id = ? FOR UPDATE"
@@ -455,6 +598,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
         """.trimIndent()
         private const val INSERT_RESOURCE = "INSERT INTO complaint_resource_ids (id, data_scope_id, test_only, state, created_at) " +
             "VALUES (?, ?, true, 'LIVE', clock_timestamp()) ON CONFLICT (id) DO NOTHING"
+        private const val DISCARD_REPLY_RESOURCE = "DELETE FROM complaint_resource_ids WHERE id = ? AND data_scope_id = ? AND test_only AND state = 'LIVE'"
         private val INSERT_REPORT = """
             WITH stamp AS (SELECT clock_timestamp() AS at)
             INSERT INTO complaints (id, data_scope_id, test_only, owner_id, ownership, kind, type, status, subject, body,
@@ -462,9 +606,16 @@ internal class ComplaintOwnerCreateOperation private constructor(
             SELECT ?, ?, true, ?, 'INSTALLATION', 'REPORT', ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, stamp.at, stamp.at, 1 FROM stamp
             RETURNING created_at
         """.trimIndent()
+        private val INSERT_REPLY = """
+            WITH stamp AS (SELECT clock_timestamp() AS at)
+            INSERT INTO complaints (id, data_scope_id, test_only, owner_id, ownership, kind, type, status, subject, body,
+                notice_key, parent_resource_id, app_version, platform, os_version, manufacturer, device_model, created_at, updated_at, version)
+            SELECT ?, ?, true, ?, 'INSTALLATION', 'REPLY', ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, stamp.at, stamp.at, 1 FROM stamp
+            RETURNING created_at
+        """.trimIndent()
         private val COMPLETE_WHERE = """
             FROM stamp WHERE actor_kind = 'INSTALLATION' AND actor_id = ? AND idempotency_key = ? AND state = 'IN_PROGRESS'
-                AND data_scope_id = ? AND test_only AND operation = 'OWNER_CREATE' AND target_ids = ARRAY[?::uuid] AND fingerprint = ?
+                AND data_scope_id = ? AND test_only AND operation = ? AND target_ids = ?::uuid[] AND fingerprint = ?
         """.trimIndent()
         private val COMPLETE_APPLIED = """
             WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE complaint_idempotency_receipts
@@ -474,9 +625,13 @@ internal class ComplaintOwnerCreateOperation private constructor(
         """.trimIndent()
         private val COMPLETE_REJECTED = """
             WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE complaint_idempotency_receipts
-            SET state = 'COMPLETED', outcome = 'REJECTED', response_status = 409, problem_code = ?,
+            SET state = 'COMPLETED', outcome = 'REJECTED', response_status = ?, problem_code = ?,
                 completed_at = stamp.at, expires_at = stamp.at + interval '192 hours'
             $COMPLETE_WHERE
         """.trimIndent()
+
+        /** A bound parameter, not SQL interpolation. The closed tuple has one or two canonical ordered UUIDs. */
+        private fun targetArray(tuple: ComplaintOwnerOperationTuple): String =
+            tuple.targetIds().joinToString(prefix = "{", postfix = "}", separator = ",")
     }
 }

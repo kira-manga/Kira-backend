@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
@@ -199,13 +200,29 @@ internal class ComplaintIngressAdmission(
         locked { startAttempt(context, SemanticOperation.OWNER_CREATE) }
     }
 
-    /** Concrete adapter only, after the authenticated receipt preflight actually released its connection. */
-    internal fun admitOwnerCreate(context: ComplaintIngressContext, tuple: ComplaintOwnerOperationTuple): ComplaintAdmittedOwnerCreate {
+    internal fun startOwnerReply(context: ComplaintIngressContext) {
         requireConnectionFree()
-        if (clock !== SystemComplaintAdmissionNanoClock) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        locked { startAttempt(context, SemanticOperation.OWNER_REPLY) }
+    }
+
+    /** Concrete adapter only, after the authenticated receipt preflight actually released its connection. */
+    internal fun admitOwnerCreate(context: ComplaintIngressContext, tuple: ComplaintOwnerOperationTuple): ComplaintAdmittedOwnerCreate =
+        admitOwnerCreation(context, tuple, ComplaintOwnerCreationOperation.OWNER_CREATE)
+
+    internal fun admitOwnerReply(context: ComplaintIngressContext, tuple: ComplaintOwnerOperationTuple): ComplaintAdmittedOwnerCreate =
+        admitOwnerCreation(context, tuple, ComplaintOwnerCreationOperation.OWNER_REPLY)
+
+    /** Both fixed producers charge the SAME actor/global windows; only the dedup member distinguishes operations. */
+    private fun admitOwnerCreation(
+        context: ComplaintIngressContext,
+        tuple: ComplaintOwnerOperationTuple,
+        expected: ComplaintOwnerCreationOperation,
+    ): ComplaintAdmittedOwnerCreate {
+        requireConnectionFree()
+        if (clock !== SystemComplaintAdmissionNanoClock || tuple.operation !== expected) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
         return locked {
             val state = state(context)
-            if (state.operation !== SemanticOperation.OWNER_CREATE ||
+            if (state.operation !== creationSemantic(expected) ||
                 state.admission != null
             ) {
                 refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
@@ -404,7 +421,7 @@ internal class ComplaintIngressAdmission(
 
     private fun requireCreateState(handoff: AdmittedCreate) {
         val state = state(handoff.context)
-        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_CREATE || !state.consumed) {
+        if (handoff.owner !== this || state.operation !== creationSemantic(handoff.tuple.operation) || !state.consumed) {
             refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
         }
         if (state.ownerCreateIdentity !== handoff.identity || state.admission !== handoff.identity) {
@@ -532,7 +549,12 @@ internal class ComplaintIngressAdmission(
         var ownerDeleteAllIdentity: Any? = null
     }
 
-    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE, OWNER_DELETE_ALL }
+    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE, OWNER_REPLY, OWNER_DELETE_ALL }
+
+    private fun creationSemantic(operation: ComplaintOwnerCreationOperation): SemanticOperation = when (operation) {
+        ComplaintOwnerCreationOperation.OWNER_CREATE -> SemanticOperation.OWNER_CREATE
+        ComplaintOwnerCreationOperation.OWNER_REPLY -> SemanticOperation.OWNER_REPLY
+    }
 
     private class AdmittedDeleteAll(
         val owner: ComplaintIngressAdmission,
@@ -673,11 +695,17 @@ internal class ComplaintIngressAdmission(
             }
         }
 
-        internal fun bindOwnerCreate(handoff: ComplaintAdmittedOwnerCreate, phaseIdentity: Any) {
+        internal fun bindOwnerCreate(
+            handoff: ComplaintAdmittedOwnerCreate,
+            phaseIdentity: Any,
+            operation: ComplaintOwnerCreationOperation = ComplaintOwnerCreationOperation.OWNER_CREATE,
+        ) {
             val selected = handoff as? AdmittedCreate ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             selected.owner.locked {
                 selected.owner.requireCreateState(selected)
-                if (selected.stage !== CreateStage.MINTED || selected.phaseIdentity != null) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                if (selected.stage !== CreateStage.MINTED || selected.phaseIdentity != null || selected.tuple.operation !== operation) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
                 selected.phaseIdentity = phaseIdentity
                 selected.stage = CreateStage.BOUND
             }

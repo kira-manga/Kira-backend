@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonGenerator
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateRejection
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerReplyRejection
 import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -32,7 +33,7 @@ internal class ComplaintOwnerOperationResponse {
         val buffer = ComplaintHistoryEncodedBody(maximum)
         try {
             if (!statusLookup && receipt is ComplaintOwnerReceipt.Rejected) {
-                buffer.write(checkNotNull(REJECTIONS[receipt.code]))
+                buffer.write(checkNotNull(REJECTIONS[receipt.problemCode]))
             } else {
                 factory.createGenerator(buffer).use { json ->
                     json.writeStartObject()
@@ -64,8 +65,8 @@ internal class ComplaintOwnerOperationResponse {
 
             is ComplaintOwnerReceipt.Rejected -> {
                 json.writeStringField("outcome", "REJECTED")
-                json.writeNumberField("originalStatus", 409)
-                json.writeStringField("problemCode", receipt.code.name)
+                json.writeNumberField("originalStatus", receipt.status)
+                json.writeStringField("problemCode", receipt.problemCode)
             }
         }
     }
@@ -74,7 +75,10 @@ internal class ComplaintOwnerOperationResponse {
 
     companion object {
         val PROBLEMS = ComplaintOwnerOperationFailure.entries.associateWith { problem(it.status, it.title, it.code) }
-        private val REJECTIONS = ComplaintOwnerCreateRejection.entries.associateWith { problem(409, "Conflict", it.name) }
+        private val REJECTIONS = ComplaintOwnerCreateRejection.entries.associate { it.name to problem(409, "Conflict", it.name) } +
+            ComplaintOwnerReplyRejection.entries.associate {
+                it.name to problem(it.status, if (it.status == 404) "Not Found" else "Conflict", it.name)
+            }
 
         private fun problem(status: Int, title: String, code: String): ByteArray = (
             """{"type":"about:blank","title":"$title","status":$status,"errors":[""" +

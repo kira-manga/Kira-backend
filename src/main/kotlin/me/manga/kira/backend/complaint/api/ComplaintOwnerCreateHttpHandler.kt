@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerReplyInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerStatusQuery
 import me.manga.kira.backend.complaint.domain.ComplaintReportMetadataInput
 import me.manga.kira.backend.complaint.domain.ComplaintType
@@ -29,7 +30,7 @@ import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
 
-/** Two exact POST routes, intentionally UNREGISTERED. Does not change the production closed filter/graph. */
+/** Fixed create/reply/status POST routes, intentionally UNREGISTERED. Production's closed graph is unchanged. */
 internal class ComplaintOwnerCreateHttpHandler(
     private val service: ComplaintOwnerCreateService,
     private val ingress: ComplaintIngressAdmission,
@@ -73,7 +74,8 @@ internal class ComplaintOwnerCreateHttpHandler(
 
     private fun exchangeHttp(request: HttpServletRequest, response: HttpServletResponse, context: ComplaintIngressContext) {
         val path = request.requestURI.removePrefix(request.contextPath)
-        if (request.method != "POST" || path !in PATHS) rejectOwnerOperation(ComplaintOwnerOperationFailure.NOT_FOUND)
+        val reply = REPLY.matchEntire(path)
+        if (request.method != "POST" || (path !in PATHS && reply == null)) rejectOwnerOperation(ComplaintOwnerOperationFailure.NOT_FOUND)
         if (request.queryString != null ||
             single(request, "If-Match", 128) != null
         ) {
@@ -89,6 +91,8 @@ internal class ComplaintOwnerCreateHttpHandler(
             val receipt = try {
                 if (statusLookup) {
                     service.status(context, bearer, ComplaintOwnerOperationJson.status(body))
+                } else if (reply != null) {
+                    service.reply(context, bearer, ComplaintOwnerOperationJson.reply(body, checkNotNull(key), reply.groupValues[1]))
                 } else {
                     service.create(context, bearer, ComplaintOwnerOperationJson.create(body, checkNotNull(key)))
                 }
@@ -159,12 +163,14 @@ internal class ComplaintOwnerCreateHttpHandler(
             ingress.requireResponseReady()
             val status = if (statusLookup) {
                 200
-            } else if (receipt is ComplaintOwnerReceipt.Applied) {
-                201
             } else {
-                409
+                when (receipt) {
+                    is ComplaintOwnerReceipt.Applied -> 201
+                    is ComplaintOwnerReceipt.Rejected -> receipt.status
+                }
             }
-            headers(response, status, if (status == 409) "application/problem+json" else "application/json", body.length)
+            val media = if (!statusLookup && receipt is ComplaintOwnerReceipt.Rejected) "application/problem+json" else "application/json"
+            headers(response, status, media, body.length)
             if (!statusLookup && receipt is ComplaintOwnerReceipt.Applied) {
                 response.setHeader("Location", receipt.location)
                 response.setHeader("ETag", receipt.etag)
@@ -214,6 +220,7 @@ internal class ComplaintOwnerCreateHttpHandler(
         const val STATUS = "/api/v1/complaint-operations/status"
         const val MAX_BODY_BYTES = 16 * 1024
         private val PATHS = setOf(CREATE, STATUS)
+        private val REPLY = Regex("$CREATE/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/replies")
         private val MEDIA = Regex("""application/json(?:[ \t]*;[ \t]*charset[ \t]*=[ \t]*(?:utf-8|"utf-8"))?""", RegexOption.IGNORE_CASE)
     }
 }
@@ -250,8 +257,26 @@ internal object ComplaintOwnerOperationJson {
     fun status(body: ByteArray): ComplaintOwnerStatusQuery = parse {
         val root = read(body, setOf("operation", "key", "targetIds", "fingerprint"))
         val ids = root["targetIds"]
-        require(ids.isArray && ids.size() == 1 && ids[0].isTextual)
-        ComplaintOwnerStatusQuery(string(root, "operation"), string(root, "key"), ids[0].textValue(), string(root, "fingerprint"))
+        require(ids.isArray && ids.size() in 1..2 && ids.all { it.isTextual })
+        ComplaintOwnerStatusQuery(string(root, "operation"), string(root, "key"), ids.map { it.textValue() }, string(root, "fingerprint"))
+    }
+
+    fun reply(body: ByteArray, key: String, parentId: String): ComplaintOwnerReplyInput = parse {
+        val root = read(body, setOf("id", "body", "metadata"))
+        val metadata = root["metadata"]
+        fields(metadata, setOf("appVersion", "osVersion", "manufacturer", "deviceModel"))
+        ComplaintOwnerReplyInput(
+            ComplaintIdentifiers.resourceId(parentId),
+            ComplaintIdentifiers.clientResourceId(string(root, "id")),
+            ComplaintIdentifiers.idempotencyKey(key),
+            string(root, "body"),
+            ComplaintReportMetadataInput(
+                if (metadata["appVersion"].isNull) null else string(metadata, "appVersion"),
+                string(metadata, "osVersion"),
+                string(metadata, "manufacturer"),
+                string(metadata, "deviceModel"),
+            ),
+        )
     }
 
     private fun read(body: ByteArray, expected: Set<String>): JsonNode {
