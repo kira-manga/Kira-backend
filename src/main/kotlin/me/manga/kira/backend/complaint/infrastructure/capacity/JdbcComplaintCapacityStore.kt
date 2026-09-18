@@ -27,11 +27,13 @@ import me.manga.kira.backend.complaint.domain.InstallationEnrollmentRejection
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentResult
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
+import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationActivationCapacityV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationCapacityV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
@@ -78,6 +80,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForCatalogSignerRotationFinalization(operation: CatalogSignerRotationFinalizationOperationV1): LockedCatalogSignerRotationFinalization =
         LockedCatalogSignerRotationFinalization.lock(this, operation)
+
+    internal fun lockForCatalogSignerRotationActivation(operation: CatalogSignerRotationActivationOperationV1): LockedCatalogSignerRotationActivation =
+        LockedCatalogSignerRotationActivation.lock(this, operation)
 
     internal fun lockForOwnerCreate(operation: ComplaintOwnerCreateOperation): LockedOwnerCreate = LockedOwnerCreate.lock(this, operation)
 
@@ -541,6 +546,64 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedCatalogSignerRotationFinalization(store, operation, store.readLockedLedger())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    /** Separate fixed actual2/3 activation profile. Existing G1 and overlap2 actual-count guards stay unchanged. */
+    internal class LockedCatalogSignerRotationActivation private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: CatalogSignerRotationActivationOperationV1,
+        private val before: ComplaintCapacityLedger,
+    ) {
+        private var issued = false
+        private var settled = false
+        internal fun belongsTo(candidate: CatalogSignerRotationActivationOperationV1): Boolean = operation === candidate
+        internal fun settledFor(candidate: CatalogSignerRotationActivationOperationV1): Boolean = belongsTo(candidate) && settled
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun settle(candidate: CatalogSignerRotationActivationOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                val (rows, creating) = operation.requireCounterSettlement(this, store.jdbc)
+                issued = true
+                check(rows in 2..3 && (!creating || rows == 2))
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                val balance = before.balance
+                check(balance.actual[ComplaintCapacityCounter.CATALOG_MUTATIONS] == rows.toLong())
+                val minimumStorage = CatalogGenesisCapacity.storageBytes + CatalogSignerRotationCapacityV1.storageBytes +
+                    if (rows == 3) CatalogSignerRotationActivationCapacityV1.storageBytes else 0L
+                check(balance.actual[ComplaintCapacityCounter.STORAGE_BYTES] >= minimumStorage)
+                if (creating) {
+                    val after = before.chargeCreation(expected, CatalogSignerRotationActivationCapacityV1.charge).balance
+                    for (counter in CATALOG_SIGNER_ROTATION_COUNTERS) {
+                        operation.requireCounterSettlement(this, store.jdbc)
+                        check(
+                            store.jdbc.update(
+                                CHARGE_ENROLLMENT_COUNTER,
+                                after.free[counter], after.actual[counter], after.testReserved[counter], counter.storedName, counter.storedOrdinal, expected,
+                                balance.hardLimit[counter], balance.creationLimit[counter], balance.free[counter], balance.actual[counter],
+                                balance.recoveryReserved[counter], balance.testReserved[counter],
+                            ) == 1,
+                        )
+                    }
+                }
+                operation.requireCounterSettlement(this, store.jdbc)
+                settled = true // Only PREPARE with actual2 creates/charges. Reads/signature/COMPLETE/PROJECT never charge/refund.
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: CatalogSignerRotationActivationOperationV1): LockedCatalogSignerRotationActivation {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedCatalogSignerRotationActivation(store, operation, store.readLockedLedger())
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }
