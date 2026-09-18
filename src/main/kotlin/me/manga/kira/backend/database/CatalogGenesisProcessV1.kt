@@ -1,24 +1,30 @@
 package me.manga.kira.backend.database
 
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeFailureV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.requireCatalogFreeze
+import me.manga.kira.backend.complaint.infrastructure.catalog.requirePublication
 import java.io.File
 import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
-/** Two closed stage entries share one original-child retirement mechanism, never a configurable command/recovery runner. */
+/** Closed stage/mode entries share one original-child retirement mechanism, never a configurable command/recovery runner. */
 internal object CatalogGenesisProcessV1 {
     private const val MAXIMUM_PROCESS_MILLIS = 75_000L // Includes JVM startup; does not extend the child's original 60s work budget.
     private const val RETIREMENT_MILLIS = 5_000L
 
     fun launchAuthor(args: Array<String>): CatalogGenesisProcessObservationV1 = launch(Stage.AUTHOR, args)
     fun launchTargetFinalize(args: Array<String>): CatalogGenesisProcessObservationV1 = launch(Stage.TARGET_FINALIZE, args)
+    fun launchPublisher(args: Array<String>): CatalogGenesisProcessObservationV1 =
+        launch(if (args.firstOrNull() == "recover") Stage.PUBLISH_RECOVER else Stage.PUBLISH, args)
 
     internal fun observeAuthor(exit: CatalogGenesisExitV1, retired: Boolean): CatalogGenesisProcessObservationV1 = Stage.AUTHOR.observe(exit, retired)
 
     internal fun observeTargetFinalize(exit: CatalogGenesisExitV1, retired: Boolean): CatalogGenesisProcessObservationV1 =
         Stage.TARGET_FINALIZE.observe(exit, retired)
+
+    internal fun observePublisher(exit: CatalogGenesisExitV1, retired: Boolean): CatalogGenesisProcessObservationV1 = Stage.PUBLISH.observe(exit, retired)
 
     @Suppress("TooGenericExceptionCaught") // Only bounded statuses leave this process; its exact child is retained through all failures.
     private fun launch(stage: Stage, args: Array<String>): CatalogGenesisProcessObservationV1 {
@@ -88,6 +94,12 @@ internal object CatalogGenesisProcessV1 {
     internal fun awaitTargetFinalize(child: Process, maximumMillis: Long, started: Long = System.nanoTime()): CatalogGenesisProcessObservationV1 =
         awaitOriginal(Stage.TARGET_FINALIZE, child, maximumMillis, started)
 
+    internal fun awaitPublisher(child: Process, maximumMillis: Long, started: Long = System.nanoTime()): CatalogGenesisProcessObservationV1 =
+        awaitOriginal(Stage.PUBLISH, child, maximumMillis, started)
+
+    internal fun awaitPublisherRecovery(child: Process, maximumMillis: Long, started: Long = System.nanoTime()): CatalogGenesisProcessObservationV1 =
+        awaitOriginal(Stage.PUBLISH_RECOVER, child, maximumMillis, started)
+
     /** Real wait/exit observation, never an exit request or caller-supplied cleanup flag. Test callers also retain an actual child handle. */
     @Suppress("TooGenericExceptionCaught")
     private fun awaitOriginal(stage: Stage, child: Process, maximumMillis: Long, started: Long): CatalogGenesisProcessObservationV1 {
@@ -144,6 +156,7 @@ internal object CatalogGenesisProcessV1 {
         val entry = when (stage) {
             Stage.AUTHOR -> ComplaintCatalogAuthorMain::class.java
             Stage.TARGET_FINALIZE -> ComplaintCatalogGenesisFinalizeMain::class.java
+            Stage.PUBLISH, Stage.PUBLISH_RECOVER -> ComplaintCatalogGenesisPublishMain::class.java
         }
         val source = entry.protectionDomain.codeSource.location.toURI()
         requireCatalogFreeze(source.scheme == "file") // Do not pretend a Boot nested-jar launcher is an ordinary worker classpath.
@@ -154,6 +167,8 @@ internal object CatalogGenesisProcessV1 {
 
     internal fun haltAuthor(exit: CatalogGenesisExitV1): Nothing = halt(Stage.AUTHOR, exit)
     internal fun haltTargetFinalize(exit: CatalogGenesisExitV1): Nothing = halt(Stage.TARGET_FINALIZE, exit)
+    internal fun haltPublisher(exit: CatalogGenesisExitV1): Nothing = halt(Stage.PUBLISH, exit)
+    internal fun haltPublisherRecovery(exit: CatalogGenesisExitV1): Nothing = halt(Stage.PUBLISH_RECOVER, exit)
 
     /** Dedicated worker only. The supervisor must still observe actual death; no hook or main-return proof is substituted. */
     private fun halt(stage: Stage, exit: CatalogGenesisExitV1): Nothing {
@@ -161,7 +176,7 @@ internal object CatalogGenesisProcessV1 {
         error("Catalog genesis worker did not terminate.")
     }
 
-    /** Deliberately not exposed to argv/callers and not a stage registry; no publisher or arbitrary worker can be installed. */
+    /** Deliberately not exposed to argv/callers and not a stage registry; only these fixed workers/modes can be launched. */
     private enum class Stage(val worker: Class<*>, val retirementThread: String, val credentialNames: Set<String>) {
         AUTHOR(
             ComplaintCatalogAuthorWorkerMain::class.java,
@@ -177,28 +192,50 @@ internal object CatalogGenesisProcessV1 {
                 listOf("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN").map { "KIRA_CATALOG_TARGET_${family}_$it" }
             }.toSet(),
         ),
+        PUBLISH(
+            ComplaintCatalogGenesisPublishWorkerMain::class.java,
+            "catalog-publish-child-retirement",
+            listOf("SECRETS", "PRIMARY_READ", "REPLICA_READ", "SEALER", "PRIMARY_PUT").flatMap { family ->
+                listOf("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN").map { "KIRA_CATALOG_PUBLISH_${family}_$it" }
+            }.toSet(),
+        ),
+        PUBLISH_RECOVER(
+            ComplaintCatalogGenesisPublishWorkerMain::class.java,
+            "catalog-publish-recovery-child-retirement",
+            listOf("SECRETS", "PRIMARY_READ", "REPLICA_READ", "SEALER").flatMap { family ->
+                listOf("ACCESS_KEY_ID", "SECRET_ACCESS_KEY", "SESSION_TOKEN").map { "KIRA_CATALOG_PUBLISH_${family}_$it" }
+            }.toSet(),
+        ),
         ;
 
         fun parseArguments(args: Array<String>) {
             when (this) {
                 AUTHOR -> ComplaintCatalogAuthorMain.parseArguments(args)
                 TARGET_FINALIZE -> ComplaintCatalogGenesisFinalizeMain.parseArguments(args)
+                PUBLISH, PUBLISH_RECOVER -> {
+                    val command = ComplaintCatalogGenesisPublishMain.parseArguments(args)
+                    requirePublication(command.recover == (this === PUBLISH_RECOVER), CatalogGenesisPublishFailureV1.INPUT_REFUSED)
+                }
             }
         }
 
         fun signal(problem: Throwable): Throwable = when (this) {
             AUTHOR -> catalogAuthorSignal(problem)
             TARGET_FINALIZE -> catalogTargetFinalizeSignal(problem)
+            PUBLISH, PUBLISH_RECOVER -> catalogPublisherSignal(problem)
         }
 
         fun failureExit(problem: Throwable): CatalogGenesisExitV1 = when (this) {
             AUTHOR -> catalogAuthorFailureExit(problem)
             TARGET_FINALIZE -> catalogTargetFinalizeFailureExit(problem)
+            PUBLISH, PUBLISH_RECOVER -> catalogPublisherFailureExit(problem)
         }
 
         fun closedExit(exit: CatalogGenesisExitV1): CatalogGenesisExitV1 = when (exit) {
             CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE -> if (this === AUTHOR) exit else CatalogGenesisExitV1.FAILED
             CatalogGenesisExitV1.PROJECTED -> if (this === TARGET_FINALIZE) exit else CatalogGenesisExitV1.FAILED
+            CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED ->
+                if (this === PUBLISH || this === PUBLISH_RECOVER) exit else CatalogGenesisExitV1.FAILED
             else -> exit
         }
 
@@ -222,15 +259,19 @@ private fun catalogGenesisExitPriority(exit: CatalogGenesisExitV1): Int = when (
     CatalogGenesisExitV1.FATAL -> 4
     CatalogGenesisExitV1.CANCELLED -> 3
     CatalogGenesisExitV1.INTERRUPTED -> 2
-    CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE, CatalogGenesisExitV1.PROJECTED -> 0
+    CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE, CatalogGenesisExitV1.PROJECTED,
+    CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
+    -> 0
     else -> 1
 }
 
-/** Private stage statuses only. AUTHOR 0/10 and TARGET 11 are not interchangeable success observations. */
+/** Private stage statuses only. AUTHOR 0/10, TARGET 11 and publisher 12/13 are not interchangeable success observations. */
 internal enum class CatalogGenesisExitV1(val code: Int) {
     FROZEN(0),
     SIGNED_AWAITING_RELEASE(10),
     PROJECTED(11),
+    AWAIT_REPLICATION(12),
+    DUAL_COPY_OBSERVED(13),
     INPUT_REFUSED(64),
     FAILED(70),
     CLEANUP_UNPROVEN(71),

@@ -6,6 +6,102 @@ AUTHOR freeze and TARGET finalization remain separate stages. This publisher doe
 sign, select a NULL D, write the replica, run SQL COMPLETE/PROJECT, open complaint gates
 or issue a current/restore capability.
 
+The dedicated executable below is a **source-only, NOT_RUN increment**. Its compilation,
+connected worker bridge and shared owning-process retirement checks remain unverified
+integration, not operational acceptance. The core's qualification limits remain unchanged.
+
+## Fixed executable and sessions
+
+Invoke `me.manga.kira.backend.database.ComplaintCatalogGenesisPublishMain` using Java 21
+on the Linux custody platform and an independently qualified **ordinary runtime classpath**:
+absolute normalized application classes/plain JAR and dependency paths, including the
+application's own code source. A Boot nested executable JAR, `java -jar`, relative path or
+unexpanded wildcard is not that classpath. This entry does not assemble an artifact or
+download dependencies. Use the same qualified launcher/JVM discipline as the
+[AUTHOR CLI](COMPLAINT_CATALOG_AUTHOR_CLI_V1.md); keep the supervisor free of injected Java
+options/agents. The only argument forms after this main class are, in fixed order:
+
+```text
+publish --manifest /absolute/original-author-request.json --target-deployment /absolute/desired.json --genesis-pin /absolute/independent.pin
+recover --manifest /absolute/original-author-request.json --target-deployment /absolute/desired.json --genesis-pin /absolute/independent.pin
+```
+
+The existing strict AUTHOR manifest maps to the original frozen request; it is not replaced
+by TARGET D and contains no credential bytes. The original no-follow, bounded manifest reader
+retains its actual descriptor and closes it before core acquisition. Only the core reads the
+TARGET desired document. There is no third JSON schema, default manifest, supplied D/version,
+credential/endpoint flag, force/repair/reset/retry switch or implicit finalizer. Both commands
+require a separately supplied independent pin. Do not invoke the worker main directly: only
+the public supervisor observes owning-process death.
+
+Supply these literal families through a protected environment, each with `_ACCESS_KEY_ID`,
+`_SECRET_ACCESS_KEY`, `_SESSION_TOKEN`, never through argv, the manifest or transcripts:
+
+| Family | `publish` | `recover` |
+|---|---|---|
+| `KIRA_CATALOG_PUBLISH_SECRETS` | Required | Required |
+| `KIRA_CATALOG_PUBLISH_PRIMARY_READ` | Required | Required |
+| `KIRA_CATALOG_PUBLISH_REPLICA_READ` | Required | Required |
+| `KIRA_CATALOG_PUBLISH_SEALER` | Optional complete trio | Optional complete trio |
+| `KIRA_CATALOG_PUBLISH_PRIMARY_PUT` | Required | **Not retained in the child environment or parsed/passed** |
+
+Bounds are 128/256/16,384 printable non-space ASCII characters respectively. A partial optional
+trio refuses; the actual core assembly requires sealer presence iff its mapping exists. SECRETS
+must acquire the full actual TARGET inventory **and fixed configuration operator**, unlike the
+TARGET finalizer. No AUTHOR password or signing session is acquired. The fixed publisher mode
+is validated before child construction; recovery's allowlist omits PUT entirely, even if the
+supervisor inherited it. No default AWS chain, AUTHOR/TARGET fallback or inherited Java options
+are carried into the child. These checks do not authenticate credential provenance or IAM policy.
+
+## Executable budget, observations and retirement
+
+The worker begins the genuine original60s owner before owned manifest/session I/O, even for
+invalid invocations. That same owner/budget spans actual file close, one `publish` or `recover`,
+all cleanup and final time/interruption checks. No repeated begin, retry, replacement owner,
+reader-cap renewal or in-process revival is available. Recovery calls the core API with **no
+PUT credential parameter**; an old arm also makes `publish` read-only despite supplied PUT credentials.
+
+The shared `CatalogGenesisProcessV1` retains the full launch/hook/wait/retirement mechanism once
+for closed AUTHOR, TARGET-finalize, publisher and publisher-recovery entries. No configurable
+worker, validator, session registry or workflow runner is exposed. The publisher uses the same
+qualified classpath, fixed `-Xms32m -Xmx256m -XX:MaxMetaspaceSize=128m -XX:ActiveProcessorCount=2
+-XX:+ExitOnOutOfMemoryError` child limits and UTC timezone. Child stdin is `/dev/null`; child
+stdout/stderr are discarded. Only the exact retained original child can be retired, never a
+process selected by PID search/name/group. Outer75s includes JVM startup; forced retirement
+allows at most5s to observe death. Neither allowance extends the original60s effect budget.
+
+After actual cleaned core return **and observed original child death**, bounded stdout is:
+
+```text
+catalog-genesis-publish AWAIT_REPLICATION; historical-only
+catalog-genesis-publish DUAL_COPY_OBSERVED; historical-only
+```
+
+Both use shell0; internal worker statuses are12 and13, distinct from AUTHOR0/10 and TARGET11.
+Wrong-stage success codes refuse. AWAIT is not completed delivery; DUAL does not finalize SQL
+or activate runtime. Bounded failures use `catalog-genesis-publish refused: STATUS` and the
+existing codes: INPUT_REFUSED64, FAILED70, CLEANUP_UNPROVEN71, FATAL72,
+RETIREMENT_UNCONFIRMED74, TIME_BUDGET_EXHAUSTED124, INTERRUPTED130, CANCELLED131.
+Fatal > cancellation > interruption > ordinary precedence and interruption restoration remain;
+publisher and manifest cleanup/time classifications are preserved without raw causes or paths.
+Every unconfirmed death stays nonzero and adds `; retirement=UNCONFIRMED`, retaining stronger signals.
+
+Return, halt or destroy requests are not death evidence. Unknown construction without a child
+handle, still-live native/OS conditions or supervisor catastrophe keep fencing/recovery restrictions.
+Neither stdout, stored outcomes nor dead processes authorize re-PUT/re-sign, evidence deletion,
+root replacement or retry. Later read-only recovery requires independent authorization and fresh
+original-custody/pin/raw/SQL/readback checks. FINALIZE records remain in the separate finalizer lane.
+
+Focused source tests join the real worker to existing freeze/first-D/publisher raw-provider/PG
+fixtures and extend the existing three retained-lock child tests. **Active publisher readback
+interruption with retained public PEM and original-child retirement remains INTERNAL outstanding
+qualification.** A genuine interrupted pool first-close can keep trust release RETAINED; clearing
+the caller flag cannot reset that proof. Generic signal tests and synthetic child-lock tests do
+not cover that composed boundary. Process death does not itself delete persistent public PEM or
+turn the original failed owner into a clean RELEASED result. No new cleanup/recovery framework or
+in-process release guarantee is claimed. These source tests are NOT_RUN, not hardware/fsync/cloud
+qualification or completion of the ordered G1 operational sequence.
+
 ## Independent inputs and original custody
 
 Call `begin()` before the stage's file/secret/custody acquisition, then either:
@@ -160,8 +256,9 @@ on the original one-shot owner. An unresolved active phase can prevent filesyste
 cleanup dispatch; a later equal graph or empty Spring observation cannot fabricate it.
 
 Finite software/SDK bounds do not prove hard DNS/native cancellation or physical wire-once
-execution. The executable/owning-process retirement adapter remains separate unfinished
-internal software. Operational use also still needs independently provisioned no-rollback
+execution. The source-only executable above and its active-interruption/retained-PEM boundary
+still need internal qualification; generic owning-child tests are not composed publisher proof.
+Operational use also still needs independently provisioned no-rollback
 custody/backups/durability, genuine approvals/current trust/released pin, least-privilege
 fixed credentials and AWS account/routes, real versioning/Object Lock/replication policy,
 writer/restore fencing, clocks, networking and native cleanup qualification. Source/tests

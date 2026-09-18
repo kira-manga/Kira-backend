@@ -6,6 +6,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFina
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeFailureV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisReleaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisReleaseLeafV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -44,6 +46,10 @@ class CatalogAuthorProcessTest {
             Triple(CatalogProcessTestStage.AUTHOR, CatalogCustodyFixtureHalt.TARGET_PROJECTED, CatalogGenesisExitV1.PROJECTED),
             Triple(CatalogProcessTestStage.TARGET_FINALIZE, CatalogCustodyFixtureHalt.AUTHOR_FROZEN, CatalogGenesisExitV1.FROZEN),
             Triple(CatalogProcessTestStage.TARGET_FINALIZE, CatalogCustodyFixtureHalt.AUTHOR_AWAITING, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE),
+            Triple(CatalogProcessTestStage.AUTHOR, CatalogCustodyFixtureHalt.PUBLISH_AWAITING, CatalogGenesisExitV1.AWAIT_REPLICATION),
+            Triple(CatalogProcessTestStage.TARGET_FINALIZE, CatalogCustodyFixtureHalt.PUBLISH_DUAL, CatalogGenesisExitV1.DUAL_COPY_OBSERVED),
+            Triple(CatalogProcessTestStage.PUBLISH, CatalogCustodyFixtureHalt.AUTHOR_FROZEN, CatalogGenesisExitV1.FROZEN),
+            Triple(CatalogProcessTestStage.PUBLISH_RECOVER, CatalogCustodyFixtureHalt.TARGET_PROJECTED, CatalogGenesisExitV1.PROJECTED),
         )
         for ((stage, halt, actual) in foreign) {
             withHeldCustody(halt) { root, child ->
@@ -52,6 +58,21 @@ class CatalogAuthorProcessTest {
                 val observed = stage.await(child, 10_000)
                 assertEquals(actual.code, child.exitValue(), "The actual dead child returned the other stage's code.")
                 assertEquals(CatalogGenesisExitV1.FAILED, observed.exit)
+                assertReleased(root, child, observed)
+            }
+        }
+        // Synthetic numeric-status/death observations only; these do not pretend the publisher core returned after cleanup.
+        for ((stage, halt, expected) in listOf(
+            Triple(CatalogProcessTestStage.PUBLISH, CatalogCustodyFixtureHalt.PUBLISH_AWAITING, CatalogGenesisExitV1.AWAIT_REPLICATION),
+            Triple(CatalogProcessTestStage.PUBLISH_RECOVER, CatalogCustodyFixtureHalt.PUBLISH_DUAL, CatalogGenesisExitV1.DUAL_COPY_OBSERVED),
+            Triple(CatalogProcessTestStage.PUBLISH, CatalogCustodyFixtureHalt.PUBLISH_INTERRUPTED, CatalogGenesisExitV1.INTERRUPTED),
+        )) {
+            withHeldCustody(halt) { root, child ->
+                child.outputStream.write(HALT_REQUEST)
+                child.outputStream.flush()
+                val observed = stage.await(child, 10_000)
+                assertEquals(expected, observed.exit)
+                assertEquals(expected.code, child.exitValue())
                 assertReleased(root, child, observed)
             }
         }
@@ -187,15 +208,22 @@ private const val HALT_REQUEST = 72
 private enum class CatalogProcessTestStage(val cleanupHalt: CatalogCustodyFixtureHalt) {
     AUTHOR(CatalogCustodyFixtureHalt.AUTHOR_CLEANUP),
     TARGET_FINALIZE(CatalogCustodyFixtureHalt.TARGET_CLEANUP),
+    PUBLISH(CatalogCustodyFixtureHalt.PUBLISH_CLEANUP),
+    PUBLISH_RECOVER(CatalogCustodyFixtureHalt.RECOVER_CLEANUP),
     ;
 
     fun await(child: Process, millis: Long): CatalogGenesisProcessObservationV1 = when (this) {
         AUTHOR -> CatalogGenesisProcessV1.awaitAuthor(child, millis)
         TARGET_FINALIZE -> CatalogGenesisProcessV1.awaitTargetFinalize(child, millis)
+        PUBLISH -> CatalogGenesisProcessV1.awaitPublisher(child, millis)
+        PUBLISH_RECOVER -> CatalogGenesisProcessV1.awaitPublisherRecovery(child, millis)
     }
 }
 
-private enum class CatalogCustodyFixtureHalt { AUTHOR_CLEANUP, TARGET_CLEANUP, AUTHOR_FROZEN, AUTHOR_AWAITING, TARGET_PROJECTED }
+private enum class CatalogCustodyFixtureHalt {
+    AUTHOR_CLEANUP, TARGET_CLEANUP, PUBLISH_CLEANUP, RECOVER_CLEANUP, PUBLISH_INTERRUPTED,
+    AUTHOR_FROZEN, AUTHOR_AWAITING, TARGET_PROJECTED, PUBLISH_AWAITING, PUBLISH_DUAL,
+}
 
 /** Test-only fixed fixture. No provider, alternate production mode, fake custody or supplied death observation. */
 internal object CatalogAuthorCustodyProcessFixture {
@@ -227,11 +255,27 @@ internal object CatalogAuthorCustodyProcessFixture {
                     catalogTargetFinalizeFailureExit(CatalogGenesisFinalizeExceptionV1(CatalogGenesisFinalizeFailureV1.CLEANUP_UNPROVEN)),
                 )
 
+                CatalogCustodyFixtureHalt.PUBLISH_CLEANUP -> CatalogGenesisProcessV1.haltPublisher(
+                    catalogPublisherFailureExit(CatalogGenesisPublishExceptionV1(CatalogGenesisPublishFailureV1.CLEANUP_UNPROVEN)),
+                )
+
+                CatalogCustodyFixtureHalt.RECOVER_CLEANUP -> CatalogGenesisProcessV1.haltPublisherRecovery(
+                    catalogPublisherFailureExit(CatalogGenesisPublishExceptionV1(CatalogGenesisPublishFailureV1.CLEANUP_UNPROVEN)),
+                )
+
+                CatalogCustodyFixtureHalt.PUBLISH_INTERRUPTED -> CatalogGenesisProcessV1.haltPublisher(
+                    catalogPublisherFailureExit(InterruptedException("Synthetic publisher interruption.")),
+                )
+
                 CatalogCustodyFixtureHalt.AUTHOR_FROZEN -> CatalogGenesisProcessV1.haltAuthor(CatalogGenesisExitV1.FROZEN)
 
                 CatalogCustodyFixtureHalt.AUTHOR_AWAITING -> CatalogGenesisProcessV1.haltAuthor(CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE)
 
                 CatalogCustodyFixtureHalt.TARGET_PROJECTED -> CatalogGenesisProcessV1.haltTargetFinalize(CatalogGenesisExitV1.PROJECTED)
+
+                CatalogCustodyFixtureHalt.PUBLISH_AWAITING -> CatalogGenesisProcessV1.haltPublisher(CatalogGenesisExitV1.AWAIT_REPLICATION)
+
+                CatalogCustodyFixtureHalt.PUBLISH_DUAL -> CatalogGenesisProcessV1.haltPublisherRecovery(CatalogGenesisExitV1.DUAL_COPY_OBSERVED)
             }
         }, "fixture-retained-custody").apply {
             isDaemon = false

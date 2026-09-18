@@ -2,6 +2,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
+import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCliCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
@@ -475,6 +476,11 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies`() = withFixture { tls ->
         withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).frozenFirstDRecheckAndSinglePrimaryPublication() }
+    }
+
+    @Test
+    fun publisherCliUsesOriginalFrozenRequestAndReadOnlyRecovery() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCliCases(it).publisherCliUsesOriginalFrozenRequestAndReadOnlyRecovery() }
     }
 
     @Test

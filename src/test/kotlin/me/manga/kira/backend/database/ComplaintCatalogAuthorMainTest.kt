@@ -181,14 +181,13 @@ class ComplaintCatalogAuthorMainTest {
                 assertEquals("catalog-author ${exit.name}; historical-only\n", output.toString(Charsets.UTF_8))
                 assertEquals("", error.toString(Charsets.UTF_8))
             }
-            output.reset()
-            error.reset()
-            assertEquals(
-                CatalogGenesisExitV1.FAILED.code,
-                ComplaintCatalogAuthorMain.report(CatalogGenesisProcessObservationV1(CatalogGenesisExitV1.PROJECTED, true)),
-            )
-            assertEquals("", output.toString(Charsets.UTF_8))
-            assertEquals("catalog-author refused: FAILED\n", error.toString(Charsets.UTF_8))
+            for (exit in listOf(CatalogGenesisExitV1.PROJECTED, CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED)) {
+                output.reset()
+                error.reset()
+                assertEquals(CatalogGenesisExitV1.FAILED.code, ComplaintCatalogAuthorMain.report(CatalogGenesisProcessObservationV1(exit, true)))
+                assertEquals("", output.toString(Charsets.UTF_8))
+                assertEquals("catalog-author refused: FAILED\n", error.toString(Charsets.UTF_8))
+            }
         } finally {
             System.setOut(previousOut)
             System.setErr(previousErr)

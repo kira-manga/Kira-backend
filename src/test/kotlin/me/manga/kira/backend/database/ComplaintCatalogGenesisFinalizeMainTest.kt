@@ -171,7 +171,7 @@ class ComplaintCatalogGenesisFinalizeMainTest {
         val type = CatalogGenesisProcessV1::class.java.declaredClasses.single { it.simpleName == "Stage" }
         assertTrue(type.isEnum && Modifier.isPrivate(type.modifiers))
         val stages = type.enumConstants.associateBy { (it as Enum<*>).name }
-        assertEquals(setOf("AUTHOR", "TARGET_FINALIZE"), stages.keys)
+        assertEquals(setOf("AUTHOR", "TARGET_FINALIZE", "PUBLISH", "PUBLISH_RECOVER"), stages.keys)
         val author = stages.getValue("AUTHOR")
         val target = stages.getValue("TARGET_FINALIZE")
         assertSame(ComplaintCatalogAuthorWorkerMain::class.java, poolTestField<Class<*>>(author, "worker"))
@@ -219,7 +219,10 @@ class ComplaintCatalogGenesisFinalizeMainTest {
             !retired && exit !in setOf(CatalogGenesisExitV1.FATAL, CatalogGenesisExitV1.CANCELLED, CatalogGenesisExitV1.INTERRUPTED) ->
                 CatalogGenesisExitV1.RETIREMENT_UNCONFIRMED
 
-            exit in setOf(CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE) -> CatalogGenesisExitV1.FAILED
+            exit in setOf(
+                CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE,
+                CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
+            ) -> CatalogGenesisExitV1.FAILED
 
             else -> exit
         }
