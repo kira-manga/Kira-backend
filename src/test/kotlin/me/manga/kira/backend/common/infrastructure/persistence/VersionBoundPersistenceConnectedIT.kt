@@ -502,13 +502,8 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     @Test
-    fun `fresh TARGET D7 recovers both returned PREPARED2 with a new actual lease and no Sign`() {
-        for (identicalSql in listOf(false, true)) {
-            withFixture { tls ->
-                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).freshBothReturnedRecovery(identicalSql) }
-            }
-        }
-    }
+    fun `fresh TARGET D7 recovers both returned PREPARED2 with a new actual lease and no Sign`() =
+        CatalogSignerRotationPreparedRecoveryCases.bothReturnedVariants { withFixture(test = it) }
 
     @Test
     fun `fresh PREPARED2 recovery refuses live historical regressed and maximum lease tokens before replay`() {

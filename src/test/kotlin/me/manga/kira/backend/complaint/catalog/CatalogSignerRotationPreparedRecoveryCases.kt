@@ -13,6 +13,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
@@ -516,6 +517,17 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
     )
 
     private fun databaseNow(): Instant = checkNotNull(f.observer.queryForObject("SELECT clock_timestamp()", Timestamp::class.java)).toInstant()
+
+    companion object {
+        /** Invoke the original carrier's factory inside each variant: no shared TLS, author or recovery fixture. */
+        fun bothReturnedVariants(withFixture: ((VersionBoundPersistenceConnectedFixture) -> Unit) -> Unit) {
+            for (identicalSql in listOf(false, true)) {
+                withFixture { tls ->
+                    withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).freshBothReturnedRecovery(identicalSql) }
+                }
+            }
+        }
+    }
 }
 
 internal enum class CatalogSignerRotationRecoveryLeaseCut { LIVE, REGRESSED, MAXIMUM }
