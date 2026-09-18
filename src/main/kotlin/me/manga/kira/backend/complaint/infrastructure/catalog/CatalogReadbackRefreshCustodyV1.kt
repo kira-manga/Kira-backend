@@ -58,6 +58,23 @@ internal class CatalogReadbackRefreshCustodyV1 {
         requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
     }
 
+    internal fun reserveSignerRotationDelivery(original: CatalogSignerRotationDeliveryV1) {
+        requireConnectionFree()
+        original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+
+    internal fun requireSignerRotationDelivery(original: CatalogSignerRotationDeliveryV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+
+    internal fun releaseSignerRotationDeliveryAfterCleanup(original: CatalogSignerRotationDeliveryV1) {
+        requireConnectionFree()
+        original.requireActualCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
     internal fun reserveSignerRotationAuthor(original: CatalogSignerRotationInitialAuthorV1) {
         requireConnectionFree()
         original.requireCustody(this)

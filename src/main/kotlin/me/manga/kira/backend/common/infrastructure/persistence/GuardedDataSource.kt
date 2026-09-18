@@ -35,7 +35,7 @@ internal class GuardedDataSource private constructor(
     private val sourceOnly = ordinarySettings != null
     private val namedCatalogOnly: Boolean
         get() = owner.desiredInstallationOperator || owner.catalogGenesisAuthoring || owner.catalogGenesisFinalization ||
-            owner.catalogSignerRotationRecovery || owner.catalogSignerRotationAuthoring
+            owner.catalogSignerRotationRecovery || owner.catalogSignerRotationAuthoring || owner.catalogSignerRotationDelivery
     private val pool = if (versionBound == null) {
         if (owner.versionBoundPools != null) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
         HikariDataSource()

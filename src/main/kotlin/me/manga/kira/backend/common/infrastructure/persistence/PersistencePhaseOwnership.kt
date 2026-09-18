@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFina
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
@@ -260,6 +261,22 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintCatalogSignerRotationSignature(attempt: CatalogSignerRotationFreezeAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE, catalogSignerRotationAttempt = attempt)
 
+    /** Concrete fixed-overlap delivery only; no caller-selected path or FreezeAttempt substitution. */
+    internal fun enterComplaintCatalogSnapshot(original: CatalogSignerRotationDeliveryV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, signerRotationDelivery = original)
+
+    internal fun enterComplaintSignerRotationDeliveryAcquire(original: CatalogSignerRotationDeliveryV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, signerRotationDelivery = original)
+
+    internal fun enterComplaintSignerRotationFinalRead(original: CatalogSignerRotationDeliveryV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ, signerRotationDelivery = original)
+
+    internal fun enterComplaintSignerRotationComplete(original: CatalogSignerRotationDeliveryV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE, signerRotationDelivery = original)
+
+    internal fun enterComplaintSignerRotationProject(original: CatalogSignerRotationDeliveryV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT, signerRotationDelivery = original)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught", "LongMethod") // Keep ordered admission, custody and publication in one auditable entry.
     private fun enter(
@@ -276,6 +293,7 @@ internal class PersistencePhaseOwnership private constructor(
         catalogSignerRotationAttempt: CatalogSignerRotationFreezeAttemptV1? = null,
         signerRotationRecovery: CatalogSignerRotationPreparedRecoveryV1? = null,
         signerRotationAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+        signerRotationDelivery: CatalogSignerRotationDeliveryV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -287,6 +305,7 @@ internal class PersistencePhaseOwnership private constructor(
         requireCatalogGenesisEntry(catalogAuthorAttempt, catalogFinalizerAttempt)
         requireSignerRotationRecoveryEntry(path, catalogSignerRotationAttempt, signerRotationRecovery)
         requireSignerRotationAuthorEntry(path, catalogSignerRotationAttempt, signerRotationAuthor)
+        requireSignerRotationDeliveryEntry(path, signerRotationDelivery)
         catalogRefresh?.requireProjectedPersistence(this)
         desiredAttempt?.requirePhaseEntry(this, path)
         firstDesiredAttempt?.requirePhaseEntry(this, path)
@@ -296,6 +315,7 @@ internal class PersistencePhaseOwnership private constructor(
         catalogSignerRotationAttempt?.requirePhaseEntry(this, path)
         signerRotationRecovery?.requirePhaseEntry(this, path)
         signerRotationAuthor?.requirePhaseEntry(this, path)
+        signerRotationDelivery?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
@@ -308,6 +328,7 @@ internal class PersistencePhaseOwnership private constructor(
         val catalogSignerRotationWork = catalogSignerRotationAttempt?.budget?.capped(2_000)
         val signerRotationRecoveryWork = signerRotationRecovery?.budget?.capped(2_000)
         val signerRotationAuthorWork = signerRotationAuthor?.phaseBudget?.capped(2_000)
+        val signerRotationDeliveryWork = signerRotationDelivery?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -352,12 +373,15 @@ internal class PersistencePhaseOwnership private constructor(
                 signerRotationRecoveryWork,
                 signerRotationAuthor,
                 signerRotationAuthorWork,
+                signerRotationDelivery,
+                signerRotationDeliveryWork,
             )
             phase = prepared
             // Retain before any publication/permit effect, including entry failures that never return a phase to the executor.
             catalogSignerRotationAttempt?.retainPhase(prepared)
             signerRotationRecovery?.retainPhase(prepared)
             signerRotationAuthor?.retainPhase(prepared)
+            signerRotationDelivery?.retainPhase(prepared)
             check(phases.compareAndSet(slot, null, prepared))
             current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
             if (!path.source) prepared.reserveComplaintClaim()
@@ -368,17 +392,20 @@ internal class PersistencePhaseOwnership private constructor(
             catalogSignerRotationAttempt?.observeFailure(failure)
             signerRotationRecovery?.observeFailure(failure)
             signerRotationAuthor?.observeFailure(failure)
+            signerRotationDelivery?.observeFailure(failure)
             try {
                 phase?.entryPublicationFailed()
             } catch (cleanup: Throwable) {
                 catalogSignerRotationAttempt?.observeFailure(cleanup)
                 signerRotationRecovery?.observeFailure(cleanup)
                 signerRotationAuthor?.observeFailure(cleanup)
+                signerRotationDelivery?.observeFailure(cleanup)
                 throw PersistencePhaseException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED, cleanupProven = false)
             } finally {
                 phase?.let { catalogSignerRotationAttempt?.observePhaseCleanup(it) }
                 phase?.let { signerRotationRecovery?.observePhaseCleanup(it) }
                 phase?.let { signerRotationAuthor?.observePhaseCleanup(it) }
+                phase?.let { signerRotationDelivery?.observePhaseCleanup(it) }
             }
             // Only the genuinely unused entry was cleaned here; preserve an already bounded reason.
             throw failure as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
@@ -446,6 +473,18 @@ internal class PersistencePhaseOwnership private constructor(
             }
 
             else -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
+
+    private fun requireSignerRotationDeliveryEntry(path: PersistencePhasePath, original: CatalogSignerRotationDeliveryV1?) {
+        if ((selection as? Selection.CatalogCoordinator)?.signerDelivering != true) {
+            if (original != null || path in SIGNER_ROTATION_FINALIZATION_PATHS) {
+                throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            return
+        }
+        if (original == null || path !in SIGNER_ROTATION_DELIVERY_PATHS) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
 
@@ -532,6 +571,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+                PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
+                PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
+                PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
@@ -577,6 +619,7 @@ internal class PersistencePhaseOwnership private constructor(
             val finalizing: Boolean get() = resources.catalogGenesisFinalization
             val recovering: Boolean get() = resources.catalogSignerRotationRecovery
             val signerAuthoring: Boolean get() = resources.catalogSignerRotationAuthoring
+            val signerDelivering: Boolean get() = resources.catalogSignerRotationDelivery
             override val dataSource: GuardedDataSource get() = resources.dataSource
             override val manager: GuardedJdbcTransactionManager get() = resources.manager
             override val ownerLimit: Int get() = 1
@@ -590,6 +633,7 @@ internal class PersistencePhaseOwnership private constructor(
                     finalizing -> CATALOG_FINALIZER_PATHS
                     recovering -> SIGNER_ROTATION_RECOVERY_PATHS
                     signerAuthoring -> CATALOG_SIGNER_ROTATION_AUTHOR_PATHS
+                    signerDelivering -> SIGNER_ROTATION_DELIVERY_PATHS
                     else -> CATALOG_PATHS
                 }
                 if (path !in allowed) {
@@ -601,6 +645,15 @@ internal class PersistencePhaseOwnership private constructor(
     }
 
     companion object {
+        private val SIGNER_ROTATION_FINALIZATION_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
+        )
+        private val SIGNER_ROTATION_DELIVERY_PATHS = SIGNER_ROTATION_FINALIZATION_PATHS + setOf(
+            PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
+        )
         private val CATALOG_SIGNER_ROTATION_AUTHOR_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -766,6 +819,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
     COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
     COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+    COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
+    COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
+    COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
     COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
     COMPLAINT_COORDINATOR_LEASE_RENEW,
     COMPLAINT_COORDINATOR_LEASE_RELINQUISH,

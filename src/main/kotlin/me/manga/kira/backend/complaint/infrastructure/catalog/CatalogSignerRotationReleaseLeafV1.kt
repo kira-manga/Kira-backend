@@ -24,6 +24,22 @@ internal enum class CatalogSignerRotationReleaseLeafV1(internal val fileName: St
     SIGN_TWO_SQL_PERSISTED("sign-two-sql-persisted", 1024),
     ENVELOPE("envelope", CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES),
     FREEZE_OUTCOME("freeze-outcome", 1024),
+    PUBLICATION_ARMED("publication-armed", 1024),
+    PUBLICATION_ACKNOWLEDGED("publication-acknowledged", 4096),
+    PUBLICATION_AWAIT_REPLICATION("publication-await-replication", 4096),
+    PRIMARY_COPY("primary-copy", 65536),
+    REPLICA_COPY("replica-copy", 65536),
+    PUBLICATION_DUAL_COPY("publication-dual-copy", 4096),
+    COMPLETE_ARMED("complete-armed", 1024),
+    COMPLETE_OUTCOME("complete-outcome", 4096),
+    PROJECT_ARMED("project-armed", 1024),
+    PROJECT_OUTCOME("project-outcome", 4096),
+    ;
+
+    companion object {
+        /** Appended fixed delivery history must never be interpreted as an unattempted old Sign2 prefix. */
+        internal fun deliveryLeaves(): List<CatalogSignerRotationReleaseLeafV1> = entries.drop(FREEZE_OUTCOME.ordinal + 1)
+    }
 }
 
 internal enum class CatalogSignerRotationCustodyObservationV1 { CREATED, IDENTICAL_OBSERVED }

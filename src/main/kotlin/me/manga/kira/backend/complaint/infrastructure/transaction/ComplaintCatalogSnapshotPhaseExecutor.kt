@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
@@ -69,6 +70,15 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         return capture(recovery = original).validate(initial, trust, policy).also { original.requireRunning() }
     }
 
+    internal fun loadSignerRotationDelivery(original: CatalogSignerRotationDeliveryV1, policy: CatalogReadbackPolicy): LocalCatalogSnapshot {
+        requireConnectionFree()
+        original.requireSnapshotSelection(ownership)
+        val initial = copyBundle(original.inputs.initialBytes())
+        val current = copyBundle(original.inputs.currentBytes())
+        val trust = OfflineTrustBundleVerifier.verify(current, policy.chain.trustBundlePolicy)
+        return capture(delivery = original).validate(initial, trust, policy).also { original.requireRunning() }
+    }
+
     internal fun loadInitialAuthor(
         initialBundleBytes: ByteArray,
         currentBundleBytes: ByteArray,
@@ -107,9 +117,10 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         finalizer: CatalogGenesisFinalizeAttemptV1? = null,
         recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
         initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+        delivery: CatalogSignerRotationDeliveryV1? = null,
     ): CatalogSnapshotRows {
         requireConnectionFree()
-        val phase = initialAuthor?.let(ownership::enterComplaintCatalogSnapshot) ?: recovery?.let(ownership::enterComplaintCatalogSnapshot)
+        val phase = delivery?.let(ownership::enterComplaintCatalogSnapshot) ?: initialAuthor?.let(ownership::enterComplaintCatalogSnapshot) ?: recovery?.let(ownership::enterComplaintCatalogSnapshot)
             ?: finalizer?.let(ownership::enterComplaintCatalogSnapshot) ?: author?.let(ownership::enterComplaintCatalogSnapshot)
             ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
         var captured: CatalogSnapshotReadOperation? = null
@@ -119,11 +130,13 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
             author?.let { reader.authenticateGenesisAuthor(it, ownership) }
             finalizer?.let { reader.authenticateGenesisFinalizer(it, ownership) }
             initialAuthor?.let { reader.authenticateInitialSignerRotationAuthor(it, ownership) }
+            delivery?.let { reader.authenticateSignerRotationDelivery(it, ownership) }
             captured = reader.read()
             author?.requireRunning()
             finalizer?.requireRunning()
             recovery?.requireRunning()
             initialAuthor?.requireBootstrapRunning()
+            delivery?.requireRunning()
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)
@@ -132,13 +145,16 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
                 closingFailure = runCatching(phase::finish).exceptionOrNull()
                 closingFailure?.let { recovery?.observeFailure(it) }
                 closingFailure?.let { initialAuthor?.observeFailure(it) }
+                closingFailure?.let { delivery?.observeFailure(it) }
             } finally {
                 recovery?.observePhaseCleanup(phase)
                 initialAuthor?.observePhaseCleanup(phase)
+                delivery?.observePhaseCleanup(phase)
             }
         }
         recovery?.throwIfSignalled()
         initialAuthor?.throwIfSignalled()
+        delivery?.throwIfSignalled()
         closingFailure?.let { throw it }
         val operation = captured ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
         // The getter checks known commit + completed resource release before any local JSON/hash/signature work.

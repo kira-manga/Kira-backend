@@ -37,6 +37,7 @@ internal class CatalogSignerRotationFreezeReleaseV1 private constructor(
     }
 
     private fun requirePreparedInputs() {
+        requireNoDeliveryHistory()
         inputLeaves().forEach { (leaf, bytes) -> requireExact(leaf, bytes) }
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARED, record("prepared-unsigned-head1"))
@@ -108,6 +109,7 @@ internal class CatalogSignerRotationFreezeReleaseV1 private constructor(
 
     /** Both actual returned outcomes, exact signatures, prior signature1 SQL and envelope are mandatory even on a no-op resume. */
     fun requireBothReturnedSignatures(): List<ByteArray> {
+        requireNoDeliveryHistory()
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARED, record("prepared-unsigned-head1"))
         val first = requireReturned(0)
         val second = requireReturned(1)
@@ -139,7 +141,7 @@ internal class CatalogSignerRotationFreezeReleaseV1 private constructor(
             mutation.signatureSlots[1].signatureBytes == null && mutation.signedEnvelopeBytes == null && mutation.signedEnvelopeSha256 == null,
         )
         // Each read scans the entire bounded allowed inventory and rejects every partial content/completeness pair.
-        SECOND_SIGN_LEAVES.forEach { requireRecovery(custody.read(it) == null) }
+        (SECOND_SIGN_LEAVES + CatalogSignerRotationReleaseLeafV1.deliveryLeaves()).forEach { requireRecovery(custody.read(it) == null) }
     }
 
     fun requireFrozenEnvelope(after: CatalogFrozenMutation) {
@@ -158,6 +160,11 @@ internal class CatalogSignerRotationFreezeReleaseV1 private constructor(
         val hash = checkNotNull(mutation.signedEnvelopeSha256)
         custody.putIfAbsent(CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME, record("signed-prepared2-head1", hash))
         return CatalogSignerRotationFrozenProductV1(mutation.operationToken, hash) // Overall owner still must prove original cleanup before Result.
+    }
+
+    private fun requireNoDeliveryHistory() {
+        // Every read validates the complete bounded inventory, including content/marker partial pairs.
+        CatalogSignerRotationReleaseLeafV1.deliveryLeaves().forEach { requireRecovery(custody.read(it) == null) }
     }
 
     private fun requireReturned(slot: Int): ByteArray {

@@ -32,6 +32,7 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperat
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
@@ -74,6 +75,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForCatalogSignerRotation(operation: CatalogSignerRotationOperationV1): LockedCatalogSignerRotation =
         LockedCatalogSignerRotation.lock(this, operation)
+
+    internal fun lockForCatalogSignerRotationFinalization(operation: CatalogSignerRotationFinalizationOperationV1): LockedCatalogSignerRotationFinalization =
+        LockedCatalogSignerRotationFinalization.lock(this, operation)
 
     internal fun lockForOwnerCreate(operation: ComplaintOwnerCreateOperation): LockedOwnerCreate = LockedOwnerCreate.lock(this, operation)
 
@@ -490,6 +494,47 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedCatalogSignerRotation(store, operation, store.readLockedLedger())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    /** Actual2 prepaid first-overlap only. Never charge/refund and never widen G1's actual0/1 profile. */
+    internal class LockedCatalogSignerRotationFinalization private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: CatalogSignerRotationFinalizationOperationV1,
+        private val before: ComplaintCapacityLedger,
+    ) {
+        private var issued = false
+        private var verified = false
+        internal fun belongsTo(candidate: CatalogSignerRotationFinalizationOperationV1): Boolean = operation === candidate
+        internal fun verifiedFor(candidate: CatalogSignerRotationFinalizationOperationV1): Boolean = belongsTo(candidate) && verified
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun verify(candidate: CatalogSignerRotationFinalizationOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterVerification(this, store.jdbc) // Concrete history is already exactly two locked rows.
+                issued = true
+                checkNotNull(store.expectedPolicyDigest) // readLockedLedger matched every locked row to this original P.
+                val balance = before.balance
+                check(balance.actual[ComplaintCapacityCounter.CATALOG_MUTATIONS] == 2L)
+                check(balance.actual[ComplaintCapacityCounter.STORAGE_BYTES] >= CatalogGenesisCapacity.storageBytes + CatalogSignerRotationCapacityV1.storageBytes)
+                operation.requireCounterVerification(this, store.jdbc)
+                verified = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: CatalogSignerRotationFinalizationOperationV1): LockedCatalogSignerRotationFinalization {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedCatalogSignerRotationFinalization(store, operation, store.readLockedLedger())
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

@@ -54,9 +54,28 @@ internal class CatalogSignerRotationPreparedRecoveryInputsV1 private constructor
         )
     }
 
+    /** Raw tail2 never supplies the accepted B1 head; the concrete delivery owner retains the actual released SQL snapshot. */
+    internal fun requireDeliveryReadback(readback: CatalogDualLocationVerifier.Overlap2Readback) {
+        requireRecovery(
+            readback.snapshotHead.generation == 1L && readback.snapshotHead.envelopeSha256 == predecessorHash &&
+                readback.currentTrustBundleSha256 == bindingValues[9] && readback.observedTail.catalogWriterGenerationId == bindingValues[10],
+        )
+    }
+
     override fun toString(): String = "CatalogSignerRotationPreparedRecoveryInputsV1(original-B-and-allocation,redacted,no-current-authority)"
 
     companion object {
+        internal fun read(
+            original: CatalogSignerRotationDeliveryV1,
+            custody: CatalogSignerRotationReleaseCustodyV1,
+            allocation: ByteArray,
+        ): CatalogSignerRotationPreparedRecoveryInputsV1 {
+            original.requireHistoricalCustody(custody)
+            val binding = custody.read(CatalogSignerRotationReleaseLeafV1.BINDING)
+                ?: throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
+            return CatalogSignerRotationPreparedRecoveryInputsV1(allocation, binding)
+        }
+
         internal fun read(
             original: CatalogSignerRotationPreparedRecoveryV1,
             custody: CatalogSignerRotationReleaseCustodyV1,

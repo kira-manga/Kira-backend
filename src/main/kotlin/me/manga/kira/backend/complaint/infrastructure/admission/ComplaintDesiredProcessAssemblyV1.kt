@@ -84,6 +84,16 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
         assemble(inputs, acquired, sealerCredentials, finalizer = false, signerRotationAuthoring = true)
     }
 
+    /** Same acquired TARGET D7 inventory; only fixed signed-overlap2 delivery/finalization is runnable. */
+    internal fun assembleTargetSignerRotationDelivery(
+        inputs: ComplaintDesiredDeploymentInputsV1,
+        acquired: List<AcquiredVersionedSecret>,
+        sealerCredentials: AwsSessionCredentials?,
+    ) {
+        inputs.requireTargetSignerRotationDeliveryProfile()
+        assemble(inputs, acquired, sealerCredentials, finalizer = false, signerRotationDelivery = true)
+    }
+
     private fun assemble(
         inputs: ComplaintDesiredDeploymentInputsV1,
         acquired: List<AcquiredVersionedSecret>,
@@ -91,11 +101,12 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
         finalizer: Boolean,
         signerRotationRecovery: Boolean = false,
         signerRotationAuthoring: Boolean = false,
+        signerRotationDelivery: Boolean = false,
     ) {
         requireConnectionFree()
         requireDesiredInstallation(!entered && !stopping, ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
         entered = true
-        val targetOnly = finalizer || signerRotationRecovery || signerRotationAuthoring
+        val targetOnly = finalizer || signerRotationRecovery || signerRotationAuthoring || signerRotationDelivery
         val secrets = matchAcquired(if (targetOnly) inputs.targetBindings() else inputs.allBindings(), acquired)
         fun secret(binding: VersionedSecretBinding): AcquiredVersionedSecret = checkNotNull(secrets[binding])
         // Distinct immutable references alone do not prove separate actual DB password material.
@@ -113,9 +124,10 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
             inputs.publicTrustPem(),
             inputs.protectedTrustParent,
         )
-        val runtime = bindTargetOwner(inputs, runtimeConfiguration, finalizer, signerRotationRecovery, signerRotationAuthoring)
+        val runtime = bindTargetOwner(inputs, runtimeConfiguration, finalizer, signerRotationRecovery, signerRotationAuthoring, signerRotationDelivery)
         targetOwner = runtime // Before shell binding, including a failed/partly constructed pool composition.
         val pools = when {
+            signerRotationDelivery -> runtime.bindCatalogSignerRotationDeliveryPools(nanoClock)
             signerRotationAuthoring -> runtime.bindCatalogSignerRotationAuthoringPools(nanoClock)
             signerRotationRecovery -> runtime.bindCatalogSignerRotationRecoveryPools(nanoClock)
             finalizer -> runtime.bindCatalogGenesisFinalizationPools(nanoClock)
@@ -200,7 +212,9 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
         finalizer: Boolean,
         signerRotationRecovery: Boolean,
         signerRotationAuthoring: Boolean,
+        signerRotationDelivery: Boolean,
     ): PersistenceJdbcLifecycleOwner = when {
+        signerRotationDelivery -> configuration.bindCatalogSignerRotationDeliveryOwner(inputs.epochRotation)
         signerRotationAuthoring -> configuration.bindCatalogSignerRotationAuthoringOwner(inputs.epochRotation)
         signerRotationRecovery -> configuration.bindCatalogSignerRotationRecoveryOwner(inputs.epochRotation)
         finalizer && inputs.epochRotation -> configuration.bindCatalogGenesisFinalizationOwnerWithEpochRotation()
@@ -348,6 +362,38 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
         requireDesiredInstallation(budget.remainingMillis(60_000) > 10_000, ComplaintDesiredInstallationFailureV1.TIME_BUDGET_EXHAUSTED)
         requireDesiredInstallation(
             owner.prepareCatalogSignerRotationAuthoring() === PersistenceLifecycleObservation.READY,
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
+        budget.remainingMillis(1)
+        requireDesiredInstallation(!Thread.currentThread().isInterrupted, ComplaintDesiredInstallationFailureV1.INTERRUPTED)
+        retained.requireUnchangedConfiguration()
+        requireDesiredInstallation(
+            canonical.contentEquals(retained.canonicalBytes()) && hash.contentEquals(retained.configurationHashBytes()),
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
+    }
+
+    /** Explicit retained-root preparation, not startup/HTTP activation or general UNKNOWN business access. */
+    internal fun prepareTargetSignerRotationDelivery(budget: PersistenceTimeBudget) {
+        requireConnectionFree()
+        val retained = target
+        val canonical = retained.canonicalBytes()
+        val hash = retained.configurationHashBytes()
+        val owner = checkNotNull(targetOwner)
+        requireDesiredInstallation(
+            owner.catalogSignerRotationDelivery && operatorOwner == null && retained.catalogSignerRotation != null &&
+                retained.desiredSettings().desiredGeneration == 1L && retained.catalogReadback?.projectedCurrent == false,
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
+        requireDesiredInstallation(!Thread.currentThread().isInterrupted, ComplaintDesiredInstallationFailureV1.INTERRUPTED)
+        budget.remainingMillis(1)
+        requireDesiredInstallation(
+            owner.preparePublicTrust() === PersistencePublicTrustPreparation.READY,
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
+        requireDesiredInstallation(budget.remainingMillis(60_000) > 10_000, ComplaintDesiredInstallationFailureV1.TIME_BUDGET_EXHAUSTED)
+        requireDesiredInstallation(
+            owner.prepareCatalogSignerRotationDelivery() === PersistenceLifecycleObservation.READY,
             ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
         )
         budget.remainingMillis(1)

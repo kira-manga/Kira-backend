@@ -104,9 +104,10 @@ The separate `COMPLAINT_CATALOG_PREPARED_ROTATION_RECOVERY_V1.md` describes a fr
 recovery-only candidate for both-returned PREPARED2 replay; it grants no fresh-process second Sign
 and its source handoff does not establish runtime acceptance.
 Truly lost provider response or trusted custody requires explicit recovery resolution.
-Complete rotation recovery is not claimed. Genuine overlap publication/projection and
-immediate activation3 are also **internal future work**, not capabilities supplied by this
-historical freeze result.
+Complete rotation recovery is not claimed. The separate fixed overlap2 delivery source is
+described in `COMPLAINT_CATALOG_SIGNER_ROTATION_DELIVERY_V1.md`; its independently retained
+owner does not accept this historical freeze result as authority. Cold pending/unknown-outcome
+recovery and immediate activation3 remain **internal future work**.
 
 At author source handoff: compilation, static checks, runtime tests, provider execution,
 services, builds, CI, commit and push are **NOT_RUN**. Any later acceptance evidence belongs

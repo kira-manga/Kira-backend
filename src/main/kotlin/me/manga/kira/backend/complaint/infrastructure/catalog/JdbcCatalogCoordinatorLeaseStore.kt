@@ -140,6 +140,7 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             val after = jdbc.query(READ_COORDINATOR_LEASE_CONTROL, { row, _ -> readControl(row) }, *arguments()).single()
             requireAt(Stage.REREADING)
             check(after == expected)
+            attempt.requireDeliveryControl(this, jdbc) // Delivery keeps both gates closed across its actual acquire CAS.
             fact = CatalogCoordinatorLeaseTransitionFact(transition(), attempt.owner, token, changed.sampledAt, expected.expiresAt)
             stage = Stage.COMPLETE
         } catch (problem: Throwable) {

@@ -36,6 +36,7 @@ This lower proves **no** publication arm eligibility, custody ownership/complete
 SQL persistence, actual DB snapshot, current B/lease, provider-root cleanup, PUT permission,
 COMPLETE/PROJECT authority, D7 deployment admission or trust-rollout completion. In particular,
 unpublished readback is not a retry entitlement, and dual readback does not establish that an arm
-ever existed. Those checks belong to a future typed delivery owner. Pending-purpose acquisition,
-fixed2 finalization, restart recovery, root/bootstrap wiring and activation3 remain separate
-INTERNAL work. No existing G1/D5 reader, configuration profile, coordinator or SQL path is widened.
+ever existed. The separate typed owner and named root are described in
+`COMPLAINT_CATALOG_SIGNER_ROTATION_DELIVERY_V1.md`; source presence does not establish acceptance.
+Pending-purpose acquisition, restart/unknown-outcome recovery and activation3 remain separate
+INTERNAL work. No existing G1/D5 reader, configuration profile or ordinary SQL predicate is widened.

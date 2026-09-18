@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
+import me.manga.kira.backend.complaint.domain.catalog.CatalogLocalHead
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
@@ -19,15 +20,18 @@ import java.util.HexFormat
 import java.util.UUID
 
 /**
- * Exact retained LIVE process plus genuine released G1 or already-projected current refresh. This comparison
- * is not current DB leadership, catalog freshness, a checkpoint or deployment/restore authority.
+ * Exact retained LIVE process plus genuine released G1/current refresh or the fixed delivery owner's
+ * actual head1 snapshot and raw fixed2 fold. This comparison is not current DB leadership, catalog
+ * freshness, a checkpoint or deployment/restore authority.
  * No opaque-D, raw tuple or supplied CatalogCommonHeadEvidence factory exists.
  */
 internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val process: VersionBoundComplaintProcessConfiguration,
-    private val catalog: CatalogCommonHeadEvidence,
+    private val catalog: CatalogCommonHeadEvidence?,
     private val preparedRecovery: CatalogSignerRotationPreparedRecoveryV1? = null,
     private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+    private val delivery: CatalogSignerRotationDeliveryV1? = null,
+    deliveryReadback: CatalogDualLocationVerifier.Overlap2Readback? = null,
 ) {
     internal val coordinator = process.pools.catalogCoordinator
     private val ownership = coordinator.ownership
@@ -38,10 +42,15 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val journal = process.consumers.journalConfiguration
     private val writer = UUID.fromString(journal.declaration().writer.generationId)
     private val epochRotationMillis = journal.declaration().limits.deadlines.epochRotationMillis
-    private val catalogGeneration = catalog.chain.tail.generation
-    private val catalogHash = digest(catalog.chain.tail.envelopeSha256)
-    private val trustHash = digest(catalog.chain.trust.currentBundleEnvelopeSha256)
-    private val catalogWriter = UUID.fromString(catalog.chain.tail.catalogWriterGenerationId)
+    // A delivery raw tail may already be2 while SQL is still accepted1. Never promote that tail to B.
+    private val accepted = catalog?.chain?.tail?.let { CatalogLocalHead(it.generation, it.envelopeSha256) }
+        ?: checkNotNull(deliveryReadback).snapshotHead
+    private val catalogGeneration = accepted.generation
+    private val catalogHash = digest(accepted.envelopeSha256)
+    private val trustHash = digest(catalog?.chain?.trust?.currentBundleEnvelopeSha256 ?: checkNotNull(deliveryReadback).currentTrustBundleSha256)
+    private val catalogWriter = UUID.fromString(
+        catalog?.chain?.tail?.catalogWriterGenerationId ?: checkNotNull(process.catalogSignerRotation).deployment.catalogWriterGenerationId,
+    )
 
     init {
         requireConnectionFree()
@@ -50,9 +59,17 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
                 desired.implementationSchema == 1 && desired.desiredGeneration > 0 &&
                 desired.configurationHashBytes().contentEquals(desiredHash) && desiredHash.size == 32 &&
                 writer.version() == 4 && writer.variant() == 2 && catalogWriter.version() == 4 && catalogWriter.variant() == 2 &&
-                catalogGeneration >= 1L && catalog.chain.trust.minimumHeadGeneration <= catalogGeneration,
+                catalogGeneration >= 1L && (catalog == null || catalog.chain.trust.minimumHeadGeneration <= catalogGeneration),
             CatalogReadbackFailure.INVALID_POLICY,
         )
+        requireCatalogReadback(
+            (delivery == null) == (deliveryReadback == null) && (catalog == null) == (delivery != null),
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
+        if (delivery != null) {
+            delivery.requireBindingInputs(process, checkNotNull(deliveryReadback))
+            requireCatalogReadback(catalogGeneration == 1L, CatalogReadbackFailure.INVALID_POLICY)
+        }
         requireUnchangedConfiguration()
     }
 
@@ -151,7 +168,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         original: CatalogSignerRotationPreparedRecoveryV1,
     ): String {
         requireRecoveredSignerRotationProcess(selected, original)
-        return catalog.chain.tail.envelopeSha256
+        return checkNotNull(catalog).chain.tail.envelopeSha256
     }
 
     internal fun requireRecoveredSignerRotationPredecessor(
@@ -162,7 +179,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireConnectionFree()
         requireRecoveredSignerRotationProcess(selected, original)
         val observed = readback.commonHeadEvidence()
-        requireCatalogReadback(observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
+        requireCatalogReadback(observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
     }
 
     internal fun startInitialAuthorSignerRotationBudget(
@@ -190,7 +207,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         original: CatalogSignerRotationInitialAuthorV1,
     ): String {
         requireInitialAuthorSignerRotationProcess(selected, original)
-        return catalog.chain.tail.envelopeSha256
+        return checkNotNull(catalog).chain.tail.envelopeSha256
     }
 
     internal fun requireInitialAuthorSignerRotationPredecessor(
@@ -201,39 +218,48 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireConnectionFree()
         requireInitialAuthorSignerRotationProcess(selected, original)
         val observed = readback.commonHeadEvidence()
-        requireCatalogReadback(observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
+        requireCatalogReadback(observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
     }
 
     internal fun requireInitialAuthorPurpose(original: CatalogSignerRotationInitialAuthorV1) {
-        if (initialAuthor !== original || !coordinator.catalogSignerRotationAuthoring || preparedRecovery != null) {
+        if (initialAuthor !== original || !coordinator.catalogSignerRotationAuthoring || preparedRecovery != null || delivery != null) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
 
-    @Suppress("ComplexCondition") // Explicitly reject both retained owners and both immutable named purposes.
+    @Suppress("ComplexCondition") // Explicitly reject every retained signer owner and immutable named purpose.
     internal fun requireOrdinaryPurpose() {
-        if (preparedRecovery != null || coordinator.catalogSignerRotationRecovery || initialAuthor != null || coordinator.catalogSignerRotationAuthoring) {
+        if (preparedRecovery != null || coordinator.catalogSignerRotationRecovery || initialAuthor != null || coordinator.catalogSignerRotationAuthoring ||
+            delivery != null || coordinator.catalogSignerRotationDelivery
+        ) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
 
     internal fun requireRecoveryPurpose(original: CatalogSignerRotationPreparedRecoveryV1) {
         if (preparedRecovery !== original ||
-            !coordinator.catalogSignerRotationRecovery
+            !coordinator.catalogSignerRotationRecovery || delivery != null
         ) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
 
-    /** Existing campaign bounding may discard diagnostics, but neither concrete signer owner's original signal. */
+    internal fun requireDeliveryPurpose(original: CatalogSignerRotationDeliveryV1) {
+        if (delivery !== original || !coordinator.catalogSignerRotationDelivery || preparedRecovery != null || initialAuthor != null) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
+
+    /** Existing campaign bounding may discard diagnostics, but never a concrete signer owner's original signal. */
     internal fun observeRecoveryFailure(problem: Throwable) {
         preparedRecovery?.observeFailure(problem)
         initialAuthor?.observeFailure(problem)
+        delivery?.observeFailure(problem)
     }
 
     internal fun signerRotationPredecessorHash(selected: VersionBoundComplaintProcessConfiguration): String {
         requireSignerRotationProcess(selected)
-        return catalog.chain.tail.envelopeSha256
+        return checkNotNull(catalog).chain.tail.envelopeSha256
     }
 
     internal fun requireSignerRotationPredecessor(
@@ -244,7 +270,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireSignerRotationProcess(selected)
         val observed = readback.commonHeadEvidence()
         requireCatalogReadback(
-            observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust,
+            observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust,
             CatalogReadbackFailure.HEAD_CONFLICT,
         )
     }
@@ -297,7 +323,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             requireConnectionFree()
             requireCatalogReadback(
                 !process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
-                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring,
+                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring && !process.pools.catalogCoordinator.catalogSignerRotationDelivery,
                 CatalogReadbackFailure.INVALID_POLICY,
             )
             val catalog = refresh.catalogFor(process)
@@ -313,7 +339,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             requireConnectionFree()
             requireCatalogReadback(
                 !process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
-                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring,
+                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring && !process.pools.catalogCoordinator.catalogSignerRotationDelivery,
                 CatalogReadbackFailure.INVALID_POLICY,
             )
             val catalog = refresh.catalogFor(process)
@@ -345,6 +371,16 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             requireConnectionFree()
             original.requireBindingInputs(process, readback)
             return CatalogCoordinatorLeaseBindingV1(process, readback.commonHeadEvidence(), original)
+        }
+
+        internal fun fromDelivery(
+            original: CatalogSignerRotationDeliveryV1,
+            process: VersionBoundComplaintProcessConfiguration,
+            readback: CatalogDualLocationVerifier.Overlap2Readback,
+        ): CatalogCoordinatorLeaseBindingV1 {
+            requireConnectionFree()
+            original.requireBindingInputs(process, readback)
+            return CatalogCoordinatorLeaseBindingV1(process, null, delivery = original, deliveryReadback = readback)
         }
 
         private fun digest(value: String): ByteArray {

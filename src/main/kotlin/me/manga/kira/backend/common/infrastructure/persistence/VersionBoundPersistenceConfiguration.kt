@@ -70,6 +70,24 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogSignerRotationAuthoring(this, epochRotation)
     }
 
+    /** Fixed overlap2 delivery, never a general publisher or an ordinary UNKNOWN launch grant. */
+    internal fun bindCatalogSignerRotationDeliveryOwner(epochRotation: Boolean): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogSignerRotationDelivery(this, epochRotation)
+    }
+
+    internal fun createCatalogSignerRotationDeliveryRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint,
+            ordinaryCapacity,
+            PersistencePathStyle.POSIX,
+            versionBound = this,
+            epochRotationEnabled = epochRotation,
+            catalogSignerRotationDelivery = true,
+        )
+    }
+
     internal fun createCatalogSignerRotationAuthoringRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(
@@ -159,7 +177,9 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
-        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring) requireFinalizerConfiguration()
+        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring || root.catalogSignerRotationDelivery) {
+            requireFinalizerConfiguration()
+        }
         trust.adopt(root)
         adoptedRoot = root
         return trust

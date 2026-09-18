@@ -24,14 +24,15 @@ internal class CatalogSignerRotationInputsV1 private constructor(
     val request: CatalogSignerRotationFreezeRequestV1,
     private val attempt: CatalogSignerRotationFreezeAttemptV1?,
     private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
+    private val delivery: CatalogSignerRotationDeliveryV1?,
     intentBytes: ByteArray,
     approvalBytes: ByteArray,
 ) {
     constructor(request: CatalogSignerRotationFreezeRequestV1, attempt: CatalogSignerRotationFreezeAttemptV1, intent: ByteArray, approvals: ByteArray) :
-        this(request, attempt, null, intent, approvals)
+        this(request, attempt, null, null, intent, approvals)
 
-    private val process = attempt?.process ?: checkNotNull(recovery).process
-    private val predecessorHash = attempt?.predecessorHash ?: checkNotNull(recovery).historicalPredecessorHash()
+    private val process = attempt?.process ?: recovery?.process ?: checkNotNull(delivery).process
+    private val predecessorHash = attempt?.predecessorHash ?: recovery?.historicalPredecessorHash() ?: checkNotNull(delivery).historicalPredecessorHash()
     private val intent = intentBytes.copyOf()
     private val approvals = approvalBytes.copyOf()
     val reader = checkNotNull(process.catalogReadback)
@@ -44,7 +45,7 @@ internal class CatalogSignerRotationInputsV1 private constructor(
     val unsignedHash = Sha256.hex(intent)
     private val keys = writer.keys()
     val bindingRecord: ByteArray = attempt?.let { signerRotationRecord("binding", *it.bindingRecordValues()) }
-        ?: checkNotNull(recovery).historicalBindingRecord()
+        ?: recovery?.historicalBindingRecord() ?: checkNotNull(delivery).historicalBindingRecord()
     val allocation: ByteArray = signerRotationRecord(
         "allocation",
         manifest.operationToken,
@@ -78,6 +79,7 @@ internal class CatalogSignerRotationInputsV1 private constructor(
         requireSignerRotation(ids.all { it in manifest.initialWriterRegistry.catalogWriter.catalogApproverIds && it in chain.currentApproverIds })
         requireSignerRotation(manifest.creation.creatorId in ids)
         recovery?.requireInputHistory(this)
+        delivery?.requireInputHistory(this)
         requireRunning()
     }
 
@@ -224,10 +226,24 @@ internal class CatalogSignerRotationInputsV1 private constructor(
     override fun toString(): String = "CatalogSignerRotationInputsV1(actual-canonical-inputs,cold-D7,redacted,no-human-approval-authority)"
 
     private fun requireRunning() {
-        if (attempt != null) attempt.requireRunning() else checkNotNull(recovery).requireRunning()
+        when {
+            attempt != null -> attempt.requireRunning()
+            recovery != null -> recovery.requireRunning()
+            else -> checkNotNull(delivery).requireRunning()
+        }
     }
 
     companion object {
+        internal fun delivery(
+            original: CatalogSignerRotationDeliveryV1,
+            request: CatalogSignerRotationFreezeRequestV1,
+            intent: ByteArray,
+            approvals: ByteArray,
+        ): CatalogSignerRotationInputsV1 {
+            original.requireInputAcquisition(request)
+            return CatalogSignerRotationInputsV1(request, null, null, original, intent, approvals)
+        }
+
         internal fun recovered(
             original: CatalogSignerRotationPreparedRecoveryV1,
             request: CatalogSignerRotationFreezeRequestV1,
@@ -235,7 +251,7 @@ internal class CatalogSignerRotationInputsV1 private constructor(
             approvals: ByteArray,
         ): CatalogSignerRotationInputsV1 {
             original.requireInputAcquisition(request)
-            return CatalogSignerRotationInputsV1(request, null, original, intent, approvals)
+            return CatalogSignerRotationInputsV1(request, null, original, null, intent, approvals)
         }
     }
 }
