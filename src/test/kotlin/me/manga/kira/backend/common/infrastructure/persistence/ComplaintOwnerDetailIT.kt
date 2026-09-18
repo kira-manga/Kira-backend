@@ -90,7 +90,7 @@ class ComplaintOwnerDetailIT {
                 if (supplied) malformedBeforeSql(f, bridge, chain, bodyGuard, content)
                 for (id in listOf(content, notice)) {
                     val request = ownerDetailTestRequest(id, f.session.token).apply {
-                        servletPath = requestURI
+                        servletPath = requireNotNull(requestURI)
                         addHeader("If-None-Match", "*")
                     }
                     var sentReleased = false
@@ -369,7 +369,7 @@ class ComplaintOwnerDetailIT {
                     ownerDetailTestRequest(id, f.session.token) to 503, // Valid framing does reach the currently unavailable SQL phase.
                 )
                 for ((request, status) in requests) {
-                    request.servletPath = request.requestURI
+                    request.servletPath = requireNotNull(request.requestURI)
                     val response = MockHttpServletResponse()
                     bridge.doFilter(request, response) { admitted, target ->
                         bodyGuard.doFilter(admitted, target) { bounded, output ->

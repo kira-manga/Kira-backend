@@ -104,7 +104,7 @@ class ComplaintOwnerDetailHttpTest {
         val item = content()
         // The existing installation/history tests retain the broad auth/framing matrix; these are detail-specific regressions.
         val requests = listOf(
-            ownerDetailTestRequest(item.id).apply { requestURI = requestURI.uppercase() } to 404,
+            ownerDetailTestRequest(item.id).apply { requestURI = requireNotNull(requestURI).uppercase() } to 404,
             ownerDetailTestRequest(item.id).apply { requestURI = "/api/v1/complaints/A${item.id.toString().drop(1)}" } to 400,
             ownerDetailTestRequest(item.id).apply { requestURI += "/" } to 404,
             ownerDetailTestRequest(item.id).apply { queryString = "limit=1" } to 400,
