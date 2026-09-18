@@ -123,46 +123,73 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     private var outcomeUncertain = false
     private val originalSignal = AtomicReference<Throwable?>()
 
-    init { requireConnectionFree(); requireProcess() }
+    init {
+        requireConnectionFree()
+        requireProcess()
+    }
 
-    fun activate(request: CatalogSignerRotationFreezeRequestV1, newSigningCredentials: AwsSessionCredentials,
-        primaryPutCredentials: AwsSessionCredentials, primaryReadCredentials: AwsSessionCredentials,
-        replicaReadCredentials: AwsSessionCredentials): CatalogSignerRotationActivationResultV1 =
+    fun activate(
+        request: CatalogSignerRotationFreezeRequestV1,
+        newSigningCredentials: AwsSessionCredentials,
+        primaryPutCredentials: AwsSessionCredentials,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogSignerRotationActivationResultV1 =
         run(Mode.INITIAL, request, newSigningCredentials, primaryPutCredentials, primaryReadCredentials, replicaReadCredentials, null)
 
-    fun recover(request: CatalogSignerRotationFreezeRequestV1, primaryReadCredentials: AwsSessionCredentials,
-        replicaReadCredentials: AwsSessionCredentials): CatalogSignerRotationActivationResultV1 =
-        run(Mode.RECOVER, request, null, null, primaryReadCredentials, replicaReadCredentials, null)
+    fun recover(
+        request: CatalogSignerRotationFreezeRequestV1,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogSignerRotationActivationResultV1 = run(Mode.RECOVER, request, null, null, primaryReadCredentials, replicaReadCredentials, null)
 
     /** A new explicit allowance, never revival of the actual closed previous owner/campaign/slot. */
-    fun continueUnattempted(request: CatalogSignerRotationFreezeRequestV1, previousInvocation: CatalogSignerRotationActivationV1,
-        newSigningCredentials: AwsSessionCredentials, primaryPutCredentials: AwsSessionCredentials,
-        primaryReadCredentials: AwsSessionCredentials, replicaReadCredentials: AwsSessionCredentials): CatalogSignerRotationActivationResultV1 =
+    fun continueUnattempted(
+        request: CatalogSignerRotationFreezeRequestV1,
+        previousInvocation: CatalogSignerRotationActivationV1,
+        newSigningCredentials: AwsSessionCredentials,
+        primaryPutCredentials: AwsSessionCredentials,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogSignerRotationActivationResultV1 =
         run(Mode.CONTINUE, request, newSigningCredentials, primaryPutCredentials, primaryReadCredentials, replicaReadCredentials, previousInvocation)
 
     @Suppress("TooGenericExceptionCaught")
-    private fun run(selectedMode: Mode, request: CatalogSignerRotationFreezeRequestV1, signCredentials: AwsSessionCredentials?,
-        putCredentials: AwsSessionCredentials?, primary: AwsSessionCredentials, replica: AwsSessionCredentials,
-        previous: CatalogSignerRotationActivationV1?): CatalogSignerRotationActivationResultV1 {
+    private fun run(
+        selectedMode: Mode,
+        request: CatalogSignerRotationFreezeRequestV1,
+        signCredentials: AwsSessionCredentials?,
+        putCredentials: AwsSessionCredentials?,
+        primary: AwsSessionCredentials,
+        replica: AwsSessionCredentials,
+        previous: CatalogSignerRotationActivationV1?,
+    ): CatalogSignerRotationActivationResultV1 {
         requireSignerRotation(caller === Thread.currentThread(), CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         var state: CatalogSignerRotationActivationStateV1? = null
         var pendingResult: CatalogSignerRotationActivationResultV1? = null
         var failure: Throwable? = null
         try {
-            requireConnectionFree(); requireRunning()
+            requireConnectionFree()
+            requireRunning()
             requireSignerRotation(!entered && stage === Stage.NEW)
-            entered = true; mode = selectedMode; publishMode = mode !== Mode.RECOVER; this.request = request
+            entered = true
+            mode = selectedMode
+            publishMode = mode !== Mode.RECOVER
+            this.request = request
             if (mode === Mode.CONTINUE) {
                 checkNotNull(previous).consumeContinuation(this, request) // Before any new custody/lease/provider attempt; never restored.
                 continuationPrior = previous
             }
-            coordinator.catalogRefreshCustody.reserveSignerRotationActivation(this); reserved = true
+            coordinator.catalogRefreshCustody.reserveSignerRotationActivation(this)
+            reserved = true
             stage = Stage.INPUTS
             selectedInputs = assembly.acquire(request)
             previous?.inputs?.requireSame(inputs)
             if (mode !== Mode.INITIAL) openExistingCustody(request)
             stage = Stage.SNAPSHOT
-            val local = loadSnapshot(); requireSnapshotTuple(local); snapshot = local
+            val local = loadSnapshot()
+            requireSnapshotTuple(local)
+            snapshot = local
             mutation = when (local) {
                 is LocalCatalogSnapshot.Prepared -> local.mutation
                 is LocalCatalogSnapshot.ProjectionPending -> checkNotNull(release).returnedMutation()
@@ -171,11 +198,13 @@ internal class CatalogSignerRotationActivationV1 private constructor(
             }
             if (local is LocalCatalogSnapshot.ProjectionPending) pendingLeaseOperationToken = UUID.fromString(local.projection.operationToken)
             release?.requireSnapshot(local)
-            stage = Stage.READBACK; observeReadback(primary, replica)
+            stage = Stage.READBACK
+            observeReadback(primary, replica)
             stage = Stage.ACQUIRE
             binding = CatalogCoordinatorLeaseBindingV1.fromActivation(this, process, checkNotNull(readback))
             acquireLease(checkNotNull(binding))
-            stage = Stage.HISTORY; initialReadIssued = true
+            stage = Stage.HISTORY
+            initialReadIssued = true
             retainedHistory = executeActivation(historyKind(initial = true)).observation.also(::requireSnapshotHistory)
             recheck(primary, replica)
             if (mode === Mode.INITIAL) prepare()
@@ -187,26 +216,36 @@ internal class CatalogSignerRotationActivationV1 private constructor(
             state = when (snapshot) {
                 is LocalCatalogSnapshot.Prepared -> {
                     if (mutation?.signedEnvelopeBytes == null) {
-                        if (mode === Mode.RECOVER) recoverSignature()
-                        else signPrepared(checkNotNull(signCredentials), primary, replica)
+                        if (mode === Mode.RECOVER) {
+                            recoverSignature()
+                        } else {
+                            signPrepared(checkNotNull(signCredentials), primary, replica)
+                        }
                     } else if (mode === Mode.RECOVER) {
                         // This marker attests identical stored bytes, not an earlier transaction/acquisition's outcome.
                         checkNotNull(release).signaturePersisted(checkNotNull(retainedHistory))
                     }
-                    if (mutation?.signedEnvelopeBytes == null) CatalogSignerRotationActivationStateV1.PREPARED_UNSIGNED
-                    else {
+                    if (mutation?.signedEnvelopeBytes == null) {
+                        CatalogSignerRotationActivationStateV1.PREPARED_UNSIGNED
+                    } else {
                         if (mode !== Mode.RECOVER) recheck(primary, replica)
                         if (checkNotNull(readback).state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNPUBLISHED &&
-                            putCredentials != null) publishUnpublished(putCredentials, primary, replica)
+                            putCredentials != null
+                        ) {
+                            publishUnpublished(putCredentials, primary, replica)
+                        }
                         finishObservedDelivery()
                     }
                 }
+
                 is LocalCatalogSnapshot.ProjectionPending -> {
                     completedHistory = checkNotNull(retainedHistory)
                     retainPending(checkNotNull(reconciliationOperation), checkNotNull(retainedHistory))
                     CatalogSignerRotationActivationStateV1.PROJECTION_PENDING
                 }
+
                 is LocalCatalogSnapshot.Accepted -> CatalogSignerRotationActivationStateV1.PROJECTED
+
                 else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
             }
             if (state === CatalogSignerRotationActivationStateV1.PROJECTION_PENDING) {
@@ -214,10 +253,16 @@ internal class CatalogSignerRotationActivationV1 private constructor(
                 pendingResult = CatalogSignerRotationActivationResultV1.issuedBy(this, state)
             }
         } catch (problem: Throwable) {
-            observeFailure(problem); failure = signerRotationSignal(problem); abort()
+            observeFailure(problem)
+            failure = signerRotationSignal(problem)
+            abort()
         } finally {
             if (pendingResult == null || failure != null) {
-                try { close() } catch (cleanup: Throwable) { failure = preferSignerRotationCleanup(failure, cleanup) }
+                try {
+                    close()
+                } catch (cleanup: Throwable) {
+                    failure = preferSignerRotationCleanup(failure, cleanup)
+                }
             }
         }
         failure?.let { throw boundedSignerRotationFailure(it) }
@@ -228,13 +273,17 @@ internal class CatalogSignerRotationActivationV1 private constructor(
 
     private fun consumeContinuation(next: CatalogSignerRotationActivationV1, selected: CatalogSignerRotationFreezeRequestV1) {
         requireConnectionFree()
-        requireSignerRotation(caller === Thread.currentThread() && process === next.process && next !== this && entered && closed &&
-            cleanupProven && released && closeFailure == null && !sqlCleanupUnproven && !outcomeUncertain &&
-            mode === Mode.INITIAL && preparedMarkerWritten && preparedOperation != null && !signArmIssued && !signArmed &&
-            !signConstructionIssued && signatureAfter == null && !signatureSqlIssued && !publicationArmedHere && !continuationConsumed,
-            CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
+        requireSignerRotation(
+            caller === Thread.currentThread() && process === next.process && next !== this && entered && closed &&
+                cleanupProven && released && closeFailure == null && !sqlCleanupUnproven && !outcomeUncertain &&
+                mode === Mode.INITIAL && preparedMarkerWritten && preparedOperation != null && !signArmIssued && !signArmed &&
+                !signConstructionIssued && signatureAfter == null && !signatureSqlIssued && !publicationArmedHere && !continuationConsumed,
+            CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN,
+        )
         val old = checkNotNull(request)
-        requireSignerRotation(old.releaseRoot == selected.releaseRoot && old.approvedIntent == selected.approvedIntent && old.approvalInputs == selected.approvalInputs)
+        requireSignerRotation(
+            old.releaseRoot == selected.releaseRoot && old.approvedIntent == selected.approvedIntent && old.approvalInputs == selected.approvalInputs,
+        )
         val actual = checkNotNull(preparedOperation).observation
         requireSignerRotation(actual.mutation?.signedEnvelopeBytes == null && actual.completedAt == null)
         actual.requireSame(checkNotNull(retainedHistory))
@@ -254,28 +303,38 @@ internal class CatalogSignerRotationActivationV1 private constructor(
         requireSignerRotation(snapshot is LocalCatalogSnapshot.Accepted && mutation == null && mode === Mode.INITIAL)
         stage = Stage.ALLOCATE
         val acquired = currentAcquisitionRecordValues().toList()
-        val bound = signerRotationRecord("binding", *(acquired.take(9) +
-            listOf(HexFormat.of().formatHex(capacityDigest()), acquired[9], acquired[10])).toTypedArray())
+        val bound = signerRotationRecord(
+            "binding",
+            *(
+                acquired.take(9) +
+                    listOf(HexFormat.of().formatHex(capacityDigest()), acquired[9], acquired[10])
+                ).toTypedArray(),
+        )
         val allocation = inputs.allocation(bound)
         val held = CatalogSignerRotationReleaseCustodyV1.retainActivation(checkNotNull(request).releaseRoot, allocation, budget)
         custody = held
         requireSignerRotation(held.open() === CatalogSignerRotationCustodyObservationV1.CREATED)
         release = CatalogSignerRotationActivationReleaseV1(this, inputs, held, allocation, bound, true)
-        stage = Stage.ARM_PREPARE; prepareIssued = true
-        checkNotNull(release).armPrepare(); prepareArmed = true
+        stage = Stage.ARM_PREPARE
+        prepareIssued = true
+        checkNotNull(release).armPrepare()
+        prepareArmed = true
         stage = Stage.PREPARE
         val operation = executeActivation(CatalogSignerRotationActivationKindV1.PREPARE, inputs.unsigned())
         preparedOperation = operation // Genuine COMMITTED+released operation retained before durable outcome or further provider construction.
         retainedHistory = operation.observation
         acceptPreparedHistory(checkNotNull(retainedHistory))
-        checkNotNull(release).prepared(checkNotNull(retainedHistory)); preparedMarkerWritten = true
+        checkNotNull(release).prepared(checkNotNull(retainedHistory))
+        preparedMarkerWritten = true
     }
 
     private fun signPrepared(credentials: AwsSessionCredentials, primary: AwsSessionCredentials, replica: AwsSessionCredentials) {
         if (mode === Mode.INITIAL) recheck(primary, replica)
         requireSignerRotation(reconciliationOperation?.input?.kind === CatalogSignerRotationActivationKindV1.PREPARED_RECHECK)
-        stage = Stage.ARM_SIGN; signArmIssued = true
-        checkNotNull(release).armSignature(checkNotNull(retainedHistory)); signArmed = true
+        stage = Stage.ARM_SIGN
+        signArmIssued = true
+        checkNotNull(release).armSignature(checkNotNull(retainedHistory))
+        signArmed = true
         stage = Stage.SIGN
         val signature = assembly.sign(credentials)
         signatureAfter = checkNotNull(release).preserveSignature(signature)
@@ -292,41 +351,53 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     }
 
     private fun persistSignature() {
-        stage = Stage.ARM_SIGNATURE; signatureSqlIssued = true
-        checkNotNull(release).armSignaturePersistence(checkNotNull(signatureAfter)); signatureSqlArmed = true
+        stage = Stage.ARM_SIGNATURE
+        signatureSqlIssued = true
+        checkNotNull(release).armSignaturePersistence(checkNotNull(signatureAfter))
+        signatureSqlArmed = true
         stage = Stage.SIGNATURE
         val operation = executeActivation(CatalogSignerRotationActivationKindV1.SIGNATURE, checkNotNull(signatureAfter))
-        signatureOperation = operation; retainedHistory = operation.observation
+        signatureOperation = operation
+        retainedHistory = operation.observation
         acceptPreparedHistory(checkNotNull(retainedHistory))
         checkNotNull(release).signaturePersisted(checkNotNull(retainedHistory))
     }
 
     private fun acceptPreparedHistory(value: CatalogSignerRotationActivationObservationV1) {
         requireSignerRotation(value.completedAt == null && value.projectedAt == null)
-        val actual = checkNotNull(value.mutation); inputs.requireMutation(actual)
+        val actual = checkNotNull(value.mutation)
+        inputs.requireMutation(actual)
         mutation = actual
         snapshot = LocalCatalogSnapshot.Prepared(CatalogLocalHead(2L, inputs.manifest.previousEnvelopeSha256), actual)
     }
 
     private fun recheck(primary: AwsSessionCredentials, replica: AwsSessionCredentials) {
         requireSignerRotation(recheckCount < 3)
-        recheckCount++; stage = Stage.READBACK; observeReadback(primary, replica)
-        stage = Stage.RECHECK; recheckIssued = true
+        recheckCount++
+        stage = Stage.READBACK
+        observeReadback(primary, replica)
+        stage = Stage.RECHECK
+        recheckIssued = true
         val before = checkNotNull(retainedHistory)
         val operation = executeActivation(historyKind(initial = false))
         reconciliationOperation = operation
         val checked = operation.observation
-        before.requireSame(checked); requireSnapshotHistory(checked); retainedHistory = checked
+        before.requireSame(checked)
+        requireSnapshotHistory(checked)
+        retainedHistory = checked
     }
 
     private fun historyKind(initial: Boolean): CatalogSignerRotationActivationKindV1 = when (val local = snapshot) {
         is LocalCatalogSnapshot.Prepared -> if (initial) CatalogSignerRotationActivationKindV1.INITIAL_PREPARED_READ else CatalogSignerRotationActivationKindV1.PREPARED_RECHECK
+
         is LocalCatalogSnapshot.ProjectionPending -> if (initial) CatalogSignerRotationActivationKindV1.INITIAL_PENDING_READ else CatalogSignerRotationActivationKindV1.PENDING_RECHECK
+
         is LocalCatalogSnapshot.Accepted -> if (local.head.generation == 2L) {
             if (initial) CatalogSignerRotationActivationKindV1.INITIAL_HEAD_READ else CatalogSignerRotationActivationKindV1.HEAD_RECHECK
         } else {
             if (initial) CatalogSignerRotationActivationKindV1.INITIAL_PROJECTED_READ else CatalogSignerRotationActivationKindV1.PROJECTED_RECHECK
         }
+
         else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
     }
 
@@ -334,25 +405,35 @@ internal class CatalogSignerRotationActivationV1 private constructor(
         val local = checkNotNull(snapshot)
         val proof = assembly.observe(local, primary, replica)
         readback = proof
-        proof.requireSnapshot(local); assembly.requireProof(proof); inputs.requirePrefix(proof)
-        if (local is LocalCatalogSnapshot.Accepted && local.head.generation == 3L) requireSignerRotation(
-            proof.observedEnvelopeBytes().contentEquals(checkNotNull(mutation?.signedEnvelopeBytes)))
+        proof.requireSnapshot(local)
+        assembly.requireProof(proof)
+        inputs.requirePrefix(proof)
+        if (local is LocalCatalogSnapshot.Accepted && local.head.generation == 3L) {
+            requireSignerRotation(proof.observedEnvelopeBytes().contentEquals(checkNotNull(mutation?.signedEnvelopeBytes)))
+        }
         release?.requireHistoricalReadback(proof)
     }
 
     private fun publishUnpublished(credentials: AwsSessionCredentials, primary: AwsSessionCredentials, replica: AwsSessionCredentials) {
         requireSignerRotation(mode !== Mode.RECOVER && !checkNotNull(release).isArmed(), CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
-        stage = Stage.ARM_PUBLICATION; checkNotNull(release).armPublication(); publicationArmedHere = true
-        stage = Stage.PUBLISH; checkNotNull(release).claimPut()
-        val value = assembly.put(credentials); acknowledgement = value; checkNotNull(release).acknowledged(value)
-        stage = Stage.READBACK; observeReadback(primary, replica)
+        stage = Stage.ARM_PUBLICATION
+        checkNotNull(release).armPublication()
+        publicationArmedHere = true
+        stage = Stage.PUBLISH
+        checkNotNull(release).claimPut()
+        val value = assembly.put(credentials)
+        acknowledgement = value
+        checkNotNull(release).acknowledged(value)
+        stage = Stage.READBACK
+        observeReadback(primary, replica)
     }
 
     private fun finishObservedDelivery(): CatalogSignerRotationActivationStateV1 {
         val proof = checkNotNull(readback)
         val retained = checkNotNull(release)
         if (proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNSIGNED ||
-            proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNPUBLISHED) {
+            proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNPUBLISHED
+        ) {
             requireSignerRotation(mode === Mode.RECOVER)
             return CatalogSignerRotationActivationStateV1.SIGNED_UNPUBLISHED
         }
@@ -360,16 +441,25 @@ internal class CatalogSignerRotationActivationV1 private constructor(
         stage = Stage.EVIDENCE
         return when (proof.state) {
             CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_AWAIT_REPLICATION -> {
-                retained.awaitReplication(proof); CatalogSignerRotationActivationStateV1.AWAIT_REPLICATION
+                retained.awaitReplication(proof)
+                CatalogSignerRotationActivationStateV1.AWAIT_REPLICATION
             }
+
             CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_DUAL_COPY -> {
-                retained.preserveDual(proof); stage = Stage.ARM_COMPLETE; completeIssued = true
-                retained.armComplete(); completeArmed = true; stage = Stage.COMPLETE
+                retained.preserveDual(proof)
+                stage = Stage.ARM_COMPLETE
+                completeIssued = true
+                retained.armComplete()
+                completeArmed = true
+                stage = Stage.COMPLETE
                 val operation = executeActivation(CatalogSignerRotationActivationKindV1.COMPLETE)
-                completeOperation = operation; completedHistory = operation.observation
-                retained.completed(checkNotNull(completedHistory)); retainPending(operation, checkNotNull(completedHistory))
+                completeOperation = operation
+                completedHistory = operation.observation
+                retained.completed(checkNotNull(completedHistory))
+                retainPending(operation, checkNotNull(completedHistory))
                 CatalogSignerRotationActivationStateV1.PROJECTION_PENDING
             }
+
             else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
         }
     }
@@ -380,18 +470,33 @@ internal class CatalogSignerRotationActivationV1 private constructor(
         var success = false
         var failure: Throwable? = null
         try {
-            requireConnectionFree(); requirePending()
+            requireConnectionFree()
+            requirePending()
             requireSignerRotation(stage === Stage.PENDING && !projectIssued)
-            projectIssued = true; val held = checkNotNull(pending); held.spent = true; allowedResult = null
-            stage = Stage.ARM_PROJECT; checkNotNull(release).armProject(held.observation); projectArmed = true
+            projectIssued = true
+            val held = checkNotNull(pending)
+            held.spent = true
+            allowedResult = null
+            stage = Stage.ARM_PROJECT
+            checkNotNull(release).armProject(held.observation)
+            projectArmed = true
             stage = Stage.PROJECT
             val operation = executeActivation(CatalogSignerRotationActivationKindV1.PROJECT)
-            projectOperation = operation; projectedHistory = operation.observation
-            checkNotNull(release).projected(checkNotNull(projectedHistory)); requireRunning(); success = true
+            projectOperation = operation
+            projectedHistory = operation.observation
+            checkNotNull(release).projected(checkNotNull(projectedHistory))
+            requireRunning()
+            success = true
         } catch (problem: Throwable) {
-            observeFailure(problem); failure = signerRotationSignal(problem); abort()
+            observeFailure(problem)
+            failure = signerRotationSignal(problem)
+            abort()
         } finally {
-            try { close() } catch (cleanup: Throwable) { failure = preferSignerRotationCleanup(failure, cleanup) }
+            try {
+                close()
+            } catch (cleanup: Throwable) {
+                failure = preferSignerRotationCleanup(failure, cleanup)
+            }
         }
         failure?.let { throw boundedSignerRotationFailure(it) }
         requireSignerRotation(success)
@@ -402,121 +507,229 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     @Suppress("TooGenericExceptionCaught")
     private fun loadSnapshot(): LocalCatalogSnapshot {
         selectPhase(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT)
-        return try { coordinator.snapshot.loadSignerRotationActivation(this, inputs.reader.policyAt(sampleWallTime())) }
-        catch (problem: Throwable) { phaseFailed(problem) } finally { selectedPath = null }
+        return try {
+            coordinator.snapshot.loadSignerRotationActivation(this, inputs.reader.policyAt(sampleWallTime()))
+        } catch (
+            problem: Throwable,
+        ) {
+            phaseFailed(problem)
+        } finally {
+            selectedPath = null
+        }
     }
 
     @Suppress("TooGenericExceptionCaught")
     private fun acquireLease(selected: CatalogCoordinatorLeaseBindingV1) {
-        requireSignerRotation(!acquireIssued); acquireIssued = true
+        requireSignerRotation(!acquireIssued)
+        acquireIssued = true
         selectPhase(PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE)
         try {
             val actual = coordinator.lease.acquireActivation(this, selected)
-            campaign = actual.campaign; leaseReceipt = actual.receipt
-            dispatchWindow = actual.campaign.requireLocalWindow(); leaseStartedAtNanos = checkNotNull(dispatchWindow).startedAtNanos
+            campaign = actual.campaign
+            leaseReceipt = actual.receipt
+            dispatchWindow = actual.campaign.requireLocalWindow()
+            leaseStartedAtNanos = checkNotNull(dispatchWindow).startedAtNanos
             requireRunning()
-            requireSignerRotation(actual.receipt.transition === CatalogCoordinatorLeaseTransitionV1.ACQUIRED &&
-                actual.receipt.owner !in (release?.historicalOwners() ?: emptySet()) && actual.receipt.token > (release?.historicalLeaseFloor() ?: 0L) &&
-                actual.campaign.owner == actual.receipt.owner && actual.campaign.token == actual.receipt.token &&
-                actual.campaign.binding === selected && actual.receipt.expiresAt != null, CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
+            requireSignerRotation(
+                actual.receipt.transition === CatalogCoordinatorLeaseTransitionV1.ACQUIRED &&
+                    actual.receipt.owner !in (release?.historicalOwners() ?: emptySet()) && actual.receipt.token > (release?.historicalLeaseFloor() ?: 0L) &&
+                    actual.campaign.owner == actual.receipt.owner && actual.campaign.token == actual.receipt.token &&
+                    actual.campaign.binding === selected && actual.receipt.expiresAt != null,
+                CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+            )
             leaseBinding = arrayOf(*selected.arguments(), actual.receipt.owner, actual.receipt.token, Timestamp.from(checkNotNull(actual.receipt.expiresAt)))
             requireActualLease()
-        } catch (problem: Throwable) { campaign?.close(); phaseFailed(problem) } finally { selectedPath = null }
+        } catch (problem: Throwable) {
+            campaign?.close()
+            phaseFailed(problem)
+        } finally {
+            selectedPath = null
+        }
     }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun executeActivation(kind: CatalogSignerRotationActivationKindV1, after: CatalogFrozenMutation? = null): CatalogSignerRotationActivationOperationV1 {
+    private fun executeActivation(
+        kind: CatalogSignerRotationActivationKindV1,
+        after: CatalogFrozenMutation? = null,
+    ): CatalogSignerRotationActivationOperationV1 {
         if (kind === CatalogSignerRotationActivationKindV1.PROJECT) requirePendingIdentity() else requireActualLease()
-        selectPhase(kind.path); selectedKind = kind; inputConstructionClaimed = false
+        selectPhase(kind.path)
+        selectedKind = kind
+        inputConstructionClaimed = false
         return try {
-            val expected = if (kind in INITIAL_KINDS) null else if (kind === CatalogSignerRotationActivationKindV1.PROJECT) checkNotNull(pending).observation else retainedHistory
-            val input = CatalogSignerRotationActivationInputV1.create(this, kind, expected, after); activeInput = input
+            val expected = if (kind in
+                INITIAL_KINDS
+            ) {
+                null
+            } else if (kind === CatalogSignerRotationActivationKindV1.PROJECT) {
+                checkNotNull(pending).observation
+            } else {
+                retainedHistory
+            }
+            val input = CatalogSignerRotationActivationInputV1.create(this, kind, expected, after)
+            activeInput = input
             coordinator.signerRotationActivation.execute(input)
-        } catch (problem: Throwable) { phaseFailed(problem) } finally { activeInput = null; selectedKind = null; selectedPath = null }
+        } catch (problem: Throwable) {
+            phaseFailed(problem)
+        } finally {
+            activeInput = null
+            selectedKind = null
+            selectedPath = null
+        }
     }
 
     private fun retainPending(operation: CatalogSignerRotationActivationOperationV1, observation: CatalogSignerRotationActivationObservationV1) {
-        requireConnectionFree(); requireSqlCleanup(); requireRunning()
+        requireConnectionFree()
+        requireSqlCleanup()
+        requireRunning()
         val completion = stage === Stage.COMPLETE && completeOperation === operation && operation.input.kind === CatalogSignerRotationActivationKindV1.COMPLETE
         val reconciled = stage === Stage.RECHECK && mode === Mode.RECOVER && reconciliationOperation === operation &&
             operation.input.kind === CatalogSignerRotationActivationKindV1.PENDING_RECHECK && observation === retainedHistory
-        requireSignerRotation((completion || reconciled) && pending == null && operation.input.original === this && operation.observation === observation &&
-            completedHistory === observation && observation.completedAt != null && observation.projectedAt == null)
-        val actual = checkNotNull(campaign); val started = actual.requireLocalWindow().startedAtNanos
-        requireSignerRotation(started == leaseStartedAtNanos); actual.close()
-        pending = Pending(operation, operation.input, observation, budget, started); stage = Stage.PENDING; requirePending()
+        requireSignerRotation(
+            (completion || reconciled) && pending == null && operation.input.original === this && operation.observation === observation &&
+                completedHistory === observation && observation.completedAt != null && observation.projectedAt == null,
+        )
+        val actual = checkNotNull(campaign)
+        val started = actual.requireLocalWindow().startedAtNanos
+        requireSignerRotation(started == leaseStartedAtNanos)
+        actual.close()
+        pending = Pending(operation, operation.input, observation, budget, started)
+        stage = Stage.PENDING
+        requirePending()
     }
 
     private fun requirePending() {
-        requireConnectionFree(); requireRunning(); requireSqlCleanup(); requirePendingIdentity()
+        requireConnectionFree()
+        requireRunning()
+        requireSqlCleanup()
+        requirePendingIdentity()
         val held = checkNotNull(pending)
         requireSignerRotation(!held.spent && !projectIssued && held.operation.observation === held.observation)
         assembly.requireProviderCleanup()
     }
 
     private fun requirePendingIdentity() {
-        requireRunning(); val held = checkNotNull(pending)
+        requireRunning()
+        val held = checkNotNull(pending)
         val operation = when (held.input.kind) {
             CatalogSignerRotationActivationKindV1.COMPLETE -> completeOperation
             CatalogSignerRotationActivationKindV1.PENDING_RECHECK -> reconciliationOperation
             else -> null
         }
-        requireSignerRotation(held.allowance === budget && held.startedAtNanos == leaseStartedAtNanos && held.operation === operation &&
-            held.operation.input === held.input && held.input.original === this && held.observation === completedHistory)
+        requireSignerRotation(
+            held.allowance === budget && held.startedAtNanos == leaseStartedAtNanos && held.operation === operation &&
+                held.operation.input === held.input && held.input.original === this && held.observation === completedHistory,
+        )
         requireOriginalDeadline(held.startedAtNanos)
     }
 
     private fun requireSnapshotTuple(local: LocalCatalogSnapshot) {
-        if (mode === Mode.INITIAL) requireSignerRotation(local is LocalCatalogSnapshot.Accepted && local.head.generation == 2L &&
-            local.head.envelopeSha256 == inputs.manifest.previousEnvelopeSha256, CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
-        else when (local) {
-            is LocalCatalogSnapshot.Prepared -> {
-                requireSignerRotation(local.head.generation == 2L && local.head.envelopeSha256 == inputs.manifest.previousEnvelopeSha256)
-                inputs.requireMutation(local.mutation)
-                local.mutation.signedEnvelopeBytes?.let { requireSignerRotation(it.contentEquals(checkNotNull(release).returnedMutation()?.signedEnvelopeBytes)) }
+        if (mode === Mode.INITIAL) {
+            requireSignerRotation(
+                local is LocalCatalogSnapshot.Accepted && local.head.generation == 2L &&
+                    local.head.envelopeSha256 == inputs.manifest.previousEnvelopeSha256,
+                CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+            )
+        } else {
+            when (local) {
+                is LocalCatalogSnapshot.Prepared -> {
+                    requireSignerRotation(local.head.generation == 2L && local.head.envelopeSha256 == inputs.manifest.previousEnvelopeSha256)
+                    inputs.requireMutation(local.mutation)
+                    local.mutation.signedEnvelopeBytes?.let {
+                        requireSignerRotation(it.contentEquals(checkNotNull(release).returnedMutation()?.signedEnvelopeBytes))
+                    }
+                }
+
+                is LocalCatalogSnapshot.ProjectionPending -> requireSignerRotation(
+                    local.head.generation == 3L &&
+                        local.projection.operationToken == inputs.manifest.operationToken &&
+                        local.head.envelopeSha256 == checkNotNull(release).expectedFrozenMutation().signedEnvelopeSha256 &&
+                        local.projection.signedEnvelopeBytes.contentEquals(checkNotNull(release).envelopeBytes()),
+                )
+
+                is LocalCatalogSnapshot.Accepted -> requireSignerRotation(
+                    local.head.generation == 3L &&
+                        local.head.envelopeSha256 == checkNotNull(release).expectedFrozenMutation().signedEnvelopeSha256,
+                )
+
+                else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
             }
-            is LocalCatalogSnapshot.ProjectionPending -> requireSignerRotation(local.head.generation == 3L &&
-                local.projection.operationToken == inputs.manifest.operationToken && local.head.envelopeSha256 == checkNotNull(release).expectedFrozenMutation().signedEnvelopeSha256 &&
-                local.projection.signedEnvelopeBytes.contentEquals(checkNotNull(release).envelopeBytes()))
-            is LocalCatalogSnapshot.Accepted -> requireSignerRotation(local.head.generation == 3L &&
-                local.head.envelopeSha256 == checkNotNull(release).expectedFrozenMutation().signedEnvelopeSha256)
-            else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
         }
         if (mode === Mode.CONTINUE) requireSignerRotation(local is LocalCatalogSnapshot.Prepared && local.mutation.signedEnvelopeBytes == null)
     }
 
     private fun requireSnapshotHistory(value: CatalogSignerRotationActivationObservationV1) {
-        requireConnectionFree(); requireRunning()
-        val proof = checkNotNull(readback); proof.requireSnapshot(checkNotNull(snapshot)); assembly.requireProof(proof)
+        requireConnectionFree()
+        requireRunning()
+        val proof = checkNotNull(readback)
+        proof.requireSnapshot(checkNotNull(snapshot))
+        assembly.requireProof(proof)
         inputs.requireGenesisHistory(value, proof)
-        requireSignerRotation(value.genesis.signedEnvelopeBytes.contentEquals(proof.genesisBytes()) && value.overlap.signedEnvelopeBytes.contentEquals(proof.overlapBytes()))
+        requireSignerRotation(
+            value.genesis.signedEnvelopeBytes.contentEquals(proof.genesisBytes()) && value.overlap.signedEnvelopeBytes.contentEquals(proof.overlapBytes()),
+        )
         requireSignerRotation(sameArguments(value.overlapCopyArguments(), CatalogSignerRotationActivationInputV1.overlapCopies(proof)))
         val expectedState = when (val local = snapshot) {
             is LocalCatalogSnapshot.Prepared -> value.mutation != null && value.completedAt == null && value.projectedAt == null
+
             is LocalCatalogSnapshot.ProjectionPending -> value.completedAt != null && value.projectedAt == null
-            is LocalCatalogSnapshot.Accepted -> if (local.head.generation == 2L) value.mutation == null else value.completedAt != null && value.projectedAt != null
+
+            is LocalCatalogSnapshot.Accepted -> if (local.head.generation ==
+                2L
+            ) {
+                value.mutation == null
+            } else {
+                value.completedAt != null && value.projectedAt != null
+            }
+
             else -> false
         }
         requireSignerRotation(expectedState)
-        value.mutation?.let { inputs.requireMutation(it); requireSignerRotation(sameSignerRotationMutation(it, checkNotNull(mutation))) }
-        if (value.completedAt != null) requireSignerRotation(sameArguments(value.copyArguments(), CatalogSignerRotationActivationInputV1.copies(
-            proof.objectVersion, proof.retainUntilEpochSecond, checkNotNull(proof.primaryEvidenceBytes()), checkNotNull(proof.replicaEvidenceBytes()))))
+        value.mutation?.let {
+            inputs.requireMutation(it)
+            requireSignerRotation(sameSignerRotationMutation(it, checkNotNull(mutation)))
+        }
+        if (value.completedAt != null) {
+            requireSignerRotation(
+                sameArguments(
+                    value.copyArguments(),
+                    CatalogSignerRotationActivationInputV1.copies(
+                        proof.objectVersion,
+                        proof.retainUntilEpochSecond,
+                        checkNotNull(proof.primaryEvidenceBytes()),
+                        checkNotNull(proof.replicaEvidenceBytes()),
+                    ),
+                ),
+            )
+        }
         if (value.mutation != null) release?.requireObservedHistory(value)
     }
 
-    internal fun frozenMutationOrNull(): CatalogFrozenMutation? { requireRunning(); return mutation }
+    internal fun frozenMutationOrNull(): CatalogFrozenMutation? {
+        requireRunning()
+        return mutation
+    }
     internal fun frozenMutation(): CatalogFrozenMutation = checkNotNull(frozenMutationOrNull())
-    internal fun isRecovery(): Boolean { requireRunning(); return mode === Mode.RECOVER }
+    internal fun isRecovery(): Boolean {
+        requireRunning()
+        return mode === Mode.RECOVER
+    }
     internal fun requireInputAcquisition(selected: CatalogSignerRotationFreezeRequestV1) {
-        requireRunning(); requireSignerRotation(stage === Stage.INPUTS && request === selected && selectedInputs == null)
+        requireRunning()
+        requireSignerRotation(stage === Stage.INPUTS && request === selected && selectedInputs == null)
     }
     internal fun requireObservedSnapshot(selected: LocalCatalogSnapshot) {
-        requireProviderRunning(); requireSignerRotation(stage === Stage.READBACK && snapshot === selected)
+        requireProviderRunning()
+        requireSignerRotation(stage === Stage.READBACK && snapshot === selected)
     }
     internal fun requireBindingInputs(candidate: VersionBoundComplaintProcessConfiguration, raw: CatalogDualLocationVerifier.Activation3Readback) {
-        requireConnectionFree(); requireRunning(); requireSqlCleanup()
+        requireConnectionFree()
+        requireRunning()
+        requireSqlCleanup()
         requireSignerRotation(stage === Stage.ACQUIRE && !acquireIssued && binding == null && candidate === process && raw === readback)
-        assembly.requireProof(raw); raw.requireSnapshot(checkNotNull(snapshot)); inputs.requirePrefix(raw)
+        assembly.requireProof(raw)
+        raw.requireSnapshot(checkNotNull(snapshot))
+        inputs.requirePrefix(raw)
     }
 
     internal fun requireSnapshotSelection(candidate: PersistencePhaseOwnership) {
@@ -712,11 +925,13 @@ internal class CatalogSignerRotationActivationV1 private constructor(
                 requireSignerRotation(preparedMarkerWritten)
                 checkNotNull(preparedOperation)
             }
+
             Mode.CONTINUE -> {
                 val previous = checkNotNull(continuationPrior)
                 requireSignerRotation(previous.continuationConsumed && previous.process === process)
                 checkNotNull(previous.preparedOperation)
             }
+
             Mode.RECOVER -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         }
         predecessor.observation.requireSame(value)
@@ -830,7 +1045,8 @@ internal class CatalogSignerRotationActivationV1 private constructor(
             stage === Stage.ARM_COMPLETE && release === selected && completeIssued && !completeArmed && proof === readback &&
                 proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_DUAL_COPY &&
                 reconciliationOperation?.input?.kind === CatalogSignerRotationActivationKindV1.PREPARED_RECHECK &&
-                reconciliationOperation?.observation === retainedHistory && retainedHistory?.mutation?.signedEnvelopeBytes != null && retainedHistory?.completedAt == null,
+                reconciliationOperation?.observation === retainedHistory && retainedHistory?.mutation?.signedEnvelopeBytes != null &&
+                retainedHistory?.completedAt == null,
             CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
         )
         assembly.requireProof(proof)
@@ -1096,7 +1312,8 @@ internal class CatalogSignerRotationActivationV1 private constructor(
             }
 
             CatalogSignerRotationActivationStateV1.PREPARED_UNSIGNED, CatalogSignerRotationActivationStateV1.SIGNED_UNPUBLISHED,
-            CatalogSignerRotationActivationStateV1.AWAIT_REPLICATION, CatalogSignerRotationActivationStateV1.PROJECTED -> {
+            CatalogSignerRotationActivationStateV1.AWAIT_REPLICATION, CatalogSignerRotationActivationStateV1.PROJECTED,
+            -> {
                 requireActualCleanup()
                 requireSignerRotation(released && closeFailure == null, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
             }
@@ -1117,10 +1334,29 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     }
 
     private enum class Stage {
-        NEW, INPUTS, SNAPSHOT, READBACK, ACQUIRE, HISTORY, RECHECK, ALLOCATE,
-        ARM_PREPARE, PREPARE, ARM_SIGN, SIGN, ARM_SIGNATURE, SIGNATURE,
-        ARM_PUBLICATION, PUBLISH, EVIDENCE, ARM_COMPLETE, COMPLETE, PENDING,
-        ARM_PROJECT, PROJECT, CLOSED,
+        NEW,
+        INPUTS,
+        SNAPSHOT,
+        READBACK,
+        ACQUIRE,
+        HISTORY,
+        RECHECK,
+        ALLOCATE,
+        ARM_PREPARE,
+        PREPARE,
+        ARM_SIGN,
+        SIGN,
+        ARM_SIGNATURE,
+        SIGNATURE,
+        ARM_PUBLICATION,
+        PUBLISH,
+        EVIDENCE,
+        ARM_COMPLETE,
+        COMPLETE,
+        PENDING,
+        ARM_PROJECT,
+        PROJECT,
+        CLOSED,
     }
 
     private enum class Mode { INITIAL, CONTINUE, RECOVER }

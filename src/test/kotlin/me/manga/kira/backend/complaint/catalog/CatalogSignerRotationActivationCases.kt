@@ -61,7 +61,10 @@ internal class CatalogSignerRotationActivationCases(private val f: CatalogSigner
             observed.acquisitionRecord(CatalogSignerRotationReleaseLeafV1.PUBLICATION_ARMED, "publication-armed")
             observed.acquisitionRecord(CatalogSignerRotationReleaseLeafV1.COMPLETE_ARMED, "complete-armed")
             observed.acquisitionRecord(
-                CatalogSignerRotationReleaseLeafV1.COMPLETE_OUTCOME, "completed3-pending3", head3 = true, times = listOf(completed),
+                CatalogSignerRotationReleaseLeafV1.COMPLETE_OUTCOME,
+                "completed3-pending3",
+                head3 = true,
+                times = listOf(completed),
             )
             projectOnce(root, original, actualComplete = true, prepares = 1, signatures = 1, initiallySigned = false)
             observed.oneSignAndPut()
@@ -116,7 +119,9 @@ internal class CatalogSignerRotationActivationCases(private val f: CatalogSigner
             f.core.refused { root.activate(original) }
             root.assertReleased(original)
             assertEquals(
-                1, root.jdbc.steps.count { it == "lease-acquire" }, "Reach the genuine live historical lease CAS, not a local lock refusal.",
+                1,
+                root.jdbc.steps.count { it == "lease-acquire" },
+                "Reach the genuine live historical lease CAS, not a local lock refusal.",
             )
             sql.effects(root, original, prepares = 0, signatures = 0, completes = 0, projects = 0)
             assertEquals(before, f.freeze.state())
@@ -227,14 +232,20 @@ internal class CatalogSignerRotationActivationCases(private val f: CatalogSigner
         sql.healthy(root, original, initiallySigned)
         if (createRecords) {
             observed.acquisitionRecord(
-                CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED, "project-armed", head3 = true, times = listOf(completed),
+                CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED,
+                "project-armed",
+                head3 = true,
+                times = listOf(completed),
             )
             observed.acquisitionRecord(
-                CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME, "projected3", head3 = true,
+                CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME,
+                "projected3",
+                head3 = true,
                 times = listOf(completed, f.row()["projected_at"] as Timestamp),
             )
             f.assertLeavesUnchanged(
-                before, setOf(CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED, CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME),
+                before,
+                setOf(CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED, CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME),
             )
         } else {
             assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME))

@@ -59,10 +59,7 @@ internal class CatalogSignerRotationActivationRoot(private val f: CatalogSignerR
         f.retainRoot(this)
     }
 
-    fun prepare(
-        inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.freeze.d7.rawDocument),
-        sameD: Boolean = true,
-    ) {
+    fun prepare(inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.freeze.d7.rawDocument), sameD: Boolean = true) {
         val old = f.projectedRoot.coordinator
         val oldOwner = poolTestField<PersistenceJdbcLifecycleOwner>(old, "owner")
         assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, oldOwner.observeShutdown())
@@ -120,10 +117,7 @@ internal class CatalogSignerRotationActivationRoot(private val f: CatalogSignerR
         f.freeze.d7.wallClock,
     ).also(attempts::add)
 
-    fun activate(
-        original: CatalogSignerRotationActivationV1,
-        request: CatalogSignerRotationFreezeRequestV1 = f.request,
-    ) = try {
+    fun activate(original: CatalogSignerRotationActivationV1, request: CatalogSignerRotationFreezeRequestV1 = f.request) = try {
         original.activate(
             request,
             CatalogSignerRotationActivationFixture.SIGNING_CREDENTIALS,
@@ -135,10 +129,7 @@ internal class CatalogSignerRotationActivationRoot(private val f: CatalogSignerR
         assertNoLostAssertions()
     }
 
-    fun recover(
-        original: CatalogSignerRotationActivationV1,
-        request: CatalogSignerRotationFreezeRequestV1 = f.request,
-    ) = try {
+    fun recover(original: CatalogSignerRotationActivationV1, request: CatalogSignerRotationFreezeRequestV1 = f.request) = try {
         // This API has no PUT or Sign credentials; both native constructions remain absent, not merely uncalled.
         val signClients = f.signing.createdClients
         val signs = f.signing.requests.size

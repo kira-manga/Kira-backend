@@ -33,7 +33,13 @@ internal class CatalogGenesisPublishHttpFixture(
 ) {
     private val predecessor = predecessorBytes?.copyOf()
     private val overlap = overlapBytes?.copyOf()
-    private val generation = if (overlap != null) 3L else if (predecessor != null) 2L else 1L
+    private val generation = if (overlap != null) {
+        3L
+    } else if (predecessor != null) {
+        2L
+    } else {
+        1L
+    }
     private val objectKey = CatalogReadbackProtocol.key(generation)
     private val publishedVersion = when (generation) {
         1L -> VERSION

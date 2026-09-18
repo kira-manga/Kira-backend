@@ -77,8 +77,10 @@ internal class OfflineCatalogChainAuthentication private constructor(
     /** Fixed immediate2->3 author precondition, reusing unchanged schema1/current-policy/chronology checks. */
     internal fun requireImmediateActivation(manifest: OfflineCatalogRotationManifestV1, policy: OfflineCatalogChainReaderPolicy) {
         requireOfflineTrustBundle(tail.generation == 2L && rotation is CatalogRotationState.AwaitingActivation)
-        requireOfflineTrustBundle(manifest.schemaVersion == 1 && manifest.generation == 3L &&
-            manifest.operation == OfflineCatalogChainProtocol.ROTATION_ACTIVATE && manifest.restoreInventory == emptyInventory)
+        requireOfflineTrustBundle(
+            manifest.schemaVersion == 1 && manifest.generation == 3L &&
+                manifest.operation == OfflineCatalogChainProtocol.ROTATION_ACTIVATE && manifest.restoreInventory == emptyInventory,
+        )
         val claims = manifest.authenticationClaims()
         validateClaims(claims, policy)
         requireOfflineTrustBundle(nextRotation(claims) is CatalogRotationState.Stable)

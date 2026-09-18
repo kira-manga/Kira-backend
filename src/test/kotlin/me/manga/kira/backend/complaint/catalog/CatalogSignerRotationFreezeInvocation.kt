@@ -296,8 +296,7 @@ internal class CatalogSignerRotationProbeJdbc(
     private val coordinator: CatalogCoordinatorPersistence,
     private val observeDeliveryQueries: Boolean = false,
     private val observeActivationQueries: Boolean = false,
-) :
-    JdbcTemplate(coordinator.dataSource) {
+) : JdbcTemplate(coordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<CatalogSignerRotationSqlCall>()
     val returnedRowCounts = linkedMapOf<CatalogSignerRotationSqlCall, Int>()

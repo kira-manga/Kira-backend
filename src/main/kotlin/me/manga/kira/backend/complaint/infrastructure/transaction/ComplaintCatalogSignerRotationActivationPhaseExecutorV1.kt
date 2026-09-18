@@ -25,10 +25,19 @@ internal class ComplaintCatalogSignerRotationActivationPhaseExecutorV1(
         val capacity = JdbcComplaintCapacityStore(jdbc, input.original.capacityDigest())
         val phase = when (input.path) {
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ -> ownership.enterComplaintSignerRotationActivationRead(input.original)
-            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_COMPLETE -> ownership.enterComplaintSignerRotationActivationComplete(input.original)
+
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_COMPLETE -> ownership.enterComplaintSignerRotationActivationComplete(
+                input.original,
+            )
+
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PROJECT -> ownership.enterComplaintSignerRotationActivationProject(input.original)
+
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE -> ownership.enterComplaintSignerRotationActivationPrepare(input.original)
-            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE -> ownership.enterComplaintSignerRotationActivationSignature(input.original)
+
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE -> ownership.enterComplaintSignerRotationActivationSignature(
+                input.original,
+            )
+
             else -> error("Unsupported fixed signer rotation activation phase.")
         }
         var operation: CatalogSignerRotationActivationOperationV1? = null

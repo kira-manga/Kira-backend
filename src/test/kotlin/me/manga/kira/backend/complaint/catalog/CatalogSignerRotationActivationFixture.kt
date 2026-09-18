@@ -27,13 +27,11 @@ import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
-internal fun withCatalogSignerRotationActivation(
-    tls: VersionBoundPersistenceConnectedFixture,
-    test: (CatalogSignerRotationActivationFixture) -> Unit,
-) = CatalogSignerRotationActivationFixture(tls).use { fixture ->
-    fixture.prepare()
-    test(fixture)
-}
+internal fun withCatalogSignerRotationActivation(tls: VersionBoundPersistenceConnectedFixture, test: (CatalogSignerRotationActivationFixture) -> Unit) =
+    CatalogSignerRotationActivationFixture(tls).use { fixture ->
+        fixture.prepare()
+        test(fixture)
+    }
 
 /** Actual G1 -> D7 -> overlap2 -> projected2 prefix; owns only its subsequent operation3 and explicitly negative rows. */
 internal class CatalogSignerRotationActivationFixture(tls: VersionBoundPersistenceConnectedFixture) : AutoCloseable {
@@ -144,7 +142,9 @@ internal class CatalogSignerRotationActivationFixture(tls: VersionBoundPersisten
 
     fun mutationJson(): String = checkNotNull(
         observer.queryForObject(
-            "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m WHERE operation_token = ?", String::class.java, token,
+            "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m WHERE operation_token = ?",
+            String::class.java,
+            token,
         ),
     )
 
@@ -173,10 +173,7 @@ internal class CatalogSignerRotationActivationFixture(tls: VersionBoundPersisten
         }
     }
 
-    fun assertLeavesUnchanged(
-        snapshot: Map<Path, Pair<Map<String, Any>, ByteArray>>,
-        appended: Set<CatalogSignerRotationReleaseLeafV1> = emptySet(),
-    ) {
+    fun assertLeavesUnchanged(snapshot: Map<Path, Pair<Map<String, Any>, ByteArray>>, appended: Set<CatalogSignerRotationReleaseLeafV1> = emptySet()) {
         val current = snapshotLeaves()
         val added = appended.flatMap { listOf(path(it), path(it).resolveSibling("${it.fileName}.complete")) }.toSet()
         assertEquals(snapshot.keys + added, current.keys)
@@ -204,7 +201,8 @@ internal class CatalogSignerRotationActivationFixture(tls: VersionBoundPersisten
                 // Post-assertion isolation only, never PROJECT or lease/head/time mutation, slot clearing or an UNKNOWN cleanup receipt.
                 observer.update(
                     "UPDATE complaint_journal_control SET pending_projection_token = NULL WHERE data_scope_id = ? AND pending_projection_token = ?",
-                    ComplaintDataScope.LIVE.id, token,
+                    ComplaintDataScope.LIVE.id,
+                    token,
                 )
                 (negativeTokens + token).forEach { observer.update("DELETE FROM complaint_catalog_mutations WHERE operation_token = ?", it) }
             }
@@ -226,7 +224,9 @@ internal class CatalogSignerRotationActivationFixture(tls: VersionBoundPersisten
 
     companion object {
         val SIGNING_CREDENTIALS: AwsSessionCredentials = AwsSessionCredentials.create(
-            "SYNTHETICACTIVATIONKMS", "synthetic-activation-kms-secret", "synthetic-activation-kms-session",
+            "SYNTHETICACTIVATIONKMS",
+            "synthetic-activation-kms-secret",
+            "synthetic-activation-kms-session",
         )
     }
 }

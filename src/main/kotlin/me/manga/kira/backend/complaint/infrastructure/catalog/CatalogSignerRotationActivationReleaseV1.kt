@@ -43,17 +43,22 @@ internal class CatalogSignerRotationActivationReleaseV1(
         original.requireRunning()
         requireRecovery(inputs.allocation(bindingBytes).contentEquals(allocation))
         val desired = original.process.desiredSettings()
-        val expected = listOf(desired.desiredGeneration.toString(), HexFormat.of().formatHex(original.process.configurationHashBytes()),
+        val expected = listOf(
+            desired.desiredGeneration.toString(), HexFormat.of().formatHex(original.process.configurationHashBytes()),
             desired.databaseIdentity.toString(), desired.restoreIdentity.toString(),
             original.process.consumers.journalConfiguration.declaration().writer.generationId,
             "2", inputs.manifest.previousEnvelopeSha256, Sha256.hex(inputs.currentBytes()), inputs.manifest.catalogWriterGenerationId,
-            HexFormat.of().formatHex(original.process.consumers.capacityPolicy.digestBytes()))
+            HexFormat.of().formatHex(original.process.consumers.capacityPolicy.digestBytes()),
+        )
         requireRecovery(binding.drop(2).take(10) == expected)
         val owner = UUID.fromString(binding[12])
         requireRecovery(owner.toString() == binding[12] && owner.version() == 4 && owner.variant() == 2)
         requireRecovery(binding[13].toLong() > 0 && binding[13].toLong().toString() == binding[13])
-        if (created) inputLeaves().forEach { (leaf, bytes) -> requireCreated(leaf, bytes) }
-        else inputLeaves().forEach { (leaf, bytes) -> requireExact(leaf, bytes) }
+        if (created) {
+            inputLeaves().forEach { (leaf, bytes) -> requireCreated(leaf, bytes) }
+        } else {
+            inputLeaves().forEach { (leaf, bytes) -> requireExact(leaf, bytes) }
+        }
         if (!created) {
             requireExact(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
             custody.read(CatalogSignerRotationReleaseLeafV1.PREPARED)?.let { requireRecovery(it.contentEquals(record("prepared-unsigned-head2"))) }
@@ -112,8 +117,13 @@ internal class CatalogSignerRotationActivationReleaseV1(
         requireRecovery(sameSignerRotationMutation(checkNotNull(value.mutation), inputs.unsigned()))
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARED, record("prepared-unsigned-head2"))
-        (listOf(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_ARMED, CatalogSignerRotationReleaseLeafV1.SIGN_ONE_RETURNED,
-            CatalogSignerRotationReleaseLeafV1.SIGNATURE_ONE) + SIGNATURE_TAIL + CatalogSignerRotationReleaseLeafV1.deliveryLeaves())
+        (
+            listOf(
+                CatalogSignerRotationReleaseLeafV1.SIGN_ONE_ARMED,
+                CatalogSignerRotationReleaseLeafV1.SIGN_ONE_RETURNED,
+                CatalogSignerRotationReleaseLeafV1.SIGNATURE_ONE,
+            ) + SIGNATURE_TAIL + CatalogSignerRotationReleaseLeafV1.deliveryLeaves()
+            )
             .forEach { requireRecovery(custody.read(it) == null) }
     }
 
@@ -336,7 +346,8 @@ internal class CatalogSignerRotationActivationReleaseV1(
         requireConnectionFree()
         original.requireRunning()
         if (proof.state === CatalogDualLocationVerifier.Activation3Readback.State.HEAD2 ||
-            proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNSIGNED) {
+            proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNSIGNED
+        ) {
             requireRecovery(publicationArm == null && completeArm == null && projectArm == null)
             COPY_LEAVES.forEach { requireRecovery(custody.read(it) == null) }
             return
@@ -375,8 +386,10 @@ internal class CatalogSignerRotationActivationReleaseV1(
 
     private fun requireFrozenProof(proof: CatalogDualLocationVerifier.Activation3Readback) = requireRecovery(
         proof.operationToken == inputs.manifest.operationToken && proof.frozenEnvelopeBytes().contentEquals(envelope) &&
-            (proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNPUBLISHED ||
-                (proof.observedTail.generation == 3L && proof.observedTail.envelopeSha256 == envelopeHash)),
+            (
+                proof.state === CatalogDualLocationVerifier.Activation3Readback.State.PREPARED_UNPUBLISHED ||
+                    (proof.observedTail.generation == 3L && proof.observedTail.envelopeSha256 == envelopeHash)
+                ),
     )
 
     private fun requireHistoryMatches(proof: CatalogDualLocationVerifier.Activation3Readback) =
@@ -521,8 +534,12 @@ internal class CatalogSignerRotationActivationReleaseV1(
     private class FinalizationRecord(val bytes: ByteArray, val lease: List<String>, val completedAt: Instant?, val projectedAt: Instant?)
 
     private companion object {
-        val SIGNATURE_TAIL = listOf(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED, CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED,
-            CatalogSignerRotationReleaseLeafV1.ENVELOPE, CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME)
+        val SIGNATURE_TAIL = listOf(
+            CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED,
+            CatalogSignerRotationReleaseLeafV1.ENVELOPE,
+            CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME,
+        )
         val COPY_LEAVES = listOf(
             CatalogSignerRotationReleaseLeafV1.PRIMARY_COPY,
             CatalogSignerRotationReleaseLeafV1.REPLICA_COPY,

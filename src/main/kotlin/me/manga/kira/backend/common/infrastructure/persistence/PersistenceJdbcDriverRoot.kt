@@ -19,9 +19,13 @@ internal class PersistenceJdbcDriverRoot(
     internal val catalogSignerRotationActivation: Boolean = false,
 ) {
     init {
-        check(!catalogSignerRotationActivation ||
-            (!catalogSignerRotationDelivery && !catalogSignerRotationAuthoring && !catalogSignerRotationRecovery &&
-                !desiredInstallationOperator && !catalogGenesisAuthoring && !catalogGenesisFinalization && !sourceOnly && versionBound != null))
+        check(
+            !catalogSignerRotationActivation ||
+                (
+                    !catalogSignerRotationDelivery && !catalogSignerRotationAuthoring && !catalogSignerRotationRecovery &&
+                        !desiredInstallationOperator && !catalogGenesisAuthoring && !catalogGenesisFinalization && !sourceOnly && versionBound != null
+                    ),
+        )
         check(
             !catalogSignerRotationDelivery ||
                 (

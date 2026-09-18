@@ -57,7 +57,9 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         requireBinding(binding, jdbc)
         active.get()?.retireIfExpired()
         if (active.get() != null) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
-        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original, initialAuthor, delivery, activation))
+        return reserve(
+            Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original, initialAuthor, delivery, activation),
+        )
     }
 
     @Suppress("TooGenericExceptionCaught")

@@ -139,13 +139,19 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
     internal fun verifySignerRotationActivation(readback: CatalogDualLocationVerifier.Activation3Readback, evaluatedAt: Instant) {
         requireConnectionFree()
         val policy = policyAt(evaluatedAt)
-        requireCatalogReadback(!projectedCurrent && readback.initialTrustBundleSha256 == initialTrustBundleSha256 &&
-            readback.currentTrustBundleSha256 == currentTrustBundleSha256 && readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
-            readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond, CatalogReadbackFailure.INVALID_POLICY)
+        requireCatalogReadback(
+            !projectedCurrent && readback.initialTrustBundleSha256 == initialTrustBundleSha256 &&
+                readback.currentTrustBundleSha256 == currentTrustBundleSha256 && readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
+                readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond,
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
         val genesis = OfflineTrustBundleParser.parseGenesis(readback.genesisBytes()).manifest
         val empty = GenesisEmptyHeadV1(0, Sha256.hexUtf8("[]"))
-        requireCatalogReadback(genesis.restoreInventory == empty && genesis.history == GenesisEmptyHistoryV1(empty, empty, empty, empty, empty, empty, empty) &&
-            Sha256.hex(readback.genesisBytes()) == expectedGenesisEnvelopeSha256, CatalogReadbackFailure.HEAD_CONFLICT)
+        requireCatalogReadback(
+            genesis.restoreInventory == empty && genesis.history == GenesisEmptyHistoryV1(empty, empty, empty, empty, empty, empty, empty) &&
+                Sha256.hex(readback.genesisBytes()) == expectedGenesisEnvelopeSha256,
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
         readback.retentionPairs().forEach { (created, retained) ->
             verifyCreationRetention(created, retained, evaluatedAt, policy.requiredRetainUntilEpochSecond)
         }

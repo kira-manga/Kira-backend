@@ -31,9 +31,13 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
 ) : AutoCloseable {
     internal val allocationDirectoryName: String = if (activation) "rotation-activation-3" else "rotation-overlap-2"
     internal val leaves: List<CatalogSignerRotationReleaseLeafV1> = CatalogSignerRotationReleaseLeafV1.entries.filter {
-        !activation || it !in setOf(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED, CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED,
-            CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO, CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED,
-            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED)
+        !activation || it !in setOf(
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED,
+            CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED,
+        )
     }
     private val caller = Thread.currentThread()
     private val files = LinuxSignerRotationReleaseFilesV1(this, root)

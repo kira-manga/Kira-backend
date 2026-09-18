@@ -11,8 +11,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFina
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1

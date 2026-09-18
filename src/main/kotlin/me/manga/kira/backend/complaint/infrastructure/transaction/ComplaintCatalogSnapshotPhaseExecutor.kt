@@ -13,8 +13,8 @@ import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
@@ -132,7 +132,8 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
     ): CatalogSnapshotRows {
         requireConnectionFree()
         val phase =
-            activation?.let(ownership::enterComplaintCatalogSnapshot) ?: delivery?.let(ownership::enterComplaintCatalogSnapshot) ?: initialAuthor?.let(ownership::enterComplaintCatalogSnapshot)
+            activation?.let(ownership::enterComplaintCatalogSnapshot) ?: delivery?.let(ownership::enterComplaintCatalogSnapshot)
+                ?: initialAuthor?.let(ownership::enterComplaintCatalogSnapshot)
                 ?: recovery?.let(ownership::enterComplaintCatalogSnapshot)
                 ?: finalizer?.let(ownership::enterComplaintCatalogSnapshot) ?: author?.let(ownership::enterComplaintCatalogSnapshot)
                 ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()

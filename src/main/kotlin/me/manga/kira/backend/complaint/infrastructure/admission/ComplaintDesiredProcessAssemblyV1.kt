@@ -134,7 +134,16 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
             inputs.publicTrustPem(),
             inputs.protectedTrustParent,
         )
-        val runtime = bindTargetOwner(inputs, runtimeConfiguration, finalizer, signerRotationRecovery, signerRotationAuthoring, signerRotationDelivery, signerRotationActivation)
+        val runtime =
+            bindTargetOwner(
+                inputs,
+                runtimeConfiguration,
+                finalizer,
+                signerRotationRecovery,
+                signerRotationAuthoring,
+                signerRotationDelivery,
+                signerRotationActivation,
+            )
         targetOwner = runtime // Before shell binding, including a failed/partly constructed pool composition.
         val pools = when {
             signerRotationActivation -> runtime.bindCatalogSignerRotationActivationPools(nanoClock)

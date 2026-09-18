@@ -52,7 +52,13 @@ internal class CatalogSignerRotationActivationRecoveryCases(private val f: Catal
             }
             ownership.raw(original, rawState)
             sql.acquired(
-                root, original, previousLease, lower, upper, head3 = state !== ActualState.PREPARED, pending = state === ActualState.PENDING,
+                root,
+                original,
+                previousLease,
+                lower,
+                upper,
+                head3 = state !== ActualState.PREPARED,
+                pending = state === ActualState.PENDING,
             )
             sql.healthy(root, original, initiallySigned = true)
             val needsComplete = state === ActualState.PREPARED
@@ -102,7 +108,11 @@ internal class CatalogSignerRotationActivationRecoveryCases(private val f: Catal
             root.prepare()
             val original = root.begin()
             fault = CatalogSignerRotationActivationFault(
-                f, root, original, CatalogSignerRotationActivationCommitStage.SIGNATURE, CatalogSignerRotationColdCommitCut.UNKNOWN_ROLLBACK,
+                f,
+                root,
+                original,
+                CatalogSignerRotationActivationCommitStage.SIGNATURE,
+                CatalogSignerRotationColdCommitCut.UNKNOWN_ROLLBACK,
             )
             fault.interrupt { root.activate(original) }
             observed.prepared(signed = false)
@@ -140,10 +150,12 @@ internal class CatalogSignerRotationActivationRecoveryCases(private val f: Catal
             observed.prepared(signed = true)
             assertArrayEquals(returned, observed.signedBytes())
             assertArrayEquals(
-                f.read(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED), f.read(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED),
+                f.read(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED),
+                f.read(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED),
             )
             f.assertLeavesUnchanged(
-                leaves, setOf(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED, CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME),
+                leaves,
+                setOf(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED, CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME),
             )
             assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.PUBLICATION_ARMED))
             observed.oneSignAndPut(puts = 0)
@@ -192,7 +204,10 @@ internal class CatalogSignerRotationActivationRecoveryCases(private val f: Catal
                     observed.projectedHead3(completed)
                 }
                 observed.acquisitionRecord(
-                    CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED, "project-armed", head3 = true, times = listOf(completed),
+                    CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED,
+                    "project-armed",
+                    head3 = true,
+                    times = listOf(completed),
                 )
                 assertTrue(f.complete(CatalogSignerRotationReleaseLeafV1.COMPLETE_OUTCOME))
                 assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME))

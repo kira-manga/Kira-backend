@@ -85,12 +85,15 @@ internal class CatalogSignerRotationActivationRefusalCases(private val f: Catalo
             1,
             f.observer.update(
                 "UPDATE complaint_catalog_mutations SET signer_one_signature = ? WHERE operation_token = ?",
-                changed, genesis["operation_token"],
+                changed,
+                genesis["operation_token"],
             ),
         )
         val negative = f.core.genesisJson()
         val version = f.observer.queryForObject(
-            "SELECT xmin::text FROM complaint_catalog_mutations WHERE operation_token = ?", String::class.java, genesis["operation_token"],
+            "SELECT xmin::text FROM complaint_catalog_mutations WHERE operation_token = ?",
+            String::class.java,
+            genesis["operation_token"],
         )
         CatalogSignerRotationActivationRoot(f).use { root ->
             root.prepare()
@@ -112,7 +115,9 @@ internal class CatalogSignerRotationActivationRefusalCases(private val f: Catalo
             assertEquals(
                 version,
                 f.observer.queryForObject(
-                    "SELECT xmin::text FROM complaint_catalog_mutations WHERE operation_token = ?", String::class.java, genesis["operation_token"],
+                    "SELECT xmin::text FROM complaint_catalog_mutations WHERE operation_token = ?",
+                    String::class.java,
+                    genesis["operation_token"],
                 ),
             )
             val current = f.freeze.d7.genesisRow()
@@ -306,7 +311,10 @@ internal class CatalogSignerRotationActivationRefusalCases(private val f: Catalo
                     "envelope_bytes, envelope_hash, ?, object_version, retain_until, primary_evidence_bytes, primary_evidence_hash, " +
                     "replica_evidence_bytes, replica_evidence_hash, state, created_at, completed_at, projected_at " +
                     "FROM complaint_catalog_mutations WHERE operation_token = ?",
-                token, f.row()["envelope_hash"], CatalogReadbackProtocol.key(4), f.freeze.d7.genesisRow()["operation_token"],
+                token,
+                f.row()["envelope_hash"],
+                CatalogReadbackProtocol.key(4),
+                f.freeze.d7.genesisRow()["operation_token"],
             ),
         )
         val row = f.observer.queryForMap("SELECT * FROM complaint_catalog_mutations WHERE operation_token = ?", token)
@@ -325,14 +333,17 @@ internal class CatalogSignerRotationActivationRefusalCases(private val f: Catalo
     private fun controlWithoutLease(): String = checkNotNull(
         f.observer.queryForObject(
             "SELECT (to_jsonb(c) - ARRAY['lease_owner','lease_token','lease_expires_at','updated_at'])::text " +
-                "FROM complaint_journal_control c WHERE data_scope_id = ?", String::class.java, ComplaintDataScope.LIVE.id,
+                "FROM complaint_journal_control c WHERE data_scope_id = ?",
+            String::class.java,
+            ComplaintDataScope.LIVE.id,
         ),
     )
 
     private fun changeControl(column: String, value: Any?) {
         check(column == "lease_owner" || column == "pending_projection_token")
         assertEquals(
-            1, f.observer.update("UPDATE complaint_journal_control SET $column = ? WHERE data_scope_id = ?", value, ComplaintDataScope.LIVE.id),
+            1,
+            f.observer.update("UPDATE complaint_journal_control SET $column = ? WHERE data_scope_id = ?", value, ComplaintDataScope.LIVE.id),
         )
     }
 }

@@ -18,10 +18,20 @@ import java.util.HexFormat
 import java.util.UUID
 
 internal enum class CatalogSignerRotationActivationKindV1 {
-    INITIAL_HEAD_READ, INITIAL_PREPARED_READ, INITIAL_PENDING_READ, INITIAL_PROJECTED_READ,
-    HEAD_RECHECK, PREPARED_RECHECK, PENDING_RECHECK, PROJECTED_RECHECK,
-    PREPARE, SIGNATURE, COMPLETE, PROJECT,
+    INITIAL_HEAD_READ,
+    INITIAL_PREPARED_READ,
+    INITIAL_PENDING_READ,
+    INITIAL_PROJECTED_READ,
+    HEAD_RECHECK,
+    PREPARED_RECHECK,
+    PENDING_RECHECK,
+    PROJECTED_RECHECK,
+    PREPARE,
+    SIGNATURE,
+    COMPLETE,
+    PROJECT,
     ;
+
     internal val path: PersistencePhasePath get() = when (this) {
         PREPARE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE
         SIGNATURE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE
@@ -48,9 +58,14 @@ internal class CatalogSignerRotationActivationInputV1 private constructor(
     private val next = after ?: before
     private val token = UUID.fromString(manifest.operationToken)
     private val nextHash = next?.signedEnvelopeSha256?.let(::digest)
-    private val projectedBinding = nextHash?.let { hash -> acquired.copyOf().also {
-        if (it[5] == 2L) { it[5] = 3L; it[6] = hash.copyOf() }
-    } }
+    private val projectedBinding = nextHash?.let { hash ->
+        acquired.copyOf().also {
+            if (it[5] == 2L) {
+                it[5] = 3L
+                it[6] = hash.copyOf()
+            }
+        }
+    }
     private val pendingBinding = projectedBinding?.let { arrayOf<Any?>(*it, token) }
     private val advancingHead = if (headBinding != null && nextHash != null) arrayOf(*headBinding, token, nextHash) else null
     private val overlap = overlapArguments(proof, inputs.chain.limits)
@@ -59,16 +74,23 @@ internal class CatalogSignerRotationActivationInputV1 private constructor(
     private val copies = when (kind) {
         CatalogSignerRotationActivationKindV1.INITIAL_PENDING_READ, CatalogSignerRotationActivationKindV1.INITIAL_PROJECTED_READ,
         CatalogSignerRotationActivationKindV1.PENDING_RECHECK, CatalogSignerRotationActivationKindV1.PROJECTED_RECHECK,
-        CatalogSignerRotationActivationKindV1.COMPLETE -> copyArguments(proof)
+        CatalogSignerRotationActivationKindV1.COMPLETE,
+        -> copyArguments(proof)
+
         CatalogSignerRotationActivationKindV1.PROJECT -> checkNotNull(expected).copyArguments()
+
         else -> null
     }
     private val initialHistory = when (kind) {
         CatalogSignerRotationActivationKindV1.INITIAL_HEAD_READ, CatalogSignerRotationActivationKindV1.HEAD_RECHECK,
-        CatalogSignerRotationActivationKindV1.PREPARE -> overlap
+        CatalogSignerRotationActivationKindV1.PREPARE,
+        -> overlap
+
         CatalogSignerRotationActivationKindV1.INITIAL_PENDING_READ, CatalogSignerRotationActivationKindV1.INITIAL_PROJECTED_READ,
         CatalogSignerRotationActivationKindV1.PENDING_RECHECK, CatalogSignerRotationActivationKindV1.PROJECTED_RECHECK,
-        CatalogSignerRotationActivationKindV1.PROJECT -> arrayOf(*overlap, *checkNotNull(beforeActivation), *checkNotNull(copies))
+        CatalogSignerRotationActivationKindV1.PROJECT,
+        -> arrayOf(*overlap, *checkNotNull(beforeActivation), *checkNotNull(copies))
+
         else -> arrayOf(*overlap, *checkNotNull(beforeActivation))
     }
     private val finalHistory = when (kind) {
@@ -79,11 +101,15 @@ internal class CatalogSignerRotationActivationInputV1 private constructor(
     private val insert = activationArguments(inputs.unsigned()).take(11).toTypedArray()
     private val signature = if (kind === CatalogSignerRotationActivationKindV1.SIGNATURE) {
         arrayOf(*checkNotNull(beforeActivation), *checkNotNull(nextActivation).drop(11).toTypedArray())
-    } else null
+    } else {
+        null
+    }
     private val completion = copies?.let { arrayOf(*checkNotNull(nextActivation), *it) }
     private val projection = if (kind === CatalogSignerRotationActivationKindV1.PROJECT) {
         arrayOf(*checkNotNull(completion), Timestamp.from(checkNotNull(expected?.completedAt)))
-    } else null
+    } else {
+        null
+    }
 
     init {
         requireConnectionFree()
@@ -93,8 +119,12 @@ internal class CatalogSignerRotationActivationInputV1 private constructor(
         after?.let(inputs::requireMutation)
         if (acquired[5] == 3L) requireSignerRotation((acquired[6] as? ByteArray).contentEquals(nextHash))
         if (kind === CatalogSignerRotationActivationKindV1.PREPARE) requireSignerRotation(before == null && after?.signedEnvelopeBytes == null)
-        if (kind === CatalogSignerRotationActivationKindV1.SIGNATURE) requireSignerRotation(before?.signatureSlots?.single()?.signatureBytes == null &&
-            after?.signatureSlots?.single()?.signatureBytes != null)
+        if (kind === CatalogSignerRotationActivationKindV1.SIGNATURE) {
+            requireSignerRotation(
+                before?.signatureSlots?.single()?.signatureBytes == null &&
+                    after?.signatureSlots?.single()?.signatureBytes != null,
+            )
+        }
     }
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) = original.requireActivationPersistence(this, ownership, jdbc)
@@ -121,31 +151,50 @@ internal class CatalogSignerRotationActivationInputV1 private constructor(
     override fun toString(): String = "CatalogSignerRotationActivationInputV1(fixed2-to3,detached,original-owner,redacted)"
 
     companion object {
-        internal fun create(original: CatalogSignerRotationActivationV1, kind: CatalogSignerRotationActivationKindV1,
-            expected: CatalogSignerRotationActivationObservationV1?, after: CatalogFrozenMutation? = null): CatalogSignerRotationActivationInputV1 {
+        internal fun create(
+            original: CatalogSignerRotationActivationV1,
+            kind: CatalogSignerRotationActivationKindV1,
+            expected: CatalogSignerRotationActivationObservationV1?,
+            after: CatalogFrozenMutation? = null,
+        ): CatalogSignerRotationActivationInputV1 {
             requireConnectionFree()
             original.requireInputConstruction(kind, expected, after)
             return CatalogSignerRotationActivationInputV1(original, kind, expected, after)
         }
 
-        private fun overlapArguments(proof: CatalogDualLocationVerifier.Activation3Readback, limits: me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainLimits): Array<Any?> {
+        private fun overlapArguments(
+            proof: CatalogDualLocationVerifier.Activation3Readback,
+            limits: me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainLimits,
+        ): Array<Any?> {
             val bytes = proof.overlapBytes()
             val frozen = CatalogFrozenManifestParser.signed(bytes, limits)
             val manifest = OfflineTrustBundleParser.parseRotation(bytes).manifest
-            val approvals = CanonicalJson.canonicalize(ListSerializer(OfflineCatalogGenesisApprovalV1.serializer()), manifest.approvals).toByteArray(Charsets.UTF_8)
-            return arrayOf(UUID.fromString(manifest.operationToken), UUID.fromString(manifest.catalogWriterGenerationId), approvals, digest(Sha256.hex(approvals)),
-                frozen.manifestBytes, digest(frozen.manifestSha256), manifest.requiredSignerPolicy.members[0].keyId, manifest.requiredSignerPolicy.members[0].algorithmId,
+            val approvals = CanonicalJson.canonicalize(
+                ListSerializer(OfflineCatalogGenesisApprovalV1.serializer()),
+                manifest.approvals,
+            ).toByteArray(Charsets.UTF_8)
+            return arrayOf(
+                UUID.fromString(manifest.operationToken), UUID.fromString(manifest.catalogWriterGenerationId), approvals, digest(Sha256.hex(approvals)),
+                frozen.manifestBytes,
+                digest(
+                    frozen.manifestSha256,
+                ),
+                manifest.requiredSignerPolicy.members[0].keyId, manifest.requiredSignerPolicy.members[0].algorithmId,
                 manifest.requiredSignerPolicy.members[1].keyId, manifest.requiredSignerPolicy.members[1].algorithmId, CatalogReadbackProtocol.key(2),
                 Timestamp.from(Instant.ofEpochSecond(manifest.creation.createdAtEpochSecond)), digest(manifest.previousEnvelopeSha256),
-                Base64.getDecoder().decode(frozen.signatures[0].signatureBase64), Base64.getDecoder().decode(frozen.signatures[1].signatureBase64), bytes, digest(Sha256.hex(bytes)))
+                Base64.getDecoder().decode(
+                    frozen.signatures[0].signatureBase64,
+                ),
+                Base64.getDecoder().decode(frozen.signatures[1].signatureBase64), bytes, digest(Sha256.hex(bytes)),
+            )
         }
 
-        internal fun overlapCopies(proof: CatalogDualLocationVerifier.Activation3Readback): Array<Any?> = copies(
-            proof.overlapObjectVersion, proof.overlapRetainUntilEpochSecond, proof.overlapPrimaryEvidenceBytes(), proof.overlapReplicaEvidenceBytes())
-        private fun copyArguments(proof: CatalogDualLocationVerifier.Activation3Readback): Array<Any?> = copies(
-            proof.objectVersion, proof.retainUntilEpochSecond, checkNotNull(proof.primaryEvidenceBytes()), checkNotNull(proof.replicaEvidenceBytes()))
-        internal fun copies(version: String, retained: Long, primary: ByteArray, replica: ByteArray): Array<Any?> = arrayOf(
-            version, Timestamp.from(Instant.ofEpochSecond(retained)), primary, digest(Sha256.hex(primary)), replica, digest(Sha256.hex(replica)))
+        internal fun overlapCopies(proof: CatalogDualLocationVerifier.Activation3Readback): Array<Any?> =
+            copies(proof.overlapObjectVersion, proof.overlapRetainUntilEpochSecond, proof.overlapPrimaryEvidenceBytes(), proof.overlapReplicaEvidenceBytes())
+        private fun copyArguments(proof: CatalogDualLocationVerifier.Activation3Readback): Array<Any?> =
+            copies(proof.objectVersion, proof.retainUntilEpochSecond, checkNotNull(proof.primaryEvidenceBytes()), checkNotNull(proof.replicaEvidenceBytes()))
+        internal fun copies(version: String, retained: Long, primary: ByteArray, replica: ByteArray): Array<Any?> =
+            arrayOf(version, Timestamp.from(Instant.ofEpochSecond(retained)), primary, digest(Sha256.hex(primary)), replica, digest(Sha256.hex(replica)))
         private fun digest(value: String): ByteArray = HexFormat.of().parseHex(value)
     }
 }

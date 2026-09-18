@@ -356,8 +356,12 @@ internal object CatalogDualLocationVerifier {
         internal fun observedGeneration(): FrozenCatalogGeneration = CatalogFrozenManifestParser.signed(observedEnvelopeBytes(), policy.chain.limits)
         internal fun overlapPrimaryEvidenceBytes(): ByteArray = copyEvidence(checkNotNull(records[1].pair).primary, Sha256.hex(records[1].read.bytes))
         internal fun overlapReplicaEvidenceBytes(): ByteArray = copyEvidence(checkNotNull(records[1].pair).replica, Sha256.hex(records[1].read.bytes))
-        internal fun primaryEvidenceBytes(): ByteArray? = records.getOrNull(2)?.let { row -> row.pair?.let { copyEvidence(it.primary, Sha256.hex(row.read.bytes)) } }
-        internal fun replicaEvidenceBytes(): ByteArray? = records.getOrNull(2)?.let { row -> row.pair?.let { copyEvidence(it.replica, Sha256.hex(row.read.bytes)) } }
+        internal fun primaryEvidenceBytes(): ByteArray? = records.getOrNull(2)?.let { row ->
+            row.pair?.let { copyEvidence(it.primary, Sha256.hex(row.read.bytes)) }
+        }
+        internal fun replicaEvidenceBytes(): ByteArray? = records.getOrNull(2)?.let { row ->
+            row.pair?.let { copyEvidence(it.replica, Sha256.hex(row.read.bytes)) }
+        }
         val operationToken: String get() = when (val local = observed) {
             is LocalCatalogSnapshot.Prepared -> local.mutation.operationToken
             is LocalCatalogSnapshot.ProjectionPending -> local.projection.operationToken
@@ -381,12 +385,17 @@ internal object CatalogDualLocationVerifier {
         internal fun requireSnapshot(selected: LocalCatalogSnapshot) {
             val same = when (val before = observed) {
                 is LocalCatalogSnapshot.Accepted -> selected is LocalCatalogSnapshot.Accepted && selected.head == before.head
-                is LocalCatalogSnapshot.Prepared -> selected is LocalCatalogSnapshot.Prepared && selected.head == before.head &&
-                    sameSignerRotationMutation(selected.mutation, before.mutation)
-                is LocalCatalogSnapshot.ProjectionPending -> selected is LocalCatalogSnapshot.ProjectionPending && selected.head == before.head &&
-                    selected.projection.operationToken == before.projection.operationToken &&
-                    selected.projection.signedEnvelopeSha256 == before.projection.signedEnvelopeSha256 &&
-                    selected.projection.signedEnvelopeBytes.contentEquals(before.projection.signedEnvelopeBytes)
+
+                is LocalCatalogSnapshot.Prepared ->
+                    selected is LocalCatalogSnapshot.Prepared && selected.head == before.head &&
+                        sameSignerRotationMutation(selected.mutation, before.mutation)
+
+                is LocalCatalogSnapshot.ProjectionPending ->
+                    selected is LocalCatalogSnapshot.ProjectionPending && selected.head == before.head &&
+                        selected.projection.operationToken == before.projection.operationToken &&
+                        selected.projection.signedEnvelopeSha256 == before.projection.signedEnvelopeSha256 &&
+                        selected.projection.signedEnvelopeBytes.contentEquals(before.projection.signedEnvelopeBytes)
+
                 else -> false
             }
             requireCatalogReadback(same, CatalogReadbackFailure.INVALID_LOCAL_STATE)
@@ -407,16 +416,21 @@ internal object CatalogDualLocationVerifier {
                     is LocalCatalogSnapshot.Accepted -> local.head.also {
                         requireCatalogReadback(it.generation in 2L..3L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
                     }
+
                     is LocalCatalogSnapshot.Prepared -> local.head.also {
                         requireCatalogReadback(it.generation == 2L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
                         val frozen = CatalogLocalSnapshotVerifier.validateMutation(local.mutation, policy.chain.limits)
-                        requireCatalogReadback(frozen.schemaVersion == 1 && frozen.claims.generation == 3L &&
-                            frozen.claims.operation == "ROTATION_ACTIVATE" && frozen.claims.previousEnvelopeSha256 == it.envelopeSha256,
-                            CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                        requireCatalogReadback(
+                            frozen.schemaVersion == 1 && frozen.claims.generation == 3L &&
+                                frozen.claims.operation == "ROTATION_ACTIVATE" && frozen.claims.previousEnvelopeSha256 == it.envelopeSha256,
+                            CatalogReadbackFailure.INVALID_LOCAL_STATE,
+                        )
                     }
+
                     is LocalCatalogSnapshot.ProjectionPending -> local.head.also {
                         requireCatalogReadback(it.generation == 3L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
                     }
+
                     else -> throw CatalogReadbackException(CatalogReadbackFailure.INVALID_LOCAL_STATE)
                 }
                 val records = mutableListOf<ActivationRawRecord>()
@@ -428,20 +442,31 @@ internal object CatalogDualLocationVerifier {
                         requireCatalogReadback(local is LocalCatalogSnapshot.Accepted, CatalogReadbackFailure.HEAD_CONFLICT)
                         if (head.generation == 2L) State.HEAD2 else State.PROJECTED3
                     }
+
                     is CatalogReadbackResult.NeedsSignaturePersistence -> State.PREPARED_UNSIGNED
+
                     is CatalogReadbackResult.NeedsConditionalPublication -> State.PREPARED_UNPUBLISHED
+
                     is CatalogReadbackResult.AwaitReplication -> State.PREPARED_AWAIT_REPLICATION
+
                     is CatalogReadbackResult.PreparedCompletionEvidence -> State.PREPARED_DUAL_COPY
+
                     is CatalogReadbackResult.ProjectionResumeEvidence -> State.PROJECTION_PENDING_DUAL_COPY
+
                     else -> throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
                 }
                 val expectedSize = if (state in setOf(State.HEAD2, State.PREPARED_UNSIGNED, State.PREPARED_UNPUBLISHED)) 2 else 3
-                requireCatalogReadback(records.size == expectedSize && records[0].pair != null && records[1].pair != null,
-                    CatalogReadbackFailure.HEAD_CONFLICT)
+                requireCatalogReadback(
+                    records.size == expectedSize && records[0].pair != null && records[1].pair != null,
+                    CatalogReadbackFailure.HEAD_CONFLICT,
+                )
                 records.forEachIndexed { index, row ->
                     val frozen = CatalogFrozenManifestParser.signed(row.read.bytes, policy.chain.limits)
-                    requireCatalogReadback(frozen.schemaVersion == 1 && frozen.claims.generation == index + 1L &&
-                        frozen.claims.operation == listOf("GENESIS", "ROTATION_OVERLAP", "ROTATION_ACTIVATE")[index], CatalogReadbackFailure.HEAD_CONFLICT)
+                    requireCatalogReadback(
+                        frozen.schemaVersion == 1 && frozen.claims.generation == index + 1L &&
+                            frozen.claims.operation == listOf("GENESIS", "ROTATION_OVERLAP", "ROTATION_ACTIVATE")[index],
+                        CatalogReadbackFailure.HEAD_CONFLICT,
+                    )
                 }
                 if (state != State.PREPARED_AWAIT_REPLICATION) requireCatalogReadback(records.last().pair != null, CatalogReadbackFailure.HEAD_CONFLICT)
                 val common = when (result) {

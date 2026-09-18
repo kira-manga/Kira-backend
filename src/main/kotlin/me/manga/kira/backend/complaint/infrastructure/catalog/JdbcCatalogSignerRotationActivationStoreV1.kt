@@ -234,7 +234,9 @@ internal class CatalogSignerRotationActivationOperationV1 private constructor(
             CatalogSignerRotationActivationKindV1.INITIAL_PREPARED_READ,
             CatalogSignerRotationActivationKindV1.INITIAL_PENDING_READ,
             CatalogSignerRotationActivationKindV1.INITIAL_PROJECTED_READ,
-            -> check(input.expected == null) // Cold reads capture actual rows; they do not invent a precrash preimage.
+            -> check(input.expected == null)
+
+            // Cold reads capture actual rows; they do not invent a precrash preimage.
 
             CatalogSignerRotationActivationKindV1.HEAD_RECHECK,
             CatalogSignerRotationActivationKindV1.PREPARED_RECHECK,
@@ -466,8 +468,10 @@ internal class CatalogSignerRotationActivationObservationV1 private constructor(
         requireConnectionFree()
         requireSignerRotation(
             samePriorHistory(other) &&
-                ((activationRow == null && other.activationRow == null) ||
-                    (activationRow != null && other.activationRow != null && activationRow.same(other.activationRow))),
+                (
+                    (activationRow == null && other.activationRow == null) ||
+                        (activationRow != null && other.activationRow != null && activationRow.same(other.activationRow))
+                    ),
             CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
         )
     }
@@ -570,8 +574,7 @@ internal class StoredSignerRotationActivationRowV1 private constructor(
         check(lifecycle.completedAt == before.lifecycle.completedAt && sameFrozen(before) && copies.same(before.copies))
     }
 
-    internal fun same(other: StoredSignerRotationActivationRowV1): Boolean =
-        sameFrozen(other) && copies.same(other.copies) && lifecycle.same(other.lifecycle)
+    internal fun same(other: StoredSignerRotationActivationRowV1): Boolean = sameFrozen(other) && copies.same(other.copies) && lifecycle.same(other.lifecycle)
 
     private fun sameFrozen(other: StoredSignerRotationActivationRowV1): Boolean =
         sameUnsigned(other) && envelope.same(other.envelope) && signers.sameSignatures(other.signers)
@@ -601,8 +604,12 @@ internal class StoredSignerRotationActivationRowV1 private constructor(
         requireConnectionFree()
         check(lifecycle.state == "COMPLETED" && copies.complete())
         return arrayOf(
-            copies.version, copies.retainUntil?.let(Timestamp::from),
-            copies.primary.bytes?.copyOf(), copies.primary.hash?.copyOf(), copies.replica.bytes?.copyOf(), copies.replica.hash?.copyOf(),
+            copies.version,
+            copies.retainUntil?.let(Timestamp::from),
+            copies.primary.bytes?.copyOf(),
+            copies.primary.hash?.copyOf(),
+            copies.replica.bytes?.copyOf(),
+            copies.replica.hash?.copyOf(),
         )
     }
 
@@ -659,8 +666,7 @@ internal class StoredSignerRotationActivationRowV1 private constructor(
         fun sameIdentity(other: Signers): Boolean = policy == other.policy && firstId == other.firstId && firstAlgorithm == other.firstAlgorithm &&
             secondId == other.secondId && secondAlgorithm == other.secondAlgorithm
 
-        fun sameSignatures(other: Signers): Boolean =
-            firstSignature.contentEquals(other.firstSignature) && secondSignature.contentEquals(other.secondSignature)
+        fun sameSignatures(other: Signers): Boolean = firstSignature.contentEquals(other.firstSignature) && secondSignature.contentEquals(other.secondSignature)
 
         companion object {
             fun copy(row: ResultSet): Signers = Signers(
@@ -687,8 +693,10 @@ internal class StoredSignerRotationActivationRowV1 private constructor(
 
         companion object {
             fun copy(row: ResultSet): Copies = Copies(
-                row.getString("object_version"), row.getTimestamp("retain_until")?.toInstant(),
-                Document.copy(row, "primary_evidence"), Document.copy(row, "replica_evidence"),
+                row.getString("object_version"),
+                row.getTimestamp("retain_until")?.toInstant(),
+                Document.copy(row, "primary_evidence"),
+                Document.copy(row, "replica_evidence"),
             )
         }
     }
@@ -698,7 +706,9 @@ internal class StoredSignerRotationActivationRowV1 private constructor(
 
         companion object {
             fun copy(row: ResultSet): Lifecycle = Lifecycle(
-                checkNotNull(row.getString("state")), row.getTimestamp("completed_at")?.toInstant(), row.getTimestamp("projected_at")?.toInstant(),
+                checkNotNull(row.getString("state")),
+                row.getTimestamp("completed_at")?.toInstant(),
+                row.getTimestamp("projected_at")?.toInstant(),
             )
         }
     }
@@ -706,8 +716,10 @@ internal class StoredSignerRotationActivationRowV1 private constructor(
     companion object {
         internal fun copy(row: ResultSet): StoredSignerRotationActivationRowV1 {
             val shape = Shape(
-                row.requiredActivationBoolean("genesis_matches"), row.requiredActivationBoolean("overlap_matches"),
-                row.requiredActivationBoolean("activation_matches"), row.requiredActivationBoolean("bounded"),
+                row.requiredActivationBoolean("genesis_matches"),
+                row.requiredActivationBoolean("overlap_matches"),
+                row.requiredActivationBoolean("activation_matches"),
+                row.requiredActivationBoolean("bounded"),
             )
             check(shape.bounded) // Do not confuse a CASE-truncated optional field with an accepted NULL.
             return StoredSignerRotationActivationRowV1(

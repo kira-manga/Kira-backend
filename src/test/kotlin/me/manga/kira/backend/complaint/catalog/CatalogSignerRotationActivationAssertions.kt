@@ -216,12 +216,7 @@ internal class CatalogSignerRotationActivationAssertions(private val f: CatalogS
     }
 
     /** Independently decode acquisition-bound write-once records against the actual DB lease, never a record helper. */
-    fun acquisitionRecord(
-        leaf: CatalogSignerRotationReleaseLeafV1,
-        kind: String,
-        head3: Boolean = false,
-        times: List<Timestamp> = emptyList(),
-    ) {
+    fun acquisitionRecord(leaf: CatalogSignerRotationReleaseLeafV1, kind: String, head3: Boolean = false, times: List<Timestamp> = emptyList()) {
         assertTrue(f.complete(leaf), leaf.name)
         val allocation = Files.readAllBytes(f.allocation.resolve("allocation"))
         val current = f.delivery.leaseRow()
@@ -233,7 +228,9 @@ internal class CatalogSignerRotationActivationAssertions(private val f: CatalogS
         }
         val expected = listOf("catalog-signer-rotation-freeze-v1", kind, Sha256.hex(allocation), Sha256.hex(signedBytes())) +
             times.map { it.toInstant().toString() } + binding + listOf(
-                current["lease_owner"].toString(), current["lease_token"].toString(), (current["lease_expires_at"] as Timestamp).toInstant().toString(),
+                current["lease_owner"].toString(),
+                current["lease_token"].toString(),
+                (current["lease_expires_at"] as Timestamp).toInstant().toString(),
             )
         val actual = Json.parseToJsonElement(f.read(leaf).decodeToString()).jsonArray.map { it.jsonPrimitive.content }
         assertEquals(expected, actual, leaf.name)
@@ -278,7 +275,9 @@ internal class CatalogSignerRotationActivationAssertions(private val f: CatalogS
 
     private fun overlapJson(): String = checkNotNull(
         f.observer.queryForObject(
-            "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m WHERE operation_token = ?", String::class.java, f.freeze.token,
+            "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m WHERE operation_token = ?",
+            String::class.java,
+            f.freeze.token,
         ),
     )
 

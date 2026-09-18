@@ -44,12 +44,15 @@ internal class CatalogSignerRotationInputFilesV1(private val budget: Persistence
             read(request.approvalInputs, CatalogSignerRotationCapacityV1.MAX_APPROVAL_BYTES),
         )
 
-    internal fun readInputs(request: CatalogSignerRotationFreezeRequestV1, original: CatalogSignerRotationActivationV1): CatalogSignerRotationActivationInputsV1 =
-        CatalogSignerRotationActivationInputsV1(
-            original, request,
-            read(request.approvedIntent, CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES),
-            read(request.approvalInputs, CatalogSignerRotationCapacityV1.MAX_APPROVAL_BYTES),
-        )
+    internal fun readInputs(
+        request: CatalogSignerRotationFreezeRequestV1,
+        original: CatalogSignerRotationActivationV1,
+    ): CatalogSignerRotationActivationInputsV1 = CatalogSignerRotationActivationInputsV1(
+        original,
+        request,
+        read(request.approvedIntent, CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES),
+        read(request.approvalInputs, CatalogSignerRotationCapacityV1.MAX_APPROVAL_BYTES),
+    )
 
     private fun read(path: Path, maximum: Int): ByteArray {
         checkpoint()

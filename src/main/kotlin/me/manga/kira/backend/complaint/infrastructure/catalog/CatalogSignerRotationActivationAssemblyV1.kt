@@ -114,8 +114,11 @@ internal class CatalogSignerRotationActivationAssemblyV1(
         signer = construction // Actual parent retained before either native factory starts.
         val bytes = withSignerRotationCleanup({
             val key = inputs.profile.newKey.signingKey
-            val adapter = if (signingHttpFactory == null) AwsCatalogSigningAdapterV1.openOwned(construction, key, credentials)
-                else AwsCatalogSigningAdapterV1.withHttpFixture(construction, key, credentials, signingHttpFactory)
+            val adapter = if (signingHttpFactory == null) {
+                AwsCatalogSigningAdapterV1.openOwned(construction, key, credentials)
+            } else {
+                AwsCatalogSigningAdapterV1.withHttpFixture(construction, key, credentials, signingHttpFactory)
+            }
             adapter.sign(inputs.intentBytes()) // Actual one-call SDK/PSS verification and native cleanup.
         }, construction::close)
         signerCleanupProven = true

@@ -153,20 +153,31 @@ internal class CatalogSignerRotationActivationSql(private val f: CatalogSignerRo
             val a14 = if (seenSignature) signed else unsigned
             val expected = when (call.step) {
                 "activation-head-control", "activation-head-control-read", "activation-head-lease" -> b2
+
                 "activation-pending-control", "activation-pending-control-read", "activation-pending-lease" -> b3 + f.token
+
                 "activation-projected-control", "activation-projected-control-read", "activation-projected-lease" -> b3
+
                 "activation-head-history-lock", "activation-head-history-read" -> o17
+
                 "activation-prepared-history-lock", "activation-prepared-history-read" -> o17 + a14
+
                 "activation-pending-history-lock", "activation-pending-history-read",
                 "activation-projected-history-lock", "activation-projected-history-read",
                 -> o17 + a14 + c6
 
                 "activation-prepare" -> a11
+
                 "activation-signature" -> unsigned + s3
+
                 "activation-complete" -> signed + c6
+
                 "activation-head" -> b2 + listOf(f.token, hash(f.read(CatalogSignerRotationReleaseLeafV1.ENVELOPE)))
+
                 "activation-project" -> signed + c6 + row["completed_at"]
+
                 "activation-clear-pending" -> b3 + f.token
+
                 else -> null
             }
             if (expected != null) f.core.assertArguments(expected, call.arguments)
@@ -181,7 +192,12 @@ internal class CatalogSignerRotationActivationSql(private val f: CatalogSignerRo
 
     companion object {
         private val EFFECTS = setOf(
-            "activation-prepare", "activation-signature", "activation-complete", "activation-head", "activation-project", "activation-clear-pending",
+            "activation-prepare",
+            "activation-signature",
+            "activation-complete",
+            "activation-head",
+            "activation-project",
+            "activation-clear-pending",
         )
         private val DATA_CONTROLS = setOf("activation-head-control", "activation-pending-control", "activation-projected-control")
         private val ACTIVATION_COLUMNS = listOf(

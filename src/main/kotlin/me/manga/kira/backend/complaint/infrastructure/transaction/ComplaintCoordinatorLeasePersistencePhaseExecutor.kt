@@ -12,8 +12,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinator
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseReceiptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogCoordinatorLeaseStore
@@ -52,7 +52,10 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         return acquire(binding, null, delivery = original)
     }
 
-    internal fun acquireActivation(original: CatalogSignerRotationActivationV1, binding: CatalogCoordinatorLeaseBindingV1): CatalogCoordinatorLeaseAcquisitionV1 {
+    internal fun acquireActivation(
+        original: CatalogSignerRotationActivationV1,
+        binding: CatalogCoordinatorLeaseBindingV1,
+    ): CatalogCoordinatorLeaseAcquisitionV1 {
         original.requireLeaseSelection(ownership, jdbc, binding)
         return acquire(binding, null, activation = original)
     }
@@ -77,7 +80,9 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
             }
             attempt = retained
             try {
-                return CatalogCoordinatorLeaseAcquisitionV1.issuedBy(persist(retained, recovery = original, initialAuthor = initialAuthor, delivery = delivery, activation = activation))
+                return CatalogCoordinatorLeaseAcquisitionV1.issuedBy(
+                    persist(retained, recovery = original, initialAuthor = initialAuthor, delivery = delivery, activation = activation),
+                )
             } finally {
                 retained.finish()
             }

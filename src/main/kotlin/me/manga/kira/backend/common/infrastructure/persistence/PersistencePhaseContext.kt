@@ -48,12 +48,12 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPubl
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadReadOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationInputV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationInputV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
@@ -345,14 +345,16 @@ constructor(
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
-                ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork ?: signerRotationActivationWork
+                ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
+                ?: signerRotationActivationWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
-            ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork ?: signerRotationActivationWork
+            ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
+            ?: signerRotationActivationWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -1021,13 +1023,15 @@ constructor(
     }
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
-        catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null || signerRotationActivation != null
+        catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
+        signerRotationActivation != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget ?: catalogSignerRotationAttempt?.budget
+            signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+                ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
         catalogBudget?.let {

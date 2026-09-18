@@ -75,7 +75,12 @@ class ComplaintOwnerDetailIT {
             val create = mock(ComplaintOwnerCreateHttpHandler::class.java)
             val authentication = ComplaintInstallationBearerAuthenticator(f.session.run.scope, f.session.jwt, f.session.phases, f.session.ingress)
             val factory = ComplaintInstallationSecurityChainFactory(
-                bridge, authentication, installations, f.session.handler, history, create,
+                bridge,
+                authentication,
+                installations,
+                f.session.handler,
+                history,
+                create,
                 detail = if (supplied) f.handler else null,
             )
             val users = mock(UserRepository::class.java)
@@ -169,7 +174,11 @@ class ComplaintOwnerDetailIT {
             ComplaintOwnerDetailReadAdapter(ComplaintDataScope.LIVE, f.session.jwt, f.session.phases, f.phases, f.session.ingress)
         }
         val wrongScope = ComplaintOwnerDetailReadAdapter(
-            ComplaintDataScope.of(UUID.randomUUID()), f.session.jwt, f.session.phases, f.phases, f.session.ingress,
+            ComplaintDataScope.of(UUID.randomUUID()),
+            f.session.jwt,
+            f.session.phases,
+            f.phases,
+            f.session.ingress,
         )
         f.session.ingress.withIngress(ownerDetailTestRequest(own, f.session.token)) { context ->
             denied { wrongScope.authenticate(context, f.session.token, own) }
@@ -268,7 +277,8 @@ class ComplaintOwnerDetailIT {
     fun `concrete detail operation requires exact read only phase resource completion commit and physical release`() = withFixture { f ->
         val id = f.content()
         assertEquals(PersistencePhaseFailureCode.ENTRY_REFUSED, assertThrows<PersistencePhaseException> { f.store.read(f.identity(), id) }.code)
-        f.rows.withPhase { phase -> // The otherwise-valid history page phase cannot host a detail operation.
+        f.rows.withPhase { phase ->
+            // The otherwise-valid history page phase cannot host a detail operation.
             assertThrows<PersistencePhaseException> { f.store.read(f.identity(), id) }
             assertThrows<PersistencePhaseException> { phase.commit() }
         }
@@ -337,13 +347,7 @@ class ComplaintOwnerDetailIT {
         assertEquals(before, f.rows.state())
     }
 
-    private fun malformedBeforeSql(
-        f: Fixture,
-        bridge: ComplaintHttpIngressBridge,
-        chain: FilterChainProxy,
-        bodyGuard: RequestBodySizeLimitFilter,
-        id: UUID,
-    ) {
+    private fun malformedBeforeSql(f: Fixture, bridge: ComplaintHttpIngressBridge, chain: FilterChainProxy, bodyGuard: RequestBodySizeLimitFilter, id: UUID) {
         OwnedCallerTestScope().use { callers ->
             val gate = callers.gate()
             val held = callers.launch {

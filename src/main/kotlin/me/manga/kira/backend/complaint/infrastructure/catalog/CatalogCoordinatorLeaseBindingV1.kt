@@ -51,7 +51,10 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         ?: checkNotNull(deliveryReadback).snapshotHead
     private val catalogGeneration = accepted.generation
     private val catalogHash = digest(accepted.envelopeSha256)
-    private val trustHash = digest(activationReadback?.currentTrustBundleSha256 ?: catalog?.chain?.trust?.currentBundleEnvelopeSha256 ?: checkNotNull(deliveryReadback).currentTrustBundleSha256)
+    private val trustHash = digest(
+        activationReadback?.currentTrustBundleSha256 ?: catalog?.chain?.trust?.currentBundleEnvelopeSha256
+            ?: checkNotNull(deliveryReadback).currentTrustBundleSha256,
+    )
     private val catalogWriter = UUID.fromString(
         catalog?.chain?.tail?.catalogWriterGenerationId ?: checkNotNull(process.catalogSignerRotation).deployment.catalogWriterGenerationId,
     )
@@ -68,10 +71,14 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         )
         when {
             activation != null -> {
-                requireCatalogReadback(catalog == null && delivery == null && deliveryReadback == null && deliveryProjectedReadback == null &&
-                    preparedRecovery == null && initialAuthor == null && catalogGeneration in 2L..3L, CatalogReadbackFailure.INVALID_POLICY)
+                requireCatalogReadback(
+                    catalog == null && delivery == null && deliveryReadback == null && deliveryProjectedReadback == null &&
+                        preparedRecovery == null && initialAuthor == null && catalogGeneration in 2L..3L,
+                    CatalogReadbackFailure.INVALID_POLICY,
+                )
                 activation.requireBindingInputs(process, checkNotNull(activationReadback))
             }
+
             delivery == null -> requireCatalogReadback(
                 catalog != null && deliveryReadback == null && deliveryProjectedReadback == null && activationReadback == null,
                 CatalogReadbackFailure.INVALID_POLICY,
@@ -357,7 +364,8 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             requireConnectionFree()
             requireCatalogReadback(
                 !process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
-                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring && !process.pools.catalogCoordinator.catalogSignerRotationDelivery && !process.pools.catalogCoordinator.catalogSignerRotationActivation,
+                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring && !process.pools.catalogCoordinator.catalogSignerRotationDelivery &&
+                    !process.pools.catalogCoordinator.catalogSignerRotationActivation,
                 CatalogReadbackFailure.INVALID_POLICY,
             )
             val catalog = refresh.catalogFor(process)
@@ -373,7 +381,8 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             requireConnectionFree()
             requireCatalogReadback(
                 !process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
-                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring && !process.pools.catalogCoordinator.catalogSignerRotationDelivery && !process.pools.catalogCoordinator.catalogSignerRotationActivation,
+                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring && !process.pools.catalogCoordinator.catalogSignerRotationDelivery &&
+                    !process.pools.catalogCoordinator.catalogSignerRotationActivation,
                 CatalogReadbackFailure.INVALID_POLICY,
             )
             val catalog = refresh.catalogFor(process)
