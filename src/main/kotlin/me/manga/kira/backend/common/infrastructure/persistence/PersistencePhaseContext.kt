@@ -939,9 +939,8 @@ constructor(
         }
     }
 
-    private fun usesCatalogLifecycleCleanup(): Boolean =
-        catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
-            catalogSignerRotationAttempt != null || signerRotationRecovery != null
+    private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
+        catalogSignerRotationAttempt != null || signerRotationRecovery != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
