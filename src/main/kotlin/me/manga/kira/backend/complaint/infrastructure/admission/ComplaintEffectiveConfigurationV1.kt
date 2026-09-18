@@ -116,7 +116,7 @@ internal object ComplaintEffectiveConfigurationV1 {
         }
     }
 
-    private fun pool(descriptor: VersionBoundPersistencePoolDescriptor): JsonObject = buildJsonObject {
+    internal fun pool(descriptor: VersionBoundPersistencePoolDescriptor): JsonObject = buildJsonObject {
         put("role", descriptor.role.name)
         put("authenticationPassword", secret(descriptor.authenticationPassword))
         put(

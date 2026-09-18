@@ -10,6 +10,7 @@ import me.manga.kira.backend.security.ComplaintOwnerCursorCodec
 import me.manga.kira.backend.security.InstallationJwtCodec
 import me.manga.kira.backend.security.JwtKeyProvider
 import me.manga.kira.backend.security.VersionBoundComplaintConsumerConfiguration
+import me.manga.kira.backend.security.VersionBoundInstallationJwtConfiguration
 import java.time.Duration
 
 /** Private construction inputs only; these JSON objects are serialization output, never caller configuration or readiness. */
@@ -18,12 +19,12 @@ internal object ComplaintEffectiveConsumerConfigurationV1 {
         val bindings = owner.descriptors().sortedWith(compareBy({ it.family.name }, { it.logicalKeyId }))
         put("secretBindings", JsonArray(bindings.map(ComplaintEffectiveConfigurationV1::secret)))
         put("userJwt", userJwt(requireNotNull(owner.jwt.boundUserKeyProvider) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }))
-        put("installationJwt", installationJwt(owner))
+        put("installationJwt", installationJwt(owner.jwt))
         put("admission", admission(owner))
         put("ownerCursor", cursor(owner.ownerCursorCodec))
     }
 
-    private fun userJwt(owner: JwtKeyProvider): JsonObject = buildJsonObject {
+    internal fun userJwt(owner: JwtKeyProvider): JsonObject = buildJsonObject {
         val id = owner.immutableVersionBinding().logicalKeyId
         put("protocolVersion", 1)
         put("algorithm", "HS256")
@@ -35,8 +36,8 @@ internal object ComplaintEffectiveConsumerConfigurationV1 {
         put("clockSkew", duration(owner.versionBoundClockSkew))
     }
 
-    private fun installationJwt(owner: VersionBoundComplaintConsumerConfiguration): JsonObject = buildJsonObject {
-        val ring = owner.jwt.installationKeyRing
+    internal fun installationJwt(owner: VersionBoundInstallationJwtConfiguration): JsonObject = buildJsonObject {
+        val ring = owner.installationKeyRing
         put("protocolVersion", 1)
         put("algorithm", "HS256")
         put("type", InstallationJwtCodec.TYPE)
@@ -99,7 +100,7 @@ internal object ComplaintEffectiveConsumerConfigurationV1 {
         )
     }
 
-    private fun window(bucketLimit: Int, eventLimit: Int, pruneBatch: Int, ingress: Boolean): JsonObject = buildJsonObject {
+    internal fun window(bucketLimit: Int, eventLimit: Int, pruneBatch: Int, ingress: Boolean): JsonObject = buildJsonObject {
         put("bucketLimit", bucketLimit)
         put("eventLimit", eventLimit)
         put("pruneBatch", pruneBatch)
@@ -108,7 +109,7 @@ internal object ComplaintEffectiveConsumerConfigurationV1 {
         if (!ingress) put("deleteAllWindowNanos", ComplaintAdmissionPolicy.DELETE_ALL_WINDOW_NANOS)
     }
 
-    private fun ownerReads(policy: ComplaintAdmissionPolicy): JsonObject = buildJsonObject {
+    internal fun ownerReads(policy: ComplaintAdmissionPolicy): JsonObject = buildJsonObject {
         put("bucketLimit", policy.semanticBucketLimit)
         put("eventLimit", policy.semanticEventLimit)
         put("pruneBatch", policy.pruneBatch)
@@ -133,7 +134,7 @@ internal object ComplaintEffectiveConsumerConfigurationV1 {
         put("ownerDeleteAllIpPerHour", 20)
     }
 
-    private fun cursor(owner: ComplaintOwnerCursorCodec): JsonObject = buildJsonObject {
+    internal fun cursor(owner: ComplaintOwnerCursorCodec): JsonObject = buildJsonObject {
         val protocol = owner.protocol
         put("activeKeyId", owner.activeKeyId)
         put("verificationKeyIds", strings(owner.verificationKeyIds().sorted()))
