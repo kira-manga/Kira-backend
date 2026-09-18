@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainReaderP
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.domain.catalog.UnverifiedGenesisPreparation
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotRows
@@ -49,14 +50,26 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         return capture().observeGenesisPreparation(policy.limits)
     }
 
-    @Suppress("TooGenericExceptionCaught")
-    private fun capture(attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null): CatalogSnapshotRows {
+    /** Separate author root accepts only this original freeze's inputs and remaining budget. */
+    internal fun loadGenesisPreparation(attempt: CatalogGenesisFreezeAttemptV1): UnverifiedGenesisPreparation {
         requireConnectionFree()
-        val phase = attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
+        attempt.requireRunning()
+        val trust = OfflineTrustBundleVerifier.verify(attempt.inputs.currentBytes(), attempt.inputs.chain.trustBundlePolicy)
+        requireCatalogReadback(trust.body.minimumCatalogHeadGeneration == 1L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+        return capture(author = attempt).observeGenesisPreparation(attempt.inputs.chain.limits)
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun capture(attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null, author: CatalogGenesisFreezeAttemptV1? = null): CatalogSnapshotRows {
+        requireConnectionFree()
+        val phase = author?.let(ownership::enterComplaintCatalogSnapshot)
+            ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
         var captured: CatalogSnapshotReadOperation? = null
         try {
             phase.begin()
+            author?.let { reader.authenticateGenesisAuthor(it, ownership) }
             captured = reader.read()
+            author?.requireRunning()
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)

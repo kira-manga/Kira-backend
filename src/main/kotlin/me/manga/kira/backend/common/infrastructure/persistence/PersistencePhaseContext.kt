@@ -37,6 +37,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttem
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffPersistenceOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationControlOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadInputV1
@@ -96,6 +97,8 @@ constructor(
     private val desiredWork: PersistenceTimeBudget? = null,
     private val firstDesiredAttempt: ComplaintSignedGenesisFirstDAttemptV1? = null,
     private val firstDesiredWork: PersistenceTimeBudget? = null,
+    private val catalogAuthorAttempt: CatalogGenesisFreezeAttemptV1? = null,
+    private val catalogAuthorWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -299,12 +302,13 @@ constructor(
         check(acquisition === completion && work == null)
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
         work =
-            rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
+            rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
+                ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
-        return (rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork)?.systemCappedSnapshot(ceilingMillis)
+        return (rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork)?.systemCappedSnapshot(ceilingMillis)
     }
 
     internal fun requireAcceptedLease() = requireWork()
@@ -853,7 +857,7 @@ constructor(
 
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
-        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: return false
+        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -879,13 +883,21 @@ constructor(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
+        if (catalogAuthorAttempt != null) return budget.systemCleanupSnapshot(WORK_MILLIS)
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
-        return if (ordinaryBudget && desiredAttempt == null && firstDesiredAttempt == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
+        return if (ordinaryBudget && desiredAttempt == null && firstDesiredAttempt == null) {
+            budget
+        } else {
+            budget.systemCappedSnapshot(WORK_MILLIS)
+        }
     }
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
+        catalogAuthorAttempt?.let {
+            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
+        }
         val selected =
             (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget ?: desiredAttempt?.budget ?: firstDesiredAttempt?.budget)
                 ?.capped(EMERGENCY_MILLIS)

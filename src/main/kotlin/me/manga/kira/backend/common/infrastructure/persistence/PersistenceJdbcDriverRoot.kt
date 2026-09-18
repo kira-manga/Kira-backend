@@ -11,12 +11,14 @@ internal class PersistenceJdbcDriverRoot(
     versionBound: VersionBoundPersistenceConfiguration? = null,
     epochRotationEnabled: Boolean = false,
     internal val desiredInstallationOperator: Boolean = false,
+    internal val catalogGenesisAuthoring: Boolean = false,
 ) {
     init {
         check(!desiredInstallationOperator || (!sourceOnly && versionBound != null && !epochRotationEnabled))
+        check(!catalogGenesisAuthoring || (!desiredInstallationOperator && !sourceOnly && versionBound != null && !epochRotationEnabled))
     }
 
-    private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly, desiredInstallationOperator)
+    private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly, desiredInstallationOperator, catalogGenesisAuthoring)
     val shutdown = AtomicBoolean()
     internal val versionBoundPools = versionBound?.createPools(this)
     internal val epochRotationMaterial = if (epochRotationEnabled) {
@@ -44,17 +46,26 @@ internal class PersistenceJdbcDriverRoot(
     private val scanner = PersistenceRetainedPlatformThread("kira-persistence-scanner", ::scan)
 
     init {
-        if (desiredInstallationOperator) {
+        if (desiredInstallationOperator || catalogGenesisAuthoring) {
             // Seal even direct/later requests on these original participants, not merely the public start facade.
             ordinary.forbidStarts()
             deletion.forbidStarts()
         }
     }
 
-    fun start(): PersistenceLifecycleActivation = if (desiredInstallationOperator) PersistenceLifecycleActivation.CLOSED else startRoot()
+    fun start(): PersistenceLifecycleActivation = if (desiredInstallationOperator ||
+        catalogGenesisAuthoring
+    ) {
+        PersistenceLifecycleActivation.CLOSED
+    } else {
+        startRoot()
+    }
 
     internal fun startDesiredInstallationOperatorInfrastructure(): PersistenceLifecycleActivation =
         if (desiredInstallationOperator) startRoot() else PersistenceLifecycleActivation.CLOSED
+
+    internal fun startCatalogGenesisAuthoringInfrastructure(): PersistenceLifecycleActivation =
+        if (catalogGenesisAuthoring) startRoot() else PersistenceLifecycleActivation.CLOSED
 
     private fun startRoot(): PersistenceLifecycleActivation {
         if (shutdown.get()) return PersistenceLifecycleActivation.CLOSED
@@ -83,7 +94,7 @@ internal class PersistenceJdbcDriverRoot(
         }
         if (shutdown.get()) return PersistenceLifecycleActivation.CLOSED
         // CoordinatorPoolPreparation owns its one actual start/initialization ticket. Never start an ordinary helper.
-        if (desiredInstallationOperator) return PersistenceLifecycleActivation.STARTED
+        if (desiredInstallationOperator || catalogGenesisAuthoring) return PersistenceLifecycleActivation.STARTED
         val ordinaryStart = ordinary.start()
         if (shutdown.get() && ordinaryStart === PersistenceFactoryStart.CLOSED) return PersistenceLifecycleActivation.CLOSED
         check(ordinaryStart === PersistenceFactoryStart.STARTED)
@@ -91,7 +102,7 @@ internal class PersistenceJdbcDriverRoot(
     }
 
     fun prepareDeletion(): PersistenceLifecycleActivation {
-        if (sourceOnly || desiredInstallationOperator) return PersistenceLifecycleActivation.CLOSED
+        if (sourceOnly || desiredInstallationOperator || catalogGenesisAuthoring) return PersistenceLifecycleActivation.CLOSED
         if (shutdown.get() || !startClaimed.get()) return PersistenceLifecycleActivation.CLOSED
         if (!deletionClaimed.compareAndSet(false, true)) return PersistenceLifecycleActivation.ALREADY_CLAIMED
         return runCatching {
@@ -154,7 +165,7 @@ internal class PersistenceJdbcDriverRoot(
     fun requestCatalogCoordinatorShutdown(): Boolean = catalogCoordinator.forbidStarts()
 
     internal fun prepareEpochRotation(): PersistenceLifecycleActivation {
-        if (desiredInstallationOperator) return PersistenceLifecycleActivation.CLOSED
+        if (desiredInstallationOperator || catalogGenesisAuthoring) return PersistenceLifecycleActivation.CLOSED
         val participant = epochRotationParticipant ?: return PersistenceLifecycleActivation.CLOSED
         if (shutdown.get() || !startClaimed.get()) return PersistenceLifecycleActivation.CLOSED
         if (!epochRotationClaimed.compareAndSet(false, true)) return PersistenceLifecycleActivation.ALREADY_CLAIMED
@@ -244,7 +255,7 @@ internal class PersistenceJdbcDriverRoot(
         epochRotationParticipant?.recordsEnded() != false && epochRotationParticipant?.threadsEnded() != false && epochRotation?.endedForTrust() != false
 
     fun preparationObservation(deleting: Boolean): PersistenceLifecycleObservation {
-        if (desiredInstallationOperator) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (desiredInstallationOperator || catalogGenesisAuthoring) return PersistenceLifecycleObservation.UNAVAILABLE
         if (shutdown.get()) return PersistenceLifecycleObservation.UNAVAILABLE
         if (!startClaimed.get() || (deleting && !deletionClaimed.get())) return PersistenceLifecycleObservation.NOT_REQUESTED
         val participant = if (deleting) deletion else ordinary

@@ -22,6 +22,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val dataSource: GuardedDataSource,
 ) : AutoCloseable {
     internal val desiredInstallationOperator: Boolean get() = owner.desiredInstallationOperator
+    internal val catalogGenesisAuthoring: Boolean get() = owner.catalogGenesisAuthoring
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
@@ -61,6 +62,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
+        if (catalogGenesisAuthoring) return // No lease/rotation/projected/finalizer composition on the separate author root.
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
         rotationExecutor = CatalogEpochRotationV1(this, jdbc)
@@ -85,7 +87,7 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     fun prepare(): PersistenceLifecycleObservation {
         requireResources()
-        if (desiredInstallationOperator) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (desiredInstallationOperator || catalogGenesisAuthoring) return PersistenceLifecycleObservation.UNAVAILABLE
         checkNotNull(executor)
         return dataSource.prepareCatalogCoordinator()
     }
@@ -95,6 +97,13 @@ internal class CatalogCoordinatorPersistence private constructor(
         requireResources()
         if (!desiredInstallationOperator) return PersistenceLifecycleObservation.UNAVAILABLE
         checkNotNull(desiredExecutor)
+        return dataSource.prepareCatalogCoordinator()
+    }
+
+    internal fun prepareCatalogGenesisAuthoring(): PersistenceLifecycleObservation {
+        requireResources()
+        if (!catalogGenesisAuthoring) return PersistenceLifecycleObservation.UNAVAILABLE
+        checkNotNull(genesisExecutor)
         return dataSource.prepareCatalogCoordinator()
     }
 

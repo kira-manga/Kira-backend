@@ -103,7 +103,7 @@ internal class GuardedDataSource private constructor(
     }
 
     fun start(): PersistenceLifecycleActivation {
-        if (owner.desiredInstallationOperator || route !== Route.ORDINARY) return PersistenceLifecycleActivation.FAILED
+        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring || route !== Route.ORDINARY) return PersistenceLifecycleActivation.FAILED
         if (!sourceOnly && launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) {
             return PersistenceLifecycleActivation.FAILED
         }
@@ -112,7 +112,7 @@ internal class GuardedDataSource private constructor(
 
     /** Explicit infrastructure warm-up only; neither a health getter nor a request may activate deletion. */
     fun prepareDeletion(): PersistenceLifecycleObservation {
-        if (owner.desiredInstallationOperator ||
+        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring ||
             launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY
         ) {
             return PersistenceLifecycleObservation.UNAVAILABLE
@@ -133,7 +133,11 @@ internal class GuardedDataSource private constructor(
     override fun getConnection(): Connection {
         // Stock pool preparation uses its retained raw initialization ticket, not this business facade.
         // An operator connection has no unscoped caller route around the three fixed phase operations.
-        if (owner.desiredInstallationOperator && PersistencePhaseOwnership.current() == null) PersistenceJdbcGuardContext.refuse()
+        if ((owner.desiredInstallationOperator || owner.catalogGenesisAuthoring) &&
+            PersistencePhaseOwnership.current() == null
+        ) {
+            PersistenceJdbcGuardContext.refuse()
+        }
         val budget = PersistencePhaseOwnership.current()?.retainedPhaseCheckoutBudget(checkoutMillis) ?: PersistenceTimeBudget.start(checkoutMillis)
         if (!businessReady()) PersistenceJdbcGuardContext.refuse()
         val acquisition = lifecycle.prepareAcquisition(budget)
@@ -204,11 +208,19 @@ internal class GuardedDataSource private constructor(
     internal val complaintContainment: PersistenceComplaintContainment get() = owner.complaintContainment
 
     internal fun requireOrdinaryPhaseResource() {
-        if (owner.desiredInstallationOperator || route !== Route.ORDINARY) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring ||
+            route !== Route.ORDINARY
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
 
     internal fun requireDeletionPhaseResource() {
-        if (owner.desiredInstallationOperator || route !== Route.DELETION) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring ||
+            route !== Route.DELETION
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
 
     internal fun requireCatalogCoordinatorPhaseResource() {
@@ -233,7 +245,7 @@ internal class GuardedDataSource private constructor(
         deletionPreparation?.prepared() != false && catalogPreparation?.prepared() != false &&
         (route !== Route.CATALOG_COORDINATOR || owner.ownsCatalogDataSource(this)) && lifecycle.businessReady()
 
-    private fun launchRoutePermitsBusiness(): Boolean = if (owner.desiredInstallationOperator) {
+    private fun launchRoutePermitsBusiness(): Boolean = if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring) {
         route === Route.CATALOG_COORDINATOR && launchProfile === PersistencePoolLaunchProfile.UNKNOWN && owner.ownsCatalogDataSource(this)
     } else {
         sourceOnly || launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY

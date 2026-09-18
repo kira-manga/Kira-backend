@@ -19,18 +19,19 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     private val trust: OwnedPersistencePublicTrust,
     authenticationPassword: VersionedSecretBinding,
     private val desiredInstallationOperator: Boolean,
+    private val catalogGenesisAuthoring: Boolean,
 ) {
     val descriptor = EndpointDescriptor(endpoint, authenticationPassword, trust.sha256, trust.byteCount, trust.certificateCount)
     private var adoptedRoot: PersistenceJdbcDriverRoot? = null
 
     fun bindLifecycleOwner(): PersistenceJdbcLifecycleOwner {
-        requireConfiguration(!desiredInstallationOperator)
+        requireConfiguration(!desiredInstallationOperator && !catalogGenesisAuthoring)
         return PersistenceJdbcLifecycleOwner.versionBound(this)
     }
 
     /** Explicit cold resource opt-in; the existing default root and v1/v2 inventory remain unchanged. */
     fun bindLifecycleOwnerWithEpochRotation(): PersistenceJdbcLifecycleOwner {
-        requireConfiguration(!desiredInstallationOperator)
+        requireConfiguration(!desiredInstallationOperator && !catalogGenesisAuthoring)
         return PersistenceJdbcLifecycleOwner.versionBoundWithEpochRotation(this)
     }
 
@@ -38,6 +39,12 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     internal fun bindDesiredInstallationOperatorOwner(): PersistenceJdbcLifecycleOwner {
         requireConfiguration(desiredInstallationOperator)
         return PersistenceJdbcLifecycleOwner.desiredInstallationOperator(this)
+    }
+
+    /** Separate fixed author authentication. Never an alternate launch or password for the TARGET graph. */
+    internal fun bindCatalogGenesisAuthoringOwner(): PersistenceJdbcLifecycleOwner {
+        requireConfiguration(catalogGenesisAuthoring)
+        return PersistenceJdbcLifecycleOwner.catalogGenesisAuthoring(this)
     }
 
     internal fun createRoot(): PersistenceJdbcDriverRoot =
@@ -54,6 +61,14 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         desiredInstallationOperator = true,
     )
 
+    internal fun createCatalogGenesisAuthoringRoot(): PersistenceJdbcDriverRoot = PersistenceJdbcDriverRoot(
+        endpoint,
+        ordinaryCapacity,
+        PersistencePathStyle.POSIX,
+        versionBound = this,
+        catalogGenesisAuthoring = true,
+    )
+
     /** Root construction calls this before any actor can start. No independent endpoint/trust pairing is accepted. */
     internal fun adopt(
         root: PersistenceJdbcDriverRoot,
@@ -62,9 +77,10 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         pathStyle: PersistencePathStyle,
         sourceOnly: Boolean,
         operatorOnly: Boolean,
+        authorOnly: Boolean,
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
-        requireConfiguration(operatorOnly == desiredInstallationOperator)
+        requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
         trust.adopt(root)
         adoptedRoot = root
         return trust
@@ -107,6 +123,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
 
     companion object {
         internal const val DESIRED_INSTALLATION_OPERATOR_USERNAME = "kira_complaint_config_operator"
+        internal const val CATALOG_GENESIS_AUTHOR_USERNAME = "kira_complaint_catalog_operator"
 
         /** No trust-file I/O, resolver call, JDBC driver loading, pool construction or actor start. */
         fun fromAcquired(
@@ -119,7 +136,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
             publicTrustPem: ByteArray,
             protectedTrustParent: Path,
         ): VersionBoundPersistenceConfiguration = capture(
-            authenticationPassword, host, port, database, username, ordinaryCapacity, publicTrustPem, protectedTrustParent, false,
+            authenticationPassword, host, port, database, username, ordinaryCapacity, publicTrustPem, protectedTrustParent, false, false,
         )
 
         /** A separately acquired DB password; never substitutes credentials in the target process or its D. */
@@ -131,7 +148,19 @@ internal class VersionBoundPersistenceConfiguration private constructor(
             publicTrustPem: ByteArray,
             protectedTrustParent: Path,
         ): VersionBoundPersistenceConfiguration = capture(
-            authenticationPassword, host, port, database, DESIRED_INSTALLATION_OPERATOR_USERNAME, 1, publicTrustPem, protectedTrustParent, true,
+            authenticationPassword, host, port, database, DESIRED_INSTALLATION_OPERATOR_USERNAME, 1, publicTrustPem, protectedTrustParent, true, false,
+        )
+
+        /** No source/runtime identity, desired graph, future envelope pin or caller-selected database principal. */
+        internal fun forCatalogGenesisAuthoring(
+            authenticationPassword: AcquiredVersionedSecret,
+            host: String,
+            port: Int,
+            database: String,
+            publicTrustPem: ByteArray,
+            protectedTrustParent: Path,
+        ): VersionBoundPersistenceConfiguration = capture(
+            authenticationPassword, host, port, database, CATALOG_GENESIS_AUTHOR_USERNAME, 1, publicTrustPem, protectedTrustParent, false, true,
         )
 
         private fun capture(
@@ -144,6 +173,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
             publicTrustPem: ByteArray,
             protectedTrustParent: Path,
             operatorOnly: Boolean,
+            authorOnly: Boolean,
         ): VersionBoundPersistenceConfiguration = persistenceBootstrapBoundary {
             val binding = authenticationPassword.descriptor
             requireConfiguration(binding.family === SecretMaterialFamily.DATABASE && binding.purpose === SecretMaterialPurpose.AUTHENTICATION_PASSWORD)
@@ -177,7 +207,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
                 PersistenceLoginPolicy.resolve("2", 2000),
             )
             requireConfiguration(PersistenceNativeSettings.assessOrdinary(endpoint, PersistencePathStyle.POSIX) is PersistenceNativeSettingsResult.Supported)
-            VersionBoundPersistenceConfiguration(endpoint, ordinaryCapacity, trust, binding, operatorOnly)
+            VersionBoundPersistenceConfiguration(endpoint, ordinaryCapacity, trust, binding, operatorOnly, authorOnly)
         }
 
         private fun decodePassword(material: ByteArray): String {

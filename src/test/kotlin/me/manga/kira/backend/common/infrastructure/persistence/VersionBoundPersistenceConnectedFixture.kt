@@ -1,7 +1,11 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.security.AcquiredVersionedSecret
+import me.manga.kira.backend.security.ImmutableSecretVersion
+import me.manga.kira.backend.security.SecretMaterialFamily
+import me.manga.kira.backend.security.SecretMaterialPurpose
 import me.manga.kira.backend.security.SecretVersionSnapshot
+import me.manga.kira.backend.security.VersionedSecretBinding
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -24,20 +28,25 @@ internal class VersionBoundPersistenceConnectedFixture(
     val client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
     epochRotation: Boolean = false,
     private val desiredOperator: Boolean = false,
+    private val catalogAuthor: Boolean = false,
 ) : AutoCloseable {
     private val trustParent = database.versionBoundTls().publicTrustParent()
-    private val suppliedPassword = when (client) {
-        ConnectedTlsClient.WRONG_PASSWORD -> "synthetic-wrong-only"
-        else -> if (desiredOperator) DESIRED_OPERATOR_TEST_PASSWORD else PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD
+    private val suppliedPassword = when {
+        client == ConnectedTlsClient.WRONG_PASSWORD -> "synthetic-wrong-only"
+        desiredOperator -> DESIRED_OPERATOR_TEST_PASSWORD
+        catalogAuthor -> CATALOG_AUTHOR_TEST_PASSWORD
+        else -> PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD
     }.toByteArray(Charsets.UTF_8)
     var acquisitions = 0
         private set
-    val acquired = AcquiredVersionedSecret.acquire(VersionBoundPersistenceTestInputs.binding()) { version ->
+    val acquired = AcquiredVersionedSecret.acquire(
+        if (catalogAuthor) catalogAuthorTestPasswordBinding() else VersionBoundPersistenceTestInputs.binding(),
+    ) { version ->
         acquisitions++
         SecretVersionSnapshot(version, suppliedPassword)
     }
-    val configuration = if (desiredOperator) {
-        VersionBoundPersistenceConfiguration.forDesiredInstallationOperator(
+    val configuration = when {
+        desiredOperator -> VersionBoundPersistenceConfiguration.forDesiredInstallationOperator(
             acquired,
             if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
             database.port,
@@ -45,8 +54,17 @@ internal class VersionBoundPersistenceConnectedFixture(
             database.versionBoundTls().publicTrust(client == ConnectedTlsClient.WRONG_CA),
             trustParent,
         )
-    } else {
-        VersionBoundPersistenceConfiguration.fromAcquired(
+
+        catalogAuthor -> VersionBoundPersistenceConfiguration.forCatalogGenesisAuthoring(
+            acquired,
+            if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
+            database.port,
+            PgLifecycleDatabaseSettings.DATABASE,
+            database.versionBoundTls().publicTrust(client == ConnectedTlsClient.WRONG_CA),
+            trustParent,
+        )
+
+        else -> VersionBoundPersistenceConfiguration.fromAcquired(
             acquired,
             if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
             database.port,
@@ -60,6 +78,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     val scope = PgLifecycleTestScope(
         when {
             desiredOperator -> configuration.bindDesiredInstallationOperatorOwner()
+            catalogAuthor -> configuration.bindCatalogGenesisAuthoringOwner()
             epochRotation -> configuration.bindLifecycleOwnerWithEpochRotation()
             else -> configuration.bindLifecycleOwner()
         },
@@ -74,7 +93,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private var closed = false
 
     init {
-        check(!desiredOperator || !epochRotation)
+        check(listOf(desiredOperator, catalogAuthor, epochRotation).count { it } <= 1)
         suppliedPassword.fill(0) // The connected path must use its captured acquisition, never a later caller buffer.
     }
 
@@ -82,7 +101,11 @@ internal class VersionBoundPersistenceConnectedFixture(
         profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,
         nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
     ) {
-        pools = if (desiredOperator) owner.bindDesiredInstallationOperatorPools(nanoClock) else owner.bindVersionBoundPools(profile, nanoClock)
+        pools = when {
+            desiredOperator -> owner.bindDesiredInstallationOperatorPools(nanoClock)
+            catalogAuthor -> owner.bindCatalogGenesisAuthoringPools(nanoClock)
+            else -> owner.bindVersionBoundPools(profile, nanoClock)
+        }
         // The original owner retains partial-shell custody if either named binding throws. The operator never selects TEST.
         Files.createDirectory(trustParent, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
         parentCreated = true
@@ -91,7 +114,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     }
 
     fun start() {
-        check(!desiredOperator)
+        check(!desiredOperator && !catalogAuthor)
         assertEquals(PersistenceLifecycleActivation.STARTED, pools.ordinary.start(), client.name)
         awaitLifecycleFact { owner.snapshot().ordinaryReady && owner.snapshot().timerReady }
         assertEquals(PersistenceLifecycleObservation.READY, pools.ordinary.observePreparation())
@@ -101,6 +124,14 @@ internal class VersionBoundPersistenceConnectedFixture(
     fun startDesiredInstallationOperator() {
         check(desiredOperator)
         assertEquals(PersistenceLifecycleObservation.READY, owner.prepareDesiredInstallationOperator())
+        assertEquals(PersistenceLifecycleObservation.READY, pools.catalogCoordinator.observePreparation())
+        assertFalse(owner.snapshot().ordinaryReady || owner.snapshot().deletionReady)
+        awaitLifecycleFact { owner.snapshot().catalogCoordinatorReady && owner.snapshot().timerReady }
+    }
+
+    fun startCatalogGenesisAuthoring() {
+        check(catalogAuthor)
+        assertEquals(PersistenceLifecycleObservation.READY, owner.prepareCatalogGenesisAuthoring())
         assertEquals(PersistenceLifecycleObservation.READY, pools.catalogCoordinator.observePreparation())
         assertFalse(owner.snapshot().ordinaryReady || owner.snapshot().deletionReady)
         awaitLifecycleFact { owner.snapshot().catalogCoordinatorReady && owner.snapshot().timerReady }
@@ -233,11 +264,12 @@ internal class VersionBoundPersistenceConnectedFixture(
                 }
             }
             // This SAME_THREAD class owns the only candidate roots; paired close ends BOTH before this unchanged proof.
-            val allCandidates = "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND usename IN (?, ?))"
+            val allCandidates = "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND usename IN (?, ?, ?))"
             observer.prepareStatement(allCandidates).use { statement ->
                 statement.queryTimeout = 2
                 statement.setString(1, PgLifecycleDatabaseSettings.CANDIDATE)
                 statement.setString(2, VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME)
+                statement.setString(3, VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME)
                 awaitLifecycleFact {
                     statement.executeQuery().use { row ->
                         check(row.next())
@@ -255,7 +287,11 @@ internal class VersionBoundPersistenceConnectedFixture(
         assertTrue(row.getBoolean(3) && !row.wasNull())
         assertTrue(row.getString(4) in setOf("TLSv1.2", "TLSv1.3") && row.getInt(5) >= 128)
         assertEquals(
-            if (desiredOperator) VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME else PgLifecycleDatabaseSettings.CANDIDATE,
+            when {
+                desiredOperator -> VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME
+                catalogAuthor -> VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME
+                else -> PgLifecycleDatabaseSettings.CANDIDATE
+            },
             row.getString(6),
         )
         val session = TlsSession(row.getInt(1), row.getTimestamp(2).toInstant())
@@ -269,3 +305,16 @@ internal class VersionBoundPersistenceConnectedFixture(
 
 /** Dedicated synthetic fixture principal only. Production code never provisions or grants this login. */
 internal const val DESIRED_OPERATOR_TEST_PASSWORD = "synthetic-desired-operator-only"
+
+internal const val CATALOG_AUTHOR_TEST_PASSWORD = "synthetic-catalog-author-only"
+
+/** Distinct synthetic acquired author descriptor, never the candidate/TARGET password binding. */
+internal fun catalogAuthorTestPasswordBinding(): VersionedSecretBinding = VersionedSecretBinding.of(
+    SecretMaterialFamily.DATABASE,
+    SecretMaterialPurpose.AUTHENTICATION_PASSWORD,
+    "fixture-catalog-author-password",
+    ImmutableSecretVersion.awsSecretsManager(
+        "arn:aws:secretsmanager:eu-west-1:123456789012:secret:fixture-catalog-author-Ab12Cd",
+        "650e8400-e29b-41d4-a716-446655440001",
+    ),
+)

@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
@@ -15,6 +16,7 @@ import me.manga.kira.backend.complaint.catalog.HeldSealPreparationCut
 import me.manga.kira.backend.complaint.catalog.HeldSealStopCut
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
+import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
@@ -399,6 +401,36 @@ class VersionBoundPersistenceConnectedIT {
                 withHeldEpochSeal(tls, clock) { HeldEpochSealCleanupCases(it).foreignStop(cut) }
             }
         }
+    }
+
+    @Test
+    fun `catalog author fixed login opens only its original TLS coordinator and no legacy or unrelated phase`() = withFixture { tls ->
+        withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).fixedAuthorRootAndLeastPrivilege() }
+    }
+
+    @Test
+    fun `catalog author real PREPARE and SDK Sign retain exact bytes before CAS and only released pin freezes without another Sign`() = withFixture { tls ->
+        withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).signedAwaitingReleaseAndExactPinReuse() }
+    }
+
+    @Test
+    fun `catalog author complete unsigned receipt permits fresh prefreeze Sign after provider failure without charging again`() = withFixture { tls ->
+        withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).preparedUnsignedResignEligibility() }
+    }
+
+    @Test
+    fun `catalog author unresolved persistence arm refuses reSign with unsigned and restored absent SQL`() = withFixture { tls ->
+        withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).unresolvedPersistenceArmCannotResign() }
+    }
+
+    @Test
+    fun `catalog author signature commit completion failure recovers only exact retained bytes without Sign or new charge`() = withFixture { tls ->
+        withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).signatureCompletionFailureReusesFrozenBytes() }
+    }
+
+    @Test
+    fun `catalog author original begin budget and throwing signer cleanup never release a result or revive the owner`() = withFixture { tls ->
+        withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).originalBudgetAndSignerCleanup() }
     }
 
     @Test

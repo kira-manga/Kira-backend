@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesired
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
@@ -148,6 +149,9 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintCatalogSnapshot(attempt: CatalogReadbackRefreshCustodyV1.Attempt): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, catalogRefresh = attempt)
 
+    internal fun enterComplaintCatalogSnapshot(attempt: CatalogGenesisFreezeAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, catalogAuthorAttempt = attempt)
+
     internal fun enterComplaintCatalogProjectedHead(attempt: CatalogReadbackRefreshCustodyV1.Attempt): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD, catalogRefresh = attempt)
 
@@ -155,6 +159,12 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintCatalogGenesisPrepare(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE)
 
     internal fun enterComplaintCatalogGenesisSignature(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE)
+
+    internal fun enterComplaintCatalogGenesisPrepare(attempt: CatalogGenesisFreezeAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE, catalogAuthorAttempt = attempt)
+
+    internal fun enterComplaintCatalogGenesisSignature(attempt: CatalogGenesisFreezeAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE, catalogAuthorAttempt = attempt)
 
     internal fun enterComplaintCatalogGenesisComplete(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE)
 
@@ -214,6 +224,7 @@ internal class PersistencePhaseOwnership private constructor(
         catalogRefresh: CatalogReadbackRefreshCustodyV1.Attempt? = null,
         desiredAttempt: ComplaintDesiredInstallAttemptV1? = null,
         firstDesiredAttempt: ComplaintSignedGenesisFirstDAttemptV1? = null,
+        catalogAuthorAttempt: CatalogGenesisFreezeAttemptV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -222,15 +233,20 @@ internal class PersistencePhaseOwnership private constructor(
             throw failure
         }
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
+        if ((selection as? Selection.CatalogCoordinator)?.authoring == true && catalogAuthorAttempt == null) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         catalogRefresh?.requireProjectedPersistence(this)
         desiredAttempt?.requirePhaseEntry(this, path)
         firstDesiredAttempt?.requirePhaseEntry(this, path)
+        catalogAuthorAttempt?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
         val catalogRefreshWork = catalogRefresh?.let { checkNotNull(it.projectedBudget).capped(2_000) }
         val desiredWork = desiredAttempt?.budget?.capped(2_000)
         val firstDesiredWork = firstDesiredAttempt?.budget?.capped(2_000)
+        val catalogAuthorWork = catalogAuthorAttempt?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -263,6 +279,8 @@ internal class PersistencePhaseOwnership private constructor(
                 desiredWork,
                 firstDesiredAttempt,
                 firstDesiredWork,
+                catalogAuthorAttempt,
+                catalogAuthorWork,
             )
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
@@ -404,6 +422,7 @@ internal class PersistencePhaseOwnership private constructor(
         }
 
         class CatalogCoordinator(private val resources: CatalogCoordinatorPersistence) : Selection {
+            val authoring: Boolean get() = resources.catalogGenesisAuthoring
             override val dataSource: GuardedDataSource get() = resources.dataSource
             override val manager: GuardedJdbcTransactionManager get() = resources.manager
             override val ownerLimit: Int get() = 1
@@ -411,7 +430,11 @@ internal class PersistencePhaseOwnership private constructor(
             override fun requireResources() = resources.requireResources()
 
             override fun acquire(path: PersistencePhasePath): LocalPersistencePermit? {
-                val allowed = if (resources.desiredInstallationOperator) DESIRED_INSTALL_PATHS else CATALOG_PATHS
+                val allowed = when {
+                    resources.desiredInstallationOperator -> DESIRED_INSTALL_PATHS
+                    authoring -> CATALOG_AUTHOR_PATHS
+                    else -> CATALOG_PATHS
+                }
                 if (path !in allowed) {
                     throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
                 }
@@ -421,6 +444,11 @@ internal class PersistencePhaseOwnership private constructor(
     }
 
     companion object {
+        private val CATALOG_AUTHOR_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
+        )
         private val DESIRED_INSTALL_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_DESIRED_BOOTSTRAP,
             PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,

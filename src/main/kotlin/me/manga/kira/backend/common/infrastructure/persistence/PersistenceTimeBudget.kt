@@ -48,6 +48,22 @@ internal class PersistenceTimeBudget private constructor(
         return PersistenceTimeBudget(SystemPersistenceNanoClock, started, remaining * NANOS_PER_MILLISECOND)
     }
 
+    /**
+     * Cleanup may still dispatch the original closes with zero remaining wait. Unlike capped(), expiry
+     * cannot throw before those attempts are made. A zero allowance is already expired, never renewed
+     * work/success time; protected factory predicates still see only the system clock.
+     */
+    internal fun systemCleanupSnapshot(ceilingMillis: Long): PersistenceTimeBudget {
+        val started = System.nanoTime()
+        val remaining = try {
+            remainingMillis(ceilingMillis)
+        } catch (failure: PersistenceBoundaryException) {
+            if (failure.code !== PersistenceBoundaryFailureCode.TIME_BUDGET_EXHAUSTED) throw failure
+            0L
+        }
+        return PersistenceTimeBudget(SystemPersistenceNanoClock, started, remaining * NANOS_PER_MILLISECOND)
+    }
+
     override fun toString(): String = "PersistenceTimeBudget(redacted)"
 
     companion object {

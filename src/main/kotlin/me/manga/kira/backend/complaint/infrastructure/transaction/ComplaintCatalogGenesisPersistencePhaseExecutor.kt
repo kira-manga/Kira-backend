@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogDualLocationVerifier
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizationObservation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationInput
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
@@ -97,23 +98,50 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
         return persist(input, expectedCapacityPolicyDigest).observation
     }
 
+    internal fun prepareGenesis(attempt: CatalogGenesisFreezeAttemptV1): UnverifiedGenesisPreparation {
+        requireConnectionFree()
+        attempt.requirePersistence(ownership, jdbc)
+        return persist(attempt.inputs.preparationInput(), attempt.inputs.capacityDigest(), attempt).observation
+    }
+
+    internal fun persistGenesisSignature(
+        attempt: CatalogGenesisFreezeAttemptV1,
+        local: UnverifiedGenesisPreparation,
+        signatureBytes: ByteArray,
+    ): UnverifiedGenesisPreparation {
+        requireConnectionFree()
+        attempt.requirePersistence(ownership, jdbc)
+        return persist(attempt.inputs.signatureInput(local, signatureBytes), attempt.inputs.capacityDigest(), attempt).observation
+    }
+
     @Suppress("TooGenericExceptionCaught")
-    private fun persist(input: CatalogGenesisMutationInput, expectedCapacityPolicyDigest: ByteArray): CatalogGenesisMutationOperation {
+    private fun persist(
+        input: CatalogGenesisMutationInput,
+        expectedCapacityPolicyDigest: ByteArray,
+        author: CatalogGenesisFreezeAttemptV1? = null,
+    ): CatalogGenesisMutationOperation {
         requireConnectionFree()
         requireCatalogReadback(expectedCapacityPolicyDigest.size == 32, CatalogReadbackFailure.INVALID_POLICY)
         input.finalization?.binding?.requirePersistence(ownership, jdbc)
         val capacity = JdbcComplaintCapacityStore(jdbc, expectedCapacityPolicyDigest)
         val store = JdbcCatalogGenesisMutationStore(jdbc)
         val phase = when (input.path) {
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE -> ownership.enterComplaintCatalogGenesisPrepare()
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE -> ownership.enterComplaintCatalogGenesisSignature()
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE ->
+                author?.let(ownership::enterComplaintCatalogGenesisPrepare) ?: ownership.enterComplaintCatalogGenesisPrepare()
+
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE ->
+                author?.let(ownership::enterComplaintCatalogGenesisSignature) ?: ownership.enterComplaintCatalogGenesisSignature()
+
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE -> ownership.enterComplaintCatalogGenesisComplete()
+
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT -> ownership.enterComplaintCatalogGenesisProject()
+
             else -> error("Unsupported G1 phase.")
         }
         var completed: CatalogGenesisMutationOperation? = null
         try {
             phase.begin() // Fixed shared epoch fence precedes every control, advisory/mutation and counter lock.
+            author?.authenticate(ownership, jdbc)
             completed = when (input.path) {
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE -> store.prepare(input, capacity)
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE -> store.persistSignature(input, capacity)
@@ -122,6 +150,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
                 else -> error("Unsupported G1 phase.")
             }
             input.finalization?.binding?.requirePersistence(ownership, jdbc)
+            author?.requirePersistence(ownership, jdbc)
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)

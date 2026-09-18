@@ -37,6 +37,8 @@ import java.util.UUID
 internal class JdbcCatalogSnapshotReader(private val jdbc: JdbcTemplate) {
     fun read(): CatalogSnapshotReadOperation = CatalogSnapshotReadOperation.capture(jdbc)
 
+    internal fun authenticateGenesisAuthor(attempt: CatalogGenesisFreezeAttemptV1, ownership: PersistencePhaseOwnership) = attempt.authenticate(ownership, jdbc)
+
     override fun toString(): String = "JdbcCatalogSnapshotReader(read-only,no-authority)"
 }
 
