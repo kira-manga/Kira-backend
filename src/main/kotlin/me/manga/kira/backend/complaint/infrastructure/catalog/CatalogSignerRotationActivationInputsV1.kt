@@ -6,9 +6,11 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenMutation
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenSignatureSlot
+import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
 import me.manga.kira.backend.complaint.domain.catalog.CatalogRotationState
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationCapacityV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisApprovalV1
+import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisManifestV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisSignatureV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogRotationEnvelopeV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogRotationManifestV1
@@ -16,7 +18,11 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineRequiredSignerV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.parsing.catalog.OfflineTrustBundleParser
+import java.sql.Timestamp
+import java.time.Instant
 import java.util.Base64
+import java.util.HexFormat
+import java.util.UUID
 
 /** Derived fixed capability, not another desired profile or an alteration of the cold D7 inventory. */
 internal class CatalogSignerRotationActivationProfileV1 private constructor(
@@ -109,6 +115,43 @@ internal class CatalogSignerRotationActivationInputsV1(
         val bytes = CanonicalJson.canonicalize(OfflineCatalogRotationManifestV1.serializer(), overlap.manifest).toByteArray(Charsets.UTF_8)
         state.append(overlap.manifest.authenticationClaims(), overlap.signatures, bytes, g2, chain)
         state.requireImmediateActivation(manifest, chain)
+        original.requireRunning()
+    }
+
+    /** Bind every frozen G1 column to the genuine raw prefix before accepting its captured full33 history. */
+    internal fun requireGenesisHistory(value: CatalogSignerRotationActivationObservationV1, proof: CatalogDualLocationVerifier.Activation3Readback) {
+        requireConnectionFree()
+        original.requireRunning()
+        val raw = proof.genesisBytes()
+        val frozen = CatalogLocalSnapshotVerifier.validateMutation(value.genesis, chain.limits)
+        requireSignerRotation(
+            frozen.schemaVersion == 1 && frozen.claims.operation == "GENESIS" && frozen.claims.generation == 1L &&
+                frozen.envelopeBytes.contentEquals(raw),
+        )
+        CatalogLocalSnapshotVerifier.requireStoredSignatures(frozen, value.genesis.signatureSlots)
+        val parsedGenesis = OfflineTrustBundleParser.parseGenesis(raw)
+        val genesis = parsedGenesis.manifest
+        val unsigned = CanonicalJson.canonicalize(OfflineCatalogGenesisManifestV1.serializer(), genesis).toByteArray(Charsets.UTF_8)
+        val approval = CanonicalJson.canonicalize(ListSerializer(OfflineCatalogGenesisApprovalV1.serializer()), genesis.approvals).toByteArray(Charsets.UTF_8)
+        val signer = genesis.requiredSignerPolicy.members.single()
+        val hex = HexFormat.of()
+        // V14 frozen columns 0..22, independently derived from authenticated raw G1, not the captured SQL values.
+        val expected = arrayOf<Any?>(
+            UUID.fromString(genesis.operationToken), genesis.operation, null, null, 0L, hex.parseHex(genesis.previousEnvelopeSha256),
+            genesis.generation, UUID.fromString(genesis.catalogWriterGenerationId), approval, hex.parseHex(Sha256.hex(approval)),
+            genesis.canonicalizerId, unsigned, hex.parseHex(Sha256.hex(unsigned)), genesis.requiredSignerPolicy.mode,
+            signer.keyId, signer.algorithmId, Base64.getDecoder().decode(parsedGenesis.signatures.single().signatureBase64),
+            null, null, null, raw, hex.parseHex(Sha256.hex(raw)), CatalogReadbackProtocol.key(1),
+        )
+        val actual = value.historyArguments().first()
+        requireSignerRotation(
+            actual.size == 33 && expected.indices.all { index ->
+                val before = expected[index]
+                val after = actual[index]
+                if (before is ByteArray) after is ByteArray && before.contentEquals(after) else before == after
+            } && actual[30] == Timestamp.from(Instant.ofEpochSecond(genesis.creation.createdAtEpochSecond)),
+        )
+        // C6/state/completed_at/projected_at stay actual historical data; raw G1 cannot invent their precrash values.
         original.requireRunning()
     }
 

@@ -488,6 +488,7 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     private fun requireSnapshotHistory(value: CatalogSignerRotationActivationObservationV1) {
         requireConnectionFree(); requireRunning()
         val proof = checkNotNull(readback); proof.requireSnapshot(checkNotNull(snapshot)); assembly.requireProof(proof)
+        inputs.requireGenesisHistory(value, proof)
         requireSignerRotation(value.genesis.signedEnvelopeBytes.contentEquals(proof.genesisBytes()) && value.overlap.signedEnvelopeBytes.contentEquals(proof.overlapBytes()))
         requireSignerRotation(sameArguments(value.overlapCopyArguments(), CatalogSignerRotationActivationInputV1.overlapCopies(proof)))
         val expectedState = when (val local = snapshot) {
