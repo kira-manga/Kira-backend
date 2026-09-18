@@ -50,7 +50,11 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
     val signing = AwsJournalKmsFixture()
     val readback = CatalogSignerRotationReadbackHttpFixture(f.d7)
     val operator = CatalogSignerRotationFreezeV1.withHttpFixtures(
-        f.process, f.campaign, signing::httpClient, readback::httpClient, f.d7.wallClock,
+        f.process,
+        f.campaign,
+        signing::httpClient,
+        readback::httpClient,
+        f.d7.wallClock,
     )
     val attempt: CatalogSignerRotationFreezeAttemptV1 = poolTestField(operator, "attempt")
     private val assembly: AutoCloseable = poolTestField(operator, "assembly")
@@ -109,13 +113,19 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
     fun execute(resume: Boolean = false, request: CatalogSignerRotationFreezeRequestV1 = f.request) = try {
         if (resume) {
             operator.resume(
-                request, AwsJournalKmsFixture.CREDENTIALS, NEW_SIGNING_CREDENTIALS,
-                S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials,
+                request,
+                AwsJournalKmsFixture.CREDENTIALS,
+                NEW_SIGNING_CREDENTIALS,
+                S3CatalogReadbackFixture.credentials,
+                S3CatalogReadbackFixture.credentials,
             )
         } else {
             operator.freeze(
-                request, AwsJournalKmsFixture.CREDENTIALS, NEW_SIGNING_CREDENTIALS,
-                S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials,
+                request,
+                AwsJournalKmsFixture.CREDENTIALS,
+                NEW_SIGNING_CREDENTIALS,
+                S3CatalogReadbackFixture.credentials,
+                S3CatalogReadbackFixture.credentials,
             )
         }
     } finally {
@@ -194,7 +204,9 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
 
     companion object {
         private val NEW_SIGNING_CREDENTIALS = AwsSessionCredentials.create(
-            "SYNTHETICNEWKMSACCESS", "synthetic-new-kms-secret-not-real", "synthetic-new-kms-session",
+            "SYNTHETICNEWKMSACCESS",
+            "synthetic-new-kms-secret-not-real",
+            "synthetic-new-kms-session",
         )
     }
 }
@@ -259,10 +271,12 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
                     // The prerequisite lease intentionally stays row-only; only these three author phases take the shared epoch fence.
                     val sharedFence = when (path) {
                         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> false
+
                         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
                         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
                         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
                         -> true
+
                         else -> error("Unexpected signer rotation/lease phase.")
                     }
                     assertEquals(sharedFence, row.getBoolean(6))
@@ -296,15 +310,25 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
     private fun step(sql: String, arguments: Array<out Any?>): String = when (sql) {
         LOCK_COORDINATOR_LEASE_CONTROL -> "lease-lock"
+
         READ_COORDINATOR_LEASE_CONTROL -> "lease-read"
+
         ACQUIRE_COORDINATOR_LEASE -> "lease-acquire"
+
         LOCK_SIGNER_ROTATION_CONTROL -> "control"
+
         READ_SIGNER_ROTATION_CURRENT_LEASE -> "current-lease"
+
         TRY_CATALOG_LOCK -> "catalog"
+
         LOCK_SIGNER_ROTATION_HISTORY -> "history-lock"
+
         READ_SIGNER_ROTATION_HISTORY -> "history-read"
+
         INSERT_SIGNER_ROTATION_PREPARED -> "prepare"
+
         WRITE_SIGNER_ROTATION_SIGNATURE -> "signature"
+
         else -> when {
             sql.contains("FROM complaint_capacity_counters") -> "counters"
             sql.contains("UPDATE complaint_capacity_counters") -> "charge:${arguments[3]}"

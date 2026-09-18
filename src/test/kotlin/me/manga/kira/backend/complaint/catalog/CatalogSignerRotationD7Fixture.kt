@@ -108,7 +108,10 @@ internal object CatalogSignerRotationD7Inputs {
             currentApproverIds = chain.currentApproverIds,
             expectedGenesisEnvelopeSha256 = genesisPin,
             chainLimits = DesiredCatalogChainLimitsV1(
-                limits.maximumEnvelopeBytes, limits.maximumManifestRecords, limits.maximumGenerations, limits.maximumEncodedBytes,
+                limits.maximumEnvelopeBytes,
+                limits.maximumManifestRecords,
+                limits.maximumGenerations,
+                limits.maximumEncodedBytes,
             ),
         )
         return base.copy(
@@ -132,7 +135,11 @@ internal object CatalogSignerRotationD7Inputs {
         Json.encodeToString(ComplaintDesiredDeploymentDocumentV1.serializer(), document).toByteArray(Charsets.UTF_8)
 
     private fun key(id: String, arn: String, pair: KeyPair): DesiredCatalogSigningKeyInputV1 = DesiredCatalogSigningKeyInputV1(
-        id, arn, OfflineTrustBundleFixture.ALGORITHM, base64(pair.public.encoded), Sha256.hex(pair.public.encoded),
+        id,
+        arn,
+        OfflineTrustBundleFixture.ALGORITHM,
+        base64(pair.public.encoded),
+        Sha256.hex(pair.public.encoded),
     )
 
     private fun base64(bytes: ByteArray): String = Base64.getEncoder().encodeToString(bytes)
@@ -171,11 +178,7 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     val envelope: ByteArray get() = freeze.read(CatalogGenesisReleaseLeafV1.ENVELOPE)
     val retainUntil: Instant get() = Instant.ofEpochSecond(freeze.manifest.creation.createdAtEpochSecond).atOffset(ZoneOffset.UTC).plusYears(10).toInstant()
 
-    fun prepare(
-        profile: String = "D7",
-        totalAttemptMillis: Long = 30_000,
-        beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit = {},
-    ) {
+    fun prepare(profile: String = "D7", totalAttemptMillis: Long = 30_000, beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit = {}) {
         desired.prepare()
         val base = desired.document
         val capacity = ComplaintDesiredDeploymentJsonV1.parse(CatalogSignerRotationD7Inputs.bytes(base)).capacity
@@ -188,7 +191,11 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
                 observer.update(
                     "UPDATE complaint_capacity_counters SET configuration_hash = ?, configuration_closed = false, hard_limit = ?, " +
                         "creation_limit = ?, free_units = ?, actual_units = 0, recovery_reserved_units = 0, test_reserved_units = 0 WHERE name = ?",
-                    capacity.digestBytes(), capacity.hardLimit[counter], capacity.creationLimit[counter], capacity.hardLimit[counter], counter.storedName,
+                    capacity.digestBytes(),
+                    capacity.hardLimit[counter],
+                    capacity.creationLimit[counter],
+                    capacity.hardLimit[counter],
+                    counter.storedName,
                 ),
             )
         }
@@ -236,7 +243,12 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         startRuntime()
         genesisWire = CatalogSignerRotationReadbackHttpFixture(this)
         refresh = CurrentAcceptedCatalogRefreshV1.withHttpFixture(
-            process, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials, genesisWire::httpClient, wallClock, clock::nanoTime,
+            process,
+            S3CatalogReadbackFixture.credentials,
+            S3CatalogReadbackFixture.credentials,
+            genesisWire::httpClient,
+            wallClock,
+            clock::nanoTime,
         ).use { it.refresh() }
         genesisWire.assertCompletedReadbacks(1)
         assertEquals(1L, refresh.catalogFor(process).chain.tail.generation)
@@ -265,7 +277,9 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         assembly.assemble(
             inputs,
             DesiredInstallationInputFixture.acquired(
-                inputs, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray(), DESIRED_OPERATOR_TEST_PASSWORD.toByteArray(),
+                inputs,
+                PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray(),
+                DESIRED_OPERATOR_TEST_PASSWORD.toByteArray(),
             ),
             null,
         )
@@ -282,11 +296,14 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     }
 
     fun desiredHash(): ByteArray? = observer.queryForObject(
-        "SELECT desired_configuration_hash FROM complaint_journal_control WHERE data_scope_id = ?", ByteArray::class.java, ComplaintDataScope.LIVE.id,
+        "SELECT desired_configuration_hash FROM complaint_journal_control WHERE data_scope_id = ?",
+        ByteArray::class.java,
+        ComplaintDataScope.LIVE.id,
     )
 
     fun genesisRow(): Map<String, Any?> = observer.queryForMap(
-        "SELECT * FROM complaint_catalog_mutations WHERE operation_token = ?", UUID.fromString(freeze.manifest.operationToken),
+        "SELECT * FROM complaint_catalog_mutations WHERE operation_token = ?",
+        UUID.fromString(freeze.manifest.operationToken),
     )
 
     fun state(): List<String> = freeze.state()
@@ -333,12 +350,21 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
             awaitLifecycleFact {
                 observer.queryForObject(
                     "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND usename IN (?, ?, ?))",
-                    Boolean::class.java, PgLifecycleDatabaseSettings.CANDIDATE, CatalogGenesisFreezeFixture.AUTHOR, ComplaintDesiredInstallationFixture.OPERATOR,
+                    Boolean::class.java,
+                    PgLifecycleDatabaseSettings.CANDIDATE,
+                    CatalogGenesisFreezeFixture.AUTHOR,
+                    ComplaintDesiredInstallationFixture.OPERATOR,
                 ) == true
             }
         }
-        val sourceClosed = runCatching { ready.getOrThrow(); originalFreeze?.close() }
-        val desiredClosed = runCatching { ready.getOrThrow(); desired.close() }
+        val sourceClosed = runCatching {
+            ready.getOrThrow()
+            originalFreeze?.close()
+        }
+        val desiredClosed = runCatching {
+            ready.getOrThrow()
+            desired.close()
+        }
         rethrowSignerRotationFixtureFailures(listOf(stopped) + retired + listOf(ready, sourceClosed, desiredClosed))
     }
 

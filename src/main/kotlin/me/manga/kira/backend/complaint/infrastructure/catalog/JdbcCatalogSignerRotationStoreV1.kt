@@ -253,7 +253,9 @@ private class StoredSignerRotationRow(
     companion object {
         fun copy(row: ResultSet): StoredSignerRotationRow = StoredSignerRotationRow(
             StoredSignerRotationShape(
-                row.requiredRotationBoolean("genesis_matches"), row.requiredRotationBoolean("rotation_matches"), row.requiredRotationBoolean("bounded"),
+                row.requiredRotationBoolean("genesis_matches"),
+                row.requiredRotationBoolean("rotation_matches"),
+                row.requiredRotationBoolean("bounded"),
             ),
             row.getLong("successor_generation").also { check(!row.wasNull()) }, checkNotNull(row.getObject("operation_token", UUID::class.java)),
             checkNotNull(

@@ -463,8 +463,12 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
         assertSame(original, activeRotation())
         val http = CatalogSignerRotationReadbackHttpFixture(f.d7)
         val refresh = CurrentAcceptedCatalogRefreshV1.withHttpFixture(
-            f.process, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials,
-            http::httpClient, f.d7.wallClock, f.clock::nanoTime,
+            f.process,
+            S3CatalogReadbackFixture.credentials,
+            S3CatalogReadbackFixture.credentials,
+            http::httpClient,
+            f.d7.wallClock,
+            f.clock::nanoTime,
         )
         val refusal = assertThrows<CatalogReadbackException> { refresh.use { it.refresh() } }
         assertEquals(CatalogReadbackFailure.LIMIT_EXCEEDED, refusal.code)
@@ -556,7 +560,8 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
         }
         val expected = OfflineCatalogRotationFixture.bytes(
             OfflineCatalogRotationEnvelopeV1(
-                1, f.manifest,
+                1,
+                f.manifest,
                 signatures.mapIndexed { index, bytes ->
                     OfflineCatalogGenesisSignatureV1(ids[index], "RSASSA_PSS_SHA_256", Base64.getEncoder().encodeToString(bytes))
                 },
@@ -592,9 +597,17 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
         assertEquals(2L, row["successor_generation"])
         assertEquals(Sha256.hex(f.d7.envelope), HexFormat.of().formatHex(row["predecessor_hash"] as ByteArray))
         for (column in listOf(
-            "object_version", "retain_until", "primary_evidence_bytes", "primary_evidence_hash", "replica_evidence_bytes", "replica_evidence_hash",
-            "completed_at", "projected_at",
-        )) assertNull(row[column], column)
+            "object_version",
+            "retain_until",
+            "primary_evidence_bytes",
+            "primary_evidence_hash",
+            "replica_evidence_bytes",
+            "replica_evidence_hash",
+            "completed_at",
+            "projected_at",
+        )) {
+            assertNull(row[column], column)
+        }
         assertEquals(2L, f.observer.queryForObject("SELECT count(*) FROM complaint_catalog_mutations", Long::class.java))
         assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaint_catalog_mutations WHERE successor_generation >= 3", Long::class.java))
     }
@@ -627,7 +640,8 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
     private fun genesisJson(): String = checkNotNull(
         f.observer.queryForObject(
             "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m WHERE operation_token = ?",
-            String::class.java, UUID.fromString(f.d7.freeze.manifest.operationToken),
+            String::class.java,
+            UUID.fromString(f.d7.freeze.manifest.operationToken),
         ),
     )
 
@@ -644,7 +658,8 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
     ): CatalogSignerRotationFreezeRequestV1 {
         // Separate negative inputs before any PREPARE. Alternate roots are not recovery permission for a started allocation.
         val root = Files.createDirectory(
-            f.releaseRoot.resolve(label), PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
+            f.releaseRoot.resolve(label),
+            PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
         )
         return f.request(manifest, approvals ?: approvalBytes(manifest.approvals), root)
     }

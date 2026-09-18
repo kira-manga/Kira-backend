@@ -177,7 +177,12 @@ internal class CatalogSignerRotationReadbackHttpFixture(private val d7: CatalogS
     private val settings = checkNotNull(d7.process.catalogReadback)
 
     init {
-        http.respond = { request -> observed { beforeRequest(request); reply(request) } }
+        http.respond = { request ->
+            observed {
+                beforeRequest(request)
+                reply(request)
+            }
+        }
     }
 
     fun httpClient(): SdkHttpClient = observed {

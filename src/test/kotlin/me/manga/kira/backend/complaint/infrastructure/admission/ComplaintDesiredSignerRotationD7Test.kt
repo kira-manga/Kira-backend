@@ -134,8 +134,14 @@ internal class ComplaintDesiredSignerRotationD7Test {
             assertThrows<IllegalArgumentException> { writer.requireRetained(process.pools, checkNotNull(foreign.catalog)) }
             assertThrows<IllegalArgumentException> {
                 VersionBoundComplaintProcessConfiguration.fromRetainedWithSignerRotation(
-                    process.consumers, process.pools, inputs.implementationSchema, 2, inputs.databaseIdentity, inputs.restoreIdentity,
-                    reader, writer,
+                    process.consumers,
+                    process.pools,
+                    inputs.implementationSchema,
+                    2,
+                    inputs.databaseIdentity,
+                    inputs.restoreIdentity,
+                    reader,
+                    writer,
                 )
             }
             process.requireUnchangedConfiguration()

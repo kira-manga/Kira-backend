@@ -31,8 +31,12 @@ internal class ComplaintDesiredProcessAssemblyV1Test {
     fun `each selected D1 through D6 uses its genuine retained inventory with an independent fixed operator and every target actor cold`() {
         val hashes = mutableSetOf<String>()
         for (profile in listOf(
-            DesiredProcessProfileV1.D1, DesiredProcessProfileV1.D2, DesiredProcessProfileV1.D3,
-            DesiredProcessProfileV1.D4, DesiredProcessProfileV1.D5, DesiredProcessProfileV1.D6,
+            DesiredProcessProfileV1.D1,
+            DesiredProcessProfileV1.D2,
+            DesiredProcessProfileV1.D3,
+            DesiredProcessProfileV1.D4,
+            DesiredProcessProfileV1.D5,
+            DesiredProcessProfileV1.D6,
         )) {
             withAssembly(DesiredInstallationInputFixture.document(profile.name)) { assembly ->
                 val process = assembly.target
