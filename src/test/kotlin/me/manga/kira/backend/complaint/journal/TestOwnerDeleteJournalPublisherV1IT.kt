@@ -226,32 +226,62 @@ class TestOwnerDeleteJournalPublisherV1IT {
         val seed = f.wire(attempt)
         val work = seed.factory(f.store, f.lanes).use { f.prepared(attempt, it) }
         val durable = f.state()
-        for (mode in listOf("S3", "KMS")) {
+        for ((index, mode) in listOf("S3", "KMS").withIndex()) {
             val wire = f.wire(attempt)
-            TestOwnerDeleteJournalPublisherFactoryV1.withHttpFixture(
+            val expectedOwners = index + 1
+            val publisher = TestOwnerDeleteJournalPublisherFactoryV1.withHttpFixture(
                 f.lanes, f.store, f.routing, TestOwnerDeleteJournalPublisherFixture.CREDENTIALS,
                 {
                     requireConnectionFree()
-                    assertEquals(1, f.lanes.activeOwners().privacyOwners)
+                    assertEquals(expectedOwners, f.lanes.activeOwners().privacyOwners)
                     error(TestOwnerDeleteJournalPublisherFixture.PRIVATE_TEXT)
                 },
                 {
                     requireConnectionFree()
-                    assertEquals(1, f.lanes.activeOwners().privacyOwners)
+                    assertEquals(expectedOwners, f.lanes.activeOwners().privacyOwners)
                     if (mode == "KMS") error(TestOwnerDeleteJournalPublisherFixture.PRIVATE_TEXT)
                     wire.kms.httpClient()
                 }, wire.clock, { wire.nanos },
-            ).use { publisher ->
-                redacted(assertThrows<JournalPublicationExceptionV1> { publisher.reserve().use { it.publish(work) } })
+            )
+            val owner = publisher.reserve()
+            val failure = assertThrows<RuntimeException> { owner.publish(work) }
+            if (mode == "S3") {
+                assertEquals(JournalPublicationFailureV1.PROVIDER_FAILURE, assertInstanceOf(JournalPublicationExceptionV1::class.java, failure).code)
+            } else {
+                assertEquals(me.manga.kira.backend.security.OwnerDeleteAllJournalFailure.KEY_FAILURE,
+                    assertInstanceOf(OwnerDeleteAllJournalException::class.java, failure).code)
             }
+            redacted(failure)
+            // A factory that never returned its owner has unproved internals, even when every returned client closed.
+            val cleanup = assertThrows<RuntimeException> { owner.close() }
+            if (mode == "S3") {
+                assertEquals(JournalPublicationFailureV1.CLEANUP_FAILURE, assertInstanceOf(JournalPublicationExceptionV1::class.java, cleanup).code)
+            } else {
+                assertEquals(me.manga.kira.backend.security.OwnerDeleteAllJournalFailure.KEY_CLEANUP_FAILURE,
+                    assertInstanceOf(OwnerDeleteAllJournalException::class.java, cleanup).code)
+            }
+            redacted(cleanup)
+            val closes = wire.kms.closedClients
+            repeat(2) {
+                assertTrue(cleanup === assertThrows<RuntimeException> { owner.close() })
+                assertTrue(cleanup === assertThrows<RuntimeException> { publisher.close() })
+            }
+            assertEquals(closes, wire.kms.closedClients, "Repeated close must not retry native cleanup")
             assertEquals(0, wire.s3ClientsCreated)
+            assertEquals(0, wire.s3ClientsClosed)
             assertEquals(if (mode == "KMS") 0 else 1, wire.kms.createdClients)
+            assertEquals(wire.kms.createdClients, wire.kms.closedClients)
             assertEquals(wire.kms.createdClients, wire.kms.returnedClientCloses)
             assertTrue(wire.requests.isEmpty())
             assertTrue(wire.kms.requests.isEmpty())
-            assertEquals(0L, f.lanes.activeOwners().totalOwners)
+            assertEquals(expectedOwners.toLong(), f.lanes.activeOwners().totalOwners)
+            assertNull(f.lanes.tryRoutinePublication())
             assertEquals(durable, f.state())
         }
+        val stopping = assertThrows<RuntimeException> { f.lanes.close() }
+        assertTrue(stopping is JournalPublicationExceptionV1 || stopping is OwnerDeleteAllJournalException)
+        redacted(stopping)
+        assertEquals(2L, f.lanes.activeOwners().totalOwners, "Unknown construction custody is not quiescence")
     }
 
     @Test
