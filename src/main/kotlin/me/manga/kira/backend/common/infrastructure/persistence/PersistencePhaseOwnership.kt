@@ -261,7 +261,7 @@ internal class PersistencePhaseOwnership private constructor(
         enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE, catalogSignerRotationAttempt = attempt)
 
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
-    @Suppress("ThrowsCount", "TooGenericExceptionCaught")
+    @Suppress("ThrowsCount", "TooGenericExceptionCaught", "LongMethod") // Keep ordered admission, custody and publication in one auditable entry.
     private fun enter(
         path: PersistencePhasePath,
         deletionScope: ComplaintDataScope? = null,

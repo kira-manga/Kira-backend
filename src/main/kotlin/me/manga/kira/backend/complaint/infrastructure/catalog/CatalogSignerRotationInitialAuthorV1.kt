@@ -310,7 +310,7 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
         invocationAttempt = null
     }
 
-    @Suppress("TooGenericExceptionCaught")
+    @Suppress("TooGenericExceptionCaught", "InstanceOfCheckForException") // One failure path retains SQL uncertainty and all original signals.
     private fun <T> inPhase(path: PersistencePhasePath, action: () -> T): T {
         requireConnectionFree()
         requireBootstrapRunning()

@@ -210,6 +210,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         }
     }
 
+    @Suppress("ComplexCondition") // Explicitly reject both retained owners and both immutable named purposes.
     internal fun requireOrdinaryPurpose() {
         if (preparedRecovery != null || coordinator.catalogSignerRotationRecovery || initialAuthor != null || coordinator.catalogSignerRotationAuthoring) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
