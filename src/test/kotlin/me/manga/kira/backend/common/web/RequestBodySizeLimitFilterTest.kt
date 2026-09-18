@@ -469,6 +469,86 @@ class RequestBodySizeLimitFilterTest {
         }
     }
 
+    @Test
+    fun `owner DELETE admits only empty observable input with optional JSON and bounded declared unknown or chunked framing`() {
+        val path = "/api/v1/complaints/$SESSION_ID"
+        for (media in listOf(emptyList(), listOf("application/json"), listOf("application/json; charset=UTF-8"))) {
+            for (framing in listOf("declared", "unknown", "chunked")) {
+                val request = GeneratedBodyRequest(0, if (framing == "declared") 0 else -1, path, "DELETE", rawContentTypes = media)
+                if (framing == "chunked") request.addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
+                var reached = false
+                filter.doFilter(request, MockHttpServletResponse()) { wrapped, _ ->
+                    reached = true
+                    val actual = wrapped as HttpServletRequest
+                    assertEquals(0L, actual.contentLengthLong)
+                    assertEquals(0, actual.inputStream.readAllBytes().size)
+                    assertEquals(0, actual.inputStream.readAllBytes().size)
+                }
+                assertTrue(reached)
+                assertEquals(1, request.streamAccesses)
+                assertEquals(0, request.bytesRead)
+            }
+        }
+        for (count in listOf(1, 2, 16384)) {
+            assertOwnerRejected(GeneratedBodyRequest(count, path = path, method = "DELETE"), 400, "VALIDATION_FAILED", consumed = count)
+        }
+        val short = GeneratedBodyRequest(0, 1, path, "DELETE")
+        val response = MockHttpServletResponse()
+        filter.doFilter(short, response) { _, _ -> error("False positive length cannot reach dispatch") }
+        assertEquals(400, response.status)
+        assertEquals(1, short.streamAccesses)
+        assertEquals(0, short.bytesRead)
+    }
+
+    @Test
+    fun `owner DELETE protective aliases and false small streams retain the sixteen KiB cap without enabling a route`() {
+        val exact = "/api/v1/complaints/$SESSION_ID"
+        for ((context, path) in listOf("" to exact, "" to "$exact/", "" to "$exact;variant=1", "" to exact.replace("complaint", "%63omplaint"), "/kira" to "/kira$exact")) {
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, 0, path, "DELETE").apply { contextPath = context }
+            assertOwnerRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 16385)
+        }
+        for (length in listOf("16385", Long.MAX_VALUE.toString(), "9".repeat(60))) {
+            assertOwnerRejected(
+                GeneratedBodyRequest(Int.MAX_VALUE, path = exact, method = "DELETE").apply { addHeader(HttpHeaders.CONTENT_LENGTH, length) },
+                413, "PAYLOAD_TOO_LARGE",
+            )
+        }
+        for ((method, path) in listOf("PUT" to exact, "DELETE" to "/api/v1/complaints-other/$SESSION_ID", "DELETE" to "$exact/child")) {
+            val request = GeneratedBodyRequest(16385, path = path, method = method).apply { contentType = "text/plain" }
+            var count = 0
+            filter.doFilter(request, MockHttpServletResponse()) { wrapped, _ -> count = (wrapped as HttpServletRequest).inputStream.readAllBytes().size }
+            assertEquals(16385, count)
+        }
+    }
+
+    @Test
+    fun `owner DELETE rejects duplicate security preconditions unsupported media and conflicting framing before stream`() {
+        val path = "/api/v1/complaints/$SESSION_ID"
+        for ((name, value) in listOf("Authorization" to "Bearer synthetic", "X-Kira-Idempotency-Key" to DELETE_ALL_KEY, "X-Kira-Complaint-Contract" to "1", HttpHeaders.CONTENT_LENGTH to "0")) {
+            val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = "DELETE").apply { addHeader(name, value); addHeader(name, value) }
+            assertOwnerRejected(request, 400, "VALIDATION_FAILED")
+        }
+        assertOwnerRejected(
+            GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = "DELETE").apply { addHeader(HttpHeaders.IF_MATCH, "x".repeat(257)) },
+            412, "PRECONDITION_FAILED",
+        )
+        assertOwnerRejected(
+            GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = "DELETE").apply { addHeader(HttpHeaders.IF_MATCH, "*"); addHeader(HttpHeaders.IF_MATCH, "*") },
+            412, "PRECONDITION_FAILED",
+        )
+        for (media in listOf("", "text/plain", "application/json; charset=utf-16")) {
+            assertOwnerRejected(GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = "DELETE", rawContentTypes = listOf(media)), 415, "UNSUPPORTED_MEDIA_TYPE")
+        }
+        assertOwnerRejected(
+            GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = "DELETE").apply { addHeader(HttpHeaders.CONTENT_ENCODING, "gzip") },
+            415, "UNSUPPORTED_MEDIA_TYPE",
+        )
+        assertOwnerRejected(
+            GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = "DELETE").apply { addHeader(HttpHeaders.CONTENT_LENGTH, "0"); addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked") },
+            400, "VALIDATION_FAILED",
+        )
+    }
+
     private fun assertOwnerRejected(request: GeneratedBodyRequest, status: Int, code: String, consumed: Int = 0) {
         val response = MockHttpServletResponse()
         filter.doFilter(request, response, FilterChain { _, _ -> error("Owner failure must precede downstream dispatch") })

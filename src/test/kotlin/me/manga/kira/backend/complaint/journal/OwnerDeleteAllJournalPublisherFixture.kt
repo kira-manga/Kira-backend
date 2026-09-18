@@ -134,41 +134,14 @@ internal class OwnerDeleteAllJournalPublisherFixture private constructor(
 
     fun httpClient(): SdkHttpClient {
         s3ClientsCreated++
-        return object : SdkHttpClient {
-            override fun prepareRequest(request: HttpExecuteRequest): ExecutableHttpRequest {
-                requireConnectionFree()
-                beforePrepare()
-                val bytes = request.contentStreamProvider().orElse(null)?.newStream()?.use { it.readNBytes(98_305) } ?: ByteArray(0)
-                check(bytes.size <= 98_304)
-                val captured = JournalPublisherHttpRequest(request.httpRequest(), bytes).also { requests.add(it) }
-                val result = object : ExecutableHttpRequest {
-                    override fun call(): HttpExecuteResponse {
-                        captured.calls++
-                        val reply = respond(captured).also { captured.reply = it }
-                        reply.calls++
-                        reply.beforeCall()
-                        return reply.response().also { captured.responseReturned = true }
-                    }
-
-                    override fun abort() {
-                        captured.aborts++
-                        captured.reply?.let {
-                            it.aborts++
-                            it.onAbort()
-                        }
-                    }
-                }
-                afterPrepare()
-                return result
-            }
-
-            override fun close() {
+        return journalPublisherRawHttpClient(
+            requests, { beforePrepare() }, { afterPrepare() },
+            {
                 s3ClientsClosed++
                 onClientClose()
-            }
-
-            override fun clientName(): String = "SyntheticOrdinaryJournalSync"
-        }
+            },
+            { respond(it) },
+        )
     }
 
     fun statefulReply(request: JournalPublisherHttpRequest): S3CatalogReply = when (request.kind) {
@@ -198,37 +171,13 @@ internal class OwnerDeleteAllJournalPublisherFixture private constructor(
     fun listReply(versions: List<JournalPublisherObject> = listOfNotNull(stored), exactKey: String = event.route.objectKey): S3CatalogReply =
         xmlReply(listDocument(versions, exactKey))
 
-    fun listDocument(versions: List<JournalPublisherObject> = listOfNotNull(stored), exactKey: String = event.route.objectKey): String = buildString {
-        append("<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">")
-        append("<Name>${journal.declaration().journalLocation.bucket}</Name><Prefix>${encoded(exactKey)}</Prefix>")
-        append("<KeyMarker></KeyMarker><VersionIdMarker></VersionIdMarker><MaxKeys>2</MaxKeys><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType>")
-        versions.forEach {
-            append("<Version><Key>${encoded(it.key)}</Key><VersionId>${xml(it.version)}</VersionId><IsLatest>true</IsLatest>")
-            append("<LastModified>${it.lastModified}</LastModified><Size>${it.bytes.size}</Size><StorageClass>STANDARD</StorageClass></Version>")
-        }
-        append("</ListVersionsResult>")
-    }
+    fun listDocument(versions: List<JournalPublisherObject> = listOfNotNull(stored), exactKey: String = event.route.objectKey): String =
+        journalPublisherRawListDocument(journal.declaration().journalLocation.bucket, exactKey, versions)
 
-    fun getReply(value: JournalPublisherObject = checkNotNull(stored)): S3CatalogReply = S3CatalogReply(value.bytes).apply {
-        headers = headers + mapOf(
-            "Content-Type" to listOf("application/octet-stream"),
-            "x-amz-version-id" to listOf(value.version),
-            "x-amz-bucket-region" to listOf(journal.declaration().journalLocation.region),
-            "x-amz-checksum-sha256" to listOf(checksum(value.bytes)),
-            "x-amz-checksum-type" to listOf("FULL_OBJECT"),
-            "Last-Modified" to listOf(DateTimeFormatter.RFC_1123_DATE_TIME.format(value.lastModified.atZone(ZoneOffset.UTC))),
-            "x-amz-object-lock-mode" to listOf("COMPLIANCE"),
-            "x-amz-object-lock-retain-until-date" to listOf(value.retainUntil.toString()),
-        ) + value.metadata.mapKeys { "x-amz-meta-${it.key}" }.mapValues { listOf(it.value) }
-    }
+    fun getReply(value: JournalPublisherObject = checkNotNull(stored)): S3CatalogReply =
+        journalPublisherRawGetReply(journal.declaration().journalLocation.region, value)
 
-    fun putReply(value: JournalPublisherObject = checkNotNull(stored)): S3CatalogReply = S3CatalogReply(ByteArray(0)).apply {
-        headers = headers + mapOf(
-            "x-amz-version-id" to listOf(value.version),
-            "x-amz-checksum-sha256" to listOf(checksum(value.bytes)),
-            "x-amz-checksum-type" to listOf("FULL_OBJECT"),
-        )
-    }
+    fun putReply(value: JournalPublisherObject = checkNotNull(stored)): S3CatalogReply = journalPublisherRawPutReply(value)
 
     fun objectFor(bytes: ByteArray, version: String = VERSION): JournalPublisherObject {
         val created = wall.truncatedTo(ChronoUnit.SECONDS)
@@ -287,34 +236,8 @@ internal class OwnerDeleteAllJournalPublisherFixture private constructor(
     }
 
     fun assertSigned(request: JournalPublisherHttpRequest) {
-        val http = request.http
         val location = journal.declaration().journalLocation
-        assertEquals("https", http.protocol())
-        assertEquals("s3.${location.region}.amazonaws.com", http.host())
-        assertEquals(443, http.port())
-        assertEquals(location.accountId, request.header("x-amz-expected-bucket-owner"))
-        assertEquals(CREDENTIALS.sessionToken(), request.header("x-amz-security-token"))
-        assertEquals(hash(request.body), request.header("x-amz-content-sha256"))
-        val authorization = request.header("Authorization")
-        val scope = authorization.substringAfter("Credential=${CREDENTIALS.accessKeyId()}/").substringBefore(',')
-        val signed = authorization.substringAfter("SignedHeaders=").substringBefore(',').split(';')
-        val query = http.rawQueryParameters().flatMap { (key, values) ->
-            (if (values.isEmpty()) listOf("") else values).map { encodedQuery(key) + "=" + encodedQuery(it.orEmpty()) }
-        }.sorted().joinToString("&")
-        val headers = signed.joinToString("") { "$it:${request.header(it).trim().replace(Regex("[ \\t]+"), " ")}\n" }
-        val canonical = "${http.method()}\n${http.encodedPath()}\n$query\n$headers\n${signed.joinToString(";")}\n${hash(request.body)}"
-        val date = request.header("x-amz-date")
-        val signingDate = hmac(("AWS4" + CREDENTIALS.secretAccessKey()).toByteArray(), date.take(8))
-        val signingRegion = hmac(signingDate, location.region)
-        val signingService = hmac(signingRegion, "s3")
-        val signingKey = hmac(signingService, "aws4_request")
-        val signature = hmac(signingKey, "AWS4-HMAC-SHA256\n$date\n$scope\n${hash(canonical.toByteArray())}")
-        assertEquals(HexFormat.of().formatHex(signature), authorization.substringAfter("Signature="))
-        assertTrue(signed.containsAll(listOf("host", "x-amz-date", "x-amz-security-token", "x-amz-expected-bucket-owner")))
-        listOf("Range", "Transfer-Encoding", "Content-Encoding", "x-amz-trailer", "x-amz-decoded-content-length").forEach {
-            assertFalse(http.firstMatchingHeader(it).isPresent)
-        }
-        assertEquals("1", request.header("amz-sdk-request").substringAfter("attempt=").substringBefore(';'))
+        journalPublisherRawAssertSigned(request, location.region, location.accountId, CREDENTIALS)
     }
 
     private fun keyReply(request: JournalKmsHttpRequest): JournalKmsHttpReply {
@@ -375,10 +298,6 @@ internal class OwnerDeleteAllJournalPublisherFixture private constructor(
             assertTrue(failure.suppressed.isEmpty())
         }
 
-        private fun hmac(key: ByteArray, value: String): ByteArray = Mac.getInstance("HmacSHA256").run {
-            init(SecretKeySpec(key, "HmacSHA256"))
-            doFinal(value.toByteArray())
-        }
     }
 }
 
@@ -405,4 +324,114 @@ internal data class JournalPublisherObject(
     val metadata: Map<String, String>,
 ) {
     override fun toString(): String = "JournalPublisherObject(synthetic,redacted)"
+}
+
+/** Reused raw HTTP SPI only. It accepts no SQL work, codec event or verification authority. */
+internal fun journalPublisherRawHttpClient(
+    requests: MutableList<JournalPublisherHttpRequest>,
+    beforePrepare: () -> Unit,
+    afterPrepare: () -> Unit,
+    onClose: () -> Unit,
+    respond: (JournalPublisherHttpRequest) -> S3CatalogReply,
+): SdkHttpClient = object : SdkHttpClient {
+    override fun prepareRequest(request: HttpExecuteRequest): ExecutableHttpRequest {
+        requireConnectionFree()
+        beforePrepare()
+        val bytes = request.contentStreamProvider().orElse(null)?.newStream()?.use { it.readNBytes(98_305) } ?: ByteArray(0)
+        check(bytes.size <= 98_304)
+        val captured = JournalPublisherHttpRequest(request.httpRequest(), bytes).also { requests.add(it) }
+        val result = object : ExecutableHttpRequest {
+            override fun call(): HttpExecuteResponse {
+                captured.calls++
+                val reply = respond(captured).also { captured.reply = it }
+                reply.calls++
+                reply.beforeCall()
+                return reply.response().also { captured.responseReturned = true }
+            }
+
+            override fun abort() {
+                captured.aborts++
+                captured.reply?.let { it.aborts++; it.onAbort() }
+            }
+        }
+        afterPrepare()
+        return result
+    }
+
+    override fun close() = onClose()
+    override fun clientName(): String = "SyntheticOrdinaryJournalSync"
+}
+
+internal fun journalPublisherRawListDocument(bucket: String, exactKey: String, versions: List<JournalPublisherObject>): String = buildString {
+    append("<ListVersionsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">")
+    append("<Name>$bucket</Name><Prefix>${OwnerDeleteAllJournalPublisherFixture.encoded(exactKey)}</Prefix>")
+    append("<KeyMarker></KeyMarker><VersionIdMarker></VersionIdMarker><MaxKeys>2</MaxKeys><IsTruncated>false</IsTruncated><EncodingType>url</EncodingType>")
+    versions.forEach {
+        append("<Version><Key>${OwnerDeleteAllJournalPublisherFixture.encoded(it.key)}</Key><VersionId>${OwnerDeleteAllJournalPublisherFixture.xml(it.version)}</VersionId><IsLatest>true</IsLatest>")
+        append("<LastModified>${it.lastModified}</LastModified><Size>${it.bytes.size}</Size><StorageClass>STANDARD</StorageClass></Version>")
+    }
+    append("</ListVersionsResult>")
+}
+
+internal fun journalPublisherRawGetReply(region: String, value: JournalPublisherObject): S3CatalogReply = S3CatalogReply(value.bytes).apply {
+    headers = headers + mapOf(
+        "Content-Type" to listOf("application/octet-stream"),
+        "x-amz-version-id" to listOf(value.version),
+        "x-amz-bucket-region" to listOf(region),
+        "x-amz-checksum-sha256" to listOf(OwnerDeleteAllJournalPublisherFixture.checksum(value.bytes)),
+        "x-amz-checksum-type" to listOf("FULL_OBJECT"),
+        "Last-Modified" to listOf(DateTimeFormatter.RFC_1123_DATE_TIME.format(value.lastModified.atZone(ZoneOffset.UTC))),
+        "x-amz-object-lock-mode" to listOf("COMPLIANCE"),
+        "x-amz-object-lock-retain-until-date" to listOf(value.retainUntil.toString()),
+    ) + value.metadata.mapKeys { "x-amz-meta-${it.key}" }.mapValues { listOf(it.value) }
+}
+
+internal fun journalPublisherRawPutReply(value: JournalPublisherObject): S3CatalogReply = S3CatalogReply(ByteArray(0)).apply {
+    headers = headers + mapOf(
+        "x-amz-version-id" to listOf(value.version),
+        "x-amz-checksum-sha256" to listOf(OwnerDeleteAllJournalPublisherFixture.checksum(value.bytes)),
+        "x-amz-checksum-type" to listOf("FULL_OBJECT"),
+    )
+}
+
+/** Independent raw SigV4 assertion shared without accepting any journal/work/verification type. */
+internal fun journalPublisherRawAssertSigned(
+    request: JournalPublisherHttpRequest,
+    region: String,
+    accountId: String,
+    credentials: AwsSessionCredentials,
+) {
+    val http = request.http
+    assertEquals("https", http.protocol())
+    assertEquals("s3.$region.amazonaws.com", http.host())
+    assertEquals(443, http.port())
+    assertEquals(accountId, request.header("x-amz-expected-bucket-owner"))
+    assertEquals(credentials.sessionToken(), request.header("x-amz-security-token"))
+    assertEquals(OwnerDeleteAllJournalPublisherFixture.hash(request.body), request.header("x-amz-content-sha256"))
+    val authorization = request.header("Authorization")
+    val scope = authorization.substringAfter("Credential=${credentials.accessKeyId()}/").substringBefore(',')
+    val signed = authorization.substringAfter("SignedHeaders=").substringBefore(',').split(';')
+    val query = http.rawQueryParameters().flatMap { (key, values) ->
+        (if (values.isEmpty()) listOf("") else values).map {
+            OwnerDeleteAllJournalPublisherFixture.encodedQuery(key) + "=" + OwnerDeleteAllJournalPublisherFixture.encodedQuery(it.orEmpty())
+        }
+    }.sorted().joinToString("&")
+    val headers = signed.joinToString("") { "$it:${request.header(it).trim().replace(Regex("[ \\t]+"), " ")}\n" }
+    val canonical = "${http.method()}\n${http.encodedPath()}\n$query\n$headers\n${signed.joinToString(";")}\n${OwnerDeleteAllJournalPublisherFixture.hash(request.body)}"
+    val date = request.header("x-amz-date")
+    fun hmac(key: ByteArray, value: String): ByteArray = Mac.getInstance("HmacSHA256").run {
+        init(SecretKeySpec(key, "HmacSHA256"))
+        doFinal(value.toByteArray())
+    }
+    val signingDate = hmac(("AWS4" + credentials.secretAccessKey()).toByteArray(), date.take(8))
+    val signingRegion = hmac(signingDate, region)
+    val signingService = hmac(signingRegion, "s3")
+    val signingKey = hmac(signingService, "aws4_request")
+    val signature = hmac(signingKey, "AWS4-HMAC-SHA256\n$date\n$scope\n${OwnerDeleteAllJournalPublisherFixture.hash(canonical.toByteArray())}")
+    assertEquals(HexFormat.of().formatHex(signature), authorization.substringAfter("Signature="))
+    assertTrue(signed.containsAll(listOf("host", "x-amz-date", "x-amz-security-token", "x-amz-expected-bucket-owner")))
+    listOf("Range", "Transfer-Encoding", "Content-Encoding", "x-amz-trailer", "x-amz-decoded-content-length").forEach {
+        assertFalse(http.firstMatchingHeader(it).isPresent)
+    }
+    assertEquals("1", request.header("amz-sdk-request").substringAfter("attempt=").substringBefore(';'))
 }

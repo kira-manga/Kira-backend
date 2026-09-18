@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -179,7 +180,38 @@ class ComplaintInstallationSecurityChainTest {
         requireConnectionFree()
     }
 
-    private class Fixture(includeDeleteAll: Boolean = false) : AutoCloseable {
+    @Test
+    fun `optional one target DELETE requires current installation bearer and does not borrow delete all anonymous dispatch`() = Fixture(includeDelete = true).use { f ->
+        val path = "/api/v1/complaints/${f.id}"
+        for (token in listOf(null, f.userToken, JwtTestSupport.tamperSignature(f.installationToken))) {
+            assertEquals(401, f.request("DELETE", path, token).status)
+        }
+        assertEquals(0, f.currentReads)
+        assertEquals(0, f.deleteCalls)
+        assertEquals(204, f.request("DELETE", path, f.installationToken).status)
+        assertTrue(f.observed?.principal is InstallationHttpPrincipal)
+        assertEquals(1, f.currentReads)
+        assertEquals(1, f.deleteCalls)
+        assertEquals(0, f.deleteAllCalls)
+        f.active = false
+        assertEquals(401, f.request("DELETE", path, f.installationToken).status)
+        assertEquals(1, f.deleteCalls)
+        f.active = true
+        f.phaseUnavailable = true
+        assertEquals(503, f.request("DELETE", path, f.installationToken).status)
+        assertEquals(1, f.deleteCalls)
+        f.phaseUnavailable = false
+        for (alias in listOf("$path/", path.replace("complaint", "%63omplaint"))) {
+            assertEquals(404, f.request("DELETE", alias, "not-a-token", decodedServletPath = path).status)
+        }
+        assertEquals(1, f.deleteCalls)
+        assertEquals(0, f.userReads)
+        assertNull(f.observedUser)
+        assertNull(f.observedMdcUser)
+        requireConnectionFree()
+    }
+
+    private class Fixture(includeDeleteAll: Boolean = false, includeDelete: Boolean = false) : AutoCloseable {
         val ingress = historyTestIngress()
         val bridge = ComplaintHttpIngressBridge(ingress)
         val id: UUID = UUID.randomUUID()
@@ -192,6 +224,7 @@ class ComplaintInstallationSecurityChainTest {
         var userReads = 0
         var semanticStarts = 0
         var deleteAllCalls = 0
+        var deleteCalls = 0
         var active = true
         var phaseUnavailable = false
         var observed: Authentication? = null
@@ -239,7 +272,29 @@ class ComplaintInstallationSecurityChainTest {
             }
         }
         private val history = mock(ComplaintOwnerHistoryHttpHandler::class.java)
-        private val create = mock(ComplaintOwnerCreateHttpHandler::class.java)
+        private val delete = if (includeDelete) {
+            mock(ComplaintOwnerDeleteHttpHandler::class.java) { call ->
+                if (call.method.name.substringBefore('$') == "handleWithinIngress") {
+                    val admitted = call.getArgument<ComplaintIngressContext>(2)
+                    ingress.requireLiveContext(admitted)
+                    assertSame(bodyContext, admitted)
+                    deleteCalls += 1
+                    capture(call.getArgument(0), call.getArgument(1))
+                    null
+                } else {
+                    Answers.RETURNS_DEFAULTS.answer(call)
+                }
+            }
+        } else {
+            null
+        }
+        private val create = mock(ComplaintOwnerCreateHttpHandler::class.java) { call ->
+            when (call.method.name.substringBefore('$')) {
+                "hasDeleteStatus" -> delete != null
+                "usesDeleteStatus" -> delete != null && call.getArgument<ComplaintOwnerDeleteHttpHandler>(0) === delete
+                else -> Answers.RETURNS_DEFAULTS.answer(call)
+            }
+        }
         private val deleteAll = if (includeDeleteAll) {
             mock(ComplaintOwnerDeleteAllHttpHandler::class.java) { call ->
                 if (call.method.name.substringBefore('$') == "handleWithinIngress") {
@@ -257,7 +312,7 @@ class ComplaintInstallationSecurityChainTest {
             null
         }
         private val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt, phases, ingress)
-        private val factory = ComplaintInstallationSecurityChainFactory(bridge, authentication, installations, me, history, create, deleteAll)
+        private val factory = ComplaintInstallationSecurityChainFactory(bridge, authentication, installations, me, history, create, deleteAll, delete = delete)
         private val context = complaintSpringSecurityContext(factory, users)
         private val proxy = context.getBean(FilterChainProxy::class.java)
         private val body = RequestBodySizeLimitFilter(ObjectMapper())

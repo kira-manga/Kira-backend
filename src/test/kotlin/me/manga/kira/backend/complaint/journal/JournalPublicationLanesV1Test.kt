@@ -3,12 +3,16 @@ package me.manga.kira.backend.complaint.journal
 import me.manga.kira.backend.common.infrastructure.persistence.racePersistenceAdmissions
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.InitialLiveJournalTestFixture
+import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLaneSnapshotV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.security.ownerDeleteTestJournal
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 
 /** Accounting only; real privacy factories and cleanup owners are exercised by the separate PG fixture. */
 class JournalPublicationLanesV1Test {
@@ -50,5 +54,34 @@ class JournalPublicationLanesV1Test {
         lanes.close()
         assertEquals(0L, lanes.activeOwners().totalOwners)
         assertNull(lanes.tryRoutinePublication())
+    }
+
+    @Test
+    fun `retaining TEST declarations preserves existing shared routine occupancy and cannot enlarge the LIVE budget`() {
+        val live = ComplaintJournalConfigurationV1.of(InitialLiveJournalTestFixture.declaration())
+        val test = ownerDeleteTestJournal()
+        JournalPublicationLanesV1(live).use { lanes ->
+            val held = List(3) { checkNotNull(lanes.tryRoutinePublication()) }
+            lanes.retainTestJournal(test)
+            lanes.requireTestJournal(test)
+            lanes.requireJournal(live)
+            assertEquals(JournalPublicationLaneSnapshotV1(3, 0), lanes.activeOwners())
+            assertNull(lanes.tryRoutinePublication())
+            val sameBytes = TestOwnerDeleteJournalConfigurationV1.of(test.declaration())
+            assertEquals(test.sha256, sameBytes.sha256)
+            assertThrows<JournalPublicationExceptionV1> { lanes.requireTestJournal(sameBytes) }
+            val declaration = test.declaration()
+            val larger = TestOwnerDeleteJournalConfigurationV1.of(declaration.copy(
+                limits = declaration.limits.copy(capacity = declaration.limits.capacity.copy(maximumPublicationLanes = 8, routinePublicationLanes = 7)),
+            ))
+            assertThrows<JournalPublicationExceptionV1> { lanes.retainTestJournal(larger) }
+            assertEquals(JournalPublicationLaneSnapshotV1(3, 0), lanes.activeOwners())
+            held.forEach { it.close() }
+            assertEquals(0L, lanes.activeOwners().totalOwners)
+        }
+        JournalPublicationLanesV1(test).use { lanes ->
+            lanes.requireTestJournal(test)
+            assertThrows<JournalPublicationExceptionV1> { lanes.requireJournal(live) }
+        }
     }
 }

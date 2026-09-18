@@ -1,0 +1,1788 @@
+{
+  "schema": 1,
+  "derivation": "independent artifact LP/HMAC-SHA-256; product not executed",
+  "vectors": [
+    {
+      "id": "ordinary_k1",
+      "request_id": "ordinary",
+      "set": "ordinary_four_retained_keys",
+      "role": "active",
+      "hmac_key_bytes": 32,
+      "routing_key_id": "test-route-01",
+      "routing_key_id_utf8_bytes": 13,
+      "publication_epoch_decimal": "17",
+      "credential_version_decimal": "9",
+      "ordinary_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/",
+      "seal_terminal_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/seal-terminal/",
+      "routing": {
+        "frame": {
+          "raw_file": "raw/routing-ordinary_k1.bin",
+          "byte_count": 431,
+          "sha256": "f0f65d7d7b8b69a3de776b3a9a8f9f910e197b9ffb925b74c861fd66da7ce4e0",
+          "hex": "000000216b6972612d636f6d706c61696e742d6a6f75726e616c2d726f7574696e672d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30310000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 33,
+              "bytes": 37,
+              "value": "kira-complaint-journal-routing-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 37,
+              "utf8_offset": 41,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 42,
+              "utf8_offset": 46,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 82,
+              "utf8_offset": 86,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 196,
+              "utf8_offset": 200,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 204,
+              "utf8_offset": 208,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 244,
+              "utf8_offset": 248,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 250,
+              "utf8_offset": 254,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-01"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 267,
+              "utf8_offset": 271,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 283,
+              "utf8_offset": 287,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 299,
+              "utf8_offset": 303,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 339,
+              "utf8_offset": 343,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 344,
+              "utf8_offset": 348,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 384,
+              "utf8_offset": 388,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "248ed8a3d295f130d3d42900f3bbebb451efa57058fba9133de655c0c26d94c6",
+        "hmac_sha256_base64url": "JI7Yo9KV8TDT1CkA87vrtFHvpXBY-6kTPeZVwMJtlMY"
+      },
+      "event_id": {
+        "frame": {
+          "raw_file": "raw/event_id-ordinary_k1.bin",
+          "byte_count": 432,
+          "sha256": "d9a161826cd2e11d34f05b5c613417bf79e962c1418743a0e2afaec0b86f6c51",
+          "hex": "000000226b6972612d636f6d706c61696e742d6a6f75726e616c2d6576656e742d69642d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30310000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 34,
+              "bytes": 38,
+              "value": "kira-complaint-journal-event-id-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 38,
+              "utf8_offset": 42,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 43,
+              "utf8_offset": 47,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 83,
+              "utf8_offset": 87,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 197,
+              "utf8_offset": 201,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 205,
+              "utf8_offset": 209,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 245,
+              "utf8_offset": 249,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 251,
+              "utf8_offset": 255,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-01"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 268,
+              "utf8_offset": 272,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 284,
+              "utf8_offset": 288,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 300,
+              "utf8_offset": 304,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 340,
+              "utf8_offset": 344,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 345,
+              "utf8_offset": 349,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 385,
+              "utf8_offset": 389,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "c4b5399ce68dd6348e646ff077f57f4db0bff30cce53528b6f1f60717804768c",
+        "hmac_sha256_base64url": "xLU5nOaN1jSOZG_wd_V_TbC_8wzOU1KLbx9gcXgEdow"
+      },
+      "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000017/test-route-01/JI7Yo9KV8TDT1CkA87vrtFHvpXBY-6kTPeZVwMJtlMY",
+      "object_key_utf8_bytes": 237,
+      "payload": {
+        "raw_file": "raw/payload-ordinary_k1.json",
+        "byte_count": 597,
+        "sha256": "1f23763c9021f2a67d27aafe44c302b4de2d3d3c8923d906f73124c85f363fe6",
+        "canonical_utf8": "{\"actorId\":\"a1111111-1111-4111-8111-111111111111\",\"actorKind\":\"INSTALLATION\",\"complaintIds\":[\"e5555555-5555-4555-8555-555555555555\"],\"credentialVersion\":9,\"dataScopeId\":\"b2222222-2222-4222-8222-222222222222\",\"dataScopeKind\":\"TEST\",\"eventId\":\"xLU5nOaN1jSOZG_wd_V_TbC_8wzOU1KLbx9gcXgEdow\",\"eventKind\":\"OWNER_DELETE\",\"operationKey\":\"d4444444-4444-4444-8444-444444444444\",\"ownerInstallationIds\":[\"a1111111-1111-4111-8111-111111111111\"],\"publicationEpoch\":17,\"requestFingerprint\":\"PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs\",\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}"
+      }
+    },
+    {
+      "id": "ordinary_k2",
+      "request_id": "ordinary",
+      "set": "ordinary_four_retained_keys",
+      "role": "retained",
+      "hmac_key_bytes": 32,
+      "routing_key_id": "test-route-02",
+      "routing_key_id_utf8_bytes": 13,
+      "publication_epoch_decimal": "17",
+      "credential_version_decimal": "9",
+      "ordinary_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/",
+      "seal_terminal_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/seal-terminal/",
+      "routing": {
+        "frame": {
+          "raw_file": "raw/routing-ordinary_k2.bin",
+          "byte_count": 431,
+          "sha256": "6057fe9d3a9b6a47da310b71e00b07d825162a4031abbeec7ef54b91aec1f156",
+          "hex": "000000216b6972612d636f6d706c61696e742d6a6f75726e616c2d726f7574696e672d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30320000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 33,
+              "bytes": 37,
+              "value": "kira-complaint-journal-routing-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 37,
+              "utf8_offset": 41,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 42,
+              "utf8_offset": 46,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 82,
+              "utf8_offset": 86,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 196,
+              "utf8_offset": 200,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 204,
+              "utf8_offset": 208,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 244,
+              "utf8_offset": 248,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 250,
+              "utf8_offset": 254,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-02"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 267,
+              "utf8_offset": 271,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 283,
+              "utf8_offset": 287,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 299,
+              "utf8_offset": 303,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 339,
+              "utf8_offset": 343,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 344,
+              "utf8_offset": 348,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 384,
+              "utf8_offset": 388,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "8813a4113027022ea836f0c19c202a3c34c21e50eac11c5424c0994f636833dd",
+        "hmac_sha256_base64url": "iBOkETAnAi6oNvDBnCAqPDTCHlDqwRxUJMCZT2NoM90"
+      },
+      "event_id": {
+        "frame": {
+          "raw_file": "raw/event_id-ordinary_k2.bin",
+          "byte_count": 432,
+          "sha256": "c306b6b901c489aa1c79f8ffde39f0ae32bd119244c9392463af620dfd5e779f",
+          "hex": "000000226b6972612d636f6d706c61696e742d6a6f75726e616c2d6576656e742d69642d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30320000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 34,
+              "bytes": 38,
+              "value": "kira-complaint-journal-event-id-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 38,
+              "utf8_offset": 42,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 43,
+              "utf8_offset": 47,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 83,
+              "utf8_offset": 87,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 197,
+              "utf8_offset": 201,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 205,
+              "utf8_offset": 209,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 245,
+              "utf8_offset": 249,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 251,
+              "utf8_offset": 255,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-02"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 268,
+              "utf8_offset": 272,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 284,
+              "utf8_offset": 288,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 300,
+              "utf8_offset": 304,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 340,
+              "utf8_offset": 344,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 345,
+              "utf8_offset": 349,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 385,
+              "utf8_offset": 389,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "129b6752c4900bf6f3e48526d690bd63ac54aa3ab05d913ebd6980f7c35c0eaf",
+        "hmac_sha256_base64url": "EptnUsSQC_bz5IUm1pC9Y6xUqjqwXZE-vWmA98NcDq8"
+      },
+      "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000017/test-route-02/iBOkETAnAi6oNvDBnCAqPDTCHlDqwRxUJMCZT2NoM90",
+      "object_key_utf8_bytes": 237,
+      "payload": {
+        "raw_file": "raw/payload-ordinary_k2.json",
+        "byte_count": 597,
+        "sha256": "a84b9bfe005642cf1a61866cdf4c1c20a879c05c89fda8a102e41cea05f052bf",
+        "canonical_utf8": "{\"actorId\":\"a1111111-1111-4111-8111-111111111111\",\"actorKind\":\"INSTALLATION\",\"complaintIds\":[\"e5555555-5555-4555-8555-555555555555\"],\"credentialVersion\":9,\"dataScopeId\":\"b2222222-2222-4222-8222-222222222222\",\"dataScopeKind\":\"TEST\",\"eventId\":\"EptnUsSQC_bz5IUm1pC9Y6xUqjqwXZE-vWmA98NcDq8\",\"eventKind\":\"OWNER_DELETE\",\"operationKey\":\"d4444444-4444-4444-8444-444444444444\",\"ownerInstallationIds\":[\"a1111111-1111-4111-8111-111111111111\"],\"publicationEpoch\":17,\"requestFingerprint\":\"PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs\",\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}"
+      }
+    },
+    {
+      "id": "ordinary_k3",
+      "request_id": "ordinary",
+      "set": "ordinary_four_retained_keys",
+      "role": "retained",
+      "hmac_key_bytes": 32,
+      "routing_key_id": "test-route-03",
+      "routing_key_id_utf8_bytes": 13,
+      "publication_epoch_decimal": "17",
+      "credential_version_decimal": "9",
+      "ordinary_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/",
+      "seal_terminal_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/seal-terminal/",
+      "routing": {
+        "frame": {
+          "raw_file": "raw/routing-ordinary_k3.bin",
+          "byte_count": 431,
+          "sha256": "84d9018134d8be16a52a66ba789f158723984e75c3aace83e1055a9c59b6ec0f",
+          "hex": "000000216b6972612d636f6d706c61696e742d6a6f75726e616c2d726f7574696e672d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30330000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 33,
+              "bytes": 37,
+              "value": "kira-complaint-journal-routing-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 37,
+              "utf8_offset": 41,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 42,
+              "utf8_offset": 46,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 82,
+              "utf8_offset": 86,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 196,
+              "utf8_offset": 200,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 204,
+              "utf8_offset": 208,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 244,
+              "utf8_offset": 248,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 250,
+              "utf8_offset": 254,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-03"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 267,
+              "utf8_offset": 271,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 283,
+              "utf8_offset": 287,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 299,
+              "utf8_offset": 303,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 339,
+              "utf8_offset": 343,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 344,
+              "utf8_offset": 348,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 384,
+              "utf8_offset": 388,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "5fa9a84d30062e96fb8ea6423f835a80db52a2e470dcd859098b30637a912357",
+        "hmac_sha256_base64url": "X6moTTAGLpb7jqZCP4NagNtSouRw3NhZCYswY3qRI1c"
+      },
+      "event_id": {
+        "frame": {
+          "raw_file": "raw/event_id-ordinary_k3.bin",
+          "byte_count": 432,
+          "sha256": "9a4539f6a46ecd7df12cb1c978b134f227ae5d8cc72199a12e4fde166ec76241",
+          "hex": "000000226b6972612d636f6d706c61696e742d6a6f75726e616c2d6576656e742d69642d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30330000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 34,
+              "bytes": 38,
+              "value": "kira-complaint-journal-event-id-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 38,
+              "utf8_offset": 42,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 43,
+              "utf8_offset": 47,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 83,
+              "utf8_offset": 87,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 197,
+              "utf8_offset": 201,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 205,
+              "utf8_offset": 209,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 245,
+              "utf8_offset": 249,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 251,
+              "utf8_offset": 255,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-03"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 268,
+              "utf8_offset": 272,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 284,
+              "utf8_offset": 288,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 300,
+              "utf8_offset": 304,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 340,
+              "utf8_offset": 344,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 345,
+              "utf8_offset": 349,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 385,
+              "utf8_offset": 389,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "f088e0b6766756fd8ec8022d2ff9e4180bf7ebdc2656d6eecb6ec0c1529a11bb",
+        "hmac_sha256_base64url": "8IjgtnZnVv2OyAItL_nkGAv369wmVtbuy27AwVKaEbs"
+      },
+      "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000017/test-route-03/X6moTTAGLpb7jqZCP4NagNtSouRw3NhZCYswY3qRI1c",
+      "object_key_utf8_bytes": 237,
+      "payload": {
+        "raw_file": "raw/payload-ordinary_k3.json",
+        "byte_count": 597,
+        "sha256": "7d7650ab7c95ce23eab673c0c29c99786e459fd09d26568a04935d19742f0dfd",
+        "canonical_utf8": "{\"actorId\":\"a1111111-1111-4111-8111-111111111111\",\"actorKind\":\"INSTALLATION\",\"complaintIds\":[\"e5555555-5555-4555-8555-555555555555\"],\"credentialVersion\":9,\"dataScopeId\":\"b2222222-2222-4222-8222-222222222222\",\"dataScopeKind\":\"TEST\",\"eventId\":\"8IjgtnZnVv2OyAItL_nkGAv369wmVtbuy27AwVKaEbs\",\"eventKind\":\"OWNER_DELETE\",\"operationKey\":\"d4444444-4444-4444-8444-444444444444\",\"ownerInstallationIds\":[\"a1111111-1111-4111-8111-111111111111\"],\"publicationEpoch\":17,\"requestFingerprint\":\"PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs\",\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}"
+      }
+    },
+    {
+      "id": "ordinary_k4",
+      "request_id": "ordinary",
+      "set": "ordinary_four_retained_keys",
+      "role": "retained",
+      "hmac_key_bytes": 32,
+      "routing_key_id": "test-route-04",
+      "routing_key_id_utf8_bytes": 13,
+      "publication_epoch_decimal": "17",
+      "credential_version_decimal": "9",
+      "ordinary_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/",
+      "seal_terminal_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/seal-terminal/",
+      "routing": {
+        "frame": {
+          "raw_file": "raw/routing-ordinary_k4.bin",
+          "byte_count": 431,
+          "sha256": "28b95502716a99f99a774b07322378e2899cb7fd68a304221fcbfa8c06072ff2",
+          "hex": "000000216b6972612d636f6d706c61696e742d6a6f75726e616c2d726f7574696e672d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30340000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 33,
+              "bytes": 37,
+              "value": "kira-complaint-journal-routing-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 37,
+              "utf8_offset": 41,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 42,
+              "utf8_offset": 46,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 82,
+              "utf8_offset": 86,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 196,
+              "utf8_offset": 200,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 204,
+              "utf8_offset": 208,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 244,
+              "utf8_offset": 248,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 250,
+              "utf8_offset": 254,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-04"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 267,
+              "utf8_offset": 271,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 283,
+              "utf8_offset": 287,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 299,
+              "utf8_offset": 303,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 339,
+              "utf8_offset": 343,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 344,
+              "utf8_offset": 348,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 384,
+              "utf8_offset": 388,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "74efeac40ab4ba894cf1eb7246b1dfcf9cea2b69504124ce7acb29f428db4a97",
+        "hmac_sha256_base64url": "dO_qxAq0uolM8etyRrHfz5zqK2lQQSTOessp9CjbSpc"
+      },
+      "event_id": {
+        "frame": {
+          "raw_file": "raw/event_id-ordinary_k4.bin",
+          "byte_count": 432,
+          "sha256": "15aa2308d405c9d22ad1156fe7f1002bc39e1f3b200bd62c46fffb35a8a4dee1",
+          "hex": "000000226b6972612d636f6d706c61696e742d6a6f75726e616c2d6576656e742d69642d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000231370000000d746573742d726f7574652d30340000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001390000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b50675a66534b3366616e6e4b2d79767732646d684c48516a5a725639496e6269544b4f77462d7645344773",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 34,
+              "bytes": 38,
+              "value": "kira-complaint-journal-event-id-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 38,
+              "utf8_offset": 42,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 43,
+              "utf8_offset": 47,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 83,
+              "utf8_offset": 87,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 197,
+              "utf8_offset": 201,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 205,
+              "utf8_offset": 209,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 245,
+              "utf8_offset": 249,
+              "utf8_bytes": 2,
+              "bytes": 6,
+              "value": "17"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 251,
+              "utf8_offset": 255,
+              "utf8_bytes": 13,
+              "bytes": 17,
+              "value": "test-route-04"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 268,
+              "utf8_offset": 272,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 284,
+              "utf8_offset": 288,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 300,
+              "utf8_offset": 304,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 340,
+              "utf8_offset": 344,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "9"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 345,
+              "utf8_offset": 349,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 385,
+              "utf8_offset": 389,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "ae67526650dba6ea88050c717c94372c637630065ced084c85e173edafddabc8",
+        "hmac_sha256_base64url": "rmdSZlDbpuqIBQxxfJQ3LGN2MAZc7QhMheFz7a_dq8g"
+      },
+      "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000017/test-route-04/dO_qxAq0uolM8etyRrHfz5zqK2lQQSTOessp9CjbSpc",
+      "object_key_utf8_bytes": 237,
+      "payload": {
+        "raw_file": "raw/payload-ordinary_k4.json",
+        "byte_count": 597,
+        "sha256": "f13f1f989718e9bad550609e0c9104ebfe1741aa4f8b95ea7e5b5062f60a03b0",
+        "canonical_utf8": "{\"actorId\":\"a1111111-1111-4111-8111-111111111111\",\"actorKind\":\"INSTALLATION\",\"complaintIds\":[\"e5555555-5555-4555-8555-555555555555\"],\"credentialVersion\":9,\"dataScopeId\":\"b2222222-2222-4222-8222-222222222222\",\"dataScopeKind\":\"TEST\",\"eventId\":\"rmdSZlDbpuqIBQxxfJQ3LGN2MAZc7QhMheFz7a_dq8g\",\"eventKind\":\"OWNER_DELETE\",\"operationKey\":\"d4444444-4444-4444-8444-444444444444\",\"ownerInstallationIds\":[\"a1111111-1111-4111-8111-111111111111\"],\"publicationEpoch\":17,\"requestFingerprint\":\"PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs\",\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}"
+      }
+    },
+    {
+      "id": "minimum",
+      "request_id": "minimum",
+      "set": "separate_minimum_profile",
+      "role": "active",
+      "hmac_key_bytes": 32,
+      "routing_key_id": "k",
+      "routing_key_id_utf8_bytes": 1,
+      "publication_epoch_decimal": "1",
+      "credential_version_decimal": "1",
+      "ordinary_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/",
+      "seal_terminal_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/seal-terminal/",
+      "routing": {
+        "frame": {
+          "raw_file": "raw/routing-minimum.bin",
+          "byte_count": 418,
+          "sha256": "684a901e42c9a0a9dff7dad299ce80ef1658283b7fc763cfee95ec472300f613",
+          "hex": "000000216b6972612d636f6d706c61696e742d6a6f75726e616c2d726f7574696e672d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000131000000016b0000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001310000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b466b69504666427335732d5a6c53366c78517475756d4d622d566b755f3839756658575266725a63444451",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 33,
+              "bytes": 37,
+              "value": "kira-complaint-journal-routing-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 37,
+              "utf8_offset": 41,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 42,
+              "utf8_offset": 46,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 82,
+              "utf8_offset": 86,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 196,
+              "utf8_offset": 200,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 204,
+              "utf8_offset": 208,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 244,
+              "utf8_offset": 248,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 249,
+              "utf8_offset": 253,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "k"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 254,
+              "utf8_offset": 258,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 270,
+              "utf8_offset": 274,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 286,
+              "utf8_offset": 290,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 326,
+              "utf8_offset": 330,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 331,
+              "utf8_offset": 335,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 371,
+              "utf8_offset": 375,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "FkiPFfBs5s-ZlS6lxQtuumMb-Vku_89ufXWRfrZcDDQ"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "adf5c89887a5cb7b150369439378b6cc318c2feea26c3d337a20a0ff53273ce3",
+        "hmac_sha256_base64url": "rfXImIely3sVA2lDk3i2zDGML-6ibD0zeiCg_1MnPOM"
+      },
+      "event_id": {
+        "frame": {
+          "raw_file": "raw/event_id-minimum.bin",
+          "byte_count": 419,
+          "sha256": "8ae5c6b2ff490fef8bbb83cc9a4fd120ba4524545c9485041673ee7767e96515",
+          "hex": "000000226b6972612d636f6d706c61696e742d6a6f75726e616c2d6576656e742d69642d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d3232323232323232323232320000000131000000016b0000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000001310000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b466b69504666427335732d5a6c53366c78517475756d4d622d566b755f3839756658575266725a63444451",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 34,
+              "bytes": 38,
+              "value": "kira-complaint-journal-event-id-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 38,
+              "utf8_offset": 42,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 43,
+              "utf8_offset": 47,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 83,
+              "utf8_offset": 87,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 197,
+              "utf8_offset": 201,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 205,
+              "utf8_offset": 209,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 245,
+              "utf8_offset": 249,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 250,
+              "utf8_offset": 254,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "k"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 255,
+              "utf8_offset": 259,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 271,
+              "utf8_offset": 275,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 287,
+              "utf8_offset": 291,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 327,
+              "utf8_offset": 331,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 332,
+              "utf8_offset": 336,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 372,
+              "utf8_offset": 376,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "FkiPFfBs5s-ZlS6lxQtuumMb-Vku_89ufXWRfrZcDDQ"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "2dc47d280d70380328f3e01e6fb25cc9ad1b6b69c33be3c59c64e77dd8b81743",
+        "hmac_sha256_base64url": "LcR9KA1wOAMo8-Aeb7Jcya0ba2nDO-PFnGTnfdi4F0M"
+      },
+      "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/k/rfXImIely3sVA2lDk3i2zDGML-6ibD0zeiCg_1MnPOM",
+      "object_key_utf8_bytes": 225,
+      "payload": {
+        "raw_file": "raw/payload-minimum.json",
+        "byte_count": 596,
+        "sha256": "6492874f1f8893a0daffdfbacd1ef0f612751e177ac9b1de952e9e2807a3811a",
+        "canonical_utf8": "{\"actorId\":\"a1111111-1111-4111-8111-111111111111\",\"actorKind\":\"INSTALLATION\",\"complaintIds\":[\"e5555555-5555-4555-8555-555555555555\"],\"credentialVersion\":1,\"dataScopeId\":\"b2222222-2222-4222-8222-222222222222\",\"dataScopeKind\":\"TEST\",\"eventId\":\"LcR9KA1wOAMo8-Aeb7Jcya0ba2nDO-PFnGTnfdi4F0M\",\"eventKind\":\"OWNER_DELETE\",\"operationKey\":\"d4444444-4444-4444-8444-444444444444\",\"ownerInstallationIds\":[\"a1111111-1111-4111-8111-111111111111\"],\"publicationEpoch\":1,\"requestFingerprint\":\"FkiPFfBs5s-ZlS6lxQtuumMb-Vku_89ufXWRfrZcDDQ\",\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}"
+      }
+    },
+    {
+      "id": "maximum",
+      "request_id": "maximum",
+      "set": "separate_maximum_profile",
+      "role": "active",
+      "hmac_key_bytes": 128,
+      "routing_key_id": "test-routing-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "routing_key_id_utf8_bytes": 64,
+      "publication_epoch_decimal": "9223372036854775807",
+      "credential_version_decimal": "9223372036854775807",
+      "ordinary_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/",
+      "seal_terminal_prefix": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/seal-terminal/",
+      "routing": {
+        "frame": {
+          "raw_file": "raw/routing-maximum.bin",
+          "byte_count": 517,
+          "sha256": "0250d484e61af88ac6e76344412462fa1264b14faf947d72a9c0701d6ea1acad",
+          "hex": "000000216b6972612d636f6d706c61696e742d6a6f75726e616c2d726f7574696e672d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d323232323232323232323232000000133932323333373230333638353437373538303700000040746573742d726f7574696e672d7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878780000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000013393232333337323033363835343737353830370000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b496a6f6d75342d6a4870584642556a453573775a6a7436306b57393047504946526c776b744756627a524d",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 33,
+              "bytes": 37,
+              "value": "kira-complaint-journal-routing-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 37,
+              "utf8_offset": 41,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 42,
+              "utf8_offset": 46,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 82,
+              "utf8_offset": 86,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 196,
+              "utf8_offset": 200,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 204,
+              "utf8_offset": 208,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 244,
+              "utf8_offset": 248,
+              "utf8_bytes": 19,
+              "bytes": 23,
+              "value": "9223372036854775807"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 267,
+              "utf8_offset": 271,
+              "utf8_bytes": 64,
+              "bytes": 68,
+              "value": "test-routing-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 335,
+              "utf8_offset": 339,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 351,
+              "utf8_offset": 355,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 367,
+              "utf8_offset": 371,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 407,
+              "utf8_offset": 411,
+              "utf8_bytes": 19,
+              "bytes": 23,
+              "value": "9223372036854775807"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 430,
+              "utf8_offset": 434,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 470,
+              "utf8_offset": 474,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "Ijomu4-jHpXFBUjE5swZjt60kW90GPIFRlwktGVbzRM"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "84bcaf8b8168caeff49cd73aa9d5a7d0eaad8ef298f1b629dc160ed39e785630",
+        "hmac_sha256_base64url": "hLyvi4Foyu_0nNc6qdWn0OqtjvKY8bYp3BYO0554VjA"
+      },
+      "event_id": {
+        "frame": {
+          "raw_file": "raw/event_id-maximum.bin",
+          "byte_count": 518,
+          "sha256": "5f836604f6c08fa1cc6972e0ea15c88ad7c37f05b8d6ff9947b7a7cb4ae2b290",
+          "hex": "000000226b6972612d636f6d706c61696e742d6a6f75726e616c2d6576656e742d69642d763100000001310000002463333333333333332d333333332d343333332d383333332d3333333333333333333333330000006e636f6d706c61696e74732f6a6f75726e616c2f76312f63333333333333332d333333332d343333332d383333332d3333333333333333333333332f746573742f62323232323232322d323232322d343232322d383232322d3232323232323232323232322f6f7264696e6172792f00000004544553540000002462323232323232322d323232322d343232322d383232322d323232323232323232323232000000133932323333373230333638353437373538303700000040746573742d726f7574696e672d7878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878787878780000000c4f574e45525f44454c4554450000000c494e5354414c4c4154494f4e0000002461313131313131312d313131312d343131312d383131312d31313131313131313131313100000013393232333337323033363835343737353830370000002464343434343434342d343434342d343434342d383434342d3434343434343434343434340000002b496a6f6d75342d6a4870584642556a453573775a6a7436306b57393047504946526c776b744756627a524d",
+          "fields": [
+            {
+              "name": "domain",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 0,
+              "utf8_offset": 4,
+              "utf8_bytes": 34,
+              "bytes": 38,
+              "value": "kira-complaint-journal-event-id-v1"
+            },
+            {
+              "name": "version_text",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 38,
+              "utf8_offset": 42,
+              "utf8_bytes": 1,
+              "bytes": 5,
+              "value": "1"
+            },
+            {
+              "name": "writer_generation",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 43,
+              "utf8_offset": 47,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "c3333333-3333-4333-8333-333333333333"
+            },
+            {
+              "name": "ordinary_prefix",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 83,
+              "utf8_offset": 87,
+              "utf8_bytes": 110,
+              "bytes": 114,
+              "value": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/"
+            },
+            {
+              "name": "scope_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 197,
+              "utf8_offset": 201,
+              "utf8_bytes": 4,
+              "bytes": 8,
+              "value": "TEST"
+            },
+            {
+              "name": "data_scope_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 205,
+              "utf8_offset": 209,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "b2222222-2222-4222-8222-222222222222"
+            },
+            {
+              "name": "publication_epoch_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 245,
+              "utf8_offset": 249,
+              "utf8_bytes": 19,
+              "bytes": 23,
+              "value": "9223372036854775807"
+            },
+            {
+              "name": "routing_key_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 268,
+              "utf8_offset": 272,
+              "utf8_bytes": 64,
+              "bytes": 68,
+              "value": "test-routing-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            },
+            {
+              "name": "event_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 336,
+              "utf8_offset": 340,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "OWNER_DELETE"
+            },
+            {
+              "name": "actor_kind",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 352,
+              "utf8_offset": 356,
+              "utf8_bytes": 12,
+              "bytes": 16,
+              "value": "INSTALLATION"
+            },
+            {
+              "name": "actor_id",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 368,
+              "utf8_offset": 372,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "a1111111-1111-4111-8111-111111111111"
+            },
+            {
+              "name": "credential_version_decimal",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 408,
+              "utf8_offset": 412,
+              "utf8_bytes": 19,
+              "bytes": 23,
+              "value": "9223372036854775807"
+            },
+            {
+              "name": "operation_key",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 431,
+              "utf8_offset": 435,
+              "utf8_bytes": 36,
+              "bytes": 40,
+              "value": "d4444444-4444-4444-8444-444444444444"
+            },
+            {
+              "name": "request_fingerprint_base64url",
+              "kind": "lp32be_utf8",
+              "length_word_offset": 471,
+              "utf8_offset": 475,
+              "utf8_bytes": 43,
+              "bytes": 47,
+              "value": "Ijomu4-jHpXFBUjE5swZjt60kW90GPIFRlwktGVbzRM"
+            }
+          ]
+        },
+        "hmac_sha256_hex": "252c8bb4fbab9744b019092633fa6d4aa19571064c7c4daca71c16a439b9d604",
+        "hmac_sha256_base64url": "JSyLtPurl0SwGQkmM_ptSqGVcQZMfE2spxwWpDm51gQ"
+      },
+      "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/b2222222-2222-4222-8222-222222222222/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/9223372036854775807/test-routing-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/hLyvi4Foyu_0nNc6qdWn0OqtjvKY8bYp3BYO0554VjA",
+      "object_key_utf8_bytes": 288,
+      "payload": {
+        "raw_file": "raw/payload-maximum.json",
+        "byte_count": 632,
+        "sha256": "4b2f708e9d16896fbb8c339d5a70482f6416354f6728070dcc833faddd86961c",
+        "canonical_utf8": "{\"actorId\":\"a1111111-1111-4111-8111-111111111111\",\"actorKind\":\"INSTALLATION\",\"complaintIds\":[\"e5555555-5555-4555-8555-555555555555\"],\"credentialVersion\":9223372036854775807,\"dataScopeId\":\"b2222222-2222-4222-8222-222222222222\",\"dataScopeKind\":\"TEST\",\"eventId\":\"JSyLtPurl0SwGQkmM_ptSqGVcQZMfE2spxwWpDm51gQ\",\"eventKind\":\"OWNER_DELETE\",\"operationKey\":\"d4444444-4444-4444-8444-444444444444\",\"ownerInstallationIds\":[\"a1111111-1111-4111-8111-111111111111\"],\"publicationEpoch\":9223372036854775807,\"requestFingerprint\":\"Ijomu4-jHpXFBUjE5swZjt60kW90GPIFRlwktGVbzRM\",\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}"
+      }
+    }
+  ]
+}

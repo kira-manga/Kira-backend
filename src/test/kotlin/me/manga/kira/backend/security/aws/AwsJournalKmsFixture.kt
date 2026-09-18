@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.InitialLiveJournalTestFixture
 import me.manga.kira.backend.complaint.domain.JournalQueueV1
+import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.security.ImmutableSecretVersion
 import me.manga.kira.backend.security.JournalDataKeyRequestV1
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
@@ -158,6 +159,31 @@ internal class AwsJournalKmsFixture(val journal: ComplaintJournalConfigurationV1
 
         fun context(journal: ComplaintJournalConfigurationV1 = journal(), change: (MutableList<String>) -> Unit = {}): Map<String, String> =
             mapOf(CONTEXT_KEY to url(frame(fields(journal).toMutableList().also(change))))
+
+        /** Independent TEST raw-context expectations only; the LIVE adapter and its request/profile types are unchanged. */
+        fun testOwnerDeleteFields(
+            journal: TestOwnerDeleteJournalConfigurationV1,
+            objectKey: String,
+            eventId: String,
+            epoch: Long,
+            routingKeyId: String,
+            nonce: String,
+        ): List<String> {
+            val d = journal.declaration()
+            val writer = d.writer.generationId
+            val prefix = "complaints/journal/v1/$writer/test/${journal.scope.id}/ordinary/"
+            return listOf(
+                "kira-complaint-journal-kms-context-v1", "1", "1", "1", "kcj-1", "OWNER_DELETE", "AES-256-GCM",
+                "FRESH_PER_OBJECT_KMS_WRAPPED", d.encryption.keyId, d.encryption.keyArn, d.journalLocation.bucket,
+                objectKey, writer, prefix, "TEST", journal.scope.id.toString(), epoch.toString(), routingKeyId, eventId, nonce,
+            )
+        }
+
+        fun generateDocument(keyArn: String, plaintext: ByteArray, wrapped: ByteArray): String =
+            """{"KeyId":"$keyArn","Plaintext":"${base64(plaintext)}","CiphertextBlob":"${base64(wrapped)}"}"""
+
+        fun decryptDocument(keyArn: String, plaintext: ByteArray): String =
+            """{"KeyId":"$keyArn","Plaintext":"${base64(plaintext)}","EncryptionAlgorithm":"SYMMETRIC_DEFAULT"}"""
 
         fun keyBytes(): ByteArray = "QUJD".repeat(8).toByteArray(Charsets.US_ASCII) // A second Base64 decoding changes its size/content.
         fun wrappedBytes(size: Int = 64): ByteArray = ByteArray(size) { (it * 13 + 7).toByte() }

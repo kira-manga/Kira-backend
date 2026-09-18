@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintReportFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintReportIdentity
 import me.manga.kira.backend.complaint.domain.ComplaintReportMetadataInput
@@ -57,7 +58,11 @@ internal fun withComplaintOwnerCreate(database: PgLifecycleDatabaseFixture, test
     }
 }
 
-internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallationEnrollmentFixture, val run: OrdinaryComplaintTestInstallationFixture) :
+internal class ComplaintOwnerCreateFixture(
+    val base: OrdinaryComplaintInstallationEnrollmentFixture,
+    val run: OrdinaryComplaintTestInstallationFixture,
+    private val desired: ComplaintInstallationDesiredSettings.Configured = run.desired,
+) :
     AutoCloseable {
     val policy = ownerCreateTestCapacityPolicy()
     val ingress = ownerCreateTestIngress(policy)
@@ -65,7 +70,7 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
     val observer = base.observer
     val jdbc = OwnerCreateFixtureJdbc(this)
     val capacity = JdbcComplaintCapacityStore(jdbc, policy.digestBytes())
-    val store = JdbcComplaintOwnerCreateStore(jdbc, capacity, base.service, run.desired)
+    val store = JdbcComplaintOwnerCreateStore(jdbc, capacity, base.service, desired)
     val phases = ComplaintOwnerCreatePhaseExecutor(base.ordinary.ownership, store)
     val handler = handler()
     val actor = ScopedInstallationId(UUID.randomUUID().also { base.ids.add(it) }, run.scope)
@@ -177,7 +182,7 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
     fun exchange(id: UUID, session: Boolean): MockHttpServletResponse {
         base.ids.addIfAbsent(id)
         val exchange = ComplaintInstallationExchangeAdapter(
-            run.desired,
+            desired,
             base.ordinary.ownership,
             base.jdbc,
             JdbcComplaintCapacityStore(base.jdbc, policy.digestBytes()),
@@ -290,6 +295,11 @@ internal class ComplaintOwnerCreateFixture(val base: OrdinaryComplaintInstallati
 
     internal fun trackReplyResource(id: UUID) {
         resources.addIfAbsent(id)
+    }
+
+    /** Only exact rows created by the borrowed one-target delete fixture; cleanup is not evidence issuance. */
+    internal fun trackOwnerDeletePublication(eventId: String) {
+        publications.addIfAbsent(eventId)
     }
 
     /** Legal committed deletion receipt shape only; not publication verification or an actual deletion producer. */

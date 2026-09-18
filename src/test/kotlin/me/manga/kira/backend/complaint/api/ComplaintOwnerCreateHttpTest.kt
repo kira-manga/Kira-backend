@@ -235,6 +235,22 @@ class ComplaintOwnerCreateHttpTest {
         }
     }
 
+    @Test
+    fun `delete status has an explicit delegate input but cannot enter the closed creation status method`() {
+        val bytes = statusBody.replace("OWNER_CREATE", "OWNER_DELETE").toByteArray()
+        val parsed = ComplaintOwnerOperationJson.statusInput(bytes)
+        assertTrue(parsed is ComplaintOwnerStatusInput.Delete)
+        val query = (parsed as ComplaintOwnerStatusInput.Delete).query
+        assertEquals(key, query.key)
+        assertEquals(id, query.targetId)
+        assertThrows<ComplaintOwnerOperationRejected> { ComplaintOwnerOperationJson.status(bytes) }
+        val f = Fixture()
+        assertEquals(400, f.request(input(STATUS, bytes)).status)
+        assertTrue(f.calls.isEmpty(), "A missing delete delegate must not call the creation port.")
+        assertEquals(201, f.request(input()).status)
+        assertEquals("""{"id":"$id","version":1}""", f.request(input()).contentAsString)
+    }
+
     private fun input(path: String = CREATE, body: ByteArray = (if (path == STATUS) statusBody else createBody).toByteArray()): MockHttpServletRequest =
         MockHttpServletRequest("POST", path).apply {
             remoteAddr = "192.0.2.1"
