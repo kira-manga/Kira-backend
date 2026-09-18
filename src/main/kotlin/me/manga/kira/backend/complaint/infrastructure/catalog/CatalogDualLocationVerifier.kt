@@ -8,12 +8,14 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogCommonHeadEvidence
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenMutation
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenSignatureSlot
 import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
+import me.manga.kira.backend.complaint.domain.catalog.CatalogLocalHead
 import me.manga.kira.backend.complaint.domain.catalog.CatalogObjectMetadata
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPolicy
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPort
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackResult
+import me.manga.kira.backend.complaint.domain.catalog.CatalogTailEvidence
 import me.manga.kira.backend.complaint.domain.catalog.LocalCatalogSnapshot
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisManifestV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogLocationV1
@@ -147,6 +149,172 @@ internal object CatalogDualLocationVerifier {
                 )
                 val bytes = raw.read?.bytes ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
                 return SignerRotationAuthorReadback(evidence, bytes.copyOf(), local, policy.evaluatedAtEpochSecond, policy.requiredRetainUntilEpochSecond)
+            }
+        }
+    }
+
+    /**
+     * Actual raw fixed-overlap2 observations only. The supplied snapshot head is retained separately
+     * from the external tail; neither becomes current DB, lease, custody, publication or SQL authority.
+     * In particular, observing an absent successor does not prove that a publication arm is unspent.
+     */
+    class Overlap2Readback private constructor(
+        val state: State,
+        val snapshotHead: CatalogLocalHead,
+        val operationToken: String,
+        private val observed: LocalCatalogSnapshot,
+        private val frozenEnvelope: ByteArray,
+        private val observedEnvelope: ByteArray,
+        val observedTail: CatalogTailEvidence,
+        private val commonHead: CatalogCommonHeadEvidence?,
+        private val policy: CatalogReadbackPolicy,
+        val initialTrustBundleSha256: String,
+        val currentTrustBundleSha256: String,
+        metadata: CatalogObjectMetadata,
+        dualPair: ReadCatalogPair?,
+    ) {
+        enum class State { PREPARED_UNPUBLISHED, PREPARED_AWAIT_REPLICATION, PREPARED_DUAL_COPY, PROJECTION_PENDING_DUAL_COPY }
+
+        val frozenEnvelopeSha256: String = Sha256.hex(frozenEnvelope)
+        /** These copy observations belong to observedTail, which is still G1 when unpublished. */
+        val objectVersion: String = metadata.requestBinding.versionId
+        val retainUntilEpochSecond: Long = checkNotNull(metadata.retainUntilEpochSecond)
+        val evaluatedAtEpochSecond: Long = policy.evaluatedAtEpochSecond
+        val requiredRetainUntilEpochSecond: Long = policy.requiredRetainUntilEpochSecond
+        private val primaryBytes = dualPair?.let { copyEvidence(it.primary, frozenEnvelopeSha256) }
+        private val replicaBytes = dualPair?.let { copyEvidence(it.replica, frozenEnvelopeSha256) }
+
+        internal fun frozenEnvelopeBytes(): ByteArray = frozenEnvelope.copyOf()
+        internal fun observedEnvelopeBytes(): ByteArray = observedEnvelope.copyOf()
+
+        /** G1 common evidence when unpublished, G2 when dual, and deliberately none when primary-only. */
+        internal fun commonHeadEvidence(): CatalogCommonHeadEvidence? = commonHead
+
+        /** Only exact dual G2 has copy evidence; neither a G1 pair nor a primary-only G2 is promoted. */
+        internal fun primaryEvidenceBytes(): ByteArray? = primaryBytes?.copyOf()
+        internal fun replicaEvidenceBytes(): ByteArray? = replicaBytes?.copyOf()
+
+        /** Reparse retained frozen2, not observedTail and not a new provider or database observation. */
+        internal fun generation(): FrozenCatalogGeneration {
+            requireConnectionFree()
+            return CatalogFrozenManifestParser.signed(frozenEnvelope.copyOf(), policy.chain.limits)
+        }
+
+        internal fun requireSnapshot(selected: LocalCatalogSnapshot) {
+            val same = when (val before = observed) {
+                is LocalCatalogSnapshot.Prepared ->
+                    selected is LocalCatalogSnapshot.Prepared && selected.head == before.head &&
+                        sameSignerRotationMutation(selected.mutation, before.mutation)
+
+                is LocalCatalogSnapshot.ProjectionPending ->
+                    selected is LocalCatalogSnapshot.ProjectionPending && selected.head == before.head &&
+                        selected.projection.operationToken == before.projection.operationToken &&
+                        selected.projection.signedEnvelopeSha256 == before.projection.signedEnvelopeSha256 &&
+                        selected.projection.signedEnvelopeBytes.contentEquals(before.projection.signedEnvelopeBytes)
+
+                else -> false
+            }
+            requireCatalogReadback(same, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+        }
+
+        override fun toString(): String = "Overlap2Readback(private-raw-fixed2,no-custody-or-PUT-or-SQL-or-current-authority)"
+
+        companion object {
+            internal fun verify(
+                provider: CatalogReadbackPort,
+                initialBundleBytes: ByteArray,
+                currentBundleBytes: ByteArray,
+                policy: CatalogReadbackPolicy,
+                local: LocalCatalogSnapshot,
+            ): Overlap2Readback {
+                requireConnectionFree()
+                val head = when (local) {
+                    is LocalCatalogSnapshot.Prepared -> {
+                        requireCatalogReadback(local.head.generation == 1L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                        local.head
+                    }
+
+                    is LocalCatalogSnapshot.ProjectionPending -> {
+                        requireCatalogReadback(local.head.generation == 2L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                        local.head
+                    }
+
+                    else -> throw CatalogReadbackException(CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                }
+                val frozen = when (local) {
+                    is LocalCatalogSnapshot.Prepared -> CatalogLocalSnapshotVerifier.validateMutation(local.mutation, policy.chain.limits)
+                    is LocalCatalogSnapshot.ProjectionPending -> CatalogFrozenManifestParser.signed(local.projection.signedEnvelopeBytes, policy.chain.limits)
+                    else -> throw CatalogReadbackException(CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                }
+                val envelope = frozen.envelopeBytes ?: throw CatalogReadbackException(CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                requireCatalogReadback(
+                    frozen.schemaVersion == 1 && frozen.claims.generation == 2L && frozen.claims.operation == "ROTATION_OVERLAP" &&
+                        frozen.claims.previousEnvelopeSha256 == policy.expectedGenesisEnvelopeSha256,
+                    CatalogReadbackFailure.INVALID_LOCAL_STATE,
+                )
+                // The raw path checks local tuple/hash/signatures and current trust before I/O, then authenticates G1/the chain.
+                val raw = verifyRaw(provider, initialBundleBytes, currentBundleBytes, policy, local)
+                val token = frozen.claims.operationToken
+                val (state, evidence, tail) = when (val result = raw.result) {
+                    is CatalogReadbackResult.NeedsConditionalPublication -> {
+                        requireCatalogReadback(local is LocalCatalogSnapshot.Prepared && result.operationToken == token, CatalogReadbackFailure.HEAD_CONFLICT)
+                        Triple(State.PREPARED_UNPUBLISHED, result.evidence, result.evidence.chain.tail)
+                    }
+
+                    is CatalogReadbackResult.AwaitReplication -> {
+                        requireCatalogReadback(
+                            local is LocalCatalogSnapshot.Prepared && result.operationToken == token && result.predecessor == head,
+                            CatalogReadbackFailure.HEAD_CONFLICT,
+                        )
+                        Triple(State.PREPARED_AWAIT_REPLICATION, null, result.candidate)
+                    }
+
+                    is CatalogReadbackResult.PreparedCompletionEvidence -> {
+                        requireCatalogReadback(local is LocalCatalogSnapshot.Prepared && result.operationToken == token, CatalogReadbackFailure.HEAD_CONFLICT)
+                        Triple(State.PREPARED_DUAL_COPY, result.evidence, result.evidence.chain.tail)
+                    }
+
+                    is CatalogReadbackResult.ProjectionResumeEvidence -> {
+                        requireCatalogReadback(local is LocalCatalogSnapshot.ProjectionPending && result.operationToken == token, CatalogReadbackFailure.HEAD_CONFLICT)
+                        Triple(State.PROJECTION_PENDING_DUAL_COPY, result.evidence, result.evidence.chain.tail)
+                    }
+
+                    else -> throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                }
+                val read = raw.read ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                if (state == State.PREPARED_UNPUBLISHED) {
+                    requireCatalogReadback(
+                        tail.generation == 1L && tail.envelopeSha256 == policy.expectedGenesisEnvelopeSha256 && raw.pair != null,
+                        CatalogReadbackFailure.HEAD_CONFLICT,
+                    )
+                } else {
+                    requireCatalogReadback(
+                        tail.generation == 2L && tail.envelopeSha256 == frozen.envelopeSha256 && read.bytes.contentEquals(envelope),
+                        CatalogReadbackFailure.HEAD_CONFLICT,
+                    )
+                }
+                val pair = when (state) {
+                    State.PREPARED_DUAL_COPY, State.PROJECTION_PENDING_DUAL_COPY ->
+                        raw.pair ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+
+                    // lastPair still describes G1 on primary-only G2. It is not dual-copy G2 evidence.
+                    State.PREPARED_UNPUBLISHED, State.PREPARED_AWAIT_REPLICATION -> null
+                }
+                return Overlap2Readback(
+                    state,
+                    head,
+                    token,
+                    local,
+                    envelope.copyOf(),
+                    read.bytes.copyOf(),
+                    tail,
+                    evidence,
+                    policy,
+                    raw.initialHash,
+                    raw.currentHash,
+                    read.metadata,
+                    pair,
+                )
             }
         }
     }
