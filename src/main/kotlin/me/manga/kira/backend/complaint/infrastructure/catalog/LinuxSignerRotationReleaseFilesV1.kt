@@ -280,7 +280,10 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
             if (present) result[spec.name] = readPair(spec)
         }
         if (expectedAllocation != null) {
-            requireSignerRotationCustody(result[ALLOCATION.name]?.contentEquals(expectedAllocation) == true, CatalogSignerRotationCustodyFailureV1.DIFFERENT_BYTES)
+            requireSignerRotationCustody(
+                result[ALLOCATION.name]?.contentEquals(expectedAllocation) == true,
+                CatalogSignerRotationCustodyFailureV1.DIFFERENT_BYTES,
+            )
         }
         checkDirectories()
         requireLiveLock()

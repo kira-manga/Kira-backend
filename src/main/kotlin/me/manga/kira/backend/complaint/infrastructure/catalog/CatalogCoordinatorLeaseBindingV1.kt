@@ -169,7 +169,11 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     }
 
     internal fun requireRecoveryPurpose(original: CatalogSignerRotationPreparedRecoveryV1) {
-        if (preparedRecovery !== original || !coordinator.catalogSignerRotationRecovery) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (preparedRecovery !== original ||
+            !coordinator.catalogSignerRotationRecovery
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
 
     /** Existing campaign bounding may discard diagnostics, but not this concrete recovery owner's original signal. */

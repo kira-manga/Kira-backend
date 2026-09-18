@@ -165,8 +165,11 @@ internal class CatalogSignerRotationFreezeAssemblyV1 private constructor(
 
     private inner class ReadbackRound(val budget: PersistenceTimeBudget) : AutoCloseable {
         val construction = S3CatalogReadbackAdapter.Construction()
-        val http = if (attempt != null) CatalogSignerRotationReadbackHttpPairV1(attempt, budget)
-        else CatalogSignerRotationReadbackHttpPairV1(checkNotNull(recovery), budget)
+        val http = if (attempt != null) {
+            CatalogSignerRotationReadbackHttpPairV1(attempt, budget)
+        } else {
+            CatalogSignerRotationReadbackHttpPairV1(checkNotNull(recovery), budget)
+        }
         fun requireRunning() {
             this@CatalogSignerRotationFreezeAssemblyV1.requireRunning()
             budget.remainingMillis(1)

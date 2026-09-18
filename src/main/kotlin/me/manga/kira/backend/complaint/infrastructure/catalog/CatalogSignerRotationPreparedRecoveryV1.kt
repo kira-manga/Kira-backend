@@ -272,10 +272,7 @@ internal class CatalogSignerRotationPreparedRecoveryV1 private constructor(
         checkNotNull(history).requireReadback(selected)
     }
 
-    internal fun requireBindingInputs(
-        selected: VersionBoundComplaintProcessConfiguration,
-        raw: CatalogDualLocationVerifier.SignerRotationAuthorReadback,
-    ) {
+    internal fun requireBindingInputs(selected: VersionBoundComplaintProcessConfiguration, raw: CatalogDualLocationVerifier.SignerRotationAuthorReadback) {
         requireRunning()
         requireSqlCleanup()
         requireSignerRotation(
@@ -285,10 +282,7 @@ internal class CatalogSignerRotationPreparedRecoveryV1 private constructor(
         requirePredecessor(raw)
     }
 
-    internal fun requireBoundProcess(
-        selected: CatalogCoordinatorLeaseBindingV1,
-        candidate: VersionBoundComplaintProcessConfiguration,
-    ) {
+    internal fun requireBoundProcess(selected: CatalogCoordinatorLeaseBindingV1, candidate: VersionBoundComplaintProcessConfiguration) {
         requireRunning()
         requireSignerRotation(
             binding === selected && candidate === process && stage === Stage.REPLAY && campaign?.binding === selected,
@@ -304,11 +298,7 @@ internal class CatalogSignerRotationPreparedRecoveryV1 private constructor(
         )
     }
 
-    internal fun requireLeaseSelection(
-        candidate: PersistencePhaseOwnership,
-        jdbc: JdbcTemplate,
-        selected: CatalogCoordinatorLeaseBindingV1,
-    ) {
+    internal fun requireLeaseSelection(candidate: PersistencePhaseOwnership, jdbc: JdbcTemplate, selected: CatalogCoordinatorLeaseBindingV1) {
         requireConnectionFree()
         requireLeaseAttempt(selected)
         requireSignerRotation(candidate === ownership && jdbc.dataSource === source, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
@@ -368,11 +358,7 @@ internal class CatalogSignerRotationPreparedRecoveryV1 private constructor(
         replayReserved = true
     }
 
-    internal fun requireReplayPhase(
-        selected: CatalogSignerRotationFreezeAttemptV1,
-        candidate: PersistencePhaseOwnership,
-        path: PersistencePhasePath,
-    ) {
+    internal fun requireReplayPhase(selected: CatalogSignerRotationFreezeAttemptV1, candidate: PersistencePhaseOwnership, path: PersistencePhasePath) {
         requireRunning()
         requireSqlCleanup()
         requireSignerRotation(
@@ -484,11 +470,14 @@ internal class CatalogSignerRotationPreparedRecoveryV1 private constructor(
     internal fun observeFailure(problem: Throwable) {
         val signal = when {
             problem is Error -> problem
+
             problem is CancellationException -> CancellationException("Catalog signer rotation recovery cancelled.")
+
             problem is InterruptedException || problem is InterruptedIOException ||
                 (problem is PersistencePhaseException && problem.code === PersistencePhaseFailureCode.INTERRUPTED) ||
                 (problem is CatalogSignerRotationFreezeExceptionV1 && problem.code === CatalogSignerRotationFreezeFailureV1.INTERRUPTED) ->
                 InterruptedException("Catalog signer rotation recovery interrupted.")
+
             else -> return
         }
         while (true) {
@@ -553,9 +542,13 @@ internal class CatalogSignerRotationPreparedRecoveryV1 private constructor(
         closeFailure = CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
         abort()
         val outcomes = listOf(
-            runCatching(assembly::close), runCatching { custody?.close() }, runCatching(::requireConnectionFree),
-            runCatching(::requireSqlCleanup), runCatching { replay?.requireSqlCleanup() },
-            runCatching(::throwIfSignalled), runCatching { replay?.throwIfSignalled() },
+            runCatching(assembly::close),
+            runCatching { custody?.close() },
+            runCatching(::requireConnectionFree),
+            runCatching(::requireSqlCleanup),
+            runCatching { replay?.requireSqlCleanup() },
+            runCatching(::throwIfSignalled),
+            runCatching { replay?.throwIfSignalled() },
             runCatching {
                 requireSignerRotation(!Thread.currentThread().isInterrupted, CatalogSignerRotationFreezeFailureV1.INTERRUPTED)
                 budget.remainingMillis(1)

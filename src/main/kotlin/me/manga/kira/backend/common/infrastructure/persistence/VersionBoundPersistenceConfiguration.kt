@@ -67,8 +67,12 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     internal fun createCatalogSignerRotationRecoveryRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(
-            endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this,
-            epochRotationEnabled = epochRotation, catalogSignerRotationRecovery = true,
+            endpoint,
+            ordinaryCapacity,
+            PersistencePathStyle.POSIX,
+            versionBound = this,
+            epochRotationEnabled = epochRotation,
+            catalogSignerRotationRecovery = true,
         )
     }
 

@@ -37,10 +37,7 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
     }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun acquire(
-        binding: CatalogCoordinatorLeaseBindingV1,
-        original: CatalogSignerRotationPreparedRecoveryV1?,
-    ): CatalogCoordinatorLeaseAcquisitionV1 {
+    private fun acquire(binding: CatalogCoordinatorLeaseBindingV1, original: CatalogSignerRotationPreparedRecoveryV1?): CatalogCoordinatorLeaseAcquisitionV1 {
         var attempt: CatalogCoordinatorLeaseCustodyV1.Attempt? = null
         try {
             requireEntryResources()

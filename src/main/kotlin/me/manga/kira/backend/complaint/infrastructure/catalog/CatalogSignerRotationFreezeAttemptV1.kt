@@ -76,8 +76,11 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
         requireConnectionFree()
         requireRunning()
         requireSignerRotation(!reserved && !released, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
-        if (recovery == null) coordinator.catalogRefreshCustody.reserveSignerRotation(this)
-        else recovery.retainReplay(this, process, campaign, budget)
+        if (recovery == null) {
+            coordinator.catalogRefreshCustody.reserveSignerRotation(this)
+        } else {
+            recovery.retainReplay(this, process, campaign, budget)
+        }
         reserved = true
     }
 
@@ -304,18 +307,27 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     }
 
     internal fun requirePredecessor(readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback) {
-        if (recovery == null) campaign.binding.requireSignerRotationPredecessor(process, readback)
-        else campaign.binding.requireRecoveredSignerRotationPredecessor(process, recovery, readback)
+        if (recovery == null) {
+            campaign.binding.requireSignerRotationPredecessor(process, readback)
+        } else {
+            campaign.binding.requireRecoveredSignerRotationPredecessor(process, recovery, readback)
+        }
     }
 
     private fun requireProcess() {
-        if (recovery == null) campaign.binding.requireSignerRotationProcess(process)
-        else campaign.binding.requireRecoveredSignerRotationProcess(process, recovery)
+        if (recovery == null) {
+            campaign.binding.requireSignerRotationProcess(process)
+        } else {
+            campaign.binding.requireRecoveredSignerRotationProcess(process, recovery)
+        }
     }
 
     private fun requireSharedSlot() {
-        if (recovery == null) coordinator.catalogRefreshCustody.requireSignerRotation(this)
-        else coordinator.catalogRefreshCustody.requireSignerRotationRecoveryReplay(recovery, this)
+        if (recovery == null) {
+            coordinator.catalogRefreshCustody.requireSignerRotation(this)
+        } else {
+            coordinator.catalogRefreshCustody.requireSignerRotationRecoveryReplay(recovery, this)
+        }
     }
 
     /** Detached outside phase entry; never regenerate/hash full B under the control lock. */
@@ -348,8 +360,11 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     internal fun releaseAfterCleanup() {
         requireActualCleanup()
         if (!reserved) return
-        if (recovery == null) coordinator.catalogRefreshCustody.releaseSignerRotationAfterCleanup(this)
-        else recovery.releaseReplayAfterCleanup(this) // The parent still owns the one shared slot until its own cleanup is proven.
+        if (recovery == null) {
+            coordinator.catalogRefreshCustody.releaseSignerRotationAfterCleanup(this)
+        } else {
+            recovery.releaseReplayAfterCleanup(this) // The parent still owns the one shared slot until its own cleanup is proven.
+        }
         released = true
     }
 

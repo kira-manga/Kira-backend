@@ -22,8 +22,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     private val owner: CatalogSignerRotationFreezeAttemptV1?,
     private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
     private val readbackBudget: PersistenceTimeBudget,
-) :
-    SdkHttpClient {
+) : SdkHttpClient {
     constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) : this(owner, null, budget)
     internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) : this(null, owner, budget)
     private val closed = AtomicBoolean()
