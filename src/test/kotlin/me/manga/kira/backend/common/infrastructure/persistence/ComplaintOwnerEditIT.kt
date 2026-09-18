@@ -92,7 +92,7 @@ class ComplaintOwnerEditIT {
             complaintSpringSecurityContext(factory, users).use { spring ->
                 val chain = spring.getBean(FilterChainProxy::class.java)
                 fun send(request: MockHttpServletRequest): MockHttpServletResponse {
-                    request.servletPath = request.requestURI
+                    request.servletPath = requireNotNull(request.requestURI)
                     var sentReleased = false
                     val response = object : MockHttpServletResponse() {
                         override fun getOutputStream(): ServletOutputStream {
