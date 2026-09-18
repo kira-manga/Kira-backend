@@ -350,11 +350,18 @@ class VersionBoundTestNamespaceProcessV1Test {
                     settings.copy(concurrent = 3), settings.copy(ingressBuckets = 65), settings.copy(ingressRate = 119),
                     settings.copy(semanticBuckets = 129), settings.copy(semanticEvents = 4097), settings.copy(prune = 9),
                     settings.copy(enrollmentGlobal = 3), settings.copy(createGlobal = 3), settings.copy(members = 65), settings.copy(memberPrune = 9),
-                    settings.copy(forwarded = true), settings.copy(proxies = listOf("192.0.2.0/24")),
                 )
                 variants.forEachIndexed { index, changed ->
                     assertDifferent(original, process(fixture.configuration(settings = changed.settings()), pools, lanes), "admission $index")
                 }
+                val proxySettings = settings.copy(proxies = listOf("192.0.2.0/24"))
+                val proxyBaseline = process(fixture.configuration(settings = proxySettings.settings()), pools, lanes)
+                assertDifferent(original, proxyBaseline, "trusted proxy CIDRs")
+                assertDifferent(
+                    proxyBaseline,
+                    process(fixture.configuration(settings = proxySettings.copy(forwarded = true).settings()), pools, lanes),
+                    "forwarded mode with unchanged trusted proxies",
+                )
                 val p = fixture.base.capacity
                 val policies = listOf(
                     ComplaintCapacityPolicyV1.of(
