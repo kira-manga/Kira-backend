@@ -5,7 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenMutation
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 
-/** Fixed write-once effects and positive outcomes. No absence authorizes Sign; there is no pin/reapproval protocol. */
+/** Fixed write-once effects and positive outcomes. Absence alone never authorizes Sign; there is no pin/reapproval protocol. */
 internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogSignerRotationInputsV1, budget: PersistenceTimeBudget) : AutoCloseable {
     private val custody = CatalogSignerRotationReleaseCustodyV1.retain(inputs.request.releaseRoot, inputs.allocation, budget)
     private val allocationHash = Sha256.hex(inputs.allocation)
@@ -17,6 +17,10 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
 
     fun openExisting() {
         requireRecovery(custody.openExisting() === CatalogSignerRotationCustodyObservationV1.IDENTICAL_OBSERVED)
+        requirePreparedInputs()
+    }
+
+    private fun requirePreparedInputs() {
         inputLeaves().forEach { (leaf, bytes) -> requireExact(leaf, bytes) }
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARED, record("prepared-unsigned-head1"))
@@ -92,6 +96,23 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
             requireRecovery(persisted != null && it.contentEquals(record("signed-prepared2-head1", Sha256.hex(envelope))))
         }
         return signatures
+    }
+
+    /** Positive complete prefix AND absent every second-slot/downstream record under the original exclusive lock. */
+    fun requireUnattemptedSecondSign(local: CatalogSignerRotationObservationV1) {
+        requirePreparedInputs()
+        inputs.requireObservation(local)
+        val mutation = checkNotNull(local.mutation)
+        val first = requireReturned(0)
+        val persistedFirst = persistenceRecord(0, first, null, null)
+        requireExact(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED, persistedFirst)
+        requireExact(CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED, persistedFirst)
+        requireRecovery(first.contentEquals(mutation.signatureSlots[0].signatureBytes))
+        requireRecovery(
+            mutation.signatureSlots[1].signatureBytes == null && mutation.signedEnvelopeBytes == null && mutation.signedEnvelopeSha256 == null,
+        )
+        // Each read scans the entire bounded allowed inventory and rejects every partial content/completeness pair.
+        SECOND_SIGN_LEAVES.forEach { requireRecovery(custody.read(it) == null) }
     }
 
     fun requireFrozenEnvelope(after: CatalogFrozenMutation) {
@@ -170,4 +191,16 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
 
     override fun close() = custody.close()
     override fun toString(): String = "CatalogSignerRotationFreezeReleaseV1(fixed-write-once-history,redacted,no-human-approval-authority)"
+
+    private companion object {
+        val SECOND_SIGN_LEAVES = listOf(
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED,
+            CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED,
+            CatalogSignerRotationReleaseLeafV1.ENVELOPE,
+            CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME,
+        )
+    }
 }

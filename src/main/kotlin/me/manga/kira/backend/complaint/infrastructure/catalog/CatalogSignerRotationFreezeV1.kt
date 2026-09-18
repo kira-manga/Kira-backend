@@ -42,7 +42,7 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
     ): CatalogSignerRotationFreezeResultV1 = run(
-        false,
+        Mode.FREEZE,
         request,
         oldSigningCredentials,
         newSigningCredentials,
@@ -52,8 +52,8 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
 
     /**
      * No Sign is reachable on resume. Both exact durable returned signatures must exist; missing or
-     * uncertain effects/files refuse. Known unattempted later Sign is an INTERNAL continuation gap
-     * in this slice; lost provider response/custody needs explicit recovery resolution. Only the still-genuine original G1 campaign
+     * uncertain effects/files refuse. Known unattempted Sign2 has a separate explicit continuation;
+     * lost provider response/custody needs explicit recovery resolution. Only the still-genuine original G1 campaign
      * can reach this unit: restart after PREPARED2 cannot fabricate a replacement G1 refresh result.
      */
     fun resume(
@@ -63,7 +63,7 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
     ): CatalogSignerRotationFreezeResultV1 = run(
-        true,
+        Mode.RESUME,
         request,
         oldSigningCredentials,
         newSigningCredentials,
@@ -71,14 +71,38 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         replicaReadCredentials,
     )
 
-    @Suppress("TooGenericExceptionCaught")
-    private fun run(
-        resuming: Boolean,
+    /**
+     * Only an exact signature1-persisted prefix with no Sign2/downstream arm or outcome can continue.
+     * The prior invocation must have positively closed and released its actual shared slot under its
+     * own allowance. It is never revived: this new owner uses only its own original bounded allowance.
+     * Merely passing the old deadline after proven cleanup does not invalidate that historical proof.
+     * No old-key credentials, replacement campaign, lease renewal or first-Sign replay is accepted.
+     */
+    fun continueSecondSign(
         request: CatalogSignerRotationFreezeRequestV1,
-        oldSigningCredentials: AwsSessionCredentials,
+        previousInvocation: CatalogSignerRotationFreezeV1,
         newSigningCredentials: AwsSessionCredentials,
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogSignerRotationFreezeResultV1 = run(
+        Mode.SECOND_SIGN,
+        request,
+        null,
+        newSigningCredentials,
+        primaryReadCredentials,
+        replicaReadCredentials,
+        previousInvocation,
+    )
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun run(
+        mode: Mode,
+        request: CatalogSignerRotationFreezeRequestV1,
+        oldSigningCredentials: AwsSessionCredentials?,
+        newSigningCredentials: AwsSessionCredentials,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+        previousInvocation: CatalogSignerRotationFreezeV1? = null,
     ): CatalogSignerRotationFreezeResultV1 {
         requireSignerRotation(caller === Thread.currentThread(), CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         var product: CatalogSignerRotationFrozenProductV1? = null
@@ -88,16 +112,21 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
             requireRunning()
             requireSignerRotation(!entered, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
             entered = true
+            if (mode === Mode.SECOND_SIGN) checkNotNull(previousInvocation).requireClosedForContinuation(attempt)
             attempt.reserve()
             val inputs = assembly.acquire(request)
             attempt.bind(inputs)
+            if (mode === Mode.SECOND_SIGN) checkNotNull(previousInvocation).attempt.requireSameContinuationInputs(attempt)
             val retained = CatalogSignerRotationFreezeReleaseV1(inputs, budget)
             release = retained // The original lock/files owner exists before open, including partial construction.
-            if (resuming) retained.openExisting() else retained.openNew()
-            product = if (resuming) {
-                resumePrepared(retained, primaryReadCredentials, replicaReadCredentials)
-            } else {
-                freezePrepared(retained, oldSigningCredentials, newSigningCredentials, primaryReadCredentials, replicaReadCredentials)
+            if (mode === Mode.FREEZE) retained.openNew() else retained.openExisting()
+            product = when (mode) {
+                Mode.FREEZE -> freezePrepared(
+                    retained, checkNotNull(oldSigningCredentials), newSigningCredentials, primaryReadCredentials, replicaReadCredentials,
+                )
+
+                Mode.RESUME -> resumePrepared(retained, primaryReadCredentials, replicaReadCredentials)
+                Mode.SECOND_SIGN -> continuePreparedSecondSign(retained, newSigningCredentials, primaryReadCredentials, replicaReadCredentials)
             }
             requireRunning()
         } catch (problem: Throwable) {
@@ -139,6 +168,35 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
             retained.signaturePersisted(slot, local)
         }
         return retained.signedPrepared(local)
+    }
+
+    private fun continuePreparedSecondSign(
+        retained: CatalogSignerRotationFreezeReleaseV1,
+        newCredentials: AwsSessionCredentials,
+        primaryCredentials: AwsSessionCredentials,
+        replicaCredentials: AwsSessionCredentials,
+    ): CatalogSignerRotationFrozenProductV1 {
+        var local = attempt.readPrepared()
+        retained.requireUnattemptedSecondSign(local)
+        val readback = assembly.observe(local, primaryCredentials, replicaCredentials)
+        local = attempt.recheck(local, readback) // Fresh actual full B/DB-time lease after raw provider cleanup; no PREPARE or recharge.
+        retained.requireUnattemptedSecondSign(local)
+        retained.armSign(1, local) // Requires newly CREATED arm2, never an identical existing arm or outcome.
+        val signature = assembly.signSecondOnly(newCredentials)
+        retained.preserveSignature(1, signature)
+        val after = attempt.inputs.withSignature(local, 1, signature, readback)
+        retained.armSignaturePersistence(1, after)
+        local = attempt.persistSignature(local, after)
+        retained.signaturePersisted(1, local)
+        return retained.signedPrepared(local)
+    }
+
+    /** Historical original cleanup only; never checks/renews the prior owner's spent running budget. */
+    private fun requireClosedForContinuation(next: CatalogSignerRotationFreezeAttemptV1) {
+        requireConnectionFree()
+        requireSignerRotation(caller === Thread.currentThread() && entered && closed, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
+        requireSignerRotation(cleanupProven && closeFailure == null, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
+        attempt.requireReleasedForContinuation(next)
     }
 
     private fun resumePrepared(
@@ -202,6 +260,8 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
     }
 
     override fun toString(): String = "CatalogSignerRotationFreezeV1(fixed-overlap2,redacted,no-publication-or-activation-authority)"
+
+    private enum class Mode { FREEZE, RESUME, SECOND_SIGN }
 
     companion object {
         fun begin(process: VersionBoundComplaintProcessConfiguration, campaign: CatalogCoordinatorLeaseCampaignV1): CatalogSignerRotationFreezeV1 =

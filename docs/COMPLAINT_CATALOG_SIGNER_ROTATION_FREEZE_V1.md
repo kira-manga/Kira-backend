@@ -70,14 +70,40 @@ cannot become a successful result. The returned result is historical, not future
 actual returned signatures, signature-1 SQL receipt, signature-2 SQL arm and exact envelope,
 with fresh actual SQL/raw readback under the still-genuine original campaign. It verifies
 and persists only those same bytes; an already-identical SQL state is not charged again.
-No absence, unknown response, sparse conflict or missing sidecar grants either Sign.
+No absence, unknown response, sparse conflict or missing sidecar grants either Sign on resume.
 
-Continuation of a **known-unattempted** later Sign, broader SQL-outcome reconciliation,
-and restart provenance after PREPARED2 are **internal unimplemented recovery states** in
-this slice—not a blanket “external recovery” classification. Truly lost provider response
-or trusted custody requires explicit recovery resolution. Complete rotation recovery is
-not claimed. Genuine overlap publication/projection and immediate activation3 are also
-**internal future work**, not capabilities supplied by this historical freeze result.
+A separately named `continueSecondSign(request, previousInvocation, newSigningCredentials,
+primaryReadCredentials, replicaReadCredentials)` supports only a **known-unattempted**
+second Sign. It does not accept old-key Sign credentials. The previous exact invocation
+must have positively completed its original cleanup and actual shared-slot release under
+its own allowance: closed, cleanup proven, no close failure, reserved and released, and no
+retained/unresolved original SQL phase. File absence, an empty ThreadLocal or an absent
+active slot cannot replace that witness. A prior timeout/interruption or uncertain cleanup
+that prevented release remains refused, with no proof repair or budget revival.
+
+The new explicit invocation owns its own one original bounded allowance. Once previous
+cleanup/release was genuinely proven, the old deadline merely passing later does not erase
+that historical fact; the old owner's running/budget methods are never reused. The exact
+same retained process, coordinator, campaign, allocation, input bytes and provisioned
+root are mandatory. No new G1/D5 result or lease renewal supplies continuity.
+
+Exclusive existing custody must contain exact allocation/input/PREPARE history and complete
+first-Sign arm, return, signature, SQL-arm and persisted records. Actual SQL must contain
+that identical authentic signature1, null signature2 and no envelope. Every second-slot
+and downstream record must be absent from the complete protected inventory. After actual
+raw G1 readback and fresh locked full-B/current DB-time lease recheck, the same prefix is
+required again and arm2 must be newly CREATED. Only the existing real slot2 SDK/PSS,
+immutable signature/envelope custody and SQL CAS path runs; no PREPARE or capacity recharge,
+signature1 replacement, repair, alternate format or randomized retry occurs. Existing arm2,
+missing/partial pairs, mismatched bytes, identity/lease drift or uncertain cleanup refuses
+before Sign. Existing `resume` remains strictly both-returned and never Signs.
+
+Broader SQL-outcome reconciliation and restart provenance after PREPARED2 remain **internal
+unimplemented recovery states** in this slice—not a blanket “external recovery” classification.
+Truly lost provider response or trusted custody requires explicit recovery resolution.
+Complete rotation recovery is not claimed. Genuine overlap publication/projection and
+immediate activation3 are also **internal future work**, not capabilities supplied by this
+historical freeze result.
 
 At author source handoff: compilation, static checks, runtime tests, provider execution,
 services, builds, CI, commit and push are **NOT_RUN**. Any later acceptance evidence belongs

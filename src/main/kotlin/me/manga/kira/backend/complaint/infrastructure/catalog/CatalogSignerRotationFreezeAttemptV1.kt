@@ -172,6 +172,42 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
         )
     }
 
+    /** Actual historical release facts, not absent active custody, a free ThreadLocal or a supplied receipt. */
+    internal fun requireReleasedForContinuation(next: CatalogSignerRotationFreezeAttemptV1) {
+        requireConnectionFree()
+        requireSignerRotation(caller === Thread.currentThread() && reserved && released, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
+        requireSignerRotation(failed && selected == null, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
+        requireSqlCleanup()
+        requireSignerRotation(
+            next !== this && process === next.process && campaign === next.campaign,
+            CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
+        )
+        requireSignerRotation(
+            coordinator === next.coordinator && ownership === next.ownership && jdbc === next.jdbc,
+            CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
+        )
+    }
+
+    /** Bind the new invocation to all the previous immutable inputs and the same provisioned durable root. */
+    internal fun requireSameContinuationInputs(next: CatalogSignerRotationFreezeAttemptV1) {
+        requireReleasedForContinuation(next)
+        val previous = selectedInputs ?: throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
+        val current = next.inputs
+        requireSignerRotation(previous.request.releaseRoot == current.request.releaseRoot, CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
+        requireSignerRotation(
+            previous.allocation.contentEquals(current.allocation) && previous.bindingRecord.contentEquals(current.bindingRecord),
+            CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+        )
+        requireSignerRotation(
+            previous.intentBytes().contentEquals(current.intentBytes()) && previous.approvalBytes().contentEquals(current.approvalBytes()),
+            CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+        )
+        requireSignerRotation(
+            previous.initialBytes().contentEquals(current.initialBytes()) && previous.currentBytes().contentEquals(current.currentBytes()),
+            CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+        )
+    }
+
     /** Retain only signals, never arbitrary SQL/provider diagnostics; lower cleanup may otherwise report only a bounded phase code. */
     internal fun observeFailure(problem: Throwable) {
         val signal = when {
