@@ -48,6 +48,9 @@ internal class JdbcCatalogSnapshotReader(private val jdbc: JdbcTemplate) {
     internal fun authenticateSignerRotationDelivery(original: CatalogSignerRotationDeliveryV1, ownership: PersistencePhaseOwnership) =
         original.authenticate(ownership, jdbc)
 
+    internal fun authenticateSignerRotationActivation(original: CatalogSignerRotationActivationV1, ownership: PersistencePhaseOwnership) =
+        original.authenticate(ownership, jdbc)
+
     override fun toString(): String = "JdbcCatalogSnapshotReader(read-only,no-authority)"
 }
 

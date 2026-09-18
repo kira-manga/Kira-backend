@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPublishRecheckPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogProjectedHeadPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationActivationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
@@ -30,6 +31,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val catalogSignerRotationRecovery: Boolean get() = owner.catalogSignerRotationRecovery
     internal val catalogSignerRotationAuthoring: Boolean get() = owner.catalogSignerRotationAuthoring
     internal val catalogSignerRotationDelivery: Boolean get() = owner.catalogSignerRotationDelivery
+    internal val catalogSignerRotationActivation: Boolean get() = owner.catalogSignerRotationActivation
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
@@ -49,6 +51,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var signerRotationExecutor: ComplaintCatalogSignerRotationPersistencePhaseExecutor? = null
 
     private var signerRotationFinalizationExecutor: ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1? = null
+    private var signerRotationActivationExecutor: ComplaintCatalogSignerRotationActivationPhaseExecutorV1? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
@@ -65,6 +68,9 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val signerRotationFinalization: ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1
         get() = checkNotNull(signerRotationFinalizationExecutor)
 
+    internal val signerRotationActivation: ComplaintCatalogSignerRotationActivationPhaseExecutorV1
+        get() = checkNotNull(signerRotationActivationExecutor)
+
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
         check(bindingClaimed.compareAndSet(false, true))
@@ -78,6 +84,11 @@ internal class CatalogCoordinatorPersistence private constructor(
             return // No catalog writer, lease/rotation or readback executor is constructed on the operator root.
         }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
+        if (catalogSignerRotationActivation) {
+            leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
+            signerRotationActivationExecutor = ComplaintCatalogSignerRotationActivationPhaseExecutorV1(this, jdbc)
+            return // Only fixed3 effects; no G1, overlap2, ordinary projection, epoch or cutoff writer exists on this fixed activation root.
+        }
         if (catalogSignerRotationDelivery) {
             leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
             signerRotationFinalizationExecutor = ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1(this, jdbc)
@@ -129,7 +140,7 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     private fun requiresNamedPreparation(): Boolean =
         desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery ||
-            catalogSignerRotationAuthoring || catalogSignerRotationDelivery
+            catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation
 
     /** Only the named operator owner can start the infrastructure for this route. */
     internal fun prepareDesiredInstallationOperator(): PersistenceLifecycleObservation {
@@ -178,6 +189,15 @@ internal class CatalogCoordinatorPersistence private constructor(
         checkNotNull(executor)
         checkNotNull(leaseExecutor)
         checkNotNull(signerRotationFinalizationExecutor)
+        return dataSource.prepareCatalogCoordinator()
+    }
+
+    internal fun prepareCatalogSignerRotationActivation(): PersistenceLifecycleObservation {
+        requireResources()
+        if (!catalogSignerRotationActivation) return PersistenceLifecycleObservation.UNAVAILABLE
+        checkNotNull(executor)
+        checkNotNull(leaseExecutor)
+        checkNotNull(signerRotationActivationExecutor)
         return dataSource.prepareCatalogCoordinator()
     }
 

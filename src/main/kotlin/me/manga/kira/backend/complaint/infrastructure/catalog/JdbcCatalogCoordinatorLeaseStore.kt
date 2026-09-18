@@ -87,7 +87,10 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
         try {
             requireAt(Stage.RETAINED)
             val pendingDelivery = attempt.usesPendingDeliverySql(this, jdbc)
-            val lockSql = if (pendingDelivery) {
+            val pendingActivation = attempt.usesPendingActivationSql(this, jdbc)
+            val lockSql = if (pendingActivation) {
+                CatalogSignerRotationActivationLeaseSqlV1.LOCK_SIGNER_ROTATION_ACTIVATION_PENDING_LEASE_CONTROL
+            } else if (pendingDelivery) {
                 CatalogSignerRotationPendingLeaseSqlV1.LOCK_SIGNER_ROTATION_PENDING_LEASE_CONTROL
             } else {
                 LOCK_COORDINATOR_LEASE_CONTROL
@@ -106,7 +109,11 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             // Only now may a later statement sample clock_timestamp(); no time expression was in the locking projection.
             val changed = when (attempt.path) {
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> jdbc.query(
-                    if (pendingDelivery) CatalogSignerRotationPendingLeaseSqlV1.ACQUIRE_SIGNER_ROTATION_PENDING_LEASE else ACQUIRE_COORDINATOR_LEASE,
+                    when {
+                        pendingActivation -> CatalogSignerRotationActivationLeaseSqlV1.ACQUIRE_SIGNER_ROTATION_ACTIVATION_PENDING_LEASE
+                        pendingDelivery -> CatalogSignerRotationPendingLeaseSqlV1.ACQUIRE_SIGNER_ROTATION_PENDING_LEASE
+                        else -> ACQUIRE_COORDINATOR_LEASE
+                    },
                     { row, _ -> Changed.copy(row) },
                     attempt.owner,
                     *arguments(),
@@ -143,7 +150,9 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             )
             check(changed.lease == expected)
             stage = Stage.REREADING
-            val readSql = if (pendingDelivery) {
+            val readSql = if (pendingActivation) {
+                CatalogSignerRotationActivationLeaseSqlV1.READ_SIGNER_ROTATION_ACTIVATION_PENDING_LEASE_CONTROL
+            } else if (pendingDelivery) {
                 CatalogSignerRotationPendingLeaseSqlV1.READ_SIGNER_ROTATION_PENDING_LEASE_CONTROL
             } else {
                 READ_COORDINATOR_LEASE_CONTROL

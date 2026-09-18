@@ -16,8 +16,12 @@ internal class PersistenceJdbcDriverRoot(
     internal val catalogSignerRotationRecovery: Boolean = false,
     internal val catalogSignerRotationAuthoring: Boolean = false,
     internal val catalogSignerRotationDelivery: Boolean = false,
+    internal val catalogSignerRotationActivation: Boolean = false,
 ) {
     init {
+        check(!catalogSignerRotationActivation ||
+            (!catalogSignerRotationDelivery && !catalogSignerRotationAuthoring && !catalogSignerRotationRecovery &&
+                !desiredInstallationOperator && !catalogGenesisAuthoring && !catalogGenesisFinalization && !sourceOnly && versionBound != null))
         check(
             !catalogSignerRotationDelivery ||
                 (
@@ -43,7 +47,7 @@ internal class PersistenceJdbcDriverRoot(
 
     private val namedCatalogOnly: Boolean
         get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization ||
-            catalogSignerRotationRecovery || catalogSignerRotationAuthoring || catalogSignerRotationDelivery
+            catalogSignerRotationRecovery || catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation
     private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly, desiredInstallationOperator, catalogGenesisAuthoring)
     val shutdown = AtomicBoolean()
     internal val versionBoundPools = versionBound?.createPools(this)
@@ -77,7 +81,7 @@ internal class PersistenceJdbcDriverRoot(
             ordinary.forbidStarts()
             deletion.forbidStarts()
             val fixedFinalization = catalogGenesisFinalization || catalogSignerRotationRecovery ||
-                catalogSignerRotationAuthoring || catalogSignerRotationDelivery
+                catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation
             if (fixedFinalization) {
                 epochRotationParticipant?.forbidStarts()
                 epochRotation?.seal() // Retain the exact dormant descriptor/inventory, never permit capture.
@@ -109,6 +113,9 @@ internal class PersistenceJdbcDriverRoot(
 
     internal fun startCatalogSignerRotationDeliveryInfrastructure(): PersistenceLifecycleActivation =
         if (catalogSignerRotationDelivery) startRoot() else PersistenceLifecycleActivation.CLOSED
+
+    internal fun startCatalogSignerRotationActivationInfrastructure(): PersistenceLifecycleActivation =
+        if (catalogSignerRotationActivation) startRoot() else PersistenceLifecycleActivation.CLOSED
 
     private fun startRoot(): PersistenceLifecycleActivation {
         if (shutdown.get()) return PersistenceLifecycleActivation.CLOSED
@@ -211,7 +218,7 @@ internal class PersistenceJdbcDriverRoot(
     fun requestCatalogCoordinatorShutdown(): Boolean = catalogCoordinator.forbidStarts()
 
     private fun rethrowNamedSignerRotationSignal(failure: Throwable) {
-        if (!catalogSignerRotationRecovery && !catalogSignerRotationAuthoring && !catalogSignerRotationDelivery) return
+        if (!catalogSignerRotationRecovery && !catalogSignerRotationAuthoring && !catalogSignerRotationDelivery && !catalogSignerRotationActivation) return
         if (failure is InterruptedException || failure is java.io.InterruptedIOException) {
             Thread.currentThread().interrupt()
             throw failure

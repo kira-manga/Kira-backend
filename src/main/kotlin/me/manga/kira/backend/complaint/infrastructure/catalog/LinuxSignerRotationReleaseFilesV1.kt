@@ -30,11 +30,16 @@ import java.util.concurrent.CancellationException
  * No call claims a hard native timeout. Every returned handle is retained BEFORE the post-call check.
  */
 internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSignerRotationReleaseCustodyV1, private val selectedRoot: Path) {
+    private val allocationName = owner.allocationDirectoryName
+    private val siblingName = if (allocationName == "rotation-overlap-2") "rotation-activation-3" else "rotation-overlap-2"
+    private val specs = listOf(ALLOCATION) + owner.leaves.map { Spec(it.fileName, it.maximumBytes) }
+    private val leafNames = specs.flatMap { listOf(it.name, it.completenessName) }.toSet()
     private val resources = mutableListOf<Held<*>>()
     private val directories = mutableListOf<Directory>()
     private val fileKeys = mutableMapOf<String, Any>()
     private var root: Directory? = null
     private var allocation: Directory? = null
+    private var sibling: Directory? = null
     private var filesystemOwner: UserPrincipal? = null
     private var lockChannel: FileChannel? = null
     private var lock: FileLock? = null
@@ -67,9 +72,9 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
     private fun openAllocationBytes(expected: ByteArray?, existingOnly: Boolean): CatalogSignerRotationCustodyObservationV1 {
         val selected = rootDirectory()
         val beforeLock = scan(selected, ROOT_NAMES)
-        requireSignerRotationCustody(ALLOCATION_DIRECTORY !in beforeLock || LOCK_FILE in beforeLock, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
+        requireSignerRotationCustody(beforeLock.none { it != LOCK_FILE } || LOCK_FILE in beforeLock, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
         requireSignerRotationCustody(
-            !existingOnly || (ALLOCATION_DIRECTORY in beforeLock && LOCK_FILE in beforeLock),
+            !existingOnly || (allocationName in beforeLock && LOCK_FILE in beforeLock),
             CatalogSignerRotationCustodyFailureV1.INCOMPLETE,
         )
         openPermanentLock(LOCK_FILE in beforeLock)
@@ -77,22 +82,26 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
         requireLiveLock()
         requireSignerRotationCustody(LOCK_FILE in names, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
 
-        requireSignerRotationCustody(!existingOnly || ALLOCATION_DIRECTORY in names, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
+        requireSignerRotationCustody(!existingOnly || allocationName in names, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
+
+        // The other fixed allocation is read-only: retain its directory identity/0700 owner, never inspect or change its leaves.
+        if (siblingName in names) sibling = openDirectory(selected.path.resolve(siblingName), selected, privateBoundary = true)
+        checkDirectories()
 
         // Infrastructure only: the one permanent lock channel is NEVER reopened for force or reread.
         // An empty lock without an allocation may survive an interrupted first allocation.
         io { checkNotNull(lockChannel).force(true) }
         forceDirectory(selected)
-        val created = ALLOCATION_DIRECTORY !in names
+        val created = allocationName !in names
         if (created) {
             checkDirectories()
-            io { Files.createDirectory(selected.path.resolve(ALLOCATION_DIRECTORY), PosixFilePermissions.asFileAttribute(DIRECTORY_PERMISSIONS)) }
+            io { Files.createDirectory(selected.path.resolve(allocationName), PosixFilePermissions.asFileAttribute(DIRECTORY_PERMISSIONS)) }
             checkDirectories()
         }
-        allocation = openDirectory(selected.path.resolve(ALLOCATION_DIRECTORY), selected, privateBoundary = true)
+        allocation = openDirectory(selected.path.resolve(allocationName), selected, privateBoundary = true)
         checkDirectories()
         if (created) {
-            requireSignerRotationCustody(scan(allocationDirectory(), LEAF_NAMES).isEmpty(), CatalogSignerRotationCustodyFailureV1.INVENTORY_REFUSED)
+            requireSignerRotationCustody(scan(allocationDirectory(), leafNames).isEmpty(), CatalogSignerRotationCustodyFailureV1.INVENTORY_REFUSED)
             forceDirectory(allocationDirectory())
             forceDirectory(selected) // Persist the new directory's entry in its parent before any allocation record.
             writePair(ALLOCATION, checkNotNull(expected))
@@ -267,14 +276,15 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
     private fun readInventory(expectedAllocation: ByteArray?): Map<String, ByteArray> {
         requireLiveLock()
         checkDirectories()
-        requireSignerRotationCustody(scan(rootDirectory(), ROOT_NAMES) == ROOT_NAMES, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
-        val names = scan(allocationDirectory(), LEAF_NAMES)
+        val expectedRootNames = setOf(LOCK_FILE, allocationName) + if (sibling == null) emptySet() else setOf(siblingName)
+        requireSignerRotationCustody(scan(rootDirectory(), ROOT_NAMES) == expectedRootNames, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
+        val names = scan(allocationDirectory(), leafNames)
         requireSignerRotationCustody(
             ALLOCATION.name in names && ALLOCATION.completenessName in names && names.containsAll(fileKeys.keys.filter { it != LOCK_FILE }),
             CatalogSignerRotationCustodyFailureV1.INCOMPLETE,
         )
         val result = mutableMapOf<String, ByteArray>()
-        for (spec in SPECS) {
+        for (spec in specs) {
             val present = spec.name in names
             requireSignerRotationCustody(present == (spec.completenessName in names), CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
             if (present) result[spec.name] = readPair(spec)
@@ -439,14 +449,13 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
     }
 
     companion object {
-        private const val MAX_RESOURCES = 72 // <=65 ancestry streams, allocation, lock/channel and bounded transients.
+        private const val MAX_RESOURCES = 72 // <=65 ancestry streams, selected allocation, optional sibling, lock/channel and bounded transients.
         private const val DIRECTORY_MODE = 0x1c0 // 0700
         private const val WRITE_MODE = 0x180 // 0600
         private const val READ_MODE = 0x100 // 0400
         private const val MODE_MASK = 0xfff // Include sticky/setgid/setuid; not just rwx permissions.
         private const val UNTRUSTED_WRITE_BITS = 0x12 // 0022
         private const val LOCK_FILE = "rotation.lock"
-        private const val ALLOCATION_DIRECTORY = "rotation-overlap-2"
         private const val COMPLETENESS_BYTES = 4 + 64 // Big-endian nonnegative length, then lowercase ASCII SHA-256.
         private val DIRECTORY_PERMISSIONS = PosixFilePermissions.fromString("rwx------")
         private val WRITE_PERMISSIONS = PosixFilePermissions.fromString("rw-------")
@@ -456,9 +465,7 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
         private val NEW_FILE_OPTIONS = setOf<OpenOption>(CREATE_NEW, WRITE, NOFOLLOW_LINKS)
         private val NEW_LOCK_OPTIONS = setOf<OpenOption>(CREATE_NEW, READ, WRITE, NOFOLLOW_LINKS)
         private val DOT = Path.of(".")
-        private val ROOT_NAMES = setOf(LOCK_FILE, ALLOCATION_DIRECTORY)
+        private val ROOT_NAMES = setOf(LOCK_FILE, "rotation-overlap-2", "rotation-activation-3")
         private val ALLOCATION = Spec("allocation", CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES)
-        private val SPECS = listOf(ALLOCATION) + CatalogSignerRotationReleaseLeafV1.entries.map { Spec(it.fileName, it.maximumBytes) }
-        private val LEAF_NAMES = SPECS.flatMap { listOf(it.name, it.completenessName) }.toSet()
     }
 }

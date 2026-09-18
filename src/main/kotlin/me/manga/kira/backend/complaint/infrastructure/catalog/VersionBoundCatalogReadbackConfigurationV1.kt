@@ -135,6 +135,22 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
         verifyCreationRetention(claims.creation.createdAtEpochSecond, readback.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
     }
 
+    /** Fixed actual2/3 raw fold on unchanged cold D7 routing, not a PROJECTED_CURRENT profile conversion. */
+    internal fun verifySignerRotationActivation(readback: CatalogDualLocationVerifier.Activation3Readback, evaluatedAt: Instant) {
+        requireConnectionFree()
+        val policy = policyAt(evaluatedAt)
+        requireCatalogReadback(!projectedCurrent && readback.initialTrustBundleSha256 == initialTrustBundleSha256 &&
+            readback.currentTrustBundleSha256 == currentTrustBundleSha256 && readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
+            readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond, CatalogReadbackFailure.INVALID_POLICY)
+        val genesis = OfflineTrustBundleParser.parseGenesis(readback.genesisBytes()).manifest
+        val empty = GenesisEmptyHeadV1(0, Sha256.hexUtf8("[]"))
+        requireCatalogReadback(genesis.restoreInventory == empty && genesis.history == GenesisEmptyHistoryV1(empty, empty, empty, empty, empty, empty, empty) &&
+            Sha256.hex(readback.genesisBytes()) == expectedGenesisEnvelopeSha256, CatalogReadbackFailure.HEAD_CONFLICT)
+        readback.retentionPairs().forEach { (created, retained) ->
+            verifyCreationRetention(created, retained, evaluatedAt, policy.requiredRetainUntilEpochSecond)
+        }
+    }
+
     private fun verifyCreationRetention(createdAt: Long, retainUntil: Long, evaluatedAt: Instant, requiredRetainUntil: Long) {
         calendarCheck {
             val created = Instant.ofEpochSecond(createdAt)

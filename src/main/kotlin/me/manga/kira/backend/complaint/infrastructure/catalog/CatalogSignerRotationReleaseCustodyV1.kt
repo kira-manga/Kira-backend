@@ -11,7 +11,7 @@ import java.nio.file.Path
 import java.util.concurrent.CancellationException
 
 /**
- * Caller-retained, Linux-only byte custody for one fixed `rotation-overlap-2` allocation, with no deleting lifecycle.
+ * Caller-retained Linux-only byte custody for the fixed overlap2 or activation3 sibling, with no deleting lifecycle.
  * Call retain BEFORE open and keep this original owner through close, including failed construction.
  *
  * Provisioning must independently bind this exact durable root outside DB restore/deployment/temporary
@@ -27,7 +27,14 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
     root: Path,
     private var allocationBytes: ByteArray?,
     private val originalBudget: PersistenceTimeBudget,
+    private val activation: Boolean = false,
 ) : AutoCloseable {
+    internal val allocationDirectoryName: String = if (activation) "rotation-activation-3" else "rotation-overlap-2"
+    internal val leaves: List<CatalogSignerRotationReleaseLeafV1> = CatalogSignerRotationReleaseLeafV1.entries.filter {
+        !activation || it !in setOf(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED, CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED,
+            CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO, CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED)
+    }
     private val caller = Thread.currentThread()
     private val files = LinuxSignerRotationReleaseFilesV1(this, root)
     private var state = State.RETAINED
@@ -60,12 +67,13 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
     }
 
     fun putIfAbsent(leaf: CatalogSignerRotationReleaseLeafV1, bytes: ByteArray): CatalogSignerRotationCustodyObservationV1 = perform(State.OPEN) {
-        requireSignerRotationCustody(bytes.size in 1..leaf.maximumBytes, CatalogSignerRotationCustodyFailureV1.INVALID_INPUT)
+        requireSignerRotationCustody(leaf in leaves && bytes.size in 1..leaf.maximumBytes, CatalogSignerRotationCustodyFailureV1.INVALID_INPUT)
         files.putIfAbsent(checkNotNull(allocationBytes), leaf, bytes.copyOf())
     }
 
     /** A null is only absence under this held lock, not evidence that an effect was never attempted. */
     fun read(leaf: CatalogSignerRotationReleaseLeafV1): ByteArray? = perform(State.OPEN) {
+        requireSignerRotationCustody(leaf in leaves, CatalogSignerRotationCustodyFailureV1.INVALID_INPUT)
         files.read(checkNotNull(allocationBytes), leaf)
     }
 
@@ -208,6 +216,16 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
             return CatalogSignerRotationReleaseCustodyV1(root, allocationBytes.copyOf(), originalBudget)
         }
 
+        internal fun retainActivation(root: Path, allocationBytes: ByteArray, originalBudget: PersistenceTimeBudget): CatalogSignerRotationReleaseCustodyV1 {
+            requireSignerRotationCustody(
+                root.fileSystem === FileSystems.getDefault() && root.isAbsolute && root == root.normalize() &&
+                    root.nameCount in 1..MAX_PATH_DEPTH && root.toString().length <= MAX_PATH_CHARS &&
+                    allocationBytes.size in 1..CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES,
+                CatalogSignerRotationCustodyFailureV1.INVALID_INPUT,
+            )
+            return CatalogSignerRotationReleaseCustodyV1(root, allocationBytes.copyOf(), originalBudget, activation = true)
+        }
+
         /** Same bounded root capture, but there is deliberately no expected new-token allocation to initialize. */
         internal fun retainExisting(root: Path, originalBudget: PersistenceTimeBudget): CatalogSignerRotationReleaseCustodyV1 {
             requireSignerRotationCustody(
@@ -216,6 +234,15 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
                 CatalogSignerRotationCustodyFailureV1.INVALID_INPUT,
             )
             return CatalogSignerRotationReleaseCustodyV1(root, null, originalBudget)
+        }
+
+        internal fun retainExistingActivation(root: Path, originalBudget: PersistenceTimeBudget): CatalogSignerRotationReleaseCustodyV1 {
+            requireSignerRotationCustody(
+                root.fileSystem === FileSystems.getDefault() && root.isAbsolute && root == root.normalize() &&
+                    root.nameCount in 1..MAX_PATH_DEPTH && root.toString().length <= MAX_PATH_CHARS,
+                CatalogSignerRotationCustodyFailureV1.INVALID_INPUT,
+            )
+            return CatalogSignerRotationReleaseCustodyV1(root, null, originalBudget, activation = true)
         }
 
         internal fun preserveInterruption(failure: Throwable) {

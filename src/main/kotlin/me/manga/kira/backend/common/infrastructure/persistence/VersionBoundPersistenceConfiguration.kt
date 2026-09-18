@@ -76,6 +76,11 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogSignerRotationDelivery(this, epochRotation)
     }
 
+    internal fun bindCatalogSignerRotationActivationOwner(epochRotation: Boolean): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogSignerRotationActivation(this, epochRotation)
+    }
+
     internal fun createCatalogSignerRotationDeliveryRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(
@@ -85,6 +90,18 @@ internal class VersionBoundPersistenceConfiguration private constructor(
             versionBound = this,
             epochRotationEnabled = epochRotation,
             catalogSignerRotationDelivery = true,
+        )
+    }
+
+    internal fun createCatalogSignerRotationActivationRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint,
+            ordinaryCapacity,
+            PersistencePathStyle.POSIX,
+            versionBound = this,
+            epochRotationEnabled = epochRotation,
+            catalogSignerRotationActivation = true,
         )
     }
 
@@ -179,7 +196,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
         if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring ||
-            root.catalogSignerRotationDelivery
+            root.catalogSignerRotationDelivery || root.catalogSignerRotationActivation
         ) {
             requireFinalizerConfiguration()
         }

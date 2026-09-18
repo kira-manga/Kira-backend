@@ -22,7 +22,7 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     private val operatorCoordinator =
         (
             root.desiredInstallationOperator || root.catalogGenesisAuthoring || root.catalogGenesisFinalization ||
-                root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring || root.catalogSignerRotationDelivery
+                root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring || root.catalogSignerRotationDelivery || root.catalogSignerRotationActivation
             ) &&
             role === PersistenceJdbcParticipantRole.CATALOG_COORDINATOR
     private val strictPolicy = when (role) {

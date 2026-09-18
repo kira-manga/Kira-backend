@@ -40,18 +40,24 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         return acquire(binding, jdbc, null, delivery = original)
     }
 
+    internal fun acquireActivation(original: CatalogSignerRotationActivationV1, binding: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate): Attempt {
+        original.requireLeaseSelection(coordinator.ownership, jdbc, binding)
+        return acquire(binding, jdbc, null, activation = original)
+    }
+
     private fun acquire(
         binding: CatalogCoordinatorLeaseBindingV1,
         jdbc: JdbcTemplate,
         original: CatalogSignerRotationPreparedRecoveryV1?,
         initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
         delivery: CatalogSignerRotationDeliveryV1? = null,
+        activation: CatalogSignerRotationActivationV1? = null,
     ): Attempt {
         requireConnectionFree()
         requireBinding(binding, jdbc)
         active.get()?.retireIfExpired()
         if (active.get() != null) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
-        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original, initialAuthor, delivery))
+        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original, initialAuthor, delivery, activation))
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -111,6 +117,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         private val recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
         private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
         private val delivery: CatalogSignerRotationDeliveryV1? = null,
+        private val activation: CatalogSignerRotationActivationV1? = null,
     ) {
         internal val custody: CatalogCoordinatorLeaseCustodyV1 get() = this@CatalogCoordinatorLeaseCustodyV1
         private val caller = Thread.currentThread()
@@ -122,8 +129,9 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         // Only this concrete delivery owner's actual pending2 snapshot selects the separate ten-argument SQL leaf.
         // The binding remains genuinely B2; ordinary acquisitions, renewals and relinquishments keep their existing SQL.
         private val deliveryPendingOperation = delivery?.pendingLeaseOperation(binding)
+        private val activationPendingOperation = activation?.pendingLeaseOperation(binding)
         private val arguments = binding.arguments().let { values ->
-            deliveryPendingOperation?.let { arrayOf(*values, it) } ?: values
+            (deliveryPendingOperation ?: activationPendingOperation)?.let { arrayOf(*values, it) } ?: values
         }
         private var retained: CatalogCoordinatorLeaseOperation? = null
         private var acquired: CatalogCoordinatorLeaseCampaignV1? = null
@@ -139,6 +147,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
             recovery?.requireLeaseAttempt(binding)
             initialAuthor?.requireLeaseAttempt(binding)
             delivery?.requireLeaseAttempt(binding)
+            activation?.requireLeaseAttempt(binding)
             if (Thread.currentThread().isInterrupted) refuse(PersistencePhaseFailureCode.INTERRUPTED)
             if (path !== PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH) {
                 requireLeaseWindow(clock.nanoTime() - startedAtNanos)
@@ -172,19 +181,30 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
             return true
         }
 
+        internal fun usesPendingActivationSql(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate): Boolean {
+            requireOperation(operation, selected)
+            if (activationPendingOperation == null) return false
+            check(path === PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE)
+            check(checkNotNull(activation).pendingLeaseOperation(binding) == activationPendingOperation)
+            return true
+        }
+
         /** Under the actual row lock, before the later-clock CAS; the floor is never a caller-supplied long. */
         internal fun requireHistoricalTokenFloor(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate, lockedToken: Long, lockedOwner: UUID?) {
             requireOperation(operation, selected)
-            if (delivery != null) check(owner != lockedOwner) // Also exclude the latest real owner when an earlier recovery left no outcome artifact.
+            if (delivery != null || activation != null) check(owner != lockedOwner) // Also exclude the latest real owner when an earlier recovery left no outcome artifact.
             recovery?.requireHistoricalLeaseFloor(binding, lockedToken)
             delivery?.requireHistoricalLeaseFloor(binding, lockedToken)
+            activation?.requireHistoricalLeaseFloor(binding, lockedToken)
             delivery?.requireClosedLeaseControl(binding, selected)
+            activation?.requireClosedLeaseControl(binding, selected)
         }
 
         /** Delivery's additional fixed closed-gate predicate, without changing ordinary acquire/renew SQL. */
         internal fun requireDeliveryControl(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate) {
             requireOperation(operation, selected)
             delivery?.requireClosedLeaseControl(binding, selected)
+            activation?.requireClosedLeaseControl(binding, selected)
         }
 
         /** A historical receipt can be reread after success, but a failed/late original return can never recover one. */
@@ -243,6 +263,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
             recovery?.observeFailure(problem)
             initialAuthor?.observeFailure(problem)
             delivery?.observeFailure(problem)
+            activation?.observeFailure(problem)
             abort()
             return retained?.returnFailure(problem)
                 ?: (problem as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
@@ -261,6 +282,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
                 recovery?.observeFailure(problem)
                 initialAuthor?.observeFailure(problem)
                 delivery?.observeFailure(problem)
+                activation?.observeFailure(problem)
                 abort()
                 throw problem
             } finally {
