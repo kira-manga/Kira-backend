@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.api
 
 import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.core.JsonGenerator
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetail
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryContent
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryNotice
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryPage
@@ -71,6 +72,31 @@ internal class ComplaintOwnerHistoryResponses {
         }
     }
 
+    /** Same closed fields as history, but one root item and its own post-escaping 32 KiB buffer. */
+    @Suppress("TooGenericExceptionCaught", "SwallowedException", "ThrowsCount")
+    fun encodeDetail(permit: Permit, detail: ComplaintOwnerDetail): ComplaintHistoryEncodedBody {
+        if (!permit.belongsTo(semaphore) || !isOpen()) throw ComplaintHistorySerializationFailure()
+        val buffer = ComplaintHistoryEncodedBody(DETAIL_MAX_BYTES)
+        try {
+            factory.createGenerator(buffer).use { json ->
+                when (detail) {
+                    is ComplaintOwnerDetail.Content -> content(json, detail.item)
+                    is ComplaintOwnerDetail.Notice -> notice(json, detail.item)
+                }
+            }
+            return buffer
+        } catch (failure: IOException) {
+            buffer.destroy()
+            throw ComplaintHistorySerializationFailure()
+        } catch (failure: RuntimeException) {
+            buffer.destroy()
+            throw ComplaintHistorySerializationFailure()
+        } catch (failure: Error) {
+            buffer.destroy()
+            throw failure
+        }
+    }
+
     private fun notice(json: JsonGenerator, row: ComplaintOwnerHistoryNotice) {
         json.writeStartObject()
         json.writeStringField("id", row.id.toString())
@@ -94,7 +120,7 @@ internal class ComplaintOwnerHistoryResponses {
         json.writeStringField("createdAt", row.createdAt.toString())
         json.writeStringField("updatedAt", row.updatedAt.toString())
         json.writeNumberField("version", row.version)
-        json.writeStringField("actionTag", "\"complaint-${row.id}-v${row.version}\"")
+        json.writeStringField("actionTag", actionTag(row))
         nullable(json, "appVersion", row.appVersion)
         json.writeStringField("platform", row.platform.name)
         json.writeStringField("osVersion", row.osVersion)
@@ -111,6 +137,12 @@ internal class ComplaintOwnerHistoryResponses {
     }
 
     override fun toString(): String = "ComplaintOwnerHistoryResponses(bounded)"
+
+    companion object {
+        const val DETAIL_MAX_BYTES = 32 * 1024
+
+        fun actionTag(row: ComplaintOwnerHistoryContent): String = "\"complaint-${row.id}-v${row.version}\""
+    }
 
     internal class Permit(private val semaphore: Semaphore) : AutoCloseable {
         private val retained = AtomicBoolean()

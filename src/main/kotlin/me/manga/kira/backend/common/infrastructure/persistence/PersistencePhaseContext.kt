@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperat
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVerificationOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDetailReadOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintCatalogGenesisPublishRecheckOperationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
@@ -176,6 +177,7 @@ constructor(
     internal val installationDeletionPreflight: PersistenceInstallationDeletionPreflight = InstallationDeletionPreflightBoundary()
     internal val installationCurrentState: PersistenceInstallationCurrentState = InstallationCurrentStateBoundary()
     internal val ownerHistory: PersistenceOwnerHistory = OwnerHistoryBoundary()
+    internal val ownerDetail: PersistenceOwnerDetail = OwnerDetailBoundary()
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerDeleteAll: PersistenceOwnerDeleteAll = OwnerDeleteAllBoundary()
     internal val ownerDeleteAllVerification: PersistenceOwnerDeleteAllVerification = OwnerDeleteAllVerificationBoundary()
@@ -581,6 +583,8 @@ constructor(
         PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
         PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
         -> ownerHistory.completed()
+
+        PersistencePhasePath.COMPLAINT_OWNER_DETAIL -> ownerDetail.completed()
 
         PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
@@ -2219,6 +2223,45 @@ constructor(
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true
     }
 
+    /** One exact-ID read recognizes only this phase's retained concrete operation and actual released result. */
+    private inner class OwnerDetailBoundary : PersistenceOwnerDetail {
+        private var issued = false
+        private var retained: ComplaintOwnerDetailReadOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DETAIL)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintOwnerDetailReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DETAIL)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintOwnerDetailReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DETAIL)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun connection(operation: ComplaintOwnerDetailReadOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintOwnerDetailReadOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext) == true
+    }
+
     /** A concrete read, not a caller-supplied diagnostic enum, owns completion and the result-release seal. */
     private inner class InstallationCurrentStateBoundary : PersistenceInstallationCurrentState {
         private var issued = false
@@ -2794,6 +2837,16 @@ internal interface PersistenceOwnerHistory {
     fun requireRetained(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate)
     fun connection(operation: ComplaintOwnerHistoryReadOperation, jdbc: JdbcTemplate): Connection
     fun requireCommitted(operation: ComplaintOwnerHistoryReadOperation)
+    fun completed(): Boolean
+}
+
+/** Same-phase retention and physical-release checks, never replaceable by a caller's result or callback. */
+internal interface PersistenceOwnerDetail {
+    fun requireOperation(jdbc: JdbcTemplate)
+    fun retain(operation: ComplaintOwnerDetailReadOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintOwnerDetailReadOperation, jdbc: JdbcTemplate)
+    fun connection(operation: ComplaintOwnerDetailReadOperation, jdbc: JdbcTemplate): Connection
+    fun requireCommitted(operation: ComplaintOwnerDetailReadOperation)
     fun completed(): Boolean
 }
 

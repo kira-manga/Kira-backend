@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBearerAuthenticator
 import org.springframework.http.server.RequestPath
@@ -41,6 +42,7 @@ internal class ComplaintInstallationSecurityChainFactory(
     private val history: ComplaintOwnerHistoryHttpHandler,
     private val create: ComplaintOwnerCreateHttpHandler,
     private val deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
+    private val detail: ComplaintOwnerDetailHttpHandler? = null,
 ) {
     private val entryPoint = AuthenticationEntryPoint { request, response, _ ->
         ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAUTHORIZED)
@@ -105,11 +107,13 @@ internal class ComplaintInstallationSecurityChainFactory(
 
                 ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(deleteAll).handleWithinIngress(request, response, context)
 
-                else -> if (request.method == "GET") {
+                ComplaintInstallationRoutes.HISTORY -> if (request.method == "GET") {
                     history.handleWithinIngress(request, response, context)
                 } else {
                     create.handleWithinIngress(request, response, context)
                 }
+
+                else -> checkNotNull(detail).handleWithinIngress(request, response, context)
             }
         }
     }
@@ -118,15 +122,22 @@ internal class ComplaintInstallationSecurityChainFactory(
 
     /** Concrete optional composition only; no public readiness flag can open this route. */
     private fun implemented(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.implemented(request) ||
-        (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL)
+        (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
+        (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request))
 
     private inner class ClosedUnimplementedRoutes : OncePerRequestFilter() {
         override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
             if (!implemented(request)) {
                 ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.NOT_FOUND)
-            } else {
-                filterChain.doFilter(request, response)
+                return
             }
+            // Detail's fixed bodyless validation precedes even the converter's current-row SQL.
+            if (ComplaintInstallationRoutes.isDetail(request) &&
+                !checkNotNull(detail).validateWithinIngress(request, response, bridge.authenticationContext(request))
+            ) {
+                return
+            }
+            filterChain.doFilter(request, response)
         }
     }
 }
@@ -139,6 +150,7 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     const val ME = "/api/v1/installations/me"
     const val HISTORY = "/api/v1/complaints"
     const val STATUS = "/api/v1/complaint-operations/status"
+    private val detailPath = Regex("$HISTORY/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     private val publicPaths = setOf(ENROLLMENT, SESSION, "/api/v1/installations/bootstrap", DELETE_ALL)
     private val patterns = (
         publicPaths + setOf(ME, HISTORY, STATUS, "$HISTORY/{id}", "$HISTORY/{id}/replies", "$HISTORY/{id}/content")
@@ -153,6 +165,8 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     }
 
     fun path(request: HttpServletRequest): String = request.requestURI.removePrefix(request.contextPath)
+
+    fun isDetail(request: HttpServletRequest): Boolean = detailPath.matches(path(request))
 
     fun requiresBearer(request: HttpServletRequest): Boolean = path(request) !in publicPaths
 

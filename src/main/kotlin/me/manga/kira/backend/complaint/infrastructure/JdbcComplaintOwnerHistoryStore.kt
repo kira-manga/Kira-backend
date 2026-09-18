@@ -224,7 +224,8 @@ internal class ComplaintOwnerHistoryReadOperation private constructor(
             }
         }
 
-        private val ACTOR_SQL = """
+        // Fixed fragments shared with exact-ID detail, not a caller-selected query/authority surface.
+        internal val ACTOR_SQL = """
             WITH actor AS (
                 SELECT a.id, a.data_scope_id FROM app_installations a
                 JOIN complaint_installation_ids i ON i.id = a.id AND i.data_scope_id = a.data_scope_id
@@ -239,7 +240,7 @@ internal class ComplaintOwnerHistoryReadOperation private constructor(
         private val AUTH_SQL = "$ACTOR_SQL SELECT EXISTS (SELECT 1 FROM actor) AS allowed"
 
         // SQL bounds every text field before pgjdbc receives it, including corruption outside normal constraints.
-        private val COLUMNS = """
+        internal val COLUMNS = """
             c.id, c.kind, c.type, c.status, c.notice_key, c.parent_resource_id, c.platform,
             c.created_at, c.updated_at, c.version,
             (c.subject IS NULL OR octet_length(c.subject) <= 800)

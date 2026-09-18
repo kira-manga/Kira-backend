@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
@@ -18,6 +19,7 @@ import java.util.IdentityHashMap
 
 /** Identity alone grants nothing: only the owning live registry can recognize this view. */
 internal class ComplaintIngressContext :
+    ComplaintOwnerDetailRequestContext,
     ComplaintOwnerHistoryRequestContext,
     ComplaintOwnerOperationContext,
     ComplaintInstallationRequestContext {

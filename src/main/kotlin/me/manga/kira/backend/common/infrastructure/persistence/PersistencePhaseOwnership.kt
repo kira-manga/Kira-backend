@@ -131,6 +131,9 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintOwnerHistoryPage(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE)
 
+    /** Exact-ID owner detail, using the same ordinary read budget and original resource owner. */
+    internal fun enterComplaintOwnerDetail(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DETAIL)
+
     /** TEST-dormant create/status share only the existing ordinary owner; no activation is inferred. */
     internal fun enterComplaintOwnerOperationAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION)
 
@@ -593,6 +596,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
+                PersistencePhasePath.COMPLAINT_OWNER_DETAIL,
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE,
@@ -866,6 +870,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_INSTALLATION_CURRENT_STATE,
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,
+    COMPLAINT_OWNER_DETAIL,
     COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
     COMPLAINT_OWNER_CREATE_PREFLIGHT,
     COMPLAINT_OWNER_CREATE,
@@ -916,6 +921,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_INSTALLATION_CURRENT_STATE,
             COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
             COMPLAINT_OWNER_HISTORY_PAGE,
+            COMPLAINT_OWNER_DETAIL,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_STATUS,
