@@ -145,7 +145,8 @@ class ComplaintOwnerReplyHttpTest {
         val reversedBody = statusBody.replace("[\"$parent\",\"$id\"]", "[\"$id\",\"$parent\"]").toByteArray()
         assertEquals(200, reversed.request(input(STATUS, reversedBody)).status)
         assertEquals(
-            listOf(id, parent), checkNotNull(reversed.queried).targetIds(),
+            listOf(id, parent),
+            checkNotNull(reversed.queried).targetIds(),
             "Never sort the status tuple; the store must compare its original order.",
         )
     }

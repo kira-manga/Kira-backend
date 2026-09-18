@@ -83,7 +83,14 @@ private fun replyResultConstraint(line: String): Boolean = line.startsWith("cons
 
 private fun assertReplyRejectionCell(sql: Connection) {
     for (operation in listOf(
-        "OWNER_EDIT", "OWNER_DELETE", "ADMIN_EDIT", "ADMIN_STATUS", "ADMIN_CLOSURE", "ADMIN_DELETE", "ADMIN_BATCH_STATUS", "ADMIN_BATCH_DELETE",
+        "OWNER_EDIT",
+        "OWNER_DELETE",
+        "ADMIN_EDIT",
+        "ADMIN_STATUS",
+        "ADMIN_CLOSURE",
+        "ADMIN_DELETE",
+        "ADMIN_BATCH_STATUS",
+        "ADMIN_BATCH_DELETE",
     )) {
         val actor = if (operation.startsWith("ADMIN")) "ADMIN" else "INSTALLATION"
         sql.expectSqlFailure(
@@ -109,7 +116,10 @@ private fun assertReplyReceiptBounds(sql: Connection) {
     }
     sql.expectSqlFailure(receiptUpdate("fingerprint=decode('00','hex')"), constraint = "chk_complaint_receipt_identity")
     for (set in listOf(
-        "expires_at=NULL", "completed_at=NULL", "expires_at=completed_at+interval '191 hours'", "expires_at=completed_at+interval '8 days'",
+        "expires_at=NULL",
+        "completed_at=NULL",
+        "expires_at=completed_at+interval '191 hours'",
+        "expires_at=completed_at+interval '8 days'",
     )) {
         sql.expectSqlFailure(receiptUpdate(set), constraint = "chk_complaint_receipt_phase")
     }

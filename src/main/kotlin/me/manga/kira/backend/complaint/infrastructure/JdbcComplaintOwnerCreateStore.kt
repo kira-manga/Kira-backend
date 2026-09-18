@@ -64,13 +64,14 @@ internal class JdbcComplaintOwnerCreateStore(
         platform: ComplaintPlatform,
     ): ComplaintOwnerCreateOperation = capture(PersistencePhasePath.COMPLAINT_OWNER_CREATE, identity, candidate.tuple, candidate, platform)
 
-    fun reply(
-        identity: ComplaintOwnerOperationIdentity,
-        candidate: ComplaintOwnerReplyCandidate,
-        platform: ComplaintPlatform,
-    ): ComplaintOwnerCreateOperation = capture(
-        PersistencePhasePath.COMPLAINT_OWNER_REPLY, identity, candidate.tuple, platform = platform, reply = candidate,
-    )
+    fun reply(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerReplyCandidate, platform: ComplaintPlatform): ComplaintOwnerCreateOperation =
+        capture(
+            PersistencePhasePath.COMPLAINT_OWNER_REPLY,
+            identity,
+            candidate.tuple,
+            platform = platform,
+            reply = candidate,
+        )
 
     private fun capture(
         path: PersistencePhasePath,
@@ -186,7 +187,11 @@ internal class ComplaintOwnerCreateOperation private constructor(
         } else {
             actor.plus(
                 elements = arrayOf<Any?>(
-                    selected.installation.scope.id, selected.operation.name, targetArray(selected), selected.fingerprintBytes(), selected.key,
+                    selected.installation.scope.id,
+                    selected.operation.name,
+                    targetArray(selected),
+                    selected.fingerprintBytes(),
+                    selected.key,
                 ),
             )
         }
@@ -342,13 +347,18 @@ internal class ComplaintOwnerCreateOperation private constructor(
                 provisionalReplyResource = true
             } else {
                 parentState = jdbc.query(
-                    ComplaintOwnerReplyParentRows.resource, { row, _ -> row.getString("state") }, id, binding.scope.id,
+                    ComplaintOwnerReplyParentRows.resource,
+                    { row, _ -> row.getString("state") },
+                    id,
+                    binding.scope.id,
                 ).singleOrNull()
             }
         }
         // Resource reservations (including the new child) all precede the locked parent content.
         val parent = jdbc.query(
-            ComplaintOwnerReplyParentRows.content, { row, _ -> ComplaintOwnerReplyParentRows.read(row) }, *parentArguments,
+            ComplaintOwnerReplyParentRows.content,
+            { row, _ -> ComplaintOwnerReplyParentRows.read(row) },
+            *parentArguments,
         ).singleOrNull()
         requireTokenTime() // Sampling inside a locking SELECT would precede its possible wait.
         val rejected = when {
@@ -374,8 +384,13 @@ internal class ComplaintOwnerCreateOperation private constructor(
 
     private fun claim(selected: ComplaintOwnerOperationTuple): Boolean = try {
         jdbc.update(
-            INSERT_CLAIM, selected.installation.id, selected.key, selected.operation.name,
-            selected.fingerprintBytes(), targetArray(selected), selected.installation.scope.id,
+            INSERT_CLAIM,
+            selected.installation.id,
+            selected.key,
+            selected.operation.name,
+            selected.fingerprintBytes(),
+            targetArray(selected),
+            selected.installation.scope.id,
         ) == 1
     } catch (failure: DataAccessException) {
         // Only the exact unique-claim statement's real PostgreSQL lock timeout is the retryable409.
@@ -442,8 +457,12 @@ internal class ComplaintOwnerCreateOperation private constructor(
         }
         val arguments = outcomeArguments.plus(
             elements = arrayOf<Any?>(
-                selected.installation.id, selected.key, selected.installation.scope.id,
-                selected.operation.name, targetArray(selected), selected.fingerprintBytes(),
+                selected.installation.id,
+                selected.key,
+                selected.installation.scope.id,
+                selected.operation.name,
+                targetArray(selected),
+                selected.fingerprintBytes(),
             ),
         )
         check(jdbc.update(if (receipt is ComplaintOwnerReceipt.Applied) COMPLETE_APPLIED else COMPLETE_REJECTED, *arguments) == 1)
@@ -631,7 +650,6 @@ internal class ComplaintOwnerCreateOperation private constructor(
         """.trimIndent()
 
         /** A bound parameter, not SQL interpolation. The closed tuple has one or two canonical ordered UUIDs. */
-        private fun targetArray(tuple: ComplaintOwnerOperationTuple): String =
-            tuple.targetIds().joinToString(prefix = "{", postfix = "}", separator = ",")
+        private fun targetArray(tuple: ComplaintOwnerOperationTuple): String = tuple.targetIds().joinToString(prefix = "{", postfix = "}", separator = ",")
     }
 }

@@ -14,12 +14,7 @@ internal class ComplaintReplyRequest private constructor(
     override fun toString(): String = "ComplaintReplyRequest(redacted)"
 
     companion object {
-        fun normalize(
-            identity: ComplaintReportIdentity,
-            parentId: UUID,
-            body: String,
-            metadata: ComplaintReportMetadataInput,
-        ): ComplaintReplyRequest {
+        fun normalize(identity: ComplaintReportIdentity, parentId: UUID, body: String, metadata: ComplaintReportMetadataInput): ComplaintReplyRequest {
             ComplaintIdentifiers.resourceId(parentId.toString())
             require(parentId != identity.clientId.value)
             return ComplaintReplyRequest(identity, parentId, ComplaintReportTextRules.replyBody(body), ComplaintReportMetadata.normalize(metadata))

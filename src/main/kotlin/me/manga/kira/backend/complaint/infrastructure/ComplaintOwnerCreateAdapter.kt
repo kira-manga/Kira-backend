@@ -141,8 +141,11 @@ internal class ComplaintOwnerReplyCandidate private constructor(val request: Com
             return ComplaintOwnerReplyCandidate(
                 request,
                 ComplaintOwnerOperationTuple(
-                    installation, request.identity.key.value, request.operation,
-                    listOf(request.parentId, request.identity.clientId.value), fingerprint.bytes(),
+                    installation,
+                    request.identity.key.value,
+                    request.operation,
+                    listOf(request.parentId, request.identity.clientId.value),
+                    fingerprint.bytes(),
                 ),
             )
         }

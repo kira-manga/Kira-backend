@@ -71,7 +71,10 @@ internal fun ComplaintOwnerCreateFixture.replyNotice(scope: ComplaintDataScope =
         observer.update(
             "INSERT INTO complaints (id,data_scope_id,test_only,ownership,kind,status,notice_key,created_at,updated_at,version) " +
                 "VALUES (?, ?, ?, 'SYSTEM', 'NOTICE', 'PINNED', ?, now(), now(), 1)",
-            id, scope.id, scope.testOnly, "complaints.notice.fixture.$id",
+            id,
+            scope.id,
+            scope.testOnly,
+            "complaints.notice.fixture.$id",
         ),
     )
     return id

@@ -17,12 +17,18 @@ class ComplaintReplyFingerprintTest {
     fun `two independent reply frames and digests bind the fixed route operation and ordered identities`() {
         val goldens = listOf(
             Golden(
-                request(), BASIC_HEX, 249,
-                "6ac63649647daed223d03db6698d0f16fc871caf2ee276556f04a843bf99bc9e", "asY2SWR9rtIj0D22aY0PFvyHHK8u4nZVbwSoQ7-ZvJ4",
+                request(),
+                BASIC_HEX,
+                249,
+                "6ac63649647daed223d03db6698d0f16fc871caf2ee276556f04a843bf99bc9e",
+                "asY2SWR9rtIj0D22aY0PFvyHHK8u4nZVbwSoQ7-ZvJ4",
             ),
             Golden(
-                unicodeRequest(), UNICODE_HEX, 261,
-                "38ef127b0a034c551d39ec18bacdb68bae3f0b0b81abe4997420649118c9256e", "OO8SewoDTFUdOewYus22i64_CwuBq-SZdCBkkRjJJW4",
+                unicodeRequest(),
+                UNICODE_HEX,
+                261,
+                "38ef127b0a034c551d39ec18bacdb68bae3f0b0b81abe4997420649118c9256e",
+                "OO8SewoDTFUdOewYus22i64_CwuBq-SZdCBkkRjJJW4",
             ),
         )
         for (golden in goldens) {

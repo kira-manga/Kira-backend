@@ -77,7 +77,13 @@ class ComplaintOwnerReplyIT {
             val history = mock(ComplaintOwnerHistoryHttpHandler::class.java)
             val authentication = ComplaintInstallationBearerAuthenticator(f.run.scope, f.jwt, f.historyPhases, f.ingress)
             val factory = ComplaintInstallationSecurityChainFactory(
-                bridge, authentication, installations, me, history, f.handler, reply = if (supplied) f.handler else null,
+                bridge,
+                authentication,
+                installations,
+                me,
+                history,
+                f.handler,
+                reply = if (supplied) f.handler else null,
             )
             val users = mock(UserRepository::class.java)
             complaintSpringSecurityContext(factory, users).use { spring ->
@@ -168,7 +174,9 @@ class ComplaintOwnerReplyIT {
                         "AND parent_resource_id = ? AND body = E'Synthetic reply\\nline' AND platform = 'ANDROID' AND app_version IS NULL " +
                         "AND os_version = 'fixture-os' AND manufacturer = '' AND device_model = '' AND created_at = updated_at " +
                         "AND closure_reason IS NULL FROM complaints WHERE id = ?",
-                    Boolean::class.java, attempt.parentId, attempt.id,
+                    Boolean::class.java,
+                    attempt.parentId,
+                    attempt.id,
                 ),
             )
         }
@@ -301,7 +309,13 @@ class ComplaintOwnerReplyIT {
         }
         f.assertReleased()
         val completed = responses.mapIndexed { index, response ->
-            if (response.status != 503) response else if (index == 0) f.create(report) else f.reply(reply)
+            if (response.status != 503) {
+                response
+            } else if (index == 0) {
+                f.create(report)
+            } else {
+                f.reply(reply)
+            }
         }
         assertEquals(listOf(201, 409), completed.map { it.status }.sorted())
         f.problem(completed.single { it.status == 409 }, 409, "COMPLAINT_CAPACITY_REACHED")
@@ -456,7 +470,11 @@ class ComplaintOwnerReplyIT {
             f.observer.queryForObject(
                 "SELECT operation = 'OWNER_REPLY' AND target_ids = ARRAY[?::uuid,?::uuid] AND state = 'COMPLETED' " +
                     "AND ack_ids = ARRAY[?::uuid] AND ack_versions = ARRAY[1::bigint] FROM complaint_idempotency_receipts WHERE actor_id = ?",
-                Boolean::class.java, attempt.parentId, attempt.id, attempt.id, f.actor.id,
+                Boolean::class.java,
+                attempt.parentId,
+                attempt.id,
+                attempt.id,
+                f.actor.id,
             ),
         )
         f.assertCharge(before.counters, ComplaintCapacityCharges.OWNER_CREATE)
@@ -487,8 +505,12 @@ class ComplaintOwnerReplyIT {
     fun `faults at reply resource parent content audit completion and rejection cleanup leave no abandoned ordinary claim`() = withFixture { f ->
         val parent = f.content()
         for (point in listOf(
-            OwnerCreateFixtureStep.RESOURCE, OwnerCreateFixtureStep.PARENT_RESOURCE, OwnerCreateFixtureStep.PARENT_CONTENT,
-            OwnerCreateFixtureStep.CONTENT, OwnerCreateFixtureStep.COMPLETE, OwnerCreateFixtureStep.DISCARD_RESOURCE,
+            OwnerCreateFixtureStep.RESOURCE,
+            OwnerCreateFixtureStep.PARENT_RESOURCE,
+            OwnerCreateFixtureStep.PARENT_CONTENT,
+            OwnerCreateFixtureStep.CONTENT,
+            OwnerCreateFixtureStep.COMPLETE,
+            OwnerCreateFixtureStep.DISCARD_RESOURCE,
         )) {
             val attempt = f.replyAttempt(if (point == OwnerCreateFixtureStep.DISCARD_RESOURCE) f.content(pending = true) else parent)
             val before = f.state()

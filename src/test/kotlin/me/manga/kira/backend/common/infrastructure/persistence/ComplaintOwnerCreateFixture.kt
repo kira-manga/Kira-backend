@@ -383,8 +383,22 @@ internal data class OwnerCreateFixtureState(
 )
 
 internal enum class OwnerCreateFixtureStep {
-    AUTH, OBSERVE, CLAIM, COUNTERS, CHARGE, RUN, OWNER, CREDENTIAL, COLLISION,
-    PARENT_CANDIDATE, PARENT_RESOURCE, PARENT_CONTENT, DISCARD_RESOURCE, RESOURCE, CONTENT, COMPLETE,
+    AUTH,
+    OBSERVE,
+    CLAIM,
+    COUNTERS,
+    CHARGE,
+    RUN,
+    OWNER,
+    CREDENTIAL,
+    COLLISION,
+    PARENT_CANDIDATE,
+    PARENT_RESOURCE,
+    PARENT_CONTENT,
+    DISCARD_RESOURCE,
+    RESOURCE,
+    CONTENT,
+    COMPLETE,
 }
 
 /** Passive/fault hooks bracket genuine SQL. No result, commit state or physical-release flag is forged. */

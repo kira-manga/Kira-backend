@@ -35,13 +35,7 @@ internal class ComplaintOwnerCreateInput(
 }
 
 /** Reply identity is ordered parent then new client UUID. Parent notice UUIDs need not be version 4. */
-internal class ComplaintOwnerReplyInput(
-    val parentId: UUID,
-    val id: UUID,
-    val key: UUID,
-    val body: String,
-    val metadata: ComplaintReportMetadataInput,
-) {
+internal class ComplaintOwnerReplyInput(val parentId: UUID, val id: UUID, val key: UUID, val body: String, val metadata: ComplaintReportMetadataInput) {
     init {
         ComplaintIdentifiers.resourceId(parentId.toString())
         ComplaintIdentifiers.clientResourceId(id.toString())
