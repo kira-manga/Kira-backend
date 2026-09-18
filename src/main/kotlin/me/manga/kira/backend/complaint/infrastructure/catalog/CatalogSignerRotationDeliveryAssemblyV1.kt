@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBu
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogGetRequest
 import me.manga.kira.backend.complaint.domain.catalog.CatalogListRequest
+import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPolicy
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPort
 import me.manga.kira.backend.complaint.domain.catalog.CatalogVersionBody
 import me.manga.kira.backend.complaint.domain.catalog.LocalCatalogSnapshot
@@ -15,6 +16,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadb
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
+import java.time.Instant
 
 /**
  * One original fixed delivery assembly. No signing client or replica PUT exists here.
@@ -43,10 +45,45 @@ internal class CatalogSignerRotationDeliveryAssemblyV1(
     }
 
     internal fun observe(
-        local: LocalCatalogSnapshot.Prepared,
+        local: LocalCatalogSnapshot,
         primaryCredentials: AwsSessionCredentials,
         replicaCredentials: AwsSessionCredentials,
-    ): CatalogDualLocationVerifier.Overlap2Readback {
+    ): CatalogDualLocationVerifier.Overlap2Readback = observeRaw(
+        local,
+        primaryCredentials,
+        replicaCredentials,
+        { provider, policy -> CatalogDualLocationVerifier.Overlap2Readback.verify(provider, inputs.initialBytes(), inputs.currentBytes(), policy, local) },
+        inputs.reader::verifySignerRotationDelivery,
+    ).also { proof ->
+        readbacks.last().proof = proof
+        original.requireRunning()
+    }
+
+    /** The actual Accepted snapshot is passed to its own raw verifier; it is never reconstructed as Pending. */
+    internal fun observeProjected(
+        local: LocalCatalogSnapshot.Accepted,
+        primaryCredentials: AwsSessionCredentials,
+        replicaCredentials: AwsSessionCredentials,
+    ): CatalogDualLocationVerifier.ProjectedHeadReadback = observeRaw(
+        local,
+        primaryCredentials,
+        replicaCredentials,
+        { provider, policy ->
+            CatalogDualLocationVerifier.ProjectedHeadReadback.verify(provider, inputs.initialBytes(), inputs.currentBytes(), policy, local)
+        },
+        inputs.reader::verifySignerRotationProjectedRecovery,
+    ).also { proof ->
+        readbacks.last().projectedProof = proof
+        original.requireRunning()
+    }
+
+    private fun <T> observeRaw(
+        local: LocalCatalogSnapshot,
+        primaryCredentials: AwsSessionCredentials,
+        replicaCredentials: AwsSessionCredentials,
+        verify: (CatalogReadbackPort, CatalogReadbackPolicy) -> T,
+        verifyPolicy: (T, Instant) -> Unit,
+    ): T {
         requireConnectionFree()
         original.requireObservedSnapshot(local)
         requireSignerRotation(acquired && !closed && readbacks.size < 3, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
@@ -70,21 +107,15 @@ internal class CatalogSignerRotationDeliveryAssemblyV1(
                     System::nanoTime, // Parent native wrapper retains returned requests/bodies before throwable owner checks.
                 )
                 round.requireRunning()
-                CatalogDualLocationVerifier.Overlap2Readback.verify(
-                    TimedReadback(adapter, round),
-                    inputs.initialBytes(),
-                    inputs.currentBytes(),
-                    policy,
-                    local,
-                )
+                verify(TimedReadback(adapter, round), policy)
             },
             round::close,
         )
         round.requireRunning()
         round.requireCleanup()
-        reader.verifySignerRotationDelivery(proof, evaluatedAt)
+        verifyPolicy(proof, evaluatedAt)
         original.sampleWallTime()
-        round.proof = proof // Only an actual raw proof plus actual original provider cleanup reaches this handoff.
+        // Only an actual raw proof plus actual original provider cleanup reaches either typed handoff.
         original.requireRunning()
         return proof
     }
@@ -129,6 +160,15 @@ internal class CatalogSignerRotationDeliveryAssemblyV1(
         requireProviderCleanup()
     }
 
+    internal fun requireProof(proof: CatalogDualLocationVerifier.ProjectedHeadReadback) {
+        requireConnectionFree()
+        original.requireRunning()
+        val round = readbacks.lastOrNull()
+        requireSignerRotation(round != null && round.projectedProof === proof && !closed, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        checkNotNull(round).requireCleanup()
+        requireProviderCleanup()
+    }
+
     internal fun requireAcknowledgement(value: CatalogPrimaryPutAcknowledgementV1) {
         requireConnectionFree()
         original.requireRunning()
@@ -168,6 +208,7 @@ internal class CatalogSignerRotationDeliveryAssemblyV1(
         val construction = S3CatalogReadbackAdapter.Construction()
         val http = CatalogSignerRotationReadbackHttpPairV1(original, budget)
         var proof: CatalogDualLocationVerifier.Overlap2Readback? = null
+        var projectedProof: CatalogDualLocationVerifier.ProjectedHeadReadback? = null
         private var cleanupProven = false
         private var closeFailure: Throwable? = null
 

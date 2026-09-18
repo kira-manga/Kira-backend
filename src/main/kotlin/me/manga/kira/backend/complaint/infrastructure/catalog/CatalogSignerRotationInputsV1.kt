@@ -202,6 +202,13 @@ internal class CatalogSignerRotationInputsV1 private constructor(
         return canonicalEnvelope(signatures).also { requireSignerRotation(it.size <= CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES) }
     }
 
+    /** Expected frozen data from the complete original custody prefix; never a claim that these bytes were read from SQL. */
+    internal fun expectedSignedDeliveryMutation(signatures: List<ByteArray>): CatalogFrozenMutation {
+        requireConnectionFree()
+        checkNotNull(delivery).requireRunning()
+        return mutation(signatures, signedBytes(signatures)).also(::requireMutation)
+    }
+
     private fun canonicalEnvelope(signatures: List<ByteArray>): ByteArray = CanonicalJson.canonicalize(
         OfflineCatalogRotationEnvelopeV1.serializer(),
         OfflineCatalogRotationEnvelopeV1(

@@ -38,5 +38,9 @@ COMPLETE/PROJECT authority, D7 deployment admission or trust-rollout completion.
 unpublished readback is not a retry entitlement, and dual readback does not establish that an arm
 ever existed. The separate typed owner and named root are described in
 `COMPLAINT_CATALOG_SIGNER_ROTATION_DELIVERY_V1.md`; source presence does not establish acceptance.
-Pending-purpose acquisition, restart/unknown-outcome recovery and activation3 remain separate
-INTERNAL work. No existing G1/D5 reader, configuration profile or ordinary SQL predicate is widened.
+Fresh pending-purpose acquisition and ambiguous-COMPLETE/PROJECT reconciliation belong only to
+that owner, not this raw proof. Already-projected2 recovery uses the separate unchanged genuine
+`ProjectedHeadReadback` Accepted2 fold; it never manufactures a Pending snapshot to make this
+verifier accept it. A narrowly named cold-D7 policy check pins that proof to exact overlap2 and
+the unchanged trust/time/retention floors. Activation3 remains separate INTERNAL work. No existing
+G1/D5 reader profile, raw verifier or ordinary SQL predicate is widened.

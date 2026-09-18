@@ -54,11 +54,25 @@ internal class CatalogSignerRotationPreparedRecoveryInputsV1 private constructor
         )
     }
 
-    /** Raw tail2 never supplies the accepted B1 head; the concrete delivery owner retains the actual released SQL snapshot. */
+    /** Raw tail2 never supplies accepted B1. Pending2 must already be the actual released SQL snapshot. */
     internal fun requireDeliveryReadback(readback: CatalogDualLocationVerifier.Overlap2Readback) {
+        val matchingHead = when (readback.snapshotHead.generation) {
+            1L -> readback.snapshotHead.envelopeSha256 == predecessorHash
+            2L -> readback.state === CatalogDualLocationVerifier.Overlap2Readback.State.PROJECTION_PENDING_DUAL_COPY &&
+                readback.snapshotHead.envelopeSha256 == readback.frozenEnvelopeSha256
+            else -> false
+        }
         requireRecovery(
-            readback.snapshotHead.generation == 1L && readback.snapshotHead.envelopeSha256 == predecessorHash &&
+            matchingHead && readback.generation().claims.previousEnvelopeSha256 == predecessorHash &&
                 readback.currentTrustBundleSha256 == bindingValues[9] && readback.observedTail.catalogWriterGenerationId == bindingValues[10],
+        )
+    }
+
+    internal fun requireProjectedDeliveryReadback(readback: CatalogDualLocationVerifier.ProjectedHeadReadback) {
+        val actual = readback.commonHeadEvidence().chain.tail
+        requireRecovery(
+            actual.generation == 2L && readback.generation().claims.previousEnvelopeSha256 == predecessorHash &&
+                readback.currentTrustBundleSha256 == bindingValues[9] && actual.catalogWriterGenerationId == bindingValues[10],
         )
     }
 

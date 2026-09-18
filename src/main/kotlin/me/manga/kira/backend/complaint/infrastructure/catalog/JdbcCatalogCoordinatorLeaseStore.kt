@@ -86,10 +86,16 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
     private fun execute() {
         try {
             requireAt(Stage.RETAINED)
-            val before = jdbc.query(LOCK_COORDINATOR_LEASE_CONTROL, { row, _ -> readControl(row) }, *arguments()).single()
+            val pendingDelivery = attempt.usesPendingDeliverySql(this, jdbc)
+            val lockSql = if (pendingDelivery) {
+                CatalogSignerRotationPendingLeaseSqlV1.LOCK_SIGNER_ROTATION_PENDING_LEASE_CONTROL
+            } else {
+                LOCK_COORDINATOR_LEASE_CONTROL
+            }
+            val before = jdbc.query(lockSql, { row, _ -> readControl(row) }, *arguments()).single()
             requireAt(Stage.RETAINED)
             val token = if (attempt.path === PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE) {
-                attempt.requireHistoricalTokenFloor(this, jdbc, before.token)
+                attempt.requireHistoricalTokenFloor(this, jdbc, before.token, before.owner)
                 check(before.token < Long.MAX_VALUE)
                 Math.addExact(before.token, 1L)
             } else {
@@ -100,7 +106,7 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             // Only now may a later statement sample clock_timestamp(); no time expression was in the locking projection.
             val changed = when (attempt.path) {
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> jdbc.query(
-                    ACQUIRE_COORDINATOR_LEASE,
+                    if (pendingDelivery) CatalogSignerRotationPendingLeaseSqlV1.ACQUIRE_SIGNER_ROTATION_PENDING_LEASE else ACQUIRE_COORDINATOR_LEASE,
                     { row, _ -> Changed.copy(row) },
                     attempt.owner,
                     *arguments(),
@@ -137,7 +143,12 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             )
             check(changed.lease == expected)
             stage = Stage.REREADING
-            val after = jdbc.query(READ_COORDINATOR_LEASE_CONTROL, { row, _ -> readControl(row) }, *arguments()).single()
+            val readSql = if (pendingDelivery) {
+                CatalogSignerRotationPendingLeaseSqlV1.READ_SIGNER_ROTATION_PENDING_LEASE_CONTROL
+            } else {
+                READ_COORDINATOR_LEASE_CONTROL
+            }
+            val after = jdbc.query(readSql, { row, _ -> readControl(row) }, *arguments()).single()
             requireAt(Stage.REREADING)
             check(after == expected)
             attempt.requireDeliveryControl(this, jdbc) // Delivery keeps both gates closed across its actual acquire CAS.

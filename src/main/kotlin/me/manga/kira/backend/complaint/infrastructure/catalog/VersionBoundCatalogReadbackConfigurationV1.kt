@@ -209,6 +209,28 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
         verifyCreationRetention(observedCreation, readback.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
     }
 
+    /** Actual Accepted2 raw proof on the original cold D7 policy, not a conversion to the projected-current reader profile. */
+    internal fun verifySignerRotationProjectedRecovery(readback: CatalogDualLocationVerifier.ProjectedHeadReadback, evaluatedAt: Instant) {
+        requireConnectionFree()
+        val policy = policyAt(evaluatedAt)
+        requireCatalogReadback(
+            !projectedCurrent && readback.initialTrustBundleSha256 == initialTrustBundleSha256 &&
+                readback.currentTrustBundleSha256 == currentTrustBundleSha256 &&
+                readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
+                readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond,
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
+        val claims = readback.generation().claims
+        requireCatalogReadback(
+            claims.generation == 2L && claims.operation == "ROTATION_OVERLAP" &&
+                claims.previousEnvelopeSha256 == expectedGenesisEnvelopeSha256 &&
+                claims.catalogWriterGenerationId in chainPolicy.currentWriterGenerationIds &&
+                claims.approvals.all { it.approverId in chainPolicy.currentApproverIds },
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
+        verifyCreationRetention(claims.creation.createdAtEpochSecond, readback.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
+    }
+
     override fun toString(): String = if (projectedCurrent) {
         "VersionBoundCatalogReadbackConfigurationV1(projected-current,redacted,no-authority)"
     } else {

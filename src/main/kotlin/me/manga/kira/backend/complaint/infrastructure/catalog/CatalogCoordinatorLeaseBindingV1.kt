@@ -21,7 +21,7 @@ import java.util.UUID
 
 /**
  * Exact retained LIVE process plus genuine released G1/current refresh or the fixed delivery owner's
- * actual head1 snapshot and raw fixed2 fold. This comparison is not current DB leadership, catalog
+ * actual head1/pending2/Accepted2 snapshot and its corresponding raw fixed2 fold. This comparison is not current DB leadership, catalog
  * freshness, a checkpoint or deployment/restore authority.
  * No opaque-D, raw tuple or supplied CatalogCommonHeadEvidence factory exists.
  */
@@ -32,6 +32,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
     private val delivery: CatalogSignerRotationDeliveryV1? = null,
     deliveryReadback: CatalogDualLocationVerifier.Overlap2Readback? = null,
+    deliveryProjectedReadback: CatalogDualLocationVerifier.ProjectedHeadReadback? = null,
 ) {
     internal val coordinator = process.pools.catalogCoordinator
     private val ownership = coordinator.ownership
@@ -63,13 +64,23 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
                 catalogGeneration >= 1L && (catalog == null || catalog.chain.trust.minimumHeadGeneration <= catalogGeneration),
             CatalogReadbackFailure.INVALID_POLICY,
         )
-        requireCatalogReadback(
-            (delivery == null) == (deliveryReadback == null) && (catalog == null) == (delivery != null),
-            CatalogReadbackFailure.INVALID_POLICY,
-        )
-        if (delivery != null) {
-            delivery.requireBindingInputs(process, checkNotNull(deliveryReadback))
-            requireCatalogReadback(catalogGeneration == 1L, CatalogReadbackFailure.INVALID_POLICY)
+        when {
+            delivery == null -> requireCatalogReadback(
+                catalog != null && deliveryReadback == null && deliveryProjectedReadback == null,
+                CatalogReadbackFailure.INVALID_POLICY,
+            )
+
+            deliveryReadback != null -> {
+                requireCatalogReadback(catalog == null && deliveryProjectedReadback == null, CatalogReadbackFailure.INVALID_POLICY)
+                delivery.requireBindingInputs(process, deliveryReadback)
+                requireCatalogReadback(catalogGeneration in 1L..2L, CatalogReadbackFailure.INVALID_POLICY)
+            }
+
+            else -> {
+                val proof = checkNotNull(deliveryProjectedReadback)
+                requireCatalogReadback(catalog === proof.commonHeadEvidence() && catalogGeneration == 2L, CatalogReadbackFailure.INVALID_POLICY)
+                delivery.requireProjectedBindingInputs(process, proof)
+            }
         }
         requireUnchangedConfiguration()
     }
@@ -390,6 +401,16 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             requireConnectionFree()
             original.requireBindingInputs(process, readback)
             return CatalogCoordinatorLeaseBindingV1(process, null, delivery = original, deliveryReadback = readback)
+        }
+
+        internal fun fromProjectedDelivery(
+            original: CatalogSignerRotationDeliveryV1,
+            process: VersionBoundComplaintProcessConfiguration,
+            readback: CatalogDualLocationVerifier.ProjectedHeadReadback,
+        ): CatalogCoordinatorLeaseBindingV1 {
+            requireConnectionFree()
+            original.requireProjectedBindingInputs(process, readback)
+            return CatalogCoordinatorLeaseBindingV1(process, readback.commonHeadEvidence(), delivery = original, deliveryProjectedReadback = readback)
         }
 
         private fun digest(value: String): ByteArray {

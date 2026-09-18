@@ -11,8 +11,17 @@ import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
-/** Four fixed actions only. No caller-supplied B, pending allowance, arbitrary generation or SQL path. */
-internal enum class CatalogSignerRotationFinalizationKindV1 { INITIAL_READ, RECHECK, COMPLETE, PROJECT }
+/** Fixed lifecycle reads and two effects only. No caller-supplied B, allowance, arbitrary generation or SQL path. */
+internal enum class CatalogSignerRotationFinalizationKindV1 {
+    INITIAL_READ,
+    INITIAL_PENDING_READ,
+    INITIAL_PROJECTED_READ,
+    RECHECK,
+    PENDING_RECHECK,
+    PROJECTED_RECHECK,
+    COMPLETE,
+    PROJECT,
+}
 
 /**
  * Connection-free detached arguments from the original retained delivery owner and released history.
@@ -24,10 +33,16 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
     internal val kind: CatalogSignerRotationFinalizationKindV1,
     internal val expected: CatalogSignerRotationFinalizationObservationV1?,
     readback: CatalogDualLocationVerifier.Overlap2Readback?,
+    projectedReadback: CatalogDualLocationVerifier.ProjectedHeadReadback?,
 ) {
     internal val path: PersistencePhasePath = when (kind) {
-        CatalogSignerRotationFinalizationKindV1.INITIAL_READ, CatalogSignerRotationFinalizationKindV1.RECHECK ->
-            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ
+        CatalogSignerRotationFinalizationKindV1.INITIAL_READ,
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+        CatalogSignerRotationFinalizationKindV1.RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ
 
         CatalogSignerRotationFinalizationKindV1.COMPLETE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE
 
@@ -38,10 +53,14 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
     private val frozen = original.frozenMutation()
     private val token = UUID.fromString(manifest.operationToken)
     private val envelopeHash = digest(checkNotNull(frozen.signedEnvelopeSha256))
-    private val preparedBinding = original.finalizationBindingArguments()
-    private val projectedBinding = preparedBinding.copyOf().also {
-        it[5] = 2L
-        it[6] = envelopeHash.copyOf() // These two and only these two positions change from B1 to B2.
+    private val acquiredBinding = original.finalizationBindingArguments()
+    private val preparedBinding = acquiredBinding.takeIf { it[5] == 1L }
+    private val projectedBinding = acquiredBinding.copyOf().also {
+        // A genuine acquired B1 may advance for COMPLETE. A cold acquired B2 is never relabelled as B1.
+        if (it[5] == 1L) {
+            it[5] = 2L
+            it[6] = envelopeHash.copyOf()
+        }
     }
     private val pendingBinding = arrayOf<Any?>(*projectedBinding, token)
     private val rotation = arrayOf<Any?>(
@@ -65,48 +84,90 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
     )
     private val genesis = expected?.genesisArguments()
     private val copies: Array<Any?>? = when (kind) {
-        CatalogSignerRotationFinalizationKindV1.COMPLETE -> copyArguments(checkNotNull(readback))
+        CatalogSignerRotationFinalizationKindV1.COMPLETE,
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        -> copyArguments(checkNotNull(readback))
+
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        -> copyArguments(checkNotNull(projectedReadback))
+
         CatalogSignerRotationFinalizationKindV1.PROJECT -> checkNotNull(expected).copyArguments()
         else -> null
     }
     private val preparedHistory = genesis?.let { arrayOf<Any?>(*rotation, *it) }
-    private val pendingHistory = copies?.let { arrayOf<Any?>(*rotation, *checkNotNull(genesis), *it) }
+    private val initialCopyHistory = copies?.let { arrayOf<Any?>(*rotation, *it) }
+    private val pendingHistory = genesis?.let { g -> copies?.let { arrayOf<Any?>(*rotation, *g, *it) } }
     private val completion = copies?.let { arrayOf<Any?>(*rotation, *it) }
     private val projection = if (kind === CatalogSignerRotationFinalizationKindV1.PROJECT) {
         arrayOf<Any?>(*checkNotNull(completion), Timestamp.from(checkNotNull(expected?.completedAt)))
     } else {
         null
     }
-    private val head = arrayOf<Any?>(*preparedBinding, token, envelopeHash)
+    private val head = preparedBinding?.let { arrayOf<Any?>(*it, token, envelopeHash) }
 
     init {
         requireConnectionFree()
-        requireSignerRotation(preparedBinding.size == 12 && preparedBinding[5] == 1L)
+        requireSignerRotation(acquiredBinding.size == 12 && (acquiredBinding[5] == 1L || acquiredBinding[5] == 2L))
+        val expectedGeneration = when (kind) {
+            CatalogSignerRotationFinalizationKindV1.INITIAL_READ,
+            CatalogSignerRotationFinalizationKindV1.RECHECK,
+            CatalogSignerRotationFinalizationKindV1.COMPLETE,
+            -> 1L
+
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+            CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+            CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+            -> 2L
+
+            CatalogSignerRotationFinalizationKindV1.PROJECT -> acquiredBinding[5]
+        }
+        requireSignerRotation(acquiredBinding[5] == expectedGeneration)
+        if (acquiredBinding[5] == 2L) requireSignerRotation((acquiredBinding[6] as? ByteArray).contentEquals(envelopeHash))
         inputs.requireMutation(frozen)
         expected?.let {
             inputs.requireObservation(CatalogSignerRotationObservationV1(it.genesis, it.mutation))
             requireSignerRotation(sameSignerRotationMutation(it.mutation, frozen), CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
         }
         readback?.let {
+            val requiredState = when (kind) {
+                CatalogSignerRotationFinalizationKindV1.COMPLETE -> CatalogDualLocationVerifier.Overlap2Readback.State.PREPARED_DUAL_COPY
+                CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+                CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+                -> CatalogDualLocationVerifier.Overlap2Readback.State.PROJECTION_PENDING_DUAL_COPY
+
+                else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+            }
             requireSignerRotation(
-                kind === CatalogSignerRotationFinalizationKindV1.COMPLETE &&
-                    it.state === CatalogDualLocationVerifier.Overlap2Readback.State.PREPARED_DUAL_COPY &&
+                projectedReadback == null && it.state === requiredState &&
                     it.operationToken == manifest.operationToken && it.frozenEnvelopeBytes().contentEquals(frozen.signedEnvelopeBytes),
+                CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+            )
+        }
+        projectedReadback?.let {
+            val generation = it.generation()
+            requireSignerRotation(
+                readback == null && (kind === CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ ||
+                    kind === CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK) &&
+                    generation.claims.operationToken == manifest.operationToken && generation.envelopeBytes.contentEquals(frozen.signedEnvelopeBytes),
                 CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
             )
         }
     }
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) = original.requireFinalizationPersistence(this, ownership, jdbc)
-    internal fun preparedBindingArguments(): Array<Any?> = preparedBinding
+    internal fun preparedBindingArguments(): Array<Any?> = checkNotNull(preparedBinding)
     internal fun pendingBindingArguments(): Array<Any?> = pendingBinding
     internal fun projectedBindingArguments(): Array<Any?> = projectedBinding
     internal fun initialHistoryArguments(): Array<Any?> = rotation
+    internal fun initialCopyHistoryArguments(): Array<Any?> = checkNotNull(initialCopyHistory)
     internal fun preparedHistoryArguments(): Array<Any?> = checkNotNull(preparedHistory)
     internal fun pendingHistoryArguments(): Array<Any?> = checkNotNull(pendingHistory)
     internal fun completionArguments(): Array<Any?> = checkNotNull(completion)
     internal fun projectionArguments(): Array<Any?> = checkNotNull(projection)
-    internal fun headArguments(): Array<Any?> = head
+    internal fun headArguments(): Array<Any?> = checkNotNull(head)
     internal fun clearPendingArguments(): Array<Any?> = pendingBinding
 
     override fun toString(): String = "CatalogSignerRotationFinalizationInputV1(fixed-B1-B2,original-owner,redacted)"
@@ -115,10 +176,32 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
         internal fun initial(original: CatalogSignerRotationDeliveryV1): CatalogSignerRotationFinalizationInputV1 =
             create(original, CatalogSignerRotationFinalizationKindV1.INITIAL_READ, null, null)
 
+        internal fun initialPending(
+            original: CatalogSignerRotationDeliveryV1,
+            readback: CatalogDualLocationVerifier.Overlap2Readback,
+        ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ, null, readback)
+
+        internal fun initialProjected(
+            original: CatalogSignerRotationDeliveryV1,
+            readback: CatalogDualLocationVerifier.ProjectedHeadReadback,
+        ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ, null, null, readback)
+
         internal fun recheck(
             original: CatalogSignerRotationDeliveryV1,
             expected: CatalogSignerRotationFinalizationObservationV1,
         ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.RECHECK, expected, null)
+
+        internal fun recheckPending(
+            original: CatalogSignerRotationDeliveryV1,
+            expected: CatalogSignerRotationFinalizationObservationV1,
+            readback: CatalogDualLocationVerifier.Overlap2Readback,
+        ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK, expected, readback)
+
+        internal fun recheckProjected(
+            original: CatalogSignerRotationDeliveryV1,
+            expected: CatalogSignerRotationFinalizationObservationV1,
+            readback: CatalogDualLocationVerifier.ProjectedHeadReadback,
+        ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK, expected, null, readback)
 
         internal fun complete(
             original: CatalogSignerRotationDeliveryV1,
@@ -136,24 +219,30 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
             kind: CatalogSignerRotationFinalizationKindV1,
             expected: CatalogSignerRotationFinalizationObservationV1?,
             readback: CatalogDualLocationVerifier.Overlap2Readback?,
+            projectedReadback: CatalogDualLocationVerifier.ProjectedHeadReadback? = null,
         ): CatalogSignerRotationFinalizationInputV1 {
             requireConnectionFree()
-            original.requireInputConstruction(kind, expected, readback)
-            return CatalogSignerRotationFinalizationInputV1(original, kind, expected, readback)
+            original.requireInputConstruction(kind, expected, readback, projectedReadback)
+            return CatalogSignerRotationFinalizationInputV1(original, kind, expected, readback, projectedReadback)
         }
 
         private fun copyArguments(readback: CatalogDualLocationVerifier.Overlap2Readback): Array<Any?> {
             val primary = checkNotNull(readback.primaryEvidenceBytes())
             val replica = checkNotNull(readback.replicaEvidenceBytes())
-            return arrayOf(
-                readback.objectVersion,
-                Timestamp.from(Instant.ofEpochSecond(readback.retainUntilEpochSecond)),
-                primary,
-                digest(Sha256.hex(primary)),
-                replica,
-                digest(Sha256.hex(replica)),
-            )
+            return copyArguments(readback.objectVersion, readback.retainUntilEpochSecond, primary, replica)
         }
+
+        private fun copyArguments(readback: CatalogDualLocationVerifier.ProjectedHeadReadback): Array<Any?> =
+            copyArguments(readback.objectVersion, readback.retainUntilEpochSecond, readback.primaryEvidenceBytes(), readback.replicaEvidenceBytes())
+
+        private fun copyArguments(version: String, retainUntil: Long, primary: ByteArray, replica: ByteArray): Array<Any?> = arrayOf(
+            version,
+            Timestamp.from(Instant.ofEpochSecond(retainUntil)),
+            primary,
+            digest(Sha256.hex(primary)),
+            replica,
+            digest(Sha256.hex(replica)),
+        )
 
         private fun digest(value: String): ByteArray = HexFormat.of().parseHex(value)
     }

@@ -106,8 +106,10 @@ and its source handoff does not establish runtime acceptance.
 Truly lost provider response or trusted custody requires explicit recovery resolution.
 Complete rotation recovery is not claimed. The separate fixed overlap2 delivery source is
 described in `COMPLAINT_CATALOG_SIGNER_ROTATION_DELIVERY_V1.md`; its independently retained
-owner does not accept this historical freeze result as authority. Cold pending/unknown-outcome
-recovery and immediate activation3 remain **internal future work**.
+owner does not accept this historical freeze result as authority. That route's fresh cold
+pending/ambiguous-COMPLETE/PROJECT reconciliation requires the complete original durable root,
+actual signed/raw evidence and a new DB-time lease; it never revives this owner's authority.
+Immediate activation3 and lost-signature/full rotation recovery remain **internal future work**.
 
 At author source handoff: compilation, static checks, runtime tests, provider execution,
 services, builds, CI, commit and push are **NOT_RUN**. Any later acceptance evidence belongs
