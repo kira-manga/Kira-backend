@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.targetFinalizerBindingFields
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentInputsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredProcessAssemblyV1
@@ -25,9 +26,11 @@ internal class CatalogGenesisFinalizationLifecycleTest {
         for (profile in listOf("D2", "D3", "D4", "D6")) {
             val inputs = ComplaintDesiredDeploymentInputsV1.fromDecoded(DesiredInstallationInputFixture.document(profile))
             val all = DesiredInstallationInputFixture.acquired(inputs)
-            val targetSecrets = all.filter { it.descriptor != inputs.operatorPassword }
-            assertEquals(inputs.allBindings().filter { it != inputs.operatorPassword }, inputs.targetBindings())
-            assertEquals(inputs.targetBindings(), targetSecrets.map { it.descriptor })
+            val operatorBinding = targetFinalizerBindingFields(inputs.operatorPassword)
+            val expectedTarget = inputs.targetBindings().map(::targetFinalizerBindingFields)
+            val targetSecrets = all.filter { targetFinalizerBindingFields(it.descriptor) != operatorBinding }
+            assertEquals(inputs.allBindings().map(::targetFinalizerBindingFields).filter { it != operatorBinding }, expectedTarget)
+            assertEquals(expectedTarget, targetSecrets.map { targetFinalizerBindingFields(it.descriptor) })
             val normal = ComplaintDesiredProcessAssemblyV1()
             val restricted = ComplaintDesiredProcessAssemblyV1()
             try {
@@ -59,7 +62,10 @@ internal class CatalogGenesisFinalizationLifecycleTest {
                     descriptors.map { it.role },
                 )
                 descriptors.zip(ordinary.pools.descriptors()).forEach { (actual, expected) ->
-                    assertEquals(inputs.runtimePassword, actual.authenticationPassword)
+                    assertEquals(
+                        targetFinalizerBindingFields(inputs.runtimePassword),
+                        targetFinalizerBindingFields(actual.authenticationPassword),
+                    )
                     assertEquals(expected.hikari, actual.hikari)
                     assertEquals(expected.publicTrustSha256, actual.publicTrustSha256)
                     assertEquals(expected.openings().map { it.policy }, actual.openings().map { it.policy })
@@ -72,7 +78,10 @@ internal class CatalogGenesisFinalizationLifecycleTest {
                 target.epochRotation?.let {
                     assertSame(owner.epochRotation, it)
                     assertTrue(it.belongsTo(target.pools))
-                    assertEquals(inputs.runtimePassword, it.descriptor().authenticationPassword)
+                    assertEquals(
+                        targetFinalizerBindingFields(inputs.runtimePassword),
+                        targetFinalizerBindingFields(it.descriptor().authenticationPassword),
+                    )
                 }
                 assertEquals(profile in setOf("D4", "D6"), ownedCutField(restricted, "lanes") != null)
                 assertSame(target.epochSealAcquisition, ownedCutField(restricted, "sealer"))

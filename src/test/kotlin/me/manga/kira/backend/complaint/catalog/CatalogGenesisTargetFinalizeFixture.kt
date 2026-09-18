@@ -47,6 +47,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapsho
 import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxGenesisReleaseFilesV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
+import me.manga.kira.backend.security.VersionedSecretBinding
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
 import me.manga.kira.backend.support.MutableClock
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -77,6 +78,13 @@ internal fun withCatalogGenesisTargetFinalize(
     fixture.prepare(profile)
     test(fixture)
 }
+
+/**
+ * Acquired descriptors are defensive copies with identity equality.
+ * Compare every public field, never secret material or owner identity.
+ */
+internal fun targetFinalizerBindingFields(binding: VersionedSecretBinding): List<Any> =
+    listOf(binding.family, binding.purpose, binding.logicalKeyId, binding.version)
 
 internal class CatalogGenesisTargetFinalizeFixture(val tls: VersionBoundPersistenceConnectedFixture) : AutoCloseable {
     val desired = ComplaintDesiredInstallationFixture(tls)
@@ -293,7 +301,9 @@ internal class CatalogGenesisTargetFinalizeInvocation(private val fixture: Catal
         val acquired = DesiredInstallationInputFixture.acquired(
             fixture.inputs,
             PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray(),
-        ).filter { it.descriptor != fixture.inputs.operatorPassword }
+        ).filter {
+            targetFinalizerBindingFields(it.descriptor) != targetFinalizerBindingFields(fixture.inputs.operatorPassword)
+        }
         secrets.respond = { request ->
             preserveAssertions {
                 requireConnectionFree()
@@ -303,7 +313,10 @@ internal class CatalogGenesisTargetFinalizeInvocation(private val fixture: Catal
                     it.descriptor.version.resourceArn == fields["SecretId"] &&
                         it.descriptor.version.versionId == fields["VersionId"]
                 }
-                assertTrue(fixture.inputs.targetBindings().contains(selected.descriptor))
+                assertTrue(
+                    fixture.inputs.targetBindings().map(::targetFinalizerBindingFields)
+                        .contains(targetFinalizerBindingFields(selected.descriptor)),
+                )
                 selected.useMaterial { AwsSecretVersionFixture.reply(selected.descriptor.version, it) }
             }
         }

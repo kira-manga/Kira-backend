@@ -432,7 +432,10 @@ internal class CatalogGenesisTargetFinalizeCases(private val f: CatalogGenesisTa
         }
         try {
             val all = DesiredInstallationInputFixture.acquired(f.inputs, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray())
-            foreign.assembleTargetFinalizer(f.inputs, all.filter { it.descriptor != f.inputs.operatorPassword }, null)
+            val targetSecrets = all.filter {
+                targetFinalizerBindingFields(it.descriptor) != targetFinalizerBindingFields(f.inputs.operatorPassword)
+            }
+            foreign.assembleTargetFinalizer(f.inputs, targetSecrets, null)
             invocation.execute()
             invocation.assertFullReadback()
             invocation.assertReleased()
