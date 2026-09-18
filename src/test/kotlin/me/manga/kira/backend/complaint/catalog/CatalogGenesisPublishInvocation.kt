@@ -147,8 +147,8 @@ internal class CatalogGenesisPublishInvocation(private val fixture: CatalogGenes
         clock.onSample = {}
         runCatching(operator::close)
         scopes.values.forEach { it.owner.requestShutdown() }
-        scopes.values.forEach { it.owner.versionBoundPools?.close() }
         scopes.values.forEach { it.close() }
+        scopes.values.forEach { it.owner.versionBoundPools?.close() }
         requireConnectionFree()
         // Test disposal only, after actual retirement of the SAME original JDBC roots/lease; never renew command work or emit its result.
         runCatching { (ownedCutField(operator, "release") as? AutoCloseable)?.close() }
