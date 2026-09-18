@@ -294,7 +294,11 @@ internal class CatalogSignerRotationInitialAuthorCases(private val h: CatalogSig
         assertThrows<CatalogReadbackException> { CatalogCoordinatorLeaseBindingV1.fromRetained(h.process, refresh) }
         assertThrows<CatalogReadbackException> {
             CurrentAcceptedCatalogRefreshV1.withHttpFixture(
-                h.process, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials, h.readback::httpClient, f.d7.wallClock,
+                h.process,
+                S3CatalogReadbackFixture.credentials,
+                S3CatalogReadbackFixture.credentials,
+                h.readback::httpClient,
+                f.d7.wallClock,
             ).use { it.refresh() }
         }
         assertThrows<PersistencePhaseException> { CatalogSignerRotationFreezeV1.begin(h.process, campaign) }

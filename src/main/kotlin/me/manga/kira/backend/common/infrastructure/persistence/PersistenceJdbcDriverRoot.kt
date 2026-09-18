@@ -19,8 +19,10 @@ internal class PersistenceJdbcDriverRoot(
     init {
         check(
             !catalogSignerRotationAuthoring ||
-                (!catalogSignerRotationRecovery && !desiredInstallationOperator && !catalogGenesisAuthoring &&
-                    !catalogGenesisFinalization && !sourceOnly && versionBound != null),
+                (
+                    !catalogSignerRotationRecovery && !desiredInstallationOperator && !catalogGenesisAuthoring &&
+                        !catalogGenesisFinalization && !sourceOnly && versionBound != null
+                    ),
         )
         check(
             !catalogSignerRotationRecovery ||

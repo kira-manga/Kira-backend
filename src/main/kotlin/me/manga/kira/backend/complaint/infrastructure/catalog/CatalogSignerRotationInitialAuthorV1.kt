@@ -102,7 +102,11 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
             reserved = true
             stage = Stage.REFRESH
             val producer = CurrentAcceptedCatalogRefreshV1.initialAuthor(
-                this, primaryReadCredentials, replicaReadCredentials, readbackHttpFactory, clock,
+                this,
+                primaryReadCredentials,
+                replicaReadCredentials,
+                readbackHttpFactory,
+                clock,
             )
             refresh = producer // Before the first provider construction or snapshot phase.
             refreshResult = producer.refresh()
@@ -146,7 +150,12 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
             invocation?.requireClosedForInitialAuthor(this) // Historical cleanup only, not its spent running deadline.
             stage = Stage.CREATING_INVOCATION
             val next = CatalogSignerRotationFreezeV1.beginInitialAuthor(
-                this, process, checkNotNull(campaign), signingHttpFactory, readbackHttpFactory, clock,
+                this,
+                process,
+                checkNotNull(campaign),
+                signingHttpFactory,
+                readbackHttpFactory,
+                clock,
             )
             invocation = next // Construction is cold; retain before any input, provider, slot or SQL effect.
             stage = Stage.READY
@@ -333,15 +342,19 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
         when (path) {
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT ->
                 requireSignerRotation(stage === Stage.REFRESH && snapshotIssued && readback == null)
+
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE -> {
                 requireSignerRotation(completeIssued && !completed && !projectIssued)
                 requireBarrier(checkNotNull(readback), expected)
             }
+
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT -> {
                 requireSignerRotation(projectIssued && !projected)
                 requireBarrier(checkNotNull(readback), expected)
             }
+
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> requireLeaseAttempt(checkNotNull(binding))
+
             else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         }
         phaseEntered = true
@@ -353,7 +366,9 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
         val authenticated = jdbc.query(
             "SELECT session_user = ? AND current_user = ? AND current_database() = ? AS authenticated",
             ResultSetExtractor { rows -> rows.next() && rows.getBoolean("authenticated") && !rows.wasNull() && !rows.next() },
-            username, username, database,
+            username,
+            username,
+            database,
         )
         requireSignerRotation(authenticated == true, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         requireBootstrapRunning()
@@ -379,7 +394,9 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
             if (!phase.signerRotationAuthorCleanupProven(this)) sqlCleanupUnproven = true
             if (selectedPath === PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE &&
                 phase.databaseOutcome() === PersistenceDatabaseOutcome.UNKNOWN
-            ) leaseOutcomeUncertain = true
+            ) {
+                leaseOutcomeUncertain = true
+            }
             if (!sqlCleanupUnproven && !leaseOutcomeUncertain) originalPhase = null
         } catch (problem: Throwable) {
             sqlCleanupUnproven = true
@@ -440,18 +457,22 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
     }
 
     internal fun requireCustody(selected: CatalogReadbackRefreshCustodyV1) = requireSignerRotation(
-        caller === Thread.currentThread() && coordinator.catalogRefreshCustody === selected, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
+        caller === Thread.currentThread() && coordinator.catalogRefreshCustody === selected,
+        CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
     )
 
     internal fun observeFailure(problem: Throwable) {
         val signal = when {
             problem is Error -> problem
+
             problem is CancellationException -> CancellationException("Catalog signer rotation initial author cancelled.")
+
             problem is InterruptedException || problem is InterruptedIOException ||
                 (problem is PersistencePhaseException && problem.code === PersistencePhaseFailureCode.INTERRUPTED) ||
                 (problem is CatalogReadbackException && problem.code === CatalogReadbackFailure.INTERRUPTED) ||
                 (problem is CatalogSignerRotationFreezeExceptionV1 && problem.code === CatalogSignerRotationFreezeFailureV1.INTERRUPTED) ->
                 InterruptedException("Catalog signer rotation initial author interrupted.")
+
             else -> return
         }
         while (true) {
@@ -478,9 +499,13 @@ internal class CatalogSignerRotationInitialAuthorV1 private constructor(
         closeFailure = CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
         campaign?.close() // Stop locally first; never a SQL relinquishment, reacquire, refund or reset.
         val outcomes = listOf(
-            runCatching { invocation?.close() }, runCatching { refresh?.close() }, runCatching { refreshAttempt?.closeProvider() },
-            runCatching { refreshAttempt?.requireInitialAuthorCleanup(this) }, runCatching(::requireSqlCleanup),
-            runCatching(::requireConnectionFree), runCatching(::throwIfSignalled),
+            runCatching { invocation?.close() },
+            runCatching { refresh?.close() },
+            runCatching { refreshAttempt?.closeProvider() },
+            runCatching { refreshAttempt?.requireInitialAuthorCleanup(this) },
+            runCatching(::requireSqlCleanup),
+            runCatching(::requireConnectionFree),
+            runCatching(::throwIfSignalled),
             runCatching { requireSignerRotation(invocationAttempt == null, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN) },
         )
         requireSignerRotationCleanup(outcomes)

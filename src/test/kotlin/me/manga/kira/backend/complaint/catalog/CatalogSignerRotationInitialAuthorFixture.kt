@@ -23,13 +23,11 @@ import org.junit.jupiter.api.assertThrows
 import java.sql.SQLException
 import java.util.concurrent.atomic.AtomicReference
 
-internal fun withCatalogSignerRotationInitialAuthor(
-    tls: VersionBoundPersistenceConnectedFixture,
-    test: (CatalogSignerRotationInitialAuthorFixture) -> Unit,
-) = CatalogSignerRotationInitialAuthorFixture(tls).use { fixture ->
-    fixture.assemble()
-    test(fixture)
-}
+internal fun withCatalogSignerRotationInitialAuthor(tls: VersionBoundPersistenceConnectedFixture, test: (CatalogSignerRotationInitialAuthorFixture) -> Unit) =
+    CatalogSignerRotationInitialAuthorFixture(tls).use { fixture ->
+        fixture.assemble()
+        test(fixture)
+    }
 
 /** Thin route adapter over the existing first-D, raw G1, SQL probe and freeze invocation; no replacement campaign or result. */
 internal class CatalogSignerRotationInitialAuthorFixture(tls: VersionBoundPersistenceConnectedFixture) : AutoCloseable {
@@ -91,7 +89,9 @@ internal class CatalogSignerRotationInitialAuthorFixture(tls: VersionBoundPersis
         val owner = poolTestField<PersistenceJdbcLifecycleOwner>(assembly, "targetOwner")
         val slot = active()
         assertTrue(owner.catalogSignerRotationAuthoring && coordinator.catalogSignerRotationAuthoring)
-        assertFalse(owner.catalogSignerRotationRecovery || owner.catalogGenesisAuthoring || owner.catalogGenesisFinalization || owner.desiredInstallationOperator)
+        assertFalse(
+            owner.catalogSignerRotationRecovery || owner.catalogGenesisAuthoring || owner.catalogGenesisFinalization || owner.desiredInstallationOperator,
+        )
         assertNull(ownedCutField(assembly, "operatorOwner"))
         assertSame(process.pools, owner.versionBoundPools)
         assertTrue(freeze.d7.inputs.epochRotation, "Optional epoch inventory was parsed before real first-D, not added after selection.")

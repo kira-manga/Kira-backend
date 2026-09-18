@@ -121,6 +121,7 @@ constructor(
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
+
     // Capture this phase's original allowance; a later session stage must never replace its cleanup budget.
     private val signerRotationAuthorAllowance = signerRotationAuthor?.phaseBudget
     private val entityManagerFactory = ownership.entityManagerFactory
@@ -965,8 +966,9 @@ constructor(
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
-        val catalogBudget = signerRotationAuthorAllowance ?: signerRotationRecovery?.budget ?: catalogSignerRotationAttempt?.budget ?: catalogPublisherAttempt?.budget
-            ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
+        val catalogBudget =
+            signerRotationAuthorAllowance ?: signerRotationRecovery?.budget ?: catalogSignerRotationAttempt?.budget ?: catalogPublisherAttempt?.budget
+                ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
         catalogBudget?.let {
             return it.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
         }

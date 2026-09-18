@@ -30,11 +30,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         return acquire(binding, jdbc, original)
     }
 
-    internal fun acquireInitialAuthor(
-        original: CatalogSignerRotationInitialAuthorV1,
-        binding: CatalogCoordinatorLeaseBindingV1,
-        jdbc: JdbcTemplate,
-    ): Attempt {
+    internal fun acquireInitialAuthor(original: CatalogSignerRotationInitialAuthorV1, binding: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate): Attempt {
         original.requireLeaseSelection(coordinator.ownership, jdbc, binding)
         return acquire(binding, jdbc, null, original)
     }

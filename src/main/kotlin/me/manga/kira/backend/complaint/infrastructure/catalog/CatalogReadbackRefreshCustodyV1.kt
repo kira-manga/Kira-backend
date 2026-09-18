@@ -178,8 +178,12 @@ internal class CatalogReadbackRefreshCustodyV1 {
             val retained = initialAuthorBudget ?: return original
             val millis = retained.remainingMillis(minOf(original.requestTimeoutMillis, 10_000L))
             return S3CatalogReadbackLimits(
-                millis, minOf(original.connectTimeoutMillis.toLong(), millis).toInt(), minOf(original.readTimeoutMillis.toLong(), millis).toInt(),
-                original.maximumListBytes, original.maximumErrorBytes, original.maximumObjectBytes,
+                millis,
+                minOf(original.connectTimeoutMillis.toLong(), millis).toInt(),
+                minOf(original.readTimeoutMillis.toLong(), millis).toInt(),
+                original.maximumListBytes,
+                original.maximumErrorBytes,
+                original.maximumObjectBytes,
             )
         }
 

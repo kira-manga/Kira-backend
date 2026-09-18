@@ -293,8 +293,13 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         ): CatalogSignerRotationFreezeV1 {
             original.requireInvocationConstruction(process, campaign)
             return CatalogSignerRotationFreezeV1(
-                process, campaign, campaign.binding.startInitialAuthorSignerRotationBudget(process, original),
-                signingHttpFactory, readbackHttpFactory, clock, original,
+                process,
+                campaign,
+                campaign.binding.startInitialAuthorSignerRotationBudget(process, original),
+                signingHttpFactory,
+                readbackHttpFactory,
+                clock,
+                original,
             )
         }
 

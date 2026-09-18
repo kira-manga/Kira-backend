@@ -294,8 +294,11 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentAcceptedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
-            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
-                !process.pools.catalogCoordinator.catalogSignerRotationAuthoring, CatalogReadbackFailure.INVALID_POLICY)
+            requireCatalogReadback(
+                !process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
+                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring,
+                CatalogReadbackFailure.INVALID_POLICY,
+            )
             val catalog = refresh.catalogFor(process)
             requireCatalogReadback(catalog.chain.tail.generation == 1L, CatalogReadbackFailure.INVALID_POLICY)
             return CatalogCoordinatorLeaseBindingV1(process, catalog)
@@ -307,8 +310,11 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentProjectedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
-            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
-                !process.pools.catalogCoordinator.catalogSignerRotationAuthoring, CatalogReadbackFailure.INVALID_POLICY)
+            requireCatalogReadback(
+                !process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
+                    !process.pools.catalogCoordinator.catalogSignerRotationAuthoring,
+                CatalogReadbackFailure.INVALID_POLICY,
+            )
             val catalog = refresh.catalogFor(process)
             requireCatalogReadback(
                 process.catalogReadback?.projectedCurrent == true && catalog.chain.tail.generation > 1L,

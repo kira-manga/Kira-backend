@@ -82,7 +82,11 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
                                 primaryCredentials,
                                 replicaCredentials,
                                 limits,
-                                if (initialAuthor == null) checkNotNull(httpFactory) else { { attempt.openInitialAuthorHttp(limits, httpFactory) } },
+                                if (initialAuthor == null) {
+                                    checkNotNull(httpFactory)
+                                } else {
+                                    { attempt.openInitialAuthorHttp(limits, httpFactory) }
+                                },
                                 if (initialAuthor == null) nanoTime else System::nanoTime,
                             )
                             val provider = TimedCatalogReadbackV1(adapter, attempt)
@@ -159,8 +163,13 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
             httpFactory: (() -> SdkHttpClient)?,
             clock: Clock,
         ): CurrentAcceptedCatalogRefreshV1 = CurrentAcceptedCatalogRefreshV1(
-            owner.process, primaryCredentials, replicaCredentials, httpFactory,
-            clock, { owner.process.pools.catalogCoordinator.ownership.nanoClock.nanoTime() }, initialAuthor = owner,
+            owner.process,
+            primaryCredentials,
+            replicaCredentials,
+            httpFactory,
+            clock,
+            { owner.process.pools.catalogCoordinator.ownership.nanoClock.nanoTime() },
+            initialAuthor = owner,
         )
 
         internal fun finalizing(
