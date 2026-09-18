@@ -188,7 +188,7 @@ class ComplaintOwnerDeleteRecoveryIT {
             (aliases + wire.event).forEach { f.phases.recover(read(publishers, it)) }
             assertEquals(settled, f.state())
             assertEquals(1, wire.requests.count { it.kind == "PUT" })
-            assertEquals(wire.event.route.objectKey, wire.requests.single { it.kind == "PUT" }.http.encodedPath().removePrefix("/"))
+            assertEquals("/${wire.journal.declaration().journalLocation.bucket}/${wire.event.route.objectKey}", wire.requests.single { it.kind == "PUT" }.http.encodedPath())
             assertTrue(f.rows("complaint_deletion_journal_retirements").isEmpty())
         }
         wire.assertClientsClosed()

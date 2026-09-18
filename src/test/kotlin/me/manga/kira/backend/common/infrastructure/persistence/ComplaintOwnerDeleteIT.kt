@@ -839,7 +839,7 @@ class ComplaintOwnerDeleteIT {
     }
 
     private fun editInput(f: OwnerDeleteFixture, id: UUID, key: UUID): MockHttpServletRequest =
-        MockHttpServletRequest("PATCH", "/api/v1/complaints/$id").apply {
+        MockHttpServletRequest("PATCH", "/api/v1/complaints/$id/content").apply {
             remoteAddr = "192.0.2.1"
             contentType = "application/json"
             addHeader("Authorization", "Bearer ${f.creator.token}")
