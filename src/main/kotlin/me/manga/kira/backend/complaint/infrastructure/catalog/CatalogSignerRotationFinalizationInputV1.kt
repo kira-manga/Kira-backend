@@ -94,6 +94,7 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
         -> copyArguments(checkNotNull(projectedReadback))
 
         CatalogSignerRotationFinalizationKindV1.PROJECT -> checkNotNull(expected).copyArguments()
+
         else -> null
     }
     private val preparedHistory = genesis?.let { arrayOf<Any?>(*rotation, *it) }
@@ -134,6 +135,7 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
         readback?.let {
             val requiredState = when (kind) {
                 CatalogSignerRotationFinalizationKindV1.COMPLETE -> CatalogDualLocationVerifier.Overlap2Readback.State.PREPARED_DUAL_COPY
+
                 CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
                 CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
                 -> CatalogDualLocationVerifier.Overlap2Readback.State.PROJECTION_PENDING_DUAL_COPY
@@ -149,8 +151,10 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
         projectedReadback?.let {
             val generation = it.generation()
             requireSignerRotation(
-                readback == null && (kind === CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ ||
-                    kind === CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK) &&
+                readback == null && (
+                    kind === CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ ||
+                        kind === CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK
+                    ) &&
                     generation.claims.operationToken == manifest.operationToken && generation.envelopeBytes.contentEquals(frozen.signedEnvelopeBytes),
                 CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
             )

@@ -201,6 +201,7 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
 
                 // Exact no-op; close still proves this owner's cleanup, never the older owner's cleanup.
                 is LocalCatalogSnapshot.Accepted -> CatalogSignerRotationDeliveryStateV1.PROJECTED
+
                 else -> throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
             }
             if (state === CatalogSignerRotationDeliveryStateV1.PROJECTION_PENDING) {
@@ -502,6 +503,7 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         val retained = checkNotNull(release)
         when (local) {
             is LocalCatalogSnapshot.Prepared -> requirePreparedTuple(local)
+
             is LocalCatalogSnapshot.ProjectionPending -> requireSignerRotation(
                 local.head.generation == 2L && local.head.envelopeSha256 == retained.expectedFrozenMutation().signedEnvelopeSha256 &&
                     local.projection.operationToken == inputs.manifest.operationToken &&
@@ -612,10 +614,7 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         checkNotNull(history).requireDeliveryReadback(raw)
     }
 
-    internal fun requireProjectedBindingInputs(
-        candidate: VersionBoundComplaintProcessConfiguration,
-        raw: CatalogDualLocationVerifier.ProjectedHeadReadback,
-    ) {
+    internal fun requireProjectedBindingInputs(candidate: VersionBoundComplaintProcessConfiguration, raw: CatalogDualLocationVerifier.ProjectedHeadReadback) {
         requireConnectionFree()
         requireRunning()
         requireSqlCleanup()

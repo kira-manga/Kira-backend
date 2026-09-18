@@ -119,10 +119,7 @@ internal class CatalogSignerRotationColdRecoveryCases(private val f: CatalogSign
         }
     }
 
-    private fun interrupted(
-        stage: CatalogSignerRotationColdCommitStage,
-        cut: CatalogSignerRotationColdCommitCut,
-    ): CatalogSignerRotationColdRecoveryFault {
+    private fun interrupted(stage: CatalogSignerRotationColdCommitStage, cut: CatalogSignerRotationColdCommitCut): CatalogSignerRotationColdRecoveryFault {
         f.awaitActualLeaseExpiry()
         f.http.replicateOnPut = true
         lateinit var fault: CatalogSignerRotationColdRecoveryFault

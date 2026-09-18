@@ -32,13 +32,7 @@ internal class CatalogSignerRotationColdRecoverySql(private val f: CatalogSigner
         }
     }
 
-    fun acquired(
-        root: CatalogSignerRotationDeliveryRoot,
-        before: Map<String, Any?>,
-        lower: Instant,
-        upper: Instant,
-        state: CatalogSignerRotationColdState,
-    ) {
+    fun acquired(root: CatalogSignerRotationDeliveryRoot, before: Map<String, Any?>, lower: Instant, upper: Instant, state: CatalogSignerRotationColdState) {
         val actual = f.leaseRow()
         val sampled = (actual["lease_expires_at"] as Timestamp).toInstant().minusSeconds(30)
         assertFalse(lower.isBefore((before["lease_expires_at"] as Timestamp).toInstant()))
@@ -125,9 +119,13 @@ internal class CatalogSignerRotationColdRecoverySql(private val f: CatalogSigner
         root.jdbc.calls.forEach { call ->
             val expected = when (call.step) {
                 "final-prepared-control", "final-prepared-control-read", "final-prepared-lease" -> b1
+
                 "final-pending-control", "final-pending-control-read", "final-pending-lease" -> b2 + f.freeze.token
+
                 "final-projected-control", "final-projected-control-read", "final-projected-lease" -> b2
+
                 "final-initial-history-lock", "final-initial-history-read" -> r17
+
                 "final-initial-pending-history-lock",
                 "final-initial-pending-history-read",
                 "final-initial-projected-history-lock",
@@ -135,6 +133,7 @@ internal class CatalogSignerRotationColdRecoverySql(private val f: CatalogSigner
                 -> r17 + c6
 
                 "final-prepared-history-lock", "final-prepared-history-read" -> r17 + g21
+
                 "final-pending-history-lock",
                 "final-pending-history-read",
                 "final-projected-history-lock",
@@ -142,9 +141,13 @@ internal class CatalogSignerRotationColdRecoverySql(private val f: CatalogSigner
                 -> r17 + g21 + c6
 
                 "final-complete" -> r17 + c6
+
                 "final-head" -> b1 + listOf(f.freeze.token, digest(f.envelope))
+
                 "final-project" -> r17 + c6 + row["completed_at"]
+
                 "final-clear-pending" -> b2 + f.freeze.token
+
                 else -> null
             }
             if (expected != null) f.core.assertArguments(expected, call.arguments)

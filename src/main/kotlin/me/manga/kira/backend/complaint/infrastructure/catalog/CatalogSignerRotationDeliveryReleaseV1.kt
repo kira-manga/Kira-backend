@@ -282,8 +282,10 @@ internal class CatalogSignerRotationDeliveryReleaseV1(
 
     private fun requireFrozenProof(proof: CatalogDualLocationVerifier.Overlap2Readback) = requireRecovery(
         proof.operationToken == inputs.manifest.operationToken && proof.frozenEnvelopeBytes().contentEquals(envelope) &&
-            (proof.state === CatalogDualLocationVerifier.Overlap2Readback.State.PREPARED_UNPUBLISHED ||
-                (proof.observedTail.generation == 2L && proof.observedTail.envelopeSha256 == envelopeHash)),
+            (
+                proof.state === CatalogDualLocationVerifier.Overlap2Readback.State.PREPARED_UNPUBLISHED ||
+                    (proof.observedTail.generation == 2L && proof.observedTail.envelopeSha256 == envelopeHash)
+                ),
     )
 
     private fun requireHistoryMatches(proof: CatalogDualLocationVerifier.Overlap2Readback) =

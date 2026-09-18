@@ -118,6 +118,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         internal val startedAtNanos = clock.nanoTime() // Before phase entry, UUID generation or dispatch, never reset on return.
         internal val owner: UUID = prior?.owner ?: UUID.randomUUID()
         internal val token: Long? = prior?.token
+
         // Only this concrete delivery owner's actual pending2 snapshot selects the separate ten-argument SQL leaf.
         // The binding remains genuinely B2; ordinary acquisitions, renewals and relinquishments keep their existing SQL.
         private val deliveryPendingOperation = delivery?.pendingLeaseOperation(binding)
@@ -172,12 +173,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         }
 
         /** Under the actual row lock, before the later-clock CAS; the floor is never a caller-supplied long. */
-        internal fun requireHistoricalTokenFloor(
-            operation: CatalogCoordinatorLeaseOperation,
-            selected: JdbcTemplate,
-            lockedToken: Long,
-            lockedOwner: UUID?,
-        ) {
+        internal fun requireHistoricalTokenFloor(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate, lockedToken: Long, lockedOwner: UUID?) {
             requireOperation(operation, selected)
             if (delivery != null) check(owner != lockedOwner) // Also exclude the latest real owner when an earlier recovery left no outcome artifact.
             recovery?.requireHistoricalLeaseFloor(binding, lockedToken)

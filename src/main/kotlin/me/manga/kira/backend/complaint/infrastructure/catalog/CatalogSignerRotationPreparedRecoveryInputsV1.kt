@@ -58,8 +58,11 @@ internal class CatalogSignerRotationPreparedRecoveryInputsV1 private constructor
     internal fun requireDeliveryReadback(readback: CatalogDualLocationVerifier.Overlap2Readback) {
         val matchingHead = when (readback.snapshotHead.generation) {
             1L -> readback.snapshotHead.envelopeSha256 == predecessorHash
-            2L -> readback.state === CatalogDualLocationVerifier.Overlap2Readback.State.PROJECTION_PENDING_DUAL_COPY &&
-                readback.snapshotHead.envelopeSha256 == readback.frozenEnvelopeSha256
+
+            2L ->
+                readback.state === CatalogDualLocationVerifier.Overlap2Readback.State.PROJECTION_PENDING_DUAL_COPY &&
+                    readback.snapshotHead.envelopeSha256 == readback.frozenEnvelopeSha256
+
             else -> false
         }
         requireRecovery(
