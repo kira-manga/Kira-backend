@@ -57,17 +57,30 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
                 val original = reader.sdkLimits
                 val millis = round.budget.remainingMillis(minOf(original.requestTimeoutMillis, 10_000L))
                 val limits = S3CatalogReadbackLimits(
-                    millis, minOf(original.connectTimeoutMillis.toLong(), millis).toInt(), minOf(original.readTimeoutMillis.toLong(), millis).toInt(),
-                    original.maximumListBytes, original.maximumErrorBytes, original.maximumObjectBytes,
+                    millis,
+                    minOf(original.connectTimeoutMillis.toLong(), millis).toInt(),
+                    minOf(original.readTimeoutMillis.toLong(), millis).toInt(),
+                    original.maximumListBytes,
+                    original.maximumErrorBytes,
+                    original.maximumObjectBytes,
                 )
                 val adapter = S3CatalogReadbackAdapter.openOwned(
-                    round.construction, inputs.currentBytes(), inputs.chain.trustBundlePolicy,
-                    primaryCredentials, replicaCredentials, limits, { round.http.open(limits, readbackHttpFactory) },
+                    round.construction,
+                    inputs.currentBytes(),
+                    inputs.chain.trustBundlePolicy,
+                    primaryCredentials,
+                    replicaCredentials,
+                    limits,
+                    { round.http.open(limits, readbackHttpFactory) },
                     System::nanoTime, // Pure lower clock: the explicit native wrapper owns returned handles BEFORE parent-budget checks.
                 )
                 round.requireRunning()
                 CatalogDualLocationVerifier.SignerRotationAuthorReadback.verify(
-                    TimedSignerRotationReadback(adapter, round), inputs.initialBytes(), inputs.currentBytes(), policy, local.localSnapshot,
+                    TimedSignerRotationReadback(adapter, round),
+                    inputs.initialBytes(),
+                    inputs.currentBytes(),
+                    policy,
+                    local.localSnapshot,
                 )
             },
             round::close,

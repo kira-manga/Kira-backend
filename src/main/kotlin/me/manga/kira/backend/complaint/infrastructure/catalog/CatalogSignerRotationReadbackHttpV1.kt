@@ -18,7 +18,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * wire adapters. In particular, a returned request is retained BEFORE any throwable post-prepare check.
  * No routes, credentials, evidence or effect eligibility are supplied through this transport join.
  */
-internal class CatalogSignerRotationReadbackHttpV1(private val owner: CatalogSignerRotationFreezeAttemptV1, private val readbackBudget: PersistenceTimeBudget) : SdkHttpClient {
+internal class CatalogSignerRotationReadbackHttpV1(private val owner: CatalogSignerRotationFreezeAttemptV1, private val readbackBudget: PersistenceTimeBudget) :
+    SdkHttpClient {
     private val closed = AtomicBoolean()
     private var opened = false
 

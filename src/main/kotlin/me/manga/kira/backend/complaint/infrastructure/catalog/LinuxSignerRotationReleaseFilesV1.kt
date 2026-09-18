@@ -201,7 +201,10 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
         while (io { iterator.hasNext() }) {
             val entry = io { iterator.next() }
             val name = entry.fileName.toString()
-            requireSignerRotationCustody(names.size < allowed.size && name in allowed && names.add(name), CatalogSignerRotationCustodyFailureV1.INVENTORY_REFUSED)
+            requireSignerRotationCustody(
+                names.size < allowed.size && name in allowed && names.add(name),
+                CatalogSignerRotationCustodyFailureV1.INVENTORY_REFUSED,
+            )
         }
         closeTransient(held)
         checkDirectory(directory)

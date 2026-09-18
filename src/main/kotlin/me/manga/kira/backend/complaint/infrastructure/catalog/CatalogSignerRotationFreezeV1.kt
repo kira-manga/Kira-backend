@@ -42,7 +42,12 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
     ): CatalogSignerRotationFreezeResultV1 = run(
-        false, request, oldSigningCredentials, newSigningCredentials, primaryReadCredentials, replicaReadCredentials,
+        false,
+        request,
+        oldSigningCredentials,
+        newSigningCredentials,
+        primaryReadCredentials,
+        replicaReadCredentials,
     )
 
     /**
@@ -58,7 +63,12 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
     ): CatalogSignerRotationFreezeResultV1 = run(
-        true, request, oldSigningCredentials, newSigningCredentials, primaryReadCredentials, replicaReadCredentials,
+        true,
+        request,
+        oldSigningCredentials,
+        newSigningCredentials,
+        primaryReadCredentials,
+        replicaReadCredentials,
     )
 
     @Suppress("TooGenericExceptionCaught")
@@ -147,8 +157,7 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         return retained.signedPrepared(local)
     }
 
-    internal fun owns(selected: CatalogSignerRotationFreezeAttemptV1): Boolean =
-        caller === Thread.currentThread() && !closed && attempt === selected
+    internal fun owns(selected: CatalogSignerRotationFreezeAttemptV1): Boolean = caller === Thread.currentThread() && !closed && attempt === selected
 
     internal fun requireRunning() {
         requireSignerRotation(caller === Thread.currentThread() && !closed, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
@@ -206,7 +215,12 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
             readbackHttpFactory: () -> SdkHttpClient,
             clock: Clock = Clock.systemUTC(),
         ): CatalogSignerRotationFreezeV1 = CatalogSignerRotationFreezeV1(
-            process, campaign, campaign.binding.startSignerRotationBudget(process), signingHttpFactory, readbackHttpFactory, clock,
+            process,
+            campaign,
+            campaign.binding.startSignerRotationBudget(process),
+            signingHttpFactory,
+            readbackHttpFactory,
+            clock,
         )
     }
 }

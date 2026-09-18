@@ -39,15 +39,31 @@ internal object ComplaintEffectiveConfigurationV7 {
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
                 reader, checkNotNull(rotation), checkNotNull(lanes), checkNotNull(sealer), coverage,
             )
+
             sealer != null -> ComplaintEffectiveConfigurationV4.encode(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
                 reader, checkNotNull(rotation), checkNotNull(lanes), sealer,
             )
+
             rotation != null -> ComplaintEffectiveConfigurationV3.encode(
-                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, reader, rotation,
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                reader,
+                rotation,
             )
+
             else -> ComplaintEffectiveConfigurationV2.encode(
-                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity, reader,
+                consumers,
+                pools,
+                implementationSchema,
+                desiredGeneration,
+                databaseIdentity,
+                restoreIdentity,
+                reader,
             )
         }
         val base = CanonicalJson.json.parseToJsonElement(previous.toString(Charsets.UTF_8)).jsonObject

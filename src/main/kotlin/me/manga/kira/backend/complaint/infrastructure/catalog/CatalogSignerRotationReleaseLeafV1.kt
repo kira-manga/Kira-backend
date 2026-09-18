@@ -29,8 +29,19 @@ internal enum class CatalogSignerRotationReleaseLeafV1(internal val fileName: St
 internal enum class CatalogSignerRotationCustodyObservationV1 { CREATED, IDENTICAL_OBSERVED }
 
 internal enum class CatalogSignerRotationCustodyFailureV1 {
-    INVALID_INPUT, INVALID_STATE, WRONG_CALLER, INTERRUPTED, TIME_BUDGET, UNSUPPORTED_FILESYSTEM,
-    UNPROTECTED_PATH, LOCK_UNAVAILABLE, INVENTORY_REFUSED, INCOMPLETE, DIFFERENT_BYTES, IO_UNCERTAIN, CLEANUP_UNCERTAIN,
+    INVALID_INPUT,
+    INVALID_STATE,
+    WRONG_CALLER,
+    INTERRUPTED,
+    TIME_BUDGET,
+    UNSUPPORTED_FILESYSTEM,
+    UNPROTECTED_PATH,
+    LOCK_UNAVAILABLE,
+    INVENTORY_REFUSED,
+    INCOMPLETE,
+    DIFFERENT_BYTES,
+    IO_UNCERTAIN,
+    CLEANUP_UNCERTAIN,
 }
 
 internal class CatalogSignerRotationCustodyExceptionV1(val code: CatalogSignerRotationCustodyFailureV1) :

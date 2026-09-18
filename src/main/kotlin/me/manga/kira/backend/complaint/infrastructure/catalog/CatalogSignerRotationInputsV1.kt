@@ -39,7 +39,13 @@ internal class CatalogSignerRotationInputsV1(
     private val keys = writer.keys()
     val bindingRecord: ByteArray = signerRotationRecord("binding", *attempt.bindingRecordValues())
     val allocation: ByteArray = signerRotationRecord(
-        "allocation", manifest.operationToken, Sha256.hex(intent), Sha256.hex(approvals), Sha256.hex(initial), Sha256.hex(current), Sha256.hex(bindingRecord),
+        "allocation",
+        manifest.operationToken,
+        Sha256.hex(intent),
+        Sha256.hex(approvals),
+        Sha256.hex(initial),
+        Sha256.hex(current),
+        Sha256.hex(bindingRecord),
     )
 
     init {
@@ -189,13 +195,21 @@ internal class CatalogSignerRotationInputsV1(
     private fun canonicalEnvelope(signatures: List<ByteArray>): ByteArray = CanonicalJson.canonicalize(
         OfflineCatalogRotationEnvelopeV1.serializer(),
         OfflineCatalogRotationEnvelopeV1(
-            1, manifest,
-            keys.mapIndexed { index, key -> OfflineCatalogGenesisSignatureV1(key.keyId, key.algorithmId, Base64.getEncoder().encodeToString(signatures[index])) },
+            1,
+            manifest,
+            keys.mapIndexed { index, key ->
+                OfflineCatalogGenesisSignatureV1(key.keyId, key.algorithmId, Base64.getEncoder().encodeToString(signatures[index]))
+            },
         ),
     ).toByteArray(Charsets.UTF_8)
 
     private fun mutation(signatures: List<ByteArray?>, envelope: ByteArray?): CatalogFrozenMutation = CatalogFrozenMutation(
-        1, manifest.operationToken, intent, unsignedHash, envelope, envelope?.let(Sha256::hex),
+        1,
+        manifest.operationToken,
+        intent,
+        unsignedHash,
+        envelope,
+        envelope?.let(Sha256::hex),
         keys.mapIndexed { index, key -> CatalogFrozenSignatureSlot(key.keyId, key.algorithmId, signatures[index]) },
     )
 

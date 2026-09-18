@@ -44,14 +44,23 @@ internal class CatalogSignerRotationSqlInputV1 private constructor(
     private val genesisFields = expected?.genesis?.let { genesis ->
         val manifest = OfflineTrustBundleParser.parseGenesis(checkNotNull(genesis.signedEnvelopeBytes)).manifest
         arrayOf<Any?>(
-            UUID.fromString(genesis.operationToken), genesis.unsignedManifestBytes, digest(genesis.unsignedManifestSha256),
-            genesis.signatureSlots.single().signatureBytes, genesis.signedEnvelopeBytes, genesis.signedEnvelopeSha256?.let(::digest),
+            UUID.fromString(genesis.operationToken),
+            genesis.unsignedManifestBytes,
+            digest(genesis.unsignedManifestSha256),
+            genesis.signatureSlots.single().signatureBytes,
+            genesis.signedEnvelopeBytes,
+            genesis.signedEnvelopeSha256?.let(::digest),
             CanonicalJson.canonicalize(ListSerializer(OfflineCatalogGenesisApprovalV1.serializer()), manifest.approvals).toByteArray(),
         )
     }
     private val history = arrayOf<Any?>(
-        predecessorHash, first.keyId, first.algorithmId, writer,
-        expected?.genesis?.signedEnvelopeBytes, expected?.genesis?.signedEnvelopeBytes, *frozen,
+        predecessorHash,
+        first.keyId,
+        first.algorithmId,
+        writer,
+        expected?.genesis?.signedEnvelopeBytes,
+        expected?.genesis?.signedEnvelopeBytes,
+        *frozen,
     )
     private val signatureWrite = arrayOf<Any?>(*afterSignatures, *frozen, *beforeSignatures)
 
@@ -104,8 +113,10 @@ internal class CatalogSignerRotationSqlInputV1 private constructor(
 
         private fun digest(hash: String): ByteArray = HexFormat.of().parseHex(hash)
         private fun signatures(value: CatalogFrozenMutation?): Array<Any?> = arrayOf(
-            value?.signatureSlots?.get(0)?.signatureBytes, value?.signatureSlots?.get(1)?.signatureBytes,
-            value?.signedEnvelopeBytes, value?.signedEnvelopeSha256?.let(::digest),
+            value?.signatureSlots?.get(0)?.signatureBytes,
+            value?.signatureSlots?.get(1)?.signatureBytes,
+            value?.signedEnvelopeBytes,
+            value?.signedEnvelopeSha256?.let(::digest),
         )
     }
 }

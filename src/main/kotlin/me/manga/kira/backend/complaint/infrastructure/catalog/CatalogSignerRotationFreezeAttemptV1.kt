@@ -170,7 +170,9 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
     internal fun observeFailure(problem: Throwable) {
         val signal = when {
             problem is Error -> problem
+
             problem is CancellationException -> CancellationException("Catalog signer rotation freeze cancelled.")
+
             problem is InterruptedException || problem is InterruptedIOException ||
                 (problem is PersistencePhaseException && problem.code === PersistencePhaseFailureCode.INTERRUPTED) ||
                 (problem is CatalogSignerRotationFreezeExceptionV1 && problem.code === CatalogSignerRotationFreezeFailureV1.INTERRUPTED) ->
@@ -182,7 +184,9 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
             val previous = originalSignal.get()
             if (previous is Error || (previous is CancellationException && signal !is Error) ||
                 (previous is InterruptedException && signal is InterruptedException)
-            ) return
+            ) {
+                return
+            }
             if (originalSignal.compareAndSet(previous, signal)) return
         }
     }
@@ -193,14 +197,20 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
 
     internal fun requirePersistence(candidate: PersistencePhaseOwnership, candidateJdbc: JdbcTemplate, input: CatalogSignerRotationSqlInputV1) {
         requireRunning()
-        requireSignerRotation(candidate === ownership && candidateJdbc === jdbc && selected === input && reserved, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        requireSignerRotation(
+            candidate === ownership && candidateJdbc === jdbc && selected === input && reserved,
+            CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
+        )
         campaign.binding.requirePersistence(candidate, candidateJdbc)
         coordinator.catalogRefreshCustody.requireSignerRotation(this)
     }
 
     internal fun requireRunning() {
         throwIfSignalled()
-        requireSignerRotation(caller === Thread.currentThread() && !failed && !released && owner.owns(this), CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        requireSignerRotation(
+            caller === Thread.currentThread() && !failed && !released && owner.owns(this),
+            CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
+        )
         requireSignerRotation(!sqlCleanupUnproven, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
         owner.requireRunning()
         campaign.binding.requireSignerRotationProcess(process)
@@ -217,8 +227,10 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
 
     internal fun bindingRecordValues(): Array<String> {
         requireConnectionFree()
-        return (binding.map { if (it is ByteArray) HexFormat.of().formatHex(it) else it.toString() } +
-            listOf(HexFormat.of().formatHex(capacity), campaign.owner.toString(), campaign.token.toString())).toTypedArray()
+        return (
+            binding.map { if (it is ByteArray) HexFormat.of().formatHex(it) else it.toString() } +
+                listOf(HexFormat.of().formatHex(capacity), campaign.owner.toString(), campaign.token.toString())
+            ).toTypedArray()
     }
 
     internal fun capacityDigest(): ByteArray = capacity.copyOf()

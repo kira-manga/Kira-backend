@@ -74,7 +74,11 @@ internal class CatalogSignerRotationOperationV1 private constructor(
             requireCurrentLease()
             when (input.path) {
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ -> Unit
-                PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE -> check(jdbc.update(INSERT_SIGNER_ROTATION_PREPARED, *input.insertArguments()) == 1)
+
+                PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE -> check(
+                    jdbc.update(INSERT_SIGNER_ROTATION_PREPARED, *input.insertArguments()) == 1,
+                )
+
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE -> {
                     if (!checkNotNull(original)[1].matchesSignatures(input.nextSignatures())) {
                         check(jdbc.update(WRITE_SIGNER_ROTATION_SIGNATURE, *input.signatureArguments()) == 1)
@@ -117,7 +121,8 @@ internal class CatalogSignerRotationOperationV1 private constructor(
         phase.catalogSignerRotation.requireRetained(this, jdbc)
         val rows = jdbc.query(
             if (lock) LOCK_SIGNER_ROTATION_HISTORY else READ_SIGNER_ROTATION_HISTORY,
-            { row, _ -> StoredSignerRotationRow.copy(row) }, *input.historyArguments(),
+            { row, _ -> StoredSignerRotationRow.copy(row) },
+            *input.historyArguments(),
         )
         phase.catalogSignerRotation.requireRetained(this, jdbc)
         check(rows.size in 1..2) // LIMIT3 detects any unrelated/prior/extra history, not merely the global pending row.
@@ -203,27 +208,43 @@ private class StoredSignerRotationRow(
     private val envelopeHash: ByteArray?,
 ) {
     fun matchesSignatures(expected: Array<Any?>): Boolean = signatureOne.contentEquals(expected[0] as ByteArray?) &&
-        signatureTwo.contentEquals(expected[1] as ByteArray?) && envelope.contentEquals(expected[2] as ByteArray?) && envelopeHash.contentEquals(expected[3] as ByteArray?)
+        signatureTwo.contentEquals(expected[1] as ByteArray?) && envelope.contentEquals(expected[2] as ByteArray?) &&
+        envelopeHash.contentEquals(expected[3] as ByteArray?)
 
     fun matchesGenesis(expected: Array<Any?>): Boolean = token == expected[0] && unsigned.contentEquals(expected[1] as ByteArray?) &&
         unsignedHash.contentEquals(expected[2] as ByteArray?) && signatureOne.contentEquals(expected[3] as ByteArray?) &&
-        envelope.contentEquals(expected[4] as ByteArray?) && envelopeHash.contentEquals(expected[5] as ByteArray?) && approval.contentEquals(expected[6] as ByteArray?)
+        envelope.contentEquals(expected[4] as ByteArray?) && envelopeHash.contentEquals(expected[5] as ByteArray?) &&
+        approval.contentEquals(expected[6] as ByteArray?)
 
     fun sameBytes(other: StoredSignerRotationRow): Boolean = token == other.token && firstId == other.firstId && firstAlgorithm == other.firstAlgorithm &&
-        secondId == other.secondId && secondAlgorithm == other.secondAlgorithm && unsigned.contentEquals(other.unsigned) && unsignedHash.contentEquals(other.unsignedHash) &&
+        secondId == other.secondId && secondAlgorithm == other.secondAlgorithm && unsigned.contentEquals(other.unsigned) &&
+        unsignedHash.contentEquals(other.unsignedHash) &&
         approval.contentEquals(other.approval) && signatureOne.contentEquals(other.signatureOne) && signatureTwo.contentEquals(other.signatureTwo) &&
         envelope.contentEquals(other.envelope) && envelopeHash.contentEquals(other.envelopeHash)
 
     fun mutation(): CatalogFrozenMutation = CatalogFrozenMutation(
-        1, token.toString(), checkNotNull(unsigned), HexFormat.of().formatHex(checkNotNull(unsignedHash)), envelope, envelopeHash?.let(HexFormat.of()::formatHex),
-        listOfNotNull(CatalogFrozenSignatureSlot(firstId, firstAlgorithm, signatureOne), secondId?.let { CatalogFrozenSignatureSlot(it, checkNotNull(secondAlgorithm), signatureTwo) }),
+        1,
+        token.toString(),
+        checkNotNull(unsigned),
+        HexFormat.of().formatHex(checkNotNull(unsignedHash)),
+        envelope,
+        envelopeHash?.let(HexFormat.of()::formatHex),
+        listOfNotNull(
+            CatalogFrozenSignatureSlot(firstId, firstAlgorithm, signatureOne),
+            secondId?.let {
+                CatalogFrozenSignatureSlot(it, checkNotNull(secondAlgorithm), signatureTwo)
+            },
+        ),
     )
 
     companion object {
         fun copy(row: ResultSet): StoredSignerRotationRow = StoredSignerRotationRow(
             row.requiredRotationBoolean("genesis_matches"), row.requiredRotationBoolean("rotation_matches"), row.requiredRotationBoolean("bounded"),
             row.getLong("successor_generation").also { check(!row.wasNull()) }, checkNotNull(row.getObject("operation_token", UUID::class.java)),
-            checkNotNull(row.getString("signer_one_id")), checkNotNull(row.getString("signer_one_algorithm")), row.getString("signer_two_id"), row.getString("signer_two_algorithm"),
+            checkNotNull(
+                row.getString("signer_one_id"),
+            ),
+            checkNotNull(row.getString("signer_one_algorithm")), row.getString("signer_two_id"), row.getString("signer_two_algorithm"),
             row.getBytes("unsigned_bytes")?.copyOf(), row.getBytes("unsigned_hash")?.copyOf(), row.getBytes("approval_bytes")?.copyOf(),
             row.getBytes("signer_one_signature")?.copyOf(), row.getBytes("signer_two_signature")?.copyOf(),
             row.getBytes("envelope_bytes")?.copyOf(), row.getBytes("envelope_hash")?.copyOf(),

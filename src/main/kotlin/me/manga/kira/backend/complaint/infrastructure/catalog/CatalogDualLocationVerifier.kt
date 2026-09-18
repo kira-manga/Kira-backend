@@ -98,8 +98,10 @@ internal object CatalogDualLocationVerifier {
         internal fun requireSnapshot(selected: LocalCatalogSnapshot) {
             val same = when (val before = observed) {
                 is LocalCatalogSnapshot.Accepted -> selected is LocalCatalogSnapshot.Accepted && selected.head == before.head
-                is LocalCatalogSnapshot.Prepared -> selected is LocalCatalogSnapshot.Prepared && selected.head == before.head &&
-                    sameSignerRotationMutation(selected.mutation, before.mutation)
+
+                is LocalCatalogSnapshot.Prepared ->
+                    selected is LocalCatalogSnapshot.Prepared && selected.head == before.head &&
+                        sameSignerRotationMutation(selected.mutation, before.mutation)
 
                 else -> false
             }
@@ -119,6 +121,7 @@ internal object CatalogDualLocationVerifier {
                 requireConnectionFree()
                 when (local) {
                     is LocalCatalogSnapshot.Accepted -> requireCatalogReadback(local.head.generation == 1L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+
                     is LocalCatalogSnapshot.Prepared -> {
                         val parsed = CatalogLocalSnapshotVerifier.validateMutation(local.mutation, policy.chain.limits)
                         requireCatalogReadback(

@@ -148,11 +148,17 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
         valid(
             when (profile) {
                 DesiredProcessProfileV1.D1 -> catalog == null && !epochRotation && sealerMapping == null
+
                 DesiredProcessProfileV1.D2 -> catalog?.projectedCurrent == false && !epochRotation && sealerMapping == null
+
                 DesiredProcessProfileV1.D3 -> catalog?.projectedCurrent == false && epochRotation && sealerMapping == null
+
                 DesiredProcessProfileV1.D4 -> catalog?.projectedCurrent == false && epochRotation && sealerMapping != null
+
                 DesiredProcessProfileV1.D5 -> catalog?.projectedCurrent == true && (sealerMapping == null || epochRotation)
+
                 DesiredProcessProfileV1.D6 -> catalog != null && epochRotation && sealerMapping != null
+
                 DesiredProcessProfileV1.D7 -> desiredGeneration == 1L && catalog?.projectedCurrent == false && (sealerMapping == null || epochRotation) &&
                     (livePolicy == null || (epochRotation && sealerMapping != null))
             },
@@ -180,7 +186,11 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
         valid(
             desiredGeneration == 1L &&
                 profile in setOf(
-                    DesiredProcessProfileV1.D2, DesiredProcessProfileV1.D3, DesiredProcessProfileV1.D4, DesiredProcessProfileV1.D6, DesiredProcessProfileV1.D7,
+                    DesiredProcessProfileV1.D2,
+                    DesiredProcessProfileV1.D3,
+                    DesiredProcessProfileV1.D4,
+                    DesiredProcessProfileV1.D6,
+                    DesiredProcessProfileV1.D7,
                 ),
         )
         valid(catalog?.projectedCurrent == false)

@@ -22,7 +22,8 @@ internal class CatalogSignerRotationInputFilesV1(private val budget: Persistence
 
     fun readInputs(request: CatalogSignerRotationFreezeRequestV1, attempt: CatalogSignerRotationFreezeAttemptV1): CatalogSignerRotationInputsV1 =
         CatalogSignerRotationInputsV1(
-            request, attempt,
+            request,
+            attempt,
             read(request.approvedIntent, CatalogSignerRotationCapacityV1.MAX_DOCUMENT_BYTES),
             read(request.approvalInputs, CatalogSignerRotationCapacityV1.MAX_APPROVAL_BYTES),
         )

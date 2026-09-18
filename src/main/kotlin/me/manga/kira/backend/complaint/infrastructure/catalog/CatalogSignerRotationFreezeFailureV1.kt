@@ -8,7 +8,12 @@ import java.io.InterruptedIOException
 import java.util.concurrent.CancellationException
 
 internal enum class CatalogSignerRotationFreezeFailureV1 {
-    INPUT_REFUSED, PROCESS_REFUSED, RECOVERY_REQUIRED, TIME_BUDGET_EXHAUSTED, INTERRUPTED, CLEANUP_UNPROVEN,
+    INPUT_REFUSED,
+    PROCESS_REFUSED,
+    RECOVERY_REQUIRED,
+    TIME_BUDGET_EXHAUSTED,
+    INTERRUPTED,
+    CLEANUP_UNPROVEN,
 }
 
 /** No SQL, credential, filesystem path, provider diagnostic graph or approval document is attached. */
@@ -57,6 +62,7 @@ internal fun boundedSignerRotationFailure(problem: Throwable): CatalogSignerRota
     if (signal is CatalogSignerRotationFreezeExceptionV1) return signal
     val code = when {
         signal is PersistencePhaseException && !signal.cleanupProven -> CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN
+
         signal is PersistencePhaseException && signal.code === PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED ->
             CatalogSignerRotationFreezeFailureV1.TIME_BUDGET_EXHAUSTED
 
@@ -70,6 +76,7 @@ internal fun boundedSignerRotationFailure(problem: Throwable): CatalogSignerRota
             CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN
 
         signal is CatalogSignerRotationCustodyExceptionV1 -> CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED
+
         else -> CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED
     }
     return CatalogSignerRotationFreezeExceptionV1(code)

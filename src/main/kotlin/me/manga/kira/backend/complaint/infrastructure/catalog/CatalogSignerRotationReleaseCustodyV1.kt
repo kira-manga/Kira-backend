@@ -85,7 +85,10 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
 
     internal fun checkpoint(candidate: LinuxSignerRotationReleaseFilesV1) {
         requireCaller()
-        requireSignerRotationCustody(files === candidate && (state == State.OPENING || state == State.OPEN), CatalogSignerRotationCustodyFailureV1.INVALID_STATE)
+        requireSignerRotationCustody(
+            files === candidate && (state == State.OPENING || state == State.OPEN),
+            CatalogSignerRotationCustodyFailureV1.INVALID_STATE,
+        )
         checkpoint()
     }
 

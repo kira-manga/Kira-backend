@@ -128,7 +128,10 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
     )
 
     private fun persistenceRecord(slot: Int, mutation: CatalogFrozenMutation): ByteArray = persistenceRecord(
-        slot, checkNotNull(mutation.signatureSlots[0].signatureBytes), mutation.signatureSlots[1].signatureBytes, mutation.signedEnvelopeBytes,
+        slot,
+        checkNotNull(mutation.signatureSlots[0].signatureBytes),
+        mutation.signatureSlots[1].signatureBytes,
+        mutation.signedEnvelopeBytes,
     )
 
     private fun persistenceRecord(slot: Int, first: ByteArray, second: ByteArray?, envelope: ByteArray?): ByteArray =
@@ -141,10 +144,28 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
         requireRecovery(custody.putIfAbsent(leaf, bytes) === CatalogSignerRotationCustodyObservationV1.CREATED)
 
     private fun armedLeaf(slot: Int) = if (slot == 0) CatalogSignerRotationReleaseLeafV1.SIGN_ONE_ARMED else CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED
-    private fun returnedLeaf(slot: Int) = if (slot == 0) CatalogSignerRotationReleaseLeafV1.SIGN_ONE_RETURNED else CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED
+    private fun returnedLeaf(slot: Int) = if (slot ==
+        0
+    ) {
+        CatalogSignerRotationReleaseLeafV1.SIGN_ONE_RETURNED
+    } else {
+        CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED
+    }
     private fun signatureLeaf(slot: Int) = if (slot == 0) CatalogSignerRotationReleaseLeafV1.SIGNATURE_ONE else CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO
-    private fun sqlArmedLeaf(slot: Int) = if (slot == 0) CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED else CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED
-    private fun sqlPersistedLeaf(slot: Int) = if (slot == 0) CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED else CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED
+    private fun sqlArmedLeaf(slot: Int) = if (slot ==
+        0
+    ) {
+        CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_ARMED
+    } else {
+        CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED
+    }
+    private fun sqlPersistedLeaf(slot: Int) = if (slot ==
+        0
+    ) {
+        CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED
+    } else {
+        CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED
+    }
     private fun requireRecovery(condition: Boolean) = requireSignerRotation(condition, CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
 
     override fun close() = custody.close()
