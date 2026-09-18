@@ -18,6 +18,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundlePolicy
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
+import me.manga.kira.backend.complaint.parsing.catalog.OfflineTrustBundleParser
 import java.time.DateTimeException
 import java.time.Instant
 import java.time.ZoneOffset
@@ -171,6 +172,41 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
             CatalogReadbackFailure.HEAD_CONFLICT,
         )
         verifyCreationRetention(manifest.creation.createdAtEpochSecond, evidence.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
+    }
+
+    /** Fixed2 raw policy only; accepted SQL head, custody, current lease and delivery remain separate checks. */
+    internal fun verifySignerRotationDelivery(readback: CatalogDualLocationVerifier.Overlap2Readback, evaluatedAt: Instant) {
+        requireConnectionFree()
+        val policy = policyAt(evaluatedAt)
+        requireCatalogReadback(
+            !projectedCurrent && readback.initialTrustBundleSha256 == initialTrustBundleSha256 &&
+                readback.currentTrustBundleSha256 == currentTrustBundleSha256 &&
+                readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
+                readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond,
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
+        val claims = readback.generation().claims
+        requireCatalogReadback(
+            claims.generation == 2L && claims.operation == "ROTATION_OVERLAP" &&
+                claims.previousEnvelopeSha256 == expectedGenesisEnvelopeSha256 &&
+                claims.catalogWriterGenerationId in chainPolicy.currentWriterGenerationIds &&
+                claims.approvals.all { it.approverId in chainPolicy.currentApproverIds },
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
+        // With an absent successor the observed retention belongs to G1, not the newer frozen2 intent.
+        val observedCreation = if (readback.state == CatalogDualLocationVerifier.Overlap2Readback.State.PREPARED_UNPUBLISHED) {
+            val genesis = OfflineTrustBundleParser.parseGenesis(readback.observedEnvelopeBytes()).manifest
+            requireCatalogReadback(
+                readback.observedTail.generation == 1L && readback.observedTail.envelopeSha256 == expectedGenesisEnvelopeSha256 &&
+                    genesis.catalogWriterGenerationId in chainPolicy.currentWriterGenerationIds &&
+                    genesis.approvals.all { it.approverId in chainPolicy.currentApproverIds },
+                CatalogReadbackFailure.HEAD_CONFLICT,
+            )
+            genesis.creation.createdAtEpochSecond
+        } else {
+            claims.creation.createdAtEpochSecond
+        }
+        verifyCreationRetention(observedCreation, readback.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
     }
 
     override fun toString(): String = if (projectedCurrent) {
