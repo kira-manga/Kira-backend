@@ -269,16 +269,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(4))
                     assertTrue(row.getBoolean(5) && !row.wasNull())
                     // The prerequisite lease intentionally stays row-only; only these three author phases take the shared epoch fence.
-                    val sharedFence = when (path) {
-                        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> false
-
-                        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
-                        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
-                        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
-                        -> true
-
-                        else -> error("Unexpected signer rotation/lease phase.")
-                    }
+                    val sharedFence = expectedSharedFence(path)
                     assertEquals(sharedFence, row.getBoolean(6))
                     val found = row.getInt(1) to row.getLong(2)
                     assertFalse(row.next())
@@ -291,21 +282,34 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         calls.add(CatalogSignerRotationSqlCall(phase, step, arguments))
         beforeSql(step)
         action().also {
-            if (step == "catalog") {
-                holder.connection.createStatement().use { statement ->
-                    statement.executeQuery(
-                        "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted)",
-                    ).use { row ->
-                        assertTrue(row.next() && row.getBoolean(1))
-                        assertFalse(row.next())
-                    }
-                }
-            }
+            if (step == "catalog") assertCatalogLock(holder.connection)
             afterSql(step)
         }
     } catch (failure: AssertionError) {
         assertion.compareAndSet(null, failure)
         throw failure
+    }
+
+    private fun expectedSharedFence(path: PersistencePhasePath): Boolean = when (path) {
+        PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> false
+
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+        -> true
+
+        else -> error("Unexpected signer rotation/lease phase.")
+    }
+
+    private fun assertCatalogLock(connection: Connection) {
+        connection.createStatement().use { statement ->
+            statement.executeQuery(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ExclusiveLock' AND granted)",
+            ).use { row ->
+                assertTrue(row.next() && row.getBoolean(1))
+                assertFalse(row.next())
+            }
+        }
     }
 
     private fun step(sql: String, arguments: Array<out Any?>): String = when (sql) {
