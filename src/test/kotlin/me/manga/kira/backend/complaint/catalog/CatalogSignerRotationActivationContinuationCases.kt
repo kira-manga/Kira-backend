@@ -30,14 +30,21 @@ internal class CatalogSignerRotationActivationContinuationCases(private val f: C
 
     fun knownUnattemptedSameProcessOnly() {
         f.delivery.awaitActualLeaseExpiry()
-        CatalogSignerRotationActivationRoot(f).use { root ->
+        val root = CatalogSignerRotationActivationRoot(f)
+        val foreign = CatalogSignerRotationActivationRoot(f)
+        AutoCloseable {
+            // Both prepared roots share pgjdbc's Timer; stop both originals before either full retirement observation.
+            val stopped = listOf(root, foreign).map { runCatching { it.assembly.close() } }
+            val retired = listOf(root, foreign).map { runCatching(it::close) }
+            rethrowSignerRotationFixtureFailures(stopped + retired)
+        }.use {
             root.prepare()
             val previous = cutAfterCommittedPrepare(root)
             val witness = ActivationUnattemptedObservation(previous)
             val leaves = f.snapshotLeaves()
             val row = f.mutationJson()
             val version = f.rowVersion()
-            foreignProcessRefuses(root, previous)
+            foreignProcessRefuses(root, foreign, previous)
             assertEquals(row, f.mutationJson())
             assertEquals(version, f.rowVersion())
             f.assertLeavesUnchanged(leaves)
@@ -118,23 +125,25 @@ internal class CatalogSignerRotationActivationContinuationCases(private val f: C
         return previous
     }
 
-    private fun foreignProcessRefuses(root: CatalogSignerRotationActivationRoot, previous: CatalogSignerRotationActivationV1) {
-        CatalogSignerRotationActivationRoot(f).use { foreign ->
-            foreign.prepare()
-            assertNotSame(root.process, foreign.process)
-            val attempt = foreign.begin()
-            val reads = f.http.read.createdClients
-            val lease = f.delivery.leaseRow()
-            f.core.refused { foreign.continueUnattempted(attempt, previous) }
-            foreign.assertReleased(attempt, reserved = false)
-            assertTrue(foreign.jdbc.calls.isEmpty(), "A foreign actual process is refused before even snapshot SQL, not by a file lock.")
-            assertEquals(reads, f.http.read.createdClients)
-            assertEquals(0, f.signing.createdClients)
-            assertEquals(0, f.http.put.createdClients)
-            assertEquals(lease, f.delivery.leaseRow())
-            assertFalse(poolTestField<Boolean>(previous, "continuationConsumed"))
-            assertNull(ownedCutField(attempt, "custody"))
-        }
+    private fun foreignProcessRefuses(
+        root: CatalogSignerRotationActivationRoot,
+        foreign: CatalogSignerRotationActivationRoot,
+        previous: CatalogSignerRotationActivationV1,
+    ) {
+        foreign.prepare()
+        assertNotSame(root.process, foreign.process)
+        val attempt = foreign.begin()
+        val reads = f.http.read.createdClients
+        val lease = f.delivery.leaseRow()
+        f.core.refused { foreign.continueUnattempted(attempt, previous) }
+        foreign.assertReleased(attempt, reserved = false)
+        assertTrue(foreign.jdbc.calls.isEmpty(), "A foreign actual process is refused before even snapshot SQL, not by a file lock.")
+        assertEquals(reads, f.http.read.createdClients)
+        assertEquals(0, f.signing.createdClients)
+        assertEquals(0, f.http.put.createdClients)
+        assertEquals(lease, f.delivery.leaseRow())
+        assertFalse(poolTestField<Boolean>(previous, "continuationConsumed"))
+        assertNull(ownedCutField(attempt, "custody"))
     }
 
     private fun oneShotRefuses(root: CatalogSignerRotationActivationRoot, previous: CatalogSignerRotationActivationV1) {
