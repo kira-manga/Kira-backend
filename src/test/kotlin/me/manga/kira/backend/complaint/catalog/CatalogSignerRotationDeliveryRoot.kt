@@ -45,6 +45,8 @@ internal class CatalogSignerRotationDeliveryRoot(private val f: CatalogSignerRot
     val assembly = ComplaintDesiredProcessAssemblyV1.withClockFixture(clock)
     private var scope: PgLifecycleTestScope? = null
     private var retired = false
+    private var disposed = false
+    val cleanupVerified: Boolean get() = disposed
     private val attempts = mutableListOf<CatalogSignerRotationDeliveryV1>()
     lateinit var process: VersionBoundComplaintProcessConfiguration
         private set
@@ -52,6 +54,10 @@ internal class CatalogSignerRotationDeliveryRoot(private val f: CatalogSignerRot
         private set
     val coordinator get() = process.pools.catalogCoordinator
     val phases: List<PersistencePhaseContext> get() = jdbc.observations.keys.toList()
+
+    init {
+        f.retainRoot(this)
+    }
 
     fun prepare(inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.freeze.d7.rawDocument), sameD: Boolean = true) {
         val old = f.initial.coordinator
@@ -221,7 +227,8 @@ internal class CatalogSignerRotationDeliveryRoot(private val f: CatalogSignerRot
                 assertOriginalFilesClosed(original)
             }
             assertTransportDisposed()
-            if (::process.isInitialized) released()
+            assertResourcesReleased()
+            disposed = true // Actual original fixture disposal only, before preserved assertions; never an operation cleanup receipt.
         }
         rethrowSignerRotationFixtureFailures(listOf(retirement, disposal, runCatching(::assertNoLostAssertions)))
     }
@@ -241,11 +248,15 @@ internal class CatalogSignerRotationDeliveryRoot(private val f: CatalogSignerRot
     }
 
     fun released() {
+        assertResourcesReleased()
+        assertNoLostAssertions()
+    }
+
+    private fun assertResourcesReleased() {
         requireConnectionFree()
         assertNull(PersistencePhaseOwnership.current())
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
-        assertEquals(0, coordinator.activeSnapshotOwners())
-        assertNoLostAssertions()
+        if (::process.isInitialized) assertEquals(0, coordinator.activeSnapshotOwners())
     }
 
     private fun assertTransportDisposed() {

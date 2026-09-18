@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.catalog
 
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
@@ -22,6 +23,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.IOException
 import java.sql.Timestamp
+import java.util.HexFormat
 import java.util.UUID
 
 /** Negative faults only on actual owned SQL/native/file routes. No lease-expiry shortcut, transaction replacement or repaired command. */
@@ -86,17 +88,31 @@ internal class CatalogSignerRotationDeliveryFailureCases(private val f: CatalogS
                 assertEquals(state, f.freeze.state())
             }
             val frozen = f.envelope.copyOf()
+            val frozenHash = (f.freeze.row()["envelope_hash"] as ByteArray).copyOf()
             try {
                 val corrupt = frozen.copyOf().also { it[it.lastIndex] = (it.last().toInt() xor 1).toByte() }
+                // Keep the database's bytes/hash constraint valid so the real snapshot/frozen-tuple boundary must refuse.
                 assertEquals(
                     1,
-                    f.observer.update("UPDATE complaint_catalog_mutations SET envelope_bytes = ? WHERE operation_token = ?", corrupt, f.freeze.token),
+                    f.observer.update(
+                        "UPDATE complaint_catalog_mutations SET envelope_bytes = ?, envelope_hash = ? WHERE operation_token = ?",
+                        corrupt,
+                        HexFormat.of().parseHex(Sha256.hex(corrupt)),
+                        f.freeze.token,
+                    ),
                 )
+                val calls = fresh.jdbc.calls.size
                 refuseWithoutAcquisition(fresh, "frozen-envelope")
+                assertTrue(fresh.jdbc.calls.drop(calls).any { it.path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT })
             } finally {
                 assertEquals(
                     1,
-                    f.observer.update("UPDATE complaint_catalog_mutations SET envelope_bytes = ? WHERE operation_token = ?", frozen, f.freeze.token),
+                    f.observer.update(
+                        "UPDATE complaint_catalog_mutations SET envelope_bytes = ?, envelope_hash = ? WHERE operation_token = ?",
+                        frozen,
+                        frozenHash,
+                        f.freeze.token,
+                    ),
                 )
             }
         }

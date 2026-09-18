@@ -25,6 +25,7 @@ internal fun withCatalogSignerRotationDelivery(tls: VersionBoundPersistenceConne
 
 /** Same production initial-author prefix and TLS/PG carrier. No seeded signed2 row, fabricated lease or pre-published cloud object. */
 internal class CatalogSignerRotationDeliveryFixture(tls: VersionBoundPersistenceConnectedFixture) : AutoCloseable {
+    private val roots = mutableListOf<CatalogSignerRotationDeliveryRoot>()
     val initial = CatalogSignerRotationInitialAuthorFixture(tls)
     val freeze get() = initial.freeze
     val observer get() = freeze.observer
@@ -43,6 +44,10 @@ internal class CatalogSignerRotationDeliveryFixture(tls: VersionBoundPersistence
         private set
     lateinit var frozenPrefix: Map<Path, Pair<Map<String, Any>, ByteArray>>
         private set
+
+    fun retainRoot(root: CatalogSignerRotationDeliveryRoot) {
+        roots.add(root) // Retained before preparation can start any original actors, including failed preparation.
+    }
 
     fun prepare() {
         initial.assemble()
@@ -128,5 +133,33 @@ internal class CatalogSignerRotationDeliveryFixture(tls: VersionBoundPersistence
         freeze.d7.assertFrozenUnchanged()
     }
 
-    override fun close() = initial.close()
+    override fun close() {
+        val stopped = runCatching(freeze.d7::retireRuntime)
+        val retired = freeze.invocations.map { runCatching(it::fixtureCleanup) }
+        val ready = runCatching {
+            stopped.getOrThrow()
+            requireConnectionFree()
+            assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
+            assertTrue(freeze.invocations.all { it.cleanupVerified })
+            assertTrue(roots.all { it.cleanupVerified }, "Every original delivery root must physically retire before fixture row cleanup.")
+        }
+        val detached = runCatching {
+            ready.getOrThrow()
+            if (::prefix.isInitialized) {
+                // Post-assertion fixture isolation only: detach this fixture's FK before the existing teardown deletes operation2.
+                // Never PROJECT, alter lease/head/times, clear a failed owner slot, or turn UNKNOWN into a cleanup/success receipt.
+                observer.update(
+                    "UPDATE complaint_journal_control SET pending_projection_token = NULL WHERE data_scope_id = ? AND pending_projection_token = ?",
+                    ComplaintDataScope.LIVE.id,
+                    freeze.token,
+                )
+            }
+        }
+        val closed = runCatching {
+            ready.getOrThrow()
+            detached.getOrThrow()
+            initial.close()
+        }
+        rethrowSignerRotationFixtureFailures(listOf(stopped) + retired + listOf(ready, detached, closed))
+    }
 }
