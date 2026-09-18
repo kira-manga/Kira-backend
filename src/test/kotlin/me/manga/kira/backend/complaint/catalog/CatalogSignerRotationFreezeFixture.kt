@@ -190,7 +190,7 @@ internal class CatalogSignerRotationReadbackHttpFixture(private val d7: CatalogS
         val ordinal = http.createdClients
         object : SdkHttpClient by delegate {
             override fun prepareRequest(request: HttpExecuteRequest) = observed { delegate.prepareRequest(request) }
-            override fun close() = observed {
+            override fun close() = observed<Unit> {
                 assertTrue(http.replies.all { it.closes == 1 })
                 delegate.close()
                 afterClientClose(ordinal)
