@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttem
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
@@ -224,6 +225,10 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintDesiredSignedGenesisFirst(attempt: ComplaintSignedGenesisFirstDAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST, firstDesiredAttempt = attempt)
 
+    /** Current selected-G1 recheck on the fixed operator only; no NULL-D transition or portable earlier selection result. */
+    internal fun enterComplaintCatalogGenesisPublishRecheck(attempt: CatalogGenesisPublishAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK, catalogPublisherAttempt = attempt)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught")
     private fun enter(
@@ -236,6 +241,7 @@ internal class PersistencePhaseOwnership private constructor(
         firstDesiredAttempt: ComplaintSignedGenesisFirstDAttemptV1? = null,
         catalogAuthorAttempt: CatalogGenesisFreezeAttemptV1? = null,
         catalogFinalizerAttempt: CatalogGenesisFinalizeAttemptV1? = null,
+        catalogPublisherAttempt: CatalogGenesisPublishAttemptV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -255,6 +261,7 @@ internal class PersistencePhaseOwnership private constructor(
         firstDesiredAttempt?.requirePhaseEntry(this, path)
         catalogAuthorAttempt?.requirePhaseEntry(this, path)
         catalogFinalizerAttempt?.requirePhaseEntry(this, path)
+        catalogPublisherAttempt?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
@@ -263,6 +270,7 @@ internal class PersistencePhaseOwnership private constructor(
         val firstDesiredWork = firstDesiredAttempt?.budget?.capped(2_000)
         val catalogAuthorWork = catalogAuthorAttempt?.budget?.capped(2_000)
         val catalogFinalizerWork = catalogFinalizerAttempt?.phaseBudget?.capped(2_000)
+        val catalogPublisherWork = catalogPublisherAttempt?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -299,6 +307,8 @@ internal class PersistencePhaseOwnership private constructor(
                 catalogAuthorWork,
                 catalogFinalizerAttempt,
                 catalogFinalizerWork,
+                catalogPublisherAttempt,
+                catalogPublisherWork,
             )
             phase = prepared
             check(phases.compareAndSet(slot, null, prepared))
@@ -413,6 +423,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
                 PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
                 PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
+                PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
                 -> throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
             }
         }
@@ -479,6 +490,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_DESIRED_CLOSE,
             PersistencePhasePath.COMPLAINT_DESIRED_SUPERSEDE,
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
         )
         private val CATALOG_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
@@ -620,6 +632,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_DESIRED_CLOSE,
     COMPLAINT_DESIRED_SUPERSEDE,
     COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
+    COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
     ;
 
     internal val source: Boolean

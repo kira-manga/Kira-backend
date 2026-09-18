@@ -10,6 +10,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.bindDesiredInstallationOperatorPools
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.preferCatalogFreezeCleanup
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.VersionBoundLiveJournalCoverageV1
 import me.manga.kira.backend.security.AcquiredVersionedSecret
@@ -31,6 +32,7 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
     private var lanes: JournalPublicationLanesV1? = null
     private var sealer: VersionBoundEpochSealAcquisitionV1? = null
     private var assembled: VersionBoundComplaintProcessConfiguration? = null
+    private var closeFailure: Throwable? = null
 
     val target: VersionBoundComplaintProcessConfiguration
         get() {
@@ -240,15 +242,22 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
     /** All original roots are permanently stopped before ANY shared-Timer proof is awaited. */
     override fun close() {
         stopping = true
-        val outcomes = listOf(
-            runCatching { targetOwner?.requestShutdown() },
-            runCatching { operatorOwner?.requestShutdown() },
-            runCatching { sealer?.close() },
-            runCatching { lanes?.close() },
-            runCatching { operatorOwner?.versionBoundPools?.close() },
-            runCatching { targetOwner?.versionBoundPools?.close() },
-        )
-        requireDesiredInstallation(outcomes.all { it.isSuccess }, ComplaintDesiredInstallationFailureV1.CLEANUP_UNPROVEN)
+        fun retain(problem: Throwable) {
+            if (problem is ComplaintDesiredInstallationExceptionV1 && problem.code === ComplaintDesiredInstallationFailureV1.INTERRUPTED) {
+                Thread.currentThread().interrupt()
+            }
+            closeFailure = preferCatalogFreezeCleanup(closeFailure, problem) // Restore interruption before attempting the next actual close.
+        }
+        runCatching { targetOwner?.requestShutdown() }.onFailure(::retain)
+        runCatching { operatorOwner?.requestShutdown() }.onFailure(::retain)
+        runCatching { sealer?.close() }.onFailure(::retain)
+        runCatching { lanes?.close() }.onFailure(::retain)
+        runCatching { operatorOwner?.versionBoundPools?.close() }.onFailure(::retain)
+        runCatching { targetOwner?.versionBoundPools?.close() }.onFailure(::retain)
+        closeFailure = closeFailure?.let {
+            preferCatalogFreezeCleanup(it, ComplaintDesiredInstallationExceptionV1(ComplaintDesiredInstallationFailureV1.CLEANUP_UNPROVEN))
+        }
+        closeFailure?.let { throw it } // Fatal > cancellation > interruption > bounded ordinary failure; a later close cannot erase uncertainty.
     }
 
     fun requireCleanup(budget: PersistenceTimeBudget) {

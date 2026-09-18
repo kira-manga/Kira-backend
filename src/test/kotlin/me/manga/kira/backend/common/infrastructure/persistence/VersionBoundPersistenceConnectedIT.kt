@@ -1,6 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
+import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
@@ -18,6 +19,7 @@ import me.manga.kira.backend.complaint.catalog.HeldSealStopCut
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
+import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
@@ -463,6 +465,47 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun unknownCommitOrReleaseNeverSucceeds() = withFixture { tls ->
         withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).unknownCommitOrReleaseNeverSucceeds() }
+    }
+
+    @Test
+    fun `catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).frozenFirstDRecheckAndSinglePrimaryPublication() }
+    }
+
+    @Test
+    fun `catalog publisher rejects absent different and stale current D or a different actual graph and wrong fixed login`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).currentSelectedStateAndActualGraphRequired() }
+    }
+
+    @Test
+    fun `catalog publisher requires independent pin complete existing custody raw signature and empty namespaces without repairs`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).independentPinExistingCustodyAndEmptyProbeRequired() }
+    }
+
+    @Test
+    fun `catalog publisher actual recheck completion late read preparation and namespace close failures prevent arming or PUT`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).recheckCompletionAndNamespaceCloseAreBarriers() }
+    }
+
+    @Test
+    fun `catalog publisher cancellation and reader-only expiry after durable arm never dispatch or recover into another PUT`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).durableArmCancellationAndEmptyRecoveryNeverReput() }
+        withCatalogGenesisPublish(tls, catalogAttemptMillis = 10_000) { CatalogGenesisPublishCases(it).readerCapAtReturnedPutClientNeverDispatchesOrReputs() }
+    }
+
+    @Test
+    fun `catalog publisher lost acknowledgement recovers pending completed and dual copies without rewriting stable provenance`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).lostAcknowledgementAndReplicationRecoveryAreStable() }
+    }
+
+    @Test
+    fun `catalog publisher acknowledged outcome precedes interrupted readback and survives conflicting fresh observations`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).acknowledgedOutcomeSurvivesReadbackCutsAndConflicts() }
+    }
+
+    @Test
+    fun `catalog publisher original preacquisition deadline and fatal PUT close cannot advance or refund effect eligibility`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).originalDeadlineAndFatalPutCloseCannotAdvance() }
     }
 
     @Test

@@ -53,6 +53,11 @@ internal class ComplaintSignedGenesisFirstDInputsV1 private constructor(
             return arguments // The fixed retained operation alone borrows these before/after its one D-only CAS.
         }
 
+        internal fun arguments(operation: ComplaintCatalogGenesisPublishRecheckOperationV1): Array<Any?> {
+            operation.requireRelease(this)
+            return arguments // Separate original publisher's current all-history comparison; no generic getter or selection receipt.
+        }
+
         override fun toString(): String = "SignedGenesisFirstDInputs.Verified(private-comparison,no-authority)"
 
         companion object {

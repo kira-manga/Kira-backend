@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishAttemptV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -193,6 +194,7 @@ internal class DesiredOldBindingV1 private constructor(
     fun hashAbsent(): Boolean = hash == null
     fun target(attempt: ComplaintDesiredInstallAttemptV1): Boolean = generation == attempt.desiredGeneration && attempt.matchesHash(hash)
     fun target(attempt: ComplaintSignedGenesisFirstDAttemptV1): Boolean = generation == attempt.desiredGeneration && attempt.matchesHash(hash)
+    fun target(attempt: CatalogGenesisPublishAttemptV1): Boolean = generation == attempt.desiredGeneration && attempt.matchesHash(hash)
     fun same(other: DesiredOldBindingV1): Boolean = generation == other.generation && hash.contentEquals(other.hash) && sameExceptDesired(other)
     fun sameExceptDesired(other: DesiredOldBindingV1): Boolean = database == other.database && restore == other.restore && writer == other.writer &&
         catalogGeneration == other.catalogGeneration && catalogHash.contentEquals(other.catalogHash) && trustHash.contentEquals(other.trustHash) &&
@@ -241,6 +243,7 @@ internal class DesiredControlRowV1 private constructor(
     )
     fun exactTarget(attempt: ComplaintDesiredInstallAttemptV1): Boolean = binding.target(attempt)
     fun exactTarget(attempt: ComplaintSignedGenesisFirstDAttemptV1): Boolean = binding.target(attempt)
+    fun exactTarget(attempt: CatalogGenesisPublishAttemptV1): Boolean = binding.target(attempt)
     fun sameLease(other: DesiredControlRowV1): Boolean =
         leaseOwner == other.leaseOwner && leaseToken == other.leaseToken && leaseExpiresAt == other.leaseExpiresAt
     fun sameGatesAndLease(other: DesiredControlRowV1): Boolean = maintenanceClosed == other.maintenanceClosed && creationClosed == other.creationClosed &&

@@ -23,6 +23,7 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApp
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintCatalogGenesisPublishRecheckOperationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallOperationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDAttemptV1
@@ -42,6 +43,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFree
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationInput
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadReadOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
@@ -103,6 +105,8 @@ constructor(
     private val catalogAuthorWork: PersistenceTimeBudget? = null,
     private val catalogFinalizerAttempt: CatalogGenesisFinalizeAttemptV1? = null,
     private val catalogFinalizerWork: PersistenceTimeBudget? = null,
+    private val catalogPublisherAttempt: CatalogGenesisPublishAttemptV1? = null,
+    private val catalogPublisherWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -162,6 +166,7 @@ constructor(
     internal val cutoffPublications: PersistenceCutoffPublications = CutoffPublicationsBoundary()
     internal val desiredInstallation: PersistenceDesiredInstall = DesiredInstallationBoundary()
     internal val signedGenesisFirstDesired: PersistenceSignedGenesisFirstDesired = SignedGenesisFirstDesiredBoundary()
+    internal val catalogGenesisPublishRecheck: PersistenceCatalogGenesisPublishRecheck = CatalogGenesisPublishRecheckBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -188,7 +193,9 @@ constructor(
             isReadOnly = path.readOnly
             // Desired-state pending/pristine checks deliberately take a fresh statement snapshot
             // AFTER the LIVE control lock. Never inherit a role/database REPEATABLE READ default.
-            if (desiredAttempt != null || firstDesiredAttempt != null) isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
+            if (desiredAttempt != null || firstDesiredAttempt != null || catalogPublisherAttempt != null) {
+                isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
+            }
         }
         manager.getTransaction(definition)
         // The wrapper retained TransactionStatus before this validation. A failure here still has rollback custody.
@@ -214,7 +221,7 @@ constructor(
         requireWork()
         stage = Stage.SETTING_UP
         installLimits()
-        if (firstDesiredAttempt != null && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
+        if ((firstDesiredAttempt != null || catalogPublisherAttempt != null) && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         selectedHolder.acquireFence(selected)
@@ -307,12 +314,14 @@ constructor(
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
+                ?: catalogPublisherWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
+            ?: catalogPublisherWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -567,6 +576,8 @@ constructor(
         -> catalogGenesis.completed()
 
         PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST -> signedGenesisFirstDesired.completed()
+
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK -> catalogGenesisPublishRecheck.completed()
 
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
@@ -863,7 +874,7 @@ constructor(
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
-            ?: catalogFinalizerWork ?: return false
+            ?: catalogFinalizerWork ?: catalogPublisherWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -889,7 +900,9 @@ constructor(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        if (catalogAuthorAttempt != null || catalogFinalizerAttempt != null) return budget.systemCleanupSnapshot(WORK_MILLIS)
+        if (catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null) {
+            return budget.systemCleanupSnapshot(WORK_MILLIS)
+        }
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
         return if (ordinaryBudget && desiredAttempt == null && firstDesiredAttempt == null) {
             budget
@@ -901,6 +914,9 @@ constructor(
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
+        catalogPublisherAttempt?.let {
+            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
+        }
         catalogFinalizerAttempt?.let {
             return it.phaseBudget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
         }
@@ -1060,6 +1076,7 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
             -> PersistenceDeletionFence(this@PersistencePhaseContext, ownership.nanoClock)
 
             else -> null
@@ -1480,6 +1497,47 @@ constructor(
         }
 
         override fun completed(): Boolean = retained?.let { it.attempt === firstDesiredAttempt && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    /** Publisher-only current recheck, sharing no operation/receipt with the D-mutating first-D path. */
+    private inner class CatalogGenesisPublishRecheckBoundary : PersistenceCatalogGenesisPublishRecheck {
+        private var issued = false
+        private var retained: ComplaintCatalogGenesisPublishRecheckOperationV1? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK)
+            val attempt = catalogPublisherAttempt ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            attempt.requirePersistence(ownership, jdbc)
+            if (issued || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintCatalogGenesisPublishRecheckOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK)
+            if (!issued || retained != null || operation.attempt !== catalogPublisherAttempt) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintCatalogGenesisPublishRecheckOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK)
+            if (retained !== operation || operation.attempt !== catalogPublisherAttempt || !selectedHolder.fenceReady()) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            operation.attempt.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: ComplaintCatalogGenesisPublishRecheckOperationV1) {
+            val retainedByCaller = caller.isCurrent() && retained === operation && operation.attempt === catalogPublisherAttempt
+            if (!retainedByCaller || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult() // Actual known COMMITTED and released original holder/permit, before any publisher I/O.
+        }
+
+        override fun completed(): Boolean = retained?.let { it.attempt === catalogPublisherAttempt && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     /** Four fixed operations; a write has a mandatory one-use ingress handoff, never a raw bypass. */

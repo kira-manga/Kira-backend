@@ -110,9 +110,17 @@ internal class CatalogGenesisTargetFinalizeFixture(val tls: VersionBoundPersiste
     val token: UUID get() = UUID.fromString(freeze.manifest.operationToken)
     val retainUntil: Instant get() = Instant.ofEpochSecond(freeze.manifest.creation.createdAtEpochSecond).atOffset(ZoneOffset.UTC).plusYears(10).toInstant()
 
-    fun prepare(profile: String) {
+    fun prepare(profile: String, catalogAttemptMillis: Long? = null) {
         desired.prepare()
-        val base = DesiredInstallationInputFixture.document(profile).copy(database = desired.document.database)
+        val original = DesiredInstallationInputFixture.document(profile).copy(database = desired.document.database)
+        // Declare an optional stricter reader policy BEFORE the genuine freeze and first-D; never mutate an already-selected D or budget.
+        val base = if (catalogAttemptMillis == null) {
+            original
+        } else {
+            original.copy(
+                catalog = checkNotNull(original.catalog).copy(totalAttemptMillis = catalogAttemptMillis),
+            )
+        }
         val capacity = ComplaintDesiredDeploymentInputsV1.fromDecoded(base).capacity
         val goldenRegistry = VersionBoundCatalogReadbackTestFixture.envelope().manifest.initialWriterRegistry
         val registry = goldenRegistry.copy(catalogWriter = goldenRegistry.catalogWriter.copy(generationId = OfflineTrustBundleFixture.CATALOG_WRITER))
@@ -391,8 +399,8 @@ internal class CatalogGenesisTargetFinalizeInvocation(private val fixture: Catal
         runCatching(operator::close) // Failed command cleanup is sticky; fixture retirement cannot return its result.
         scope?.let {
             it.owner.requestShutdown()
+            it.close() // Observe actual original retirement before guarded pool close can reconcile an expired phase.
             it.owner.versionBoundPools?.close()
-            it.close()
         }
         requireConnectionFree()
         // An original quarantined phase may have prevented dispatch. Only after its real root/lease retirement,
