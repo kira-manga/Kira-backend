@@ -220,8 +220,10 @@ class ComplaintCatalogGenesisFinalizeMainTest {
                 CatalogGenesisExitV1.RETIREMENT_UNCONFIRMED
 
             exit in setOf(
-                CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE,
-                CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
+                CatalogGenesisExitV1.FROZEN,
+                CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE,
+                CatalogGenesisExitV1.AWAIT_REPLICATION,
+                CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
             ) -> CatalogGenesisExitV1.FAILED
 
             else -> exit

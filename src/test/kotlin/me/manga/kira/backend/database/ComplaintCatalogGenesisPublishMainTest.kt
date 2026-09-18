@@ -45,7 +45,9 @@ class ComplaintCatalogGenesisPublishMainTest {
             assertEquals(Path.of(valid[6]), parsed.pin)
             assertEquals("CatalogPublisherCommandV1(redacted,no-authority)", parsed.toString())
             listOf(
-                emptyArray(), valid.dropLast(2).toTypedArray(), valid + "--force",
+                emptyArray(),
+                valid.dropLast(2).toTypedArray(),
+                valid + "--force",
                 valid.copyOf().apply { this[0] = "resume" },
                 valid.copyOf().apply { this[0] = "PUBLISH" },
                 valid.copyOf().apply { this[1] = "--genesis-pin" },
@@ -134,8 +136,11 @@ class ComplaintCatalogGenesisPublishMainTest {
             assertEquals(CatalogGenesisExitV1.INPUT_REFUSED, catalogPublisherFailureExit(checkNotNull(mismatch.cause)))
         }
         val successes = listOf(
-            CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE, CatalogGenesisExitV1.PROJECTED,
-            CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
+            CatalogGenesisExitV1.FROZEN,
+            CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE,
+            CatalogGenesisExitV1.PROJECTED,
+            CatalogGenesisExitV1.AWAIT_REPLICATION,
+            CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
         )
         assertEquals(listOf(0, 10, 11, 12, 13), successes.map { it.code })
     }
@@ -232,7 +237,9 @@ class ComplaintCatalogGenesisPublishMainTest {
                 CatalogGenesisExitV1.RETIREMENT_UNCONFIRMED
 
             exit in setOf(
-                CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE, CatalogGenesisExitV1.PROJECTED,
+                CatalogGenesisExitV1.FROZEN,
+                CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE,
+                CatalogGenesisExitV1.PROJECTED,
             ) -> CatalogGenesisExitV1.FAILED
 
             else -> exit
@@ -269,8 +276,13 @@ class ComplaintCatalogGenesisPublishMainTest {
     }
 
     private fun arguments(recover: Boolean = false): Array<String> = arrayOf(
-        if (recover) "recover" else "publish", "--manifest", "/not-read/$CANARY-author.json",
-        "--target-deployment", "/not-read/$CANARY-target.json", "--genesis-pin", "/not-read/$CANARY-independent.pin",
+        if (recover) "recover" else "publish",
+        "--manifest",
+        "/not-read/$CANARY-author.json",
+        "--target-deployment",
+        "/not-read/$CANARY-target.json",
+        "--genesis-pin",
+        "/not-read/$CANARY-independent.pin",
     )
 
     private fun environment(): Map<String, String> = FAMILIES.flatMap { family ->

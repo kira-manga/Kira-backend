@@ -221,8 +221,16 @@ private enum class CatalogProcessTestStage(val cleanupHalt: CatalogCustodyFixtur
 }
 
 private enum class CatalogCustodyFixtureHalt {
-    AUTHOR_CLEANUP, TARGET_CLEANUP, PUBLISH_CLEANUP, RECOVER_CLEANUP, PUBLISH_INTERRUPTED,
-    AUTHOR_FROZEN, AUTHOR_AWAITING, TARGET_PROJECTED, PUBLISH_AWAITING, PUBLISH_DUAL,
+    AUTHOR_CLEANUP,
+    TARGET_CLEANUP,
+    PUBLISH_CLEANUP,
+    RECOVER_CLEANUP,
+    PUBLISH_INTERRUPTED,
+    AUTHOR_FROZEN,
+    AUTHOR_AWAITING,
+    TARGET_PROJECTED,
+    PUBLISH_AWAITING,
+    PUBLISH_DUAL,
 }
 
 /** Test-only fixed fixture. No provider, alternate production mode, fake custody or supplied death observation. */

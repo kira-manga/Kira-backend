@@ -211,7 +211,9 @@ internal object CatalogGenesisProcessV1 {
         fun parseArguments(args: Array<String>) {
             when (this) {
                 AUTHOR -> ComplaintCatalogAuthorMain.parseArguments(args)
+
                 TARGET_FINALIZE -> ComplaintCatalogGenesisFinalizeMain.parseArguments(args)
+
                 PUBLISH, PUBLISH_RECOVER -> {
                     val command = ComplaintCatalogGenesisPublishMain.parseArguments(args)
                     requirePublication(command.recover == (this === PUBLISH_RECOVER), CatalogGenesisPublishFailureV1.INPUT_REFUSED)
@@ -233,9 +235,12 @@ internal object CatalogGenesisProcessV1 {
 
         fun closedExit(exit: CatalogGenesisExitV1): CatalogGenesisExitV1 = when (exit) {
             CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE -> if (this === AUTHOR) exit else CatalogGenesisExitV1.FAILED
+
             CatalogGenesisExitV1.PROJECTED -> if (this === TARGET_FINALIZE) exit else CatalogGenesisExitV1.FAILED
+
             CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED ->
                 if (this === PUBLISH || this === PUBLISH_RECOVER) exit else CatalogGenesisExitV1.FAILED
+
             else -> exit
         }
 
@@ -257,11 +262,15 @@ internal fun preferCatalogGenesisExit(previous: CatalogGenesisExitV1, next: Cata
 
 private fun catalogGenesisExitPriority(exit: CatalogGenesisExitV1): Int = when (exit) {
     CatalogGenesisExitV1.FATAL -> 4
+
     CatalogGenesisExitV1.CANCELLED -> 3
+
     CatalogGenesisExitV1.INTERRUPTED -> 2
+
     CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE, CatalogGenesisExitV1.PROJECTED,
     CatalogGenesisExitV1.AWAIT_REPLICATION, CatalogGenesisExitV1.DUAL_COPY_OBSERVED,
     -> 0
+
     else -> 1
 }
 
