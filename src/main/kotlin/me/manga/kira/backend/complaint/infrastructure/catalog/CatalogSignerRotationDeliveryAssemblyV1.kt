@@ -71,7 +71,11 @@ internal class CatalogSignerRotationDeliveryAssemblyV1(
                 )
                 round.requireRunning()
                 CatalogDualLocationVerifier.Overlap2Readback.verify(
-                    TimedReadback(adapter, round), inputs.initialBytes(), inputs.currentBytes(), policy, local,
+                    TimedReadback(adapter, round),
+                    inputs.initialBytes(),
+                    inputs.currentBytes(),
+                    policy,
+                    local,
                 )
             },
             round::close,

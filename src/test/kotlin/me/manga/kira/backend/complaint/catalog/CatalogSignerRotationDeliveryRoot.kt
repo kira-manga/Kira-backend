@@ -53,10 +53,7 @@ internal class CatalogSignerRotationDeliveryRoot(private val f: CatalogSignerRot
     val coordinator get() = process.pools.catalogCoordinator
     val phases: List<PersistencePhaseContext> get() = jdbc.observations.keys.toList()
 
-    fun prepare(
-        inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.freeze.d7.rawDocument),
-        sameD: Boolean = true,
-    ) {
+    fun prepare(inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.freeze.d7.rawDocument), sameD: Boolean = true) {
         val old = f.initial.coordinator
         val oldOwner = poolTestField<PersistenceJdbcLifecycleOwner>(old, "owner")
         assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, oldOwner.observeShutdown())

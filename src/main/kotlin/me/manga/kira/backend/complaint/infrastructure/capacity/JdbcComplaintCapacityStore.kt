@@ -521,7 +521,10 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 checkNotNull(store.expectedPolicyDigest) // readLockedLedger matched every locked row to this original P.
                 val balance = before.balance
                 check(balance.actual[ComplaintCapacityCounter.CATALOG_MUTATIONS] == 2L)
-                check(balance.actual[ComplaintCapacityCounter.STORAGE_BYTES] >= CatalogGenesisCapacity.storageBytes + CatalogSignerRotationCapacityV1.storageBytes)
+                check(
+                    balance.actual[ComplaintCapacityCounter.STORAGE_BYTES] >=
+                        CatalogGenesisCapacity.storageBytes + CatalogSignerRotationCapacityV1.storageBytes,
+                )
                 operation.requireCounterVerification(this, store.jdbc)
                 verified = true
             } catch (problem: Throwable) {
@@ -531,7 +534,10 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
         companion object {
             @Suppress("TooGenericExceptionCaught")
-            internal fun lock(store: JdbcComplaintCapacityStore, operation: CatalogSignerRotationFinalizationOperationV1): LockedCatalogSignerRotationFinalization {
+            internal fun lock(
+                store: JdbcComplaintCapacityStore,
+                operation: CatalogSignerRotationFinalizationOperationV1,
+            ): LockedCatalogSignerRotationFinalization {
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedCatalogSignerRotationFinalization(store, operation, store.readLockedLedger())

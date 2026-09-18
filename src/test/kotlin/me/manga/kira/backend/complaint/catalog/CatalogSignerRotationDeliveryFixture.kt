@@ -17,13 +17,11 @@ import java.nio.file.Path
 import java.sql.Timestamp
 import java.time.Instant
 
-internal fun withCatalogSignerRotationDelivery(
-    tls: VersionBoundPersistenceConnectedFixture,
-    test: (CatalogSignerRotationDeliveryFixture) -> Unit,
-) = CatalogSignerRotationDeliveryFixture(tls).use { fixture ->
-    fixture.prepare()
-    test(fixture)
-}
+internal fun withCatalogSignerRotationDelivery(tls: VersionBoundPersistenceConnectedFixture, test: (CatalogSignerRotationDeliveryFixture) -> Unit) =
+    CatalogSignerRotationDeliveryFixture(tls).use { fixture ->
+        fixture.prepare()
+        test(fixture)
+    }
 
 /** Same production initial-author prefix and TLS/PG carrier. No seeded signed2 row, fabricated lease or pre-published cloud object. */
 internal class CatalogSignerRotationDeliveryFixture(tls: VersionBoundPersistenceConnectedFixture) : AutoCloseable {

@@ -18,10 +18,8 @@ import java.util.UUID
 
 /** Fixed overlap2 finalization only. The private delivery owner supplies all authority and pre-entry buffers. */
 internal class JdbcCatalogSignerRotationFinalizationStoreV1(private val jdbc: JdbcTemplate) {
-    internal fun execute(
-        input: CatalogSignerRotationFinalizationInputV1,
-        capacity: JdbcComplaintCapacityStore,
-    ): CatalogSignerRotationFinalizationOperationV1 = CatalogSignerRotationFinalizationOperationV1.execute(jdbc, input, capacity)
+    internal fun execute(input: CatalogSignerRotationFinalizationInputV1, capacity: JdbcComplaintCapacityStore): CatalogSignerRotationFinalizationOperationV1 =
+        CatalogSignerRotationFinalizationOperationV1.execute(jdbc, input, capacity)
 }
 
 /** Original phase -> LIVE control -> exclusive catalog lock -> exact G1+2 history -> noncharging locked capacity verification. */
@@ -239,6 +237,7 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
             -> check(rows[1].same(before[1]))
 
             CatalogSignerRotationFinalizationKindV1.COMPLETE -> rows[1].requireCompletionOf(before[1])
+
             CatalogSignerRotationFinalizationKindV1.PROJECT -> rows[1].requireProjectionOf(before[1])
         }
     }
@@ -249,10 +248,7 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         stage = Stage.COUNTERS_LOCKING
     }
 
-    internal fun requireCounterVerification(
-        locked: JdbcComplaintCapacityStore.LockedCatalogSignerRotationFinalization,
-        selected: JdbcTemplate,
-    ) {
+    internal fun requireCounterVerification(locked: JdbcComplaintCapacityStore.LockedCatalogSignerRotationFinalization, selected: JdbcTemplate) {
         requireAt(Stage.VERIFYING_COUNTERS)
         check(counters === locked && selected === jdbc && checkNotNull(original).size == 2)
     }
@@ -300,6 +296,7 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
                     -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ
 
                     CatalogSignerRotationFinalizationKindV1.COMPLETE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE
+
                     CatalogSignerRotationFinalizationKindV1.PROJECT -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT
                 }
                 check(input.path === expectedPath)
@@ -396,8 +393,7 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
         check(sameFrozen(before) && copies.same(before.copies)) // projected_at is the only mutation column allowed to change.
     }
 
-    internal fun same(other: StoredSignerRotationFinalizationRowV1): Boolean =
-        sameFrozen(other) && copies.same(other.copies) && lifecycle.same(other.lifecycle)
+    internal fun same(other: StoredSignerRotationFinalizationRowV1): Boolean = sameFrozen(other) && copies.same(other.copies) && lifecycle.same(other.lifecycle)
 
     private fun sameFrozen(other: StoredSignerRotationFinalizationRowV1): Boolean =
         header.same(other.header) && approval.same(other.approval) && unsigned.same(other.unsigned) && envelope.same(other.envelope) &&
@@ -440,8 +436,12 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
         requireRotation()
         check(lifecycle.state == "COMPLETED" && copies.complete())
         return arrayOf(
-            copies.version, copies.retainUntil?.let(Timestamp::from),
-            copies.primary.bytes?.copyOf(), copies.primary.hash?.copyOf(), copies.replica.bytes?.copyOf(), copies.replica.hash?.copyOf(),
+            copies.version,
+            copies.retainUntil?.let(Timestamp::from),
+            copies.primary.bytes?.copyOf(),
+            copies.primary.hash?.copyOf(),
+            copies.replica.bytes?.copyOf(),
+            copies.replica.hash?.copyOf(),
         )
     }
 
@@ -469,8 +469,7 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
         fun same(other: Document): Boolean = bytes.contentEquals(other.bytes) && hash.contentEquals(other.hash)
 
         companion object {
-            fun copy(row: ResultSet, prefix: String): Document =
-                Document(row.getBytes("${prefix}_bytes")?.copyOf(), row.getBytes("${prefix}_hash")?.copyOf())
+            fun copy(row: ResultSet, prefix: String): Document = Document(row.getBytes("${prefix}_bytes")?.copyOf(), row.getBytes("${prefix}_hash")?.copyOf())
         }
     }
 
@@ -489,9 +488,13 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
 
         companion object {
             fun copy(row: ResultSet): Signers = Signers(
-                checkNotNull(row.getString("signer_policy")), checkNotNull(row.getString("signer_one_id")),
-                checkNotNull(row.getString("signer_one_algorithm")), checkNotNull(row.getBytes("signer_one_signature")).copyOf(),
-                row.getString("signer_two_id"), row.getString("signer_two_algorithm"), row.getBytes("signer_two_signature")?.copyOf(),
+                checkNotNull(row.getString("signer_policy")),
+                checkNotNull(row.getString("signer_one_id")),
+                checkNotNull(row.getString("signer_one_algorithm")),
+                checkNotNull(row.getBytes("signer_one_signature")).copyOf(),
+                row.getString("signer_two_id"),
+                row.getString("signer_two_algorithm"),
+                row.getBytes("signer_two_signature")?.copyOf(),
             )
         }
     }
@@ -508,8 +511,10 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
 
         companion object {
             fun copy(row: ResultSet): Copies = Copies(
-                row.getString("object_version"), row.getTimestamp("retain_until")?.toInstant(),
-                Document.copy(row, "primary_evidence"), Document.copy(row, "replica_evidence"),
+                row.getString("object_version"),
+                row.getTimestamp("retain_until")?.toInstant(),
+                Document.copy(row, "primary_evidence"),
+                Document.copy(row, "replica_evidence"),
             )
         }
     }
@@ -519,7 +524,9 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
 
         companion object {
             fun copy(row: ResultSet): Lifecycle = Lifecycle(
-                checkNotNull(row.getString("state")), row.getTimestamp("completed_at")?.toInstant(), row.getTimestamp("projected_at")?.toInstant(),
+                checkNotNull(row.getString("state")),
+                row.getTimestamp("completed_at")?.toInstant(),
+                row.getTimestamp("projected_at")?.toInstant(),
             )
         }
     }

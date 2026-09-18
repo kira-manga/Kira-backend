@@ -283,10 +283,8 @@ internal class CatalogSignerRotationSqlCall(val phase: PersistencePhaseContext, 
 }
 
 /** Same concrete snapshot/G1/lease/rotation executors and original coordinator; all SQL/results/transaction ownership are real. */
-internal class CatalogSignerRotationProbeJdbc(
-    private val coordinator: CatalogCoordinatorPersistence,
-    private val observeDeliveryQueries: Boolean = false,
-) : JdbcTemplate(coordinator.dataSource) {
+internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCoordinatorPersistence, private val observeDeliveryQueries: Boolean = false) :
+    JdbcTemplate(coordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<CatalogSignerRotationSqlCall>()
     val steps: List<String> get() = calls.map { it.step }
@@ -366,11 +364,14 @@ internal class CatalogSignerRotationProbeJdbc(
         }
         val step = when {
             observeDeliveryQueries && sql == DELIVERY_AUTHENTICATE -> "delivery-authenticate"
+
             observeDeliveryQueries && sql == DELIVERY_GATES -> "delivery-gates"
+
             path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> {
                 assertTrue(sql.trimStart().startsWith("WITH control AS ("))
                 "snapshot"
             }
+
             else -> step(sql, arguments)
         }
         calls.add(CatalogSignerRotationSqlCall(phase, step, arguments))
@@ -414,6 +415,7 @@ internal class CatalogSignerRotationProbeJdbc(
         }
     }
 
+    @Suppress("CyclomaticComplexMethod") // One exhaustive SQL-observation label table, not additional test paths or application control flow.
     private fun step(sql: String, arguments: Array<out Any?>): String = when (sql) {
         LOCK_COORDINATOR_LEASE_CONTROL -> "lease-lock"
 

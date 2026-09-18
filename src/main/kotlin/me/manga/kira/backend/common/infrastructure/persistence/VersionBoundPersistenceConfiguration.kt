@@ -166,6 +166,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     )
 
     /** Root construction calls this before any actor can start. No independent endpoint/trust pairing is accepted. */
+    @Suppress("ComplexCondition") // The four immutable finalization-purpose flags share the same closed configuration contract.
     internal fun adopt(
         root: PersistenceJdbcDriverRoot,
         actualEndpoint: ResolvedPersistenceEndpoint,
@@ -177,7 +178,9 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
-        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring || root.catalogSignerRotationDelivery) {
+        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring ||
+            root.catalogSignerRotationDelivery
+        ) {
             requireFinalizerConfiguration()
         }
         trust.adopt(root)

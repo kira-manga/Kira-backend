@@ -174,7 +174,10 @@ internal class CatalogSignerRotationDeliveryReleaseV1(
         requireCreated(
             CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME,
             record(
-                "projected2", envelopeHash, value.completedAt.toString(), checkNotNull(value.projectedAt).toString(),
+                "projected2",
+                envelopeHash,
+                value.completedAt.toString(),
+                checkNotNull(value.projectedAt).toString(),
                 *pendingAcquisitionValues(),
             ),
         )
@@ -221,8 +224,12 @@ internal class CatalogSignerRotationDeliveryReleaseV1(
         record("await-replication2", envelopeHash, proof.objectVersion, proof.retainUntilEpochSecond.toString())
 
     private fun dualRecord(proof: CatalogDualLocationVerifier.Overlap2Readback): ByteArray = record(
-        "dual-copy2", envelopeHash, proof.objectVersion, proof.retainUntilEpochSecond.toString(),
-        Sha256.hex(checkNotNull(proof.primaryEvidenceBytes())), Sha256.hex(checkNotNull(proof.replicaEvidenceBytes())),
+        "dual-copy2",
+        envelopeHash,
+        proof.objectVersion,
+        proof.retainUntilEpochSecond.toString(),
+        Sha256.hex(checkNotNull(proof.primaryEvidenceBytes())),
+        Sha256.hex(checkNotNull(proof.replicaEvidenceBytes())),
     )
 
     private fun inputLeaves(): List<Pair<CatalogSignerRotationReleaseLeafV1, ByteArray>> = listOf(

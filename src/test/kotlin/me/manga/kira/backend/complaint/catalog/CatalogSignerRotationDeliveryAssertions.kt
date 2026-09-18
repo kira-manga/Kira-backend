@@ -219,12 +219,7 @@ internal class CatalogSignerRotationDeliveryAssertions(private val f: CatalogSig
     }
 
     /** Independently decode write-once records against the actual DB acquisition, not owner-supplied record helpers. */
-    fun acquisitionRecord(
-        leaf: CatalogSignerRotationReleaseLeafV1,
-        kind: String,
-        head2: Boolean = false,
-        times: List<Timestamp> = emptyList(),
-    ) {
+    fun acquisitionRecord(leaf: CatalogSignerRotationReleaseLeafV1, kind: String, head2: Boolean = false, times: List<Timestamp> = emptyList()) {
         assertTrue(f.freeze.complete(leaf), leaf.name)
         val allocation = f.frozenPrefix.entries.single { it.key.fileName.toString() == "allocation" }.value.second
         val values = Json.parseToJsonElement(f.freeze.read(leaf).decodeToString()).jsonArray.map { it.jsonPrimitive.content }
@@ -348,7 +343,12 @@ internal class CatalogSignerRotationDeliveryAssertions(private val f: CatalogSig
             "completed_at", "projected_at",
         )
         private val COPY_COLUMNS = listOf(
-            "object_version", "retain_until", "primary_evidence_bytes", "primary_evidence_hash", "replica_evidence_bytes", "replica_evidence_hash",
+            "object_version",
+            "retain_until",
+            "primary_evidence_bytes",
+            "primary_evidence_hash",
+            "replica_evidence_bytes",
+            "replica_evidence_hash",
         )
     }
 }

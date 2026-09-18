@@ -351,6 +351,7 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ
 
             CatalogSignerRotationFinalizationKindV1.COMPLETE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE
+
             CatalogSignerRotationFinalizationKindV1.PROJECT -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT
         }
         if (kind === CatalogSignerRotationFinalizationKindV1.PROJECT) requirePendingIdentity() else requireActualLease()
@@ -360,7 +361,9 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         return try {
             val input = when (kind) {
                 CatalogSignerRotationFinalizationKindV1.INITIAL_READ -> CatalogSignerRotationFinalizationInputV1.initial(this)
+
                 CatalogSignerRotationFinalizationKindV1.RECHECK -> CatalogSignerRotationFinalizationInputV1.recheck(this, checkNotNull(preparedHistory))
+
                 CatalogSignerRotationFinalizationKindV1.COMPLETE ->
                     CatalogSignerRotationFinalizationInputV1.complete(this, checkNotNull(preparedHistory), checkNotNull(readback))
 
@@ -428,7 +431,10 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         inputs.requireMutation(local.mutation)
         val returned = retained.signatures()
         requireSignerRotation(local.mutation.signatureSlots.indices.all { local.mutation.signatureSlots[it].signatureBytes.contentEquals(returned[it]) })
-        requireSignerRotation(local.mutation.signedEnvelopeBytes.contentEquals(retained.envelopeBytes()), CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
+        requireSignerRotation(
+            local.mutation.signedEnvelopeBytes.contentEquals(retained.envelopeBytes()),
+            CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED,
+        )
     }
 
     private fun requirePreparedHistory(value: CatalogSignerRotationFinalizationObservationV1) {
@@ -522,7 +528,10 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
     /** Runs only under the already-locked LIVE row, both before the later-clock CAS and after its exact reread. */
     internal fun requireClosedLeaseControl(selected: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate) {
         requireLeaseAttempt(selected)
-        requireSignerRotation(jdbc.dataSource === source && originalPhase === PersistencePhaseOwnership.current(), CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        requireSignerRotation(
+            jdbc.dataSource === source && originalPhase === PersistencePhaseOwnership.current(),
+            CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
+        )
         val closed = jdbc.query(
             "SELECT (maintenance_closed AND creation_closed) IS TRUE AS gates_closed FROM complaint_journal_control " +
                 "WHERE data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid",
@@ -542,7 +551,9 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         requireSignerRotation(selectedKind === kind && !inputConstructionClaimed && activeInput == null, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         val allowed = when (kind) {
             CatalogSignerRotationFinalizationKindV1.INITIAL_READ -> stage === Stage.HISTORY && initialReadIssued && expected == null && proof == null
+
             CatalogSignerRotationFinalizationKindV1.RECHECK -> stage === Stage.RECHECK && recheckIssued && expected === preparedHistory && proof == null
+
             CatalogSignerRotationFinalizationKindV1.COMPLETE ->
                 stage === Stage.COMPLETE && completeIssued && completeArmed && expected === preparedHistory && proof === readback
 
@@ -724,7 +735,9 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         requireSignerRotation(candidate === ownership && selectedPath === path && !phaseEntered, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         when (path) {
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> requireSnapshotSelection(candidate)
+
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> requireLeaseAttempt(checkNotNull(binding))
+
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
@@ -741,7 +754,9 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         val authenticated = jdbc.query(
             "SELECT session_user = ? AND current_user = ? AND current_database() = ? AS authenticated",
             ResultSetExtractor { rows -> rows.next() && rows.getBoolean("authenticated") && !rows.wasNull() && !rows.next() },
-            username, username, database,
+            username,
+            username,
+            database,
         )
         requireSignerRotation(authenticated == true, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         requireRunning()
@@ -788,7 +803,9 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
     internal fun observeFailure(problem: Throwable) {
         val signal = when {
             problem is Error -> problem
+
             problem is CancellationException -> CancellationException("Catalog signer rotation delivery cancelled.")
+
             problem is InterruptedException || problem is InterruptedIOException ||
                 (problem is PersistencePhaseException && problem.code === PersistencePhaseFailureCode.INTERRUPTED) ||
                 (problem is CatalogReadbackException && problem.code === CatalogReadbackFailure.INTERRUPTED) ||
@@ -928,8 +945,22 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
     }
 
     private enum class Stage {
-        NEW, INPUTS, SNAPSHOT, READBACK, ACQUIRE, HISTORY, RECHECK, ARM_PUBLICATION, PUBLISH, EVIDENCE,
-        ARM_COMPLETE, COMPLETE, PENDING, ARM_PROJECT, PROJECT, CLOSED,
+        NEW,
+        INPUTS,
+        SNAPSHOT,
+        READBACK,
+        ACQUIRE,
+        HISTORY,
+        RECHECK,
+        ARM_PUBLICATION,
+        PUBLISH,
+        EVIDENCE,
+        ARM_COMPLETE,
+        COMPLETE,
+        PENDING,
+        ARM_PROJECT,
+        PROJECT,
+        CLOSED,
     }
 
     companion object {

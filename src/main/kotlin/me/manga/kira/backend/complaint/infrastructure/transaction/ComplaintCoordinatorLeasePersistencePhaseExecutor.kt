@@ -46,10 +46,7 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         return acquire(binding, null, original)
     }
 
-    internal fun acquireDelivery(
-        original: CatalogSignerRotationDeliveryV1,
-        binding: CatalogCoordinatorLeaseBindingV1,
-    ): CatalogCoordinatorLeaseAcquisitionV1 {
+    internal fun acquireDelivery(original: CatalogSignerRotationDeliveryV1, binding: CatalogCoordinatorLeaseBindingV1): CatalogCoordinatorLeaseAcquisitionV1 {
         original.requireLeaseSelection(ownership, jdbc, binding)
         return acquire(binding, null, delivery = original)
     }

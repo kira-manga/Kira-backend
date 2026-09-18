@@ -20,8 +20,10 @@ internal class PersistenceJdbcDriverRoot(
     init {
         check(
             !catalogSignerRotationDelivery ||
-                (!catalogSignerRotationAuthoring && !catalogSignerRotationRecovery && !desiredInstallationOperator &&
-                    !catalogGenesisAuthoring && !catalogGenesisFinalization && !sourceOnly && versionBound != null),
+                (
+                    !catalogSignerRotationAuthoring && !catalogSignerRotationRecovery && !desiredInstallationOperator &&
+                        !catalogGenesisAuthoring && !catalogGenesisFinalization && !sourceOnly && versionBound != null
+                    ),
         )
         check(
             !catalogSignerRotationAuthoring ||
@@ -74,7 +76,9 @@ internal class PersistenceJdbcDriverRoot(
             // Seal even direct/later requests on these original participants, not merely the public start facade.
             ordinary.forbidStarts()
             deletion.forbidStarts()
-            if (catalogGenesisFinalization || catalogSignerRotationRecovery || catalogSignerRotationAuthoring || catalogSignerRotationDelivery) {
+            val fixedFinalization = catalogGenesisFinalization || catalogSignerRotationRecovery ||
+                catalogSignerRotationAuthoring || catalogSignerRotationDelivery
+            if (fixedFinalization) {
                 epochRotationParticipant?.forbidStarts()
                 epochRotation?.seal() // Retain the exact dormant descriptor/inventory, never permit capture.
             }

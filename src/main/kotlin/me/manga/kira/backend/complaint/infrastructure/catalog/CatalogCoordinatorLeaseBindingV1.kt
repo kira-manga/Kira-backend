@@ -42,6 +42,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val journal = process.consumers.journalConfiguration
     private val writer = UUID.fromString(journal.declaration().writer.generationId)
     private val epochRotationMillis = journal.declaration().limits.deadlines.epochRotationMillis
+
     // A delivery raw tail may already be2 while SQL is still accepted1. Never promote that tail to B.
     private val accepted = catalog?.chain?.tail?.let { CatalogLocalHead(it.generation, it.envelopeSha256) }
         ?: checkNotNull(deliveryReadback).snapshotHead
@@ -179,7 +180,10 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireConnectionFree()
         requireRecoveredSignerRotationProcess(selected, original)
         val observed = readback.commonHeadEvidence()
-        requireCatalogReadback(observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
+        requireCatalogReadback(
+            observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust,
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
     }
 
     internal fun startInitialAuthorSignerRotationBudget(
@@ -218,9 +222,13 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireConnectionFree()
         requireInitialAuthorSignerRotationProcess(selected, original)
         val observed = readback.commonHeadEvidence()
-        requireCatalogReadback(observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
+        requireCatalogReadback(
+            observed.chain.tail == checkNotNull(catalog).chain.tail && observed.chain.trust == catalog.chain.trust,
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
     }
 
+    @Suppress("ComplexCondition") // Check the exact retained owner plus every incompatible named purpose together.
     internal fun requireInitialAuthorPurpose(original: CatalogSignerRotationInitialAuthorV1) {
         if (initialAuthor !== original || !coordinator.catalogSignerRotationAuthoring || preparedRecovery != null || delivery != null) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
@@ -244,6 +252,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         }
     }
 
+    @Suppress("ComplexCondition") // Check the exact retained owner plus every incompatible named purpose together.
     internal fun requireDeliveryPurpose(original: CatalogSignerRotationDeliveryV1) {
         if (delivery !== original || !coordinator.catalogSignerRotationDelivery || preparedRecovery != null || initialAuthor != null) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)

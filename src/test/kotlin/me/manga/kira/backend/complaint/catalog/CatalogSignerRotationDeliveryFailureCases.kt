@@ -294,11 +294,7 @@ internal class CatalogSignerRotationDeliveryFailureCases(private val f: CatalogS
         return { reached }
     }
 
-    private fun assertUnknown(
-        root: CatalogSignerRotationDeliveryRoot,
-        original: CatalogSignerRotationDeliveryV1,
-        phase: PersistencePhaseContext,
-    ) {
+    private fun assertUnknown(root: CatalogSignerRotationDeliveryRoot, original: CatalogSignerRotationDeliveryV1, phase: PersistencePhaseContext) {
         assertRetainedUnknownPhase(original, phase)
         assertSticky(root, original)
     }

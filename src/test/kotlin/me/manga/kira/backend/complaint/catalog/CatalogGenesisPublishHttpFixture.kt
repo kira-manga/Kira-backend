@@ -167,7 +167,9 @@ internal class CatalogGenesisPublishHttpFixture(
             val cursor = request.firstMatchingRawQueryParameter("key-marker").orElse(null)?.let {
                 CatalogListCursor(it, request.firstMatchingRawQueryParameter("version-id-marker").orElseThrow())
             }
-            val offset = if (cursor == null) 0 else {
+            val offset = if (cursor == null) {
+                0
+            } else {
                 val found = versions.indexOfFirst { it.key == cursor.keyMarker && it.versionId == cursor.versionIdMarker }
                 check(found >= 0)
                 found + 1

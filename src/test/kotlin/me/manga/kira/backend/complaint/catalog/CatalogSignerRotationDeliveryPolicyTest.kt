@@ -63,7 +63,12 @@ class CatalogSignerRotationDeliveryPolicyTest {
         val proof = readback(State.PREPARED_DUAL_COPY, settings)
         reject(CatalogReadbackFailure.INVALID_POLICY) { settings.verifySignerRotationDelivery(proof, evaluatedAt.plusSeconds(1)) }
         val projected = VersionBoundCatalogReadbackConfigurationV1.fromIndependentProjectedInputs(
-            fixture.initial, fixture.current, fixture.policy().chain, fixture.head(1).envelopeSha256, S3CatalogReadbackLimits(), 1000,
+            fixture.initial,
+            fixture.current,
+            fixture.policy().chain,
+            fixture.head(1).envelopeSha256,
+            S3CatalogReadbackLimits(),
+            1000,
         )
         reject(CatalogReadbackFailure.INVALID_POLICY) { projected.verifySignerRotationDelivery(proof, evaluatedAt) }
         reject(CatalogReadbackFailure.HEAD_CONFLICT) { settings("0".repeat(64)).verifySignerRotationDelivery(proof, evaluatedAt) }
@@ -71,7 +76,12 @@ class CatalogSignerRotationDeliveryPolicyTest {
 
     private fun settings(pin: String = fixture.head(1).envelopeSha256): VersionBoundCatalogReadbackConfigurationV1 =
         VersionBoundCatalogReadbackConfigurationV1.fromIndependentInputs(
-            fixture.initial, fixture.current, fixture.policy().chain, pin, S3CatalogReadbackLimits(), 1000,
+            fixture.initial,
+            fixture.current,
+            fixture.policy().chain,
+            pin,
+            S3CatalogReadbackLimits(),
+            1000,
         )
 
     private fun readback(
@@ -83,12 +93,18 @@ class CatalogSignerRotationDeliveryPolicyTest {
         val unsigned = OfflineCatalogRotationFixture.manifestBytes(overlap.manifest)
         val bytes = envelope
         val mutation = CatalogFrozenMutation(
-            1, overlap.manifest.operationToken, unsigned, Sha256.hex(unsigned), bytes, Sha256.hex(bytes),
+            1,
+            overlap.manifest.operationToken,
+            unsigned,
+            Sha256.hex(unsigned),
+            bytes,
+            Sha256.hex(bytes),
             overlap.signatures.map { CatalogFrozenSignatureSlot(it.keyId, it.algorithmId, Base64.getDecoder().decode(it.signatureBase64)) },
         )
         val local = if (state == State.PROJECTION_PENDING_DUAL_COPY) {
             LocalCatalogSnapshot.ProjectionPending(
-                CatalogLocalHead(2, Sha256.hex(bytes)), CatalogFrozenProjection(overlap.manifest.operationToken, bytes, Sha256.hex(bytes)),
+                CatalogLocalHead(2, Sha256.hex(bytes)),
+                CatalogFrozenProjection(overlap.manifest.operationToken, bytes, Sha256.hex(bytes)),
             )
         } else {
             LocalCatalogSnapshot.Prepared(fixture.head(1), mutation)

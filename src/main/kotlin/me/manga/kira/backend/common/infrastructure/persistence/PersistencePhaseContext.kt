@@ -948,7 +948,8 @@ constructor(
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
-            ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
+            ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
+            ?: signerRotationDeliveryWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -993,7 +994,8 @@ constructor(
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget ?: catalogSignerRotationAttempt?.budget ?: catalogPublisherAttempt?.budget
+            signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget ?: catalogSignerRotationAttempt?.budget
+                ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
         catalogBudget?.let {
             return it.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
@@ -1423,6 +1425,7 @@ constructor(
     }
 
     /** Separate fixed delivery boundary. A freeze/recovery input can never select COMPLETE or PROJECT. */
+    @Suppress("ComplexCondition") // Keep this closed boundary's exact original input, owner, phase and cleanup checks explicit.
     private inner class CatalogSignerRotationFinalizationBoundary : PersistenceCatalogSignerRotationFinalizationV1 {
         private var selectedInput: CatalogSignerRotationFinalizationInputV1? = null
         private var retained: CatalogSignerRotationFinalizationOperationV1? = null

@@ -120,9 +120,11 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         delivery: CatalogSignerRotationDeliveryV1? = null,
     ): CatalogSnapshotRows {
         requireConnectionFree()
-        val phase = delivery?.let(ownership::enterComplaintCatalogSnapshot) ?: initialAuthor?.let(ownership::enterComplaintCatalogSnapshot) ?: recovery?.let(ownership::enterComplaintCatalogSnapshot)
-            ?: finalizer?.let(ownership::enterComplaintCatalogSnapshot) ?: author?.let(ownership::enterComplaintCatalogSnapshot)
-            ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
+        val phase =
+            delivery?.let(ownership::enterComplaintCatalogSnapshot) ?: initialAuthor?.let(ownership::enterComplaintCatalogSnapshot)
+                ?: recovery?.let(ownership::enterComplaintCatalogSnapshot)
+                ?: finalizer?.let(ownership::enterComplaintCatalogSnapshot) ?: author?.let(ownership::enterComplaintCatalogSnapshot)
+                ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
         var captured: CatalogSnapshotReadOperation? = null
         var closingFailure: Throwable? = null
         try {

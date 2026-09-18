@@ -30,6 +30,7 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ
 
         CatalogSignerRotationFinalizationKindV1.COMPLETE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE
+
         CatalogSignerRotationFinalizationKindV1.PROJECT -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT
     }
     private val inputs = original.inputs
@@ -114,8 +115,10 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
         internal fun initial(original: CatalogSignerRotationDeliveryV1): CatalogSignerRotationFinalizationInputV1 =
             create(original, CatalogSignerRotationFinalizationKindV1.INITIAL_READ, null, null)
 
-        internal fun recheck(original: CatalogSignerRotationDeliveryV1, expected: CatalogSignerRotationFinalizationObservationV1): CatalogSignerRotationFinalizationInputV1 =
-            create(original, CatalogSignerRotationFinalizationKindV1.RECHECK, expected, null)
+        internal fun recheck(
+            original: CatalogSignerRotationDeliveryV1,
+            expected: CatalogSignerRotationFinalizationObservationV1,
+        ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.RECHECK, expected, null)
 
         internal fun complete(
             original: CatalogSignerRotationDeliveryV1,
@@ -123,8 +126,10 @@ internal class CatalogSignerRotationFinalizationInputV1 private constructor(
             readback: CatalogDualLocationVerifier.Overlap2Readback,
         ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.COMPLETE, expected, readback)
 
-        internal fun project(original: CatalogSignerRotationDeliveryV1, expected: CatalogSignerRotationFinalizationObservationV1): CatalogSignerRotationFinalizationInputV1 =
-            create(original, CatalogSignerRotationFinalizationKindV1.PROJECT, expected, null)
+        internal fun project(
+            original: CatalogSignerRotationDeliveryV1,
+            expected: CatalogSignerRotationFinalizationObservationV1,
+        ): CatalogSignerRotationFinalizationInputV1 = create(original, CatalogSignerRotationFinalizationKindV1.PROJECT, expected, null)
 
         private fun create(
             original: CatalogSignerRotationDeliveryV1,
