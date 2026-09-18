@@ -236,7 +236,7 @@ class VersionBoundTestNamespaceProcessV1Test {
         }
 
     @Test
-    fun `exact TEST J reader original coordinator and lane binding cannot be replaced by equal-looking owners`() =
+    fun `exact TEST J reader original coordinator and lane binding cannot be replaced by equal-looking owners`(): Unit =
         ComplaintProcessPoolFixture().use { database ->
             ComplaintProcessPoolFixture().use { replacement ->
                 val fixture = BoundTestComplaintConsumerFixture()

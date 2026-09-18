@@ -190,7 +190,7 @@ class VersionBoundTestActivationConfigurationV1Test {
         }
 
     @Test
-    fun `selected key requires exact current-bundle public material algorithm and fingerprint not an ID or supplied hash alone`() =
+    fun `selected key requires exact current-bundle public material algorithm and fingerprint not an ID or supplied hash alone`(): Unit =
         ComplaintProcessPoolFixture().use { database ->
             val pools = database.bind()
             val journal = fullTestJournal()
