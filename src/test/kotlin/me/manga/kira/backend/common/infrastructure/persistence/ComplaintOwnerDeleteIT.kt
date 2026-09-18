@@ -709,7 +709,10 @@ class ComplaintOwnerDeleteIT {
             f.assertCounterDelta(counters, OwnerDeleteLiteralCharges.authorization, OwnerDeleteLiteralCharges.promise,
                 OwnerDeleteLiteralCharges.ordinaryApply, OwnerDeleteLiteralCharges.content)
         }
-        withFixture { f ->
+        withOwnerDelete(database.value, ordinaryMaximumPoolSize = 3) { f ->
+            // The held edit and status/preflight need two real ordinary owners: P=3 yields P-1=2.
+            assertEquals(3, f.base.ordinary.pool.ordinaryPoolSize())
+            assertEquals(2, f.base.ordinary.admission.ownerLimit)
             val attempt = f.attempt(report(f).id)
             val wire = f.wire(attempt)
             val before = f.counters()
@@ -722,6 +725,7 @@ class ComplaintOwnerDeleteIT {
                     val edit = callers.launch { f.send(editInput(f, attempt.id, attempt.key), http) }
                     gate.awaitEntered()
                     try {
+                        assertEquals(1, f.base.ordinary.admission.activeOwners())
                         f.creator.problem(f.send(f.statusInput(attempt), http), 404, "OPERATION_NOT_FOUND")
                         val refused = f.send(f.input(attempt), http)
                         f.creator.problem(refused, 409, "IDEMPOTENCY_IN_PROGRESS")

@@ -72,8 +72,12 @@ import java.util.concurrent.CopyOnWriteArrayList
 import javax.sql.DataSource
 
 /** Reuses the existing ordinary/deletion lifecycle verbatim. No launcher, pool, controller or activation is added. */
-internal fun withOwnerDelete(database: PgLifecycleDatabaseFixture, test: (OwnerDeleteFixture) -> Unit) {
-    withOwnerDeleteAllAuthorization(database) { existing ->
+internal fun withOwnerDelete(database: PgLifecycleDatabaseFixture, test: (OwnerDeleteFixture) -> Unit) =
+    withOwnerDelete(database, ordinaryMaximumPoolSize = 2, test = test)
+
+/** Explicit real-pool sizing for paired ordinary callers; the ordinary P-minus-one budget is unchanged. */
+internal fun withOwnerDelete(database: PgLifecycleDatabaseFixture, ordinaryMaximumPoolSize: Int, test: (OwnerDeleteFixture) -> Unit) {
+    withOwnerDeleteAllAuthorization(database, ordinaryMaximumPoolSize = ordinaryMaximumPoolSize) { existing ->
         OrdinaryComplaintTestInstallationFixture(existing.base).use { run ->
             OwnerDeleteFixture(existing, run).use(test)
         }

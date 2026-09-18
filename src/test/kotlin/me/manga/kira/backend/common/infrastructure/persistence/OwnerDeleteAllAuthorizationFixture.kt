@@ -82,9 +82,10 @@ import java.util.concurrent.atomic.AtomicReference
 internal fun withOwnerDeleteAllAuthorization(
     database: PgLifecycleDatabaseFixture,
     endpoint: ResolvedPersistenceEndpoint? = null,
+    ordinaryMaximumPoolSize: Int = 2,
     test: (OwnerDeleteAllAuthorizationFixture) -> Unit,
 ) {
-    withOrdinarySourceGrantCleanup(database, SystemPersistenceNanoClock, 2, includeAuditEntities = true, candidateEndpoint = endpoint) { ordinary ->
+    withOrdinarySourceGrantCleanup(database, SystemPersistenceNanoClock, ordinaryMaximumPoolSize, includeAuditEntities = true, candidateEndpoint = endpoint) { ordinary ->
         SyntheticComplaintCounters(ordinary.foreignTemplate(), ordinary.cutoff).use { counters ->
             counters.seed(0, closed = false)
             OrdinaryComplaintInstallationEnrollmentFixture(ordinary, counters).use { base ->
