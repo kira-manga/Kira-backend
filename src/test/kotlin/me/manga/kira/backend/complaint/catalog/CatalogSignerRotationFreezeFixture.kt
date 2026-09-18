@@ -12,10 +12,14 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisApprovalV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisEnvelopeV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogRotationManifestV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundComplaintProcessConfiguration
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseLeafV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -67,16 +71,31 @@ internal class CatalogSignerRotationFreezeFixture(tls: VersionBoundPersistenceCo
     val token: UUID get() = UUID.fromString(manifest.operationToken)
 
     fun prepare(profile: String) {
-        d7.prepare(profile) { process ->
-            val coordinator = process.pools.catalogCoordinator
-            val observed = CatalogSignerRotationProbeJdbc(coordinator)
-            // One actual JdbcTemplate is retained by BOTH the real lease campaign and the real rotation executor.
-            coordinator.javaClass.getDeclaredField("leaseExecutor").also { it.isAccessible = true }
-                .set(coordinator, ComplaintCoordinatorLeasePersistencePhaseExecutor(coordinator, observed))
-            coordinator.javaClass.getDeclaredField("signerRotationExecutor").also { it.isAccessible = true }
-                .set(coordinator, ComplaintCatalogSignerRotationPersistencePhaseExecutor(coordinator, observed))
-            jdbc = observed
-        }
+        d7.prepare(profile, beforeLease = ::installProbe)
+        prepareRelease()
+        jdbc.resetObservations() // Do not count the genuine prerequisite lease as a rotation READ/PREPARE/CAS.
+    }
+
+    /** Cold production TARGET-only initial-author route; caller retains its concrete session before preparation. */
+    fun assembleInitialAuthor(): ComplaintDesiredProcessAssemblyV1 = d7.assembleInitialAuthor().also {
+        installProbe(process)
+        install("executor", ComplaintCatalogSnapshotPhaseExecutor(coordinator.ownership, JdbcCatalogSnapshotReader(jdbc)))
+        install("genesisExecutor", ComplaintCatalogGenesisPersistencePhaseExecutor(coordinator.ownership, jdbc))
+        prepareRelease()
+    }
+
+    private fun installProbe(process: VersionBoundComplaintProcessConfiguration) {
+        jdbc = CatalogSignerRotationProbeJdbc(process.pools.catalogCoordinator)
+        // One actual JdbcTemplate is retained before BOTH the campaign and rotation executor can bind.
+        install("leaseExecutor", ComplaintCoordinatorLeasePersistencePhaseExecutor(coordinator, jdbc))
+        install("signerRotationExecutor", ComplaintCatalogSignerRotationPersistencePhaseExecutor(coordinator, jdbc))
+    }
+
+    private fun install(name: String, executor: Any) {
+        coordinator.javaClass.getDeclaredField(name).also { it.isAccessible = true }.set(coordinator, executor)
+    }
+
+    private fun prepareRelease() {
         val genesis = Json.decodeFromString(OfflineCatalogGenesisEnvelopeV1.serializer(), d7.envelope.decodeToString())
         manifest = OfflineCatalogRotationFixture.manifest(genesis, 2, d7.envelope, "ROTATION_OVERLAP", listOf("catalog-old", "catalog-new"))
         assertEquals(
@@ -89,7 +108,6 @@ internal class CatalogSignerRotationFreezeFixture(tls: VersionBoundPersistenceCo
             PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")),
         )
         request = request(manifest)
-        jdbc.resetObservations() // Do not count the genuine prerequisite lease as a rotation READ/PREPARE/CAS.
     }
 
     fun invocation(): CatalogSignerRotationFreezeInvocation = CatalogSignerRotationFreezeInvocation(this).also(invocations::add)

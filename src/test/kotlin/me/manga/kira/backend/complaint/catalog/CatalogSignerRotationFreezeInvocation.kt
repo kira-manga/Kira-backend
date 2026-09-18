@@ -14,17 +14,26 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.ACQUIRE_COORDINATO
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINALIZATION
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxSignerRotationReleaseFilesV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_COORDINATOR_LEASE_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_GENESIS_FINALIZATION
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_GENESIS_FINAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_CURRENT_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.RELINQUISH_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.TRY_CATALOG_LOCK
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_COMPLETION
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_HEAD
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_INITIAL_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_PROJECTION
 import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_SIGNATURE
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
@@ -47,11 +56,14 @@ import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
 
 /** Actual one-shot owner and two real SDK responses; only raw HTTP is synthetic, never a Sign result/phase/campaign. */
-internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSignerRotationFreezeFixture) {
+internal class CatalogSignerRotationFreezeInvocation(
+    private val f: CatalogSignerRotationFreezeFixture,
+    private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+) {
     private val caller = Thread.currentThread()
     val signing = AwsJournalKmsFixture()
     val readback = CatalogSignerRotationReadbackHttpFixture(f.d7)
-    val operator = CatalogSignerRotationFreezeV1.withHttpFixtures(
+    val operator = initialAuthor?.beginFreeze() ?: CatalogSignerRotationFreezeV1.withHttpFixtures(
         f.process,
         f.campaign,
         signing::httpClient,
@@ -151,7 +163,8 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
         assertOriginalFilesClosed()
         assertEquals(signing.createdClients, signing.returnedClientCloses)
         assertSyntheticTransportsDisposed()
-        assertNull(poolTestField<AtomicReference<Any?>>(f.coordinator.catalogRefreshCustody, "active").get())
+        val active = poolTestField<AtomicReference<Any?>>(f.coordinator.catalogRefreshCustody, "active").get()
+        if (initialAuthor == null) assertNull(active) else assertSame(initialAuthor, active)
         assertEquals(reserved, poolTestField<Boolean>(attempt, "reserved"))
         assertEquals(reserved, poolTestField<Boolean>(attempt, "released"))
         assertTrue(poolTestField<Boolean>(operator, "closed"))
@@ -250,7 +263,7 @@ internal class CatalogSignerRotationSqlCall(val phase: PersistencePhaseContext, 
     val arguments: List<Any?> = arguments.map { if (it is ByteArray) it.copyOf() else it }
 }
 
-/** Same concrete lease/rotation executors and original coordinator; all SQL/results/transaction ownership are real. */
+/** Same concrete snapshot/G1/lease/rotation executors and original coordinator; all SQL/results/transaction ownership are real. */
 internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCoordinatorPersistence) : JdbcTemplate(coordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<CatalogSignerRotationSqlCall>()
@@ -298,6 +311,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(1, coordinator.activeSnapshotOwners())
         assertEquals(path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, holder.connection.isReadOnly)
+        // This fixture leaves the role default READ COMMITTED unchanged; G1/lease do not acquire rotation's explicit override.
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, holder.connection.transactionIsolation)
         assertEquals(sql.count { it == '?' }, arguments.size)
         if (phase !in observations) {
@@ -311,7 +325,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(3))
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(4))
                     assertTrue(row.getBoolean(5) && !row.wasNull())
-                    // Snapshot is read-only and leases stay row-only; only rotation data phases take the shared epoch fence.
+                    // Snapshot is read-only and leases stay row-only; original G1 and rotation data phases take the shared epoch fence.
                     val sharedFence = expectedSharedFence(path)
                     assertEquals(sharedFence, row.getBoolean(6))
                     val found = row.getInt(1) to row.getLong(2)
@@ -347,6 +361,8 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
+        PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
         -> true
 
         else -> error("Unexpected signer rotation/lease phase.")
@@ -385,6 +401,22 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         INSERT_SIGNER_ROTATION_PREPARED -> "prepare"
 
         WRITE_SIGNER_ROTATION_SIGNATURE -> "signature"
+
+        LOCK_GENESIS_FINAL_CONTROL -> "genesis-control"
+
+        READ_GENESIS_FINAL_CONTROL -> "genesis-control-read"
+
+        LOCK_GENESIS_FINALIZATION -> "genesis-history-lock"
+
+        READ_GENESIS_FINALIZATION -> "genesis-history-read"
+
+        WRITE_GENESIS_COMPLETION -> "genesis-complete"
+
+        WRITE_GENESIS_HEAD -> "genesis-head"
+
+        WRITE_GENESIS_PROJECTION -> "genesis-project"
+
+        WRITE_GENESIS_INITIAL_CONTROL -> "genesis-initial"
 
         else -> when {
             sql.contains("FROM complaint_capacity_counters") -> "counters"

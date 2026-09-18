@@ -8,6 +8,8 @@ import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationFreezeCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationInitialAuthorCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationInitialAuthorCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationPreparedRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryIdentityCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryLeaseCut
@@ -32,6 +34,7 @@ import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
 import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationFreeze
+import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationInitialAuthor
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
@@ -446,6 +449,25 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `catalog author original begin budget and throwing signer cleanup never release a result or revive the owner`() = withFixture { tls ->
         withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).originalBudgetAndSignerCleanup() }
+    }
+
+    @Test
+    fun `initial TARGET D7 bootstraps G1 and keeps one campaign across freeze continuation and no Sign resume`() = withFixture { tls ->
+        withCatalogSignerRotationInitialAuthor(tls) { CatalogSignerRotationInitialAuthorCases(it).bootstrapAndSameSessionContinuation() }
+    }
+
+    @Test
+    fun `initial TARGET D7 ACQUIRE UNKNOWN stays retained after original root retirement`() = withFixture { tls ->
+        withCatalogSignerRotationInitialAuthor(tls) { CatalogSignerRotationInitialAuthorCases(it).acquireUnknownSurvivesOriginalRootRetirement() }
+    }
+
+    @Test
+    fun `initial TARGET D7 original bootstrap budget cancellation and child fatal keep their session blocked`() {
+        CatalogSignerRotationInitialAuthorCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationInitialAuthor(tls) { CatalogSignerRotationInitialAuthorCases(it).originalBudgetAndSignals(cut) }
+            }
+        }
     }
 
     @Test

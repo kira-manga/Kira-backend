@@ -35,8 +35,9 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
     private val core = CatalogSignerRotationFreezeCases(f)
 
     /** Real first Sign/CAS/custody and third READ rollback, not seeded SQL, fabricated signatures or a replacement campaign. */
-    internal fun signatureOnePersistedPrefix(): CatalogSignerRotationFreezeInvocation {
-        val partial = f.invocation()
+    internal fun signatureOnePersistedPrefix(
+        partial: CatalogSignerRotationFreezeInvocation = f.invocation(),
+    ): CatalogSignerRotationFreezeInvocation {
         var readPhases = 0
         var refusedBeforeSecondArm = false
         f.jdbc.beforeSql = { step ->

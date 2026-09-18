@@ -179,6 +179,57 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     val retainUntil: Instant get() = Instant.ofEpochSecond(freeze.manifest.creation.createdAtEpochSecond).atOffset(ZoneOffset.UTC).plusYears(10).toInstant()
 
     fun prepare(profile: String = "D7", totalAttemptMillis: Long = 30_000, beforeLease: (VersionBoundComplaintProcessConfiguration) -> Unit = {}) {
+        prepareFirstD(profile, totalAttemptMillis)
+        val pin = Sha256.hex(envelope)
+        startRuntime()
+        genesisWire = CatalogSignerRotationReadbackHttpFixture(this)
+        refresh = CurrentAcceptedCatalogRefreshV1.withHttpFixture(
+            process,
+            S3CatalogReadbackFixture.credentials,
+            S3CatalogReadbackFixture.credentials,
+            genesisWire::httpClient,
+            wallClock,
+            clock::nanoTime,
+        ).use { it.refresh() }
+        genesisWire.assertCompletedReadbacks(1)
+        assertEquals(1L, refresh.catalogFor(process).chain.tail.generation)
+        assertEquals(pin, refresh.catalogFor(process).chain.tail.envelopeSha256)
+        assertEquals("COMPLETED", genesisRow()["state"])
+        assertTrue(genesisRow()["projected_at"] != null)
+        assertArrayEquals(envelope, genesisRow()["envelope_bytes"] as ByteArray)
+        assertEquals(1L, observer.queryForObject("SELECT count(*) FROM complaint_catalog_mutations", Long::class.java))
+        beforeLease(process) // Same concrete executors/JdbcTemplate instrumentation, before any campaign can retain that identity.
+        val binding = CatalogCoordinatorLeaseBindingV1.fromRetained(process, refresh)
+        val beforeLeaseAt = databaseNow()
+        originalLease = coordinator.lease.acquire(binding)
+        val afterLeaseAt = databaseNow()
+        val receipt = lease.receipt
+        assertEquals(CatalogCoordinatorLeaseTransitionV1.ACQUIRED, receipt.transition)
+        assertFalse(receipt.sampledAt.isBefore(beforeLeaseAt) || receipt.sampledAt.isAfter(afterLeaseAt))
+        assertEquals(Duration.ofSeconds(30), Duration.between(receipt.sampledAt, checkNotNull(receipt.expiresAt)))
+        assertEquals(1L, receipt.token)
+        assertArrayEquals(selectedHash, process.configurationHashBytes())
+        released()
+    }
+
+    /** Same genuine AUTHOR/first-D prefix; unlike prepare(), no controlled ordinary runtime, refresh or lease is created. */
+    fun assembleInitialAuthor(): ComplaintDesiredProcessAssemblyV1 {
+        prepareFirstD("D7", 30_000, epochInventory = true)
+        val assembly = ComplaintDesiredProcessAssemblyV1.withClockFixture(clock)
+        runtime = assembly // Retain the actual root before its cold construction, including a partial failure.
+        assembly.assembleTargetSignerRotationAuthor(
+            inputs,
+            DesiredInstallationInputFixture.acquired(inputs, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray(), targetOnly = true),
+            null,
+        )
+        process = assembly.target
+        assertArrayEquals(selectedHash, process.configurationHashBytes())
+        assertSame(clock, coordinator.ownership.nanoClock)
+        assertNull(originalLease)
+        return assembly
+    }
+
+    private fun prepareFirstD(profile: String, totalAttemptMillis: Long, epochInventory: Boolean = false) {
         desired.prepare()
         val base = desired.document
         val capacity = ComplaintDesiredDeploymentJsonV1.parse(CatalogSignerRotationD7Inputs.bytes(base)).capacity
@@ -214,6 +265,7 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         released.assertReleased()
         assertEquals(0, released.signing.createdClients)
         document = CatalogSignerRotationD7Inputs.document(base, source.initial, source.current, pin, frozenRequest.chainPolicy, profile, totalAttemptMillis)
+        if (epochInventory) document = document.copy(epochRotation = true) // Before raw parsing/first-D, never retrofitted onto retained D.
         rawDocument = CatalogSignerRotationD7Inputs.bytes(document)
         inputs = ComplaintDesiredDeploymentJsonV1.parse(rawDocument)
         val release = ComplaintSignedGenesisFirstDInputsV1.fromRaw(source.intent, source.initial, source.current, envelope, pin)
@@ -240,35 +292,6 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
         frozenFiles = Files.walk(source.releaseRoot.resolve("genesis")).use { entries ->
             entries.filter { Files.isRegularFile(it, NOFOLLOW_LINKS) }.toList().associateWith(Files::readAllBytes)
         }
-        startRuntime()
-        genesisWire = CatalogSignerRotationReadbackHttpFixture(this)
-        refresh = CurrentAcceptedCatalogRefreshV1.withHttpFixture(
-            process,
-            S3CatalogReadbackFixture.credentials,
-            S3CatalogReadbackFixture.credentials,
-            genesisWire::httpClient,
-            wallClock,
-            clock::nanoTime,
-        ).use { it.refresh() }
-        genesisWire.assertCompletedReadbacks(1)
-        assertEquals(1L, refresh.catalogFor(process).chain.tail.generation)
-        assertEquals(pin, refresh.catalogFor(process).chain.tail.envelopeSha256)
-        assertEquals("COMPLETED", genesisRow()["state"])
-        assertTrue(genesisRow()["projected_at"] != null)
-        assertArrayEquals(envelope, genesisRow()["envelope_bytes"] as ByteArray)
-        assertEquals(1L, observer.queryForObject("SELECT count(*) FROM complaint_catalog_mutations", Long::class.java))
-        beforeLease(process) // Same concrete executors/JdbcTemplate instrumentation, before any campaign can retain that identity.
-        val binding = CatalogCoordinatorLeaseBindingV1.fromRetained(process, refresh)
-        val beforeLeaseAt = databaseNow()
-        originalLease = coordinator.lease.acquire(binding)
-        val afterLeaseAt = databaseNow()
-        val receipt = lease.receipt
-        assertEquals(CatalogCoordinatorLeaseTransitionV1.ACQUIRED, receipt.transition)
-        assertFalse(receipt.sampledAt.isBefore(beforeLeaseAt) || receipt.sampledAt.isAfter(afterLeaseAt))
-        assertEquals(Duration.ofSeconds(30), Duration.between(receipt.sampledAt, checkNotNull(receipt.expiresAt)))
-        assertEquals(1L, receipt.token)
-        assertArrayEquals(selectedHash, process.configurationHashBytes())
-        released()
     }
 
     private fun startRuntime() {
