@@ -331,18 +331,18 @@ internal class CatalogSignerRotationDeliveryAssertions(private val f: CatalogSig
     private fun SdkHttpRequest.header(name: String): String = firstMatchingHeader(name).orElseThrow()
 
     companion object {
-        private val ROTATION_COLUMNS = listOf(
+        internal val ROTATION_COLUMNS = listOf(
             "operation_token", "catalog_writer_generation", "approval_bytes", "approval_hash", "unsigned_bytes", "unsigned_hash",
             "signer_one_id", "signer_one_algorithm", "signer_two_id", "signer_two_algorithm", "object_key", "created_at", "predecessor_hash",
             "signer_one_signature", "signer_two_signature", "envelope_bytes", "envelope_hash",
         )
-        private val GENESIS_COLUMNS = listOf(
+        internal val GENESIS_COLUMNS = listOf(
             "operation_token", "catalog_writer_generation", "approval_bytes", "approval_hash", "unsigned_bytes", "unsigned_hash",
             "signer_one_id", "signer_one_algorithm", "signer_one_signature", "envelope_bytes", "envelope_hash", "object_key", "created_at",
             "object_version", "retain_until", "primary_evidence_bytes", "primary_evidence_hash", "replica_evidence_bytes", "replica_evidence_hash",
             "completed_at", "projected_at",
         )
-        private val COPY_COLUMNS = listOf(
+        internal val COPY_COLUMNS = listOf(
             "object_version",
             "retain_until",
             "primary_evidence_bytes",

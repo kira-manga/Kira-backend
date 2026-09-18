@@ -5,6 +5,10 @@ import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCliCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationColdCommitCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationColdRecoveryCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationColdRecoveryRefusalCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationColdRefusalCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationDeliveryCases
@@ -593,13 +597,35 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     @Test
-    fun `fixed overlap2 UNKNOWN COMPLETE keeps original authority and refuses cold finalization`() = withFixture { tls ->
-        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationDeliveryFailureCases(it).unknownCompleteRetainsOriginalAuthority() }
+    fun `fixed overlap2 cold pending2 needs fresh actual lease before separate PROJECT`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationColdRecoveryCases(it).knownPendingNeedsFreshLease() }
     }
 
     @Test
-    fun `fixed overlap2 UNKNOWN PROJECT keeps original pending authority and refuses cold finalization`() = withFixture { tls ->
-        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationDeliveryFailureCases(it).unknownProjectRetainsOriginalPendingAuthority() }
+    fun `fixed overlap2 cold COMPLETE arm reconciles actual prepared or pending without repeating committed effects`() {
+        CatalogSignerRotationColdCommitCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationColdRecoveryCases(it).completeArmReconcilesActualState(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fixed overlap2 cold PROJECT arm reconciles actual pending or projected without rewriting provenance`() {
+        CatalogSignerRotationColdCommitCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationColdRecoveryCases(it).projectArmReconcilesActualState(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fixed overlap2 cold recovery refuses partial custody and contradictory pending or raw copy evidence`() {
+        CatalogSignerRotationColdRefusalCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationColdRecoveryRefusalCases(it).refuses(cut) }
+            }
+        }
     }
 
     @Test

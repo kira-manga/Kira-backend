@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicReference
  * cannot supply Sign/PUT credentials. The original release lock, refresh slot and allowance span
  * COMPLETE -> PROJECT; a private pending capability is issued only after actual commit AND release.
  *
- * Fresh recovery can reconcile actual PREPARED1/pending2/projected2 under a new DB-time lease.
+ * Fresh recovery can reconcile actual PREPARED2/head1, pending2 or projected2 under a new DB-time lease.
  * Its DB-only grant never restores an older owner's spent phase/slot, deadline or cleanup proof.
  * The caller separately retains, prepares and retires its original TARGET-only process assembly.
  */
@@ -555,7 +555,7 @@ internal class CatalogSignerRotationDeliveryV1 private constructor(
         checkNotNull(release).requireObservedHistory(value)
     }
 
-    /** Expected freeze prefix on cold recovery, actual snapshot mutation on PREPARED1. SQL must prove its own matching full history. */
+    /** Expected freeze prefix on cold recovery, actual snapshot mutation on PREPARED2/head1. SQL must prove its own matching full history. */
     internal fun frozenMutation(): CatalogFrozenMutation {
         requireConnectionFree()
         requireRunning()

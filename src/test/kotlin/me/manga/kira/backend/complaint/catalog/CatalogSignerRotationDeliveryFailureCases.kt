@@ -1,16 +1,12 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.Sha256
-import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
-import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
-import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredDeploymentJsonV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryStateV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseLeafV1
@@ -19,8 +15,6 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.IOException
 import java.sql.Timestamp
 import java.util.HexFormat
@@ -205,73 +199,6 @@ internal class CatalogSignerRotationDeliveryFailureCases(private val f: CatalogS
         observed.preparedHead1()
     }
 
-    fun unknownCompleteRetainsOriginalAuthority() {
-        f.awaitActualLeaseExpiry()
-        f.http.replicateOnPut = true
-        CatalogSignerRotationDeliveryRoot(f).use { root ->
-            root.prepare()
-            val original = root.begin()
-            val fault = unknownCommit(root, "final-head", PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE)
-            try {
-                assertEquals(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN, f.core.refused { root.publish(original) }.code)
-            } finally {
-                root.jdbc.afterSql = {}
-            }
-            assertTrue(fault())
-            val phase = root.phases.last()
-            assertUnknown(root, original, phase)
-            observed.preparedHead1() // PG rejected the actual COMMIT, but this owner conservatively retains UNKNOWN, not observer-derived rollback authority.
-            observed.singlePut()
-            assertTrue(f.freeze.complete(CatalogSignerRotationReleaseLeafV1.PUBLICATION_DUAL_COPY))
-            assertTrue(f.freeze.complete(CatalogSignerRotationReleaseLeafV1.COMPLETE_ARMED))
-            observed.acquisitionRecord(CatalogSignerRotationReleaseLeafV1.COMPLETE_ARMED, "complete-armed")
-            assertFalse(f.freeze.exists(CatalogSignerRotationReleaseLeafV1.COMPLETE_OUTCOME))
-            assertFalse(f.freeze.exists(CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED))
-            root.retireRoot()
-            assertRetainedUnknownPhase(original, phase)
-            assertStickyAfterRetirement(root, original)
-        }
-        assertColdFinalizationRefused() // Unknown COMPLETE recovery is explicitly deferred, not fabricated from row equality.
-    }
-
-    fun unknownProjectRetainsOriginalPendingAuthority() {
-        f.awaitActualLeaseExpiry()
-        f.http.replicateOnPut = true
-        CatalogSignerRotationDeliveryRoot(f).use { root ->
-            root.prepare()
-            val original = root.begin()
-            assertEquals(CatalogSignerRotationDeliveryStateV1.PROJECTION_PENDING, root.publish(original).state)
-            val completed = observed.pendingHead2()
-            observed.pendingOwner(original)
-            val before = f.freeze.state()
-            val fault = unknownCommit(root, "final-clear-pending", PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT)
-            try {
-                assertEquals(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN, f.core.refused { root.project(original) }.code)
-            } finally {
-                root.jdbc.afterSql = {}
-            }
-            assertTrue(fault())
-            val phase = root.phases.last()
-            assertUnknown(root, original, phase)
-            assertEquals(before, f.freeze.state())
-            assertEquals(completed, observed.pendingHead2())
-            observed.singlePut()
-            assertTrue(f.freeze.complete(CatalogSignerRotationReleaseLeafV1.COMPLETE_OUTCOME))
-            assertTrue(f.freeze.complete(CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED))
-            observed.acquisitionRecord(
-                CatalogSignerRotationReleaseLeafV1.PROJECT_ARMED,
-                "project-armed",
-                head2 = true,
-                times = listOf(completed),
-            )
-            assertFalse(f.freeze.exists(CatalogSignerRotationReleaseLeafV1.PROJECT_OUTCOME))
-            root.retireRoot()
-            assertRetainedUnknownPhase(original, phase)
-            assertStickyAfterRetirement(root, original)
-        }
-        assertColdFinalizationRefused() // A new process cannot mint the private pending continuation or its original deadline.
-    }
-
     private fun refuseWithoutAcquisition(root: CatalogSignerRotationDeliveryRoot, label: String) {
         val before = f.freeze.state()
         val leaves = f.freeze.snapshotLeaves()
@@ -283,42 +210,6 @@ internal class CatalogSignerRotationDeliveryFailureCases(private val f: CatalogS
         assertTrue(root.jdbc.calls.drop(start).none { it.step == "lease-acquire" || it.step.startsWith("final-") }, label)
         assertEquals(0, f.http.put.createdClients)
         f.freeze.assertLeavesUnchanged(leaves)
-    }
-
-    /** The original selected datasource/holder executes a genuine deferred-constraint COMMIT failure. No outcome flag is assigned by the fixture. */
-    private fun unknownCommit(root: CatalogSignerRotationDeliveryRoot, step: String, path: PersistencePhasePath): () -> Boolean {
-        var reached = false
-        root.jdbc.afterSql = { actual ->
-            if (actual == step) {
-                assertFalse(reached)
-                val phase = checkNotNull(PersistencePhaseOwnership.current())
-                assertEquals(path, poolTestField<PersistencePhasePath>(phase, "path"))
-                val resources = TransactionSynchronizationManager.getResourceMap()
-                assertEquals(setOf(root.coordinator.dataSource), resources.keys)
-                val owned = JdbcTemplate(root.coordinator.dataSource)
-                owned.execute("CREATE TEMP TABLE kira_overlap2_final_commit (id int UNIQUE DEFERRABLE INITIALLY DEFERRED)")
-                assertEquals(2, owned.update("INSERT INTO kira_overlap2_final_commit VALUES (1), (1)"))
-                assertSame(phase, PersistencePhaseOwnership.current())
-                assertEquals(resources.keys, TransactionSynchronizationManager.getResourceMap().keys)
-                assertSame(
-                    resources.getValue(root.coordinator.dataSource),
-                    TransactionSynchronizationManager.getResource(root.coordinator.dataSource),
-                )
-                reached = true
-            }
-        }
-        return { reached }
-    }
-
-    private fun assertUnknown(root: CatalogSignerRotationDeliveryRoot, original: CatalogSignerRotationDeliveryV1, phase: PersistencePhaseContext) {
-        assertRetainedUnknownPhase(original, phase)
-        assertSticky(root, original)
-    }
-
-    private fun assertRetainedUnknownPhase(original: CatalogSignerRotationDeliveryV1, phase: PersistencePhaseContext) {
-        assertSame(phase, ownedCutField(original, "originalPhase"))
-        assertEquals(PersistenceDatabaseOutcome.UNKNOWN, phase.databaseOutcome())
-        assertTrue(poolTestField<Boolean>(original, "outcomeUncertain"))
     }
 
     private fun assertSticky(root: CatalogSignerRotationDeliveryRoot, original: CatalogSignerRotationDeliveryV1) {
@@ -345,22 +236,5 @@ internal class CatalogSignerRotationDeliveryFailureCases(private val f: CatalogS
         assertFalse(poolTestField<Boolean>(original, "released"))
         assertEquals(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN, f.core.refused(original::close).code)
         assertFalse(poolTestField<Boolean>(original, "cleanupProven"))
-    }
-
-    private fun assertColdFinalizationRefused() {
-        val before = f.freeze.state()
-        val leaves = f.freeze.snapshotLeaves()
-        val reads = f.http.read.createdClients
-        CatalogSignerRotationDeliveryRoot(f).use { cold ->
-            cold.prepare()
-            val original = cold.begin()
-            assertEquals(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED, f.core.refused { cold.recover(original) }.code)
-            cold.assertReleased(original)
-            assertTrue(cold.jdbc.calls.isEmpty())
-            assertEquals(reads, f.http.read.createdClients)
-            assertEquals(before, f.freeze.state())
-            f.freeze.assertLeavesUnchanged(leaves)
-            f.assertNoFurtherSign()
-        }
     }
 }

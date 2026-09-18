@@ -3,7 +3,7 @@
 `CatalogSignerRotationDeliveryV1` is an internal programmatic owner for **signed PREPARED2 →
 conditional PRIMARY publication → COMPLETE/head2/pending2 → separate PROJECT**. It is not a
 service, CLI, ordinary runtime launch, general publisher or activation3 implementation. The same
-`recover` entry also reconciles actual PREPARED1, pending2 or already-projected2 for NEW backend
+`recover` entry also reconciles actual PREPARED2/head1, pending2 or already-projected2 for NEW backend
 data. No old Firestore data is imported or recovered by this route.
 At recovery source handoff, compilation, statics, tests and runtime/provider execution are **NOT_RUN**.
 Acceptance belongs only to a later primary-controlled exact-source gate packet.

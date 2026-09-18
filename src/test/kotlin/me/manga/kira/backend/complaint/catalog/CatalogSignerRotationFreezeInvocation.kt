@@ -15,6 +15,9 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPendingLeaseSqlV1.ACQUIRE_SIGNER_ROTATION_PENDING_LEASE
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPendingLeaseSqlV1.LOCK_SIGNER_ROTATION_PENDING_LEASE_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPendingLeaseSqlV1.READ_SIGNER_ROTATION_PENDING_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
@@ -22,10 +25,14 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINAL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_INITIAL_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PENDING_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PENDING_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PREPARED_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PREPARED_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxSignerRotationReleaseFilesV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_COORDINATOR_LEASE_CONTROL
@@ -33,6 +40,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.READ_GENESIS_FINAL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_GENESIS_FINAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_CURRENT_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_INITIAL_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PENDING_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PENDING_LEASE
@@ -423,6 +432,12 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
         ACQUIRE_COORDINATOR_LEASE -> "lease-acquire"
 
+        LOCK_SIGNER_ROTATION_PENDING_LEASE_CONTROL -> "pending-lease-lock"
+
+        READ_SIGNER_ROTATION_PENDING_LEASE_CONTROL -> "pending-lease-read"
+
+        ACQUIRE_SIGNER_ROTATION_PENDING_LEASE -> "pending-lease-acquire"
+
         RELINQUISH_COORDINATOR_LEASE -> "lease-relinquish"
 
         LOCK_SIGNER_ROTATION_CONTROL -> "control"
@@ -482,6 +497,16 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         WRITE_SIGNER_ROTATION_FINAL_HEAD -> "final-head"
         WRITE_SIGNER_ROTATION_FINAL_PROJECTION -> "final-project"
         WRITE_SIGNER_ROTATION_FINAL_CLEAR_PENDING -> "final-clear-pending"
+        else -> coldFinalizationStep(sql)
+    }
+
+    private fun coldFinalizationStep(sql: String): String? = when (sql) {
+        LOCK_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL -> "final-projected-control"
+        LOCK_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY -> "final-initial-pending-history-lock"
+        READ_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY -> "final-initial-pending-history-read"
+        LOCK_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY -> "final-initial-projected-history-lock"
+        READ_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY -> "final-initial-projected-history-read"
+        LOCK_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY -> "final-projected-history-lock"
         else -> null
     }
 
