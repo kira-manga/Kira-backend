@@ -45,10 +45,7 @@ import java.sql.SQLException
 import java.util.concurrent.atomic.AtomicReference
 
 /** Existing resolver-SPI acquisition, passing exactly TARGET bindings; no configuration-operator root or provider call. */
-internal fun signerRotationRecoveryAcquired(
-    inputs: ComplaintDesiredDeploymentInputsV1,
-    password: ByteArray,
-): List<AcquiredVersionedSecret> {
+internal fun signerRotationRecoveryAcquired(inputs: ComplaintDesiredDeploymentInputsV1, password: ByteArray): List<AcquiredVersionedSecret> {
     val target = inputs.targetBindings().map(::targetFinalizerBindingFields)
     return DesiredInstallationInputFixture.acquired(inputs, password, targetOnly = true).also {
         assertEquals(target, it.map { acquired -> targetFinalizerBindingFields(acquired.descriptor) })
@@ -104,10 +101,7 @@ internal class CatalogSignerRotationPreparedRecoveryFixture(private val f: Catal
     val coordinator get() = process.pools.catalogCoordinator
     val phases: List<PersistencePhaseContext> get() = jdbc.observations.keys.toList()
 
-    fun prepare(
-        inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.d7.rawDocument),
-        sameD: Boolean = true,
-    ) {
+    fun prepare(inputs: ComplaintDesiredDeploymentInputsV1 = ComplaintDesiredDeploymentJsonV1.parse(f.d7.rawDocument), sameD: Boolean = true) {
         val oldOwner = poolTestField<PersistenceJdbcLifecycleOwner>(f.coordinator, "owner")
         assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, oldOwner.observeShutdown())
         assembly.assembleTargetSignerRotationRecovery(
@@ -155,10 +149,7 @@ internal class CatalogSignerRotationPreparedRecoveryFixture(private val f: Catal
         f.d7.wallClock,
     ).also(attempts::add)
 
-    fun resume(
-        original: CatalogSignerRotationPreparedRecoveryV1,
-        request: CatalogSignerRotationFreezeRequestV1 = f.request,
-    ) = try {
+    fun resume(original: CatalogSignerRotationPreparedRecoveryV1, request: CatalogSignerRotationFreezeRequestV1 = f.request) = try {
         original.resume(request, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
     } finally {
         assertNoLostAssertions()

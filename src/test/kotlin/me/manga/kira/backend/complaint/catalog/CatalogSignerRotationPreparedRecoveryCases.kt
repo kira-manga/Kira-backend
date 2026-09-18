@@ -150,12 +150,15 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
         preparedPrefix()
         when (cut) {
             CatalogSignerRotationRecoveryIdentityCut.BINDING_MISSING -> Files.delete(f.path(CatalogSignerRotationReleaseLeafV1.BINDING))
+
             CatalogSignerRotationRecoveryIdentityCut.SIGNATURE_MARKER_MISSING ->
                 Files.delete(f.marker(CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO))
+
             CatalogSignerRotationRecoveryIdentityCut.SIGNATURE_ONE_REGRESSED -> assertEquals(
                 1,
                 f.observer.update("UPDATE complaint_catalog_mutations SET signer_one_signature = NULL WHERE operation_token = ?", f.token),
             )
+
             else -> Unit
         }
         val before = f.state()
@@ -257,7 +260,9 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
                     fired = true
                     when (cut) {
                         CatalogSignerRotationRecoveryProviderCut.BUDGET_AFTER_RAW -> fresh.clock.extraNanos += 60_000_000_000L
+
                         CatalogSignerRotationRecoveryProviderCut.CLOSE_FAILURE -> throw IOException("synthetic-private-recovery-close")
+
                         CatalogSignerRotationRecoveryProviderCut.CANCELLATION_AFTER_LEASE ->
                             throw CancellationException("synthetic-private-recovery-cancel")
                     }
@@ -340,11 +345,16 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
             assertNull(f.row()["envelope_hash"])
         }
         for (leaf in listOf(
-            CatalogSignerRotationReleaseLeafV1.SIGN_ONE_RETURNED, CatalogSignerRotationReleaseLeafV1.SIGNATURE_ONE,
-            CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED, CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED,
-            CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO, CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_ONE_RETURNED,
+            CatalogSignerRotationReleaseLeafV1.SIGNATURE_ONE,
+            CatalogSignerRotationReleaseLeafV1.SIGN_ONE_SQL_PERSISTED,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED,
+            CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO,
+            CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED,
             CatalogSignerRotationReleaseLeafV1.ENVELOPE,
-        )) assertTrue(f.complete(leaf), leaf.name)
+        )) {
+            assertTrue(f.complete(leaf), leaf.name)
+        }
         assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_PERSISTED))
         assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME))
         if (relinquish) {
@@ -369,12 +379,7 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
         assertEquals(0L, f.clock.extraNanos)
     }
 
-    private fun assertNewLease(
-        fresh: CatalogSignerRotationPreparedRecoveryFixture,
-        before: Map<String, Any?>,
-        lower: Instant,
-        upper: Instant,
-    ) {
+    private fun assertNewLease(fresh: CatalogSignerRotationPreparedRecoveryFixture, before: Map<String, Any?>, lower: Instant, upper: Instant) {
         val actual = leaseRow()
         val owner = actual["lease_owner"] as UUID
         val token = actual["lease_token"] as Long
@@ -409,13 +414,15 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
         val sentinel = Any()
         var bound = false
         fresh.jdbc.afterSql = { step ->
-            if (step == "snapshot") TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
-                override fun afterCommit() {
-                    TransactionSynchronizationManager.bindResource(key, sentinel)
-                    bound = true
-                    error("Synthetic snapshot completion with original Spring resource unresolved.")
-                }
-            })
+            if (step == "snapshot") {
+                TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
+                    override fun afterCommit() {
+                        TransactionSynchronizationManager.bindResource(key, sentinel)
+                        bound = true
+                        error("Synthetic snapshot completion with original Spring resource unresolved.")
+                    }
+                })
+            }
         }
         try {
             assertEquals(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN, core.refused { fresh.resume(original) }.code)
@@ -471,10 +478,7 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
         return fresh.phases.last().also { assertEquals(PersistenceDatabaseOutcome.UNKNOWN, it.databaseOutcome()) }
     }
 
-    private fun assertSticky(
-        fresh: CatalogSignerRotationPreparedRecoveryFixture,
-        original: CatalogSignerRotationPreparedRecoveryV1,
-    ) {
+    private fun assertSticky(fresh: CatalogSignerRotationPreparedRecoveryFixture, original: CatalogSignerRotationPreparedRecoveryV1) {
         assertSame(original, fresh.active())
         assertFalse(poolTestField<Boolean>(original, "released"))
         assertFalse(poolTestField<Boolean>(original, "cleanupProven"))
