@@ -5,14 +5,17 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPoolPreparation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
+import me.manga.kira.backend.common.infrastructure.persistence.PoolLifecycle
 import me.manga.kira.backend.common.infrastructure.persistence.actualPool
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
@@ -46,6 +49,7 @@ import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.HexFormat
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicReference
 
 /** Genuine freeze/first-D/current recheck, raw SDK and Linux custody. Synthetic fixtures are not cloud, approval or crash-durability qualification. */
 internal class CatalogGenesisPublishCases(private val f: CatalogGenesisPublishFixture) {
@@ -133,10 +137,18 @@ internal class CatalogGenesisPublishCases(private val f: CatalogGenesisPublishFi
         assertSecretInventory(different)
         assertNoPublication()
         val badPassword = f.invocation().apply { operatorPasswordOverride = "synthetic-wrong-config-operator-password".toByteArray() }
-        refused { badPassword.execute() } // Real verify-full TLS/SCRAM failure, not a supplied authentication Boolean or SET ROLE.
+        refused { badPassword.execute() } // Wrong acquired material on the actual fixed-login route, not a supplied authentication Boolean or SET ROLE.
         badPassword.fixtureCleanup()
         assertSecretInventory(badPassword)
-        assertTrue(badPassword.scopes.getValue("operatorOwner").catalogEntries().isNotEmpty())
+        // The original stock-pool warm-up retains its ticket after retirement; a live ledger is not invocation history.
+        // These are warm-up entry/refusal facts, not an assertion of a particular native SQLSTATE or SCRAM diagnostic.
+        val warmup: CatalogCoordinatorPoolPreparation = poolTestField(checkNotNull(badPassword.coordinator).dataSource, "catalogPreparation")
+        val initialization: PoolLifecycle.Acquisition = poolTestField(warmup, "initialization")
+        assertTrue(initialization.entered())
+        assertTrue(initialization.actualFrameEnded())
+        val warmupState: AtomicReference<PersistenceLifecycleObservation> = poolTestField(warmup, "state")
+        assertEquals(PersistenceLifecycleObservation.UNAVAILABLE, warmupState.get())
+        assertTrue(badPassword.scopes.getValue("operatorOwner").catalogEntries().isEmpty())
         assertTrue(badPassword.phases.isEmpty())
         assertNoPublication()
         assertTrue(f.http.read.requests.isEmpty())
@@ -378,7 +390,7 @@ internal class CatalogGenesisPublishCases(private val f: CatalogGenesisPublishFi
         f.assertUnchangedFreeze()
     }
 
-    fun acknowledgedOutcomeSurvivesReadbackCutsAndConflicts() {
+    fun acknowledgedOutcomeSurvivesCancelledReadbackAndConflicts() {
         val before = f.state()
         val first = f.invocation()
         var outcomeBeforeRead = false
@@ -386,14 +398,13 @@ internal class CatalogGenesisPublishCases(private val f: CatalogGenesisPublishFi
             if (f.http.put.requests.isNotEmpty()) {
                 assertTrue(f.complete(OUTCOME))
                 outcomeBeforeRead = true
-                throw InterruptedException(PRIVATE)
+                throw CancellationException(PRIVATE)
             }
         }
         try {
-            assertSanitized(assertThrows<InterruptedException> { first.execute() })
-            assertTrue(Thread.currentThread().isInterrupted)
+            assertSanitized(assertThrows<CancellationException> { first.execute() })
+            assertFalse(Thread.currentThread().isInterrupted)
         } finally {
-            Thread.interrupted() // Restore the SAME_THREAD carrier only; this is not resumed command work.
             f.http.beforeRead = {}
         }
         first.fixtureCleanup()

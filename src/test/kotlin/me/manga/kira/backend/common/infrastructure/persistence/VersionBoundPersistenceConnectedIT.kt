@@ -504,8 +504,8 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     @Test
-    fun `catalog publisher acknowledged outcome precedes interrupted readback and survives conflicting fresh observations`() = withFixture { tls ->
-        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).acknowledgedOutcomeSurvivesReadbackCutsAndConflicts() }
+    fun `catalog publisher acknowledged outcome precedes cancelled readback and survives conflicting fresh observations`() = withFixture { tls ->
+        withCatalogGenesisPublish(tls) { CatalogGenesisPublishCases(it).acknowledgedOutcomeSurvivesCancelledReadbackAndConflicts() }
     }
 
     @Test
