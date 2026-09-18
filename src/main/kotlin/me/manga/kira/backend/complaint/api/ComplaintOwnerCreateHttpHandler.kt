@@ -12,6 +12,9 @@ import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.domain.ComplaintIdentifiers
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditInput
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditPrecondition
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditStatusQuery
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
@@ -29,13 +32,23 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.charset.CharacterCodingException
 import java.nio.charset.CodingErrorAction
+import java.util.UUID
 
 /** Fixed create/reply/status POST routes, intentionally UNREGISTERED. Production's closed graph is unchanged. */
 internal class ComplaintOwnerCreateHttpHandler(
     private val service: ComplaintOwnerCreateService,
     private val ingress: ComplaintIngressAdmission,
     private val responses: ComplaintOwnerOperationResponse = ComplaintOwnerOperationResponse(),
+    private val editStatus: ComplaintOwnerEditHttpHandler? = null,
 ) : HttpRequestHandler {
+    init {
+        require(editStatus == null || editStatus.sharesOwner(ingress, responses)) { "Complaint status composition refused." }
+    }
+
+    internal fun hasEditStatus(): Boolean = editStatus != null
+
+    internal fun usesEditStatus(handler: ComplaintOwnerEditHttpHandler): Boolean = editStatus === handler
+
     override fun handleRequest(request: HttpServletRequest, response: HttpServletResponse) = responseBoundary(request, response) {
         ingress.withIngress(request) { context -> exchangeHttp(request, response, context) }
     }
@@ -90,7 +103,15 @@ internal class ComplaintOwnerCreateHttpHandler(
             val body = body(request)
             val receipt = try {
                 if (statusLookup) {
-                    service.status(context, bearer, ComplaintOwnerOperationJson.status(body))
+                    when (val query = ComplaintOwnerOperationJson.statusInput(body)) {
+                        is ComplaintOwnerStatusInput.Creation -> service.status(context, bearer, query.query)
+                        is ComplaintOwnerStatusInput.Edit -> {
+                            val selected = editStatus ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+                            body.fill(0)
+                            selected.handleStatusWithinIngress(response, context, bearer, query.query, permit)
+                            return@use
+                        }
+                    }
                 } else if (reply != null) {
                     service.reply(context, bearer, ComplaintOwnerOperationJson.reply(body, checkNotNull(key), reply.groupValues[1]))
                 } else {
@@ -225,6 +246,12 @@ internal class ComplaintOwnerCreateHttpHandler(
     }
 }
 
+/** Only these fixed status producers can be dispatched; edit never enters the creation enum/tuple/receipt. */
+internal sealed interface ComplaintOwnerStatusInput {
+    class Creation(val query: ComplaintOwnerStatusQuery) : ComplaintOwnerStatusInput
+    class Edit(val query: ComplaintOwnerEditStatusQuery) : ComplaintOwnerStatusInput
+}
+
 /** Closed structural parser only. It cannot supply authenticated scope/platform or normalize prose. */
 internal object ComplaintOwnerOperationJson {
     private val mapper = ObjectMapper(
@@ -254,11 +281,30 @@ internal object ComplaintOwnerOperationJson {
         )
     }
 
-    fun status(body: ByteArray): ComplaintOwnerStatusQuery = parse {
+    fun status(body: ByteArray): ComplaintOwnerStatusQuery = when (val parsed = statusInput(body)) {
+        is ComplaintOwnerStatusInput.Creation -> parsed.query
+        is ComplaintOwnerStatusInput.Edit -> rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+    }
+
+    fun statusInput(body: ByteArray): ComplaintOwnerStatusInput = parse {
         val root = read(body, setOf("operation", "key", "targetIds", "fingerprint"))
         val ids = root["targetIds"]
         require(ids.isArray && ids.size() in 1..2 && ids.all { it.isTextual })
-        ComplaintOwnerStatusQuery(string(root, "operation"), string(root, "key"), ids.map { it.textValue() }, string(root, "fingerprint"))
+        val operation = string(root, "operation")
+        if (operation == "OWNER_EDIT") {
+            ComplaintOwnerStatusInput.Edit(ComplaintOwnerEditStatusQuery(string(root, "key"), ids.map { it.textValue() }, string(root, "fingerprint")))
+        } else {
+            ComplaintOwnerStatusInput.Creation(
+                ComplaintOwnerStatusQuery(operation, string(root, "key"), ids.map { it.textValue() }, string(root, "fingerprint")),
+            )
+        }
+    }
+
+    fun edit(body: ByteArray, key: String, target: UUID, precondition: ComplaintOwnerEditPrecondition): ComplaintOwnerEditInput = parse {
+        val root = read(body)
+        val subject = if (root.has("subject")) string(root, "subject") else null
+        fields(root, if (subject == null) setOf("body") else setOf("subject", "body"))
+        ComplaintOwnerEditInput(target, ComplaintIdentifiers.idempotencyKey(key), subject, string(root, "body"), precondition)
     }
 
     fun reply(body: ByteArray, key: String, parentId: String): ComplaintOwnerReplyInput = parse {
@@ -279,12 +325,13 @@ internal object ComplaintOwnerOperationJson {
         )
     }
 
-    private fun read(body: ByteArray, expected: Set<String>): JsonNode {
+    private fun read(body: ByteArray, expected: Set<String>? = null): JsonNode {
         require(body.size <= ComplaintOwnerCreateHttpHandler.MAX_BODY_BYTES)
         val text = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
             .decode(ByteBuffer.wrap(body)).toString()
         val root = mapper.readTree(text)
-        fields(root, expected)
+        require(root != null && root.isObject)
+        if (expected != null) fields(root, expected)
         return root
     }
 

@@ -329,6 +329,118 @@ class RequestBodySizeLimitFilterTest {
         assertEquals(listOf("/*"), body.urlPatterns.toList())
     }
 
+    @Test
+    fun `owner create reply edit and status share sixteen KiB before replay with declared unknown and chunked framing`() {
+        assertEquals(16384, RequestBodySizeLimitFilter.MAX_OWNER_BODY_BYTES)
+        for ((method, path) in OWNER_PATHS) {
+            for (framing in listOf("declared", "unknown", "chunked")) {
+                val request = GeneratedBodyRequest(16384, if (framing == "declared") 16384 else -1, path, method, "{}".toByteArray())
+                if (framing == "chunked") request.addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
+                var reached = false
+                val response = MockHttpServletResponse()
+                filter.doFilter(request, response, FilterChain { wrapped, _ ->
+                    reached = true
+                    val replay = wrapped as HttpServletRequest
+                    assertEquals(16384L, replay.contentLengthLong)
+                    assertEquals(16384, replay.inputStream.readAllBytes().size)
+                    assertEquals(16384, replay.inputStream.readAllBytes().size)
+                })
+                assertTrue(reached)
+                assertEquals(1, request.streamAccesses)
+                assertEquals(16384, request.bytesRead)
+            }
+        }
+    }
+
+    @Test
+    fun `owner prebuffer stops streamed false small and giant bodies at limit plus one or rejects declared size before stream`() {
+        for ((method, path) in OWNER_PATHS) {
+            for (framing in listOf("unknown", "chunked", "zero", "small")) {
+                val declared = when (framing) { "zero" -> 0L; "small" -> 2L; else -> -1L }
+                val request = GeneratedBodyRequest(Int.MAX_VALUE, declared, path, method, SUBMITTED_VALUE.toByteArray())
+                if (framing == "chunked") request.addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
+                assertOwnerRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 16385)
+            }
+            for (length in listOf("16385", Long.MAX_VALUE.toString(), "9".repeat(60))) {
+                val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method).apply { addHeader(HttpHeaders.CONTENT_LENGTH, length) }
+                assertOwnerRejected(request, 413, "PAYLOAD_TOO_LARGE")
+            }
+            assertOwnerRejected(GeneratedBodyRequest(2, 3, path, method), 400, "VALIDATION_FAILED", consumed = 2)
+            assertOwnerRejected(GeneratedBodyRequest(3, 2, path, method), 400, "VALIDATION_FAILED", consumed = 3)
+        }
+    }
+
+    @Test
+    fun `owner media framing raw field lengths and duplicate security fields are rejected before buffering`() {
+        for ((method, path) in OWNER_PATHS) {
+            for (media in listOf("", "text/plain", "application/json; charset=utf-16", "application/json; x=y", " ".repeat(129) + "application/json")) {
+                val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method, rawContentTypes = listOf(media))
+                assertOwnerRejected(request, 415, "UNSUPPORTED_MEDIA_TYPE")
+            }
+            assertOwnerRejected(
+                GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method, rawContentTypes = listOf("application/json", "application/json")),
+                400, "VALIDATION_FAILED",
+            )
+            val invalidFields = listOf(
+                HttpHeaders.CONTENT_LENGTH to "+1", HttpHeaders.CONTENT_LENGTH to " ".repeat(64) + "1",
+                HttpHeaders.TRANSFER_ENCODING to "gzip, chunked", HttpHeaders.TRANSFER_ENCODING to "chunked;extra",
+                "Authorization" to "Bearer " + "x".repeat(4104), "X-Kira-Idempotency-Key" to "x".repeat(37),
+                "X-Kira-Complaint-Contract" to "2",
+            )
+            for ((name, value) in invalidFields) {
+                assertOwnerRejected(GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method).apply { addHeader(name, value) }, 400, "VALIDATION_FAILED")
+            }
+            for ((name, value) in listOf(
+                HttpHeaders.CONTENT_LENGTH to "1", HttpHeaders.TRANSFER_ENCODING to "chunked", "Authorization" to "Bearer synthetic",
+                "X-Kira-Idempotency-Key" to DELETE_ALL_KEY, "X-Kira-Complaint-Contract" to "1",
+            )) {
+                val request = GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method).apply { addHeader(name, value); addHeader(name, value) }
+                assertOwnerRejected(request, 400, "VALIDATION_FAILED")
+            }
+            assertOwnerRejected(GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method).apply { addHeader(HttpHeaders.CONTENT_ENCODING, "gzip") }, 415, "UNSUPPORTED_MEDIA_TYPE")
+            assertOwnerRejected(
+                GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method).apply {
+                    addHeader(HttpHeaders.CONTENT_LENGTH, "1"); addHeader(HttpHeaders.TRANSFER_ENCODING, "chunked")
+                }, 400, "VALIDATION_FAILED",
+            )
+            val tag = GeneratedBodyRequest(Int.MAX_VALUE, path = path, method = method).apply { addHeader(HttpHeaders.IF_MATCH, "x".repeat(257)) }
+            assertOwnerRejected(tag, if (method == "PATCH") 412 else 400, if (method == "PATCH") "PRECONDITION_FAILED" else "VALIDATION_FAILED")
+        }
+    }
+
+    @Test
+    fun `owner context encoded and trailing aliases cannot bypass protective cap without enabling a route`() {
+        for ((method, path) in OWNER_PATHS) {
+            for ((context, alias) in listOf(
+                "" to "$path/", "/kira" to "/kira$path", "" to path.replace("complaint", "%63omplaint"),
+                "" to "$path;ignored=value",
+            )) {
+                val request = GeneratedBodyRequest(Int.MAX_VALUE, path = alias, method = method).apply { contextPath = context }
+                assertOwnerRejected(request, 413, "PAYLOAD_TOO_LARGE", consumed = 16385)
+            }
+        }
+        for ((method, path) in listOf("PUT" to "/api/v1/complaints/$SESSION_ID/content", "POST" to "/api/v1/complaints-other")) {
+            val request = GeneratedBodyRequest(16385, path = path, method = method).apply { contentType = "text/plain" }
+            var count = 0
+            filter.doFilter(request, MockHttpServletResponse(), FilterChain { wrapped, _ -> count = (wrapped as HttpServletRequest).inputStream.readAllBytes().size })
+            assertEquals(16385, count, "Unrelated methods/siblings keep the generic cap/media behavior.")
+        }
+    }
+
+    private fun assertOwnerRejected(request: GeneratedBodyRequest, status: Int, code: String, consumed: Int = 0) {
+        val response = MockHttpServletResponse()
+        filter.doFilter(request, response, FilterChain { _, _ -> error("Owner failure must precede downstream dispatch") })
+        assertEquals(status, response.status)
+        assertEquals(consumed, request.bytesRead)
+        assertEquals(if (consumed == 0) 0 else 1, request.streamAccesses)
+        assertEquals("1", response.getHeader(CONTRACT_HEADER))
+        assertEquals("no-store, no-transform", response.getHeader(HttpHeaders.CACHE_CONTROL))
+        assertEquals(response.contentAsByteArray.size.toString(), response.getHeader(HttpHeaders.CONTENT_LENGTH))
+        assertEquals(code, ObjectMapper().readTree(response.contentAsByteArray)["errors"][0]["code"].asText())
+        assertTrue(response.contentAsByteArray.size < 1024)
+        assertFalse(response.contentAsString.contains(SUBMITTED_VALUE))
+    }
+
     private fun assertInstallationRejected(request: GeneratedBodyRequest, status: Int, code: String, consumed: Int = 0) {
         val response = MockHttpServletResponse().apply {
             addHeader(CONTRACT_HEADER, "old")
@@ -431,5 +543,9 @@ class RequestBodySizeLimitFilterTest {
         const val DELETE_ALL_JSON = "{\"installationId\":\"$SESSION_ID\",\"secret\":\"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"," +
             "\"credentialVersion\":1,\"dataScopeId\":\"00000000-0000-0000-0000-000000000000\"}"
         val FOUR_KIB_PATHS = listOf(RequestBodySizeLimitFilter.SESSION_PATH, RequestBodySizeLimitFilter.DELETE_ALL_PATH)
+        val OWNER_PATHS = listOf(
+            "POST" to "/api/v1/complaints", "POST" to "/api/v1/complaints/$SESSION_ID/replies",
+            "PATCH" to "/api/v1/complaints/$SESSION_ID/content", "POST" to "/api/v1/complaint-operations/status",
+        )
     }
 }

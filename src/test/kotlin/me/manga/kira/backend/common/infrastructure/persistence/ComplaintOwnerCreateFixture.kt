@@ -398,6 +398,7 @@ internal enum class OwnerCreateFixtureStep {
     DISCARD_RESOURCE,
     RESOURCE,
     CONTENT,
+    EDIT_CONTENT,
     COMPLETE,
 }
 
@@ -450,6 +451,7 @@ internal class OwnerCreateFixtureJdbc(private val fixture: ComplaintOwnerCreateF
         sql.startsWith("DELETE FROM complaint_resource_ids") -> OwnerCreateFixtureStep.DISCARD_RESOURCE
         sql.startsWith("INSERT INTO complaint_resource_ids") -> OwnerCreateFixtureStep.RESOURCE
         sql.contains("INSERT INTO complaints") -> OwnerCreateFixtureStep.CONTENT
+        sql.contains("UPDATE complaints SET subject") -> OwnerCreateFixtureStep.EDIT_CONTENT
         sql.contains("UPDATE complaint_idempotency_receipts") -> OwnerCreateFixtureStep.COMPLETE
         else -> null
     }

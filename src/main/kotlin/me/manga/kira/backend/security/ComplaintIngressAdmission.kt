@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
@@ -47,6 +48,7 @@ internal class ComplaintIngressAdmission(
     private val clock: ComplaintAdmissionNanoClock,
     private val createPolicy: ComplaintOwnerCreateAdmissionPolicy = ComplaintOwnerCreateAdmissionPolicy.Disabled,
     private val deleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Disabled,
+    private val editPolicy: ComplaintOwnerEditAdmissionPolicy = ComplaintOwnerEditAdmissionPolicy.Disabled,
 ) {
     private val lock = Any()
     private val keys = ComplaintAdmissionKeyRing(configuration)
@@ -82,6 +84,9 @@ internal class ComplaintIngressAdmission(
     }
     private val deletions = (deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded)?.let {
         ComplaintOwnerDeleteAllAdmissionStore(it, checkNotNull(mutationMembers))
+    }
+    private val edits = (editPolicy as? ComplaintOwnerEditAdmissionPolicy.Bounded)?.let {
+        ComplaintOwnerEditAdmissionStore(it, checkNotNull(mutationMembers))
     }
     private var reservations = 0
     private var lastRawTime = clock.now()
@@ -205,6 +210,38 @@ internal class ComplaintIngressAdmission(
     internal fun startOwnerReply(context: ComplaintIngressContext) {
         requireConnectionFree()
         locked { startAttempt(context, SemanticOperation.OWNER_REPLY) }
+    }
+
+    internal fun startOwnerEdit(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.OWNER_EDIT) }
+    }
+
+    /** Only the concrete edit adapter calls after its authenticated receipt read has physically released. */
+    internal fun admitOwnerEdit(context: ComplaintIngressContext, tuple: ComplaintOwnerEditTuple): ComplaintAdmittedOwnerEdit {
+        requireConnectionFree()
+        if (clock !== SystemComplaintAdmissionNanoClock) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        return locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.OWNER_EDIT || state.admission != null) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val limits = editPolicy as? ComplaintOwnerEditAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
+            val handoff = AdmittedEdit(this, context, tuple, limits)
+            val now = time()
+            val activeKeys = keys.keys()
+            checkNotNull(edits).admit(
+                ComplaintAdmissionPseudonyms.ownerEditMember(activeKeys, tuple),
+                ComplaintAdmissionPseudonyms.ownerEditDeleteActor(activeKeys, tuple.installation),
+                semantics,
+                now,
+            )
+            state.admission = handoff.identity
+            state.ownerEditIdentity = handoff.identity
+            state.admittedAt = now
+            state.consumed = true
+            handoff
+        }
     }
 
     /** Concrete adapter only, after the authenticated receipt preflight actually released its connection. */
@@ -443,17 +480,28 @@ internal class ComplaintIngressAdmission(
         requireLifetime(state, advanceTime(System.nanoTime()))
     }
 
+    private fun requireEditState(handoff: AdmittedEdit) {
+        val state = state(handoff.context)
+        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_EDIT || !state.consumed ||
+            state.ownerEditIdentity !== handoff.identity || state.admission !== handoff.identity
+        ) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        requireLifetime(state, advanceTime(System.nanoTime()))
+    }
+
     private fun mutationMembers(): ComplaintMutationAdmissionMembers? {
         val create = createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded
         val deletion = deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded
-        if (create != null && deletion != null) {
-            require(create.memberLimit == deletion.memberLimit && create.pruneBatch == deletion.pruneBatch) { INVALID_ADMISSION_CONFIGURATION }
-        }
-        return when {
-            create != null -> ComplaintMutationAdmissionMembers(create.memberLimit, create.pruneBatch)
-            deletion != null -> ComplaintMutationAdmissionMembers(deletion.memberLimit, deletion.pruneBatch)
-            else -> null
-        }
+        val edit = editPolicy as? ComplaintOwnerEditAdmissionPolicy.Bounded
+        val dimensions = listOfNotNull(
+            create?.let { it.memberLimit to it.pruneBatch },
+            deletion?.let { it.memberLimit to it.pruneBatch },
+            edit?.let { it.memberLimit to it.pruneBatch },
+        )
+        require(dimensions.distinct().size <= 1) { INVALID_ADMISSION_CONFIGURATION }
+        val selected = dimensions.firstOrNull() ?: return null
+        return ComplaintMutationAdmissionMembers(selected.first, selected.second)
     }
 
     private fun requireLifetime(state: ContextState, now: Long) {
@@ -548,10 +596,11 @@ internal class ComplaintIngressAdmission(
         var refreshIdentity: Any? = null
         var enrollmentIdentity: Any? = null
         var ownerCreateIdentity: Any? = null
+        var ownerEditIdentity: Any? = null
         var ownerDeleteAllIdentity: Any? = null
     }
 
-    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE, OWNER_REPLY, OWNER_DELETE_ALL }
+    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE, OWNER_REPLY, OWNER_EDIT, OWNER_DELETE_ALL }
 
     private fun creationSemantic(operation: ComplaintOwnerCreationOperation): SemanticOperation = when (operation) {
         ComplaintOwnerCreationOperation.OWNER_CREATE -> SemanticOperation.OWNER_CREATE
@@ -585,6 +634,20 @@ internal class ComplaintIngressAdmission(
     }
 
     private enum class CreateStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
+
+    private class AdmittedEdit(
+        val owner: ComplaintIngressAdmission,
+        val context: ComplaintIngressContext,
+        val tuple: ComplaintOwnerEditTuple,
+        val limits: ComplaintOwnerEditAdmissionPolicy.Bounded,
+    ) : ComplaintAdmittedOwnerEdit {
+        val identity = Any()
+        var phaseIdentity: Any? = null
+        var stage = EditStage.MINTED
+        override fun toString(): String = "ComplaintAdmittedOwnerEdit(redacted)"
+    }
+
+    private enum class EditStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
 
     private class AdmittedEnrollment(
         val owner: ComplaintIngressAdmission,
@@ -626,6 +689,55 @@ internal class ComplaintIngressAdmission(
 
     companion object {
         private val current = ThreadLocal<ComplaintIngressContext?>()
+
+        internal fun bindOwnerEdit(handoff: ComplaintAdmittedOwnerEdit, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedEdit ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireEditState(selected)
+                if (selected.stage !== EditStage.MINTED || selected.phaseIdentity != null) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.phaseIdentity = phaseIdentity
+                selected.stage = EditStage.BOUND
+            }
+        }
+
+        internal fun claimOwnerEdit(handoff: ComplaintAdmittedOwnerEdit, phaseIdentity: Any, tuple: ComplaintOwnerEditTuple) {
+            val selected = handoff as? AdmittedEdit ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireEditState(selected)
+                if (selected.stage !== EditStage.BOUND || selected.phaseIdentity !== phaseIdentity || selected.tuple !== tuple) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = EditStage.CLAIMED
+            }
+        }
+
+        internal fun checkOwnerEditBounds(handoff: ComplaintAdmittedOwnerEdit, phaseIdentity: Any, ledger: ComplaintCapacityLedger) {
+            val selected = handoff as? AdmittedEdit ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireEditState(selected)
+                if (selected.stage !== EditStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                if (!selected.limits.matchesLocked(ledger)) refuseComplaintAdmission()
+                selected.stage = EditStage.BOUNDS_CHECKED
+            }
+        }
+
+        /** Intrinsic time and retained scalars only; no backing store/provider call inside the transaction. */
+        internal fun checkOwnerEditWrite(handoff: ComplaintAdmittedOwnerEdit, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedEdit ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireEditState(selected)
+                if (selected.phaseIdentity !== phaseIdentity ||
+                    (selected.stage !== EditStage.BOUNDS_CHECKED && selected.stage !== EditStage.WRITING)
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = EditStage.WRITING
+            }
+        }
 
         /** Before even a deletion permit: no forged, spent, expired or foreign-context admission. */
         internal fun requireOwnerDeleteAllEntry(handoff: ComplaintAdmittedOwnerDeleteAll, tuple: InstallationDeletionPreflightTuple) {

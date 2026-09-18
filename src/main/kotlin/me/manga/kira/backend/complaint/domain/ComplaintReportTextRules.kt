@@ -19,6 +19,19 @@ internal object ComplaintReportTextRules {
     // Bounds direct-call scratch work. The HTTP owner must still enforce its aggregate raw 16KiB body cap first.
     private const val MAX_INPUT_CODE_UNITS = 16_384
 
+    fun editedBody(value: String): String {
+        if (value.length > MAX_INPUT_CODE_UNITS) reject(ComplaintReportField.BODY, ComplaintReportRejection.TOO_LONG)
+        val normalized = try {
+            ComplaintTextRules.editedBody(value)
+        } catch (failure: ComplaintValidationException) {
+            reject(ComplaintReportField.BODY, rejection(failure.reason))
+        }
+        if (normalized != value.replace("\r\n", "\n").trim(::isReportWhitespace)) {
+            reject(ComplaintReportField.BODY, ComplaintReportRejection.NORMALIZATION_MISMATCH)
+        }
+        return normalized
+    }
+
     fun replyBody(value: String): String {
         if (value.length > MAX_INPUT_CODE_UNITS) reject(ComplaintReportField.BODY, ComplaintReportRejection.TOO_LONG)
         val normalized = try {

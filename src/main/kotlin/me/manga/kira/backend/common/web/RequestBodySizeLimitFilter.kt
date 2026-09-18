@@ -23,7 +23,8 @@ import java.nio.charset.StandardCharsets
 
 /**
  * Enforces the HTTP body-size contract before MVC/Jackson/strict source parsing. The normal cap is
- * 256 KiB; import/multipart receive 5 MiB and POST installation enrollment/session/delete-all receive 4 KiB. The body is
+ * 256 KiB; import/multipart receive 5 MiB, POST installation enrollment/session/delete-all receive 4 KiB,
+ * and owner create/reply/edit/status receive 16 KiB. The body is
  * read at most `limit + 1` bytes and replayed from memory, so chunked or falsely-small Content-Length requests cannot bypass
  * the cap. An over-limit response is a bounded RFC-9457 problem and never echoes submitted content.
  * These protective installation boundaries do not activate routes or provide complaint ingress admission;
@@ -33,6 +34,14 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
 
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
         val installation = installationBodyRoute(request)
+        val owner = ownerBodyRoute(request)
+        if (owner != null) {
+            val failure = ownerHeaderFailure(request, owner)
+            if (failure != null) {
+                writeOwnerFailure(response, failure)
+                return
+            }
+        }
         val headerFailure = if (installation != null) installationHeaderFailure(request) else null
         if (headerFailure != null) {
             writeInstallationFailure(response, headerFailure)
@@ -44,11 +53,15 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
                 InstallationBodyRoute.SESSION -> MAX_SESSION_BODY_BYTES
                 InstallationBodyRoute.ENROLLMENT -> MAX_ENROLLMENT_BODY_BYTES
                 InstallationBodyRoute.DELETE_ALL -> MAX_DELETE_ALL_BODY_BYTES
-                null -> limitFor(request)
+                null -> if (owner != null) MAX_OWNER_BODY_BYTES else limitFor(request)
             }
-        val declaredLength = if (installation != null) installationDeclaredLength(request) else request.contentLengthLong
+        val declaredLength = when {
+            installation != null -> installationDeclaredLength(request)
+            owner != null -> if (request.getHeader(HttpHeaders.TRANSFER_ENCODING) != null) -1L else installationDeclaredLength(request)
+            else -> request.contentLengthLong
+        }
         if (declaredLength > limit) {
-            writeTooLarge(response, limit, installation)
+            if (owner != null) writeOwnerFailure(response, OwnerFailure.TOO_LARGE) else writeTooLarge(response, limit, installation)
             return
         }
 
@@ -62,11 +75,21 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
 
         val body = request.inputStream.readNBytes(limit + 1)
         if (body.size > limit) {
-            writeTooLarge(response, limit, installation)
+            if (owner != null) {
+                body.fill(0)
+                writeOwnerFailure(response, OwnerFailure.TOO_LARGE)
+            } else {
+                writeTooLarge(response, limit, installation)
+            }
             return
         }
         if (installation != null && declaredLength >= 0 && declaredLength != body.size.toLong()) {
             writeInstallationFailure(response, HttpStatus.BAD_REQUEST)
+            return
+        }
+        if (owner != null && declaredLength >= 0 && declaredLength != body.size.toLong()) {
+            body.fill(0)
+            writeOwnerFailure(response, OwnerFailure.INVALID)
             return
         }
 
@@ -94,6 +117,60 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
             // to the existing container/security policy rather than creating a new global policy.
             null
         }
+    }
+
+    /** Protective matching follows the owned route templates, including aliases later refused by the fixed dispatcher. */
+    private fun ownerBodyRoute(request: HttpServletRequest): OwnerBodyRoute? = try {
+        val path = RequestPath.parse(request.requestURI, request.contextPath).pathWithinApplication()
+        when {
+            request.method == "PATCH" && ownerContentPaths.any { it.matches(path) } -> OwnerBodyRoute.EDIT
+            request.method == "POST" && ownerPostPaths.any { it.matches(path) } -> OwnerBodyRoute.POST
+            else -> null
+        }
+    } catch (ex: IllegalArgumentException) {
+        null // Preserve the existing container/firewall malformed-path policy.
+    }
+
+    private fun ownerHeaderFailure(request: HttpServletRequest, route: OwnerBodyRoute): OwnerFailure? {
+        if (installationContentHeaders.any { request.getHeaders(it).asSequence().take(2).count() > 1 }) return OwnerFailure.INVALID
+        val security = listOf("Authorization" to 4103, "X-Kira-Idempotency-Key" to 36, "X-Kira-Complaint-Contract" to 1)
+        for ((name, maximum) in security) {
+            val values = request.getHeaders(name)
+            if (!values.hasMoreElements()) continue
+            val value = values.nextElement()
+            if (values.hasMoreElements() || value.length > maximum || value.any { it.code !in 32..126 }) return OwnerFailure.INVALID
+            if (name == "X-Kira-Complaint-Contract" && value != "1") return OwnerFailure.INVALID
+        }
+        val tags = request.getHeaders(HttpHeaders.IF_MATCH)
+        if (tags.hasMoreElements()) {
+            val tag = tags.nextElement()
+            if (route != OwnerBodyRoute.EDIT) return OwnerFailure.INVALID
+            if (tags.hasMoreElements() || tag.length > 256 || tag.any { it.code !in 32..126 && it != '\t' }) return OwnerFailure.PRECONDITION
+        }
+        val rawLength = request.getHeader(HttpHeaders.CONTENT_LENGTH)
+        if (rawLength != null && rawLength.length > 64) return OwnerFailure.INVALID
+        val length = rawLength?.trim(' ', '\t')
+        val transfer = request.getHeader(HttpHeaders.TRANSFER_ENCODING)
+        if (length != null && transfer != null) return OwnerFailure.INVALID
+        if (length != null && (length.isEmpty() || length.any { it !in '0'..'9' })) return OwnerFailure.INVALID
+        if (transfer != null && (transfer.length > 64 || !headerTokenEquals(transfer, "chunked"))) return OwnerFailure.INVALID
+        val rawMedia = request.getHeader(HttpHeaders.CONTENT_TYPE)
+        if (rawMedia != null && rawMedia.length > 128) return OwnerFailure.MEDIA
+        val media = rawMedia?.trim(' ', '\t')
+        val encoding = request.getHeader(HttpHeaders.CONTENT_ENCODING)
+        if (media == null || media.any { it.code > 127 } || !installationMediaType.matches(media)) return OwnerFailure.MEDIA
+        if (encoding != null && (encoding.length > 64 || !headerTokenEquals(encoding, "identity"))) return OwnerFailure.MEDIA
+        return null
+    }
+
+    /** Constant no-prose errors, bounded before serialization or any downstream security/domain work. */
+    private fun writeOwnerFailure(response: HttpServletResponse, failure: OwnerFailure) {
+        response.status = failure.status.value()
+        response.setHeader("X-Kira-Complaint-Contract", "1")
+        response.setHeader(HttpHeaders.CACHE_CONTROL, "no-store, no-transform")
+        response.contentType = "application/problem+json;charset=UTF-8"
+        response.setContentLength(failure.body.size)
+        response.outputStream.write(failure.body)
     }
 
     private fun installationHeaderFailure(request: HttpServletRequest): HttpStatus? {
@@ -210,12 +287,28 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
 
     private enum class InstallationBodyRoute { SESSION, ENROLLMENT, DELETE_ALL }
 
+    private enum class OwnerBodyRoute { POST, EDIT }
+
+    private enum class OwnerFailure(val status: HttpStatus, code: String) {
+        INVALID(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED"),
+        PRECONDITION(HttpStatus.PRECONDITION_FAILED, "PRECONDITION_FAILED"),
+        MEDIA(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE"),
+        TOO_LARGE(HttpStatus.PAYLOAD_TOO_LARGE, "PAYLOAD_TOO_LARGE"),
+        ;
+
+        val body: ByteArray = (
+            """{"type":"about:blank","title":"${status.reasonPhrase}","status":${status.value()},"errors":[""" +
+                """{"code":"$code","message":"Complaint request refused."}]}"""
+            ).toByteArray(StandardCharsets.UTF_8)
+    }
+
     companion object {
         const val DEFAULT_MAX_BODY_BYTES = 256 * 1024
         const val MAX_IMPORT_BODY_BYTES = 5 * 1024 * 1024
         const val MAX_SESSION_BODY_BYTES = 4 * 1024
         const val MAX_ENROLLMENT_BODY_BYTES = MAX_SESSION_BODY_BYTES
         const val MAX_DELETE_ALL_BODY_BYTES = MAX_SESSION_BODY_BYTES
+        const val MAX_OWNER_BODY_BYTES = 16 * 1024
         const val IMPORT_PATH = "/api/v1/admin/sources/import-bundled"
         const val TUTORIAL_MEDIA_PATH = "/api/v1/admin/tutorial-media"
         const val SESSION_PATH = "/api/v1/installations/session"
@@ -224,6 +317,10 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         private val sessionPath = PathPatternParser.defaultInstance.parse(SESSION_PATH)
         private val enrollmentPath = PathPatternParser.defaultInstance.parse(ENROLLMENT_PATH)
         private val deleteAllPath = PathPatternParser.defaultInstance.parse(DELETE_ALL_PATH)
+        private val ownerPostPaths = listOf("/api/v1/complaints", "/api/v1/complaints/{id}/replies", "/api/v1/complaint-operations/status")
+            .flatMap { listOf(it, "$it/") }.map(PathPatternParser.defaultInstance::parse)
+        private val ownerContentPaths = listOf("/api/v1/complaints/{id}/content", "/api/v1/complaints/{id}/content/")
+            .map(PathPatternParser.defaultInstance::parse)
         private val installationMediaType = Regex(
             """application/json(?:[ \t]*;[ \t]*charset[ \t]*=[ \t]*(?:utf-8|"utf-8"))?""",
             RegexOption.IGNORE_CASE,

@@ -1,6 +1,7 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
@@ -38,6 +39,20 @@ internal object ComplaintAdmissionPseudonyms {
 
     fun ownerCreateGlobal(keys: List<ComplaintAdmissionKey>): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("GLOBAL"), ascii("OWNER_CREATE")))
+
+    /** Single-item edit/delete share this 60/hour family; delete-all and creation deliberately do not. */
+    fun ownerEditDeleteActor(keys: List<ComplaintAdmissionKey>, installation: ScopedInstallationId): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(domain(), ascii("ACTOR"), ascii("INSTALLATION"), uuid(installation.id), uuid(installation.scope.id), ascii("OWNER_EDIT_DELETE")),
+    )
+
+    fun ownerEditMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintOwnerEditTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(), ascii("MEMBER"), ascii("INSTALLATION"), uuid(tuple.installation.id), uuid(tuple.installation.scope.id),
+            ascii(ComplaintOwnerEditTuple.OPERATION), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
+        ),
+    )
 
     fun ownerCreateMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintOwnerOperationTuple): List<ComplaintAdmissionBucketKey> = derive(
         keys,

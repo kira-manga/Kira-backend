@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintRecoverySettlementResult
 import me.manga.kira.backend.complaint.domain.ComplaintTestReserveSpendResult
 import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
@@ -20,6 +21,7 @@ import me.manga.kira.backend.complaint.domain.SessionRefreshResult
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationDeletionPreflightOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVerificationOperation
@@ -64,6 +66,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotRea
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintAdmittedEnrollmentWrite
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerCreate
+import me.manga.kira.backend.security.ComplaintAdmittedOwnerEdit
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.ComplaintAdmittedSessionRefresh
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
@@ -180,6 +183,7 @@ constructor(
     internal val ownerHistory: PersistenceOwnerHistory = OwnerHistoryBoundary()
     internal val ownerDetail: PersistenceOwnerDetail = OwnerDetailBoundary()
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
+    internal val ownerEdit: PersistenceOwnerEdit = OwnerEditBoundary()
     internal val ownerDeleteAll: PersistenceOwnerDeleteAll = OwnerDeleteAllBoundary()
     internal val ownerDeleteAllVerification: PersistenceOwnerDeleteAllVerification = OwnerDeleteAllVerificationBoundary()
     private val ownerDeleteAllApplyBoundary = OwnerDeleteAllApplyBoundary()
@@ -598,6 +602,12 @@ constructor(
         PersistencePhasePath.COMPLAINT_OWNER_REPLY,
         PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
         -> ownerOperation.completed()
+
+        PersistencePhasePath.COMPLAINT_OWNER_EDIT_AUTHENTICATION,
+        PersistencePhasePath.COMPLAINT_OWNER_EDIT_PREFLIGHT,
+        PersistencePhasePath.COMPLAINT_OWNER_EDIT_STATUS,
+        PersistencePhasePath.COMPLAINT_OWNER_EDIT,
+        -> ownerEdit.completed()
 
         PersistencePhasePath.COMPLAINT_DELETION_MUTATION -> complaintDeletion.completed()
 
@@ -1960,6 +1970,84 @@ constructor(
             (writeOperation == null || claimed)
     }
 
+    /** A separate fixed edit capability. Creation's tuple, handoff and retained operation cannot enter it. */
+    private inner class OwnerEditBoundary : PersistenceOwnerEdit {
+        private var issued = false
+        private var retained: ComplaintOwnerEditOperation? = null
+        private val admissionIdentity = Any()
+        private var admission: ComplaintAdmittedOwnerEdit? = null
+        private var claimed = false
+        private var boundsChecked = false
+        private val write: Boolean get() = path === PersistencePhasePath.COMPLAINT_OWNER_EDIT
+
+        override fun bindEdit(handoff: ComplaintAdmittedOwnerEdit) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || !write || admission != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            admission = handoff
+            ComplaintIngressAdmission.bindOwnerEdit(handoff, admissionIdentity)
+        }
+
+        override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            if (expected !in setOf(
+                    PersistencePhasePath.COMPLAINT_OWNER_EDIT_AUTHENTICATION,
+                    PersistencePhasePath.COMPLAINT_OWNER_EDIT_PREFLIGHT,
+                    PersistencePhasePath.COMPLAINT_OWNER_EDIT_STATUS,
+                    PersistencePhasePath.COMPLAINT_OWNER_EDIT,
+                )
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, expected)
+            if (issued || (write && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun claimEdit(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerEditTuple) {
+            requireRetained(operation, jdbc)
+            if (!write || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.claimOwnerEdit(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, tuple)
+            claimed = true
+        }
+
+        override fun checkEditBounds(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger) {
+            requireRetained(operation, jdbc)
+            if (!claimed || boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkOwnerEditBounds(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, ledger)
+            boundsChecked = true
+        }
+
+        override fun checkEditWrite(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (!claimed || !boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkOwnerEditWrite(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity)
+        }
+
+        override fun entityManager(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate): EntityManager {
+            checkEditWrite(operation, jdbc)
+            return createdEntityManager ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintOwnerEditOperation) {
+            if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true && (!write || claimed)
+    }
+
     /** Fixed fenced LIVE authorizer/reloader; no callback or caller-minted result can complete it. */
     private inner class OwnerDeleteAllBoundary : PersistenceOwnerDeleteAll {
         private var issued = false
@@ -2885,6 +2973,20 @@ internal interface PersistenceOwnerOperation {
     fun checkCreateWrite(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate)
     fun entityManager(operation: ComplaintOwnerCreateOperation, jdbc: JdbcTemplate): EntityManager
     fun requireCommitted(operation: ComplaintOwnerCreateOperation)
+    fun completed(): Boolean
+}
+
+/** This view cannot grant resources without its own concrete retained edit operation and exact one-use handoff. */
+internal interface PersistenceOwnerEdit {
+    fun bindEdit(handoff: ComplaintAdmittedOwnerEdit)
+    fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath)
+    fun retain(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate)
+    fun claimEdit(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate, tuple: ComplaintOwnerEditTuple)
+    fun checkEditBounds(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger)
+    fun checkEditWrite(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate)
+    fun entityManager(operation: ComplaintOwnerEditOperation, jdbc: JdbcTemplate): EntityManager
+    fun requireCommitted(operation: ComplaintOwnerEditOperation)
     fun completed(): Boolean
 }
 

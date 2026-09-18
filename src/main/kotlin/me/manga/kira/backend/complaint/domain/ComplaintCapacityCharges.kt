@@ -45,4 +45,7 @@ object ComplaintCapacityCharges {
     val REPORT_CONTENT: ComplaintCapacityVector = INSTALLATION_CONTENT_V1
 
     val OWNER_CREATE: ComplaintCapacityVector = NORMAL_RECEIPT + RESOURCE_ID + INSTALLATION_CONTENT_V1 + AUDIT
+
+    // The existing INSTALLATION content envelope already covers every legal edit; no new content/ID slot or refund.
+    val OWNER_EDIT: ComplaintCapacityVector = NORMAL_RECEIPT + AUDIT
 }

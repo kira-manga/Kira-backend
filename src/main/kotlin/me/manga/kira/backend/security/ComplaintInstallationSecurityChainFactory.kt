@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBearerAuthenticator
 import org.springframework.http.server.RequestPath
@@ -44,7 +45,13 @@ internal class ComplaintInstallationSecurityChainFactory(
     private val deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
     private val detail: ComplaintOwnerDetailHttpHandler? = null,
     private val reply: ComplaintOwnerCreateHttpHandler? = null,
+    private val edit: ComplaintOwnerEditHttpHandler? = null,
 ) {
+    init {
+        require(create.hasEditStatus() == (edit != null)) { "Complaint edit/status composition refused." }
+        if (edit != null) require(create.usesEditStatus(edit)) { "Complaint edit/status composition refused." }
+    }
+
     private val entryPoint = AuthenticationEntryPoint { request, response, _ ->
         ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAUTHORIZED)
     }
@@ -116,6 +123,8 @@ internal class ComplaintInstallationSecurityChainFactory(
 
                 else -> if (ComplaintInstallationRoutes.isReply(request)) {
                     checkNotNull(reply).handleWithinIngress(request, response, context)
+                } else if (ComplaintInstallationRoutes.isContent(request)) {
+                    checkNotNull(edit).handleWithinIngress(request, response, context)
                 } else {
                     checkNotNull(detail).handleWithinIngress(request, response, context)
                 }
@@ -129,6 +138,7 @@ internal class ComplaintInstallationSecurityChainFactory(
     private fun implemented(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.implemented(request) ||
         (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
         (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
+        (edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
         (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request))
 
     private inner class ClosedUnimplementedRoutes : OncePerRequestFilter() {
@@ -158,6 +168,7 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     const val STATUS = "/api/v1/complaint-operations/status"
     private val detailPath = Regex("$HISTORY/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     private val replyPath = Regex("${detailPath.pattern}/replies")
+    private val contentPath = Regex("${detailPath.pattern}/content")
     private val publicPaths = setOf(ENROLLMENT, SESSION, "/api/v1/installations/bootstrap", DELETE_ALL)
     private val patterns = (
         publicPaths + setOf(ME, HISTORY, STATUS, "$HISTORY/{id}", "$HISTORY/{id}/replies", "$HISTORY/{id}/content")
@@ -176,6 +187,8 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     fun isDetail(request: HttpServletRequest): Boolean = detailPath.matches(path(request))
 
     fun isReply(request: HttpServletRequest): Boolean = replyPath.matches(path(request))
+
+    fun isContent(request: HttpServletRequest): Boolean = contentPath.matches(path(request))
 
     fun requiresBearer(request: HttpServletRequest): Boolean = path(request) !in publicPaths
 
