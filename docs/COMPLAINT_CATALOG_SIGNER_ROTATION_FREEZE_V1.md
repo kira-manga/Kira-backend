@@ -108,3 +108,20 @@ historical freeze result.
 At author source handoff: compilation, static checks, runtime tests, provider execution,
 services, builds, CI, commit and push are **NOT_RUN**. Any later acceptance evidence belongs
 to the primary-controlled exact-source gate packet, not to this source document.
+
+## Controlled-integration validation boundary
+
+The default desired-process assembly and its clock-only fixture remain cold with an
+`UNKNOWN` launch selection; the ordinary pool intentionally refuses to start on that
+route. An explicitly named `withControlledIntegrationFixture` factory selects
+`CONTROLLED_TEST_ONLY` at original construction, before any pools bind. It uses the same
+actual parsed/acquired D7 or D2 inputs, assembly recipe, retained pool descriptors and
+canonical D/hash. It never changes a retained launch flag or supplies successful phase,
+readback, lifecycle or cleanup evidence.
+
+Connected tests on that explicit fixture validate the algorithm, actual SQL/TLS, raw SDK
+and cryptographic behavior, custody and cleanup in **controlled integration only**. They
+do not qualify or provide a production launch route. A real normal D7-author launch
+remains **INTERNAL unimplemented work**, distinct from fresh-process PREPARED2-only
+recovery admission; that narrower recovery purpose must not be repurposed as normal
+runtime launch. Pure cold/default refusal and actual D2 no-retrofit boundaries remain.

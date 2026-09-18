@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinato
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcLifecycleOwner
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePoolLaunchProfile
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublicTrustPreparation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublicTrustRelease
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
@@ -27,8 +28,11 @@ import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import java.security.MessageDigest
 
 /** Retained before even the first cold root binds. All partial resources stay here; no graph supplied by an HTTP/startup caller. */
-internal class ComplaintDesiredProcessAssemblyV1 private constructor(private val nanoClock: PersistenceNanoClock) : AutoCloseable {
-    constructor() : this(SystemPersistenceNanoClock)
+internal class ComplaintDesiredProcessAssemblyV1 private constructor(
+    private val nanoClock: PersistenceNanoClock,
+    private val runtimeLaunchProfile: PersistencePoolLaunchProfile,
+) : AutoCloseable {
+    constructor() : this(SystemPersistenceNanoClock, PersistencePoolLaunchProfile.UNKNOWN)
     private var entered = false
     private var stopping = false
     private var targetOwner: PersistenceJdbcLifecycleOwner? = null
@@ -93,8 +97,8 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(private val
             else -> runtimeConfiguration.bindLifecycleOwner()
         }
         targetOwner = runtime // Before shell binding, including a failed/partly constructed pool composition.
-        val pools = if (finalizer) runtime.bindCatalogGenesisFinalizationPools(nanoClock) else runtime.bindVersionBoundPools(nanoClock = nanoClock)
-        // UNKNOWN; no target participant, driver, trust-file I/O or pool preparation.
+        val pools = if (finalizer) runtime.bindCatalogGenesisFinalizationPools(nanoClock) else runtime.bindVersionBoundPools(runtimeLaunchProfile, nanoClock)
+        // Still cold: no target participant, driver, trust-file I/O or pool preparation. Default launch remains UNKNOWN.
         val mapping = inputs.sealerMapping
         requireDesiredInstallation((mapping == null) == (sealerCredentials == null), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
         val seal = if (mapping == null) {
@@ -297,6 +301,11 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(private val
 
     companion object {
         /** Clock is selected BEFORE the actual cold resource/phase binding, never swapped on a live process or campaign. */
-        internal fun withClockFixture(nanoClock: PersistenceNanoClock): ComplaintDesiredProcessAssemblyV1 = ComplaintDesiredProcessAssemblyV1(nanoClock)
+        internal fun withClockFixture(nanoClock: PersistenceNanoClock): ComplaintDesiredProcessAssemblyV1 =
+            ComplaintDesiredProcessAssemblyV1(nanoClock, PersistencePoolLaunchProfile.UNKNOWN)
+
+        /** Explicit controlled integration only, selected before ANY pool binds; never a production launch qualification or retained-profile mutation. */
+        internal fun withControlledIntegrationFixture(nanoClock: PersistenceNanoClock): ComplaintDesiredProcessAssemblyV1 =
+            ComplaintDesiredProcessAssemblyV1(nanoClock, PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY)
     }
 }

@@ -272,7 +272,8 @@ internal class CatalogSignerRotationD7Fixture(val tls: VersionBoundPersistenceCo
     }
 
     private fun startRuntime() {
-        val assembly = ComplaintDesiredProcessAssemblyV1.withClockFixture(clock)
+        // Same raw acquired D7/D2 graph and D hash; controlled integration is selected before binding, never patched onto retained pools.
+        val assembly = ComplaintDesiredProcessAssemblyV1.withControlledIntegrationFixture(clock)
         runtime = assembly
         assembly.assemble(
             inputs,
