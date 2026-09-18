@@ -146,7 +146,8 @@ internal class CatalogSignerRotationFreezeAssemblyV1 private constructor(
     /** Separate fixed continuation sequence, selected only after the owner proves prefix/cleanup and creates arm2. */
     fun signSecondOnly(credentials: AwsSessionCredentials): ByteArray {
         requireConnectionFree()
-        attempt.requireRunning()
+        requireSignerRotation(recovery == null, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        checkNotNull(attempt).requireSigningAllowed()
         requireSignerRotation(acquired && !closed && nextSigner == 0)
         requireSignerRotation(signers.all { it == null })
         nextSigner = 1 // No old-key provider/credentials or fabricated signature; the existing slot2 path remains one-shot.
