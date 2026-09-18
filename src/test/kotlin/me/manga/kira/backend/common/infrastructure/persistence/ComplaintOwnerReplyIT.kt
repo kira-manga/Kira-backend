@@ -299,15 +299,20 @@ class ComplaintOwnerReplyIT {
         val report = f.attempt()
         val reply = f.replyAttempt(parent)
         val before = f.state()
-        val barrier = CyclicBarrier(2)
+        val claimBarrierPassed = AtomicBoolean()
+        val barrier = CyclicBarrier(2) { claimBarrierPassed.set(true) }
         val inputs = listOf(f.input(report), f.replyInput(reply))
-        f.beforeStep = { step -> if (step == OwnerCreateFixtureStep.CLAIM) barrier.await(1, TimeUnit.SECONDS) }
+        f.beforeStep = { step -> if (step == OwnerCreateFixtureStep.CLAIM) barrier.await(500, TimeUnit.MILLISECONDS) }
         val responses = try {
             OwnedCallerTestScope().use { callers -> inputs.map { input -> callers.launch { f.send(input) } }.map { it.value() } }
         } finally {
             f.beforeStep = {}
         }
         f.assertReleased()
+        assertTrue(claimBarrierPassed.get(), "Both original callers must pass the claim barrier before any retry.")
+        val claims = f.observations.filter { it.first == OwnerCreateFixtureStep.CLAIM }
+        assertEquals(2, claims.size, "Both original claim statements must complete before any retry.")
+        assertEquals(2, claims.map { it.second.identity.second }.toSet().size, "The original claims must use two real transactions.")
         val completed = responses.mapIndexed { index, response ->
             if (response.status != 503) {
                 response
