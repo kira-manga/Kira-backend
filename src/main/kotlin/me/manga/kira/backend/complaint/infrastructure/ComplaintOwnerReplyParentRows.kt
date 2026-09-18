@@ -21,7 +21,7 @@ internal object ComplaintOwnerReplyParentRows {
             CASE WHEN octet_length(c.subject) <= 800 THEN c.subject END AS subject
         $ELIGIBLE FOR UPDATE OF c
     """.trimIndent()
-    const val resource = "SELECT state FROM complaint_resource_ids WHERE id = ? AND data_scope_id = ? AND test_only FOR UPDATE"
+    const val RESOURCE = "SELECT state FROM complaint_resource_ids WHERE id = ? AND data_scope_id = ? AND test_only FOR UPDATE"
 
     fun read(row: ResultSet): ComplaintOwnerReplyParentSnapshot {
         val noticeKey = row.getString("notice_key")?.let(ComplaintIdentifiers::noticeKey)

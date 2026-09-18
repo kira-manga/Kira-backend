@@ -38,6 +38,8 @@ internal interface ComplaintAdmittedEnrollmentWrite
  * boundary. The session coordinator must perform real preflight before invoking the lower counter
  * operation. No raw request/address/actor enters retained counter or context state.
  */
+// Each fixed operation keeps its explicit original-context and one-use admission boundary.
+@Suppress("TooManyFunctions")
 internal class ComplaintIngressAdmission(
     private val resolver: ClientIpResolver,
     private val policy: ComplaintAdmissionPolicy,

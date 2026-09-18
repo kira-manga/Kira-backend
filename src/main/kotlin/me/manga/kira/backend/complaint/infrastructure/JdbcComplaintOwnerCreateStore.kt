@@ -347,7 +347,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
                 provisionalReplyResource = true
             } else {
                 parentState = jdbc.query(
-                    ComplaintOwnerReplyParentRows.resource,
+                    ComplaintOwnerReplyParentRows.RESOURCE,
                     { row, _ -> row.getString("state") },
                     id,
                     binding.scope.id,

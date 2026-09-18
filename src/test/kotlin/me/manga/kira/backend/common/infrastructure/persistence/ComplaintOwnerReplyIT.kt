@@ -89,7 +89,7 @@ class ComplaintOwnerReplyIT {
             complaintSpringSecurityContext(factory, users).use { spring ->
                 val chain = spring.getBean(FilterChainProxy::class.java)
                 val guard = RequestBodySizeLimitFilter(ObjectMapper())
-                val request = f.replyInput(attempt).apply { servletPath = requestURI }
+                val request = f.replyInput(attempt).apply { servletPath = requireNotNull(requestURI) }
                 var sentReleased = false
                 val response = object : MockHttpServletResponse() {
                     override fun getOutputStream(): ServletOutputStream {
