@@ -63,6 +63,7 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
     val phases: List<PersistencePhaseContext> get() = f.jdbc.observations.keys.take(lastPhase ?: f.jdbc.observations.size).drop(firstPhase)
     val producedSignatures = mutableListOf<ByteArray>()
     var beforeSign: (Int) -> Unit = {}
+    private var firstSignerSlot = 0
     private val assertion = AtomicReference<AssertionError?>()
     private var retired = false
     val cleanupVerified: Boolean get() = retired
@@ -71,7 +72,7 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
         signing.respond = { request ->
             preserveAssertions {
                 f.d7.released()
-                val slot = producedSignatures.size
+                val slot = firstSignerSlot + producedSignatures.size
                 assertTrue(slot in 0..1, "A third Sign or a retry is never authorized.")
                 beforeSign(slot)
                 val keyId = listOf("catalog-old", "catalog-new")[slot]
@@ -133,14 +134,39 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
         assertNoLostAssertions()
     }
 
+    fun continueSecondSign(
+        previous: CatalogSignerRotationFreezeInvocation,
+        request: CatalogSignerRotationFreezeRequestV1 = f.request,
+    ) = try {
+        firstSignerSlot = 1 // Expected request order, not a fabricated first response or inference from the request's ARN.
+        operator.continueSecondSign(
+            request,
+            previous.operator,
+            NEW_SIGNING_CREDENTIALS,
+            S3CatalogReadbackFixture.credentials,
+            S3CatalogReadbackFixture.credentials,
+        )
+    } finally {
+        if (lastPhase == null) lastPhase = f.jdbc.observations.size
+        assertNoLostAssertions()
+    }
+
     /** On-time invocation cleanup only; deliberately keeps the already accepted process and original lease campaign alive. */
-    fun assertReleased() {
+    fun assertReleased() = assertCleaned(reserved = true)
+
+    fun assertCleanedWithoutReservation() = assertCleaned(reserved = false)
+
+    private fun assertCleaned(reserved: Boolean) {
         f.d7.released()
         assertOriginalFilesClosed()
         assertEquals(signing.createdClients, signing.returnedClientCloses)
         assertSyntheticTransportsDisposed()
         assertNull(poolTestField<AtomicReference<Any?>>(f.coordinator.catalogRefreshCustody, "active").get())
-        assertTrue(poolTestField<Boolean>(attempt, "released"))
+        assertEquals(reserved, poolTestField<Boolean>(attempt, "reserved"))
+        assertEquals(reserved, poolTestField<Boolean>(attempt, "released"))
+        assertTrue(poolTestField<Boolean>(operator, "closed"))
+        assertTrue(poolTestField<Boolean>(operator, "cleanupProven"))
+        assertNull(ownedCutField(operator, "closeFailure"))
         assertNoLostAssertions()
     }
 
