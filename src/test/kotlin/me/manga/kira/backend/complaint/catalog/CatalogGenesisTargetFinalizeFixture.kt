@@ -47,6 +47,15 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapsho
 import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxGenesisReleaseFilesV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
+import me.manga.kira.backend.database.CatalogAuthorChainLimitsV1
+import me.manga.kira.backend.database.CatalogAuthorDatabaseDocumentV1
+import me.manga.kira.backend.database.CatalogAuthorDocumentV1
+import me.manga.kira.backend.database.CatalogAuthorFilesDocumentV1
+import me.manga.kira.backend.database.CatalogAuthorSecretDocumentV1
+import me.manga.kira.backend.database.CatalogAuthorSigningDocumentV1
+import me.manga.kira.backend.database.CatalogAuthorTrustDocumentV1
+import me.manga.kira.backend.database.CatalogGenesisExitV1
+import me.manga.kira.backend.database.ComplaintCatalogGenesisFinalizeWorkerMain
 import me.manga.kira.backend.security.VersionedSecretBinding
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
 import me.manga.kira.backend.support.MutableClock
@@ -57,6 +66,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.HttpExecuteRequest
 import software.amazon.awssdk.http.SdkHttpClient
 import software.amazon.awssdk.http.SdkHttpRequest
@@ -66,6 +76,7 @@ import java.nio.file.Path
 import java.time.Instant
 import java.time.ZoneOffset
 import java.util.Base64
+import java.util.HexFormat
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
@@ -175,6 +186,51 @@ internal class CatalogGenesisTargetFinalizeFixture(val tls: VersionBoundPersiste
     }
 
     fun invocation(): CatalogGenesisTargetFinalizeInvocation = CatalogGenesisTargetFinalizeInvocation(this).also(invocations::add)
+
+    /** Serialize the original AUTHOR public request, not TARGET credentials or a substitute combined CLI schema. */
+    fun cliArguments(): Array<String> {
+        val frozen = request.frozen
+        val database = frozen.database
+        val password = database.authenticationPassword
+        val policy = frozen.chainPolicy
+        val trust = policy.trustBundlePolicy
+        val limits = policy.limits
+        val key = frozen.signingKey
+        val spki = key.publicKey().encoded
+        val document = CatalogAuthorDocumentV1(
+            1,
+            CatalogAuthorDatabaseDocumentV1(
+                database.host,
+                database.port,
+                database.database,
+                CatalogAuthorSecretDocumentV1(password.logicalKeyId, password.version.resourceArn, password.version.versionId),
+                database.publicTrustPem.toString(),
+                database.protectedTrustParent.toString(),
+            ),
+            CatalogAuthorFilesDocumentV1(
+                frozen.files.approvedIntent.toString(),
+                frozen.files.initialBundle.toString(),
+                frozen.files.currentBundle.toString(),
+                frozen.files.approvalInputs.toString(),
+            ),
+            CatalogAuthorTrustDocumentV1(
+                base64(trust.rootPublicKeySpki), trust.rootPublicKeySha256, trust.rootKeyId, trust.rootAlgorithmId,
+                trust.expectedEnvironment, trust.expectedCatalogLocations, trust.minimumBundleVersion,
+                policy.currentWriterGenerationIds, policy.currentApproverIds,
+                CatalogAuthorChainLimitsV1(
+                    limits.maximumEnvelopeBytes, limits.maximumManifestRecords, limits.maximumGenerations, limits.maximumEncodedBytes,
+                ),
+            ),
+            HexFormat.of().formatHex(frozen.capacityDigest()),
+            CatalogAuthorSigningDocumentV1(key.keyId, key.keyArn, key.algorithmId, base64(spki), Sha256.hex(spki)),
+            frozen.releaseRoot.toString(),
+        )
+        val path = freeze.writeInput("original-author-command.json", Json.encodeToString(CatalogAuthorDocumentV1.serializer(), document).toByteArray())
+        return arrayOf(
+            "finalize", "--manifest", path.toString(), "--target-deployment", request.targetDeployment.toString(),
+            "--genesis-pin", checkNotNull(frozen.independentPin).toString(),
+        )
+    }
 
     fun desiredHash(): ByteArray? = observer.queryForObject(
         "SELECT desired_configuration_hash FROM complaint_journal_control WHERE data_scope_id = ?",
@@ -353,6 +409,43 @@ internal class CatalogGenesisTargetFinalizeInvocation(private val fixture: Catal
         )
     } finally {
         assertNoLostAssertions()
+    }
+
+    /** Same concrete owner/budget and HTTP fixtures, invoked through the real worker's manifest/session path. */
+    fun executeCli(args: Array<String>): CatalogGenesisExitV1 = try {
+        val families = listOf("SECRETS", "PRIMARY_READ", "REPLICA_READ") +
+            if (fixture.inputs.sealerMapping == null) emptyList() else listOf("SEALER")
+        val sessions = families.associateWith { family ->
+            AwsSessionCredentials.create("SYNTHETICTARGET$family", "synthetic-$family-secret-not-real", "synthetic-$family-session-not-real")
+        }
+        val environment = sessions.flatMap { (family, session) ->
+            listOf(
+                "KIRA_CATALOG_TARGET_${family}_ACCESS_KEY_ID" to session.accessKeyId(),
+                "KIRA_CATALOG_TARGET_${family}_SECRET_ACCESS_KEY" to session.secretAccessKey(),
+                "KIRA_CATALOG_TARGET_${family}_SESSION_TOKEN" to session.sessionToken(),
+            )
+        }.toMap()
+        val budget = operator.budget
+        val result = ComplaintCatalogGenesisFinalizeWorkerMain.execute(args, operator, environment)
+        assertEquals(CatalogGenesisExitV1.PROJECTED, result)
+        assertSame(budget, operator.budget)
+        assertSame(budget, attempt.budget)
+        assertSame(operator, poolTestField<CatalogGenesisFinalizeV1>(attempt, "operator"))
+        secrets.requests.forEach { assertCliSession(it.http, sessions.getValue("SECRETS")) }
+        val locations = checkNotNull(fixture.inputs.catalog).chainPolicy.trustBundlePolicy.expectedCatalogLocations
+        http.requests.forEach { request ->
+            val location = locations.single { request.encodedPath() == "/${it.bucket}" || request.encodedPath().startsWith("/${it.bucket}/") }
+            assertCliSession(request, sessions.getValue("${location.role}_READ"))
+        }
+        result
+    } finally {
+        assertNoLostAssertions()
+    }
+
+    private fun assertCliSession(request: SdkHttpRequest, session: AwsSessionCredentials) {
+        val expected = "AWS4-HMAC-SHA256 Credential=${session.accessKeyId()}/"
+        assertTrue(request.firstMatchingHeader("Authorization").orElseThrow().startsWith(expected))
+        assertEquals(session.sessionToken(), request.firstMatchingHeader("X-Amz-Security-Token").orElseThrow())
     }
 
     fun assertFullReadback() {

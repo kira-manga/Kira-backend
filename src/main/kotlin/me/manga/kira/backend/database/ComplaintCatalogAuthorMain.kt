@@ -17,14 +17,14 @@ import kotlin.system.exitProcess
 internal object ComplaintCatalogAuthorMain {
     @JvmStatic
     fun main(args: Array<String>) {
-        exitProcess(report(CatalogAuthorProcessV1.launch(args)))
+        exitProcess(report(CatalogGenesisProcessV1.launchAuthor(args)))
     }
 
-    internal fun report(observation: CatalogAuthorProcessObservationV1): Int {
-        val exit = catalogAuthorProcessObservation(observation.exit, observation.retirementConfirmed).exit
-        return if (observation.retirementConfirmed && exit in setOf(CatalogAuthorExitV1.FROZEN, CatalogAuthorExitV1.SIGNED_AWAITING_RELEASE)) {
+    internal fun report(observation: CatalogGenesisProcessObservationV1): Int {
+        val exit = CatalogGenesisProcessV1.observeAuthor(observation.exit, observation.retirementConfirmed).exit
+        return if (observation.retirementConfirmed && exit in setOf(CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE)) {
             println("catalog-author ${exit.name}; historical-only")
-            if (System.out.checkError()) CatalogAuthorExitV1.FAILED.code else 0
+            if (System.out.checkError()) CatalogGenesisExitV1.FAILED.code else 0
         } else {
             val retirement = if (observation.retirementConfirmed) "" else "; retirement=UNCONFIRMED"
             System.err.println("catalog-author refused: ${exit.name}$retirement")
@@ -51,14 +51,14 @@ internal object ComplaintCatalogAuthorMain {
 internal object ComplaintCatalogAuthorWorkerMain {
     @JvmStatic
     fun main(args: Array<String>) {
-        CatalogAuthorProcessV1.halt(execute(args))
+        CatalogGenesisProcessV1.haltAuthor(execute(args))
     }
 
     @Suppress("TooGenericExceptionCaught") // Retain every original owner; no raw diagnostic graph crosses the process boundary.
-    internal fun execute(args: Array<String>): CatalogAuthorExitV1 {
+    internal fun execute(args: Array<String>): CatalogGenesisExitV1 {
         var operator: CatalogGenesisFreezeV1? = null
         var document: CatalogAuthorManifestFileV1? = null
-        var result: CatalogAuthorExitV1? = null
+        var result: CatalogGenesisExitV1? = null
         var failure: Throwable? = null
         try {
             val retained = CatalogGenesisFreezeV1.begin() // Before command-file or credential acquisition, including invalid invocations.
@@ -78,8 +78,8 @@ internal object ComplaintCatalogAuthorWorkerMain {
                 retained.freeze(request, secrets, signing, primary, replica)
             }
             result = when (observed.state) {
-                CatalogGenesisFreezeStateV1.FROZEN -> CatalogAuthorExitV1.FROZEN
-                CatalogGenesisFreezeStateV1.SIGNED_AWAITING_RELEASE -> CatalogAuthorExitV1.SIGNED_AWAITING_RELEASE
+                CatalogGenesisFreezeStateV1.FROZEN -> CatalogGenesisExitV1.FROZEN
+                CatalogGenesisFreezeStateV1.SIGNED_AWAITING_RELEASE -> CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE
             }
         } catch (problem: Throwable) {
             failure = catalogAuthorSignal(problem) // Restore interruption before any cleanup can clear or replace its classification.
@@ -124,33 +124,19 @@ internal fun catalogAuthorSignal(problem: Throwable): Throwable = try {
 }
 
 @Suppress("InstanceOfCheckForException")
-internal fun catalogAuthorFailureExit(problem: Throwable): CatalogAuthorExitV1 = when (val signal = catalogAuthorSignal(problem)) {
-    is Error -> CatalogAuthorExitV1.FATAL
+internal fun catalogAuthorFailureExit(problem: Throwable): CatalogGenesisExitV1 = when (val signal = catalogAuthorSignal(problem)) {
+    is Error -> CatalogGenesisExitV1.FATAL
 
-    is CancellationException -> CatalogAuthorExitV1.CANCELLED
+    is CancellationException -> CatalogGenesisExitV1.CANCELLED
 
-    is InterruptedException -> CatalogAuthorExitV1.INTERRUPTED
+    is InterruptedException -> CatalogGenesisExitV1.INTERRUPTED
 
     is CatalogGenesisFreezeExceptionV1 -> when (signal.code) {
-        CatalogGenesisFreezeFailureV1.INPUT_REFUSED -> CatalogAuthorExitV1.INPUT_REFUSED
-        CatalogGenesisFreezeFailureV1.CLEANUP_UNPROVEN -> CatalogAuthorExitV1.CLEANUP_UNPROVEN
-        CatalogGenesisFreezeFailureV1.TIME_BUDGET_EXHAUSTED -> CatalogAuthorExitV1.TIME_BUDGET_EXHAUSTED
-        else -> CatalogAuthorExitV1.FAILED
+        CatalogGenesisFreezeFailureV1.INPUT_REFUSED -> CatalogGenesisExitV1.INPUT_REFUSED
+        CatalogGenesisFreezeFailureV1.CLEANUP_UNPROVEN -> CatalogGenesisExitV1.CLEANUP_UNPROVEN
+        CatalogGenesisFreezeFailureV1.TIME_BUDGET_EXHAUSTED -> CatalogGenesisExitV1.TIME_BUDGET_EXHAUSTED
+        else -> CatalogGenesisExitV1.FAILED
     }
 
-    else -> CatalogAuthorExitV1.FAILED
-}
-
-/** Private process statuses only, never a signature/pin/approval or reusable release receipt. */
-internal enum class CatalogAuthorExitV1(val code: Int) {
-    FROZEN(0),
-    SIGNED_AWAITING_RELEASE(10),
-    INPUT_REFUSED(64),
-    FAILED(70),
-    CLEANUP_UNPROVEN(71),
-    FATAL(72),
-    RETIREMENT_UNCONFIRMED(74),
-    TIME_BUDGET_EXHAUSTED(124),
-    INTERRUPTED(130),
-    CANCELLED(131),
+    else -> CatalogGenesisExitV1.FAILED
 }

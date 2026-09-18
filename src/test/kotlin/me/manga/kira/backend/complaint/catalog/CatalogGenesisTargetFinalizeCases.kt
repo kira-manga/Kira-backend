@@ -36,6 +36,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisRele
 import me.manga.kira.backend.complaint.infrastructure.catalog.CurrentAcceptedCatalogRefreshV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.GenesisResume
 import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxGenesisReleaseFilesV1
+import me.manga.kira.backend.database.CatalogGenesisExitV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -60,13 +61,17 @@ import java.util.HexFormat
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 
-/** Six connected groups only: real freeze/first-D/TARGET, SDK raw readback and Linux custody. No cloud/deployment or crash-durability claim. */
-@Suppress("LargeClass") // Keep six joined state/recovery groups and their original-owner assertions together, not split across new fixture abstractions.
+/** Six core groups and one typed-owner CLI bridge: real freeze/first-D/TARGET. No cloud/deployment or crash-durability claim. */
+@Suppress("LargeClass") // Keep joined state/recovery groups and the CLI bridge's same original-owner assertions together, not new fixture abstractions.
 internal class CatalogGenesisTargetFinalizeCases(private val f: CatalogGenesisTargetFinalizeFixture) {
-    fun frozenReleaseFirstDAndTargetFinalize() {
+    fun frozenReleaseFirstDAndTargetFinalize() = assertRealTargetFinalization(cli = false)
+    fun targetCliUsesOriginalFrozenRequestAndOwner() = assertRealTargetFinalization(cli = true)
+
+    private fun assertRealTargetFinalization(cli: Boolean) {
         val counters = f.counters()
         val frozenMutation = frozenMutation()
         val control = preservedControl()
+        val cliArgs = if (cli) f.cliArguments() else null // Fixture input preparation precedes the actual original stage owner/budget.
         val invocation = f.invocation()
         val pids = linkedSetOf<Int>()
         var closedProvider = false
@@ -130,7 +135,7 @@ internal class CatalogGenesisTargetFinalizeCases(private val f: CatalogGenesisTa
                 })
             }
         }
-        invocation.execute()
+        if (cliArgs == null) invocation.execute() else assertEquals(CatalogGenesisExitV1.PROJECTED, invocation.executeCli(cliArgs))
         invocation.assertFullReadback()
         invocation.assertReleased()
         assertTrue(durableBeforeSql && beforeCommit && afterCommit)

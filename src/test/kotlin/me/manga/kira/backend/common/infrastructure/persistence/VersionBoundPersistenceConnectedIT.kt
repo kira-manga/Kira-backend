@@ -443,6 +443,11 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     @Test
+    fun targetCliUsesOriginalFrozenRequestAndOwner() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls, profile = "D4") { CatalogGenesisTargetFinalizeCases(it).targetCliUsesOriginalFrozenRequestAndOwner() }
+    }
+
+    @Test
     fun custodyFailurePreventsComplete() = withFixture { tls ->
         withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).custodyFailurePreventsComplete() }
     }

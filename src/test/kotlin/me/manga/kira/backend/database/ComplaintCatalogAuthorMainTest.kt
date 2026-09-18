@@ -100,7 +100,7 @@ class ComplaintCatalogAuthorMainTest {
 
     @Test
     fun `worker rejects before acquisition and process boundary preserves fatal cancellation and interruption`() {
-        assertEquals(CatalogAuthorExitV1.INPUT_REFUSED, ComplaintCatalogAuthorWorkerMain.execute(arrayOf("--private-secret-canary")))
+        assertEquals(CatalogGenesisExitV1.INPUT_REFUSED, ComplaintCatalogAuthorWorkerMain.execute(arrayOf("--private-secret-canary")))
         for (type in listOf(ComplaintCatalogAuthorMain::class.java, ComplaintCatalogAuthorWorkerMain::class.java)) {
             assertFalse(ApplicationRunner::class.java.isAssignableFrom(type))
             assertFalse(CommandLineRunner::class.java.isAssignableFrom(type))
@@ -112,13 +112,22 @@ class ComplaintCatalogAuthorMainTest {
         val prior = Thread.interrupted()
         try {
             val cleanup = CatalogGenesisFreezeExceptionV1(CatalogGenesisFreezeFailureV1.CLEANUP_UNPROVEN)
-            assertEquals(CatalogAuthorExitV1.FATAL, catalogAuthorFailureExit(preferCatalogFreezeCleanup(AssertionError("private-canary"), cleanup)))
-            assertEquals(CatalogAuthorExitV1.CANCELLED, catalogAuthorFailureExit(preferCatalogFreezeCleanup(CancellationException("private-canary"), cleanup)))
+            assertEquals(
+                CatalogGenesisExitV1.FATAL,
+                catalogAuthorFailureExit(preferCatalogFreezeCleanup(AssertionError("private-canary"), cleanup)),
+            )
+            assertEquals(
+                CatalogGenesisExitV1.CANCELLED,
+                catalogAuthorFailureExit(preferCatalogFreezeCleanup(CancellationException("private-canary"), cleanup)),
+            )
             assertFalse(Thread.currentThread().isInterrupted)
-            assertEquals(CatalogAuthorExitV1.INTERRUPTED, catalogAuthorFailureExit(preferCatalogFreezeCleanup(InterruptedException("private-canary"), cleanup)))
+            assertEquals(
+                CatalogGenesisExitV1.INTERRUPTED,
+                catalogAuthorFailureExit(preferCatalogFreezeCleanup(InterruptedException("private-canary"), cleanup)),
+            )
             assertTrue(Thread.currentThread().isInterrupted)
-            val notStarted = CatalogAuthorProcessV1.launch(arrayOf("freeze", "--manifest", "/not-read/author.json"))
-            assertEquals(CatalogAuthorExitV1.INTERRUPTED, notStarted.exit)
+            val notStarted = CatalogGenesisProcessV1.launchAuthor(arrayOf("freeze", "--manifest", "/not-read/author.json"))
+            assertEquals(CatalogGenesisExitV1.INTERRUPTED, notStarted.exit)
             assertTrue(notStarted.retirementConfirmed)
             assertTrue(Thread.currentThread().isInterrupted)
         } finally {
@@ -129,11 +138,17 @@ class ComplaintCatalogAuthorMainTest {
 
     @Test
     fun `closed reporting never turns unconfirmed retirement into success or erases stronger signals`() {
-        assertEquals(CatalogAuthorExitV1.FATAL, preferCatalogAuthorExit(CatalogAuthorExitV1.FATAL, CatalogAuthorExitV1.INTERRUPTED))
-        assertEquals(CatalogAuthorExitV1.FATAL, preferCatalogAuthorExit(CatalogAuthorExitV1.CANCELLED, CatalogAuthorExitV1.FATAL))
-        assertEquals(CatalogAuthorExitV1.CANCELLED, preferCatalogAuthorExit(CatalogAuthorExitV1.CANCELLED, CatalogAuthorExitV1.INTERRUPTED))
-        assertEquals(CatalogAuthorExitV1.INTERRUPTED, preferCatalogAuthorExit(CatalogAuthorExitV1.TIME_BUDGET_EXHAUSTED, CatalogAuthorExitV1.INTERRUPTED))
-        assertEquals(CatalogAuthorExitV1.CLEANUP_UNPROVEN, preferCatalogAuthorExit(CatalogAuthorExitV1.CLEANUP_UNPROVEN, CatalogAuthorExitV1.FAILED))
+        assertEquals(CatalogGenesisExitV1.FATAL, preferCatalogGenesisExit(CatalogGenesisExitV1.FATAL, CatalogGenesisExitV1.INTERRUPTED))
+        assertEquals(CatalogGenesisExitV1.FATAL, preferCatalogGenesisExit(CatalogGenesisExitV1.CANCELLED, CatalogGenesisExitV1.FATAL))
+        assertEquals(CatalogGenesisExitV1.CANCELLED, preferCatalogGenesisExit(CatalogGenesisExitV1.CANCELLED, CatalogGenesisExitV1.INTERRUPTED))
+        assertEquals(
+            CatalogGenesisExitV1.INTERRUPTED,
+            preferCatalogGenesisExit(CatalogGenesisExitV1.TIME_BUDGET_EXHAUSTED, CatalogGenesisExitV1.INTERRUPTED),
+        )
+        assertEquals(
+            CatalogGenesisExitV1.CLEANUP_UNPROVEN,
+            preferCatalogGenesisExit(CatalogGenesisExitV1.CLEANUP_UNPROVEN, CatalogGenesisExitV1.FAILED),
+        )
         val previousOut = System.out
         val previousErr = System.err
         val output = ByteArrayOutputStream()
@@ -143,29 +158,37 @@ class ComplaintCatalogAuthorMainTest {
         try {
             System.setOut(out)
             System.setErr(err)
-            for (exit in CatalogAuthorExitV1.entries) {
+            for (exit in CatalogGenesisExitV1.entries) {
                 output.reset()
                 error.reset()
-                val observed = catalogAuthorProcessObservation(exit, false)
-                val expected = if (exit in setOf(CatalogAuthorExitV1.FATAL, CatalogAuthorExitV1.CANCELLED, CatalogAuthorExitV1.INTERRUPTED)) {
+                val observed = catalogGenesisProcessObservation(exit, false)
+                val expected = if (exit in setOf(CatalogGenesisExitV1.FATAL, CatalogGenesisExitV1.CANCELLED, CatalogGenesisExitV1.INTERRUPTED)) {
                     exit
                 } else {
-                    CatalogAuthorExitV1.RETIREMENT_UNCONFIRMED
+                    CatalogGenesisExitV1.RETIREMENT_UNCONFIRMED
                 }
                 assertFalse(observed.retirementConfirmed)
                 assertEquals(expected, observed.exit)
                 // The reporting boundary must also reject an unnormalized internal observation.
-                assertNotEquals(0, ComplaintCatalogAuthorMain.report(CatalogAuthorProcessObservationV1(exit, false)))
+                assertNotEquals(0, ComplaintCatalogAuthorMain.report(CatalogGenesisProcessObservationV1(exit, false)))
                 assertEquals("", output.toString(Charsets.UTF_8))
                 assertEquals("catalog-author refused: ${expected.name}; retirement=UNCONFIRMED\n", error.toString(Charsets.UTF_8))
             }
-            for (exit in listOf(CatalogAuthorExitV1.FROZEN, CatalogAuthorExitV1.SIGNED_AWAITING_RELEASE)) {
+            for (exit in listOf(CatalogGenesisExitV1.FROZEN, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE)) {
                 output.reset()
                 error.reset()
-                assertEquals(0, ComplaintCatalogAuthorMain.report(catalogAuthorProcessObservation(exit, true)))
+                assertEquals(0, ComplaintCatalogAuthorMain.report(catalogGenesisProcessObservation(exit, true)))
                 assertEquals("catalog-author ${exit.name}; historical-only\n", output.toString(Charsets.UTF_8))
                 assertEquals("", error.toString(Charsets.UTF_8))
             }
+            output.reset()
+            error.reset()
+            assertEquals(
+                CatalogGenesisExitV1.FAILED.code,
+                ComplaintCatalogAuthorMain.report(CatalogGenesisProcessObservationV1(CatalogGenesisExitV1.PROJECTED, true)),
+            )
+            assertEquals("", output.toString(Charsets.UTF_8))
+            assertEquals("catalog-author refused: FAILED\n", error.toString(Charsets.UTF_8))
         } finally {
             System.setOut(previousOut)
             System.setErr(previousErr)

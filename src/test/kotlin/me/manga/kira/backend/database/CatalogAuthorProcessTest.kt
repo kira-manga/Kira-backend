@@ -2,6 +2,8 @@ package me.manga.kira.backend.database
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisCustodyObservationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisReleaseCustodyV1
@@ -27,33 +29,58 @@ import java.util.concurrent.TimeUnit
 /** Real owning JVM death and kernel-lock reacquisition, not power-loss, fsync-fault or production-storage qualification. */
 class CatalogAuthorProcessTest {
     @Test
-    fun `actual worker halt retires retained custody without cooperative close`() = withHeldCustody { root, child ->
-        child.outputStream.write(HALT_REQUEST)
-        child.outputStream.flush()
-        val observed = CatalogAuthorProcessV1.awaitOriginal(child, 10_000)
-        assertEquals(CatalogAuthorExitV1.CLEANUP_UNPROVEN, observed.exit)
-        assertEquals(CatalogAuthorExitV1.CLEANUP_UNPROVEN.code, child.exitValue())
-        assertReleased(root, child, observed)
+    fun `actual worker halt retires retained custody without cooperative close`() {
+        for (stage in CatalogProcessTestStage.entries) {
+            withHeldCustody(stage.cleanupHalt) { root, child ->
+                child.outputStream.write(HALT_REQUEST)
+                child.outputStream.flush()
+                val observed = stage.await(child, 10_000)
+                assertEquals(CatalogGenesisExitV1.CLEANUP_UNPROVEN, observed.exit)
+                assertEquals(CatalogGenesisExitV1.CLEANUP_UNPROVEN.code, child.exitValue())
+                assertReleased(root, child, observed)
+            }
+        }
+        val foreign = listOf(
+            Triple(CatalogProcessTestStage.AUTHOR, CatalogCustodyFixtureHalt.TARGET_PROJECTED, CatalogGenesisExitV1.PROJECTED),
+            Triple(CatalogProcessTestStage.TARGET_FINALIZE, CatalogCustodyFixtureHalt.AUTHOR_FROZEN, CatalogGenesisExitV1.FROZEN),
+            Triple(CatalogProcessTestStage.TARGET_FINALIZE, CatalogCustodyFixtureHalt.AUTHOR_AWAITING, CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE),
+        )
+        for ((stage, halt, actual) in foreign) {
+            withHeldCustody(halt) { root, child ->
+                child.outputStream.write(HALT_REQUEST)
+                child.outputStream.flush()
+                val observed = stage.await(child, 10_000)
+                assertEquals(actual.code, child.exitValue(), "The actual dead child returned the other stage's code.")
+                assertEquals(CatalogGenesisExitV1.FAILED, observed.exit)
+                assertReleased(root, child, observed)
+            }
+        }
     }
 
     @Test
-    fun `expired outer wait kills retained original before custody can reopen`() = withHeldCustody { root, child ->
-        val observed = CatalogAuthorProcessV1.awaitOriginal(child, 50)
-        assertEquals(CatalogAuthorExitV1.TIME_BUDGET_EXHAUSTED, observed.exit)
-        assertReleased(root, child, observed)
+    fun `expired outer wait kills retained original before custody can reopen`() {
+        for (stage in CatalogProcessTestStage.entries) {
+            withHeldCustody(stage.cleanupHalt) { root, child ->
+                val observed = stage.await(child, 50)
+                assertEquals(CatalogGenesisExitV1.TIME_BUDGET_EXHAUSTED, observed.exit)
+                assertReleased(root, child, observed)
+            }
+        }
     }
 
     @Test
     fun `interrupted outer wait retires original child and restores interruption`() {
         val prior = Thread.interrupted()
         try {
-            withHeldCustody { root, child ->
-                Thread.currentThread().interrupt()
-                val observed = CatalogAuthorProcessV1.awaitOriginal(child, 10_000)
-                assertEquals(CatalogAuthorExitV1.INTERRUPTED, observed.exit)
-                assertTrue(Thread.currentThread().isInterrupted)
-                Thread.interrupted() // Only after asserting restoration; the fresh custody caller must itself be un-interrupted.
-                assertReleased(root, child, observed)
+            for (stage in CatalogProcessTestStage.entries) {
+                withHeldCustody(stage.cleanupHalt) { root, child ->
+                    Thread.currentThread().interrupt()
+                    val observed = stage.await(child, 10_000)
+                    assertEquals(CatalogGenesisExitV1.INTERRUPTED, observed.exit)
+                    assertTrue(Thread.currentThread().isInterrupted)
+                    Thread.interrupted() // Only after asserting restoration; the fresh custody caller must itself be un-interrupted.
+                    assertReleased(root, child, observed)
+                }
             }
         } finally {
             Thread.interrupted()
@@ -61,7 +88,7 @@ class CatalogAuthorProcessTest {
         }
     }
 
-    private fun withHeldCustody(action: (Path, Process) -> Unit) {
+    private fun withHeldCustody(halt: CatalogCustodyFixtureHalt, action: (Path, Process) -> Unit) {
         val mode = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))
         val parent = Files.createTempDirectory(Path.of(System.getProperty("user.home")).toRealPath(), "kira-author-process-", mode)
         var original: Process? = null
@@ -70,7 +97,7 @@ class CatalogAuthorProcessTest {
             val builder = ProcessBuilder(
                 Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                 "-Xms16m", "-Xmx128m", "-XX:MaxMetaspaceSize=96m", "-XX:ActiveProcessorCount=1", "-XX:+ExitOnOutOfMemoryError",
-                "-Djava.io.tmpdir=$parent", "-cp", runtimeClasspath(), CatalogAuthorCustodyProcessFixture::class.java.name, root.toString(),
+                "-Djava.io.tmpdir=$parent", "-cp", runtimeClasspath(), CatalogAuthorCustodyProcessFixture::class.java.name, root.toString(), halt.name,
             ).directory(parent.toFile()).redirectError(ProcessBuilder.Redirect.DISCARD)
             builder.environment().clear() // No ambient sessions, configuration, Java agents or option variables.
             val child = builder.start().also { original = it }
@@ -95,7 +122,7 @@ class CatalogAuthorProcessTest {
         }
     }
 
-    private fun assertReleased(root: Path, child: Process, observed: CatalogAuthorProcessObservationV1) {
+    private fun assertReleased(root: Path, child: Process, observed: CatalogGenesisProcessObservationV1) {
         assertTrue(observed.retirementConfirmed)
         assertFalse(child.isAlive)
         FileChannel.open(root.resolve(".custody.lock"), WRITE, NOFOLLOW_LINKS).use { channel ->
@@ -157,14 +184,28 @@ private const val PROCESS_PAYLOAD = "synthetic-retained-author-envelope"
 private const val MAIN_RETURNED = 82
 private const val HALT_REQUEST = 72
 
+private enum class CatalogProcessTestStage(val cleanupHalt: CatalogCustodyFixtureHalt) {
+    AUTHOR(CatalogCustodyFixtureHalt.AUTHOR_CLEANUP),
+    TARGET_FINALIZE(CatalogCustodyFixtureHalt.TARGET_CLEANUP),
+    ;
+
+    fun await(child: Process, millis: Long): CatalogGenesisProcessObservationV1 = when (this) {
+        AUTHOR -> CatalogGenesisProcessV1.awaitAuthor(child, millis)
+        TARGET_FINALIZE -> CatalogGenesisProcessV1.awaitTargetFinalize(child, millis)
+    }
+}
+
+private enum class CatalogCustodyFixtureHalt { AUTHOR_CLEANUP, TARGET_CLEANUP, AUTHOR_FROZEN, AUTHOR_AWAITING, TARGET_PROJECTED }
+
 /** Test-only fixed fixture. No provider, alternate production mode, fake custody or supplied death observation. */
 internal object CatalogAuthorCustodyProcessFixture {
     private var retained: CatalogGenesisReleaseCustodyV1? = null
 
     @JvmStatic
     fun main(args: Array<String>) {
-        check(args.size == 1)
-        val owner = CatalogGenesisReleaseCustodyV1.retain(Path.of(args.single()), PROCESS_ALLOCATION.toByteArray(), PersistenceTimeBudget.start(60_000))
+        check(args.size == 2)
+        val halt = CatalogCustodyFixtureHalt.valueOf(args[1])
+        val owner = CatalogGenesisReleaseCustodyV1.retain(Path.of(args[0]), PROCESS_ALLOCATION.toByteArray(), PersistenceTimeBudget.start(60_000))
         retained = owner
         check(owner.open() == CatalogGenesisCustodyObservationV1.CREATED)
         owner.putIfAbsent(CatalogGenesisReleaseLeafV1.ENVELOPE, PROCESS_PAYLOAD.toByteArray())
@@ -176,8 +217,20 @@ internal object CatalogAuthorCustodyProcessFixture {
             System.out.write(MAIN_RETURNED)
             System.out.flush()
             check(System.`in`.read() == HALT_REQUEST)
-            val failure = catalogAuthorFailureExit(CatalogGenesisFreezeExceptionV1(CatalogGenesisFreezeFailureV1.CLEANUP_UNPROVEN))
-            CatalogAuthorProcessV1.halt(failure) // Deliberately no close: observed process death, not a close request, disposes custody.
+            // Deliberately no close. Synthetic foreign success codes exercise stage separation, not successful core cleanup.
+            when (halt) {
+                CatalogCustodyFixtureHalt.AUTHOR_CLEANUP -> CatalogGenesisProcessV1.haltAuthor(
+                    catalogAuthorFailureExit(CatalogGenesisFreezeExceptionV1(CatalogGenesisFreezeFailureV1.CLEANUP_UNPROVEN)),
+                )
+
+                CatalogCustodyFixtureHalt.TARGET_CLEANUP -> CatalogGenesisProcessV1.haltTargetFinalize(
+                    catalogTargetFinalizeFailureExit(CatalogGenesisFinalizeExceptionV1(CatalogGenesisFinalizeFailureV1.CLEANUP_UNPROVEN)),
+                )
+
+                CatalogCustodyFixtureHalt.AUTHOR_FROZEN -> CatalogGenesisProcessV1.haltAuthor(CatalogGenesisExitV1.FROZEN)
+                CatalogCustodyFixtureHalt.AUTHOR_AWAITING -> CatalogGenesisProcessV1.haltAuthor(CatalogGenesisExitV1.SIGNED_AWAITING_RELEASE)
+                CatalogCustodyFixtureHalt.TARGET_PROJECTED -> CatalogGenesisProcessV1.haltTargetFinalize(CatalogGenesisExitV1.PROJECTED)
+            }
         }, "fixture-retained-custody").apply {
             isDaemon = false
             start()
