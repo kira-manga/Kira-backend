@@ -21,12 +21,27 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_L
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINALIZATION
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_INITIAL_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PENDING_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PENDING_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PREPARED_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_FINAL_PREPARED_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_SIGNER_ROTATION_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxSignerRotationReleaseFilesV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_COORDINATOR_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_GENESIS_FINALIZATION
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_GENESIS_FINAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_CURRENT_LEASE
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_INITIAL_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PENDING_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PENDING_LEASE
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PREPARED_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PREPARED_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PREPARED_LEASE
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY
+import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_FINAL_PROJECTED_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.READ_SIGNER_ROTATION_HISTORY
 import me.manga.kira.backend.complaint.infrastructure.catalog.RELINQUISH_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.TRY_CATALOG_LOCK
@@ -34,6 +49,10 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_COMP
 import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_HEAD
 import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_INITIAL_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_GENESIS_PROJECTION
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_FINAL_CLEAR_PENDING
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_FINAL_COMPLETION
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_FINAL_HEAD
+import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_FINAL_PROJECTION
 import me.manga.kira.backend.complaint.infrastructure.catalog.WRITE_SIGNER_ROTATION_SIGNATURE
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
@@ -264,7 +283,10 @@ internal class CatalogSignerRotationSqlCall(val phase: PersistencePhaseContext, 
 }
 
 /** Same concrete snapshot/G1/lease/rotation executors and original coordinator; all SQL/results/transaction ownership are real. */
-internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCoordinatorPersistence) : JdbcTemplate(coordinator.dataSource) {
+internal class CatalogSignerRotationProbeJdbc(
+    private val coordinator: CatalogCoordinatorPersistence,
+    private val observeDeliveryQueries: Boolean = false,
+) : JdbcTemplate(coordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<CatalogSignerRotationSqlCall>()
     val steps: List<String> get() = calls.map { it.step }
@@ -280,12 +302,19 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>): T? {
         val path = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path") }
-        return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT) {
+        return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT || (observeDeliveryQueries && sql == DELIVERY_GATES)) {
             observed(sql, emptyArray()) { super.query(sql, rse) }
         } else {
             super.query(sql, rse) // RowMapper's no-argument overload already passes through observed; never double-count that dispatch.
         }
     }
+
+    override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>, vararg args: Any?): T? =
+        if (observeDeliveryQueries && sql == DELIVERY_AUTHENTICATE) {
+            observed(sql, args) { super.query(sql, rse, *args) }
+        } else {
+            super.query(sql, rse, *args) // Existing RowMapper routes remain observed exactly once.
+        }
 
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql, args) {
         super.query(sql, rowMapper, *args)
@@ -335,11 +364,14 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
             }
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
-        val step = if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT) {
-            assertTrue(sql.trimStart().startsWith("WITH control AS ("))
-            "snapshot"
-        } else {
-            step(sql, arguments)
+        val step = when {
+            observeDeliveryQueries && sql == DELIVERY_AUTHENTICATE -> "delivery-authenticate"
+            observeDeliveryQueries && sql == DELIVERY_GATES -> "delivery-gates"
+            path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT -> {
+                assertTrue(sql.trimStart().startsWith("WITH control AS ("))
+                "snapshot"
+            }
+            else -> step(sql, arguments)
         }
         calls.add(CatalogSignerRotationSqlCall(phase, step, arguments))
         beforeSql(step)
@@ -361,6 +393,9 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
         -> true
@@ -418,10 +453,39 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
         WRITE_GENESIS_INITIAL_CONTROL -> "genesis-initial"
 
-        else -> when {
+        else -> finalizationStep(sql) ?: when {
             sql.contains("FROM complaint_capacity_counters") -> "counters"
             sql.contains("UPDATE complaint_capacity_counters") -> "charge:${arguments[3]}"
             else -> error("Unexpected signer rotation/lease SQL.")
         }
+    }
+
+    private fun finalizationStep(sql: String): String? = when (sql) {
+        LOCK_SIGNER_ROTATION_FINAL_PREPARED_CONTROL -> "final-prepared-control"
+        READ_SIGNER_ROTATION_FINAL_PREPARED_CONTROL -> "final-prepared-control-read"
+        READ_SIGNER_ROTATION_FINAL_PREPARED_LEASE -> "final-prepared-lease"
+        LOCK_SIGNER_ROTATION_FINAL_PENDING_CONTROL -> "final-pending-control"
+        READ_SIGNER_ROTATION_FINAL_PENDING_CONTROL -> "final-pending-control-read"
+        READ_SIGNER_ROTATION_FINAL_PENDING_LEASE -> "final-pending-lease"
+        READ_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL -> "final-projected-control-read"
+        READ_SIGNER_ROTATION_FINAL_PROJECTED_LEASE -> "final-projected-lease"
+        LOCK_SIGNER_ROTATION_FINAL_INITIAL_HISTORY -> "final-initial-history-lock"
+        READ_SIGNER_ROTATION_FINAL_INITIAL_HISTORY -> "final-initial-history-read"
+        LOCK_SIGNER_ROTATION_FINAL_PREPARED_HISTORY -> "final-prepared-history-lock"
+        READ_SIGNER_ROTATION_FINAL_PREPARED_HISTORY -> "final-prepared-history-read"
+        LOCK_SIGNER_ROTATION_FINAL_PENDING_HISTORY -> "final-pending-history-lock"
+        READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY -> "final-pending-history-read"
+        READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY -> "final-projected-history-read"
+        WRITE_SIGNER_ROTATION_FINAL_COMPLETION -> "final-complete"
+        WRITE_SIGNER_ROTATION_FINAL_HEAD -> "final-head"
+        WRITE_SIGNER_ROTATION_FINAL_PROJECTION -> "final-project"
+        WRITE_SIGNER_ROTATION_FINAL_CLEAR_PENDING -> "final-clear-pending"
+        else -> null
+    }
+
+    private companion object {
+        const val DELIVERY_AUTHENTICATE = "SELECT session_user = ? AND current_user = ? AND current_database() = ? AS authenticated"
+        const val DELIVERY_GATES = "SELECT (maintenance_closed AND creation_closed) IS TRUE AS gates_closed FROM complaint_journal_control " +
+            "WHERE data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid"
     }
 }

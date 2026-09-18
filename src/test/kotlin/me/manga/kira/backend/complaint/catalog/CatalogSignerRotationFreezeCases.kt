@@ -115,7 +115,11 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
         assertEquals(2, f.jdbc.steps.count { it.startsWith("charge:") })
         val envelope = assertSignedSql(original.producedSignatures)
         assertEquals(Sha256.hex(envelope), result.envelopeSha256)
-        CatalogSignerRotationReleaseLeafV1.entries.forEach { assertTrue(f.complete(it), it.name) }
+        // Appended delivery leaves belong to the later owner, not the complete signed-PREPARED freeze prefix.
+        CatalogSignerRotationReleaseLeafV1.entries.take(CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME.ordinal + 1)
+            .forEach { assertTrue(f.complete(it), it.name) }
+        CatalogSignerRotationReleaseLeafV1.entries.drop(CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME.ordinal + 1)
+            .forEach { assertFalse(f.exists(it), it.name) }
         assertCharge(beforeCounters)
         assertHeadUnchanged(beforeControl, beforeGenesis)
         assertReadOnlyResume()

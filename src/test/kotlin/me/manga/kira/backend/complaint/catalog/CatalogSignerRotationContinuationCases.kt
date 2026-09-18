@@ -117,12 +117,54 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
         assertEquals(f.manifest.operationToken, result.operationToken)
         assertEquals(Sha256.hex(envelope), result.envelopeSha256)
         f.assertLeavesUnchanged(leaves, allowAdditionalLeaves = true)
-        CatalogSignerRotationReleaseLeafV1.entries.forEach { assertTrue(f.complete(it), it.name) }
+        CatalogSignerRotationReleaseLeafV1.entries.take(CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME.ordinal + 1)
+            .forEach { assertTrue(f.complete(it), it.name) }
+        CatalogSignerRotationReleaseLeafV1.entries.drop(CatalogSignerRotationReleaseLeafV1.FREEZE_OUTCOME.ordinal + 1)
+            .forEach { assertFalse(f.exists(it), it.name) }
         core.assertCharge(counters)
         core.assertHeadUnchanged(control, genesis)
         assertRefusedContinuation(continued) // A completed second Sign cannot be retried by another explicit continuation.
         core.assertReadOnlyResume()
         assertEquals(2, f.invocations.sumOf { it.signing.requests.size })
+    }
+
+    /** Lower guard, not a wrong-purpose delivery root: the genuine original process/campaign and exact input prefix remain usable. */
+    fun deliveryHistoryCannotReenter(firstOnly: Boolean) {
+        val previous = if (firstOnly) {
+            signatureOnePersistedPrefix() // Positive actual known-clean/unattempted Sign2 eligibility, not an already-spent second Sign.
+        } else {
+            f.invocation().also {
+                assertEquals(CatalogSignerRotationFreezeStateV1.SIGNED_PREPARED, it.execute().state)
+                it.assertReleased()
+                core.assertSignedSql(it.producedSignatures)
+                core.assertReadOnlyResume() // Without downstream history this very same lower route really succeeds.
+            }
+        }
+        val prefix = f.snapshotLeaves()
+        createUnexpectedLeaf(CatalogSignerRotationReleaseLeafV1.PUBLICATION_ARMED, complete = true)
+        // Synthetic negative presence only: these bytes are explicitly NOT a delivery effect, allocation or accepted result.
+        for (complete in listOf(true, false)) {
+            if (!complete) Files.delete(f.marker(CatalogSignerRotationReleaseLeafV1.PUBLICATION_ARMED))
+            assertEquals(complete, f.complete(CatalogSignerRotationReleaseLeafV1.PUBLICATION_ARMED))
+            val before = f.state()
+            val leaves = f.snapshotLeaves()
+            val calls = f.jdbc.calls.size
+            if (firstOnly) {
+                assertRefusedContinuation(previous)
+                assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_ARMED))
+            } else {
+                val next = f.invocation()
+                assertEquals(CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED, core.refused { next.execute(resume = true) }.code)
+                next.assertReleased()
+                assertEquals(0, next.signing.createdClients)
+                assertEquals(0, next.readback.http.createdClients)
+            }
+            assertEquals(calls, f.jdbc.calls.size, "Downstream history refuses before SQL or either native Sign/readback route.")
+            assertEquals(before, f.state())
+            f.assertLeavesUnchanged(leaves)
+            f.assertLeavesUnchanged(prefix, allowAdditionalLeaves = true)
+            assertEquals(if (firstOnly) 1 else 2, f.invocations.sumOf { it.signing.requests.size })
+        }
     }
 
     fun continuationRefusals(cut: CatalogSignerRotationContinuationCut) = when (cut) {

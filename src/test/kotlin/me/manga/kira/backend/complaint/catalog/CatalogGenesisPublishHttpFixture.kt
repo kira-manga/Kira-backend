@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogGetRequest
+import me.manga.kira.backend.complaint.domain.catalog.CatalogListCursor
 import me.manga.kira.backend.complaint.domain.catalog.CatalogListRequest
 import me.manga.kira.backend.complaint.domain.catalog.CatalogListedVersion
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
@@ -21,8 +22,17 @@ import java.time.ZoneOffset
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
 
-/** Raw public HTTP only: actual S3 SDK, exact request bodies, complete LISTs and version-bound GETs; no supplied publisher/verifier result. */
-internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray, createdAt: Long) {
+/** Raw SDK transport, now also with one retained G1 predecessor for fixed2. Published bytes come from the actual PUT call. */
+internal class CatalogGenesisPublishHttpFixture(
+    private val envelope: ByteArray,
+    createdAt: Long,
+    predecessorBytes: ByteArray? = null,
+    private val predecessorRetainUntil: Long? = null,
+) {
+    private val predecessor = predecessorBytes?.copyOf()
+    private val generation = if (predecessor == null) 1L else 2L
+    private val objectKey = CatalogReadbackProtocol.key(generation)
+    private val publishedVersion = if (generation == 1L) VERSION else OVERLAP2_VERSION
     val put = S3CatalogReadbackFixture()
     val read = S3CatalogReadbackFixture()
     val bodies = mutableListOf<ByteArray>()
@@ -30,8 +40,8 @@ internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray,
     var primaryVersion: String? = null
     var replicaVersion: String? = null
     var primaryReplication = "PENDING"
-    var primaryBytes = envelope.copyOf()
-    var replicaBytes = envelope.copyOf()
+    var primaryBytes = if (predecessor == null) envelope.copyOf() else ByteArray(0)
+    var replicaBytes = if (predecessor == null) envelope.copyOf() else ByteArray(0)
     var primaryRetention = retainUntil
     var replicaRetention = retainUntil
     var replicateOnPut = false
@@ -48,6 +58,7 @@ internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray,
     private val assertion = AtomicReference<AssertionError?>()
 
     init {
+        check((predecessor == null) == (predecessorRetainUntil == null))
         put.respond = { request -> preserveAssertions { putReply(request).observeLifecycle() } }
         read.respond = { request -> preserveAssertions { readReply(request).observeLifecycle().apply { beforeCall = ::connectionFreeObservation } } }
     }
@@ -100,6 +111,7 @@ internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray,
         check(primaryVersion != null)
         primaryReplication = "COMPLETED"
         replicaVersion = primaryVersion
+        replicaBytes = primaryBytes.copyOf()
     }
 
     fun assertNoLostAssertions() {
@@ -109,17 +121,19 @@ internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray,
     private fun putReply(request: SdkHttpRequest): S3CatalogReply {
         requireConnectionFree()
         assertEquals(SdkHttpMethod.PUT, request.method())
-        assertEquals("/${S3CatalogReadbackFixture.primary.bucket}/${CatalogReadbackProtocol.key(1)}", request.encodedPath())
+        assertEquals("/${S3CatalogReadbackFixture.primary.bucket}/$objectKey", request.encodedPath())
+        val body = bodies.last().copyOf()
         return S3CatalogReply(ByteArray(0)).apply {
             headers = headers + mapOf(
-                "x-amz-version-id" to listOf(VERSION),
-                "x-amz-checksum-sha256" to listOf(checksum(envelope)),
+                "x-amz-version-id" to listOf(publishedVersion),
+                "x-amz-checksum-sha256" to listOf(checksum(body)),
             )
             beforeCall = {
                 preserveAssertions {
                     requireConnectionFree()
                     // The test's synthetic server accepts this actual HTTP call before a deliberately lost acknowledgement.
-                    primaryVersion = VERSION
+                    primaryBytes = body.copyOf()
+                    primaryVersion = publishedVersion
                     if (replicateOnPut) completeReplication()
                     afterPutAccepted()
                 }
@@ -139,20 +153,43 @@ internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray,
             val maximum = request.firstMatchingRawQueryParameter("max-keys").orElseThrow().toInt()
             val prefix = request.firstMatchingRawQueryParameter("prefix").orElseThrow()
             assertEquals(CatalogReadbackProtocol.PREFIX, prefix)
-            assertTrue(request.firstMatchingRawQueryParameter("key-marker").isEmpty)
-            val listed = version?.let { CatalogListedVersion(CatalogReadbackProtocol.key(1), it, bytes(location).size.toLong()) }
-            val versions = listOfNotNull(listed).toMutableList()
+            val previous = predecessor?.let {
+                CatalogListedVersion(CatalogReadbackProtocol.key(1), S3CatalogReadbackFixture.VERSION, it.size.toLong())
+            }
+            val listed = version?.let { CatalogListedVersion(objectKey, it, bytes(location).size.toLong()) }
+            val versions = listOfNotNull(previous, listed).toMutableList()
             if (duplicatePrimary && location.role == "PRIMARY") versions.add(checkNotNull(listed).copy(versionId = "conflicting-second-version"))
             val marker = if (deleteMarkerRole == location.role) {
-                "<DeleteMarker><Key>${CatalogReadbackProtocol.key(1)}</Key><VersionId>synthetic-delete-marker</VersionId></DeleteMarker>"
+                "<DeleteMarker><Key>$objectKey</Key><VersionId>synthetic-delete-marker</VersionId></DeleteMarker>"
             } else {
                 ""
             }
-            return read.listReply(CatalogListRequest(location, prefix, null, maximum), versions, extraXml = marker)
+            val cursor = request.firstMatchingRawQueryParameter("key-marker").orElse(null)?.let {
+                CatalogListCursor(it, request.firstMatchingRawQueryParameter("version-id-marker").orElseThrow())
+            }
+            val offset = if (cursor == null) 0 else {
+                val found = versions.indexOfFirst { it.key == cursor.keyMarker && it.versionId == cursor.versionIdMarker }
+                check(found >= 0)
+                found + 1
+            }
+            val page = versions.drop(offset).take(maximum)
+            val next = if (offset + page.size < versions.size) {
+                page.last().let { CatalogListCursor(it.key, checkNotNull(it.versionId)) }
+            } else {
+                null
+            }
+            return read.listReply(CatalogListRequest(location, prefix, cursor, maximum), page, next, extraXml = marker)
         }
-        assertEquals("/${location.bucket}/${CatalogReadbackProtocol.key(1)}", request.encodedPath())
+        if (predecessor != null && request.encodedPath() == "/${location.bucket}/${CatalogReadbackProtocol.key(1)}") {
+            assertEquals(S3CatalogReadbackFixture.VERSION, request.firstMatchingRawQueryParameter("versionId").orElseThrow())
+            return read.getReply(CatalogGetRequest(location, CatalogReadbackProtocol.key(1), S3CatalogReadbackFixture.VERSION), predecessor).apply {
+                val retention = Instant.ofEpochSecond(checkNotNull(predecessorRetainUntil)).toString()
+                headers = headers + ("x-amz-object-lock-retain-until-date" to listOf(retention))
+            }
+        }
+        assertEquals("/${location.bucket}/$objectKey", request.encodedPath())
         assertEquals(version, request.firstMatchingRawQueryParameter("versionId").orElseThrow())
-        return read.getReply(CatalogGetRequest(location, CatalogReadbackProtocol.key(1), checkNotNull(version)), bytes(location)).apply {
+        return read.getReply(CatalogGetRequest(location, objectKey, checkNotNull(version)), bytes(location)).apply {
             val retention = if (location.role == "PRIMARY") primaryRetention else replicaRetention
             headers = headers + mapOf(
                 "x-amz-object-lock-retain-until-date" to listOf(Instant.ofEpochSecond(retention).toString()),
@@ -182,6 +219,7 @@ internal class CatalogGenesisPublishHttpFixture(private val envelope: ByteArray,
 
     companion object {
         const val VERSION = "synthetic-g1-published-version"
+        const val OVERLAP2_VERSION = "synthetic-overlap2-published-version"
         val PUT_CREDENTIALS: AwsSessionCredentials =
             AwsSessionCredentials.create("SYNTHETICPUBLISHKEY", "synthetic-publish-secret", "synthetic-publish-session")
 

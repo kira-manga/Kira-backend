@@ -7,6 +7,8 @@ import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationDeliveryCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationDeliveryFailureCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationFreezeCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationInitialAuthorCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationInitialAuthorCut
@@ -33,6 +35,7 @@ import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
+import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationDelivery
 import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationInitialAuthor
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
@@ -561,6 +564,49 @@ class VersionBoundPersistenceConnectedIT {
         CatalogSignerRotationRecoveryProviderCut.entries.forEach { cut ->
             withFixture { tls ->
                 withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationPreparedRecoveryCases(it).originalBudgetAndProviderFailure(cut) }
+            }
+        }
+    }
+
+    @Test
+    fun `fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationDeliveryCases(it).lostAcknowledgementLagAndFreshReadOnlyCompletion() }
+    }
+
+    @Test
+    fun `fixed overlap2 refuses current full B gates frozen bytes and live historical lease before PUT`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) {
+            CatalogSignerRotationDeliveryFailureCases(it).currentBindingGatesFrozenTupleAndLiveLeaseRefuse()
+        }
+    }
+
+    @Test
+    fun `fixed overlap2 native cleanup and spent arm keep original custody without another PUT or Sign`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) {
+            CatalogSignerRotationDeliveryFailureCases(it).nativeCleanupAndSpentArmNeverGrantAnotherPut()
+        }
+    }
+
+    @Test
+    fun `fixed overlap2 duplicate marker version retention and byte conflicts cannot COMPLETE or reput`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationDeliveryCases(it).rawCopyConflictsCannotCompleteOrReput() }
+    }
+
+    @Test
+    fun `fixed overlap2 UNKNOWN COMPLETE keeps original authority and refuses cold finalization`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationDeliveryFailureCases(it).unknownCompleteRetainsOriginalAuthority() }
+    }
+
+    @Test
+    fun `fixed overlap2 UNKNOWN PROJECT keeps original pending authority and refuses cold finalization`() = withFixture { tls ->
+        withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationDeliveryFailureCases(it).unknownProjectRetainsOriginalPendingAuthority() }
+    }
+
+    @Test
+    fun `complete and partial delivery history blocks lower both returned resume and known unattempted second Sign`() {
+        for (firstOnly in listOf(false, true)) {
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationContinuationCases(it).deliveryHistoryCannotReenter(firstOnly) }
             }
         }
     }
