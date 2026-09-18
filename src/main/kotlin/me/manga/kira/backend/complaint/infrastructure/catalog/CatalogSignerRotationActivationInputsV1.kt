@@ -120,7 +120,7 @@ internal class CatalogSignerRotationActivationInputsV1(
         val g2 = proof.overlapBytes()
         val checked = OfflineCatalogRotationChainVerifier.verifyRotationChain(sequenceOf(g1, g2), initial, current, chain)
         val expected = profile.deployment.keys().map { OfflineRequiredSignerV1(it.keyId, it.algorithmId) }
-        val overlap = OfflineTrustBundleParser.parseRotation(g2)
+        val overlap = OfflineTrustBundleParser.parseRotation(g2, chain.limits.maximumManifestRecords)
         requireSignerRotation(
             checked.tail.generation == 2L && checked.tail.envelopeSha256 == manifest.previousEnvelopeSha256 &&
                 checked.rotation == CatalogRotationState.AwaitingActivation(expected[0], expected[1]) &&

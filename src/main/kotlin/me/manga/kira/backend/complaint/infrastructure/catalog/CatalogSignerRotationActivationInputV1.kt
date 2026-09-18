@@ -168,7 +168,7 @@ internal class CatalogSignerRotationActivationInputV1 private constructor(
         ): Array<Any?> {
             val bytes = proof.overlapBytes()
             val frozen = CatalogFrozenManifestParser.signed(bytes, limits)
-            val manifest = OfflineTrustBundleParser.parseRotation(bytes).manifest
+            val manifest = OfflineTrustBundleParser.parseRotation(bytes, limits.maximumManifestRecords).manifest
             val approvals = CanonicalJson.canonicalize(
                 ListSerializer(OfflineCatalogGenesisApprovalV1.serializer()),
                 manifest.approvals,
