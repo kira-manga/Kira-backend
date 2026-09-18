@@ -928,8 +928,7 @@ constructor(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        val genesisLifecycle = catalogAuthorAttempt != null || catalogFinalizerAttempt != null
-        if (genesisLifecycle || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null || signerRotationRecovery != null) {
+        if (usesCatalogLifecycleCleanup()) {
             return budget.systemCleanupSnapshot(WORK_MILLIS)
         }
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
@@ -940,23 +939,17 @@ constructor(
         }
     }
 
+    private fun usesCatalogLifecycleCleanup(): Boolean =
+        catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
+            catalogSignerRotationAttempt != null || signerRotationRecovery != null
+
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
-        signerRotationRecovery?.let {
-            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
-        }
-        catalogSignerRotationAttempt?.let {
-            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
-        }
-        catalogPublisherAttempt?.let {
-            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
-        }
-        catalogFinalizerAttempt?.let {
-            return it.phaseBudget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
-        }
-        catalogAuthorAttempt?.let {
-            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
+        val catalogBudget = signerRotationRecovery?.budget ?: catalogSignerRotationAttempt?.budget ?: catalogPublisherAttempt?.budget
+            ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
+        catalogBudget?.let {
+            return it.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
         }
         val selected =
             (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget ?: desiredAttempt?.budget ?: firstDesiredAttempt?.budget)

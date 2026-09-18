@@ -102,13 +102,7 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
             inputs.publicTrustPem(),
             inputs.protectedTrustParent,
         )
-        val runtime = when {
-            signerRotationRecovery -> runtimeConfiguration.bindCatalogSignerRotationRecoveryOwner(inputs.epochRotation)
-            finalizer && inputs.epochRotation -> runtimeConfiguration.bindCatalogGenesisFinalizationOwnerWithEpochRotation()
-            finalizer -> runtimeConfiguration.bindCatalogGenesisFinalizationOwner()
-            inputs.epochRotation -> runtimeConfiguration.bindLifecycleOwnerWithEpochRotation()
-            else -> runtimeConfiguration.bindLifecycleOwner()
-        }
+        val runtime = bindTargetOwner(inputs, runtimeConfiguration, finalizer, signerRotationRecovery)
         targetOwner = runtime // Before shell binding, including a failed/partly constructed pool composition.
         val pools = when {
             signerRotationRecovery -> runtime.bindCatalogSignerRotationRecoveryPools(nanoClock)
@@ -186,6 +180,19 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
         val operator = operatorConfiguration.bindDesiredInstallationOperatorOwner()
         operatorOwner = operator
         operator.bindDesiredInstallationOperatorPools()
+    }
+
+    private fun bindTargetOwner(
+        inputs: ComplaintDesiredDeploymentInputsV1,
+        configuration: VersionBoundPersistenceConfiguration,
+        finalizer: Boolean,
+        signerRotationRecovery: Boolean,
+    ): PersistenceJdbcLifecycleOwner = when {
+        signerRotationRecovery -> configuration.bindCatalogSignerRotationRecoveryOwner(inputs.epochRotation)
+        finalizer && inputs.epochRotation -> configuration.bindCatalogGenesisFinalizationOwnerWithEpochRotation()
+        finalizer -> configuration.bindCatalogGenesisFinalizationOwner()
+        inputs.epochRotation -> configuration.bindLifecycleOwnerWithEpochRotation()
+        else -> configuration.bindLifecycleOwner()
     }
 
     private fun requireDistinctDatabasePasswords(runtimePassword: AcquiredVersionedSecret, operatorPassword: AcquiredVersionedSecret) {

@@ -102,12 +102,15 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     fun prepare(): PersistenceLifecycleObservation {
         requireResources()
-        if (desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery) {
+        if (requiresNamedPreparation()) {
             return PersistenceLifecycleObservation.UNAVAILABLE
         }
         checkNotNull(executor)
         return dataSource.prepareCatalogCoordinator()
     }
+
+    private fun requiresNamedPreparation(): Boolean =
+        desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery
 
     /** Only the named operator owner can start the infrastructure for this route. */
     internal fun prepareDesiredInstallationOperator(): PersistenceLifecycleObservation {

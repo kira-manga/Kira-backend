@@ -270,12 +270,7 @@ internal class PersistencePhaseOwnership private constructor(
             throw failure
         }
         selection.requireResources() // A changed/unprovable resource pair cannot spend a phase permit.
-        if ((selection as? Selection.CatalogCoordinator)?.authoring == true && catalogAuthorAttempt == null) {
-            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        }
-        if ((selection as? Selection.CatalogCoordinator)?.finalizing == true && catalogFinalizerAttempt == null) {
-            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        }
+        requireCatalogGenesisEntry(catalogAuthorAttempt, catalogFinalizerAttempt)
         requireSignerRotationRecoveryEntry(path, catalogSignerRotationAttempt, signerRotationRecovery)
         catalogRefresh?.requireProjectedPersistence(this)
         desiredAttempt?.requirePhaseEntry(this, path)
@@ -366,6 +361,15 @@ internal class PersistencePhaseOwnership private constructor(
             throw failure as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
         } finally {
             admissionCut.unlock()
+        }
+    }
+
+    private fun requireCatalogGenesisEntry(author: CatalogGenesisFreezeAttemptV1?, finalizer: CatalogGenesisFinalizeAttemptV1?) {
+        if ((selection as? Selection.CatalogCoordinator)?.authoring == true && author == null) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if ((selection as? Selection.CatalogCoordinator)?.finalizing == true && finalizer == null) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
 
