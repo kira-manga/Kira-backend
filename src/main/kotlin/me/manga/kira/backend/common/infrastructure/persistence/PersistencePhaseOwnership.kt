@@ -17,6 +17,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
+import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import org.springframework.transaction.PlatformTransactionManager
@@ -146,6 +148,17 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintOwnerReply(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_REPLY)
 
     internal fun enterComplaintOwnerOperationStatus(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS)
+
+    internal fun enterComplaintOwnerDeleteAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION)
+    internal fun enterComplaintOwnerDeletePreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT)
+    internal fun enterComplaintOwnerDeleteStatus(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_STATUS)
+    internal fun enterComplaintOwnerDeleteAuthorize(admission: ComplaintAdmittedOwnerDelete, tuple: ComplaintOwnerDeleteTuple): PersistencePhaseContext {
+        ComplaintIngressAdmission.requireOwnerDeleteEntry(admission, tuple)
+        return enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE)
+    }
+    internal fun enterComplaintOwnerDeleteReload(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD)
+    internal fun enterComplaintOwnerDeleteVerify(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY)
+    internal fun enterComplaintOwnerDeleteApply(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY)
 
     internal fun enterComplaintOwnerEditAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_EDIT_AUTHENTICATION)
 
@@ -619,6 +632,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_EDIT_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_EDIT_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_OWNER_EDIT_STATUS,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHENTICATION,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_STATUS,
                 PersistencePhasePath.COMPLAINT_OWNER_EDIT,
                 -> admission.tryComplaintBoundary()
 
@@ -630,6 +646,10 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
                 PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
@@ -680,6 +700,10 @@ internal class PersistencePhaseOwnership private constructor(
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
                     PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
                     -> admission.tryPrivacyDeletion()
 
                     else -> admission.tryRoutineDeletion()
@@ -801,6 +825,10 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
         )
         private val current = ThreadLocal<PersistencePhaseContext?>()
         private val loans = ThreadLocal<PersistenceLeaseCompletion?>()
@@ -886,6 +914,13 @@ internal enum class PersistencePhasePath {
     COMPLAINT_OWNER_DELETE_ALL_RELOAD,
     COMPLAINT_OWNER_DELETE_ALL_VERIFY,
     COMPLAINT_OWNER_DELETE_ALL_APPLY,
+    COMPLAINT_OWNER_DELETE_AUTHORIZE,
+    COMPLAINT_OWNER_DELETE_RELOAD,
+    COMPLAINT_OWNER_DELETE_VERIFY,
+    COMPLAINT_OWNER_DELETE_APPLY,
+    COMPLAINT_OWNER_DELETE_AUTHENTICATION,
+    COMPLAINT_OWNER_DELETE_PREFLIGHT,
+    COMPLAINT_OWNER_DELETE_STATUS,
     COMPLAINT_INSTALLATION_CURRENT_STATE,
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,
@@ -954,6 +989,9 @@ internal enum class PersistencePhasePath {
             COMPLAINT_OWNER_EDIT_AUTHENTICATION,
             COMPLAINT_OWNER_EDIT_PREFLIGHT,
             COMPLAINT_OWNER_EDIT_STATUS,
+            COMPLAINT_OWNER_DELETE_AUTHENTICATION,
+            COMPLAINT_OWNER_DELETE_PREFLIGHT,
+            COMPLAINT_OWNER_DELETE_STATUS,
             COMPLAINT_CATALOG_SNAPSHOT,
             COMPLAINT_CUTOFF_PAGE,
             -> true

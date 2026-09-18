@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.domain.ComplaintIdentifiers
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteStatusQuery
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditPrecondition
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditStatusQuery
@@ -40,10 +41,16 @@ internal class ComplaintOwnerCreateHttpHandler(
     private val ingress: ComplaintIngressAdmission,
     private val responses: ComplaintOwnerOperationResponse = ComplaintOwnerOperationResponse(),
     private val editStatus: ComplaintOwnerEditHttpHandler? = null,
+    private val deleteStatus: ComplaintOwnerDeleteHttpHandler? = null,
 ) : HttpRequestHandler {
     init {
         require(editStatus == null || editStatus.sharesOwner(ingress, responses)) { "Complaint status composition refused." }
+        require(deleteStatus == null || deleteStatus.sharesOwner(ingress, responses)) { "Complaint status composition refused." }
     }
+
+    internal fun hasDeleteStatus(): Boolean = deleteStatus != null
+
+    internal fun usesDeleteStatus(handler: ComplaintOwnerDeleteHttpHandler): Boolean = deleteStatus === handler
 
     internal fun hasEditStatus(): Boolean = editStatus != null
 
@@ -108,6 +115,13 @@ internal class ComplaintOwnerCreateHttpHandler(
 
                         is ComplaintOwnerStatusInput.Edit -> {
                             val selected = editStatus ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+                            body.fill(0)
+                            selected.handleStatusWithinIngress(response, context, bearer, query.query, permit)
+                            return@use
+                        }
+
+                        is ComplaintOwnerStatusInput.Delete -> {
+                            val selected = deleteStatus ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
                             body.fill(0)
                             selected.handleStatusWithinIngress(response, context, bearer, query.query, permit)
                             return@use
@@ -251,6 +265,7 @@ internal class ComplaintOwnerCreateHttpHandler(
 internal sealed interface ComplaintOwnerStatusInput {
     class Creation(val query: ComplaintOwnerStatusQuery) : ComplaintOwnerStatusInput
     class Edit(val query: ComplaintOwnerEditStatusQuery) : ComplaintOwnerStatusInput
+    class Delete(val query: ComplaintOwnerDeleteStatusQuery) : ComplaintOwnerStatusInput
 }
 
 /** Closed structural parser only. It cannot supply authenticated scope/platform or normalize prose. */
@@ -284,7 +299,7 @@ internal object ComplaintOwnerOperationJson {
 
     fun status(body: ByteArray): ComplaintOwnerStatusQuery = when (val parsed = statusInput(body)) {
         is ComplaintOwnerStatusInput.Creation -> parsed.query
-        is ComplaintOwnerStatusInput.Edit -> rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+        is ComplaintOwnerStatusInput.Edit, is ComplaintOwnerStatusInput.Delete -> rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
     }
 
     fun statusInput(body: ByteArray): ComplaintOwnerStatusInput = parse {
@@ -292,7 +307,9 @@ internal object ComplaintOwnerOperationJson {
         val ids = root["targetIds"]
         require(ids.isArray && ids.size() in 1..2 && ids.all { it.isTextual })
         val operation = string(root, "operation")
-        if (operation == "OWNER_EDIT") {
+        if (operation == "OWNER_DELETE") {
+            ComplaintOwnerStatusInput.Delete(ComplaintOwnerDeleteStatusQuery(string(root, "key"), ids.map { it.textValue() }, string(root, "fingerprint")))
+        } else if (operation == "OWNER_EDIT") {
             ComplaintOwnerStatusInput.Edit(ComplaintOwnerEditStatusQuery(string(root, "key"), ids.map { it.textValue() }, string(root, "fingerprint")))
         } else {
             ComplaintOwnerStatusInput.Creation(

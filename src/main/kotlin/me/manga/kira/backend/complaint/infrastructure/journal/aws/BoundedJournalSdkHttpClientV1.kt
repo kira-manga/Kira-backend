@@ -30,7 +30,7 @@ internal class BoundedJournalSdkHttpClientV1(
     sessionToken: String,
     httpFactory: (remainingMillis: () -> Int) -> SdkHttpClient,
 ) : SdkHttpClient {
-    private val expected = AtomicReference<JournalS3RequestV1?>()
+    private val expected = AtomicReference<JournalS3WireBindingV1?>()
     private val active = AtomicReference<Exchange?>()
     private val closed = AtomicBoolean()
     private val delegateCloseIssued = AtomicBoolean()
@@ -38,7 +38,9 @@ internal class BoundedJournalSdkHttpClientV1(
     private val wire = JournalS3HttpWireV1(endpoint, accessKeyId, sessionToken)
     private val delegate = journalPublicationCall { httpFactory(::remainingConnectionMillis) }
 
-    fun begin(call: JournalS3RequestV1) {
+    fun begin(call: JournalS3RequestV1) = beginProjected(JournalS3WireBindingV1.of(call))
+    fun begin(call: TestOwnerDeleteS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
+    private fun beginProjected(call: JournalS3WireBindingV1) {
         call.check()
         requireJournalPublication(!closed.get() && active.get() == null && expected.compareAndSet(null, call))
         checkCall(call)
@@ -55,17 +57,24 @@ internal class BoundedJournalSdkHttpClientV1(
         exchange
     }
 
-    fun observation(call: JournalS3RequestV1): JournalS3HttpObservationV1? {
+    fun observation(call: JournalS3RequestV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
+    fun observation(call: TestOwnerDeleteS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
+    private fun observationProjected(call: JournalS3WireBindingV1): JournalS3HttpObservationV1? {
         checkCall(call)
         val exchange = active.get()
         requireJournalPublication(exchange != null && exchange.nativeWorkReturned())
         return checkNotNull(exchange).observation
     }
 
-    fun dispatched(call: JournalS3RequestV1): Boolean {
+    fun dispatched(call: JournalS3RequestV1): Boolean = dispatchedProjected(retained(call))
+    fun dispatched(call: TestOwnerDeleteS3CallV1): Boolean = dispatchedProjected(retained(call))
+    private fun dispatchedProjected(call: JournalS3WireBindingV1): Boolean {
         checkCall(call)
         return active.get()?.wasDispatched() == true
     }
+
+    private fun retained(call: JournalS3RequestV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
+    private fun retained(call: TestOwnerDeleteS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
 
     @Synchronized
     fun finishRequest() = journalPublicationClose {
@@ -90,7 +99,7 @@ internal class BoundedJournalSdkHttpClientV1(
         closeFailure.get()?.let { throw it }
     }
 
-    private fun checkCall(call: JournalS3RequestV1) {
+    private fun checkCall(call: JournalS3WireBindingV1) {
         call.check()
         requireJournalPublication(!closed.get() && expected.get() === call)
         closeFailure.get()?.let { throw it }
@@ -106,7 +115,7 @@ internal class BoundedJournalSdkHttpClientV1(
     override fun clientName(): String = "KiraBoundedOrdinaryJournalUrlConnectionSync"
     override fun toString(): String = "BoundedJournalSdkHttpClientV1(closed-ordinary-or-seal-request,redacted)"
 
-    private inner class Exchange(private val call: JournalS3RequestV1) : ExecutableHttpRequest {
+    private inner class Exchange(private val call: JournalS3WireBindingV1) : ExecutableHttpRequest {
         private val prepared = AtomicBoolean()
         private val dispatched = AtomicBoolean()
         private val returned = AtomicBoolean()
@@ -187,7 +196,7 @@ internal class BoundedJournalSdkHttpClientV1(
                 // A PutObject success has no body; an embedded error cannot masquerade as it.
                 JournalS3OperationV1.PUT -> 0
 
-                JournalS3OperationV1.GET -> call.declaration.limits.decoder.maximumEnvelopeBytes
+                JournalS3OperationV1.GET -> call.maximumEnvelopeBytes
             }
         }
 

@@ -56,3 +56,8 @@ internal fun ComplaintAuditMutation.scalarDetails(): Map<String, Any?> = when (t
         "toStatus" to toStatus.name,
     )
 }
+
+/** Separate qualified delete port: existing counted producers cannot silently accept this family. */
+internal interface CountedOwnerDeleteAuditRepository {
+    fun recordOwnerDelete(entry: CountedOwnerDeleteAuditEntry, allocation: ComplaintAuditAllocation)
+}

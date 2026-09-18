@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
@@ -49,6 +50,7 @@ internal class ComplaintIngressAdmission(
     private val createPolicy: ComplaintOwnerCreateAdmissionPolicy = ComplaintOwnerCreateAdmissionPolicy.Disabled,
     private val deleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Disabled,
     private val editPolicy: ComplaintOwnerEditAdmissionPolicy = ComplaintOwnerEditAdmissionPolicy.Disabled,
+    private val ownerDeletePolicy: ComplaintOwnerDeleteAdmissionPolicy = ComplaintOwnerDeleteAdmissionPolicy.Disabled,
 ) {
     private val lock = Any()
     private val keys = ComplaintAdmissionKeyRing(configuration)
@@ -88,6 +90,10 @@ internal class ComplaintIngressAdmission(
     private val edits = (editPolicy as? ComplaintOwnerEditAdmissionPolicy.Bounded)?.let {
         ComplaintOwnerEditAdmissionStore(it, checkNotNull(mutationMembers))
     }
+    private val ownerDeletes = (ownerDeletePolicy as? ComplaintOwnerDeleteAdmissionPolicy.Bounded)?.let {
+        ComplaintOwnerDeleteAdmissionStore(it, checkNotNull(mutationMembers))
+    }
+
     private var reservations = 0
     private var lastRawTime = clock.now()
     private var elapsedTime = 0L
@@ -238,6 +244,38 @@ internal class ComplaintIngressAdmission(
             )
             state.admission = handoff.identity
             state.ownerEditIdentity = handoff.identity
+            state.admittedAt = now
+            state.consumed = true
+            handoff
+        }
+    }
+
+    internal fun startOwnerDelete(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.OWNER_DELETE) }
+    }
+
+    /** Only the concrete delete adapter calls after its authenticated receipt read has physically released. */
+    internal fun admitOwnerDelete(context: ComplaintIngressContext, tuple: ComplaintOwnerDeleteTuple): ComplaintAdmittedOwnerDelete {
+        requireConnectionFree()
+        if (clock !== SystemComplaintAdmissionNanoClock) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        return locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.OWNER_DELETE || state.admission != null) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val limits = ownerDeletePolicy as? ComplaintOwnerDeleteAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
+            val handoff = AdmittedDelete(this, context, tuple, limits)
+            val now = time()
+            val activeKeys = keys.keys()
+            checkNotNull(ownerDeletes).admit(
+                ComplaintOwnerDeleteAdmissionFrames.member(activeKeys, tuple),
+                ComplaintAdmissionPseudonyms.ownerEditDeleteActor(activeKeys, tuple.installation),
+                semantics,
+                now,
+            )
+            state.admission = handoff.identity
+            state.ownerDeleteIdentity = handoff.identity
             state.admittedAt = now
             state.consumed = true
             handoff
@@ -491,14 +529,27 @@ internal class ComplaintIngressAdmission(
         requireLifetime(state, advanceTime(System.nanoTime()))
     }
 
+    private fun requireDeleteState(handoff: AdmittedDelete) {
+        val state = state(handoff.context)
+        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_DELETE || !state.consumed) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        if (state.ownerDeleteIdentity !== handoff.identity || state.admission !== handoff.identity) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        requireLifetime(state, advanceTime(System.nanoTime()))
+    }
+
     private fun mutationMembers(): ComplaintMutationAdmissionMembers? {
         val create = createPolicy as? ComplaintOwnerCreateAdmissionPolicy.Bounded
         val deletion = deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded
         val edit = editPolicy as? ComplaintOwnerEditAdmissionPolicy.Bounded
+        val singleDelete = ownerDeletePolicy as? ComplaintOwnerDeleteAdmissionPolicy.Bounded
         val dimensions = listOfNotNull(
             create?.let { it.memberLimit to it.pruneBatch },
             deletion?.let { it.memberLimit to it.pruneBatch },
             edit?.let { it.memberLimit to it.pruneBatch },
+            singleDelete?.let { it.memberLimit to it.pruneBatch },
         )
         require(dimensions.distinct().size <= 1) { INVALID_ADMISSION_CONFIGURATION }
         val selected = dimensions.firstOrNull() ?: return null
@@ -598,6 +649,7 @@ internal class ComplaintIngressAdmission(
         var enrollmentIdentity: Any? = null
         var ownerCreateIdentity: Any? = null
         var ownerEditIdentity: Any? = null
+        var ownerDeleteIdentity: Any? = null
         var ownerDeleteAllIdentity: Any? = null
     }
 
@@ -610,6 +662,7 @@ internal class ComplaintIngressAdmission(
         OWNER_CREATE,
         OWNER_REPLY,
         OWNER_EDIT,
+        OWNER_DELETE,
         OWNER_DELETE_ALL,
     }
 
@@ -659,6 +712,20 @@ internal class ComplaintIngressAdmission(
     }
 
     private enum class EditStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
+
+    private class AdmittedDelete(
+        val owner: ComplaintIngressAdmission,
+        val context: ComplaintIngressContext,
+        val tuple: ComplaintOwnerDeleteTuple,
+        val limits: ComplaintOwnerDeleteAdmissionPolicy.Bounded,
+    ) : ComplaintAdmittedOwnerDelete {
+        val identity = Any()
+        var phaseIdentity: Any? = null
+        var stage = DeleteStage.MINTED
+        override fun toString(): String = "ComplaintAdmittedOwnerDelete(redacted)"
+    }
+
+    private enum class DeleteStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
 
     private class AdmittedEnrollment(
         val owner: ComplaintIngressAdmission,
@@ -751,6 +818,72 @@ internal class ComplaintIngressAdmission(
         }
 
         /** Before even a deletion permit: no forged, spent, expired or foreign-context admission. */
+        internal fun bindOwnerDelete(handoff: ComplaintAdmittedOwnerDelete, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteState(selected)
+                if (selected.stage !== DeleteStage.MINTED || selected.phaseIdentity != null) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.phaseIdentity = phaseIdentity
+                selected.stage = DeleteStage.BOUND
+            }
+        }
+
+        internal fun claimOwnerDelete(handoff: ComplaintAdmittedOwnerDelete, phaseIdentity: Any, tuple: ComplaintOwnerDeleteTuple) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteState(selected)
+                if (selected.stage !== DeleteStage.BOUND || selected.phaseIdentity !== phaseIdentity || selected.tuple !== tuple) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = DeleteStage.CLAIMED
+            }
+        }
+
+        internal fun checkOwnerDeleteBounds(handoff: ComplaintAdmittedOwnerDelete, phaseIdentity: Any, ledger: ComplaintCapacityLedger) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteState(selected)
+                if (selected.stage !== DeleteStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                if (!selected.limits.matchesLocked(ledger)) refuseComplaintAdmission()
+                selected.stage = DeleteStage.BOUNDS_CHECKED
+            }
+        }
+
+        /** Intrinsic time and retained scalars only; no backing store/provider call inside the transaction. */
+        internal fun checkOwnerDeleteWrite(handoff: ComplaintAdmittedOwnerDelete, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteState(selected)
+                if (selected.phaseIdentity !== phaseIdentity ||
+                    (selected.stage !== DeleteStage.BOUNDS_CHECKED && selected.stage !== DeleteStage.WRITING)
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = DeleteStage.WRITING
+            }
+        }
+
+        /** Before even a deletion permit: no forged, spent, expired or foreign-context admission. */
+        internal fun requireOwnerDeleteEntry(handoff: ComplaintAdmittedOwnerDelete, tuple: ComplaintOwnerDeleteTuple) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteState(selected)
+                if (selected.stage !== DeleteStage.MINTED || selected.tuple !== tuple) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+        }
+
+        internal fun checkOwnerDeleteReceipt(handoff: ComplaintAdmittedOwnerDelete, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireDeleteState(selected)
+                if (selected.stage !== DeleteStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+        }
+
         internal fun requireOwnerDeleteAllEntry(handoff: ComplaintAdmittedOwnerDeleteAll, tuple: InstallationDeletionPreflightTuple) {
             requireConnectionFree()
             val selected = handoff as? AdmittedDeleteAll ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)

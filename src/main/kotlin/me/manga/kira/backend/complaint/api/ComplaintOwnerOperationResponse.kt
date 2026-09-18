@@ -3,6 +3,7 @@ package me.manga.kira.backend.complaint.api
 import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.core.JsonGenerator
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateRejection
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditRejection
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
@@ -99,6 +100,37 @@ internal class ComplaintOwnerOperationResponse {
                         }
 
                         is ComplaintOwnerEditReceipt.Rejected -> {
+                            json.writeStringField("outcome", "REJECTED")
+                            json.writeNumberField("originalStatus", receipt.status)
+                            json.writeStringField("problemCode", receipt.problemCode)
+                        }
+                    }
+                    json.writeEndObject()
+                }
+            }
+            return buffer
+        } catch (failure: Throwable) {
+            buffer.destroy()
+            throw failure
+        }
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    fun encode(permit: ComplaintOwnerHistoryResponses.Permit, receipt: ComplaintOwnerDeleteReceipt, statusLookup: Boolean): ComplaintHistoryEncodedBody {
+        check(permit.belongsTo(slots) && isOpen()) { "Complaint response refused." }
+        val buffer = ComplaintHistoryEncodedBody(16 * 1024)
+        try {
+            if (!statusLookup && receipt is ComplaintOwnerDeleteReceipt.Rejected) {
+                buffer.write(checkNotNull(REJECTIONS[receipt.problemCode]))
+            } else if (statusLookup) {
+                factory.createGenerator(buffer).use { json ->
+                    json.writeStartObject()
+                    when (receipt) {
+                        ComplaintOwnerDeleteReceipt.Applied -> {
+                            json.writeStringField("outcome", "APPLIED")
+                            json.writeNumberField("originalStatus", 204)
+                        }
+                        is ComplaintOwnerDeleteReceipt.Rejected -> {
                             json.writeStringField("outcome", "REJECTED")
                             json.writeNumberField("originalStatus", receipt.status)
                             json.writeStringField("problemCode", receipt.problemCode)

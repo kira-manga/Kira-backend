@@ -95,6 +95,11 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
             return
         }
 
+        if (owner == OwnerBodyRoute.DELETE && body.isNotEmpty()) {
+            body.fill(0)
+            writeOwnerFailure(response, OwnerFailure.INVALID)
+            return
+        }
         val replayable = if (body.isEmpty()) request else CachedBodyRequest(request, body)
         filterChain.doFilter(replayable, response)
     }
@@ -126,6 +131,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         val path = RequestPath.parse(request.requestURI, request.contextPath).pathWithinApplication()
         when {
             request.method == "PATCH" && ownerContentPaths.any { it.matches(path) } -> OwnerBodyRoute.EDIT
+            request.method == "DELETE" && ownerDeletePaths.any { it.matches(path) } -> OwnerBodyRoute.DELETE
             request.method == "POST" && ownerPostPaths.any { it.matches(path) } -> OwnerBodyRoute.POST
             else -> null
         }
@@ -148,7 +154,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         val tags = request.getHeaders(HttpHeaders.IF_MATCH)
         if (tags.hasMoreElements()) {
             val tag = tags.nextElement()
-            if (route != OwnerBodyRoute.EDIT) return OwnerFailure.INVALID
+            if (route != OwnerBodyRoute.EDIT && route != OwnerBodyRoute.DELETE) return OwnerFailure.INVALID
             if (tags.hasMoreElements() || tag.length > 256) return OwnerFailure.PRECONDITION
             if (tag.any { it.code !in 32..126 && it != '\t' }) return OwnerFailure.PRECONDITION
         }
@@ -163,7 +169,8 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         if (rawMedia != null && rawMedia.length > 128) return OwnerFailure.MEDIA
         val media = rawMedia?.trim(' ', '\t')
         val encoding = request.getHeader(HttpHeaders.CONTENT_ENCODING)
-        if (media == null || media.any { it.code > 127 } || !installationMediaType.matches(media)) return OwnerFailure.MEDIA
+        if (media == null && route != OwnerBodyRoute.DELETE) return OwnerFailure.MEDIA
+        if (media != null && (media.any { it.code > 127 } || !installationMediaType.matches(media))) return OwnerFailure.MEDIA
         if (encoding != null && (encoding.length > 64 || !headerTokenEquals(encoding, "identity"))) return OwnerFailure.MEDIA
         return null
     }
@@ -292,7 +299,7 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
 
     private enum class InstallationBodyRoute { SESSION, ENROLLMENT, DELETE_ALL }
 
-    private enum class OwnerBodyRoute { POST, EDIT }
+    private enum class OwnerBodyRoute { POST, EDIT, DELETE }
 
     private enum class OwnerFailure(val status: HttpStatus, code: String) {
         INVALID(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED"),
@@ -324,6 +331,8 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         private val deleteAllPath = PathPatternParser.defaultInstance.parse(DELETE_ALL_PATH)
         private val ownerPostPaths = listOf("/api/v1/complaints", "/api/v1/complaints/{id}/replies", "/api/v1/complaint-operations/status")
             .flatMap { listOf(it, "$it/") }.map(PathPatternParser.defaultInstance::parse)
+        private val ownerDeletePaths = listOf("/api/v1/complaints/{id}", "/api/v1/complaints/{id}/")
+            .map(PathPatternParser.defaultInstance::parse)
         private val ownerContentPaths = listOf("/api/v1/complaints/{id}/content", "/api/v1/complaints/{id}/content/")
             .map(PathPatternParser.defaultInstance::parse)
         private val installationMediaType = Regex(

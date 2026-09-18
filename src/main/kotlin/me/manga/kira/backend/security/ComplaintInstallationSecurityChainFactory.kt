@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteAllHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
@@ -46,8 +47,11 @@ internal class ComplaintInstallationSecurityChainFactory(
     private val detail: ComplaintOwnerDetailHttpHandler? = null,
     private val reply: ComplaintOwnerCreateHttpHandler? = null,
     private val edit: ComplaintOwnerEditHttpHandler? = null,
+    private val delete: ComplaintOwnerDeleteHttpHandler? = null,
 ) {
     init {
+        require(create.hasDeleteStatus() == (delete != null)) { "Complaint delete/status composition refused." }
+        if (delete != null) require(create.usesDeleteStatus(delete)) { "Complaint delete/status composition refused." }
         require(create.hasEditStatus() == (edit != null)) { "Complaint edit/status composition refused." }
         if (edit != null) require(create.usesEditStatus(edit)) { "Complaint edit/status composition refused." }
     }
@@ -125,6 +129,8 @@ internal class ComplaintInstallationSecurityChainFactory(
                     checkNotNull(reply).handleWithinIngress(request, response, context)
                 } else if (ComplaintInstallationRoutes.isContent(request)) {
                     checkNotNull(edit).handleWithinIngress(request, response, context)
+                } else if (request.method == "DELETE") {
+                    checkNotNull(delete).handleWithinIngress(request, response, context)
                 } else {
                     checkNotNull(detail).handleWithinIngress(request, response, context)
                 }
@@ -139,7 +145,8 @@ internal class ComplaintInstallationSecurityChainFactory(
         (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
         (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
-        (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request))
+        (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
+        (delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
 
     private inner class ClosedUnimplementedRoutes : OncePerRequestFilter() {
         override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
@@ -148,7 +155,7 @@ internal class ComplaintInstallationSecurityChainFactory(
                 return
             }
             // Detail's fixed bodyless validation precedes even the converter's current-row SQL.
-            if (ComplaintInstallationRoutes.isDetail(request) &&
+            if (request.method == "GET" && ComplaintInstallationRoutes.isDetail(request) &&
                 !checkNotNull(detail).validateWithinIngress(request, response, bridge.authenticationContext(request))
             ) {
                 return

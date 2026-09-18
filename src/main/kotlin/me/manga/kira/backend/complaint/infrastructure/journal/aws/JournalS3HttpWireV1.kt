@@ -15,10 +15,11 @@ import java.security.MessageDigest
 
 /** Exact closed ordinary/seal request grammar. Header bounds start AFTER native HTTP header parsing. */
 internal class JournalS3HttpWireV1(private val endpoint: URI, private val accessKeyId: String, private val sessionToken: String) {
-    fun request(request: HttpExecuteRequest, call: JournalS3RequestV1, check: () -> Unit): ByteArray? {
+    fun request(request: HttpExecuteRequest, call: JournalS3RequestV1, check: () -> Unit): ByteArray? = request(request, JournalS3WireBindingV1.of(call), check)
+    internal fun request(request: HttpExecuteRequest, call: JournalS3WireBindingV1, check: () -> Unit): ByteArray? {
         check()
         val http = request.httpRequest()
-        val location = call.declaration.journalLocation
+        val location = call.location
         requireJournalPublication(http.protocol() == "https" && http.host() == endpoint.host && http.port() == 443)
         checkHeaders(http.headers())
         requireJournalPublication(single(http.headers(), "Host") == endpoint.host && single(http.headers(), "x-amz-security-token") == sessionToken)
@@ -60,16 +61,16 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         return result.getOrThrow()
     }
 
-    private fun validateList(http: SdkHttpRequest, call: JournalS3RequestV1) {
+    private fun validateList(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
         requireJournalPublication(http.method() == SdkHttpMethod.GET, JournalPublicationFailureV1.INVALID_LISTING)
-        requireJournalPublication(http.encodedPath() in listOf("/${call.declaration.journalLocation.bucket}", "/${call.declaration.journalLocation.bucket}/"))
+        requireJournalPublication(http.encodedPath() in listOf("/${call.location.bucket}", "/${call.location.bucket}/"))
         requireJournalPublication(http.rawQueryParameters().keys == LIST_PARAMETERS || http.rawQueryParameters().keys == LIST_PARAMETERS + "x-id")
         requireJournalPublication(http.rawQueryParameters().getValue("versions").all { it.isNullOrEmpty() })
         requireJournalPublication(parameter(http, "prefix") == call.objectKey && parameter(http, "max-keys") == "2")
         requireJournalPublication(parameter(http, "encoding-type") == "url" && parameter(http, "x-id") in listOf(null, "ListObjectVersions"))
     }
 
-    private fun validateGet(http: SdkHttpRequest, call: JournalS3RequestV1) {
+    private fun validateGet(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
         requireJournalPublication(http.method() == SdkHttpMethod.GET, JournalPublicationFailureV1.INVALID_READBACK)
         requireObjectPath(http, call)
         requireJournalPublication(http.rawQueryParameters().keys == setOf("versionId") || http.rawQueryParameters().keys == setOf("versionId", "x-id"))
@@ -77,7 +78,7 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(single(http.headers(), "x-amz-checksum-mode") == "ENABLED")
     }
 
-    private fun validatePut(http: SdkHttpRequest, call: JournalS3RequestV1) {
+    private fun validatePut(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
         requireJournalPublication(http.method() == SdkHttpMethod.PUT, JournalPublicationFailureV1.INVALID_PUT)
         requireObjectPath(http, call)
         requireJournalPublication(http.rawQueryParameters().keys.all { it == "x-id" } && parameter(http, "x-id") in listOf(null, "PutObject"))
@@ -92,9 +93,9 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(metadata(headers) == candidate.metadata())
     }
 
-    private fun requireObjectPath(http: SdkHttpRequest, call: JournalS3RequestV1) {
+    private fun requireObjectPath(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
         // All characters in this genuine derived route are already path-safe ASCII. No arbitrary keys or decoding.
-        requireJournalPublication(http.encodedPath() == "/${call.declaration.journalLocation.bucket}/${call.objectKey}")
+        requireJournalPublication(http.encodedPath() == "/${call.location.bucket}/${call.objectKey}")
     }
 
     private fun checkQuery(http: SdkHttpRequest) {
@@ -111,13 +112,13 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         )
     }
 
-    private fun checkSignature(headers: Map<String, List<String>>, call: JournalS3RequestV1) {
+    private fun checkSignature(headers: Map<String, List<String>>, call: JournalS3WireBindingV1) {
         val date = single(headers, "x-amz-date")
         val authorization = single(headers, "Authorization")
         requireJournalPublication(date != null && DATE.matches(date) && authorization != null)
         val prefix = "AWS4-HMAC-SHA256 Credential=$accessKeyId/${checkNotNull(
             date,
-        ).take(8)}/${call.declaration.journalLocation.region}/s3/aws4_request, SignedHeaders="
+        ).take(8)}/${call.location.region}/s3/aws4_request, SignedHeaders="
         val value = checkNotNull(authorization)
         requireJournalPublication(value.startsWith(prefix))
         val parts = value.removePrefix(prefix).split(", Signature=")
@@ -132,14 +133,15 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(signed.containsAll(required) && signed.all { single(headers, it) != null })
     }
 
-    fun responseLength(response: SdkHttpResponse, call: JournalS3RequestV1): Long? {
+    fun responseLength(response: SdkHttpResponse, call: JournalS3RequestV1): Long? = responseLength(response, JournalS3WireBindingV1.of(call))
+    internal fun responseLength(response: SdkHttpResponse, call: JournalS3WireBindingV1): Long? {
         val headers = response.headers()
         checkHeaders(headers)
         val status = response.statusCode()
         requireJournalPublication(status == 200 || status in 400..599, JournalPublicationFailureV1.INVALID_READBACK)
         FORBIDDEN_RESPONSE_HEADERS.forEach { requireJournalPublication(single(headers, it) == null, JournalPublicationFailureV1.INVALID_READBACK) }
         val region = single(headers, "x-amz-bucket-region")
-        requireJournalPublication(region == null || region == call.declaration.journalLocation.region, JournalPublicationFailureV1.INVALID_READBACK)
+        requireJournalPublication(region == null || region == call.location.region, JournalPublicationFailureV1.INVALID_READBACK)
         val marker = single(headers, "x-amz-delete-marker")
         requireJournalPublication(marker == null || marker == "false", JournalPublicationFailureV1.INVALID_READBACK)
         val missing = single(headers, "x-amz-missing-meta")
