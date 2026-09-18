@@ -4,6 +4,8 @@ import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCliCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationFreezeCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
@@ -22,6 +24,7 @@ import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
+import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationFreeze
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
@@ -436,6 +439,45 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `catalog author original begin budget and throwing signer cleanup never release a result or revive the owner`() = withFixture { tls ->
         withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).originalBudgetAndSignerCleanup() }
+    }
+
+    @Test
+    fun `D7 parsed bootstrap and genuine G1 refresh freeze signed PREPARED overlap2 without advancing head`() = withFixture { tls ->
+        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).parsedBootstrapAndSignedPrepared() }
+    }
+
+    @Test
+    fun `D7 writer cannot retrofit an already selected D2 deployment`() = withFixture { tls ->
+        withCatalogSignerRotationFreeze(tls, profile = "D2") { CatalogSignerRotationFreezeCases(it).noRetrofitSelectedD2() }
+    }
+
+    @Test
+    fun `signer rotation author rejects changed full B and predecessor before prepare or sign`() = withFixture { tls ->
+        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).changedFullBindingAndPredecessor() }
+    }
+
+    @Test
+    fun `signer rotation author rejects wrong stale reordered or unallowlisted exact approvals`() = withFixture { tls ->
+        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).exactApprovalRefusals() }
+    }
+
+    @Test
+    fun `signer rotation missing conflicting and uncertain custody never grants either Sign`() = withFixture { tls ->
+        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).missingConflictingAndUncertainCustody() }
+    }
+
+    @Test
+    fun `signer rotation signature completion failure keeps frozen signatures and exact resume reuses bytes`() = withFixture { tls ->
+        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).signatureCompletionFailureReusesFrozenBytes() }
+    }
+
+    @Test
+    fun `signer rotation original budget and signer cleanup refuse without a fresh allowance`() {
+        CatalogSignerRotationCleanupCut.entries.forEach { cut ->
+            withFixture { tls ->
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).originalBudgetAndSignerCleanup(cut) }
+            }
+        }
     }
 
     @Test
