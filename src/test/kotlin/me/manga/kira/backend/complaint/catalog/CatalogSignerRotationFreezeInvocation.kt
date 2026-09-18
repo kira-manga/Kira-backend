@@ -63,6 +63,7 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
     val phases: List<PersistencePhaseContext> get() = f.jdbc.observations.keys.take(lastPhase ?: f.jdbc.observations.size).drop(firstPhase)
     val producedSignatures = mutableListOf<ByteArray>()
     var beforeSign: (Int) -> Unit = {}
+    var rejectSecondSignResponse = false
     private var firstSignerSlot = 0
     private val assertion = AtomicReference<AssertionError?>()
     private var retired = false
@@ -77,7 +78,6 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
                 beforeSign(slot)
                 val keyId = listOf("catalog-old", "catalog-new")[slot]
                 val arn = listOf(CatalogGenesisFreezeFixture.KEY_ARN, CatalogSignerRotationD7Inputs.NEW_KEY_ARN)[slot]
-                val pair = listOf(OfflineTrustBundleFixture.firstSigner, OfflineTrustBundleFixture.secondSigner)[slot]
                 val fields = request.fields()
                 assertEquals("TrentService.Sign", request.target())
                 assertEquals(setOf("KeyId", "Message", "MessageType", "SigningAlgorithm"), fields.fieldNames().asSequence().toSet())
@@ -92,16 +92,7 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
                 assertEquals(credentials.sessionToken(), request.http.firstMatchingHeader("x-amz-security-token").orElseThrow())
                 val frame = Base64.getDecoder().decode(fields["Message"].textValue())
                 assertArrayEquals(OfflineCatalogGenesisFixture.independentFrame(keyId, f.intent), frame)
-                val signature = Signature.getInstance("RSASSA-PSS").run {
-                    setParameter(OfflineTrustBundleFixture.parameters)
-                    initSign(pair.private)
-                    update(frame)
-                    sign()
-                }
-                producedSignatures.add(signature.copyOf())
-                JournalKmsHttpReply(
-                    """{"KeyId":"$arn","SigningAlgorithm":"RSASSA_PSS_SHA_256","Signature":"${Base64.getEncoder().encodeToString(signature)}"}""",
-                ).apply {
+                signingReply(slot, arn, frame).apply {
                     beforeCall = { preserveAssertions(f.d7::released) }
                     beforeRead = { preserveAssertions(f.d7::released) }
                     onClose = { preserveAssertions(f.d7::released) }
@@ -207,6 +198,24 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
             assertEquals(1, it.closes)
         }
         readback.assertTransportDisposed()
+    }
+
+    private fun signingReply(slot: Int, arn: String, frame: ByteArray): JournalKmsHttpReply {
+        if (slot == 1 && rejectSecondSignResponse) {
+            // Raw error only after the real request checks: prepare returns its executable, but no second signature is generated.
+            return JournalKmsHttpReply("""{"__type":"KMSInternalException"}""").apply { status = 500 }
+        }
+        val pair = listOf(OfflineTrustBundleFixture.firstSigner, OfflineTrustBundleFixture.secondSigner)[slot]
+        val signature = Signature.getInstance("RSASSA-PSS").run {
+            setParameter(OfflineTrustBundleFixture.parameters)
+            initSign(pair.private)
+            update(frame)
+            sign()
+        }
+        producedSignatures.add(signature.copyOf())
+        return JournalKmsHttpReply(
+            """{"KeyId":"$arn","SigningAlgorithm":"RSASSA_PSS_SHA_256","Signature":"${Base64.getEncoder().encodeToString(signature)}"}""",
+        )
     }
 
     private fun <T> preserveAssertions(action: () -> T): T = try {

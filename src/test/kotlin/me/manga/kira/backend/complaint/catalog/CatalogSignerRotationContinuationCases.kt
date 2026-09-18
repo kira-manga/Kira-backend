@@ -141,13 +141,18 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
 
     private fun attemptedSecondSignCannotContinue() {
         val original = f.invocation()
-        original.beforeSign = { slot ->
-            if (slot == 1) error("Synthetic slot2 raw HTTP failure after the actual second Sign arm.")
-        }
-        core.refused { original.execute() }
+        original.rejectSecondSignResponse = true // Returned raw error, not unknown native prepare custody or an invented Sign result.
+        assertEquals(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED, core.refused { original.execute() }.code)
         original.assertReleased()
         original.readback.assertCompletedReadbacks(3)
         assertEquals(2, original.signing.requests.size)
+        assertEquals(2, original.signing.replies.size)
+        val secondResponse = original.signing.replies[1]
+        assertEquals(500, secondResponse.status)
+        assertEquals(1, secondResponse.calls)
+        assertEquals(0, secondResponse.reads)
+        assertEquals(1, secondResponse.aborts)
+        assertEquals(1, secondResponse.closes)
         assertEquals(1, original.producedSignatures.size)
         assertArrayEquals(original.producedSignatures.single(), f.row()["signer_one_signature"] as ByteArray)
         assertNull(f.row()["signer_two_signature"])
@@ -156,7 +161,11 @@ internal class CatalogSignerRotationContinuationCases(private val f: CatalogSign
         assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_RETURNED))
         assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.SIGNATURE_TWO))
         assertFalse(f.exists(CatalogSignerRotationReleaseLeafV1.SIGN_TWO_SQL_ARMED))
-        assertRefusedContinuation(original)
+        val rejected = assertRefusedContinuation(original)
+        val phase = rejected.phases.single() // Positively cleaned prior owner reached arm2 eligibility, not the sticky-cleanup guard.
+        assertEquals(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ, poolTestField<PersistencePhasePath>(phase, "path"))
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+        assertTrue(phase.catalogSignerRotation.cleanupProven(rejected.attempt))
         assertEquals(2, f.invocations.sumOf { it.signing.requests.size })
     }
 
