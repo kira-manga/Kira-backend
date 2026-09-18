@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCliCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationContinuationCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationFreezeCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
@@ -483,14 +484,14 @@ class VersionBoundPersistenceConnectedIT {
 
     @Test
     fun `known unattempted second Sign continuation preserves signature one and uses only the new signer`() = withFixture { tls ->
-        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).continueKnownSecondSign() }
+        withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationContinuationCases(it).continueKnownSecondSign() }
     }
 
     @Test
     fun `second Sign continuation refuses attempted uncertain stale or expired authority`() {
         CatalogSignerRotationContinuationCut.entries.forEach { cut ->
             withFixture { tls ->
-                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationFreezeCases(it).continuationRefusals(cut) }
+                withCatalogSignerRotationFreeze(tls) { CatalogSignerRotationContinuationCases(it).continuationRefusals(cut) }
             }
         }
     }
