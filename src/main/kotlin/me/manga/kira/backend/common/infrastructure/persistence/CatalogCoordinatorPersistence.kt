@@ -27,6 +27,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val catalogGenesisAuthoring: Boolean get() = owner.catalogGenesisAuthoring
     internal val catalogGenesisFinalization: Boolean get() = owner.catalogGenesisFinalization
     internal val catalogSignerRotationRecovery: Boolean get() = owner.catalogSignerRotationRecovery
+    internal val catalogSignerRotationAuthoring: Boolean get() = owner.catalogSignerRotationAuthoring
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
@@ -76,6 +77,11 @@ internal class CatalogCoordinatorPersistence private constructor(
             return // No G1, projection, epoch/cutoff or ordinary writer executor on the fixed recovery root.
         }
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
+        if (catalogSignerRotationAuthoring) {
+            leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
+            signerRotationExecutor = ComplaintCatalogSignerRotationPersistencePhaseExecutor(this, jdbc)
+            return // Exact G1 refresh -> ACQUIRE -> initial overlap author; never a projected/epoch/cutoff executor.
+        }
         if (catalogGenesisAuthoring || catalogGenesisFinalization) return // Only the named attempt may select its three fixed phases.
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
@@ -110,7 +116,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     }
 
     private fun requiresNamedPreparation(): Boolean =
-        desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery
+        desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery || catalogSignerRotationAuthoring
 
     /** Only the named operator owner can start the infrastructure for this route. */
     internal fun prepareDesiredInstallationOperator(): PersistenceLifecycleObservation {
@@ -138,6 +144,16 @@ internal class CatalogCoordinatorPersistence private constructor(
         requireResources()
         if (!catalogSignerRotationRecovery) return PersistenceLifecycleObservation.UNAVAILABLE
         checkNotNull(executor)
+        checkNotNull(leaseExecutor)
+        checkNotNull(signerRotationExecutor)
+        return dataSource.prepareCatalogCoordinator()
+    }
+
+    internal fun prepareCatalogSignerRotationAuthoring(): PersistenceLifecycleObservation {
+        requireResources()
+        if (!catalogSignerRotationAuthoring) return PersistenceLifecycleObservation.UNAVAILABLE
+        checkNotNull(executor)
+        checkNotNull(genesisExecutor)
         checkNotNull(leaseExecutor)
         checkNotNull(signerRotationExecutor)
         return dataSource.prepareCatalogCoordinator()

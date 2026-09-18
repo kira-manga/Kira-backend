@@ -124,7 +124,8 @@ readback, lifecycle or cleanup evidence.
 
 Connected tests on that explicit fixture validate the algorithm, actual SQL/TLS, raw SDK
 and cryptographic behavior, custody and cleanup in **controlled integration only**. They
-do not qualify or provide a production launch route. A real normal D7-author launch
-remains **INTERNAL unimplemented work**, distinct from fresh-process PREPARED2-only
-recovery admission; that narrower recovery purpose must not be repurposed as normal
-runtime launch. Pure cold/default refusal and actual D2 no-retrofit boundaries remain.
+do not qualify or provide a production launch route. The distinct initial D7-author
+source candidate is described in `COMPLAINT_CATALOG_INITIAL_ROTATION_AUTHOR_V1.md`; it
+remains internal and unvalidated at its source handoff. Fresh-process PREPARED2-only
+recovery admission must not be repurposed as normal runtime launch. Pure cold/default
+refusal and actual D2 no-retrofit boundaries remain.

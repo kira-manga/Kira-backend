@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinator
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseReceiptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogCoordinatorLeaseStore
 import org.springframework.jdbc.core.JdbcTemplate
@@ -36,20 +37,37 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         return acquire(binding, original)
     }
 
+    internal fun acquireInitialAuthor(
+        original: CatalogSignerRotationInitialAuthorV1,
+        binding: CatalogCoordinatorLeaseBindingV1,
+    ): CatalogCoordinatorLeaseAcquisitionV1 {
+        original.requireLeaseSelection(ownership, jdbc, binding)
+        return acquire(binding, null, original)
+    }
+
     @Suppress("TooGenericExceptionCaught")
-    private fun acquire(binding: CatalogCoordinatorLeaseBindingV1, original: CatalogSignerRotationPreparedRecoveryV1?): CatalogCoordinatorLeaseAcquisitionV1 {
+    private fun acquire(
+        binding: CatalogCoordinatorLeaseBindingV1,
+        original: CatalogSignerRotationPreparedRecoveryV1?,
+        initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+    ): CatalogCoordinatorLeaseAcquisitionV1 {
         var attempt: CatalogCoordinatorLeaseCustodyV1.Attempt? = null
         try {
             requireEntryResources()
-            val retained = if (original == null) custody.acquire(binding, jdbc) else custody.acquirePreparedRecovery(original, binding, jdbc)
+            val retained = when {
+                initialAuthor != null -> custody.acquireInitialAuthor(initialAuthor, binding, jdbc)
+                original != null -> custody.acquirePreparedRecovery(original, binding, jdbc)
+                else -> custody.acquire(binding, jdbc)
+            }
             attempt = retained
             try {
-                return CatalogCoordinatorLeaseAcquisitionV1.issuedBy(persist(retained, recovery = original))
+                return CatalogCoordinatorLeaseAcquisitionV1.issuedBy(persist(retained, recovery = original, initialAuthor = initialAuthor))
             } finally {
                 retained.finish()
             }
         } catch (problem: Throwable) {
             original?.observeFailure(problem)
+            initialAuthor?.observeFailure(problem)
             throw attempt?.failure(problem) ?: bounded(problem)
         }
     }
@@ -115,11 +133,13 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         attempt: CatalogCoordinatorLeaseCustodyV1.Attempt,
         original: CatalogCutoffAttemptV1? = null,
         recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
+        initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
     ): CatalogCoordinatorLeaseOperation {
         attempt.requireRunning(jdbc)
         val store = JdbcCatalogCoordinatorLeaseStore(jdbc)
         val phase = when (attempt.path) {
-            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> recovery?.let(ownership::enterComplaintSignerRotationRecoveryAcquire)
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> initialAuthor?.let(ownership::enterComplaintSignerRotationAuthorAcquire)
+                ?: recovery?.let(ownership::enterComplaintSignerRotationRecoveryAcquire)
                 ?: ownership.enterComplaintCoordinatorLeaseAcquire()
 
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> original?.let(ownership::enterComplaintCutoffRenew)
@@ -133,6 +153,7 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         var closingFailure: Throwable? = null
         try {
             phase.begin() // Limits and original holder only: these three named paths deliberately have NO epoch fence.
+            initialAuthor?.authenticate(ownership, jdbc)
             completed = when (attempt.path) {
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> store.acquire(attempt)
                 PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> store.renew(attempt)
@@ -148,11 +169,14 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
             try {
                 closingFailure = runCatching(phase::finish).exceptionOrNull()
                 closingFailure?.let { recovery?.observeFailure(it) }
+                closingFailure?.let { initialAuthor?.observeFailure(it) }
             } finally {
                 recovery?.observePhaseCleanup(phase)
+                initialAuthor?.observePhaseCleanup(phase)
             }
         }
         recovery?.throwIfSignalled()
+        initialAuthor?.throwIfSignalled()
         closingFailure?.let { throw it }
         return completed ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
     }

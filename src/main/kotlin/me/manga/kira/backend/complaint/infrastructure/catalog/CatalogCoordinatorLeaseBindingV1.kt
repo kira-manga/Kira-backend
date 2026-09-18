@@ -27,6 +27,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val process: VersionBoundComplaintProcessConfiguration,
     private val catalog: CatalogCommonHeadEvidence,
     private val preparedRecovery: CatalogSignerRotationPreparedRecoveryV1? = null,
+    private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
 ) {
     internal val coordinator = process.pools.catalogCoordinator
     private val ownership = coordinator.ownership
@@ -164,8 +165,55 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         requireCatalogReadback(observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
     }
 
+    internal fun startInitialAuthorSignerRotationBudget(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationInitialAuthorV1,
+    ): PersistenceTimeBudget {
+        requireConnectionFree()
+        val writer = selected.catalogSignerRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        val budget = PersistenceTimeBudget.start(writer.deployment.totalAttemptMillis, ownership.nanoClock)
+        requireInitialAuthorSignerRotationProcess(selected, original)
+        return budget
+    }
+
+    internal fun requireInitialAuthorSignerRotationProcess(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationInitialAuthorV1,
+    ) {
+        requireInitialAuthorPurpose(original)
+        original.requireBoundProcess(this, selected)
+        requireSignerRotationConfiguration(selected)
+    }
+
+    internal fun initialAuthorSignerRotationPredecessorHash(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationInitialAuthorV1,
+    ): String {
+        requireInitialAuthorSignerRotationProcess(selected, original)
+        return catalog.chain.tail.envelopeSha256
+    }
+
+    internal fun requireInitialAuthorSignerRotationPredecessor(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationInitialAuthorV1,
+        readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback,
+    ) {
+        requireConnectionFree()
+        requireInitialAuthorSignerRotationProcess(selected, original)
+        val observed = readback.commonHeadEvidence()
+        requireCatalogReadback(observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
+    }
+
+    internal fun requireInitialAuthorPurpose(original: CatalogSignerRotationInitialAuthorV1) {
+        if (initialAuthor !== original || !coordinator.catalogSignerRotationAuthoring || preparedRecovery != null) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+    }
+
     internal fun requireOrdinaryPurpose() {
-        if (preparedRecovery != null || coordinator.catalogSignerRotationRecovery) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (preparedRecovery != null || coordinator.catalogSignerRotationRecovery || initialAuthor != null || coordinator.catalogSignerRotationAuthoring) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
     }
 
     internal fun requireRecoveryPurpose(original: CatalogSignerRotationPreparedRecoveryV1) {
@@ -176,9 +224,10 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         }
     }
 
-    /** Existing campaign bounding may discard diagnostics, but not this concrete recovery owner's original signal. */
+    /** Existing campaign bounding may discard diagnostics, but neither concrete signer owner's original signal. */
     internal fun observeRecoveryFailure(problem: Throwable) {
         preparedRecovery?.observeFailure(problem)
+        initialAuthor?.observeFailure(problem)
     }
 
     internal fun signerRotationPredecessorHash(selected: VersionBoundComplaintProcessConfiguration): String {
@@ -245,7 +294,8 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentAcceptedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
-            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery, CatalogReadbackFailure.INVALID_POLICY)
+            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
+                !process.pools.catalogCoordinator.catalogSignerRotationAuthoring, CatalogReadbackFailure.INVALID_POLICY)
             val catalog = refresh.catalogFor(process)
             requireCatalogReadback(catalog.chain.tail.generation == 1L, CatalogReadbackFailure.INVALID_POLICY)
             return CatalogCoordinatorLeaseBindingV1(process, catalog)
@@ -257,13 +307,26 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentProjectedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
-            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery, CatalogReadbackFailure.INVALID_POLICY)
+            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery &&
+                !process.pools.catalogCoordinator.catalogSignerRotationAuthoring, CatalogReadbackFailure.INVALID_POLICY)
             val catalog = refresh.catalogFor(process)
             requireCatalogReadback(
                 process.catalogReadback?.projectedCurrent == true && catalog.chain.tail.generation > 1L,
                 CatalogReadbackFailure.INVALID_POLICY,
             )
             return CatalogCoordinatorLeaseBindingV1(process, catalog)
+        }
+
+        internal fun fromInitialAuthor(
+            original: CatalogSignerRotationInitialAuthorV1,
+            process: VersionBoundComplaintProcessConfiguration,
+            refresh: CurrentAcceptedCatalogRefreshV1.Result,
+        ): CatalogCoordinatorLeaseBindingV1 {
+            requireConnectionFree()
+            original.requireBindingInputs(process, refresh)
+            val catalog = refresh.catalogFor(process)
+            requireCatalogReadback(catalog.chain.tail.generation == 1L, CatalogReadbackFailure.INVALID_POLICY)
+            return CatalogCoordinatorLeaseBindingV1(process, catalog, initialAuthor = original)
         }
 
         /** Actual released snapshot/raw fold retained by one concrete owner; this purpose cannot start any normal campaign consumer. */

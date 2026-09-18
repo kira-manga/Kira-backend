@@ -22,13 +22,15 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     internal val process: VersionBoundComplaintProcessConfiguration,
     internal val campaign: CatalogCoordinatorLeaseCampaignV1,
     internal val budget: PersistenceTimeBudget,
+    private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
 ) {
     internal constructor(
         owner: CatalogSignerRotationFreezeV1,
         process: VersionBoundComplaintProcessConfiguration,
         campaign: CatalogCoordinatorLeaseCampaignV1,
         budget: PersistenceTimeBudget,
-    ) : this(owner, null, process, campaign, budget)
+        initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+    ) : this(owner, null, process, campaign, budget, initialAuthor)
 
     internal constructor(
         owner: CatalogSignerRotationPreparedRecoveryV1,
@@ -39,6 +41,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
 
     init {
         recovery?.requireReplayConstruction(process, campaign, budget)
+        initialAuthor?.requireInvocationConstruction(process, campaign)
     }
 
     private val caller = Thread.currentThread()
@@ -47,10 +50,10 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     private val jdbc = campaign.jdbc
     private val binding = campaign.binding.arguments()
     private val capacity = process.consumers.capacityPolicy.digestBytes()
-    internal val predecessorHash = if (recovery == null) {
-        campaign.binding.signerRotationPredecessorHash(process)
-    } else {
-        campaign.binding.recoveredSignerRotationPredecessorHash(process, recovery)
+    internal val predecessorHash = when {
+        initialAuthor != null -> campaign.binding.initialAuthorSignerRotationPredecessorHash(process, initialAuthor)
+        recovery != null -> campaign.binding.recoveredSignerRotationPredecessorHash(process, recovery)
+        else -> campaign.binding.signerRotationPredecessorHash(process)
     }
     private var selectedInputs: CatalogSignerRotationInputsV1? = null
     internal val inputs: CatalogSignerRotationInputsV1 get() = checkNotNull(selectedInputs)
@@ -76,10 +79,10 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
         requireConnectionFree()
         requireRunning()
         requireSignerRotation(!reserved && !released, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
-        if (recovery == null) {
-            coordinator.catalogRefreshCustody.reserveSignerRotation(this)
-        } else {
-            recovery.retainReplay(this, process, campaign, budget)
+        when {
+            initialAuthor != null -> initialAuthor.retainInvocation(this, checkNotNull(owner))
+            recovery != null -> recovery.retainReplay(this, process, campaign, budget)
+            else -> coordinator.catalogRefreshCustody.reserveSignerRotation(this)
         }
         reserved = true
     }
@@ -169,6 +172,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     internal fun requirePhaseEntry(candidate: PersistencePhaseOwnership, path: PersistencePhasePath) {
         requireRunning()
         recovery?.requireReplayPhase(this, candidate, path)
+        initialAuthor?.requireInvocationPhase(this, candidate, path)
         requireSignerRotation(candidate === ownership && selected?.path === path && !entered, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         entered = true
     }
@@ -206,6 +210,14 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
         )
     }
 
+    internal fun requireReleasedForInitialAuthor(original: CatalogSignerRotationInitialAuthorV1) {
+        requireSignerRotation(
+            caller === Thread.currentThread() && initialAuthor === original && (!reserved || released) && failed && selected == null,
+            CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN,
+        )
+        requireSqlCleanup()
+    }
+
     /** Actual historical release facts, not absent active custody, a free ThreadLocal or a supplied receipt. */
     internal fun requireReleasedForContinuation(next: CatalogSignerRotationFreezeAttemptV1) {
         requireConnectionFree()
@@ -213,7 +225,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
         requireSignerRotation(failed && selected == null, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
         requireSqlCleanup()
         requireSignerRotation(
-            next !== this && process === next.process && campaign === next.campaign,
+            next !== this && process === next.process && campaign === next.campaign && initialAuthor === next.initialAuthor && recovery === next.recovery,
             CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
         )
         requireSignerRotation(
@@ -244,6 +256,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
 
     /** Retain only signals, never arbitrary SQL/provider diagnostics; lower cleanup may otherwise report only a bounded phase code. */
     internal fun observeFailure(problem: Throwable) {
+        initialAuthor?.observeFailure(problem)
         val signal = when {
             problem is Error -> problem
 
@@ -270,6 +283,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     }
 
     internal fun throwIfSignalled() {
+        initialAuthor?.throwIfSignalled()
         originalSignal.get()?.let { throw signerRotationSignal(it) }
     }
 
@@ -306,27 +320,32 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
         original.requireReplayPhase(this, candidate, checkNotNull(selected).path)
     }
 
+    internal fun requireInitialAuthorPurpose(candidate: PersistencePhaseOwnership) {
+        val original = initialAuthor ?: throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        original.requireInvocationPhase(this, candidate, checkNotNull(selected).path)
+    }
+
     internal fun requirePredecessor(readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback) {
-        if (recovery == null) {
-            campaign.binding.requireSignerRotationPredecessor(process, readback)
-        } else {
-            campaign.binding.requireRecoveredSignerRotationPredecessor(process, recovery, readback)
+        when {
+            initialAuthor != null -> campaign.binding.requireInitialAuthorSignerRotationPredecessor(process, initialAuthor, readback)
+            recovery != null -> campaign.binding.requireRecoveredSignerRotationPredecessor(process, recovery, readback)
+            else -> campaign.binding.requireSignerRotationPredecessor(process, readback)
         }
     }
 
     private fun requireProcess() {
-        if (recovery == null) {
-            campaign.binding.requireSignerRotationProcess(process)
-        } else {
-            campaign.binding.requireRecoveredSignerRotationProcess(process, recovery)
+        when {
+            initialAuthor != null -> campaign.binding.requireInitialAuthorSignerRotationProcess(process, initialAuthor)
+            recovery != null -> campaign.binding.requireRecoveredSignerRotationProcess(process, recovery)
+            else -> campaign.binding.requireSignerRotationProcess(process)
         }
     }
 
     private fun requireSharedSlot() {
-        if (recovery == null) {
-            coordinator.catalogRefreshCustody.requireSignerRotation(this)
-        } else {
-            coordinator.catalogRefreshCustody.requireSignerRotationRecoveryReplay(recovery, this)
+        when {
+            initialAuthor != null -> initialAuthor.requireInvocationSlot(this)
+            recovery != null -> coordinator.catalogRefreshCustody.requireSignerRotationRecoveryReplay(recovery, this)
+            else -> coordinator.catalogRefreshCustody.requireSignerRotation(this)
         }
     }
 
@@ -360,11 +379,11 @@ internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
     internal fun releaseAfterCleanup() {
         requireActualCleanup()
         if (!reserved) return
-        if (recovery == null) {
-            coordinator.catalogRefreshCustody.releaseSignerRotationAfterCleanup(this)
-        } else {
-            recovery.releaseReplayAfterCleanup(this) // The parent still owns the one shared slot until its own cleanup is proven.
-        }
+        when {
+            initialAuthor != null -> initialAuthor.releaseInvocationAfterCleanup(this)
+            recovery != null -> recovery.releaseReplayAfterCleanup(this)
+            else -> coordinator.catalogRefreshCustody.releaseSignerRotationAfterCleanup(this)
+        } // A named parent retains the one shared slot until its own cleanup is proven.
         released = true
     }
 

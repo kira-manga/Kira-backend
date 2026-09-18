@@ -25,9 +25,10 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
     signingHttpFactory: (() -> SdkHttpClient)?,
     readbackHttpFactory: (() -> SdkHttpClient)?,
     clock: Clock,
+    private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
 ) : AutoCloseable {
     private val caller = Thread.currentThread()
-    private val attempt = CatalogSignerRotationFreezeAttemptV1(this, process, campaign, budget)
+    private val attempt = CatalogSignerRotationFreezeAttemptV1(this, process, campaign, budget, initialAuthor)
     private val assembly = CatalogSignerRotationFreezeAssemblyV1(attempt, signingHttpFactory, readbackHttpFactory, clock)
     private var release: CatalogSignerRotationFreezeReleaseV1? = null
     private var entered = false
@@ -223,6 +224,7 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
     internal fun owns(selected: CatalogSignerRotationFreezeAttemptV1): Boolean = caller === Thread.currentThread() && !closed && attempt === selected
 
     internal fun requireRunning() {
+        initialAuthor?.requireInvocation(this)
         requireSignerRotation(caller === Thread.currentThread() && !closed, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         requireSignerRotation(!Thread.currentThread().isInterrupted, CatalogSignerRotationFreezeFailureV1.INTERRUPTED)
         budget.remainingMillis(1)
@@ -239,6 +241,7 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         closeFailure = CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
         attempt.abort()
         val outcomes = listOf(runCatching(assembly::close), runCatching { release?.close() }, runCatching(::requireConnectionFree))
+        outcomes.forEach { it.exceptionOrNull()?.let { failure -> initialAuthor?.observeFailure(failure) } }
         requireSignerRotationCleanup(outcomes)
         attempt.requireSqlCleanup()
         attempt.throwIfSignalled()
@@ -247,6 +250,16 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
         cleanupProven = true
         attempt.releaseAfterCleanup() // Unknown close/phase/provider outcomes retain the original shared slot.
         closeFailure = null
+    }
+
+    /** Same-session handoff uses actual historical cleanup, never the preceding invocation's spent deadline. */
+    internal fun requireClosedForInitialAuthor(original: CatalogSignerRotationInitialAuthorV1) {
+        requireConnectionFree()
+        requireSignerRotation(
+            caller === Thread.currentThread() && initialAuthor === original && closed && cleanupProven && closeFailure == null,
+            CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN,
+        )
+        attempt.requireReleasedForInitialAuthor(original)
     }
 
     internal fun requireCleanedResult() {
@@ -269,6 +282,21 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
     private enum class Mode { FREEZE, RESUME, SECOND_SIGN }
 
     companion object {
+        internal fun beginInitialAuthor(
+            original: CatalogSignerRotationInitialAuthorV1,
+            process: VersionBoundComplaintProcessConfiguration,
+            campaign: CatalogCoordinatorLeaseCampaignV1,
+            signingHttpFactory: (() -> SdkHttpClient)?,
+            readbackHttpFactory: (() -> SdkHttpClient)?,
+            clock: Clock,
+        ): CatalogSignerRotationFreezeV1 {
+            original.requireInvocationConstruction(process, campaign)
+            return CatalogSignerRotationFreezeV1(
+                process, campaign, campaign.binding.startInitialAuthorSignerRotationBudget(process, original),
+                signingHttpFactory, readbackHttpFactory, clock, original,
+            )
+        }
+
         fun begin(process: VersionBoundComplaintProcessConfiguration, campaign: CatalogCoordinatorLeaseCampaignV1): CatalogSignerRotationFreezeV1 =
             CatalogSignerRotationFreezeV1(process, campaign, campaign.binding.startSignerRotationBudget(process), null, null, Clock.systemUTC())
 

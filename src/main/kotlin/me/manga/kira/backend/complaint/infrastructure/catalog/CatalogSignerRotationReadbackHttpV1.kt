@@ -22,9 +22,11 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     private val owner: CatalogSignerRotationFreezeAttemptV1?,
     private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
     private val readbackBudget: PersistenceTimeBudget,
+    private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
 ) : SdkHttpClient {
     constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) : this(owner, null, budget)
     internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) : this(null, owner, budget)
+    internal constructor(owner: CatalogSignerRotationInitialAuthorV1, budget: PersistenceTimeBudget) : this(null, null, budget, owner)
     private val closed = AtomicBoolean()
     private var opened = false
 
@@ -89,7 +91,11 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     override fun toString(): String = "CatalogSignerRotationReadbackHttpV1(original-native-custody,redacted)"
 
     private fun requireWork() {
-        if (owner != null) owner.requireRunning() else checkNotNull(recovery).requireRunning()
+        when {
+            owner != null -> owner.requireRunning()
+            recovery != null -> recovery.requireRunning()
+            else -> checkNotNull(initialAuthor).requireReadbackRunning()
+        }
         readbackBudget.remainingMillis(1)
         closeFailure?.let(::throwCleanup)
         workSignal?.let { throw it }
@@ -98,6 +104,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
 
     @Synchronized
     private fun rememberSignal(failure: Throwable) {
+        initialAuthor?.observeFailure(failure)
         val signal = signerRotationSignal(failure)
         if (signal is Error || signal is CancellationException || signal is InterruptedException) {
             workSignal = preferSignerRotationCleanup(workSignal, signal)
@@ -259,6 +266,8 @@ internal class CatalogSignerRotationReadbackHttpPairV1 private constructor(
     constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
+    internal constructor(owner: CatalogSignerRotationInitialAuthorV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     private var primaryOpened = false
     private var replicaOpened = false

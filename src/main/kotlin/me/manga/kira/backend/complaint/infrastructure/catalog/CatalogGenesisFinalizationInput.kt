@@ -12,6 +12,7 @@ internal class CatalogGenesisFinalizationInput private constructor(
     internal val readback: CatalogDualLocationVerifier.GenesisReadback,
     internal val binding: CatalogGenesisInitialLiveBinding,
     internal val finalizer: CatalogGenesisFinalizeAttemptV1? = null,
+    internal val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
 ) {
     private val manifest = readback.manifest().also { binding.requireMatchingRegistry(it.initialWriterRegistry) }
     private val token = UUID.fromString(manifest.operationToken)
@@ -67,6 +68,16 @@ internal class CatalogGenesisFinalizationInput private constructor(
             requireConnectionFree()
             finalizer.requireBarrier(readback, expected)
             return CatalogGenesisFinalizationInput(readback, expected, finalizer)
+        }
+
+        internal fun initialAuthor(
+            readback: CatalogDualLocationVerifier.GenesisReadback,
+            expected: CatalogGenesisInitialLiveBinding,
+            original: CatalogSignerRotationInitialAuthorV1,
+        ): CatalogGenesisFinalizationInput {
+            requireConnectionFree()
+            original.requireBarrier(readback, expected)
+            return CatalogGenesisFinalizationInput(readback, expected, initialAuthor = original)
         }
 
         private fun hash(bytes: ByteArray): ByteArray = HexFormat.of().parseHex(Sha256.hex(bytes))

@@ -64,6 +64,20 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogSignerRotationRecovery(this, epochRotation)
     }
 
+    /** Initial D7 author on the exact TARGET principal; purpose is fixed before any pool is bound. */
+    internal fun bindCatalogSignerRotationAuthoringOwner(epochRotation: Boolean): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogSignerRotationAuthoring(this, epochRotation)
+    }
+
+    internal fun createCatalogSignerRotationAuthoringRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this,
+            epochRotationEnabled = epochRotation, catalogSignerRotationAuthoring = true,
+        )
+    }
+
     internal fun createCatalogSignerRotationRecoveryRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(
@@ -141,7 +155,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
-        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery) requireFinalizerConfiguration()
+        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring) requireFinalizerConfiguration()
         trust.adopt(root)
         adoptedRoot = root
         return trust

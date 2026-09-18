@@ -111,20 +111,36 @@ internal class CatalogGenesisMutationInput private constructor(
             finalizer: CatalogGenesisFinalizeAttemptV1,
         ): CatalogGenesisMutationInput = finalization(readback, expected, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT, finalizer)
 
+        internal fun completeInitialAuthor(
+            readback: CatalogDualLocationVerifier.GenesisReadback,
+            expected: CatalogGenesisInitialLiveBinding,
+            original: CatalogSignerRotationInitialAuthorV1,
+        ): CatalogGenesisMutationInput {
+            requireCatalogReadback(readback.resume == GenesisResume.PREPARED, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+            return finalization(readback, expected, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE, initialAuthor = original)
+        }
+
+        internal fun projectInitialAuthor(
+            readback: CatalogDualLocationVerifier.GenesisReadback,
+            expected: CatalogGenesisInitialLiveBinding,
+            original: CatalogSignerRotationInitialAuthorV1,
+        ): CatalogGenesisMutationInput = finalization(readback, expected, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT, initialAuthor = original)
+
         private fun finalization(
             readback: CatalogDualLocationVerifier.GenesisReadback,
             expected: CatalogGenesisInitialLiveBinding,
             path: PersistencePhasePath,
             finalizer: CatalogGenesisFinalizeAttemptV1? = null,
+            initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
         ): CatalogGenesisMutationInput = CatalogGenesisMutationInput(
             path,
             readback.mutation(),
             readback.mutation(),
             readback.manifest(),
-            if (finalizer == null) {
-                CatalogGenesisFinalizationInput.verified(readback, expected)
-            } else {
-                CatalogGenesisFinalizationInput.durable(readback, expected, finalizer)
+            when {
+                initialAuthor != null -> CatalogGenesisFinalizationInput.initialAuthor(readback, expected, initialAuthor)
+                finalizer != null -> CatalogGenesisFinalizationInput.durable(readback, expected, finalizer)
+                else -> CatalogGenesisFinalizationInput.verified(readback, expected)
             },
         )
 

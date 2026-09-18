@@ -209,6 +209,11 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
         valid(profile == DesiredProcessProfileV1.D7 && catalogSignerRotation != null && desiredGeneration == 1L && catalog?.projectedCurrent == false)
     }
 
+    internal fun requireTargetSignerRotationAuthorProfile() {
+        requireTargetFinalizerProfile()
+        valid(profile == DesiredProcessProfileV1.D7 && catalogSignerRotation != null && desiredGeneration == 1L && catalog?.projectedCurrent == false)
+    }
+
     private fun catalog(input: DesiredCatalogInputV1): VersionBoundCatalogReadbackConfigurationV1 {
         valid(input.readerProfile == "G1" || input.readerProfile == "PROJECTED_CURRENT")
         val trust = OfflineTrustBundlePolicy(

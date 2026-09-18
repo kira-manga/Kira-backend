@@ -25,10 +25,11 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     private val process: VersionBoundComplaintProcessConfiguration,
     private val primaryCredentials: AwsSessionCredentials,
     private val replicaCredentials: AwsSessionCredentials,
-    private val httpFactory: () -> SdkHttpClient,
+    private val httpFactory: (() -> SdkHttpClient)?,
     private val clock: Clock,
     private val nanoTime: () -> Long,
     private val finalizer: CatalogGenesisFinalizeAttemptV1? = null,
+    private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
 ) : AutoCloseable {
     private val settings = requireNotNull(process.catalogReadback)
     private val coordinator = process.pools.catalogCoordinator
@@ -38,6 +39,11 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
         requireConnectionFree()
         process.requireUnchangedConfiguration()
         requireCatalogReadback(!settings.projectedCurrent, CatalogReadbackFailure.INVALID_POLICY)
+        requireCatalogReadback(
+            coordinator.catalogSignerRotationAuthoring == (initialAuthor != null) &&
+                (initialAuthor == null || (initialAuthor.process === process && finalizer == null)),
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
     }
 
     fun refresh(): Result = Result.perform(this)
@@ -47,34 +53,37 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
         requireConnectionFree()
         process.requireUnchangedConfiguration()
         requireCatalogReadback(!closed.get() && process.catalogReadback === settings, CatalogReadbackFailure.INVALID_POLICY)
-        val attempt = if (finalizer == null) {
-            coordinator.catalogRefreshCustody.reserve(this, settings.totalAttemptMillis, nanoTime)
-        } else {
-            coordinator.catalogRefreshCustody.reserve(this, finalizer, settings.totalAttemptMillis, nanoTime)
+        val attempt = when {
+            initialAuthor != null -> coordinator.catalogRefreshCustody.reserve(this, initialAuthor, settings.totalAttemptMillis, nanoTime)
+            finalizer != null -> coordinator.catalogRefreshCustody.reserve(this, finalizer, settings.totalAttemptMillis, nanoTime)
+            else -> coordinator.catalogRefreshCustody.reserve(this, settings.totalAttemptMillis, nanoTime)
         }
         return withS3Cleanup(
             {
                 try {
                     finalizer?.attach(this, attempt)
+                    initialAuthor?.attach(this, attempt)
                     attempt.requireRunning()
                     val evaluatedAt = clock.instant()
                     val policy = settings.policyAt(evaluatedAt)
                     val initial = settings.initialBundleBytes()
                     val current = settings.currentBundleBytes()
-                    val expected = finalizer?.expected ?: CatalogGenesisInitialLiveBinding.fromRetained(process)
-                    val local = finalizer?.snapshot(initial, current, policy) ?: coordinator.snapshot.load(initial, current, policy)
+                    val expected = initialAuthor?.expected ?: finalizer?.expected ?: CatalogGenesisInitialLiveBinding.fromRetained(process)
+                    val local = initialAuthor?.snapshot(initial, current, policy) ?: finalizer?.snapshot(initial, current, policy)
+                        ?: coordinator.snapshot.load(initial, current, policy)
                     attempt.requireRunning()
                     val readback = withS3Cleanup(
                         {
+                            val limits = attempt.initialAuthorLimits(settings.sdkLimits)
                             val adapter = S3CatalogReadbackAdapter.openOwned(
                                 attempt.construction,
                                 current,
                                 settings.chainPolicy.trustBundlePolicy,
                                 primaryCredentials,
                                 replicaCredentials,
-                                settings.sdkLimits,
-                                httpFactory,
-                                nanoTime,
+                                limits,
+                                if (initialAuthor == null) checkNotNull(httpFactory) else { { attempt.openInitialAuthorHttp(limits, httpFactory) } },
+                                if (initialAuthor == null) nanoTime else System::nanoTime,
                             )
                             val provider = TimedCatalogReadbackV1(adapter, attempt)
                             CatalogDualLocationVerifier.GenesisReadback.verify(provider, initial, current, policy, local)
@@ -86,17 +95,25 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
                     settings.verifyGenesis(readback, evaluatedAt)
                     requireCatalogReadback(!clock.instant().isBefore(evaluatedAt), CatalogReadbackFailure.INVALID_POLICY)
                     finalizer?.preserveReadback(this, readback) // Exact durable provider-closed evidence BEFORE either SQL effect.
+                    initialAuthor?.preserveReadback(this, readback)
                     if (readback.resume == GenesisResume.PREPARED) {
-                        if (finalizer == null) coordinator.genesis.completeGenesis(readback, expected) else finalizer.complete(readback)
+                        when {
+                            initialAuthor != null -> initialAuthor.complete(readback)
+                            finalizer != null -> finalizer.complete(readback)
+                            else -> coordinator.genesis.completeGenesis(readback, expected)
+                        }
                     }
                     attempt.requireRunning()
-                    val projection = finalizer?.project(readback) ?: coordinator.genesis.projectGenesisForProcess(readback, expected)
+                    val projection = initialAuthor?.project(readback) ?: finalizer?.project(readback)
+                        ?: coordinator.genesis.projectGenesisForProcess(readback, expected)
                     attempt.requireRunning()
                     process.requireUnchangedConfiguration()
                     finalizer?.preserveProjection(readback, projection)
+                    initialAuthor?.preserveProjection(readback, projection)
                     Product(readback, projection)
                 } catch (problem: Throwable) {
                     finalizer?.abort()
+                    initialAuthor?.observeFailure(problem)
                     throw problem
                 }
             },
@@ -135,6 +152,17 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     private class Product(val readback: CatalogDualLocationVerifier.GenesisReadback, val projection: ProcessBoundCatalogGenesisProjection)
 
     companion object {
+        internal fun initialAuthor(
+            owner: CatalogSignerRotationInitialAuthorV1,
+            primaryCredentials: AwsSessionCredentials,
+            replicaCredentials: AwsSessionCredentials,
+            httpFactory: (() -> SdkHttpClient)?,
+            clock: Clock,
+        ): CurrentAcceptedCatalogRefreshV1 = CurrentAcceptedCatalogRefreshV1(
+            owner.process, primaryCredentials, replicaCredentials, httpFactory,
+            clock, { owner.process.pools.catalogCoordinator.ownership.nanoClock.nanoTime() }, initialAuthor = owner,
+        )
+
         internal fun finalizing(
             attempt: CatalogGenesisFinalizeAttemptV1,
             primaryCredentials: AwsSessionCredentials,

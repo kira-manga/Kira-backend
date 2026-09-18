@@ -14,8 +14,10 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
     internal val catalogGenesisAuthoring: Boolean get() = root.catalogGenesisAuthoring
     internal val catalogGenesisFinalization: Boolean get() = root.catalogGenesisFinalization
     internal val catalogSignerRotationRecovery: Boolean get() = root.catalogSignerRotationRecovery
+    internal val catalogSignerRotationAuthoring: Boolean get() = root.catalogSignerRotationAuthoring
     private val namedCatalogOnly: Boolean
-        get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery
+        get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization ||
+            catalogSignerRotationRecovery || catalogSignerRotationAuthoring
     internal val versionBoundPools: VersionBoundPersistencePools? get() = root.versionBoundPools
     internal val epochRotation: EpochRotationPersistence? get() = root.epochRotation
     internal val complaintContainment = PersistenceComplaintContainment()
@@ -81,6 +83,20 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
             return PersistenceLifecycleObservation.UNAVAILABLE
         }
         return checkNotNull(catalogResources).prepareCatalogSignerRotationRecovery()
+    }
+
+    internal fun bindCatalogSignerRotationAuthoringPools(nanoClock: PersistenceNanoClock): VersionBoundPersistencePools {
+        if (!catalogSignerRotationAuthoring) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        return checkNotNull(versionBoundPools).bind(this, PersistencePoolLaunchProfile.UNKNOWN, nanoClock)
+    }
+
+    internal fun prepareCatalogSignerRotationAuthoring(): PersistenceLifecycleObservation {
+        requireConnectionFree()
+        if (!catalogSignerRotationAuthoring || catalogResources == null || ownershipLockHeld()) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (root.startCatalogSignerRotationAuthoringInfrastructure() !== PersistenceLifecycleActivation.STARTED) {
+            return PersistenceLifecycleObservation.UNAVAILABLE
+        }
+        return checkNotNull(catalogResources).prepareCatalogSignerRotationAuthoring()
     }
 
     /** One inert exact composition on THIS owner. No endpoint/capacity override, replacement or implicit start. */
@@ -212,6 +228,11 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
 
         internal fun catalogGenesisAuthoring(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
             PersistenceJdbcLifecycleOwner(configuration.createCatalogGenesisAuthoringRoot())
+
+        internal fun catalogSignerRotationAuthoring(
+            configuration: VersionBoundPersistenceConfiguration,
+            epochRotation: Boolean,
+        ): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner(configuration.createCatalogSignerRotationAuthoringRoot(epochRotation))
 
         internal fun catalogSignerRotationRecovery(
             configuration: VersionBoundPersistenceConfiguration,

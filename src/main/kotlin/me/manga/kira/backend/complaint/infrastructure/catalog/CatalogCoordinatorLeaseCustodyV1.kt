@@ -30,12 +30,26 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         return acquire(binding, jdbc, original)
     }
 
-    private fun acquire(binding: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate, original: CatalogSignerRotationPreparedRecoveryV1?): Attempt {
+    internal fun acquireInitialAuthor(
+        original: CatalogSignerRotationInitialAuthorV1,
+        binding: CatalogCoordinatorLeaseBindingV1,
+        jdbc: JdbcTemplate,
+    ): Attempt {
+        original.requireLeaseSelection(coordinator.ownership, jdbc, binding)
+        return acquire(binding, jdbc, null, original)
+    }
+
+    private fun acquire(
+        binding: CatalogCoordinatorLeaseBindingV1,
+        jdbc: JdbcTemplate,
+        original: CatalogSignerRotationPreparedRecoveryV1?,
+        initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
+    ): Attempt {
         requireConnectionFree()
         requireBinding(binding, jdbc)
         active.get()?.retireIfExpired()
         if (active.get() != null) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
-        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original))
+        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original, initialAuthor))
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -93,6 +107,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         private val prior: CatalogCoordinatorLeaseCampaignV1?,
         private val priorWindow: CatalogCoordinatorLeaseCampaignV1.Window?,
         private val recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
+        private val initialAuthor: CatalogSignerRotationInitialAuthorV1? = null,
     ) {
         internal val custody: CatalogCoordinatorLeaseCustodyV1 get() = this@CatalogCoordinatorLeaseCustodyV1
         private val caller = Thread.currentThread()
@@ -113,6 +128,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
             }
             requireBinding(binding, selected)
             recovery?.requireLeaseAttempt(binding)
+            initialAuthor?.requireLeaseAttempt(binding)
             if (Thread.currentThread().isInterrupted) refuse(PersistencePhaseFailureCode.INTERRUPTED)
             if (path !== PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH) {
                 requireLeaseWindow(clock.nanoTime() - startedAtNanos)
@@ -198,6 +214,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
 
         internal fun failure(problem: Throwable): PersistencePhaseException {
             recovery?.observeFailure(problem)
+            initialAuthor?.observeFailure(problem)
             abort()
             return retained?.returnFailure(problem)
                 ?: (problem as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
@@ -214,6 +231,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
                 }
             } catch (problem: Throwable) {
                 recovery?.observeFailure(problem)
+                initialAuthor?.observeFailure(problem)
                 abort()
                 throw problem
             } finally {
