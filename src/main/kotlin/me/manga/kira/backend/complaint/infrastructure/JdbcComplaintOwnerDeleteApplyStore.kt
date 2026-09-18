@@ -10,6 +10,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
@@ -163,6 +164,8 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         }, routes.joinToString(",", "{", "}") { it.eventId })
         check(appliedRows.size <= OwnerDeleteCapacityCharges.MAX_RETAINED_CANDIDATES && appliedRows.distinct().size == appliedRows.size)
         familyApplied = appliedRows.size
+        // Each retained first application spends exactly one logical E in the same transaction.
+        check((reserve?.used ?: ComplaintCapacityVector.ZERO)[ComplaintCapacityCounter.JOURNAL_APPLIED] == familyApplied.toLong())
         // An orphaned partial history cannot reset cumulative U or replenish a spent alias/identity slot.
         check((!missingL && !missingP) || familyApplied == 0)
         check(exactApplied || familyApplied < OwnerDeleteCapacityCharges.MAX_RETAINED_CANDIDATES)
