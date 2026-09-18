@@ -28,6 +28,7 @@ internal class ComplaintCatalogSignerRotationPersistencePhaseExecutor(private va
             else -> error("Unsupported signer rotation phase.")
         }
         var operation: CatalogSignerRotationOperationV1? = null
+        var closingFailure: Throwable? = null
         try {
             phase.begin()
             operation = store.execute(input, capacity)
@@ -37,15 +38,14 @@ internal class ComplaintCatalogSignerRotationPersistencePhaseExecutor(private va
             phase.recordFailure(problem)
         } finally {
             try {
-                phase.finish()
-            } catch (problem: Throwable) {
-                input.attempt.observeFailure(problem)
-                throw problem
+                closingFailure = runCatching(phase::finish).exceptionOrNull()
+                closingFailure?.let(input.attempt::observeFailure)
             } finally {
                 input.attempt.observePhaseCleanup(phase) // An unknown original phase is retained; a free thread-local is insufficient.
             }
         }
         input.attempt.throwIfSignalled()
+        closingFailure?.let { throw it }
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).observation
     }
 

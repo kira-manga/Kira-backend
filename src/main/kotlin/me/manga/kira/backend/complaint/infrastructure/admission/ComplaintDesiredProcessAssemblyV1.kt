@@ -72,13 +72,7 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(private val
         val secrets = matchAcquired(if (finalizer) inputs.targetBindings() else inputs.allBindings(), acquired)
         fun secret(binding: VersionedSecretBinding): AcquiredVersionedSecret = checkNotNull(secrets[binding])
         // Distinct immutable references alone do not prove separate actual DB password material.
-        if (!finalizer) {
-            secret(inputs.runtimePassword).useMaterial { runtime ->
-                secret(inputs.operatorPassword).useMaterial { operator ->
-                    requireDesiredInstallation(!MessageDigest.isEqual(runtime, operator), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
-                }
-            }
-        }
+        if (!finalizer) requireDistinctDatabasePasswords(secret(inputs.runtimePassword), secret(inputs.operatorPassword))
         val consumers = createConsumers(inputs, secrets)
         val routing = consumers.journalRouting
         val db = inputs.database
@@ -171,6 +165,14 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(private val
         val operator = operatorConfiguration.bindDesiredInstallationOperatorOwner()
         operatorOwner = operator
         operator.bindDesiredInstallationOperatorPools()
+    }
+
+    private fun requireDistinctDatabasePasswords(runtimePassword: AcquiredVersionedSecret, operatorPassword: AcquiredVersionedSecret) {
+        runtimePassword.useMaterial { runtime ->
+            operatorPassword.useMaterial { operator ->
+                requireDesiredInstallation(!MessageDigest.isEqual(runtime, operator), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
+            }
+        }
     }
 
     private fun createConsumers(

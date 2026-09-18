@@ -118,9 +118,10 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     internal fun requireSignerRotationProcess(selected: VersionBoundComplaintProcessConfiguration) {
         requireUnchangedConfiguration()
         val writer = process.catalogSignerRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
-        if (selected !== process || desired.desiredGeneration != 1L || catalogGeneration != 1L ||
-            process.catalogReadback?.projectedCurrent != false || writer.deployment.catalogWriterGenerationId != catalogWriter.toString()
-        ) {
+        if (selected !== process || desired.desiredGeneration != 1L || catalogGeneration != 1L) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (process.catalogReadback?.projectedCurrent != false || writer.deployment.catalogWriterGenerationId != catalogWriter.toString()) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         writer.requireRetained(process.pools, checkNotNull(process.catalogReadback))

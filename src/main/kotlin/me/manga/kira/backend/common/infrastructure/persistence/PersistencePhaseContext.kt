@@ -193,13 +193,14 @@ constructor(
         requireCaller()
         if (stage !== Stage.PREPARED) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
         stage = Stage.STARTING
+        val rechecksReadCommitted = firstDesiredAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
             setName(path.name)
             timeout = 2
             isReadOnly = path.readOnly
             // Desired-state pending/pristine checks deliberately take a fresh statement snapshot
             // AFTER the LIVE control lock. Never inherit a role/database REPEATABLE READ default.
-            if (desiredAttempt != null || firstDesiredAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) {
+            if (desiredAttempt != null || rechecksReadCommitted) {
                 isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
             }
         }
@@ -227,9 +228,7 @@ constructor(
         requireWork()
         stage = Stage.SETTING_UP
         installLimits()
-        if ((firstDesiredAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) &&
-            selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED
-        ) {
+        if (rechecksReadCommitted && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         selectedHolder.acquireFence(selected)
@@ -915,7 +914,8 @@ constructor(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        if (catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) {
+        val genesisLifecycle = catalogAuthorAttempt != null || catalogFinalizerAttempt != null
+        if (genesisLifecycle || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) {
             return budget.systemCleanupSnapshot(WORK_MILLIS)
         }
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
@@ -1314,9 +1314,8 @@ constructor(
 
         override fun retain(operation: CatalogSignerRotationOperationV1, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (retained != null || operation.input !== selectedInput || operation.input.attempt !== catalogSignerRotationAttempt ||
-                !operation.belongsTo(this@PersistencePhaseContext, path)
-            ) {
+            val matchingInput = operation.input === selectedInput && operation.input.attempt === catalogSignerRotationAttempt
+            if (retained != null || !matchingInput || !operation.belongsTo(this@PersistencePhaseContext, path)) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             operation.input.requirePersistence(ownership, jdbc)
@@ -1325,16 +1324,16 @@ constructor(
 
         override fun requireRetained(operation: CatalogSignerRotationOperationV1, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
-            if (retained !== operation || operation.input !== selectedInput || operation.input.attempt !== catalogSignerRotationAttempt ||
-                !selectedHolder.fenceReady()
-            ) {
+            val matchingInput = operation.input === selectedInput && operation.input.attempt === catalogSignerRotationAttempt
+            if (retained !== operation || !matchingInput || !selectedHolder.fenceReady()) {
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             operation.input.requirePersistence(ownership, jdbc)
         }
 
         override fun requireCommitted(operation: CatalogSignerRotationOperationV1) {
-            if (retained !== operation || operation.input !== selectedInput || !completed() || !cleanupProven(operation.input.attempt)) {
+            val completedOriginal = retained === operation && operation.input === selectedInput && completed()
+            if (!completedOriginal || !cleanupProven(operation.input.attempt)) {
                 failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireSuccessfulResult()

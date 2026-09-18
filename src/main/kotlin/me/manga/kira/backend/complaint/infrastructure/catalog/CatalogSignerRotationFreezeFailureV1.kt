@@ -26,12 +26,13 @@ internal fun requireSignerRotation(condition: Boolean, code: CatalogSignerRotati
 
 @Suppress("InstanceOfCheckForException")
 internal fun signerRotationSignal(problem: Throwable): Throwable {
-    if (problem is InterruptedException || problem is InterruptedIOException ||
-        (problem is CatalogSignerRotationFreezeExceptionV1 && problem.code === CatalogSignerRotationFreezeFailureV1.INTERRUPTED) ||
-        (problem is CatalogSignerRotationCustodyExceptionV1 && problem.code === CatalogSignerRotationCustodyFailureV1.INTERRUPTED)
-    ) {
-        Thread.currentThread().interrupt()
+    val interrupted = when (problem) {
+        is InterruptedException, is InterruptedIOException -> true
+        is CatalogSignerRotationFreezeExceptionV1 -> problem.code === CatalogSignerRotationFreezeFailureV1.INTERRUPTED
+        is CatalogSignerRotationCustodyExceptionV1 -> problem.code === CatalogSignerRotationCustodyFailureV1.INTERRUPTED
+        else -> false
     }
+    if (interrupted) Thread.currentThread().interrupt()
     return when {
         problem is Error -> problem
         problem is CancellationException -> CancellationException("Catalog signer rotation freeze cancelled.")

@@ -115,16 +115,22 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
             inputs.requireObservation(observation)
             latest = observation
             return observation
-        } catch (problem: Throwable) {
-            observeFailure(problem)
+        } catch (problem: PersistencePhaseException) {
             // A supplied positive exception flag is never cleanup authority. An unretained uncertain entry can only veto release.
-            if (!phaseRetainedForEntry && problem is PersistencePhaseException && !problem.cleanupProven) sqlCleanupUnproven = true
-            abort()
-            throwIfSignalled()
-            throw problem
+            if (!phaseRetainedForEntry && !problem.cleanupProven) sqlCleanupUnproven = true
+            executionFailed(problem)
+        } catch (problem: Throwable) {
+            executionFailed(problem)
         } finally {
             selected = null
         }
+    }
+
+    private fun executionFailed(problem: Throwable): Nothing {
+        observeFailure(problem)
+        abort()
+        throwIfSignalled()
+        throw problem
     }
 
     internal fun requirePhaseEntry(candidate: PersistencePhaseOwnership, path: PersistencePhasePath) {
@@ -182,11 +188,13 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
         }
         while (true) {
             val previous = originalSignal.get()
-            if (previous is Error || (previous is CancellationException && signal !is Error) ||
-                (previous is InterruptedException && signal is InterruptedException)
-            ) {
-                return
+            val retainPrevious = when (previous) {
+                is Error -> true
+                is CancellationException -> signal !is Error
+                is InterruptedException -> signal is InterruptedException
+                else -> false
             }
+            if (retainPrevious) return
             if (originalSignal.compareAndSet(previous, signal)) return
         }
     }

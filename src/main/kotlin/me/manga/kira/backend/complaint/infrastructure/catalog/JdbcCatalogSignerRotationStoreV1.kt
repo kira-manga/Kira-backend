@@ -164,7 +164,18 @@ internal class CatalogSignerRotationOperationV1 private constructor(
 
     override fun toString(): String = "CatalogSignerRotationOperationV1(original-fenced-fullB-phase,head-unchanged,no-publication-authority)"
 
-    private enum class Stage { RETAINED, CONTROL_LOCKED, CATALOG_LOCKED, HISTORY_LOCKED, COUNTERS_LOCKING, SETTLING_COUNTERS, WRITING, REREADING, COMPLETE, FAILED }
+    private enum class Stage {
+        RETAINED,
+        CONTROL_LOCKED,
+        CATALOG_LOCKED,
+        HISTORY_LOCKED,
+        COUNTERS_LOCKING,
+        SETTLING_COUNTERS,
+        WRITING,
+        REREADING,
+        COMPLETE,
+        FAILED,
+    }
 
     companion object {
         @Suppress("TooGenericExceptionCaught")
@@ -190,9 +201,7 @@ internal class CatalogSignerRotationOperationV1 private constructor(
 
 /** Only finite bounded columns escape the driver. No hashing/parsing/providers or caller callbacks under the locks. */
 private class StoredSignerRotationRow(
-    val genesisMatches: Boolean,
-    val rotationMatches: Boolean,
-    val bounded: Boolean,
+    private val shape: StoredSignerRotationShape,
     val generation: Long,
     private val token: UUID,
     private val firstId: String,
@@ -207,6 +216,10 @@ private class StoredSignerRotationRow(
     private val envelope: ByteArray?,
     private val envelopeHash: ByteArray?,
 ) {
+    val genesisMatches: Boolean get() = shape.genesisMatches
+    val rotationMatches: Boolean get() = shape.rotationMatches
+    val bounded: Boolean get() = shape.bounded
+
     fun matchesSignatures(expected: Array<Any?>): Boolean = signatureOne.contentEquals(expected[0] as ByteArray?) &&
         signatureTwo.contentEquals(expected[1] as ByteArray?) && envelope.contentEquals(expected[2] as ByteArray?) &&
         envelopeHash.contentEquals(expected[3] as ByteArray?)
@@ -239,7 +252,9 @@ private class StoredSignerRotationRow(
 
     companion object {
         fun copy(row: ResultSet): StoredSignerRotationRow = StoredSignerRotationRow(
-            row.requiredRotationBoolean("genesis_matches"), row.requiredRotationBoolean("rotation_matches"), row.requiredRotationBoolean("bounded"),
+            StoredSignerRotationShape(
+                row.requiredRotationBoolean("genesis_matches"), row.requiredRotationBoolean("rotation_matches"), row.requiredRotationBoolean("bounded"),
+            ),
             row.getLong("successor_generation").also { check(!row.wasNull()) }, checkNotNull(row.getObject("operation_token", UUID::class.java)),
             checkNotNull(
                 row.getString("signer_one_id"),
@@ -251,5 +266,8 @@ private class StoredSignerRotationRow(
         )
     }
 }
+
+/** The same three bounded SQL shape predicates; grouping does not turn observations into operation authority. */
+private class StoredSignerRotationShape(val genesisMatches: Boolean, val rotationMatches: Boolean, val bounded: Boolean)
 
 private fun ResultSet.requiredRotationBoolean(column: String): Boolean = getBoolean(column).also { check(!wasNull()) }
