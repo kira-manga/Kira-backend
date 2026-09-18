@@ -105,6 +105,45 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         return budget
     }
 
+    /** Fixed cold D7/G1 author only. No supplied catalog tuple or rebuilt process can obtain this binding. */
+    internal fun startSignerRotationBudget(selected: VersionBoundComplaintProcessConfiguration): PersistenceTimeBudget {
+        requireConnectionFree()
+        val writer = selected.catalogSignerRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        val budget = PersistenceTimeBudget.start(writer.deployment.totalAttemptMillis, ownership.nanoClock)
+        requireSignerRotationProcess(selected)
+        return budget
+    }
+
+    /** Local identity/configuration checks only; safe while the fixed SQL phase owns the full-B row lock. */
+    internal fun requireSignerRotationProcess(selected: VersionBoundComplaintProcessConfiguration) {
+        requireUnchangedConfiguration()
+        val writer = process.catalogSignerRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (selected !== process || desired.desiredGeneration != 1L || catalogGeneration != 1L ||
+            process.catalogReadback?.projectedCurrent != false || writer.deployment.catalogWriterGenerationId != catalogWriter.toString()
+        ) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        writer.requireRetained(process.pools, checkNotNull(process.catalogReadback))
+    }
+
+    internal fun signerRotationPredecessorHash(selected: VersionBoundComplaintProcessConfiguration): String {
+        requireSignerRotationProcess(selected)
+        return catalog.chain.tail.envelopeSha256
+    }
+
+    internal fun requireSignerRotationPredecessor(
+        selected: VersionBoundComplaintProcessConfiguration,
+        readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback,
+    ) {
+        requireConnectionFree()
+        requireSignerRotationProcess(selected)
+        val observed = readback.commonHeadEvidence()
+        requireCatalogReadback(
+            observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust,
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
+    }
+
     internal fun cutoffRouting(): VersionBoundComplaintJournalRouting {
         requireUnchangedConfiguration()
         return process.consumers.journalRouting.also { check(it.journalConfiguration === journal) }

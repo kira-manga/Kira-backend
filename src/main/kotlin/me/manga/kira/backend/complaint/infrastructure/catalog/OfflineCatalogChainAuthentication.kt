@@ -64,6 +64,16 @@ internal class OfflineCatalogChainAuthentication private constructor(
         requireOfflineTrustBundle(tail.generation >= trust.minimumHeadGeneration, OfflineTrustBundleFailure.POLICY_MISMATCH)
     }
 
+    /** No signatures or state advancement: the fixed author reuses the exact reader's claims/chronology/ordered-key checks before Sign. */
+    internal fun requireInitialOverlap(manifest: OfflineCatalogRotationManifestV1, policy: OfflineCatalogChainReaderPolicy) {
+        requireOfflineTrustBundle(tail.generation == 1L && rotation is CatalogRotationState.Stable)
+        requireOfflineTrustBundle(manifest.schemaVersion == 1 && manifest.operation == OfflineCatalogChainProtocol.ROTATION_OVERLAP)
+        requireOfflineTrustBundle(manifest.restoreInventory == emptyInventory)
+        val claims = manifest.authenticationClaims()
+        validateClaims(claims, policy)
+        requireOfflineTrustBundle(nextRotation(claims) is CatalogRotationState.AwaitingActivation)
+    }
+
     private fun validateClaims(claims: CatalogGenerationAuthenticationClaims, policy: OfflineCatalogChainReaderPolicy) {
         requireOfflineTrustBundle(OfflineBootstrapGrammar.uuidV4(claims.operationToken))
         // Both raw readers bound the generation count before next(); the predecessor begins at one.

@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapsho
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogGenesisPublishRecheckPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogProjectedHeadPhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDesiredInstallPhaseExecutor
@@ -41,6 +42,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var desiredExecutor: ComplaintDesiredInstallPhaseExecutor? = null
     private var firstDesiredExecutor: ComplaintSignedGenesisFirstDPhaseExecutor? = null
     private var publishRecheckExecutor: ComplaintCatalogGenesisPublishRecheckPhaseExecutor? = null
+    private var signerRotationExecutor: ComplaintCatalogSignerRotationPersistencePhaseExecutor? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
@@ -52,6 +54,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val desiredInstallation: ComplaintDesiredInstallPhaseExecutor get() = checkNotNull(desiredExecutor)
     internal val signedGenesisFirstDesired: ComplaintSignedGenesisFirstDPhaseExecutor get() = checkNotNull(firstDesiredExecutor)
     internal val catalogGenesisPublishRecheck: ComplaintCatalogGenesisPublishRecheckPhaseExecutor get() = checkNotNull(publishRecheckExecutor)
+    internal val signerRotation: ComplaintCatalogSignerRotationPersistencePhaseExecutor get() = checkNotNull(signerRotationExecutor)
 
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
@@ -72,6 +75,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
         rotationExecutor = CatalogEpochRotationV1(this, jdbc)
         cutoffExecutor = CatalogCutoffPublicationsV1(this, jdbc)
+        signerRotationExecutor = ComplaintCatalogSignerRotationPersistencePhaseExecutor(this, jdbc)
     }
 
     internal fun requireResources() {

@@ -12,6 +12,8 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainLimits
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainReaderPolicy
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundlePolicy
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeploymentV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationKeyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealBootstrapOriginV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealCatalogPrincipalV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealDeploymentMappingV1
@@ -115,6 +117,16 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
         AwsEpochSealStsLimits(it.requestTimeoutMillis, it.connectTimeoutMillis, it.readTimeoutMillis, it.maxResponseBytes, it.clockUncertaintyMillis)
     }
     val livePolicy = document.livePolicy?.let(::livePolicy)
+    val catalogSignerRotation = document.catalogSignerRotation?.let { writer ->
+        CatalogSignerRotationDeploymentV1(
+            writer.catalogWriterGenerationId,
+            writer.signAuthority,
+            writer.orderedSigningKeys.map { key ->
+                CatalogSignerRotationKeyV1(key.keyId, key.keyArn, key.algorithmId, binary(key.publicKeySpkiBase64, 422), key.publicKeySha256)
+            },
+            writer.totalAttemptMillis,
+        ).also { it.requireReader(checkNotNull(catalog)) }
+    }
 
     init {
         valid(document.schemaVersion == 1 && implementationSchema == 1 && desiredGeneration > 0)
@@ -131,7 +143,8 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
         valid(all.map { it.version }.distinct().size == all.size)
         valid(journal.declaration().writer.databaseIdentity == databaseIdentity.toString())
         valid(journal.declaration().writer.restoreIdentity == restoreIdentity.toString())
-        valid((profile == DesiredProcessProfileV1.D6) == (livePolicy != null))
+        valid((profile == DesiredProcessProfileV1.D7) == (catalogSignerRotation != null))
+        if (profile != DesiredProcessProfileV1.D7) valid((profile == DesiredProcessProfileV1.D6) == (livePolicy != null))
         valid(
             when (profile) {
                 DesiredProcessProfileV1.D1 -> catalog == null && !epochRotation && sealerMapping == null
@@ -140,6 +153,8 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
                 DesiredProcessProfileV1.D4 -> catalog?.projectedCurrent == false && epochRotation && sealerMapping != null
                 DesiredProcessProfileV1.D5 -> catalog?.projectedCurrent == true && (sealerMapping == null || epochRotation)
                 DesiredProcessProfileV1.D6 -> catalog != null && epochRotation && sealerMapping != null
+                DesiredProcessProfileV1.D7 -> desiredGeneration == 1L && catalog?.projectedCurrent == false && (sealerMapping == null || epochRotation) &&
+                    (livePolicy == null || (epochRotation && sealerMapping != null))
             },
         )
         livePolicy?.requireJournal(journal, checkNotNull(catalog))
@@ -164,7 +179,9 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
     fun requireBootstrapProfile() {
         valid(
             desiredGeneration == 1L &&
-                profile in setOf(DesiredProcessProfileV1.D2, DesiredProcessProfileV1.D3, DesiredProcessProfileV1.D4, DesiredProcessProfileV1.D6),
+                profile in setOf(
+                    DesiredProcessProfileV1.D2, DesiredProcessProfileV1.D3, DesiredProcessProfileV1.D4, DesiredProcessProfileV1.D6, DesiredProcessProfileV1.D7,
+                ),
         )
         valid(catalog?.projectedCurrent == false)
     }
@@ -295,4 +312,4 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
 }
 
 /** Each spelling selects a genuine retained factory, never a replacement schema tag on a smaller graph. */
-internal enum class DesiredProcessProfileV1 { D1, D2, D3, D4, D5, D6 }
+internal enum class DesiredProcessProfileV1 { D1, D2, D3, D4, D5, D6, D7 }

@@ -79,6 +79,75 @@ internal object CatalogDualLocationVerifier {
         return bytes.copyOf()
     }
 
+    /**
+     * Private actual raw G1/no-extra-tail fold for the first non-G1 author. This is NOT a G1
+     * refresh/projection Result and does not convert the G1 reader into an Accepted>1 reader.
+     * Supplied diagnostic outcomes can never construct it or authorize an author SQL phase.
+     */
+    class SignerRotationAuthorReadback private constructor(
+        private val commonHead: CatalogCommonHeadEvidence,
+        private val genesis: ByteArray,
+        private val observed: LocalCatalogSnapshot,
+        val evaluatedAtEpochSecond: Long,
+        val requiredRetainUntilEpochSecond: Long,
+    ) {
+        internal fun commonHeadEvidence(): CatalogCommonHeadEvidence = commonHead
+        internal fun genesisBytes(): ByteArray = genesis.copyOf()
+        internal fun manifest(): OfflineCatalogGenesisManifestV1 = OfflineTrustBundleParser.parseGenesis(genesis).manifest
+
+        internal fun requireSnapshot(selected: LocalCatalogSnapshot) {
+            val same = when (val before = observed) {
+                is LocalCatalogSnapshot.Accepted -> selected is LocalCatalogSnapshot.Accepted && selected.head == before.head
+                is LocalCatalogSnapshot.Prepared -> selected is LocalCatalogSnapshot.Prepared && selected.head == before.head &&
+                    sameSignerRotationMutation(selected.mutation, before.mutation)
+
+                else -> false
+            }
+            requireCatalogReadback(same, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+        }
+
+        override fun toString(): String = "SignerRotationAuthorReadback(private-raw-G1-no-tail,no-SQL-or-current-authority)"
+
+        companion object {
+            internal fun verify(
+                provider: CatalogReadbackPort,
+                initialBundleBytes: ByteArray,
+                currentBundleBytes: ByteArray,
+                policy: CatalogReadbackPolicy,
+                local: LocalCatalogSnapshot,
+            ): SignerRotationAuthorReadback {
+                requireConnectionFree()
+                when (local) {
+                    is LocalCatalogSnapshot.Accepted -> requireCatalogReadback(local.head.generation == 1L, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                    is LocalCatalogSnapshot.Prepared -> {
+                        val parsed = CatalogLocalSnapshotVerifier.validateMutation(local.mutation, policy.chain.limits)
+                        requireCatalogReadback(
+                            local.head.generation == 1L && parsed.schemaVersion == 1 && parsed.claims.generation == 2L &&
+                                parsed.claims.operation == "ROTATION_OVERLAP",
+                            CatalogReadbackFailure.INVALID_LOCAL_STATE,
+                        )
+                    }
+
+                    else -> throw CatalogReadbackException(CatalogReadbackFailure.INVALID_LOCAL_STATE)
+                }
+                val raw = verifyRaw(provider, initialBundleBytes, currentBundleBytes, policy, local)
+                val evidence = when (val result = raw.result) {
+                    is CatalogReadbackResult.CurrentHeadObserved -> result.evidence.takeIf { local is LocalCatalogSnapshot.Accepted }
+                    is CatalogReadbackResult.NeedsSignaturePersistence -> result.evidence.takeIf { local is LocalCatalogSnapshot.Prepared }
+                    is CatalogReadbackResult.NeedsConditionalPublication -> result.evidence.takeIf { local is LocalCatalogSnapshot.Prepared }
+                    else -> null
+                } ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                requireCatalogReadback(
+                    evidence.chain.tail.generation == 1L && evidence.chain.tail.envelopeSha256 == policy.expectedGenesisEnvelopeSha256 &&
+                        raw.pair != null,
+                    CatalogReadbackFailure.HEAD_CONFLICT,
+                )
+                val bytes = raw.read?.bytes ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
+                return SignerRotationAuthorReadback(evidence, bytes.copyOf(), local, policy.evaluatedAtEpochSecond, policy.requiredRetainUntilEpochSecond)
+            }
+        }
+    }
+
     /** Actual raw Accepted>1 fold only. This is neither supplied-result promotion nor proof of a historical DB projection. */
     class ProjectedHeadReadback private constructor(
         private val commonHead: CatalogCommonHeadEvidence,

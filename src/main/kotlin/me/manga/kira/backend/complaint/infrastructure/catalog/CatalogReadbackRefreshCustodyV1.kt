@@ -14,7 +14,25 @@ import java.util.concurrent.atomic.AtomicReference
 
 /** One slot on the ORIGINAL catalog coordinator, not one per factory or re-composed process wrapper. */
 internal class CatalogReadbackRefreshCustodyV1 {
-    private val active = AtomicReference<Attempt?>()
+    private val active = AtomicReference<Any?>() // Closed typed refresh/first-overlap owners share one slot; never a caller-selected engine.
+
+    internal fun reserveSignerRotation(attempt: CatalogSignerRotationFreezeAttemptV1) {
+        requireConnectionFree()
+        attempt.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, attempt), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+
+    internal fun requireSignerRotation(attempt: CatalogSignerRotationFreezeAttemptV1) {
+        attempt.requireCustody(this)
+        requireCatalogReadback(active.get() === attempt, CatalogReadbackFailure.INVALID_POLICY)
+    }
+
+    internal fun releaseSignerRotationAfterCleanup(attempt: CatalogSignerRotationFreezeAttemptV1) {
+        requireConnectionFree()
+        attempt.requireCustody(this)
+        attempt.requireActualCleanup()
+        requireCatalogReadback(active.compareAndSet(attempt, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
 
     internal fun reserve(factory: CurrentAcceptedCatalogRefreshV1, budgetMillis: Long, nanoTime: () -> Long): Attempt =
         reserve(factory, null, budgetMillis, nanoTime)

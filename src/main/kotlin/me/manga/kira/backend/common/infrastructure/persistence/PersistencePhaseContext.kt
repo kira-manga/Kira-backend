@@ -47,6 +47,9 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPubl
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadReadOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationSqlInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintAdmittedEnrollmentWrite
@@ -107,6 +110,8 @@ constructor(
     private val catalogFinalizerWork: PersistenceTimeBudget? = null,
     private val catalogPublisherAttempt: CatalogGenesisPublishAttemptV1? = null,
     private val catalogPublisherWork: PersistenceTimeBudget? = null,
+    private val catalogSignerRotationAttempt: CatalogSignerRotationFreezeAttemptV1? = null,
+    private val catalogSignerRotationWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -167,6 +172,7 @@ constructor(
     internal val desiredInstallation: PersistenceDesiredInstall = DesiredInstallationBoundary()
     internal val signedGenesisFirstDesired: PersistenceSignedGenesisFirstDesired = SignedGenesisFirstDesiredBoundary()
     internal val catalogGenesisPublishRecheck: PersistenceCatalogGenesisPublishRecheck = CatalogGenesisPublishRecheckBoundary()
+    internal val catalogSignerRotation: PersistenceCatalogSignerRotationV1 = CatalogSignerRotationBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -193,7 +199,7 @@ constructor(
             isReadOnly = path.readOnly
             // Desired-state pending/pristine checks deliberately take a fresh statement snapshot
             // AFTER the LIVE control lock. Never inherit a role/database REPEATABLE READ default.
-            if (desiredAttempt != null || firstDesiredAttempt != null || catalogPublisherAttempt != null) {
+            if (desiredAttempt != null || firstDesiredAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) {
                 isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
             }
         }
@@ -221,7 +227,9 @@ constructor(
         requireWork()
         stage = Stage.SETTING_UP
         installLimits()
-        if ((firstDesiredAttempt != null || catalogPublisherAttempt != null) && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
+        if ((firstDesiredAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) &&
+            selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED
+        ) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         selectedHolder.acquireFence(selected)
@@ -314,14 +322,14 @@ constructor(
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
-                ?: catalogPublisherWork
+                ?: catalogPublisherWork ?: catalogSignerRotationWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
-            ?: catalogPublisherWork
+            ?: catalogPublisherWork ?: catalogSignerRotationWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -575,6 +583,11 @@ constructor(
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
         -> catalogGenesis.completed()
 
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+        -> catalogSignerRotation.completed()
+
         PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST -> signedGenesisFirstDesired.completed()
 
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK -> catalogGenesisPublishRecheck.completed()
@@ -663,6 +676,7 @@ constructor(
 
     internal fun recordFailure(problem: Throwable) {
         ownerDeleteAllApply.observeFailure(problem)
+        catalogSignerRotationAttempt?.observeFailure(problem)
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
@@ -798,7 +812,8 @@ constructor(
             try {
                 caller.restoreAfterFailure()
                 if (restoreInterrupt) Thread.currentThread().interrupt()
-            } catch (_: Throwable) {
+            } catch (problem: Throwable) {
+                catalogSignerRotationAttempt?.observeFailure(problem)
                 // Discard raw restoration details, but retain unresolved custody instead of claiming settlement/refund.
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
@@ -874,7 +889,7 @@ constructor(
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
-            ?: catalogFinalizerWork ?: catalogPublisherWork ?: return false
+            ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -900,7 +915,7 @@ constructor(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        if (catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null) {
+        if (catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) {
             return budget.systemCleanupSnapshot(WORK_MILLIS)
         }
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
@@ -914,6 +929,9 @@ constructor(
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
+        catalogSignerRotationAttempt?.let {
+            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
+        }
         catalogPublisherAttempt?.let {
             return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
         }
@@ -990,7 +1008,8 @@ constructor(
                 refunded.set(true)
                 stage = Stage.CLOSED
                 true
-            } catch (_: Throwable) {
+            } catch (problem: Throwable) {
+                catalogSignerRotationAttempt?.observeFailure(problem)
                 // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
                 ownership.retainCallerForRecovery(this@PersistencePhaseContext)
                 false
@@ -1077,6 +1096,9 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
             -> PersistenceDeletionFence(this@PersistencePhaseContext, ownership.nanoClock)
 
             else -> null
@@ -1271,6 +1293,71 @@ constructor(
         }
 
         override fun completed(): Boolean = retained?.let { it.input.attempt === catalogRefresh && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    /** Fixed first-overlap operation, with original phase identity and actual cleanup proof retained beyond ThreadLocal removal. */
+    private inner class CatalogSignerRotationBoundary : PersistenceCatalogSignerRotationV1 {
+        private var selectedInput: CatalogSignerRotationSqlInputV1? = null
+        private var retained: CatalogSignerRotationOperationV1? = null
+
+        override fun requireOperation(input: CatalogSignerRotationSqlInputV1, jdbc: JdbcTemplate) {
+            if (input.attempt !== catalogSignerRotationAttempt || input.path !== path || !signerRotationPath()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, path)
+            if (selectedInput != null || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            input.requirePersistence(ownership, jdbc)
+            selectedInput = input
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: CatalogSignerRotationOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained != null || operation.input !== selectedInput || operation.input.attempt !== catalogSignerRotationAttempt ||
+                !operation.belongsTo(this@PersistencePhaseContext, path)
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            operation.input.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: CatalogSignerRotationOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.input !== selectedInput || operation.input.attempt !== catalogSignerRotationAttempt ||
+                !selectedHolder.fenceReady()
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            operation.input.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: CatalogSignerRotationOperationV1) {
+            if (retained !== operation || operation.input !== selectedInput || !completed() || !cleanupProven(operation.input.attempt)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun cleanupProven(attempt: CatalogSignerRotationFreezeAttemptV1): Boolean =
+            caller.isCurrent() && catalogSignerRotationAttempt === attempt && signerRotationPath() &&
+                stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+                acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+                (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
+        override fun completed(): Boolean = retained?.let {
+            it.input === selectedInput && it.input.attempt === catalogSignerRotationAttempt && it.completedFor(this@PersistencePhaseContext)
+        } == true
+
+        private fun signerRotationPath(): Boolean = when (path) {
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
+            -> true
+
+            else -> false
+        }
     }
 
     /** Row-only lease phases: no fence is acquired or required, so renewal remains independent of epoch rotation. */

@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettin
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealAcquisitionDescriptorV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogSignerRotationConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.VersionBoundLiveJournalCoverageV1
@@ -35,6 +36,7 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     val epochSealAcquisition: VersionBoundEpochSealAcquisitionV1?,
     private val publicationLanes: JournalPublicationLanesV1?,
     val liveCoverage: VersionBoundLiveJournalCoverageV1?,
+    val catalogSignerRotation: VersionBoundCatalogSignerRotationConfigurationV1? = null,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val retainedRotation: VersionBoundEpochRotationDescriptor?
@@ -47,7 +49,12 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
         retainedPools = pools.descriptors()
         retainedRotation = epochRotation?.descriptor()
         retainedEpochSealAcquisition = epochSealAcquisition?.descriptor()
-        canonical = if (liveCoverage != null) {
+        canonical = if (catalogSignerRotation != null) {
+            ComplaintEffectiveConfigurationV7.encode(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+                checkNotNull(catalogReadback), epochRotation, publicationLanes, epochSealAcquisition, liveCoverage, catalogSignerRotation,
+            )
+        } else if (liveCoverage != null) {
             ComplaintEffectiveConfigurationV6.encode(
                 consumers,
                 pools,
@@ -150,6 +157,11 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
     }
 
     private fun requireGraph() {
+        catalogSignerRotation?.let { writer ->
+            val reader = checkNotNull(catalogReadback)
+            writer.requireRetained(pools, reader)
+            require(desiredGeneration == 1L && !reader.projectedCurrent) { INVALID_COMPLAINT_PROCESS_CONFIGURATION }
+        }
         liveCoverage?.let { coverage ->
             require(catalogReadback != null && epochRotation != null && epochSealAcquisition != null && publicationLanes != null) {
                 INVALID_COMPLAINT_PROCESS_CONFIGURATION
@@ -295,6 +307,27 @@ internal class VersionBoundComplaintProcessConfiguration private constructor(
                 epochSealAcquisition,
                 publicationLanes,
                 liveCoverage,
+            )
+        }
+
+        /** Explicit initial D7 composition only; the old factories cannot acquire this writer after construction. */
+        fun fromRetainedWithSignerRotation(
+            consumers: VersionBoundComplaintConsumerConfiguration,
+            pools: VersionBoundPersistencePools,
+            implementationSchema: Int,
+            desiredGeneration: Long,
+            databaseIdentity: UUID,
+            restoreIdentity: UUID,
+            catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+            catalogSignerRotation: VersionBoundCatalogSignerRotationConfigurationV1,
+            publicationLanes: JournalPublicationLanesV1? = null,
+            epochSealAcquisition: VersionBoundEpochSealAcquisitionV1? = null,
+            liveCoverage: VersionBoundLiveJournalCoverageV1? = null,
+        ): VersionBoundComplaintProcessConfiguration {
+            requireConnectionFree()
+            return VersionBoundComplaintProcessConfiguration(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+                catalogReadback, pools.epochRotation, epochSealAcquisition, publicationLanes, liveCoverage, catalogSignerRotation,
             )
         }
 

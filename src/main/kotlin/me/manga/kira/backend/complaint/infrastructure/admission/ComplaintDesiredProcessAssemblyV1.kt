@@ -3,12 +3,15 @@ package me.manga.kira.backend.complaint.infrastructure.admission
 import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcLifecycleOwner
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublicTrustPreparation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublicTrustRelease
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
+import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration
 import me.manga.kira.backend.common.infrastructure.persistence.bindDesiredInstallationOperatorPools
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogSignerRotationConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.preferCatalogFreezeCleanup
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
@@ -24,7 +27,8 @@ import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import java.security.MessageDigest
 
 /** Retained before even the first cold root binds. All partial resources stay here; no graph supplied by an HTTP/startup caller. */
-internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
+internal class ComplaintDesiredProcessAssemblyV1 private constructor(private val nanoClock: PersistenceNanoClock) : AutoCloseable {
+    constructor() : this(SystemPersistenceNanoClock)
     private var entered = false
     private var stopping = false
     private var targetOwner: PersistenceJdbcLifecycleOwner? = null
@@ -95,7 +99,7 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
             else -> runtimeConfiguration.bindLifecycleOwner()
         }
         targetOwner = runtime // Before shell binding, including a failed/partly constructed pool composition.
-        val pools = if (finalizer) runtime.bindCatalogGenesisFinalizationPools() else runtime.bindVersionBoundPools()
+        val pools = if (finalizer) runtime.bindCatalogGenesisFinalizationPools(nanoClock) else runtime.bindVersionBoundPools(nanoClock = nanoClock)
         // UNKNOWN; no target participant, driver, trust-file I/O or pool preparation.
         val mapping = inputs.sealerMapping
         requireDesiredInstallation((mapping == null) == (sealerCredentials == null), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
@@ -116,7 +120,15 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
         val coverage = inputs.livePolicy?.let { policy ->
             VersionBoundLiveJournalCoverageV1.fromIndependentInputs(routing, checkNotNull(inputs.catalog), checkNotNull(lanes), policy)
         }
+        val writer = inputs.catalogSignerRotation?.let {
+            VersionBoundCatalogSignerRotationConfigurationV1.fromRetained(pools, checkNotNull(inputs.catalog), it)
+        }
         assembled = when {
+            writer != null -> VersionBoundComplaintProcessConfiguration.fromRetainedWithSignerRotation(
+                consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
+                checkNotNull(inputs.catalog), writer, lanes, seal, coverage,
+            )
+
             coverage != null -> VersionBoundComplaintProcessConfiguration.fromRetainedWithLiveCoverage(
                 consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
                 checkNotNull(inputs.catalog), checkNotNull(lanes), checkNotNull(seal), coverage,
@@ -280,4 +292,9 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
 
     private fun sameBinding(left: VersionedSecretBinding, right: VersionedSecretBinding): Boolean =
         left.family == right.family && left.purpose == right.purpose && left.logicalKeyId == right.logicalKeyId && left.version == right.version
+
+    companion object {
+        /** Clock is selected BEFORE the actual cold resource/phase binding, never swapped on a live process or campaign. */
+        internal fun withClockFixture(nanoClock: PersistenceNanoClock): ComplaintDesiredProcessAssemblyV1 = ComplaintDesiredProcessAssemblyV1(nanoClock)
+    }
 }

@@ -147,6 +147,32 @@ internal class VersionBoundCatalogReadbackConfigurationV1 private constructor(
         }
     }
 
+    /** Same cold G1 routing/retention policy, separately minted raw author handoff; never a projected-reader conversion. */
+    internal fun verifySignerRotationPredecessor(readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback, evaluatedAt: Instant) {
+        requireConnectionFree()
+        requireCatalogReadback(!projectedCurrent, CatalogReadbackFailure.INVALID_POLICY)
+        val policy = policyAt(evaluatedAt)
+        val evidence = readback.commonHeadEvidence()
+        requireCatalogReadback(
+            evidence.chain.trust.initialBundleEnvelopeSha256 == initialTrustBundleSha256 &&
+                evidence.chain.trust.currentBundleEnvelopeSha256 == currentTrustBundleSha256 &&
+                evidence.chain.tail.generation == 1L && evidence.chain.tail.envelopeSha256 == expectedGenesisEnvelopeSha256 &&
+                readback.evaluatedAtEpochSecond == policy.evaluatedAtEpochSecond &&
+                readback.requiredRetainUntilEpochSecond == policy.requiredRetainUntilEpochSecond,
+            CatalogReadbackFailure.INVALID_POLICY,
+        )
+        val manifest = readback.manifest()
+        val empty = GenesisEmptyHeadV1(0, Sha256.hexUtf8("[]"))
+        requireCatalogReadback(
+            manifest.generation == 1L && manifest.operation == "GENESIS" && manifest.restoreInventory == empty &&
+                manifest.history == GenesisEmptyHistoryV1(empty, empty, empty, empty, empty, empty, empty) &&
+                manifest.catalogWriterGenerationId in chainPolicy.currentWriterGenerationIds &&
+                manifest.approvals.all { it.approverId in chainPolicy.currentApproverIds },
+            CatalogReadbackFailure.HEAD_CONFLICT,
+        )
+        verifyCreationRetention(manifest.creation.createdAtEpochSecond, evidence.retainUntilEpochSecond, evaluatedAt, policy.requiredRetainUntilEpochSecond)
+    }
+
     override fun toString(): String = if (projectedCurrent) {
         "VersionBoundCatalogReadbackConfigurationV1(projected-current,redacted,no-authority)"
     } else {

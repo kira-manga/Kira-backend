@@ -43,6 +43,7 @@ internal object ComplaintDesiredDeploymentJsonV1 {
         return try {
             val text = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
+            val rootFields = mutableSetOf<String>()
             factory.createParser(text).use { parser ->
                 requireDesiredInstallation(parser.nextToken() == JsonToken.START_OBJECT, ComplaintDesiredInstallationFailureV1.INPUT_REFUSED)
                 var tokens = 1
@@ -50,6 +51,7 @@ internal object ComplaintDesiredDeploymentJsonV1 {
                 while (depth > 0) {
                     val token = parser.nextToken()
                     requireDesiredInstallation(token != null && ++tokens <= MAX_TOKENS, ComplaintDesiredInstallationFailureV1.INPUT_REFUSED)
+                    if (depth == 1 && token == JsonToken.FIELD_NAME) rootFields.add(parser.currentName())
                     when (token) {
                         JsonToken.START_OBJECT, JsonToken.START_ARRAY -> depth++
                         JsonToken.END_OBJECT, JsonToken.END_ARRAY -> depth--
@@ -59,7 +61,13 @@ internal object ComplaintDesiredDeploymentJsonV1 {
                 }
                 requireDesiredInstallation(parser.nextToken() == null, ComplaintDesiredInstallationFailureV1.INPUT_REFUSED)
             }
-            ComplaintDesiredDeploymentInputsV1.fromDecoded(json.decodeFromString(ComplaintDesiredDeploymentDocumentV1.serializer(), text))
+            val inputs = ComplaintDesiredDeploymentInputsV1.fromDecoded(json.decodeFromString(ComplaintDesiredDeploymentDocumentV1.serializer(), text))
+            // Preserve old profiles' unknown-field refusal. Only D7 declares this new required input.
+            requireDesiredInstallation(
+                ("catalogSignerRotation" in rootFields) == (inputs.profile == DesiredProcessProfileV1.D7),
+                ComplaintDesiredInstallationFailureV1.INPUT_REFUSED,
+            )
+            inputs
         } catch (_: Exception) {
             throw ComplaintDesiredInstallationExceptionV1(ComplaintDesiredInstallationFailureV1.INPUT_REFUSED)
         }
@@ -84,6 +92,7 @@ internal data class ComplaintDesiredDeploymentDocumentV1(
     val epochRotation: Boolean,
     val sealer: DesiredSealerInputV1?,
     val livePolicy: DesiredLivePolicyInputV1?,
+    val catalogSignerRotation: DesiredCatalogSignerRotationInputV1? = null,
 )
 
 @Serializable
@@ -274,3 +283,21 @@ internal data class DesiredLiveKmsRetentionInputV1(val key: JournalKmsKeyV1, val
 
 @Serializable
 internal data class DesiredLiveTimeBoundInputV1(val profileId: String, val policy: InitialPolicyReferenceV1, val maximumMillis: Long)
+
+/** Required only for explicit D7. Sessions, operation intent, custody paths and mutable runtime facts are not deployment D. */
+@Serializable
+internal data class DesiredCatalogSignerRotationInputV1(
+    val catalogWriterGenerationId: String,
+    val signAuthority: InitialCatalogPrincipalV1,
+    val orderedSigningKeys: List<DesiredCatalogSigningKeyInputV1>,
+    val totalAttemptMillis: Long,
+)
+
+@Serializable
+internal data class DesiredCatalogSigningKeyInputV1(
+    val keyId: String,
+    val keyArn: String,
+    val algorithmId: String,
+    val publicKeySpkiBase64: String,
+    val publicKeySha256: String,
+)

@@ -67,6 +67,7 @@ internal class CatalogGenesisInitialLiveBinding private constructor(
             CatalogReadbackFailure.INVALID_POLICY,
         )
         process?.epochSealAcquisition?.requireCatalogReferences(registry.catalogWriter.putAuthority, registry.catalogWriter.signAuthority)
+        process?.catalogSignerRotation?.deployment?.requireRegistry(registry)
     }
 
     /** Fixed local ownership only. Safe within a phase; no checkout, hash, JSON or provider call. */
