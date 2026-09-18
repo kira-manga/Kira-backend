@@ -409,7 +409,8 @@ internal class OwnerDeleteFixtureJdbc(
 
     private fun <T> around(sql: String, action: () -> T): T {
         fixture.statements.add(sql)
-        val step = step(sql)
+        // Multiline interpolation can leave leading whitespace after trimIndent; execute and record the original SQL.
+        val step = step(sql.trimStart())
         step?.let(fixture::before)
         return action().also { step?.let { fixture.after(it, deletion) } }
     }
@@ -431,8 +432,8 @@ internal class OwnerDeleteFixtureJdbc(
         sql.contains("FROM complaints") -> OwnerDeleteFixtureStep.CONTENT
         sql.startsWith("INSERT INTO complaint_recovery_capacity_reservations") || sql.contains("FROM complaint_recovery_capacity_reservations") -> OwnerDeleteFixtureStep.RESERVATION
         sql.startsWith("INSERT INTO complaint_journal_publications") || sql.contains("FROM complaint_journal_publications") -> OwnerDeleteFixtureStep.PUBLICATION
-        sql.startsWith("UPDATE complaint_resource_ids") && sql.contains("DELETION_PENDING") -> OwnerDeleteFixtureStep.PENDING
-        sql.startsWith("UPDATE complaint_resource_ids") && sql.contains("DELETED") -> OwnerDeleteFixtureStep.TOMBSTONE
+        sql.startsWith("UPDATE complaint_resource_ids") && sql.contains("SET state = 'DELETION_PENDING'") -> OwnerDeleteFixtureStep.PENDING
+        sql.startsWith("UPDATE complaint_resource_ids") && sql.contains("SET state = 'DELETED'") -> OwnerDeleteFixtureStep.TOMBSTONE
         sql.startsWith("UPDATE complaint_journal_publications") && sql.contains("SET state = 'APPLIED'") -> OwnerDeleteFixtureStep.APPLY_PUBLICATION
         sql.startsWith("UPDATE complaint_journal_publications") -> OwnerDeleteFixtureStep.VERIFY
         sql.startsWith("INSERT INTO complaint_deletion_journal_applied") -> OwnerDeleteFixtureStep.APPLIED

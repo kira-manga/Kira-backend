@@ -258,23 +258,30 @@ class ComplaintOwnerDeleteIT {
             val before = f.state()
             val changed = AtomicBoolean()
             f.observations.clear()
-            f.beforeStep = { step ->
-                if (step == OwnerDeleteFixtureStep.CONTROL && changed.compareAndSet(false, true)) {
-                    assertEquals(0, f.base.ordinary.admission.activeOwners())
-                    assertTrue(f.observations.filter { it.first in setOf(OwnerDeleteFixtureStep.AUTH, OwnerDeleteFixtureStep.PREFLIGHT) }
-                        .all { it.second.lease.completion.quiescent() })
-                    assertEquals(1, f.observer.update(change))
+            requireConnectionFree()
+            // Preopen a raw observer; JdbcTemplate would enlist a foreign Spring holder inside the deletion phase.
+            val revocationObserver = checkNotNull(f.observer.dataSource).connection
+            revocationObserver.use { observer ->
+                assertTrue(observer.autoCommit)
+                f.beforeStep = { step ->
+                    if (step == OwnerDeleteFixtureStep.CONTROL && changed.compareAndSet(false, true)) {
+                        assertEquals(0, f.base.ordinary.admission.activeOwners())
+                        assertTrue(f.observations.filter { it.first in setOf(OwnerDeleteFixtureStep.AUTH, OwnerDeleteFixtureStep.PREFLIGHT) }
+                            .all { it.second.lease.completion.quiescent() })
+                        observer.createStatement().use { statement -> assertEquals(1, statement.executeUpdate(change)) }
+                    }
+                }
+                try {
+                    wire.factory(f.store, f.lanes).use { f.creator.problem(f.delete(attempt, f.http(it)), 401, "UNAUTHORIZED") }
+                    assertTrue(changed.get())
+                    assertFalse(f.observations.any { it.first == OwnerDeleteFixtureStep.CANDIDATE })
+                    assertTrue(wire.requests.isEmpty())
+                } finally {
+                    f.beforeStep = {}
+                    if (changed.get()) assertEquals(1, f.observer.update(restore))
                 }
             }
-            try {
-                wire.factory(f.store, f.lanes).use { f.creator.problem(f.delete(attempt, f.http(it)), 401, "UNAUTHORIZED") }
-                assertTrue(changed.get())
-                assertFalse(f.observations.any { it.first == OwnerDeleteFixtureStep.CANDIDATE })
-                assertTrue(wire.requests.isEmpty())
-            } finally {
-                f.beforeStep = {}
-                if (changed.get()) assertEquals(1, f.observer.update(restore))
-            }
+            assertTrue(revocationObserver.isClosed)
             assertEquals(before, f.state(), "Compare rollback only AFTER restoring the independently committed revocation")
         }
     }

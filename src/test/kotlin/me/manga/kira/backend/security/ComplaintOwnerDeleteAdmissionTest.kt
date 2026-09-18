@@ -25,10 +25,12 @@ import java.util.concurrent.locks.LockSupport
 
 /** Admission/custody tests only; sixty attempts do not claim sixty SQL commits or authenticated TEST activation. */
 class ComplaintOwnerDeleteAdmissionTest {
+    private val testScope = ComplaintDataScope.of(UUID.fromString("b2222222-2222-4222-8222-222222222222"))
+
     @Test
     fun `one actual ingress charges mixed edits and deletes against the same sixty per hour actor allowance`() {
         val ingress = ownerDeleteTestIngress()
-        val actor = admissionTestActor(1)
+        val actor = testActor(1)
         val first = tuple(actor)
         fun deletion(value: ComplaintOwnerDeleteTuple, ip: String = "192.0.2.1") = ingress.withIngress(historyTestRequest(ip = ip)) { context ->
             ingress.startOwnerDelete(context)
@@ -44,7 +46,7 @@ class ComplaintOwnerDeleteAdmissionTest {
         admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { deletion(tuple(actor), "192.0.2.2") }
         admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { edit(tuple(actor)) }
         deletion(first) // Retained duplicate, not another paid slot.
-        deletion(tuple(admissionTestActor(2)))
+        deletion(tuple(testActor(2)))
         repeat(10) {
             ingress.withIngress(historyTestRequest()) { context ->
                 ingress.startOwnerCreate(context)
@@ -56,7 +58,7 @@ class ComplaintOwnerDeleteAdmissionTest {
     @Test
     fun `refused sixty first member is not installed and original one hour reset does not extend duplicate lifetime`() {
         val f = Counters()
-        val actor = admissionTestActor(1)
+        val actor = testActor(1)
         val first = tuple(actor)
         f.delete(first, 0)
         repeat(59) { index -> if (index % 2 == 0) f.edit(tuple(actor), 1) else f.delete(tuple(actor), 1) }
@@ -72,7 +74,7 @@ class ComplaintOwnerDeleteAdmissionTest {
     @Test
     fun `delete edit and creation retain one finite dedup owner through bounded pruning and rotation`() {
         val f = Counters(limit = 2, prune = 1)
-        val first = tuple(admissionTestActor(1))
+        val first = tuple(testActor(1))
         val second = tuple(first.installation)
         f.delete(first, 0)
         f.edit(second, 0)
@@ -112,7 +114,7 @@ class ComplaintOwnerDeleteAdmissionTest {
     @Test
     fun `fixed delete member frame binds every dimension while actor quota remains the existing edit delete family`() {
         val keys = ComplaintAdmissionKeyRing(admissionTestKeys()).keys()
-        val original = tuple(admissionTestActor(1))
+        val original = tuple(testActor(1))
         fun uuid(id: UUID): ByteArray = ByteBuffer.allocate(16).putLong(id.mostSignificantBits).putLong(id.leastSignificantBits).array()
         val parts = listOf(
             "kira-complaint-admission-v1".toByteArray(), "MEMBER".toByteArray(), "INSTALLATION".toByteArray(),
@@ -128,7 +130,7 @@ class ComplaintOwnerDeleteAdmissionTest {
         assertNotEquals(actor, ComplaintAdmissionPseudonyms.ownerDeleteAllActor(keys, original.installation))
         assertNotEquals(actor, ComplaintAdmissionPseudonyms.ownerCreateActor(keys, original.installation))
         val changes = listOf(
-            tuple(admissionTestActor(2), original.key, original.targetId, original.fingerprintBytes()),
+            tuple(testActor(2), original.key, original.targetId, original.fingerprintBytes()),
             tuple(ScopedInstallationId(original.installation.id, ComplaintDataScope.of(UUID.randomUUID())), original.key, original.targetId, original.fingerprintBytes()),
             tuple(original.installation, UUID.randomUUID(), original.targetId, original.fingerprintBytes()),
             tuple(original.installation, original.key, UUID.randomUUID(), original.fingerprintBytes()),
@@ -140,7 +142,7 @@ class ComplaintOwnerDeleteAdmissionTest {
     @Test
     fun `delete handoff refuses forgery cross thread context operation phase and equal but distinct tuple before writes`() {
         val ingress = ownerDeleteTestIngress()
-        val value = tuple(admissionTestActor(1))
+        val value = tuple(testActor(1))
         val phase = Any()
         lateinit var admitted: ComplaintAdmittedOwnerDelete
         admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) {
@@ -185,7 +187,7 @@ class ComplaintOwnerDeleteAdmissionTest {
 
     @Test
     fun `disabled mismatched and synthetic clock admission cannot mint a real delete entry`() {
-        val value = tuple(admissionTestActor(1))
+        val value = tuple(testActor(1))
         val disabled = ownerEditTestIngress()
         disabled.withIngress(historyTestRequest()) { context ->
             disabled.startOwnerDelete(context)
@@ -204,7 +206,7 @@ class ComplaintOwnerDeleteAdmissionTest {
     @Test
     fun `delete binding does not renew the original five second monotonic admission deadline`() {
         val ingress = ownerDeleteTestIngress()
-        val value = tuple(admissionTestActor(1))
+        val value = tuple(testActor(1))
         ingress.withIngress(historyTestRequest()) { context ->
             ingress.startOwnerDelete(context)
             val admitted = ingress.admitOwnerDelete(context, value)
@@ -215,6 +217,8 @@ class ComplaintOwnerDeleteAdmissionTest {
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.claimOwnerDelete(admitted, phase, value) }
         }
     }
+
+    private fun testActor(number: Int): ScopedInstallationId = ScopedInstallationId(admissionTestActor(number).id, testScope)
 
     private fun tuple(actor: ScopedInstallationId, key: UUID = UUID.randomUUID(), target: UUID = UUID.randomUUID(), digest: ByteArray = ByteArray(32) { 43 }) =
         ComplaintOwnerDeleteTuple(actor, key, target, digest)
