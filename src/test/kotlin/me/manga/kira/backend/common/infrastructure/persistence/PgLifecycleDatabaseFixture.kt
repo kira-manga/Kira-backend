@@ -231,6 +231,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.DeletionPoolPreparationIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.DeletionComplaintAuditIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.DeletionFencePrefixIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.DeletionControlSnapshotIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorResourcesIT",
                     "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
