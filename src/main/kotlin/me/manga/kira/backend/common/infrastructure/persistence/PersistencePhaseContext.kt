@@ -37,8 +37,10 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttem
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffPersistenceOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationControlOperation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationInput
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHeadReadOperationV1
@@ -99,6 +101,8 @@ constructor(
     private val firstDesiredWork: PersistenceTimeBudget? = null,
     private val catalogAuthorAttempt: CatalogGenesisFreezeAttemptV1? = null,
     private val catalogAuthorWork: PersistenceTimeBudget? = null,
+    private val catalogFinalizerAttempt: CatalogGenesisFinalizeAttemptV1? = null,
+    private val catalogFinalizerWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -302,13 +306,14 @@ constructor(
         check(acquisition === completion && work == null)
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
         work =
-            rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
+            rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
-        return (rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork)?.systemCappedSnapshot(ceilingMillis)
+        val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
+        return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
     internal fun requireAcceptedLease() = requireWork()
@@ -857,7 +862,8 @@ constructor(
 
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
-        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: return false
+        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
+            ?: catalogFinalizerWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -883,7 +889,7 @@ constructor(
     /** A rotation RETURN's protected G predicates may not invoke the original coordinator's supplied clock. */
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
-        if (catalogAuthorAttempt != null) return budget.systemCleanupSnapshot(WORK_MILLIS)
+        if (catalogAuthorAttempt != null || catalogFinalizerAttempt != null) return budget.systemCleanupSnapshot(WORK_MILLIS)
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
         return if (ordinaryBudget && desiredAttempt == null && firstDesiredAttempt == null) {
             budget
@@ -895,6 +901,9 @@ constructor(
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
+        catalogFinalizerAttempt?.let {
+            return it.phaseBudget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
+        }
         catalogAuthorAttempt?.let {
             return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
         }
@@ -1165,7 +1174,9 @@ constructor(
         private var issued = false
         private var retained: CatalogGenesisMutationOperation? = null
 
-        override fun requireOperation(jdbc: JdbcTemplate, path: PersistencePhasePath) {
+        override fun requireOperation(jdbc: JdbcTemplate, path: PersistencePhasePath, input: CatalogGenesisMutationInput?) {
+            if (input?.finalization?.finalizer !== catalogFinalizerAttempt) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            catalogFinalizerAttempt?.requirePersistence(ownership, jdbc)
             if (path !in setOf(
                     PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
                     PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,

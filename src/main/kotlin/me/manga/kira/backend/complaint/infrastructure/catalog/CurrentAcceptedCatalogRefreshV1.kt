@@ -28,6 +28,7 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     private val httpFactory: () -> SdkHttpClient,
     private val clock: Clock,
     private val nanoTime: () -> Long,
+    private val finalizer: CatalogGenesisFinalizeAttemptV1? = null,
 ) : AutoCloseable {
     private val settings = requireNotNull(process.catalogReadback)
     private val coordinator = process.pools.catalogCoordinator
@@ -41,48 +42,63 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
 
     fun refresh(): Result = Result.perform(this)
 
+    @Suppress("TooGenericExceptionCaught") // Retain the failed finalizer slot before cleanup; no exception graph is exposed by its one-shot owner.
     private fun performRefresh(): Product {
         requireConnectionFree()
         process.requireUnchangedConfiguration()
         requireCatalogReadback(!closed.get() && process.catalogReadback === settings, CatalogReadbackFailure.INVALID_POLICY)
-        val attempt = coordinator.catalogRefreshCustody.reserve(this, settings.totalAttemptMillis, nanoTime)
+        val attempt = if (finalizer == null) {
+            coordinator.catalogRefreshCustody.reserve(this, settings.totalAttemptMillis, nanoTime)
+        } else {
+            coordinator.catalogRefreshCustody.reserve(this, finalizer, settings.totalAttemptMillis, nanoTime)
+        }
         return withS3Cleanup(
             {
-                attempt.requireRunning()
-                val evaluatedAt = clock.instant()
-                val policy = settings.policyAt(evaluatedAt)
-                val initial = settings.initialBundleBytes()
-                val current = settings.currentBundleBytes()
-                val expected = CatalogGenesisInitialLiveBinding.fromRetained(process)
-                val local = coordinator.snapshot.load(initial, current, policy)
-                attempt.requireRunning()
-                val readback = withS3Cleanup(
-                    {
-                        val adapter = S3CatalogReadbackAdapter.openOwned(
-                            attempt.construction,
-                            current,
-                            settings.chainPolicy.trustBundlePolicy,
-                            primaryCredentials,
-                            replicaCredentials,
-                            settings.sdkLimits,
-                            httpFactory,
-                            nanoTime,
-                        )
-                        val provider = TimedCatalogReadbackV1(adapter, attempt)
-                        CatalogDualLocationVerifier.GenesisReadback.verify(provider, initial, current, policy, local)
-                    },
-                    attempt::closeProvider,
-                ) // No body/client/native construction owner can escape into the persistence handoff.
-                attempt.requireRunning()
-                process.requireUnchangedConfiguration()
-                settings.verifyGenesis(readback, evaluatedAt)
-                requireCatalogReadback(!clock.instant().isBefore(evaluatedAt), CatalogReadbackFailure.INVALID_POLICY)
-                if (readback.resume == GenesisResume.PREPARED) coordinator.genesis.completeGenesis(readback, expected)
-                attempt.requireRunning()
-                val projection = coordinator.genesis.projectGenesisForProcess(readback, expected)
-                attempt.requireRunning()
-                process.requireUnchangedConfiguration()
-                Product(readback, projection)
+                try {
+                    finalizer?.attach(this, attempt)
+                    attempt.requireRunning()
+                    val evaluatedAt = clock.instant()
+                    val policy = settings.policyAt(evaluatedAt)
+                    val initial = settings.initialBundleBytes()
+                    val current = settings.currentBundleBytes()
+                    val expected = finalizer?.expected ?: CatalogGenesisInitialLiveBinding.fromRetained(process)
+                    val local = finalizer?.snapshot(initial, current, policy) ?: coordinator.snapshot.load(initial, current, policy)
+                    attempt.requireRunning()
+                    val readback = withS3Cleanup(
+                        {
+                            val adapter = S3CatalogReadbackAdapter.openOwned(
+                                attempt.construction,
+                                current,
+                                settings.chainPolicy.trustBundlePolicy,
+                                primaryCredentials,
+                                replicaCredentials,
+                                settings.sdkLimits,
+                                httpFactory,
+                                nanoTime,
+                            )
+                            val provider = TimedCatalogReadbackV1(adapter, attempt)
+                            CatalogDualLocationVerifier.GenesisReadback.verify(provider, initial, current, policy, local)
+                        },
+                        attempt::closeProvider,
+                    ) // No body/client/native construction owner can escape into the persistence handoff.
+                    attempt.requireRunning()
+                    process.requireUnchangedConfiguration()
+                    settings.verifyGenesis(readback, evaluatedAt)
+                    requireCatalogReadback(!clock.instant().isBefore(evaluatedAt), CatalogReadbackFailure.INVALID_POLICY)
+                    finalizer?.preserveReadback(this, readback) // Exact durable provider-closed evidence BEFORE either SQL effect.
+                    if (readback.resume == GenesisResume.PREPARED) {
+                        if (finalizer == null) coordinator.genesis.completeGenesis(readback, expected) else finalizer.complete(readback)
+                    }
+                    attempt.requireRunning()
+                    val projection = finalizer?.project(readback) ?: coordinator.genesis.projectGenesisForProcess(readback, expected)
+                    attempt.requireRunning()
+                    process.requireUnchangedConfiguration()
+                    finalizer?.preserveProjection(readback, projection)
+                    Product(readback, projection)
+                } catch (problem: Throwable) {
+                    finalizer?.abort()
+                    throw problem
+                }
             },
             attempt::finish,
         )
@@ -119,6 +135,23 @@ internal class CurrentAcceptedCatalogRefreshV1 private constructor(
     private class Product(val readback: CatalogDualLocationVerifier.GenesisReadback, val projection: ProcessBoundCatalogGenesisProjection)
 
     companion object {
+        internal fun finalizing(
+            attempt: CatalogGenesisFinalizeAttemptV1,
+            primaryCredentials: AwsSessionCredentials,
+            replicaCredentials: AwsSessionCredentials,
+            httpFactory: (() -> SdkHttpClient)?,
+            clock: Clock,
+            nanoTime: () -> Long,
+        ): CurrentAcceptedCatalogRefreshV1 = CurrentAcceptedCatalogRefreshV1(
+            attempt.process,
+            primaryCredentials,
+            replicaCredentials,
+            httpFactory ?: { catalogUrlConnectionClient(checkNotNull(attempt.process.catalogReadback).sdkLimits) },
+            clock,
+            nanoTime,
+            attempt,
+        )
+
         fun ordinary(
             process: VersionBoundComplaintProcessConfiguration,
             primaryCredentials: AwsSessionCredentials,

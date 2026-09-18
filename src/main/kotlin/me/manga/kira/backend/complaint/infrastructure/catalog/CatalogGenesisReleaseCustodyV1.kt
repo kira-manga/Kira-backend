@@ -34,10 +34,15 @@ internal class CatalogGenesisReleaseCustodyV1 private constructor(
     private var closeIssued = false
     private var closeFailure: CatalogGenesisCustodyFailureV1? = null
 
-    fun open(): CatalogGenesisCustodyObservationV1 = perform(State.RETAINED) {
+    fun open(): CatalogGenesisCustodyObservationV1 = openAllocation(existingOnly = false)
+
+    /** Later stages may acquire existing custody only; absence never initializes a replacement allocation or lock. */
+    fun openExisting(): CatalogGenesisCustodyObservationV1 = openAllocation(existingOnly = true)
+
+    private fun openAllocation(existingOnly: Boolean): CatalogGenesisCustodyObservationV1 = perform(State.RETAINED) {
         state = State.OPENING
         claim(files.openRoot()) // Before opening ANY descriptor for the permanent lock inode.
-        val observation = files.openAllocation(allocationBytes)
+        val observation = files.openAllocation(allocationBytes, existingOnly)
         state = State.OPEN
         observation
     }

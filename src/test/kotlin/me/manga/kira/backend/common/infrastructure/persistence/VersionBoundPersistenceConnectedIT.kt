@@ -1,6 +1,7 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
+import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
@@ -17,6 +18,7 @@ import me.manga.kira.backend.complaint.catalog.HeldSealStopCut
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
+import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLease
 import me.manga.kira.backend.complaint.catalog.withCoordinatorLeasePeer
 import me.manga.kira.backend.complaint.catalog.withCurrentAcceptedCatalogRefresh
@@ -431,6 +433,36 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun `catalog author original begin budget and throwing signer cleanup never release a result or revive the owner`() = withFixture { tls ->
         withCatalogGenesisFreeze(tls) { CatalogGenesisFreezeCases(it).originalBudgetAndSignerCleanup() }
+    }
+
+    @Test
+    fun frozenReleaseFirstDAndTargetFinalize() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls, profile = "D4") { CatalogGenesisTargetFinalizeCases(it).frozenReleaseFirstDAndTargetFinalize() }
+    }
+
+    @Test
+    fun custodyFailurePreventsComplete() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).custodyFailurePreventsComplete() }
+    }
+
+    @Test
+    fun freshReadbackClassifiesEveryResume() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).freshReadbackClassifiesEveryResume() }
+    }
+
+    @Test
+    fun lockedCurrentDAndOriginalBarrierRequired() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).lockedCurrentDAndOriginalBarrierRequired() }
+    }
+
+    @Test
+    fun originalBudgetAndProviderCloseStaySticky() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).originalBudgetAndProviderCloseStaySticky() }
+    }
+
+    @Test
+    fun unknownCommitOrReleaseNeverSucceeds() = withFixture { tls ->
+        withCatalogGenesisTargetFinalize(tls) { CatalogGenesisTargetFinalizeCases(it).unknownCommitOrReleaseNeverSucceeds() }
     }
 
     @Test

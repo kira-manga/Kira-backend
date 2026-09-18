@@ -242,7 +242,9 @@ internal class CatalogGenesisMutationOperation private constructor(
 
     private fun requireControl(control: StoredGenesisControl) {
         check(control.initialMatches)
-        if (input.path === PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT && input.finalization?.binding?.process != null) {
+        if (input.finalization?.finalizer != null ||
+            (input.path === PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT && input.finalization?.binding?.process != null)
+        ) {
             check(control.currentProcessMatches) // Same locked SELECT and final reread; NULL is never bound D.
         }
     }
@@ -278,6 +280,7 @@ internal class CatalogGenesisMutationOperation private constructor(
     }
 
     private fun requireProcessBinding() {
+        input.finalization?.let { finalization -> finalization.finalizer?.requireBarrier(finalization.readback, finalization.binding) }
         input.finalization?.let { phase.catalogGenesis.requireProcessBinding(it.binding, jdbc) }
     }
 
@@ -321,7 +324,7 @@ internal class CatalogGenesisMutationOperation private constructor(
         ): CatalogGenesisMutationOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
-                phase.catalogGenesis.requireOperation(jdbc, expected)
+                phase.catalogGenesis.requireOperation(jdbc, expected, input)
                 check(input.path === expected)
                 val operation = CatalogGenesisMutationOperation(phase, jdbc, input)
                 phase.catalogGenesis.retain(operation, jdbc)

@@ -22,16 +22,24 @@ internal class CatalogReadbackRefreshCustodyV1 {
     internal fun reserve(factory: CurrentProjectedCatalogRefreshV1, budgetMillis: Long, nanoTime: () -> Long): Attempt =
         reserve(null, factory, budgetMillis, nanoTime)
 
+    internal fun reserve(
+        factory: CurrentAcceptedCatalogRefreshV1,
+        finalizer: CatalogGenesisFinalizeAttemptV1,
+        budgetMillis: Long,
+        nanoTime: () -> Long,
+    ): Attempt = reserve(factory, null, budgetMillis, nanoTime, finalizer)
+
     private fun reserve(
         genesis: CurrentAcceptedCatalogRefreshV1?,
         projected: CurrentProjectedCatalogRefreshV1?,
         budgetMillis: Long,
         nanoTime: () -> Long,
+        finalizer: CatalogGenesisFinalizeAttemptV1? = null,
     ): Attempt {
         requireConnectionFree()
         requireCatalogReadback(budgetMillis in 1..600_000, CatalogReadbackFailure.INVALID_POLICY)
         requireCatalogReadback((genesis == null) != (projected == null), CatalogReadbackFailure.INVALID_POLICY)
-        val attempt = Attempt(genesis, projected, budgetMillis, nanoTime)
+        val attempt = Attempt(genesis, projected, budgetMillis, nanoTime, finalizer)
         requireCatalogReadback(active.compareAndSet(null, attempt), CatalogReadbackFailure.LIMIT_EXCEEDED)
         return attempt
     }
@@ -42,12 +50,14 @@ internal class CatalogReadbackRefreshCustodyV1 {
         private val projected: CurrentProjectedCatalogRefreshV1?,
         budgetMillis: Long,
         private val nanoTime: () -> Long,
+        private val finalizer: CatalogGenesisFinalizeAttemptV1?,
     ) {
         internal val construction = S3CatalogReadbackAdapter.Construction(this)
         private val caller = Thread.currentThread()
-        private val started = if (projected == null) nanoTime() else 0L
+        private val started = if (projected == null && finalizer == null) nanoTime() else 0L
         private val budgetNanos = Math.multiplyExact(budgetMillis, 1_000_000L)
         internal val projectedBudget: PersistenceTimeBudget? = projected?.let { PersistenceTimeBudget.start(budgetMillis, PersistenceNanoClock { nanoTime() }) }
+        internal val finalizationBudget: PersistenceTimeBudget? = finalizer?.budget?.capped(budgetMillis)
         private var closeIssued = false
         private var closeFailure: Throwable? = null
         private var finished = false
@@ -56,16 +66,27 @@ internal class CatalogReadbackRefreshCustodyV1 {
             requireCatalogReadback(caller === Thread.currentThread() && !finished && active.get() === this, CatalogReadbackFailure.INVALID_POLICY)
             if (Thread.currentThread().isInterrupted) throw CatalogReadbackException(CatalogReadbackFailure.INTERRUPTED)
             requireCatalogReadback(genesis?.isClosed() != true && projected?.isClosed() != true, CatalogReadbackFailure.INTERRUPTED)
-            if (projectedBudget == null) {
+            finalizer?.requireRunning()
+            val retainedBudget = finalizationBudget ?: projectedBudget
+            if (retainedBudget == null) {
                 val elapsed = nanoTime() - started
                 requireCatalogReadback(elapsed in 0 until budgetNanos, CatalogReadbackFailure.LIMIT_EXCEEDED)
             } else {
                 try {
-                    projectedBudget.remainingMillis(600_000)
+                    retainedBudget.remainingMillis(600_000)
                 } catch (_: PersistenceBoundaryException) {
                     throw CatalogReadbackException(CatalogReadbackFailure.LIMIT_EXCEEDED)
                 }
             }
+        }
+
+        internal fun requireFinalizer(selected: CatalogGenesisFinalizeAttemptV1) {
+            requireRunning()
+            requireCatalogReadback(
+                finalizer === selected && genesis != null &&
+                    selected.process.pools.catalogCoordinator.catalogRefreshCustody === this@CatalogReadbackRefreshCustodyV1,
+                CatalogReadbackFailure.INVALID_POLICY,
+            )
         }
 
         internal fun requireProjectedProcess(process: VersionBoundComplaintProcessConfiguration) {
@@ -99,6 +120,7 @@ internal class CatalogReadbackRefreshCustodyV1 {
 
         internal fun finish() {
             closeProvider() // No deadline/interruption check can skip actual cleanup; failures keep the original slot occupied.
+            finalizer?.requireRunning() // A failed/uncertain finalizer never frees its original slot for a replacement wrapper.
             requireCatalogReadback(!finished && active.compareAndSet(this, null), CatalogReadbackFailure.CLOSE_FAILURE)
             finished = true
         }

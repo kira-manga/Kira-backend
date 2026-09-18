@@ -55,14 +55,20 @@ internal class LinuxGenesisReleaseFilesV1(private val owner: CatalogGenesisRelea
         return current.key
     }
 
-    fun openAllocation(expected: ByteArray): CatalogGenesisCustodyObservationV1 {
+    fun openAllocation(expected: ByteArray, existingOnly: Boolean = false): CatalogGenesisCustodyObservationV1 {
         val selected = rootDirectory()
         val beforeLock = scan(selected, ROOT_NAMES)
         requireGenesisCustody(ALLOCATION_DIRECTORY !in beforeLock || LOCK_FILE in beforeLock, CatalogGenesisCustodyFailureV1.INCOMPLETE)
+        requireGenesisCustody(
+            !existingOnly || (ALLOCATION_DIRECTORY in beforeLock && LOCK_FILE in beforeLock),
+            CatalogGenesisCustodyFailureV1.INCOMPLETE,
+        )
         openPermanentLock(LOCK_FILE in beforeLock)
         val names = scan(selected, ROOT_NAMES)
         requireLiveLock()
         requireGenesisCustody(LOCK_FILE in names, CatalogGenesisCustodyFailureV1.INCOMPLETE)
+
+        requireGenesisCustody(!existingOnly || ALLOCATION_DIRECTORY in names, CatalogGenesisCustodyFailureV1.INCOMPLETE)
 
         // Infrastructure only: the one permanent lock channel is NEVER reopened for force or reread.
         // An empty lock without an allocation may survive an interrupted first allocation.

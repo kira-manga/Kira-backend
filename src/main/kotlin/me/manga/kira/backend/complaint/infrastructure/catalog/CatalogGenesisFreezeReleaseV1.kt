@@ -21,7 +21,7 @@ internal class CatalogGenesisFreezeReleaseV1(private val inputs: CatalogGenesisF
     }
 
     fun openExisting() {
-        requireRecovery(custody.open() === CatalogGenesisCustodyObservationV1.IDENTICAL_OBSERVED)
+        requireRecovery(custody.openExisting() === CatalogGenesisCustodyObservationV1.IDENTICAL_OBSERVED)
         inputLeaves().forEach { (leaf, bytes) -> requireExact(leaf, bytes) }
         requireExact(CatalogGenesisReleaseLeafV1.FREEZE_ARMED, record("prepare-armed"))
         // A crash before this positive, committed-and-released unsigned receipt is an explicit recovery case, not replay permission.

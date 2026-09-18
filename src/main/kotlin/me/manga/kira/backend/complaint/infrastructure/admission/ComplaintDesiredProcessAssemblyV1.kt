@@ -41,34 +41,40 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
         get() = checkNotNull(operatorOwner?.versionBoundPools).catalogCoordinator
 
     /** Real acquired owners only. Test input acquisition may use the existing resolver SPI; no fake descriptors or D. */
-    fun assemble(inputs: ComplaintDesiredDeploymentInputsV1, acquired: List<AcquiredVersionedSecret>, sealerCredentials: AwsSessionCredentials?) {
+    fun assemble(inputs: ComplaintDesiredDeploymentInputsV1, acquired: List<AcquiredVersionedSecret>, sealerCredentials: AwsSessionCredentials?) =
+        assemble(inputs, acquired, sealerCredentials, finalizer = false)
+
+    /** Fixed TARGET-only composition; reuse the exact target recipe, not the operator getter or an alternate D profile. */
+    internal fun assembleTargetFinalizer(
+        inputs: ComplaintDesiredDeploymentInputsV1,
+        acquired: List<AcquiredVersionedSecret>,
+        sealerCredentials: AwsSessionCredentials?,
+    ) {
+        inputs.requireTargetFinalizerProfile()
+        assemble(inputs, acquired, sealerCredentials, finalizer = true)
+    }
+
+    private fun assemble(
+        inputs: ComplaintDesiredDeploymentInputsV1,
+        acquired: List<AcquiredVersionedSecret>,
+        sealerCredentials: AwsSessionCredentials?,
+        finalizer: Boolean,
+    ) {
         requireConnectionFree()
         requireDesiredInstallation(!entered && !stopping, ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
         entered = true
-        val secrets = matchAcquired(inputs, acquired)
+        val secrets = matchAcquired(if (finalizer) inputs.targetBindings() else inputs.allBindings(), acquired)
         fun secret(binding: VersionedSecretBinding): AcquiredVersionedSecret = checkNotNull(secrets[binding])
         // Distinct immutable references alone do not prove separate actual DB password material.
-        secret(inputs.runtimePassword).useMaterial { runtime ->
-            secret(inputs.operatorPassword).useMaterial { operator ->
-                requireDesiredInstallation(!MessageDigest.isEqual(runtime, operator), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
+        if (!finalizer) {
+            secret(inputs.runtimePassword).useMaterial { runtime ->
+                secret(inputs.operatorPassword).useMaterial { operator ->
+                    requireDesiredInstallation(!MessageDigest.isEqual(runtime, operator), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
+                }
             }
         }
-        val user = JwtKeyProvider.fromAcquired(secret(inputs.userKey), inputs.jwtSettings)
-        val jwt = VersionBoundInstallationJwtConfiguration.fromAcquired(inputs.installationActiveKeyId, inputs.installationKeys().map(::secret), user)
-        val routing = VersionBoundComplaintJournalRouting.fromAcquired(inputs.journal, inputs.routingKeys().map(::secret))
-        val consumers = VersionBoundComplaintConsumerConfiguration.fromAcquired(
-            jwt,
-            inputs.capacity,
-            inputs.journal,
-            VersionBoundComplaintConsumerInputs(
-                secret(inputs.admissionCurrent),
-                inputs.admissionPrevious?.let(::secret),
-                inputs.cursorActiveKeyId,
-                inputs.cursorKeys().map(::secret),
-                routing,
-            ),
-            inputs.consumerSettings,
-        )
+        val consumers = createConsumers(inputs, secrets)
+        val routing = consumers.journalRouting
         val db = inputs.database
         val runtimeConfiguration = VersionBoundPersistenceConfiguration.fromAcquired(
             secret(inputs.runtimePassword),
@@ -80,9 +86,15 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
             inputs.publicTrustPem(),
             inputs.protectedTrustParent,
         )
-        val runtime = if (inputs.epochRotation) runtimeConfiguration.bindLifecycleOwnerWithEpochRotation() else runtimeConfiguration.bindLifecycleOwner()
+        val runtime = when {
+            finalizer && inputs.epochRotation -> runtimeConfiguration.bindCatalogGenesisFinalizationOwnerWithEpochRotation()
+            finalizer -> runtimeConfiguration.bindCatalogGenesisFinalizationOwner()
+            inputs.epochRotation -> runtimeConfiguration.bindLifecycleOwnerWithEpochRotation()
+            else -> runtimeConfiguration.bindLifecycleOwner()
+        }
         targetOwner = runtime // Before shell binding, including a failed/partly constructed pool composition.
-        val pools = runtime.bindVersionBoundPools() // UNKNOWN; no target participant, driver, trust-file I/O or pool preparation.
+        val pools = if (finalizer) runtime.bindCatalogGenesisFinalizationPools() else runtime.bindVersionBoundPools()
+        // UNKNOWN; no target participant, driver, trust-file I/O or pool preparation.
         val mapping = inputs.sealerMapping
         requireDesiredInstallation((mapping == null) == (sealerCredentials == null), ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
         val seal = if (mapping == null) {
@@ -133,6 +145,7 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
                 inputs.catalog,
             )
         }
+        if (finalizer) return
         val operatorConfiguration = VersionBoundPersistenceConfiguration.forDesiredInstallationOperator(
             secret(inputs.operatorPassword),
             db.host,
@@ -146,11 +159,33 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
         operator.bindDesiredInstallationOperatorPools()
     }
 
-    private fun matchAcquired(
+    private fun createConsumers(
         inputs: ComplaintDesiredDeploymentInputsV1,
+        secrets: Map<VersionedSecretBinding, AcquiredVersionedSecret>,
+    ): VersionBoundComplaintConsumerConfiguration {
+        fun secret(binding: VersionedSecretBinding): AcquiredVersionedSecret = checkNotNull(secrets[binding])
+        val user = JwtKeyProvider.fromAcquired(secret(inputs.userKey), inputs.jwtSettings)
+        val jwt = VersionBoundInstallationJwtConfiguration.fromAcquired(inputs.installationActiveKeyId, inputs.installationKeys().map(::secret), user)
+        val routing = VersionBoundComplaintJournalRouting.fromAcquired(inputs.journal, inputs.routingKeys().map(::secret))
+        return VersionBoundComplaintConsumerConfiguration.fromAcquired(
+            jwt,
+            inputs.capacity,
+            inputs.journal,
+            VersionBoundComplaintConsumerInputs(
+                secret(inputs.admissionCurrent),
+                inputs.admissionPrevious?.let(::secret),
+                inputs.cursorActiveKeyId,
+                inputs.cursorKeys().map(::secret),
+                routing,
+            ),
+            inputs.consumerSettings,
+        )
+    }
+
+    private fun matchAcquired(
+        expected: List<VersionedSecretBinding>,
         acquired: List<AcquiredVersionedSecret>,
     ): Map<VersionedSecretBinding, AcquiredVersionedSecret> {
-        val expected = inputs.allBindings()
         requireDesiredInstallation(acquired.size == expected.size, ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
         return expected.associateWith { requested ->
             acquired.single { actual -> sameBinding(actual.descriptor, requested) }
@@ -175,6 +210,31 @@ internal class ComplaintDesiredProcessAssemblyV1 : AutoCloseable {
         budget.remainingMillis(1)
         requireDesiredInstallation(!Thread.currentThread().isInterrupted, ComplaintDesiredInstallationFailureV1.INTERRUPTED)
         target.requireUnchangedConfiguration()
+    }
+
+    internal fun prepareTargetFinalizer(budget: PersistenceTimeBudget) {
+        requireConnectionFree()
+        val retained = target
+        val canonical = retained.canonicalBytes()
+        val hash = retained.configurationHashBytes()
+        val owner = checkNotNull(targetOwner)
+        requireDesiredInstallation(owner.catalogGenesisFinalization && operatorOwner == null, ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
+        requireDesiredInstallation(
+            owner.preparePublicTrust() === PersistencePublicTrustPreparation.READY,
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
+        requireDesiredInstallation(budget.remainingMillis(60_000) > 10_000, ComplaintDesiredInstallationFailureV1.TIME_BUDGET_EXHAUSTED)
+        requireDesiredInstallation(
+            owner.prepareCatalogGenesisFinalization() === PersistenceLifecycleObservation.READY,
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
+        budget.remainingMillis(1)
+        requireDesiredInstallation(!Thread.currentThread().isInterrupted, ComplaintDesiredInstallationFailureV1.INTERRUPTED)
+        retained.requireUnchangedConfiguration()
+        requireDesiredInstallation(
+            canonical.contentEquals(retained.canonicalBytes()) && hash.contentEquals(retained.configurationHashBytes()),
+            ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED,
+        )
     }
 
     /** All original roots are permanently stopped before ANY shared-Timer proof is awaited. */

@@ -96,16 +96,36 @@ internal class CatalogGenesisMutationInput private constructor(
             return finalization(readback, expected, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT)
         }
 
+        internal fun completeFinalizing(
+            readback: CatalogDualLocationVerifier.GenesisReadback,
+            expected: CatalogGenesisInitialLiveBinding,
+            finalizer: CatalogGenesisFinalizeAttemptV1,
+        ): CatalogGenesisMutationInput {
+            requireCatalogReadback(readback.resume == GenesisResume.PREPARED, CatalogReadbackFailure.INVALID_LOCAL_STATE)
+            return finalization(readback, expected, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE, finalizer)
+        }
+
+        internal fun projectFinalizing(
+            readback: CatalogDualLocationVerifier.GenesisReadback,
+            expected: CatalogGenesisInitialLiveBinding,
+            finalizer: CatalogGenesisFinalizeAttemptV1,
+        ): CatalogGenesisMutationInput = finalization(readback, expected, PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT, finalizer)
+
         private fun finalization(
             readback: CatalogDualLocationVerifier.GenesisReadback,
             expected: CatalogGenesisInitialLiveBinding,
             path: PersistencePhasePath,
+            finalizer: CatalogGenesisFinalizeAttemptV1? = null,
         ): CatalogGenesisMutationInput = CatalogGenesisMutationInput(
             path,
             readback.mutation(),
             readback.mutation(),
             readback.manifest(),
-            CatalogGenesisFinalizationInput.verified(readback, expected),
+            if (finalizer == null) {
+                CatalogGenesisFinalizationInput.verified(readback, expected)
+            } else {
+                CatalogGenesisFinalizationInput.durable(readback, expected, finalizer)
+            },
         )
 
         fun prepare(

@@ -20,7 +20,8 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     }
     private val strict = role !== PersistenceJdbcParticipantRole.ORDINARY
     private val operatorCoordinator =
-        (root.desiredInstallationOperator || root.catalogGenesisAuthoring) && role === PersistenceJdbcParticipantRole.CATALOG_COORDINATOR
+        (root.desiredInstallationOperator || root.catalogGenesisAuthoring || root.catalogGenesisFinalization) &&
+            role === PersistenceJdbcParticipantRole.CATALOG_COORDINATOR
     private val strictPolicy = when (role) {
         PersistenceJdbcParticipantRole.ORDINARY -> null
         PersistenceJdbcParticipantRole.DELETION -> PersistenceDriverAttemptPolicy.TRACKED_DELETION_CONJUNCTION

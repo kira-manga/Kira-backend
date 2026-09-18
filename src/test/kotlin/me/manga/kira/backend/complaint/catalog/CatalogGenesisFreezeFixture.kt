@@ -24,6 +24,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
+import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapRegistryV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisApprovalV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationTestClock
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisAuthorDatabaseV1
@@ -68,7 +69,11 @@ internal fun withCatalogGenesisFreeze(tls: VersionBoundPersistenceConnectedFixtu
         test(fixture)
     }
 
-internal class CatalogGenesisFreezeFixture(val tls: VersionBoundPersistenceConnectedFixture) : AutoCloseable {
+internal class CatalogGenesisFreezeFixture(
+    val tls: VersionBoundPersistenceConnectedFixture,
+    registry: OfflineBootstrapRegistryV1 = OfflineTrustBundleFixture.registry(),
+    val capacityDigest: ByteArray = ByteArray(32) { (it + 1).toByte() },
+) : AutoCloseable {
     val observer = JdbcTemplate(ordinaryCleanupReader(tls.database)).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
     val parent: Path = Files.createTempDirectory(
         Path.of(System.getProperty("user.home")).toRealPath(),
@@ -77,16 +82,15 @@ internal class CatalogGenesisFreezeFixture(val tls: VersionBoundPersistenceConne
     )
     val releaseRoot: Path = directory("release")
     private val trustParent = directory("trust")
-    private val initialEnvelope = OfflineCatalogGenesisFixture.bundle()
+    private val initialEnvelope = OfflineTrustBundleFixture.signed(OfflineCatalogGenesisFixture.bundleBody(registry))
     private val currentEnvelope = OfflineTrustBundleFixture.signed(
         initialEnvelope.body.copy(version = 9, issuedAtEpochSecond = initialEnvelope.body.issuedAtEpochSecond + 3600),
     )
-    val manifest = OfflineCatalogGenesisFixture.manifest(initialEnvelope)
+    val manifest = OfflineCatalogGenesisFixture.manifest(initialEnvelope, registry)
     val intent = OfflineCatalogGenesisFixture.manifestBytes(manifest)
     val initial = OfflineTrustBundleFixture.bytes(initialEnvelope)
     val current = OfflineTrustBundleFixture.bytes(currentEnvelope)
     val approvals = CanonicalJson.canonicalize(ListSerializer(OfflineCatalogGenesisApprovalV1.serializer()), manifest.approvals).toByteArray()
-    val capacityDigest = ByteArray(32) { (it + 1).toByte() }
     private val files = CatalogGenesisFreezeFilesV1(
         writeInput("intent.json", intent),
         writeInput("initial-trust.json", initial),

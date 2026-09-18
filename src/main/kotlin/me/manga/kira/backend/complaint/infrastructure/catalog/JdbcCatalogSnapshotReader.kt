@@ -39,6 +39,9 @@ internal class JdbcCatalogSnapshotReader(private val jdbc: JdbcTemplate) {
 
     internal fun authenticateGenesisAuthor(attempt: CatalogGenesisFreezeAttemptV1, ownership: PersistencePhaseOwnership) = attempt.authenticate(ownership, jdbc)
 
+    internal fun authenticateGenesisFinalizer(attempt: CatalogGenesisFinalizeAttemptV1, ownership: PersistencePhaseOwnership) =
+        attempt.authenticate(ownership, jdbc)
+
     override fun toString(): String = "JdbcCatalogSnapshotReader(read-only,no-authority)"
 }
 

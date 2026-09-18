@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogChainReaderP
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.domain.catalog.UnverifiedGenesisPreparation
 import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
@@ -42,6 +43,20 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         return capture(attempt).validate(initial, trust, policy)
     }
 
+    internal fun loadFinalizing(
+        initialBundleBytes: ByteArray,
+        currentBundleBytes: ByteArray,
+        policy: CatalogReadbackPolicy,
+        attempt: CatalogGenesisFinalizeAttemptV1,
+    ): LocalCatalogSnapshot {
+        requireConnectionFree()
+        attempt.requireRunning()
+        val initial = copyBundle(initialBundleBytes)
+        val current = copyBundle(currentBundleBytes)
+        val trust = OfflineTrustBundleVerifier.verify(current, policy.chain.trustBundlePolicy)
+        return capture(finalizer = attempt).validate(initial, trust, policy)
+    }
+
     /** No future PSS-envelope pin is needed to observe PREPARED bytes. Their presence is not signing/publication authority. */
     fun loadGenesisPreparation(currentBundleBytes: ByteArray, policy: OfflineCatalogChainReaderPolicy): UnverifiedGenesisPreparation {
         requireConnectionFree()
@@ -60,16 +75,22 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
     }
 
     @Suppress("TooGenericExceptionCaught")
-    private fun capture(attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null, author: CatalogGenesisFreezeAttemptV1? = null): CatalogSnapshotRows {
+    private fun capture(
+        attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null,
+        author: CatalogGenesisFreezeAttemptV1? = null,
+        finalizer: CatalogGenesisFinalizeAttemptV1? = null,
+    ): CatalogSnapshotRows {
         requireConnectionFree()
-        val phase = author?.let(ownership::enterComplaintCatalogSnapshot)
+        val phase = finalizer?.let(ownership::enterComplaintCatalogSnapshot) ?: author?.let(ownership::enterComplaintCatalogSnapshot)
             ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
         var captured: CatalogSnapshotReadOperation? = null
         try {
             phase.begin()
             author?.let { reader.authenticateGenesisAuthor(it, ownership) }
+            finalizer?.let { reader.authenticateGenesisFinalizer(it, ownership) }
             captured = reader.read()
             author?.requireRunning()
+            finalizer?.requireRunning()
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)

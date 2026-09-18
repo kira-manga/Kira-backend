@@ -47,6 +47,48 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogGenesisAuthoring(this)
     }
 
+    /** Same acquired TARGET endpoint and inventory; restriction is not part of D or a substitute principal. */
+    internal fun bindCatalogGenesisFinalizationOwner(): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogGenesisFinalization(this)
+    }
+
+    internal fun bindCatalogGenesisFinalizationOwnerWithEpochRotation(): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogGenesisFinalizationWithEpochRotation(this)
+    }
+
+    internal fun createCatalogGenesisFinalizationRoot(): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint,
+            ordinaryCapacity,
+            PersistencePathStyle.POSIX,
+            versionBound = this,
+            catalogGenesisFinalization = true,
+        )
+    }
+
+    internal fun createCatalogGenesisFinalizationRootWithEpochRotation(): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint,
+            ordinaryCapacity,
+            PersistencePathStyle.POSIX,
+            versionBound = this,
+            epochRotationEnabled = true,
+            catalogGenesisFinalization = true,
+        )
+    }
+
+    private fun requireFinalizerConfiguration() {
+        val username = descriptor.publicDriverProperties()["user"]
+        requireConfiguration(
+            !desiredInstallationOperator && !catalogGenesisAuthoring &&
+                username != DESIRED_INSTALLATION_OPERATOR_USERNAME && username != CATALOG_GENESIS_AUTHOR_USERNAME,
+        )
+    }
+
     internal fun createRoot(): PersistenceJdbcDriverRoot =
         PersistenceJdbcDriverRoot(endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this)
 
@@ -81,6 +123,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
+        if (root.catalogGenesisFinalization) requireFinalizerConfiguration()
         trust.adopt(root)
         adoptedRoot = root
         return trust

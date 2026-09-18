@@ -156,6 +156,10 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
     fun allBindings(): List<VersionedSecretBinding> =
         listOf(runtimePassword, operatorPassword, userKey) + installations + listOfNotNull(admissionCurrent, admissionPrevious) + cursors + routing
 
+    /** Same TARGET secret inventory, without acquiring or composing the separate configuration operator. */
+    internal fun targetBindings(): List<VersionedSecretBinding> =
+        listOf(runtimePassword, userKey) + installations + listOfNotNull(admissionCurrent, admissionPrevious) + cursors + routing
+
     /** Refuse an unprogressable pristine install before even secret acquisition. No D1 or projected-only D5 escape. */
     fun requireBootstrapProfile() {
         valid(
@@ -163,6 +167,14 @@ internal class ComplaintDesiredDeploymentInputsV1 private constructor(document: 
                 profile in setOf(DesiredProcessProfileV1.D2, DesiredProcessProfileV1.D3, DesiredProcessProfileV1.D4, DesiredProcessProfileV1.D6),
         )
         valid(catalog?.projectedCurrent == false)
+    }
+
+    internal fun requireTargetFinalizerProfile() {
+        requireBootstrapProfile()
+        valid(
+            database.runtimeUsername != VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME &&
+                database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME,
+        )
     }
 
     private fun catalog(input: DesiredCatalogInputV1): VersionBoundCatalogReadbackConfigurationV1 {

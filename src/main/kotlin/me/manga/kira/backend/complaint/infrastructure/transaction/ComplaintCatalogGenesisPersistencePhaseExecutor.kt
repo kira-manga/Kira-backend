@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogDualLocationVerifier
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizationObservation
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisInitialLiveBinding
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationInput
@@ -72,6 +73,20 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
         return persist(CatalogGenesisMutationInput.project(readback, expected), expected.capacityPolicyDigestBytes()).processBoundProjection
     }
 
+    internal fun completeFinalizing(
+        readback: CatalogDualLocationVerifier.GenesisReadback,
+        expected: CatalogGenesisInitialLiveBinding,
+        finalizer: CatalogGenesisFinalizeAttemptV1,
+    ): CatalogGenesisFinalizationObservation =
+        persist(CatalogGenesisMutationInput.completeFinalizing(readback, expected, finalizer), expected.capacityPolicyDigestBytes()).finalizationObservation
+
+    internal fun projectFinalizing(
+        readback: CatalogDualLocationVerifier.GenesisReadback,
+        expected: CatalogGenesisInitialLiveBinding,
+        finalizer: CatalogGenesisFinalizeAttemptV1,
+    ): ProcessBoundCatalogGenesisProjection =
+        persist(CatalogGenesisMutationInput.projectFinalizing(readback, expected, finalizer), expected.capacityPolicyDigestBytes()).processBoundProjection
+
     fun prepareGenesis(
         offlineIntentManifestBytes: ByteArray,
         initialBundleBytes: ByteArray,
@@ -125,6 +140,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
         input.finalization?.binding?.requirePersistence(ownership, jdbc)
         val capacity = JdbcComplaintCapacityStore(jdbc, expectedCapacityPolicyDigest)
         val store = JdbcCatalogGenesisMutationStore(jdbc)
+        val finalizer = input.finalization?.finalizer
         val phase = when (input.path) {
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE ->
                 author?.let(ownership::enterComplaintCatalogGenesisPrepare) ?: ownership.enterComplaintCatalogGenesisPrepare()
@@ -132,9 +148,11 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE ->
                 author?.let(ownership::enterComplaintCatalogGenesisSignature) ?: ownership.enterComplaintCatalogGenesisSignature()
 
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE -> ownership.enterComplaintCatalogGenesisComplete()
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE ->
+                finalizer?.let(ownership::enterComplaintCatalogGenesisComplete) ?: ownership.enterComplaintCatalogGenesisComplete()
 
-            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT -> ownership.enterComplaintCatalogGenesisProject()
+            PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT ->
+                finalizer?.let(ownership::enterComplaintCatalogGenesisProject) ?: ownership.enterComplaintCatalogGenesisProject()
 
             else -> error("Unsupported G1 phase.")
         }
@@ -142,6 +160,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
         try {
             phase.begin() // Fixed shared epoch fence precedes every control, advisory/mutation and counter lock.
             author?.authenticate(ownership, jdbc)
+            finalizer?.authenticate(ownership, jdbc)
             completed = when (input.path) {
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE -> store.prepare(input, capacity)
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE -> store.persistSignature(input, capacity)
@@ -151,6 +170,7 @@ internal class ComplaintCatalogGenesisPersistencePhaseExecutor(private val owner
             }
             input.finalization?.binding?.requirePersistence(ownership, jdbc)
             author?.requirePersistence(ownership, jdbc)
+            finalizer?.requirePersistence(ownership, jdbc)
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)

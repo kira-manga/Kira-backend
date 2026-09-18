@@ -33,6 +33,8 @@ internal class GuardedDataSource private constructor(
     ) : this(owner, endpoint, maximumPoolSize, launchProfile, Route.ORDINARY)
 
     private val sourceOnly = ordinarySettings != null
+    private val namedCatalogOnly: Boolean
+        get() = owner.desiredInstallationOperator || owner.catalogGenesisAuthoring || owner.catalogGenesisFinalization
     private val pool = if (versionBound == null) {
         if (owner.versionBoundPools != null) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
         HikariDataSource()
@@ -103,7 +105,9 @@ internal class GuardedDataSource private constructor(
     }
 
     fun start(): PersistenceLifecycleActivation {
-        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring || route !== Route.ORDINARY) return PersistenceLifecycleActivation.FAILED
+        if (namedCatalogOnly || route !== Route.ORDINARY) {
+            return PersistenceLifecycleActivation.FAILED
+        }
         if (!sourceOnly && launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) {
             return PersistenceLifecycleActivation.FAILED
         }
@@ -112,9 +116,7 @@ internal class GuardedDataSource private constructor(
 
     /** Explicit infrastructure warm-up only; neither a health getter nor a request may activate deletion. */
     fun prepareDeletion(): PersistenceLifecycleObservation {
-        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring ||
-            launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY
-        ) {
+        if (namedCatalogOnly || launchProfile !== PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY) {
             return PersistenceLifecycleObservation.UNAVAILABLE
         }
         return deletionPreparation?.prepare() ?: PersistenceLifecycleObservation.UNAVAILABLE
@@ -133,9 +135,7 @@ internal class GuardedDataSource private constructor(
     override fun getConnection(): Connection {
         // Stock pool preparation uses its retained raw initialization ticket, not this business facade.
         // An operator connection has no unscoped caller route around the three fixed phase operations.
-        if ((owner.desiredInstallationOperator || owner.catalogGenesisAuthoring) &&
-            PersistencePhaseOwnership.current() == null
-        ) {
+        if (namedCatalogOnly && PersistencePhaseOwnership.current() == null) {
             PersistenceJdbcGuardContext.refuse()
         }
         val budget = PersistencePhaseOwnership.current()?.retainedPhaseCheckoutBudget(checkoutMillis) ?: PersistenceTimeBudget.start(checkoutMillis)
@@ -208,17 +208,13 @@ internal class GuardedDataSource private constructor(
     internal val complaintContainment: PersistenceComplaintContainment get() = owner.complaintContainment
 
     internal fun requireOrdinaryPhaseResource() {
-        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring ||
-            route !== Route.ORDINARY
-        ) {
+        if (namedCatalogOnly || route !== Route.ORDINARY) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
 
     internal fun requireDeletionPhaseResource() {
-        if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring ||
-            route !== Route.DELETION
-        ) {
+        if (namedCatalogOnly || route !== Route.DELETION) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
     }
@@ -245,7 +241,7 @@ internal class GuardedDataSource private constructor(
         deletionPreparation?.prepared() != false && catalogPreparation?.prepared() != false &&
         (route !== Route.CATALOG_COORDINATOR || owner.ownsCatalogDataSource(this)) && lifecycle.businessReady()
 
-    private fun launchRoutePermitsBusiness(): Boolean = if (owner.desiredInstallationOperator || owner.catalogGenesisAuthoring) {
+    private fun launchRoutePermitsBusiness(): Boolean = if (namedCatalogOnly) {
         route === Route.CATALOG_COORDINATOR && launchProfile === PersistencePoolLaunchProfile.UNKNOWN && owner.ownsCatalogDataSource(this)
     } else {
         sourceOnly || launchProfile === PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY

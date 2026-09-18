@@ -12,6 +12,8 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
     internal val sourceOnly: Boolean get() = root.sourceOnly
     internal val desiredInstallationOperator: Boolean get() = root.desiredInstallationOperator
     internal val catalogGenesisAuthoring: Boolean get() = root.catalogGenesisAuthoring
+    internal val catalogGenesisFinalization: Boolean get() = root.catalogGenesisFinalization
+    private val namedCatalogOnly: Boolean get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization
     internal val versionBoundPools: VersionBoundPersistencePools? get() = root.versionBoundPools
     internal val epochRotation: EpochRotationPersistence? get() = root.epochRotation
     internal val complaintContainment = PersistenceComplaintContainment()
@@ -24,7 +26,9 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
         launchProfile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.UNKNOWN,
         nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
     ): VersionBoundPersistencePools {
-        if (desiredInstallationOperator || catalogGenesisAuthoring) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        if (namedCatalogOnly) {
+            rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        }
         return (versionBoundPools ?: rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)).bind(this, launchProfile, nanoClock)
     }
 
@@ -48,6 +52,21 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
         return checkNotNull(catalogResources).prepareCatalogGenesisAuthoring()
     }
 
+    /** Fixed TARGET route; no supplied launch profile and no change to retained pool descriptors. */
+    internal fun bindCatalogGenesisFinalizationPools(nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock): VersionBoundPersistencePools {
+        if (!catalogGenesisFinalization) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        return checkNotNull(versionBoundPools).bind(this, PersistencePoolLaunchProfile.UNKNOWN, nanoClock)
+    }
+
+    internal fun prepareCatalogGenesisFinalization(): PersistenceLifecycleObservation {
+        requireConnectionFree()
+        if (!catalogGenesisFinalization || catalogResources == null || ownershipLockHeld()) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (root.startCatalogGenesisFinalizationInfrastructure() !== PersistenceLifecycleActivation.STARTED) {
+            return PersistenceLifecycleObservation.UNAVAILABLE
+        }
+        return checkNotNull(catalogResources).prepareCatalogGenesisFinalization()
+    }
+
     /** One inert exact composition on THIS owner. No endpoint/capacity override, replacement or implicit start. */
     internal fun bindCatalogCoordinator(
         launchProfile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.UNKNOWN,
@@ -57,7 +76,7 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
         if (sourceOnly || ownershipLockHeld() || root.shutdown.get()) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
-        if ((desiredInstallationOperator || catalogGenesisAuthoring) && launchProfile !== PersistencePoolLaunchProfile.UNKNOWN) {
+        if (namedCatalogOnly && launchProfile !== PersistencePoolLaunchProfile.UNKNOWN) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         versionBoundPools?.requireCatalogConstruction()
@@ -168,6 +187,12 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
 
         internal fun desiredInstallationOperator(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
             PersistenceJdbcLifecycleOwner(configuration.createDesiredInstallationOperatorRoot())
+
+        internal fun catalogGenesisFinalization(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createCatalogGenesisFinalizationRoot())
+
+        internal fun catalogGenesisFinalizationWithEpochRotation(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createCatalogGenesisFinalizationRootWithEpochRotation())
 
         internal fun catalogGenesisAuthoring(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
             PersistenceJdbcLifecycleOwner(configuration.createCatalogGenesisAuthoringRoot())
