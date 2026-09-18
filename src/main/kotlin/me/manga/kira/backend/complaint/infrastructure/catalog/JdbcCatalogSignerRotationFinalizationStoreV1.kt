@@ -93,8 +93,14 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         CatalogSignerRotationFinalizationKindV1.COMPLETE,
         -> requireControl(LOCK_SIGNER_ROTATION_FINAL_PREPARED_CONTROL, input.preparedBindingArguments())
 
-        CatalogSignerRotationFinalizationKindV1.PROJECT ->
-            requireControl(LOCK_SIGNER_ROTATION_FINAL_PENDING_CONTROL, input.pendingBindingArguments())
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECT,
+        -> requireControl(LOCK_SIGNER_ROTATION_FINAL_PENDING_CONTROL, input.pendingBindingArguments())
+
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        -> requireControl(LOCK_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL, input.projectedBindingArguments())
     }
 
     private fun requireEntryLease() = when (input.kind) {
@@ -103,8 +109,14 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         CatalogSignerRotationFinalizationKindV1.COMPLETE,
         -> requireControl(READ_SIGNER_ROTATION_FINAL_PREPARED_LEASE, input.preparedBindingArguments())
 
-        CatalogSignerRotationFinalizationKindV1.PROJECT ->
-            requireControl(READ_SIGNER_ROTATION_FINAL_PENDING_LEASE, input.pendingBindingArguments())
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECT,
+        -> requireControl(READ_SIGNER_ROTATION_FINAL_PENDING_LEASE, input.pendingBindingArguments())
+
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        -> requireControl(READ_SIGNER_ROTATION_FINAL_PROJECTED_LEASE, input.projectedBindingArguments())
     }
 
     private fun requireFinalLease() = when (input.kind) {
@@ -112,11 +124,15 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         CatalogSignerRotationFinalizationKindV1.RECHECK,
         -> requireControl(READ_SIGNER_ROTATION_FINAL_PREPARED_LEASE, input.preparedBindingArguments())
 
-        CatalogSignerRotationFinalizationKindV1.COMPLETE ->
-            requireControl(READ_SIGNER_ROTATION_FINAL_PENDING_LEASE, input.pendingBindingArguments())
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.COMPLETE,
+        -> requireControl(READ_SIGNER_ROTATION_FINAL_PENDING_LEASE, input.pendingBindingArguments())
 
-        CatalogSignerRotationFinalizationKindV1.PROJECT ->
-            requireControl(READ_SIGNER_ROTATION_FINAL_PROJECTED_LEASE, input.projectedBindingArguments())
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECT,
+        -> requireControl(READ_SIGNER_ROTATION_FINAL_PROJECTED_LEASE, input.projectedBindingArguments())
     }
 
     private fun requireFinalControl() = when (input.kind) {
@@ -124,11 +140,15 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         CatalogSignerRotationFinalizationKindV1.RECHECK,
         -> requireControl(READ_SIGNER_ROTATION_FINAL_PREPARED_CONTROL, input.preparedBindingArguments())
 
-        CatalogSignerRotationFinalizationKindV1.COMPLETE ->
-            requireControl(READ_SIGNER_ROTATION_FINAL_PENDING_CONTROL, input.pendingBindingArguments())
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.COMPLETE,
+        -> requireControl(READ_SIGNER_ROTATION_FINAL_PENDING_CONTROL, input.pendingBindingArguments())
 
-        CatalogSignerRotationFinalizationKindV1.PROJECT ->
-            requireControl(READ_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL, input.projectedBindingArguments())
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECT,
+        -> requireControl(READ_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL, input.projectedBindingArguments())
     }
 
     private fun requireControl(sql: String, arguments: Array<Any?>) {
@@ -141,27 +161,45 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         CatalogSignerRotationFinalizationKindV1.INITIAL_READ ->
             readHistory(LOCK_SIGNER_ROTATION_FINAL_INITIAL_HISTORY, input.initialHistoryArguments())
 
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ ->
+            readHistory(LOCK_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY, input.initialCopyHistoryArguments())
+
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ ->
+            readHistory(LOCK_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY, input.initialCopyHistoryArguments())
+
         CatalogSignerRotationFinalizationKindV1.RECHECK,
         CatalogSignerRotationFinalizationKindV1.COMPLETE,
         -> readHistory(LOCK_SIGNER_ROTATION_FINAL_PREPARED_HISTORY, input.preparedHistoryArguments())
 
-        CatalogSignerRotationFinalizationKindV1.PROJECT ->
-            readHistory(LOCK_SIGNER_ROTATION_FINAL_PENDING_HISTORY, input.pendingHistoryArguments())
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECT,
+        -> readHistory(LOCK_SIGNER_ROTATION_FINAL_PENDING_HISTORY, input.pendingHistoryArguments())
+
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK ->
+            readHistory(LOCK_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY, input.pendingHistoryArguments())
     }
 
     private fun readFinalHistory(): List<StoredSignerRotationFinalizationRowV1> = when (input.kind) {
-        // G21 cannot be detached before the first observation. This reread still compares the full locked G1 preimage in memory.
+        // G21 cannot be detached before any first observation. Each initial reread compares both full locked preimages in memory.
         CatalogSignerRotationFinalizationKindV1.INITIAL_READ ->
             readHistory(READ_SIGNER_ROTATION_FINAL_INITIAL_HISTORY, input.initialHistoryArguments())
+
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ ->
+            readHistory(READ_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY, input.initialCopyHistoryArguments())
+
+        CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ ->
+            readHistory(READ_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY, input.initialCopyHistoryArguments())
 
         CatalogSignerRotationFinalizationKindV1.RECHECK ->
             readHistory(READ_SIGNER_ROTATION_FINAL_PREPARED_HISTORY, input.preparedHistoryArguments())
 
-        CatalogSignerRotationFinalizationKindV1.COMPLETE ->
-            readHistory(READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY, input.pendingHistoryArguments())
+        CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.COMPLETE,
+        -> readHistory(READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY, input.pendingHistoryArguments())
 
-        CatalogSignerRotationFinalizationKindV1.PROJECT ->
-            readHistory(READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY, input.pendingHistoryArguments())
+        CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
+        CatalogSignerRotationFinalizationKindV1.PROJECT,
+        -> readHistory(READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY, input.pendingHistoryArguments())
     }
 
     private fun readHistory(sql: String, arguments: Array<Any?>): List<StoredSignerRotationFinalizationRowV1> {
@@ -181,6 +219,16 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
                 rows[1].requirePrepared()
             }
 
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ -> {
+                check(input.expected == null)
+                rows[1].requirePending()
+            }
+
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ -> {
+                check(input.expected == null)
+                rows[1].requireProjected()
+            }
+
             CatalogSignerRotationFinalizationKindV1.RECHECK,
             CatalogSignerRotationFinalizationKindV1.COMPLETE,
             -> {
@@ -188,9 +236,16 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
                 rows[1].requirePrepared()
             }
 
-            CatalogSignerRotationFinalizationKindV1.PROJECT -> {
+            CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+            CatalogSignerRotationFinalizationKindV1.PROJECT,
+            -> {
                 check(checkNotNull(input.expected).matchesHistory(rows))
                 rows[1].requirePending()
+            }
+
+            CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK -> {
+                check(checkNotNull(input.expected).matchesHistory(rows))
+                rows[1].requireProjected()
             }
         }
     }
@@ -211,7 +266,11 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         requireAt(Stage.WRITING)
         when (input.kind) {
             CatalogSignerRotationFinalizationKindV1.INITIAL_READ,
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
             CatalogSignerRotationFinalizationKindV1.RECHECK,
+            CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+            CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
             -> Unit
 
             CatalogSignerRotationFinalizationKindV1.COMPLETE -> {
@@ -233,7 +292,11 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
         check(rows[0].same(before[0])) // All 33 actual G1 columns, including lifecycle and both evidence blobs.
         when (input.kind) {
             CatalogSignerRotationFinalizationKindV1.INITIAL_READ,
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+            CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
             CatalogSignerRotationFinalizationKindV1.RECHECK,
+            CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+            CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
             -> check(rows[1].same(before[1]))
 
             CatalogSignerRotationFinalizationKindV1.COMPLETE -> rows[1].requireCompletionOf(before[1])
@@ -292,7 +355,11 @@ internal class CatalogSignerRotationFinalizationOperationV1 private constructor(
                 phase.catalogSignerRotationFinalization.requireOperation(input, jdbc)
                 val expectedPath = when (input.kind) {
                     CatalogSignerRotationFinalizationKindV1.INITIAL_READ,
+                    CatalogSignerRotationFinalizationKindV1.INITIAL_PENDING_READ,
+                    CatalogSignerRotationFinalizationKindV1.INITIAL_PROJECTED_READ,
                     CatalogSignerRotationFinalizationKindV1.RECHECK,
+                    CatalogSignerRotationFinalizationKindV1.PENDING_RECHECK,
+                    CatalogSignerRotationFinalizationKindV1.PROJECTED_RECHECK,
                     -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ
 
                     CatalogSignerRotationFinalizationKindV1.COMPLETE -> PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE
@@ -379,6 +446,10 @@ internal class StoredSignerRotationFinalizationRowV1 private constructor(
 
     internal fun requirePending() {
         check(lifecycle.state == "COMPLETED" && lifecycle.completedAt != null && lifecycle.projectedAt == null && copies.complete())
+    }
+
+    internal fun requireProjected() {
+        check(lifecycle.state == "COMPLETED" && lifecycle.completedAt != null && lifecycle.projectedAt != null && copies.complete())
     }
 
     internal fun requireCompletionOf(before: StoredSignerRotationFinalizationRowV1) {

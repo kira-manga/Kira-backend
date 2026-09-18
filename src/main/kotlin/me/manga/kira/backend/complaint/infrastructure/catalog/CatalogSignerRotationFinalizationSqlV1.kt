@@ -87,12 +87,14 @@ internal val READ_SIGNER_ROTATION_FINAL_PENDING_LEASE = """
     FROM complaint_journal_control c CROSS JOIN expected e CROSS JOIN pending p CROSS JOIN sampled WHERE $SIGNER_ROTATION_FINAL_SCOPE
 """.trimIndent()
 
-/** B12. Post-PROJECT reread only; this is not a projected-state replay or acquisition capability. */
+/** B12. Exact projected-state observation under the retained actual lease; never mutation authority. */
 internal val READ_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL = """
     $SIGNER_ROTATION_FINAL_CONTROL_EXPECTED
     SELECT ($SIGNER_ROTATION_FINAL_PROJECTED_BINDING) IS TRUE AS binding_matches
     FROM complaint_journal_control c CROSS JOIN expected e WHERE $SIGNER_ROTATION_FINAL_SCOPE
 """.trimIndent()
+
+internal val LOCK_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL = READ_SIGNER_ROTATION_FINAL_PROJECTED_CONTROL + "\nFOR UPDATE OF c"
 
 internal val READ_SIGNER_ROTATION_FINAL_PROJECTED_LEASE = """
     $SIGNER_ROTATION_FINAL_CONTROL_EXPECTED,
@@ -240,6 +242,32 @@ internal val READ_SIGNER_ROTATION_FINAL_INITIAL_HISTORY = """
 
 internal val LOCK_SIGNER_ROTATION_FINAL_INITIAL_HISTORY = READ_SIGNER_ROTATION_FINAL_INITIAL_HISTORY + "\nFOR UPDATE OF m"
 
+/** R17 + C6. Cold pending2 observation captures current G1; no claim of equality with an unavailable precrash G1. */
+internal val READ_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY = """
+    $SIGNER_ROTATION_FINAL_ROTATION_EXPECTED,
+    $SIGNER_ROTATION_FINAL_COPIES_EXPECTED
+    SELECT ($SIGNER_ROTATION_FINAL_GENESIS_SHAPE) IS TRUE AS genesis_matches,
+        ($SIGNER_ROTATION_FINAL_FROZEN AND $SIGNER_ROTATION_FINAL_PENDING) IS TRUE AS rotation_matches,
+        ($SIGNER_ROTATION_FINAL_BOUNDED) IS TRUE AS bounded, $SIGNER_ROTATION_FINAL_COLUMNS
+    FROM complaint_catalog_mutations m CROSS JOIN rotation_expected r CROSS JOIN copies_expected cp
+    ORDER BY m.successor_generation LIMIT 3
+""".trimIndent()
+
+internal val LOCK_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY = READ_SIGNER_ROTATION_FINAL_INITIAL_PENDING_HISTORY + "\nFOR UPDATE OF m"
+
+/** R17 + C6 from genuine Accepted2 raw evidence. Cold projected observation cannot issue a write or replay capability. */
+internal val READ_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY = """
+    $SIGNER_ROTATION_FINAL_ROTATION_EXPECTED,
+    $SIGNER_ROTATION_FINAL_COPIES_EXPECTED
+    SELECT ($SIGNER_ROTATION_FINAL_GENESIS_SHAPE) IS TRUE AS genesis_matches,
+        ($SIGNER_ROTATION_FINAL_FROZEN AND $SIGNER_ROTATION_FINAL_PROJECTED) IS TRUE AS rotation_matches,
+        ($SIGNER_ROTATION_FINAL_BOUNDED) IS TRUE AS bounded, $SIGNER_ROTATION_FINAL_COLUMNS
+    FROM complaint_catalog_mutations m CROSS JOIN rotation_expected r CROSS JOIN copies_expected cp
+    ORDER BY m.successor_generation LIMIT 3
+""".trimIndent()
+
+internal val LOCK_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY = READ_SIGNER_ROTATION_FINAL_INITIAL_PROJECTED_HISTORY + "\nFOR UPDATE OF m"
+
 /** R17 + G21. Every later head1 READ/recheck/COMPLETE requires the exact retained G1 row, including lifecycle/copies. */
 internal val READ_SIGNER_ROTATION_FINAL_PREPARED_HISTORY = """
     $SIGNER_ROTATION_FINAL_ROTATION_EXPECTED,
@@ -267,7 +295,7 @@ internal val READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY = """
 
 internal val LOCK_SIGNER_ROTATION_FINAL_PENDING_HISTORY = READ_SIGNER_ROTATION_FINAL_PENDING_HISTORY + "\nFOR UPDATE OF m"
 
-/** R17 + G21 + C6. Post-PROJECT observation only; timestamps are checked against the actual operation's preimage. */
+/** R17 + G21 + C6. Read-only projected observation; timestamps are checked against the actual retained preimage. */
 internal val READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY = """
     $SIGNER_ROTATION_FINAL_ROTATION_EXPECTED,
     $SIGNER_ROTATION_FINAL_GENESIS_EXPECTED,
@@ -278,6 +306,8 @@ internal val READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY = """
     FROM complaint_catalog_mutations m CROSS JOIN rotation_expected r CROSS JOIN genesis_expected g CROSS JOIN copies_expected cp
     ORDER BY m.successor_generation LIMIT 3
 """.trimIndent()
+
+internal val LOCK_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY = READ_SIGNER_ROTATION_FINAL_PROJECTED_HISTORY + "\nFOR UPDATE OF m"
 
 private val SIGNER_ROTATION_FINAL_COPY_INPUT_BOUNDED = """
     octet_length(cp.object_version) BETWEEN 1 AND 1024 AND cp.object_version <> 'null' AND isfinite(cp.retain_until)
