@@ -25,6 +25,8 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVer
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallOperationV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDOperationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurrentStateReadOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintInstallationEnrollmentOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.ComplaintRecoverySettlementOperation
@@ -72,9 +74,12 @@ import java.util.concurrent.locks.LockSupport
  * One synchronous named owner. No application lambda, foreign thread or resource switch.
  * All guarded transitions share this retained phase/permit/lease rather than splitting their custody.
  * Named operation boundaries keep commit/release/quarantine proof on this one original context.
+ * The constructor keeps each named attempt/work pair explicit instead of introducing a generic authority carrier.
  */
 @Suppress("TooManyFunctions", "LargeClass")
-internal class PersistencePhaseContext(
+internal class PersistencePhaseContext
+@Suppress("LongParameterList")
+constructor(
     private val ownership: PersistencePhaseOwnership,
     private val slot: Int,
     private val caller: PersistenceOwnedFactoryCaller,
@@ -89,6 +94,8 @@ internal class PersistencePhaseContext(
     private val catalogRefreshWork: PersistenceTimeBudget? = null,
     private val desiredAttempt: ComplaintDesiredInstallAttemptV1? = null,
     private val desiredWork: PersistenceTimeBudget? = null,
+    private val firstDesiredAttempt: ComplaintSignedGenesisFirstDAttemptV1? = null,
+    private val firstDesiredWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -147,6 +154,7 @@ internal class PersistencePhaseContext(
     internal val epochRotation: PersistenceEpochRotationControl = EpochRotationBoundary()
     internal val cutoffPublications: PersistenceCutoffPublications = CutoffPublicationsBoundary()
     internal val desiredInstallation: PersistenceDesiredInstall = DesiredInstallationBoundary()
+    internal val signedGenesisFirstDesired: PersistenceSignedGenesisFirstDesired = SignedGenesisFirstDesiredBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -173,7 +181,7 @@ internal class PersistencePhaseContext(
             isReadOnly = path.readOnly
             // Desired-state pending/pristine checks deliberately take a fresh statement snapshot
             // AFTER the LIVE control lock. Never inherit a role/database REPEATABLE READ default.
-            if (desiredAttempt != null) isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
+            if (desiredAttempt != null || firstDesiredAttempt != null) isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
         }
         manager.getTransaction(definition)
         // The wrapper retained TransactionStatus before this validation. A failure here still has rollback custody.
@@ -199,6 +207,9 @@ internal class PersistencePhaseContext(
         requireWork()
         stage = Stage.SETTING_UP
         installLimits()
+        if (firstDesiredAttempt != null && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         selectedHolder.acquireFence(selected)
         requireWork()
         stage = Stage.WORK
@@ -287,12 +298,13 @@ internal class PersistencePhaseContext(
         requireCaller()
         check(acquisition === completion && work == null)
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
-        work = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
+        work =
+            rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
-        return (rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork)?.systemCappedSnapshot(ceilingMillis)
+        return (rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork)?.systemCappedSnapshot(ceilingMillis)
     }
 
     internal fun requireAcceptedLease() = requireWork()
@@ -482,6 +494,8 @@ internal class PersistencePhaseContext(
         requireWork()
     }
 
+    // Preserve the exhaustive named-phase completion matrix; a generic callback must not replace retained operation checks.
+    @Suppress("CyclomaticComplexMethod")
     private fun completedOperation(): Boolean = when (path) {
         PersistencePhasePath.SOURCE_GRANT_CLEANUP -> true
 
@@ -542,6 +556,8 @@ internal class PersistencePhaseContext(
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
         -> catalogGenesis.completed()
+
+        PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST -> signedGenesisFirstDesired.completed()
 
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW,
@@ -837,7 +853,7 @@ internal class PersistencePhaseContext(
 
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
-        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: return false
+        val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -864,14 +880,16 @@ internal class PersistencePhaseContext(
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
-        return if (ordinaryBudget && desiredAttempt == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
+        return if (ordinaryBudget && desiredAttempt == null && firstDesiredAttempt == null) budget else budget.systemCappedSnapshot(WORK_MILLIS)
     }
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
-        val selected = (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget ?: desiredAttempt?.budget)?.capped(EMERGENCY_MILLIS)
-            ?: PersistenceTimeBudget.start(EMERGENCY_MILLIS, ownership.nanoClock)
+        val selected =
+            (rotationAttempt?.budget ?: cutoffAttempt?.budget ?: catalogRefresh?.projectedBudget ?: desiredAttempt?.budget ?: firstDesiredAttempt?.budget)
+                ?.capped(EMERGENCY_MILLIS)
+                ?: PersistenceTimeBudget.start(EMERGENCY_MILLIS, ownership.nanoClock)
         emergency = selected
         return selected
     }
@@ -1020,6 +1038,7 @@ internal class PersistencePhaseContext(
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
+            PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
             -> PersistenceDeletionFence(this@PersistencePhaseContext, ownership.nanoClock)
 
             else -> null
@@ -1397,6 +1416,47 @@ internal class PersistencePhaseContext(
         }
 
         override fun completed(): Boolean = retained?.let { it.attempt === desiredAttempt && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    /** Dedicated first-D: genuine fence + exact original attempt/operation + known commit and complete release. */
+    private inner class SignedGenesisFirstDesiredBoundary : PersistenceSignedGenesisFirstDesired {
+        private var issued = false
+        private var retained: ComplaintSignedGenesisFirstDOperationV1? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST)
+            val attempt = firstDesiredAttempt ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            attempt.requirePersistence(ownership, jdbc)
+            if (issued || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintSignedGenesisFirstDOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST)
+            if (!issued || retained != null || operation.attempt !== firstDesiredAttempt) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (!operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintSignedGenesisFirstDOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST)
+            if (retained !== operation || operation.attempt !== firstDesiredAttempt || !selectedHolder.fenceReady()) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            operation.attempt.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: ComplaintSignedGenesisFirstDOperationV1) {
+            val retainedByCaller = caller.isCurrent() && retained === operation && operation.attempt === firstDesiredAttempt
+            if (!retainedByCaller || !operation.completedFor(this@PersistencePhaseContext)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.attempt === firstDesiredAttempt && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     /** Four fixed operations; a write has a mandatory one-use ingress handoff, never a raw bypass. */

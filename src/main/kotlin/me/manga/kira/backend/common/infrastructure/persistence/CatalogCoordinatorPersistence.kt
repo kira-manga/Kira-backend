@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDesiredInstallPhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintSignedGenesisFirstDPhaseExecutor
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import java.util.concurrent.atomic.AtomicBoolean
@@ -35,6 +36,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var rotationExecutor: CatalogEpochRotationV1? = null
     private var cutoffExecutor: CatalogCutoffPublicationsV1? = null
     private var desiredExecutor: ComplaintDesiredInstallPhaseExecutor? = null
+    private var firstDesiredExecutor: ComplaintSignedGenesisFirstDPhaseExecutor? = null
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
@@ -44,6 +46,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val epochRotation: CatalogEpochRotationV1 get() = checkNotNull(rotationExecutor)
     internal val cutoffPublications: CatalogCutoffPublicationsV1 get() = checkNotNull(cutoffExecutor)
     internal val desiredInstallation: ComplaintDesiredInstallPhaseExecutor get() = checkNotNull(desiredExecutor)
+    internal val signedGenesisFirstDesired: ComplaintSignedGenesisFirstDPhaseExecutor get() = checkNotNull(firstDesiredExecutor)
 
     internal fun bindOwnership(nanoClock: PersistenceNanoClock) {
         requireResources()
@@ -53,6 +56,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         val jdbc = JdbcTemplate(dataSource).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
         if (desiredInstallationOperator) {
             desiredExecutor = ComplaintDesiredInstallPhaseExecutor(this, jdbc)
+            firstDesiredExecutor = ComplaintSignedGenesisFirstDPhaseExecutor(this, jdbc)
             return // No catalog/lease/rotation/readback executor is even constructed on the operator root.
         }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))

@@ -27,6 +27,9 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollment
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationCases
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationCompletionCases
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallationRefusalCases
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDCases
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDCompletionCases
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDConcurrencyCases
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationCompletionCut
 import me.manga.kira.backend.complaint.infrastructure.admission.withDesiredInstallation
 import org.junit.jupiter.api.AfterAll
@@ -470,6 +473,60 @@ class VersionBoundPersistenceConnectedIT {
     }
 
     /** A test-only contention pair, not a supported multi-instance deployment or another database lifecycle. */
+    @Test
+    fun `signed G1 first D authenticates least privilege selects only D and timestamp and exact retry remains read only`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDCases(it).exactSignedFirstSelectionAndRetry() }
+    }
+
+    @Test
+    fun `signed G1 first D refuses unsigned mismatched oversized and copy bearing history even for an identical selected target`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDCases(it).unsignedMismatchedAndOversizedHistory() }
+    }
+
+    @Test
+    fun `signed G1 first D requires sole all history and exact initial LIVE control without scope lease seal or head escape`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDCases(it).allHistoryAndNoninitialControlAreRefused() }
+    }
+
+    @Test
+    fun `signed G1 first D genuine epoch and catalog lock conflicts refuse before history without any mutation`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDCases(it).epochAndCatalogLocksRefuseBeforeHistory() }
+    }
+
+    @Test
+    fun `signed G1 first D pins actual read committed and sees genuine signature writer commit after unchanged control lock wait`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDConcurrencyCases(it).signatureCommitVisibleAfterControlWait() }
+    }
+
+    @Test
+    fun `signed G1 first D identical authenticated contender waits on LIVE and never repeats the D timestamp write`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDConcurrencyCases(it).authenticatedContenders(identical = true) }
+    }
+
+    @Test
+    fun `signed G1 first D different authenticated contender waits on LIVE and refuses the other selected target`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDConcurrencyCases(it).authenticatedContenders(identical = false) }
+    }
+
+    @Test
+    fun `signed G1 first D actual deferred commit failure stays unknown and only a fresh original owner may select`() = withFixture { tls ->
+        withDesiredInstallation(tls) {
+            ComplaintSignedGenesisFirstDCompletionCases(it).failureCannotEmitSuccess(DesiredInstallationCompletionCut.DEFERRED_COMMIT)
+        }
+    }
+
+    @Test
+    fun `signed G1 first D afterCommit failure cannot emit success and fresh exact retry preserves every committed byte`() = withFixture { tls ->
+        withDesiredInstallation(tls) { ComplaintSignedGenesisFirstDCompletionCases(it).failureCannotEmitSuccess(DesiredInstallationCompletionCut.AFTER_COMMIT) }
+    }
+
+    @Test
+    fun `signed G1 first D unresolved original release stays quarantined and truthful cleanup cannot revive its failed owner`() = withFixture { tls ->
+        withDesiredInstallation(tls) {
+            ComplaintSignedGenesisFirstDCompletionCases(it).failureCannotEmitSuccess(DesiredInstallationCompletionCut.UNRESOLVED_RELEASE)
+        }
+    }
+
     private fun withPairedFixture(
         epochRotation: Boolean = false,
         test: (VersionBoundPersistenceConnectedFixture, VersionBoundPersistenceConnectedFixture) -> Unit,

@@ -32,7 +32,12 @@ internal class JdbcCatalogGenesisMutationStore(private val jdbc: JdbcTemplate) {
         CatalogGenesisMutationOperation.project(jdbc, input, capacity)
 }
 
-/** One retained concrete SQL operation. Counters cannot be reached until the existing mutation/history is locked. */
+/**
+ * One retained concrete SQL operation. Counters cannot be reached until the existing mutation/history is locked.
+ * ALL production history writers must retain epoch -> LIVE -> exclusive catalog transaction lock order.
+ * The SELECT-only signed-G1 first-D operator relies on that protocol for its later READ COMMITTED history read;
+ * arbitrary privileged SQL/restore/DDL remains excluded by environmental custody, not by advisory protection.
+ */
 internal class CatalogGenesisMutationOperation private constructor(
     private val phase: PersistencePhaseContext,
     private val jdbc: JdbcTemplate,

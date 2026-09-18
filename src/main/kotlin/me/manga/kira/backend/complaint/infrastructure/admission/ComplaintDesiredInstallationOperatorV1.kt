@@ -33,6 +33,7 @@ internal class ComplaintDesiredInstallationOperatorV1 private constructor(
     private var resolverCloseIssued = false
     private var resolverCloseFailed = false
     private var attempt: ComplaintDesiredInstallAttemptV1? = null
+    private var firstDAttempt: ComplaintSignedGenesisFirstDAttemptV1? = null
 
     fun bootstrap(
         inputs: ComplaintDesiredDeploymentInputsV1,
@@ -46,6 +47,45 @@ internal class ComplaintDesiredInstallationOperatorV1 private constructor(
         secretCredentials: AwsSessionCredentials,
         sealerCredentials: AwsSessionCredentials?,
     ): ComplaintDesiredInstallationResultV1 = install(inputs, expectedGeneration, secretCredentials, sealerCredentials)
+
+    /** Separate signed-PREPARED entry, never a relaxed pristine bootstrap or a supplied D/verification receipt. */
+    @Suppress("TooGenericExceptionCaught")
+    fun selectSignedGenesisFirst(
+        inputs: ComplaintDesiredDeploymentInputsV1,
+        release: ComplaintSignedGenesisFirstDInputsV1,
+        secretCredentials: AwsSessionCredentials,
+        sealerCredentials: AwsSessionCredentials?,
+    ): ComplaintSignedGenesisFirstDResultV1 {
+        var result: ComplaintSignedGenesisFirstDResultV1? = null
+        var failure: Throwable? = null
+        try {
+            requireConnectionFree()
+            requireRunning()
+            requireDesiredInstallation(!entered, ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
+            entered = true
+            inputs.requireBootstrapProfile()
+            val acquired = inputs.allBindings().map { acquire(it, secretCredentials) }
+            assembly.assemble(inputs, acquired, sealerCredentials)
+            val verified = release.verifyFor(assembly.target) // Raw crypto/J/P checks before even preparing the operator pool.
+            requireRunning()
+            assembly.prepareOperator(budget)
+            val retained = ComplaintSignedGenesisFirstDAttemptV1(this, assembly.coordinator, assembly.target, verified, budget)
+            firstDAttempt = retained
+            result = assembly.coordinator.signedGenesisFirstDesired.select(retained)
+            requireRunning()
+        } catch (problem: Throwable) {
+            firstDAttempt?.abort()
+            failure = problem
+        } finally {
+            try {
+                close()
+            } catch (cleanup: Throwable) {
+                failure = cleanup
+            }
+        }
+        failure?.let { throw boundedDesiredInstallationFailure(it) }
+        return checkNotNull(result)
+    }
 
     @Suppress("TooGenericExceptionCaught") // Never expose SQL/provider/path/credential text; cleanup takes precedence over a historical DB outcome.
     private fun install(
@@ -126,6 +166,8 @@ internal class ComplaintDesiredInstallationOperatorV1 private constructor(
 
     internal fun owns(candidate: ComplaintDesiredInstallAttemptV1): Boolean = !closed && attempt === candidate && caller === Thread.currentThread()
 
+    internal fun owns(candidate: ComplaintSignedGenesisFirstDAttemptV1): Boolean = !closed && firstDAttempt === candidate && caller === Thread.currentThread()
+
     internal fun requireRunning() {
         requireDesiredInstallation(caller === Thread.currentThread() && !closed, ComplaintDesiredInstallationFailureV1.PROCESS_REFUSED)
         requireDesiredInstallation(!Thread.currentThread().isInterrupted, ComplaintDesiredInstallationFailureV1.INTERRUPTED)
@@ -141,6 +183,7 @@ internal class ComplaintDesiredInstallationOperatorV1 private constructor(
         requireDesiredInstallation(caller === Thread.currentThread(), ComplaintDesiredInstallationFailureV1.CLEANUP_UNPROVEN)
         closed = true
         attempt?.abort()
+        firstDAttempt?.abort()
         val provider = runCatching { closeResolver() }
         val roots = runCatching { assembly.close() }
         val proof = runCatching { assembly.requireCleanup(budget) }

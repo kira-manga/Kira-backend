@@ -63,6 +63,7 @@ internal class ComplaintDesiredInstallationFixture(val tls: VersionBoundPersiste
     private var originalControl: String? = null
     private var counters: SyntheticComplaintCounters? = null
     val invocations = mutableListOf<DesiredInstallationInvocation>()
+    val firstDInvocations = mutableListOf<SignedGenesisFirstDInvocation>()
     lateinit var document: ComplaintDesiredDeploymentDocumentV1
         private set
 
@@ -282,11 +283,12 @@ internal class ComplaintDesiredInstallationFixture(val tls: VersionBoundPersiste
 
     override fun close() {
         val stopped = runCatching(::stopRuntimeWithoutWaiting) // Every original peer stops before any installer's shared-Timer proof.
-        val retired = invocations.map { runCatching { it.fixtureCleanup() } }
+        val retired = invocations.map { runCatching { it.fixtureCleanup() } } + firstDInvocations.map { runCatching { it.fixtureCleanup() } }
         val restorationReady = runCatching {
             stopped.getOrThrow()
             requireConnectionFree()
             assertTrue(invocations.all { it.cleanupVerified }, "An original installer invocation has not completed fixture retirement.")
+            assertTrue(firstDInvocations.all { it.cleanupVerified }, "An original first-D invocation has not completed fixture retirement.")
         }
         // A preserved test assertion must not strand owned fixture rows; actual unproven retirement still forbids restoration.
         val restored = listOf(

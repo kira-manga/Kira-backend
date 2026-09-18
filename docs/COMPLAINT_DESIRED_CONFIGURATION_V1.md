@@ -87,7 +87,8 @@ root uses its acquired password and the target's same exact endpoint/database/
 verify-full public trust. The named operator route starts only the existing
 scanner/shared Timer and original one-slot coordinator. Ordinary/deletion starts
 are permanently sealed, rotation is absent, default/UNKNOWN target roots remain
-closed, and only the three installer phase paths can use the operator root.
+closed, and only the three control-only installer paths and the distinct signed-G1
+first-D phase described below can use the operator root.
 Unscoped business checkout on this operator DataSource is refused.
 
 Each phase verifies the **actual** authenticated session:
@@ -150,7 +151,7 @@ These named phases pin READ COMMITTED rather than inheriting a database/role
 isolation default. Pending/pristine absence checks take a later statement snapshot
 after the actual control lock, including a preceding writer's committed history.
 
-No epoch/advisory/history/counter/domain lock or control→fence path exists. The
+Bootstrap/supersede have no epoch/advisory/history/counter/domain lock or control→fence path. The
 existing full-B/token checks fence durable old work, **not native provider calls
 or serving pods**. Failure after phase 1 leaves closure durable. Populated slots
 are intentionally refused until their real completion/replacement protocol exists.
@@ -171,6 +172,66 @@ and its complete return tail is checked again. These are finite application
 budgets, not proof of hard OS/native call interruption. All roots are stopped and
 all owned pools closed before waiting for their shared-Timer termination conjunction.
 Cleanup failure remains retained and suppresses output success.
+
+## Separate exact signed-PREPARED-G1 first-D command
+
+`ComplaintSignedGenesisFirstDMain` is a separate non-web entry, not a bootstrap
+mode or a publisher/finalizer. It reuses the original one-shot owner, total 60s
+budget, actual version acquisition/cold target graph, independent fixed operator
+and complete original provider/root/Timer/trust cleanup:
+
+```text
+java -cp <qualified-runtime-classpath> me.manga.kira.backend.database.ComplaintSignedGenesisFirstDMain \
+  select --manifest /protected/deployment/desired.json \
+  --intent /protected/release/g1-manifest.json \
+  --initial-trust /protected/release/t0.json \
+  --current-trust /protected/release/tn.json \
+  --signed-envelope /protected/release/g1-envelope.json \
+  --genesis-pin /protected/independent-custody/g1.sha256
+```
+
+This is interface documentation, **not authorization to execute**. All six paths
+must be absolute/normalized protected regular files with no final symlink; protect
+their ancestors too. The manifest retains its existing 1 MiB bound; each raw
+release document is bounded to 128 KiB. The pin file is exactly 64 lowercase hex
+ASCII bytes, without a newline. There is no supplied D, SQL-derived trust, serialized
+verification/approval receipt, TEST launch switch or new credentials/grants.
+
+Before preparing the operator pool, the existing raw canonical intent/T0/Tn/
+RSA-PSS verifiers authenticate the exact envelope and independent pin against the
+actual target's initial G1 reader policy, journal/registry identity and applicable
+catalog authority references. Raw T0/Tn and P must match the actual target inputs.
+Only bounded private comparison bytes from that verification enter the dedicated
+`COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST` phase.
+
+Its actual holder is READ COMMITTED, even under a REPEATABLE READ login default.
+It takes the genuine shared epoch fence, authenticates the fixed session/database,
+locks LIVE control, then takes the fixed exclusive catalog transaction advisory
+lock. A **later** `ORDER BY successor_generation LIMIT 2` SELECT covers ALL history,
+without a filter or `FOR UPDATE`. History privileges stay SELECT-only. Exactly one
+row must match every independently verified GENESIS/generation-1 signed PREPARED
+field, with no copy, completion or projection state. Initial LIVE/schema-1/
+generation-1/epoch-1 control must have closed gates, its true initial scan request,
+null identity/head/trust/pending state and pristine lease/rotation/seal/checkpoint
+slots; TEST/scope/publication/scan-run history is refused.
+
+NULL D permits only the computed D plus database-sampled `updated_at` CAS. Same D
+is a complete no-op only after the identical initial-control and signed-history
+checks. Full bounded control and ALL-history rereads occur while the same locks
+remain held through commit. No history writes, counters, leases, gates, scan bits
+or other control fields are changed. Output requires real commit/release and all
+original cleanup; UNKNOWN, afterCommit or unresolved-release failure cannot succeed.
+
+This stability argument covers the implemented PREPARE/signature/COMPLETE/PROJECT
+writers in `JdbcCatalogGenesisMutationStore`. **Every future production history
+writer must share epoch → LIVE → catalog lock order.** It is not protection from
+arbitrary privileged SQL, restore, DDL or trigger mutation; environmental custody
+must exclude those. A genuine connected signature-writer/control-wait case checks
+the later statement's visibility even when the locked control tuple is unchanged.
+
+This entry does not produce or durably custody a release, Sign/PUT a catalog,
+complete/project G1, qualify offline launch, activate runtime service, certify
+provider policy or establish rollout/readiness. Those remain separate work.
 
 ## Qualification still required
 
