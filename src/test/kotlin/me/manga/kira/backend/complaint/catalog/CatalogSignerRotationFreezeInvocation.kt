@@ -292,10 +292,15 @@ internal class CatalogSignerRotationSqlCall(val phase: PersistencePhaseContext, 
 }
 
 /** Same concrete snapshot/G1/lease/rotation executors and original coordinator; all SQL/results/transaction ownership are real. */
-internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCoordinatorPersistence, private val observeDeliveryQueries: Boolean = false) :
+internal class CatalogSignerRotationProbeJdbc(
+    private val coordinator: CatalogCoordinatorPersistence,
+    private val observeDeliveryQueries: Boolean = false,
+    private val observeActivationQueries: Boolean = false,
+) :
     JdbcTemplate(coordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<CatalogSignerRotationSqlCall>()
+    val returnedRowCounts = linkedMapOf<CatalogSignerRotationSqlCall, Int>()
     val steps: List<String> get() = calls.map { it.step }
     var beforeSql: (String) -> Unit = {}
     var afterSql: (String) -> Unit = {}
@@ -309,7 +314,9 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>): T? {
         val path = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path") }
-        return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT || (observeDeliveryQueries && sql == DELIVERY_GATES)) {
+        return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT ||
+            ((observeDeliveryQueries || observeActivationQueries) && sql == DELIVERY_GATES)
+        ) {
             observed(sql, emptyArray()) { super.query(sql, rse) }
         } else {
             super.query(sql, rse) // RowMapper's no-argument overload already passes through observed; never double-count that dispatch.
@@ -317,7 +324,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
     }
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>, vararg args: Any?): T? =
-        if (observeDeliveryQueries && sql == DELIVERY_AUTHENTICATE) {
+        if ((observeDeliveryQueries || observeActivationQueries) && sql == DELIVERY_AUTHENTICATE) {
             observed(sql, args) { super.query(sql, rse, *args) }
         } else {
             super.query(sql, rse, *args) // Existing RowMapper routes remain observed exactly once.
@@ -333,6 +340,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         assertNoLostAssertions()
         observations.clear()
         calls.clear()
+        returnedRowCounts.clear()
     }
 
     fun assertNoLostAssertions() {
@@ -372,6 +380,10 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
         val step = when {
+            observeActivationQueries && sql == DELIVERY_AUTHENTICATE -> "activation-authenticate"
+
+            observeActivationQueries && sql == DELIVERY_GATES -> "activation-gates"
+
             observeDeliveryQueries && sql == DELIVERY_AUTHENTICATE -> "delivery-authenticate"
 
             observeDeliveryQueries && sql == DELIVERY_GATES -> "delivery-gates"
@@ -383,9 +395,12 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
             else -> step(sql, arguments)
         }
-        calls.add(CatalogSignerRotationSqlCall(phase, step, arguments))
+        val call = CatalogSignerRotationSqlCall(phase, step, arguments)
+        calls.add(call)
         beforeSql(step)
-        action().also {
+        action().also { result ->
+            // Count the unchanged real query result only; never alter a row, mapper, holder or accepted history.
+            if (observeActivationQueries && result is List<*>) returnedRowCounts[call] = result.size
             if (step == "catalog") assertCatalogLock(holder.connection)
             afterSql(step)
         }
@@ -406,6 +421,11 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_COMPLETE,
+        PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PROJECT,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
         -> true
@@ -470,7 +490,7 @@ internal class CatalogSignerRotationProbeJdbc(private val coordinator: CatalogCo
 
         WRITE_GENESIS_INITIAL_CONTROL -> "genesis-initial"
 
-        else -> finalizationStep(sql) ?: when {
+        else -> signerRotationActivationSqlStep(sql) ?: finalizationStep(sql) ?: when {
             sql.contains("FROM complaint_capacity_counters") -> "counters"
             sql.contains("UPDATE complaint_capacity_counters") -> "charge:${arguments[3]}"
             else -> error("Unexpected signer rotation/lease SQL.")

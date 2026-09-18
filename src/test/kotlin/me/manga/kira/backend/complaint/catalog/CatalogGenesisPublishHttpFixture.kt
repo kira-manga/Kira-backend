@@ -22,17 +22,24 @@ import java.time.ZoneOffset
 import java.util.Base64
 import java.util.concurrent.atomic.AtomicReference
 
-/** Raw SDK transport, now also with one retained G1 predecessor for fixed2. Published bytes come from the actual PUT call. */
+/** Raw SDK transport with retained genuine G1/optional overlap2 predecessors. New tail bytes come only from the actual PUT call. */
 internal class CatalogGenesisPublishHttpFixture(
     private val envelope: ByteArray,
     createdAt: Long,
     predecessorBytes: ByteArray? = null,
     private val predecessorRetainUntil: Long? = null,
+    overlapBytes: ByteArray? = null,
+    private val overlapRetainUntil: Long? = null,
 ) {
     private val predecessor = predecessorBytes?.copyOf()
-    private val generation = if (predecessor == null) 1L else 2L
+    private val overlap = overlapBytes?.copyOf()
+    private val generation = if (overlap != null) 3L else if (predecessor != null) 2L else 1L
     private val objectKey = CatalogReadbackProtocol.key(generation)
-    private val publishedVersion = if (generation == 1L) VERSION else OVERLAP2_VERSION
+    private val publishedVersion = when (generation) {
+        1L -> VERSION
+        2L -> OVERLAP2_VERSION
+        else -> ACTIVATION3_VERSION
+    }
     val put = S3CatalogReadbackFixture()
     val read = S3CatalogReadbackFixture()
     val bodies = mutableListOf<ByteArray>()
@@ -59,6 +66,7 @@ internal class CatalogGenesisPublishHttpFixture(
 
     init {
         check((predecessor == null) == (predecessorRetainUntil == null))
+        check((overlap == null) == (overlapRetainUntil == null) && (overlap == null || predecessor != null))
         put.respond = { request -> preserveAssertions { putReply(request).observeLifecycle() } }
         read.respond = { request -> preserveAssertions { readReply(request).observeLifecycle().apply { beforeCall = ::connectionFreeObservation } } }
     }
@@ -156,8 +164,9 @@ internal class CatalogGenesisPublishHttpFixture(
             val previous = predecessor?.let {
                 CatalogListedVersion(CatalogReadbackProtocol.key(1), S3CatalogReadbackFixture.VERSION, it.size.toLong())
             }
+            val second = overlap?.let { CatalogListedVersion(CatalogReadbackProtocol.key(2), OVERLAP2_VERSION, it.size.toLong()) }
             val listed = version?.let { CatalogListedVersion(objectKey, it, bytes(location).size.toLong()) }
-            val versions = listOfNotNull(previous, listed).toMutableList()
+            val versions = listOfNotNull(previous, second, listed).toMutableList()
             if (duplicatePrimary && location.role == "PRIMARY") versions.add(checkNotNull(listed).copy(versionId = "conflicting-second-version"))
             val marker = if (deleteMarkerRole == location.role) {
                 "<DeleteMarker><Key>$objectKey</Key><VersionId>synthetic-delete-marker</VersionId></DeleteMarker>"
@@ -186,6 +195,13 @@ internal class CatalogGenesisPublishHttpFixture(
             assertEquals(S3CatalogReadbackFixture.VERSION, request.firstMatchingRawQueryParameter("versionId").orElseThrow())
             return read.getReply(CatalogGetRequest(location, CatalogReadbackProtocol.key(1), S3CatalogReadbackFixture.VERSION), predecessor).apply {
                 val retention = Instant.ofEpochSecond(checkNotNull(predecessorRetainUntil)).toString()
+                headers = headers + ("x-amz-object-lock-retain-until-date" to listOf(retention))
+            }
+        }
+        if (overlap != null && request.encodedPath() == "/${location.bucket}/${CatalogReadbackProtocol.key(2)}") {
+            assertEquals(OVERLAP2_VERSION, request.firstMatchingRawQueryParameter("versionId").orElseThrow())
+            return read.getReply(CatalogGetRequest(location, CatalogReadbackProtocol.key(2), OVERLAP2_VERSION), overlap).apply {
+                val retention = Instant.ofEpochSecond(checkNotNull(overlapRetainUntil)).toString()
                 headers = headers + ("x-amz-object-lock-retain-until-date" to listOf(retention))
             }
         }
@@ -222,6 +238,7 @@ internal class CatalogGenesisPublishHttpFixture(
     companion object {
         const val VERSION = "synthetic-g1-published-version"
         const val OVERLAP2_VERSION = "synthetic-overlap2-published-version"
+        const val ACTIVATION3_VERSION = "synthetic-activation3-published-version"
         val PUT_CREDENTIALS: AwsSessionCredentials =
             AwsSessionCredentials.create("SYNTHETICPUBLISHKEY", "synthetic-publish-secret", "synthetic-publish-session")
 

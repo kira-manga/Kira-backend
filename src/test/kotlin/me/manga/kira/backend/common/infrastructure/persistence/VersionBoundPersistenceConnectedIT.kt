@@ -4,6 +4,11 @@ import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCliCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisTargetFinalizeCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationActivationCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationActivationCommitStage
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationActivationContinuationCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationActivationRecoveryCases
+import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationActivationRefusalCases
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationCleanupCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationColdCommitCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationColdRecoveryCases
@@ -39,6 +44,7 @@ import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
+import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationActivation
 import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationDelivery
 import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogSignerRotationInitialAuthor
@@ -626,6 +632,53 @@ class VersionBoundPersistenceConnectedIT {
                 withCatalogSignerRotationDelivery(tls) { CatalogSignerRotationColdRecoveryRefusalCases(it).refuses(cut) }
             }
         }
+    }
+
+    @Test
+    fun `fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease`() = withFixture { tls ->
+        withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationCases(it).producesFromProjectedOverlap() }
+    }
+
+    @Test
+    fun `fixed activation3 lost PUT ACK lag and retained signature UNKNOWN recover without another Sign or PUT`() {
+        withFixture { tls ->
+            withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationCases(it).lostAcknowledgementAndLag() }
+        }
+        withFixture { tls ->
+            withCatalogSignerRotationActivation(tls) {
+                CatalogSignerRotationActivationRecoveryCases(it).retainedSignaturePersistsWithoutAnotherSignOrPut()
+            }
+        }
+    }
+
+    @Test
+    fun `fixed activation3 COMPLETE and PROJECT gaps reconcile actual state without repairing old acquisition outcomes`() {
+        val stages = listOf(CatalogSignerRotationActivationCommitStage.COMPLETE, CatalogSignerRotationActivationCommitStage.PROJECT)
+        for (stage in stages) {
+            for (cut in CatalogSignerRotationColdCommitCut.entries) {
+                withFixture { tls ->
+                    withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationRecoveryCases(it).completeOrProjectGap(stage, cut) }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `fixed activation3 rejects wrong predecessor signer policy control drift and extra bounded history`() {
+        withFixture { tls ->
+            withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationRefusalCases(it).wrongPredecessorAndSignerPolicy() }
+        }
+        withFixture { tls ->
+            withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationRefusalCases(it).independentLeaseOwnerAndPendingTokenDrift() }
+        }
+        withFixture { tls ->
+            withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationRefusalCases(it).boundedHistoryRejectsExtraProjectedFourthRow() }
+        }
+    }
+
+    @Test
+    fun `fixed activation3 known unattempted PREPARE uses one same process witness new lease and no recharge`() = withFixture { tls ->
+        withCatalogSignerRotationActivation(tls) { CatalogSignerRotationActivationContinuationCases(it).knownUnattemptedSameProcessOnly() }
     }
 
     @Test
