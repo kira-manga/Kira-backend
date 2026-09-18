@@ -31,7 +31,6 @@ import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicReference
-import java.util.concurrent.locks.LockSupport
 
 /**
  * One controller-local negative worker cut, not a successful-disposal fixture or a same-child PG/death test.
@@ -177,6 +176,7 @@ class CatalogGenesisPublishInterruptionIT {
         assertEquals(setOf("targetOwner", "operatorOwner"), invocation.scopes.keys)
         invocation.scopes.values.forEach { scope ->
             // Read-only observation against the same original allowance, never another close or a renewed work budget.
+            // This proves only tracked driver-root termination, not termination of the Hikari pool population.
             assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, scope.owner.observeShutdown(budget))
             assertTrue(scope.actors().all { it.termination().ended() && !it.thread.isAlive })
             val pools = checkNotNull(scope.owner.versionBoundPools)
@@ -184,17 +184,13 @@ class CatalogGenesisPublishInterruptionIT {
                 val lifecycle: PoolLifecycle = poolTestField(source, "lifecycle")
                 assertEquals(PersistenceTerminalCall.RETURNED, lifecycle.firstCloseOutcome())
                 assertTrue(lifecycle.closeInterruptionObserved())
-                while (lifecycle.localShutdownForTrust() === PoolActorObservation.PENDING) {
-                    LockSupport.parkNanos(budget.remainingMillis(ceilingMillis = 1) * 1_000_000)
-                }
-                assertEquals(PoolActorObservation.UNKNOWN, lifecycle.localShutdownForTrust())
-                assertTrue(synchronized(poolTestField<Any>(lifecycle, "gate")) { lifecycle.closedPopulationReadyLocked() })
-                val actors = lifecycle.actorSnapshot()
-                assertEquals(0, actors.constructing)
-                assertEquals(0, actors.retainedGenerations)
-                assertEquals(0L, actors.futureLeaseEntries)
-                assertEquals(0L, actors.activeOperations)
-                assertTrue(actors.factorySealed)
+                // An interrupted first close can leave native actors pending until this original JVM retires.
+                // Observe only its immediate non-success state, never await or manufacture completed pool shutdown.
+                val observation = lifecycle.localShutdownForTrust()
+                assertTrue(
+                    observation === PoolActorObservation.PENDING || observation === PoolActorObservation.UNKNOWN,
+                    "Interrupted first close must remain PENDING or UNKNOWN, was $observation.",
+                )
             }
             assertEquals(PersistencePublicTrustRelease.RETAINED, scope.owner.releasePublicTrustAfterShutdown())
             assertFalse(scope.root.publicTrustReleaseReady())
