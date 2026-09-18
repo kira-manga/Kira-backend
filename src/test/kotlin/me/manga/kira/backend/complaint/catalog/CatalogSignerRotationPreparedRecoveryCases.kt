@@ -51,6 +51,8 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
     private val core = CatalogSignerRotationFreezeCases(f)
 
     fun freshBothReturnedRecovery(identicalSql: Boolean) {
+        // arguments() detaches all hash buffers; capture full B before the original graph is retired.
+        val historicalBindingArguments = f.campaign.binding.arguments().toList()
         val prefix = preparedPrefix(identicalSql, relinquish = identicalSql)
         val control = nonLeaseControl()
         val genesis = core.genesisJson()
@@ -79,7 +81,7 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
             fresh.assertReleased(original)
             fresh.assertCompletedPhases(original)
             fresh.readback.assertCompletedReadbacks(2)
-            assertNewLease(fresh, beforeLease, beforeTime, afterTime)
+            assertNewLease(fresh, historicalBindingArguments, beforeLease, beforeTime, afterTime)
             assertEquals(if (identicalSql) 0 else 1, fresh.jdbc.steps.count { it == "signature" })
             if (identicalSql) {
                 assertEquals(rowVersion, core.mutationRowVersion())
@@ -380,7 +382,13 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
         assertEquals(0L, f.clock.extraNanos)
     }
 
-    private fun assertNewLease(fresh: CatalogSignerRotationPreparedRecoveryFixture, before: Map<String, Any?>, lower: Instant, upper: Instant) {
+    private fun assertNewLease(
+        fresh: CatalogSignerRotationPreparedRecoveryFixture,
+        historicalBindingArguments: List<Any?>,
+        before: Map<String, Any?>,
+        lower: Instant,
+        upper: Instant,
+    ) {
         val actual = leaseRow()
         val owner = actual["lease_owner"] as UUID
         val token = actual["lease_token"] as Long
@@ -391,12 +399,12 @@ internal class CatalogSignerRotationPreparedRecoveryCases(private val f: Catalog
         assertEquals(Duration.ofSeconds(30), Duration.between(sampled, (actual["lease_expires_at"] as Timestamp).toInstant()))
         val acquire = fresh.jdbc.calls.single { it.step == "lease-acquire" }
         core.assertArguments(
-            listOf(owner) + f.campaign.binding.arguments().toList() +
+            listOf(owner) + historicalBindingArguments +
                 listOf(before["lease_owner"], before["lease_token"], before["lease_expires_at"], before["updated_at"]),
             acquire.arguments,
         )
         fresh.jdbc.calls.filter { it.step in setOf("control", "current-lease") }.forEach {
-            core.assertArguments(f.campaign.binding.arguments().toList() + listOf(owner, token), it.arguments)
+            core.assertArguments(historicalBindingArguments + listOf(owner, token), it.arguments)
         }
     }
 
