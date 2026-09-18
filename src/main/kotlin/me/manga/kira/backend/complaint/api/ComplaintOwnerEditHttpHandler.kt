@@ -56,7 +56,8 @@ internal class ComplaintOwnerEditHttpHandler(
             problem(request, response, failure.failure, if (failure.failure == ComplaintOwnerOperationFailure.IN_PROGRESS) 1 else null)
         } catch (failure: ComplaintAdmissionRejected) {
             problem(
-                request, response,
+                request,
+                response,
                 if (failure.status == 429) ComplaintOwnerOperationFailure.RATE_LIMITED else ComplaintOwnerOperationFailure.UNAVAILABLE,
                 failure.retryAfterSeconds,
             )
@@ -131,7 +132,10 @@ internal class ComplaintOwnerEditHttpHandler(
         val values = request.getHeaders(name)
         if (!values.hasMoreElements()) return null
         val value = values.nextElement()
-        if (values.hasMoreElements() || value.length > maximum || value.any { it.code !in 32..126 && it != '\t' }) {
+        if (values.hasMoreElements() || value.length > maximum) {
+            rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
+        }
+        if (value.any { it.code !in 32..126 && it != '\t' }) {
             rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
         }
         return value

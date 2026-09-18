@@ -83,7 +83,11 @@ class ComplaintOwnerEditHttpTest {
         for (code in ComplaintOwnerEditRejection.entries) {
             val f = Fixture().apply { receipt = ComplaintOwnerEditReceipt.Rejected(code) }
             val direct = f.request(input())
-            val title = when (code.status) { 404 -> "Not Found"; 412 -> "Precondition Failed"; else -> "Conflict" }
+            val title = when (code.status) {
+                404 -> "Not Found"
+                412 -> "Precondition Failed"
+                else -> "Conflict"
+            }
             assertEquals(code.status, direct.status)
             assertEquals(
                 """{"type":"about:blank","title":"$title","status":${code.status},"errors":[{"code":"${code.name}","message":"Complaint request refused."}]}""",
@@ -118,10 +122,13 @@ class ComplaintOwnerEditHttpTest {
             assertTrue(f.calls.isEmpty())
         }
         val invalidStatus = listOf(
-            statusBody.replace("[\"$id\"]", "[]"), statusBody.replace("[\"$id\"]", "[\"$id\",\"$key\"]"),
-            statusBody.replace("OWNER_EDIT", "owner_edit"), statusBody.replace("OWNER_EDIT", "ADMIN_EDIT"),
+            statusBody.replace("[\"$id\"]", "[]"),
+            statusBody.replace("[\"$id\"]", "[\"$id\",\"$key\"]"),
+            statusBody.replace("OWNER_EDIT", "owner_edit"),
+            statusBody.replace("OWNER_EDIT", "ADMIN_EDIT"),
             statusBody.replace("\"fingerprint\":", "\"body\":\"private\",\"fingerprint\":"),
-            statusBody.replace(id.toString(), id.toString().uppercase()), "$statusBody true",
+            statusBody.replace(id.toString(), id.toString().uppercase()),
+            "$statusBody true",
         )
         for (body in invalidStatus) {
             val f = Fixture()
@@ -138,8 +145,14 @@ class ComplaintOwnerEditHttpTest {
         val cases = listOf(
             input().apply { removeHeader("If-Match") } to 428,
             input().apply { addHeader("If-Match", "\"complaint-$id-v7\"") } to 412,
-            input().apply { removeHeader("If-Match"); addHeader("If-Match", "*") } to 412,
-            input().apply { removeHeader("If-Match"); addHeader("If-Match", "x".repeat(257)) } to 412,
+            input().apply {
+                removeHeader("If-Match")
+                addHeader("If-Match", "*")
+            } to 412,
+            input().apply {
+                removeHeader("If-Match")
+                addHeader("If-Match", "x".repeat(257))
+            } to 412,
             input().apply { removeHeader("Authorization") } to 401,
             input().apply { addHeader("Authorization", "Bearer other") } to 400,
             input().apply { removeHeader("X-Kira-Idempotency-Key") } to 400,
@@ -150,7 +163,10 @@ class ComplaintOwnerEditHttpTest {
             input().apply { requestURI = path.replace(id.toString(), id.toString().uppercase()) } to 404,
             input().apply { contentType = "text/plain" } to 415,
             input().apply { addHeader("Content-Encoding", "gzip") } to 415,
-            input().apply { addHeader("Content-Length", "1"); addHeader("Transfer-Encoding", "chunked") } to 400,
+            input().apply {
+                addHeader("Content-Length", "1")
+                addHeader("Transfer-Encoding", "chunked")
+            } to 400,
             input().apply { addHeader("Content-Length", "1") } to 400,
             input(body = ByteArray(16 * 1024 + 1) { 32 }) to 413,
             input(STATUS).apply { addHeader("If-Match", "\"complaint-$id-v7\"") } to 400,
@@ -162,7 +178,15 @@ class ComplaintOwnerEditHttpTest {
             assertTrue(f.calls.isEmpty())
         }
         val f = Fixture()
-        assertEquals(200, f.request(input().apply { contextPath = "/kira"; requestURI = "/kira$path" }).status)
+        assertEquals(
+            200,
+            f.request(
+                input().apply {
+                    contextPath = "/kira"
+                    requestURI = "/kira$path"
+                },
+            ).status,
+        )
     }
 
     @Test
@@ -183,8 +207,13 @@ class ComplaintOwnerEditHttpTest {
             ComplaintOwnerCreateHttpHandler(f.createService, f.ingress, ComplaintOwnerOperationResponse(), f.edit)
         }
         fun factory(create: ComplaintOwnerCreateHttpHandler, edit: ComplaintOwnerEditHttpHandler?) = ComplaintInstallationSecurityChainFactory(
-            f.bridge, mock(ComplaintInstallationBearerAuthenticator::class.java), mock(ComplaintInstallationHttpHandler::class.java),
-            mock(ComplaintInstallationMeHttpHandler::class.java), mock(ComplaintOwnerHistoryHttpHandler::class.java), create, edit = edit,
+            f.bridge,
+            mock(ComplaintInstallationBearerAuthenticator::class.java),
+            mock(ComplaintInstallationHttpHandler::class.java),
+            mock(ComplaintInstallationMeHttpHandler::class.java),
+            mock(ComplaintOwnerHistoryHttpHandler::class.java),
+            create,
+            edit = edit,
         )
         factory(noEdit, null)
         factory(f.create, f.edit)
@@ -231,17 +260,27 @@ class ComplaintOwnerEditHttpTest {
         assertEquals(200, f.request(input()).status)
     }
 
-    private fun input(selectedPath: String = path, body: ByteArray = (if (selectedPath == STATUS) statusBody else editBody).toByteArray()): MockHttpServletRequest =
-        MockHttpServletRequest(if (selectedPath == STATUS) "POST" else "PATCH", selectedPath).apply {
-            remoteAddr = "192.0.2.1"
-            contentType = "application/json"
-            addHeader("Authorization", "Bearer synthetic")
-            if (selectedPath != STATUS) {
-                addHeader("X-Kira-Idempotency-Key", key.toString())
-                addHeader("If-Match", "\"complaint-$id-v7\"")
+    private fun input(
+        selectedPath: String = path,
+        body: ByteArray = (
+            if (selectedPath ==
+                STATUS
+            ) {
+                statusBody
+            } else {
+                editBody
             }
-            setContent(body)
+            ).toByteArray(),
+    ): MockHttpServletRequest = MockHttpServletRequest(if (selectedPath == STATUS) "POST" else "PATCH", selectedPath).apply {
+        remoteAddr = "192.0.2.1"
+        contentType = "application/json"
+        addHeader("Authorization", "Bearer synthetic")
+        if (selectedPath != STATUS) {
+            addHeader("X-Kira-Idempotency-Key", key.toString())
+            addHeader("If-Match", "\"complaint-$id-v7\"")
         }
+        setContent(body)
+    }
 
     private fun assertEnvelope(response: MockHttpServletResponse) {
         assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
@@ -261,42 +300,56 @@ class ComplaintOwnerEditHttpTest {
         var edited: ComplaintOwnerEditInput? = null
         var queried: ComplaintOwnerEditStatusQuery? = null
         var expectedContext: ComplaintOwnerOperationContext? = null
-        val edit = ComplaintOwnerEditHttpHandler(ComplaintOwnerEditService(object : ComplaintOwnerEditPort {
-            override fun edit(context: ComplaintOwnerOperationContext, bearer: String, input: ComplaintOwnerEditInput): ComplaintOwnerEditReceipt {
-                expectedContext?.let { assertSame(it, context) }
-                assertEquals("synthetic", bearer)
-                calls.add("edit")
-                edited = input
-                return receipt
-            }
+        val edit = ComplaintOwnerEditHttpHandler(
+            ComplaintOwnerEditService(object : ComplaintOwnerEditPort {
+                override fun edit(context: ComplaintOwnerOperationContext, bearer: String, input: ComplaintOwnerEditInput): ComplaintOwnerEditReceipt {
+                    expectedContext?.let { assertSame(it, context) }
+                    assertEquals("synthetic", bearer)
+                    calls.add("edit")
+                    edited = input
+                    return receipt
+                }
 
-            override fun status(context: ComplaintOwnerOperationContext, bearer: String, query: ComplaintOwnerEditStatusQuery): ComplaintOwnerEditReceipt {
-                expectedContext?.let { assertSame(it, context) }
-                assertEquals("synthetic", bearer)
-                calls.add("status")
-                queried = query
-                return receipt
-            }
-        }), ingress, responses)
+                override fun status(context: ComplaintOwnerOperationContext, bearer: String, query: ComplaintOwnerEditStatusQuery): ComplaintOwnerEditReceipt {
+                    expectedContext?.let { assertSame(it, context) }
+                    assertEquals("synthetic", bearer)
+                    calls.add("status")
+                    queried = query
+                    return receipt
+                }
+            }),
+            ingress,
+            responses,
+        )
         val createService = ComplaintOwnerCreateService(object : ComplaintOwnerOperationPort {
-            override fun create(context: ComplaintOwnerOperationContext, bearer: String, input: ComplaintOwnerCreateInput): ComplaintOwnerReceipt = error("Edit cannot create")
-            override fun status(context: ComplaintOwnerOperationContext, bearer: String, query: ComplaintOwnerStatusQuery): ComplaintOwnerReceipt = error("Edit cannot enter creation status")
+            override fun create(context: ComplaintOwnerOperationContext, bearer: String, input: ComplaintOwnerCreateInput): ComplaintOwnerReceipt =
+                error("Edit cannot create")
+            override fun status(context: ComplaintOwnerOperationContext, bearer: String, query: ComplaintOwnerStatusQuery): ComplaintOwnerReceipt =
+                error("Edit cannot enter creation status")
         })
         val create = ComplaintOwnerCreateHttpHandler(createService, ingress, responses, edit)
 
         fun request(request: MockHttpServletRequest): MockHttpServletResponse = MockHttpServletResponse().also { response ->
-            bridge.doFilter(request, response, FilterChain { admitted, outgoing ->
-                RequestBodySizeLimitFilter(mapper).doFilter(admitted, outgoing, FilterChain { buffered, selected ->
-                    val actual = buffered as HttpServletRequest
-                    val context = bridge.claimHandler(actual)
-                    expectedContext = context
-                    if (actual.requestURI.removePrefix(actual.contextPath) == STATUS) {
-                        create.handleWithinIngress(actual, selected as HttpServletResponse, context)
-                    } else {
-                        edit.handleWithinIngress(actual, selected as HttpServletResponse, context)
-                    }
-                })
-            })
+            bridge.doFilter(
+                request,
+                response,
+                FilterChain { admitted, outgoing ->
+                    RequestBodySizeLimitFilter(mapper).doFilter(
+                        admitted,
+                        outgoing,
+                        FilterChain { buffered, selected ->
+                            val actual = buffered as HttpServletRequest
+                            val context = bridge.claimHandler(actual)
+                            expectedContext = context
+                            if (actual.requestURI.removePrefix(actual.contextPath) == STATUS) {
+                                create.handleWithinIngress(actual, selected as HttpServletResponse, context)
+                            } else {
+                                edit.handleWithinIngress(actual, selected as HttpServletResponse, context)
+                            }
+                        },
+                    )
+                },
+            )
         }
     }
 

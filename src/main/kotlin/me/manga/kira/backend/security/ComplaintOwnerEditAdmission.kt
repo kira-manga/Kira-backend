@@ -30,12 +30,7 @@ internal class ComplaintOwnerEditAdmissionStore(
         require(members.memberLimit == policy.memberLimit && members.pruneBatch == policy.pruneBatch) { INVALID_ADMISSION_CONFIGURATION }
     }
 
-    fun admit(
-        memberKeys: List<ComplaintAdmissionBucketKey>,
-        actorKeys: List<ComplaintAdmissionBucketKey>,
-        quotas: ComplaintAdmissionWindowStore,
-        now: Long,
-    ) {
+    fun admit(memberKeys: List<ComplaintAdmissionBucketKey>, actorKeys: List<ComplaintAdmissionBucketKey>, quotas: ComplaintAdmissionWindowStore, now: Long) {
         check(memberKeys.size in 1..2 && memberKeys.size == actorKeys.size)
         members.admit(memberKeys, actorKeys.map { ComplaintAdmissionCharge(it, 60) }, quotas, now)
     }

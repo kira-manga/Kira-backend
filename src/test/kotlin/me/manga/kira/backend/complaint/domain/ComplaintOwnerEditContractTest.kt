@@ -89,9 +89,16 @@ class ComplaintOwnerEditContractTest {
         assertEquals("WSE34gdD0_m4v2wA7W7aWbAv8jaxpT1ZIivnhU3Vzcc", ComplaintOwnerEditFingerprint.of(maximum).encoded)
         assertEquals(
             ComplaintOwnerEditFingerprint.of(ordinary).encoded,
-            ComplaintOwnerEditFingerprint.of(ComplaintOwnerEditRequest.normalize(scope, input("Synthetic edit", "Line 1\nLine 2", selectedKey = UUID.randomUUID()))).encoded,
+            ComplaintOwnerEditFingerprint.of(
+                ComplaintOwnerEditRequest.normalize(scope, input("Synthetic edit", "Line 1\nLine 2", selectedKey = UUID.randomUUID())),
+            ).encoded,
         )
-        for (changed in listOf(request("Other", ordinary.body), request(null, ordinary.body), request(ordinary.subject, "Other"), request(ordinary.subject, ordinary.body, 8))) {
+        for (changed in listOf(
+            request("Other", ordinary.body),
+            request(null, ordinary.body),
+            request(ordinary.subject, "Other"),
+            request(ordinary.subject, ordinary.body, 8),
+        )) {
             assertNotEquals(ComplaintOwnerEditFingerprint.of(ordinary).encoded, ComplaintOwnerEditFingerprint.of(changed).encoded)
         }
         assertNotEquals(
@@ -139,7 +146,13 @@ class ComplaintOwnerEditContractTest {
         assertEquals("\"complaint-$target-v${Long.MAX_VALUE}\"", receipt.etag)
         for (version in listOf(-1L, 0L)) assertThrows<IllegalArgumentException> { ComplaintOwnerEditReceipt.Applied(target, version) }
         assertEquals(
-            mapOf("COMPLAINT_NOT_FOUND" to 404, "COMPLAINT_INVALID_TRANSITION" to 409, "COMPLAINT_NO_CHANGE" to 409, "COMPLAINT_DELETION_PENDING" to 409, "PRECONDITION_FAILED" to 412),
+            mapOf(
+                "COMPLAINT_NOT_FOUND" to 404,
+                "COMPLAINT_INVALID_TRANSITION" to 409,
+                "COMPLAINT_NO_CHANGE" to 409,
+                "COMPLAINT_DELETION_PENDING" to 409,
+                "PRECONDITION_FAILED" to 412,
+            ),
             ComplaintOwnerEditRejection.entries.associate { it.name to it.status },
         )
         val expected = LongArray(22).also {
@@ -155,14 +168,28 @@ class ComplaintOwnerEditContractTest {
     }
 
     private fun input(subject: String?, body: String, version: Long = 7, selectedKey: UUID = key) = ComplaintOwnerEditInput(
-        target, selectedKey, subject, body, ComplaintOwnerEditPrecondition.parse(target, "\"complaint-$target-v$version\""),
+        target,
+        selectedKey,
+        subject,
+        body,
+        ComplaintOwnerEditPrecondition.parse(target, "\"complaint-$target-v$version\""),
     )
 
     private fun request(subject: String?, body: String, version: Long = 7) = ComplaintOwnerEditRequest.normalize(scope, input(subject, body, version))
 
     private companion object {
         // Python struct.pack('>i', UTF8 length), -1 null; independently constructed before the implementation tests.
-        const val ORDINARY_HEX = "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000550415443480000001f2f6170692f76312f636f6d706c61696e74732f7b69647d2f636f6e74656e740000000a4f574e45525f454449540000002432323232323232322d323232322d343232322d383232322d323232323232323232323232000000010000002431323365343536372d653839622d353264332d613435362d3432363631343137343030300000000e53796e74686574696320656469740000000d4c696e6520310a4c696e6520320000003322636f6d706c61696e742d31323365343536372d653839622d353264332d613435362d3432363631343137343030302d763722"
-        const val BODY_ONLY_HEX = "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000550415443480000001f2f6170692f76312f636f6d706c61696e74732f7b69647d2f636f6e74656e740000000a4f574e45525f454449540000002432323232323232322d323232322d343232322d383232322d323232323232323232323232000000010000002431323365343536372d653839622d353264332d613435362d343236363134313734303030ffffffff0000000c4e6f74696365207265706c790000003322636f6d706c61696e742d31323365343536372d653839622d353264332d613435362d3432363631343137343030302d763722"
+        const val ORDINARY_HEX =
+            "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000550415443480000001f2f" +
+                "6170692f76312f636f6d706c61696e74732f7b69647d2f636f6e74656e740000000a4f574e45525f45444954000000243232323232323232" +
+                "2d323232322d343232322d383232322d323232323232323232323232000000010000002431323365343536372d653839622d353264332d61" +
+                "3435362d3432363631343137343030300000000e53796e74686574696320656469740000000d4c696e6520310a4c696e6520320000003322" +
+                "636f6d706c61696e742d31323365343536372d653839622d353264332d613435362d3432363631343137343030302d763722"
+        const val BODY_ONLY_HEX =
+            "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000550415443480000001f2f" +
+                "6170692f76312f636f6d706c61696e74732f7b69647d2f636f6e74656e740000000a4f574e45525f45444954000000243232323232323232" +
+                "2d323232322d343232322d383232322d323232323232323232323232000000010000002431323365343536372d653839622d353264332d61" +
+                "3435362d343236363134313734303030ffffffff0000000c4e6f74696365207265706c790000003322636f6d706c61696e742d3132336534" +
+                "3536372d653839622d353264332d613435362d3432363631343137343030302d763722"
     }
 }

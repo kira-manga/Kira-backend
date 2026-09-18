@@ -34,10 +34,15 @@ internal class OwnerEditFixture(val base: ComplaintOwnerCreateFixture, val ingre
     val store = JdbcComplaintOwnerEditStore(base.jdbc, base.capacity, base.base.service, base.run.desired)
     val phases = ComplaintOwnerEditPhaseExecutor(base.base.ordinary.ownership, store)
     val handler = ComplaintOwnerEditHttpHandler(
-        ComplaintOwnerEditService(ComplaintOwnerEditAdapter(base.run.scope, base.jwt, phases, ingress)), ingress, responses,
+        ComplaintOwnerEditService(ComplaintOwnerEditAdapter(base.run.scope, base.jwt, phases, ingress)),
+        ingress,
+        responses,
     )
     val creations = ComplaintOwnerCreateHttpHandler(
-        ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(base.run.scope, base.jwt, base.phases, ingress)), ingress, responses, handler,
+        ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(base.run.scope, base.jwt, base.phases, ingress)),
+        ingress,
+        responses,
+        handler,
     )
 
     fun attempt(
@@ -52,7 +57,9 @@ internal class OwnerEditFixture(val base: ComplaintOwnerCreateFixture, val ingre
     }
 
     fun input(attempt: OwnerEditFixtureAttempt, bearer: String = base.token): MockHttpServletRequest = request(
-        "PATCH", "/api/v1/complaints/${attempt.id}/content", bearer,
+        "PATCH",
+        "/api/v1/complaints/${attempt.id}/content",
+        bearer,
         linkedMapOf<String, Any?>().apply {
             if (attempt.raw.subject != null) put("subject", attempt.raw.subject)
             put("body", attempt.raw.body)
@@ -68,7 +75,9 @@ internal class OwnerEditFixture(val base: ComplaintOwnerCreateFixture, val ingre
         targets: List<UUID> = listOf(attempt.id),
         fingerprint: String = ComplaintOwnerEditFingerprint.of(attempt.candidate.request).encoded,
     ): MockHttpServletRequest = request(
-        "POST", ComplaintOwnerCreateHttpHandler.STATUS, bearer,
+        "POST",
+        ComplaintOwnerCreateHttpHandler.STATUS,
+        bearer,
         linkedMapOf("operation" to "OWNER_EDIT", "key" to attempt.key.toString(), "targetIds" to targets.map(UUID::toString), "fingerprint" to fingerprint),
     )
 
@@ -77,14 +86,17 @@ internal class OwnerEditFixture(val base: ComplaintOwnerCreateFixture, val ingre
         if (request.requestURI == ComplaintOwnerCreateHttpHandler.STATUS) creations.handleRequest(request, it) else handler.handleRequest(request, it)
     }
 
-    fun edit(attempt: OwnerEditFixtureAttempt, bearer: String = base.token): MockHttpServletResponse = send(input(attempt, bearer)).also { base.assertReleased() }
+    fun edit(attempt: OwnerEditFixtureAttempt, bearer: String = base.token): MockHttpServletResponse = send(input(attempt, bearer)).also {
+        base.assertReleased()
+    }
 
     fun status(attempt: OwnerEditFixtureAttempt): MockHttpServletResponse = send(statusInput(attempt)).also { base.assertReleased() }
 
-    private fun request(method: String, path: String, bearer: String, value: Map<String, Any?>): MockHttpServletRequest = MockHttpServletRequest(method, path).apply {
-        remoteAddr = "192.0.2.1"
-        contentType = "application/json"
-        addHeader("Authorization", "Bearer $bearer")
-        setContent(mapper.writeValueAsBytes(value))
-    }
+    private fun request(method: String, path: String, bearer: String, value: Map<String, Any?>): MockHttpServletRequest =
+        MockHttpServletRequest(method, path).apply {
+            remoteAddr = "192.0.2.1"
+            contentType = "application/json"
+            addHeader("Authorization", "Bearer $bearer")
+            setContent(mapper.writeValueAsBytes(value))
+        }
 }

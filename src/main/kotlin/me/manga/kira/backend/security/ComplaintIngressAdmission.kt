@@ -6,8 +6,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
-import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
@@ -482,9 +482,10 @@ internal class ComplaintIngressAdmission(
 
     private fun requireEditState(handoff: AdmittedEdit) {
         val state = state(handoff.context)
-        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_EDIT || !state.consumed ||
-            state.ownerEditIdentity !== handoff.identity || state.admission !== handoff.identity
-        ) {
+        if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_EDIT || !state.consumed) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        if (state.ownerEditIdentity !== handoff.identity || state.admission !== handoff.identity) {
             refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
         }
         requireLifetime(state, advanceTime(System.nanoTime()))
@@ -600,7 +601,17 @@ internal class ComplaintIngressAdmission(
         var ownerDeleteAllIdentity: Any? = null
     }
 
-    private enum class SemanticOperation { SESSION, BOOTSTRAP, ENROLLMENT, OWNER_HISTORY, OWNER_STATUS, OWNER_CREATE, OWNER_REPLY, OWNER_EDIT, OWNER_DELETE_ALL }
+    private enum class SemanticOperation {
+        SESSION,
+        BOOTSTRAP,
+        ENROLLMENT,
+        OWNER_HISTORY,
+        OWNER_STATUS,
+        OWNER_CREATE,
+        OWNER_REPLY,
+        OWNER_EDIT,
+        OWNER_DELETE_ALL,
+    }
 
     private fun creationSemantic(operation: ComplaintOwnerCreationOperation): SemanticOperation = when (operation) {
         ComplaintOwnerCreationOperation.OWNER_CREATE -> SemanticOperation.OWNER_CREATE

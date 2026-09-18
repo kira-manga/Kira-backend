@@ -32,6 +32,8 @@ import java.nio.charset.StandardCharsets
  */
 class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OncePerRequestFilter() {
 
+    // Preserve fail-fast prebuffer ordering and the distinct owner/installation/generic response paths.
+    @Suppress("CyclomaticComplexMethod", "ReturnCount")
     override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
         val installation = installationBodyRoute(request)
         val owner = ownerBodyRoute(request)
@@ -131,6 +133,8 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         null // Preserve the existing container/firewall malformed-path policy.
     }
 
+    // Each bounded header/framing/media guard must reject before stream acquisition, in this order.
+    @Suppress("CyclomaticComplexMethod", "ReturnCount")
     private fun ownerHeaderFailure(request: HttpServletRequest, route: OwnerBodyRoute): OwnerFailure? {
         if (installationContentHeaders.any { request.getHeaders(it).asSequence().take(2).count() > 1 }) return OwnerFailure.INVALID
         val security = listOf("Authorization" to 4103, "X-Kira-Idempotency-Key" to 36, "X-Kira-Complaint-Contract" to 1)
@@ -145,7 +149,8 @@ class RequestBodySizeLimitFilter(private val objectMapper: ObjectMapper) : OnceP
         if (tags.hasMoreElements()) {
             val tag = tags.nextElement()
             if (route != OwnerBodyRoute.EDIT) return OwnerFailure.INVALID
-            if (tags.hasMoreElements() || tag.length > 256 || tag.any { it.code !in 32..126 && it != '\t' }) return OwnerFailure.PRECONDITION
+            if (tags.hasMoreElements() || tag.length > 256) return OwnerFailure.PRECONDITION
+            if (tag.any { it.code !in 32..126 && it != '\t' }) return OwnerFailure.PRECONDITION
         }
         val rawLength = request.getHeader(HttpHeaders.CONTENT_LENGTH)
         if (rawLength != null && rawLength.length > 64) return OwnerFailure.INVALID

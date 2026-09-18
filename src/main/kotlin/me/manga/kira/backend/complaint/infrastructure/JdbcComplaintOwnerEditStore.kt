@@ -131,8 +131,12 @@ internal class ComplaintOwnerEditOperation private constructor(
 
     private fun observe(): ComplaintOwnerEditObservation {
         val actor = arrayOf<Any?>(
-            identity.installation.id, identity.installation.scope.id, identity.credentialVersion,
-            Timestamp.from(identity.issuedAt), Timestamp.from(identity.expiresAt), desiredHash,
+            identity.installation.id,
+            identity.installation.scope.id,
+            identity.credentialVersion,
+            Timestamp.from(identity.issuedAt),
+            Timestamp.from(identity.expiresAt),
+            desiredHash,
         )
         val selected = tuple
         val arguments = if (selected == null) {
@@ -144,9 +148,12 @@ internal class ComplaintOwnerEditOperation private constructor(
             val platform = row.getString("platform")?.let(ComplaintPlatform::valueOf)
             when {
                 platform == null || selected == null -> ComplaintOwnerEditObservation(platform)
+
                 row.getBoolean("comparable") && !row.getBoolean("tuple_matches") ->
                     ComplaintOwnerEditObservation(platform, failure = ComplaintOwnerOperationFailure.KEY_REUSED)
+
                 !row.getBoolean("visible") -> ComplaintOwnerEditObservation(platform)
+
                 else -> ComplaintOwnerEditObservation(platform, decodeReceipt(row, selected))
             }
         }, *arguments).single()
@@ -239,7 +246,8 @@ internal class ComplaintOwnerEditOperation private constructor(
     }
 
     private fun claim(selected: ComplaintOwnerEditTuple): Boolean = try {
-        jdbc.update(INSERT_CLAIM, selected.installation.id, selected.key, selected.fingerprintBytes(), targetArray(selected), selected.installation.scope.id) == 1
+        jdbc.update(INSERT_CLAIM, selected.installation.id, selected.key, selected.fingerprintBytes(), targetArray(selected), selected.installation.scope.id) ==
+            1
     } catch (failure: DataAccessException) {
         if ((failure.cause as? SQLException)?.sqlState == "55P03") throw ComplaintOwnerClaimWaitTimeout()
         throw failure
@@ -296,7 +304,11 @@ internal class ComplaintOwnerEditOperation private constructor(
         }
         val arguments = outcomeArguments.plus(
             elements = arrayOf<Any?>(
-                selected.installation.id, selected.key, selected.installation.scope.id, targetArray(selected), selected.fingerprintBytes(),
+                selected.installation.id,
+                selected.key,
+                selected.installation.scope.id,
+                targetArray(selected),
+                selected.fingerprintBytes(),
             ),
         )
         check(jdbc.update(if (receipt is ComplaintOwnerEditReceipt.Applied) COMPLETE_APPLIED else COMPLETE_REJECTED, *arguments) == 1)
@@ -402,14 +414,21 @@ internal class ComplaintOwnerEditOperation private constructor(
                     check(row.getString("closure_reason") == null && row.getObject("closure_actor_id") == null && row.getTimestamp("closed_at") == null)
                     null
                 }
+
                 "ADMIN" -> ComplaintClosure.Admin(
-                    checkNotNull(row.getString("closure_reason")), checkNotNull(row.getObject("closure_actor_id", UUID::class.java)),
+                    checkNotNull(row.getString("closure_reason")),
+                    checkNotNull(row.getObject("closure_actor_id", UUID::class.java)),
                     checkNotNull(row.getTimestamp("closed_at")).toInstant(),
                 )
+
                 else -> error("Stored complaint state refused.")
             }
             val state = ComplaintModerationState(
-                kind, ComplaintOwnership.INSTALLATION, ComplaintStatus.valueOf(checkNotNull(row.getString("status"))), row.getLong("version"), closure,
+                kind,
+                ComplaintOwnership.INSTALLATION,
+                ComplaintStatus.valueOf(checkNotNull(row.getString("status"))),
+                row.getLong("version"),
+                closure,
             )
             return Content(state, subject, checkNotNull(row.getString("body")), noticeKey)
         }
@@ -456,7 +475,8 @@ internal class ComplaintOwnerEditOperation private constructor(
             ON CONFLICT (actor_kind, actor_id, idempotency_key) DO NOTHING
         """.trimIndent()
         private const val LOCK_RESERVATION = "SELECT data_scope_id, test_only, state FROM complaint_installation_ids WHERE id = ? FOR UPDATE"
-        private const val LOCK_CREDENTIAL = "SELECT data_scope_id, test_only, state, credential_version, platform FROM app_installations WHERE id = ? FOR UPDATE"
+        private const val LOCK_CREDENTIAL =
+            "SELECT data_scope_id, test_only, state, credential_version, platform FROM app_installations WHERE id = ? FOR UPDATE"
         private const val TOKEN_TIME_SQL = "SELECT clock_timestamp() >= ?::timestamptz - interval '60 seconds' " +
             "AND clock_timestamp() < ?::timestamptz + interval '60 seconds'"
         private const val ELIGIBLE = """

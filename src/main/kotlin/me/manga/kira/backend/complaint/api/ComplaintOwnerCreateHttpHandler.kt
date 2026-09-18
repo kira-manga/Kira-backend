@@ -105,6 +105,7 @@ internal class ComplaintOwnerCreateHttpHandler(
                 if (statusLookup) {
                     when (val query = ComplaintOwnerOperationJson.statusInput(body)) {
                         is ComplaintOwnerStatusInput.Creation -> service.status(context, bearer, query.query)
+
                         is ComplaintOwnerStatusInput.Edit -> {
                             val selected = editStatus ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
                             body.fill(0)

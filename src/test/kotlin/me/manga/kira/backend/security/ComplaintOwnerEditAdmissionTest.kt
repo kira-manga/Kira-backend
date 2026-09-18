@@ -59,12 +59,17 @@ class ComplaintOwnerEditAdmissionTest {
         )
         val members = (listOf(original) + changed).map { ComplaintAdmissionPseudonyms.ownerEditMember(keys, it) }
         assertEquals(members.size, members.toSet().size)
-        assertEquals(members.first(), ComplaintAdmissionPseudonyms.ownerEditMember(keys, editTuple(actor, original.key, original.targetId, original.fingerprintBytes())))
+        assertEquals(
+            members.first(),
+            ComplaintAdmissionPseudonyms.ownerEditMember(keys, editTuple(actor, original.key, original.targetId, original.fingerprintBytes())),
+        )
         val rate = ComplaintAdmissionPseudonyms.ownerEditDeleteActor(keys, actor)
         assertNotEquals(rate, ComplaintAdmissionPseudonyms.ownerCreateActor(keys, actor))
         assertNotEquals(rate, ComplaintAdmissionPseudonyms.ownerDeleteAllActor(keys, actor))
         val parts = listOf(
-            "kira-complaint-admission-v1".toByteArray(), "ACTOR".toByteArray(), "INSTALLATION".toByteArray(),
+            "kira-complaint-admission-v1".toByteArray(),
+            "ACTOR".toByteArray(),
+            "INSTALLATION".toByteArray(),
             ByteBuffer.allocate(16).putLong(actor.id.mostSignificantBits).putLong(actor.id.leastSignificantBits).array(),
             ByteBuffer.allocate(16).putLong(actor.scope.id.mostSignificantBits).putLong(actor.scope.id.leastSignificantBits).array(),
             "OWNER_EDIT_DELETE".toByteArray(),
@@ -119,7 +124,9 @@ class ComplaintOwnerEditAdmissionTest {
         val tuple = editTuple(admissionTestActor(1))
         val phase = Any()
         lateinit var retained: ComplaintAdmittedOwnerEdit
-        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.bindOwnerEdit(object : ComplaintAdmittedOwnerEdit {}, phase) }
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) {
+            ComplaintIngressAdmission.bindOwnerEdit(object : ComplaintAdmittedOwnerEdit {}, phase)
+        }
         ingress.withIngress(historyTestRequest()) { context ->
             ingress.startOwnerEdit(context)
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ingress.admitOwnerEdit(ComplaintIngressContext(), tuple) }
@@ -209,8 +216,14 @@ class ComplaintOwnerEditAdmissionTest {
         }
     }
 
-    private fun editTuple(actor: ScopedInstallationId, key: UUID = UUID.randomUUID(), target: UUID = UUID.randomUUID(), digest: ByteArray = ByteArray(32) { 43 }) =
-        ComplaintOwnerEditTuple(actor, key, target, digest)
+    private fun editTuple(
+        actor: ScopedInstallationId,
+        key: UUID = UUID.randomUUID(),
+        target: UUID = UUID.randomUUID(),
+        digest: ByteArray = ByteArray(32) {
+            43
+        },
+    ) = ComplaintOwnerEditTuple(actor, key, target, digest)
 
     private fun ledger(policy: ComplaintCapacityPolicyV1) = ComplaintCapacityLedger(
         ComplaintCapacityConfiguration.of(policy.digestBytes(), false),
@@ -221,20 +234,29 @@ class ComplaintOwnerEditAdmissionTest {
         private val policy = ownerCreateTestCapacityPolicy()
         val ring = ComplaintAdmissionKeyRing(admissionTestKeys())
         val members = ComplaintMutationAdmissionMembers(limit, prune)
-        val quotas = ComplaintAdmissionWindowStore(4096, 131072, 128, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
+        val quotas =
+            ComplaintAdmissionWindowStore(4096, 131072, 128, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
         private val edits = ComplaintOwnerEditAdmissionStore(ComplaintOwnerEditAdmissionPolicy.Bounded(policy, limit, prune), members)
         private val creates = ComplaintOwnerCreateAdmissionStore(ComplaintOwnerCreateAdmissionPolicy.Bounded(policy, 12, limit, prune), members)
 
         fun edit(tuple: ComplaintOwnerEditTuple, now: Long) {
             val keys = ring.keys()
-            edits.admit(ComplaintAdmissionPseudonyms.ownerEditMember(keys, tuple), ComplaintAdmissionPseudonyms.ownerEditDeleteActor(keys, tuple.installation), quotas, now)
+            edits.admit(
+                ComplaintAdmissionPseudonyms.ownerEditMember(keys, tuple),
+                ComplaintAdmissionPseudonyms.ownerEditDeleteActor(keys, tuple.installation),
+                quotas,
+                now,
+            )
         }
 
         fun create(tuple: ComplaintOwnerOperationTuple, now: Long) {
             val keys = ring.keys()
             creates.admit(
-                ComplaintAdmissionPseudonyms.ownerCreateMember(keys, tuple), ComplaintAdmissionPseudonyms.ownerCreateActor(keys, tuple.installation),
-                ComplaintAdmissionPseudonyms.ownerCreateGlobal(keys), quotas, now,
+                ComplaintAdmissionPseudonyms.ownerCreateMember(keys, tuple),
+                ComplaintAdmissionPseudonyms.ownerCreateActor(keys, tuple.installation),
+                ComplaintAdmissionPseudonyms.ownerCreateGlobal(keys),
+                quotas,
+                now,
             )
         }
     }
@@ -250,7 +272,8 @@ internal fun ownerEditTestIngress(
 ): ComplaintIngressAdmission = ComplaintIngressAdmission(
     ClientIpResolver(KiraSecurityProperties()),
     admissionTestPolicy(enrollment = ComplaintEnrollmentAdmissionPolicy.Bounded(policy, 9)),
-    admissionTestKeys(), clock,
+    admissionTestKeys(),
+    clock,
     ComplaintOwnerCreateAdmissionPolicy.Bounded(policy, 12, members, prune),
     editPolicy = edits,
 )

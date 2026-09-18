@@ -56,6 +56,8 @@ import java.util.concurrent.locks.LockSupport
 /** Actual session-HTTP-issued TEST token and ordinary producer/capacity/phase owner. Not activation or mobile parity. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
+// Keep the eleven grouped producer/race/fault scenarios under one owned PostgreSQL fixture lifecycle.
+@Suppress("LargeClass")
 class ComplaintOwnerEditIT {
     private val database = lazy { PgLifecycleDatabaseFixture(ComplaintOwnerEditIT::class.java).also { it.start() } }
 
@@ -78,8 +80,13 @@ class ComplaintOwnerEditIT {
             val history = mock(ComplaintOwnerHistoryHttpHandler::class.java)
             val authentication = ComplaintInstallationBearerAuthenticator(f.run.scope, f.jwt, f.historyPhases, e.ingress)
             val factory = ComplaintInstallationSecurityChainFactory(
-                bridge, authentication, installations, me, history,
-                if (enabled) e.creations else f.handler(e.ingress), edit = if (enabled) e.handler else null,
+                bridge,
+                authentication,
+                installations,
+                me,
+                history,
+                if (enabled) e.creations else f.handler(e.ingress),
+                edit = if (enabled) e.handler else null,
             )
             val users = mock(UserRepository::class.java)
             complaintSpringSecurityContext(factory, users).use { spring ->
@@ -129,64 +136,76 @@ class ComplaintOwnerEditIT {
     }
 
     @Test
-    fun `produced reports ordinary replies and orphan notice replies preserve immutable and CLOSED state while growing and shrinking prepaid envelopes`() = withFixture { f, e ->
-        val report = f.attempt()
-        assertEquals(201, f.create(report, e.creations).status)
-        val ordinary = f.replyAttempt(report.id)
-        assertEquals(201, f.reply(ordinary, e.creations).status)
-        val notice = f.replyNotice() // Synthetic system seed; owned reply itself comes from the actual producer.
-        val noticeReply = f.replyAttempt(notice)
-        assertEquals(201, f.reply(noticeReply, e.creations).status)
-        f.eraseReplyParent(notice) // Fixture erasure, not a WORM/deletion activation proof.
-        assertEquals(
-            1,
-            f.observer.update(
-                "UPDATE complaints SET status = 'CLOSED', closure_reason = 'Synthetic closure', closure_provenance = 'ADMIN', " +
-                    "closure_actor_id = ?, closed_at = now() WHERE id = ?",
-                f.base.ordinary.userId, report.id,
-            ),
-        )
-        val before = f.state()
-        for ((id, subject) in listOf(report.id to "Edited report", ordinary.id to "Edited reply", noticeReply.id to null)) {
-            val immutable = immutableContent(f, id)
-            val attempt = e.attempt(id, subject, "🙂".repeat(1000))
-            f.observations.clear()
-            assertAcknowledgement(f, e.edit(attempt), id, 2)
-            assertEquals(immutable, immutableContent(f, id))
-            assertEquals(4000, f.observer.queryForObject("SELECT octet_length(body) FROM complaints WHERE id = ?", Int::class.java, id))
-            assertEquals(1, f.observations.count { it.first == OwnerCreateFixtureStep.EDIT_CONTENT })
+    fun `produced reports ordinary replies and orphan notice replies preserve immutable and CLOSED state while growing and shrinking prepaid envelopes`() =
+        withFixture {
+                f,
+                e,
+            ->
+            val report = f.attempt()
+            assertEquals(201, f.create(report, e.creations).status)
+            val ordinary = f.replyAttempt(report.id)
+            assertEquals(201, f.reply(ordinary, e.creations).status)
+            val notice = f.replyNotice() // Synthetic system seed; owned reply itself comes from the actual producer.
+            val noticeReply = f.replyAttempt(notice)
+            assertEquals(201, f.reply(noticeReply, e.creations).status)
+            f.eraseReplyParent(notice) // Fixture erasure, not a WORM/deletion activation proof.
             assertEquals(
-                listOf(OwnerCreateFixtureStep.CLAIM, OwnerCreateFixtureStep.COUNTERS, OwnerCreateFixtureStep.RUN, OwnerCreateFixtureStep.OWNER,
-                    OwnerCreateFixtureStep.CREDENTIAL, OwnerCreateFixtureStep.PARENT_CANDIDATE, OwnerCreateFixtureStep.PARENT_RESOURCE,
-                    OwnerCreateFixtureStep.PARENT_CONTENT, OwnerCreateFixtureStep.EDIT_CONTENT, OwnerCreateFixtureStep.COMPLETE),
-                f.observations.map { it.first }.filter { it != OwnerCreateFixtureStep.AUTH && it != OwnerCreateFixtureStep.OBSERVE && it != OwnerCreateFixtureStep.CHARGE },
-            )
-            assertEquals(
-                true,
-                f.observer.queryForObject(
-                    "SELECT complaint_actor_kind = 'INSTALLATION' AND actor_user_id IS NULL AND detail = '{\"version\":2}'::jsonb " +
-                        "FROM audit_log WHERE complaint_data_scope_id = ? AND entity_id = ? AND action = 'COMPLAINT_CONTENT_EDITED'",
-                    Boolean::class.java, f.run.scope.id, id.toString(),
+                1,
+                f.observer.update(
+                    "UPDATE complaints SET status = 'CLOSED', closure_reason = 'Synthetic closure', closure_provenance = 'ADMIN', " +
+                        "closure_actor_id = ?, closed_at = now() WHERE id = ?",
+                    f.base.ordinary.userId,
+                    report.id,
                 ),
             )
+            val before = f.state()
+            for ((id, subject) in listOf(report.id to "Edited report", ordinary.id to "Edited reply", noticeReply.id to null)) {
+                val immutable = immutableContent(f, id)
+                val attempt = e.attempt(id, subject, "🙂".repeat(1000))
+                f.observations.clear()
+                assertAcknowledgement(f, e.edit(attempt), id, 2)
+                assertEquals(immutable, immutableContent(f, id))
+                assertEquals(4000, f.observer.queryForObject("SELECT octet_length(body) FROM complaints WHERE id = ?", Int::class.java, id))
+                assertEquals(1, f.observations.count { it.first == OwnerCreateFixtureStep.EDIT_CONTENT })
+                assertEquals(
+                    listOf(
+                        OwnerCreateFixtureStep.CLAIM, OwnerCreateFixtureStep.COUNTERS, OwnerCreateFixtureStep.RUN, OwnerCreateFixtureStep.OWNER,
+                        OwnerCreateFixtureStep.CREDENTIAL, OwnerCreateFixtureStep.PARENT_CANDIDATE, OwnerCreateFixtureStep.PARENT_RESOURCE,
+                        OwnerCreateFixtureStep.PARENT_CONTENT, OwnerCreateFixtureStep.EDIT_CONTENT, OwnerCreateFixtureStep.COMPLETE,
+                    ),
+                    f.observations.map { it.first }.filter {
+                        it != OwnerCreateFixtureStep.AUTH && it != OwnerCreateFixtureStep.OBSERVE &&
+                            it != OwnerCreateFixtureStep.CHARGE
+                    },
+                )
+                assertEquals(
+                    true,
+                    f.observer.queryForObject(
+                        "SELECT complaint_actor_kind = 'INSTALLATION' AND actor_user_id IS NULL AND detail = '{\"version\":2}'::jsonb " +
+                            "FROM audit_log WHERE complaint_data_scope_id = ? AND entity_id = ? AND action = 'COMPLAINT_CONTENT_EDITED'",
+                        Boolean::class.java,
+                        f.run.scope.id,
+                        id.toString(),
+                    ),
+                )
+            }
+            val shrinking = e.attempt(report.id, "Edited report", "x", 2)
+            assertAcknowledgement(f, e.edit(shrinking), report.id, 3)
+            assertEquals(1, f.observer.queryForObject("SELECT octet_length(body) FROM complaints WHERE id = ?", Int::class.java, report.id))
+            f.assertCharge(before.counters, ComplaintCapacityCharges.OWNER_EDIT.scaled(4))
+            assertEquals(before.resources, f.state().resources)
+            assertEquals(before.content.size, f.state().content.size)
+            for (counter in listOf(ComplaintCapacityCounter.RESOURCE_IDS, ComplaintCapacityCounter.COMPLAINT_ROWS)) {
+                assertEquals(before.counters.getValue(counter.storedName), f.state().counters.getValue(counter.storedName))
+            }
+            // Explicitly synthetic business-count staging; not evidence that these extra rows paid a content allocation.
+            repeat(97) { f.content(pending = it % 2 == 0) }
+            val atLimit = f.state()
+            assertEquals(100, atLimit.content.size)
+            assertAcknowledgement(f, e.edit(e.attempt(ordinary.id, "At business limit", "body", 2)), ordinary.id, 3)
+            assertEquals(100, f.state().content.size)
+            f.assertCharge(atLimit.counters, ComplaintCapacityCharges.OWNER_EDIT)
         }
-        val shrinking = e.attempt(report.id, "Edited report", "x", 2)
-        assertAcknowledgement(f, e.edit(shrinking), report.id, 3)
-        assertEquals(1, f.observer.queryForObject("SELECT octet_length(body) FROM complaints WHERE id = ?", Int::class.java, report.id))
-        f.assertCharge(before.counters, ComplaintCapacityCharges.OWNER_EDIT.scaled(4))
-        assertEquals(before.resources, f.state().resources)
-        assertEquals(before.content.size, f.state().content.size)
-        for (counter in listOf(ComplaintCapacityCounter.RESOURCE_IDS, ComplaintCapacityCounter.COMPLAINT_ROWS)) {
-            assertEquals(before.counters.getValue(counter.storedName), f.state().counters.getValue(counter.storedName))
-        }
-        // Explicitly synthetic business-count staging; not evidence that these extra rows paid a content allocation.
-        repeat(97) { f.content(pending = it % 2 == 0) }
-        val atLimit = f.state()
-        assertEquals(100, atLimit.content.size)
-        assertAcknowledgement(f, e.edit(e.attempt(ordinary.id, "At business limit", "body", 2)), ordinary.id, 3)
-        assertEquals(100, f.state().content.size)
-        f.assertCharge(atLimit.counters, ComplaintCapacityCharges.OWNER_EDIT)
-    }
 
     @Test
     fun `terminal edit rejections retain only normal receipt while malformed precondition and current auth failures retain nothing`() = withFixture { f, e ->
@@ -229,13 +248,24 @@ class ComplaintOwnerEditIT {
             assertEquals(before.audits, after.audits)
             assertEquals(before.receipts.size + 1, after.receipts.size)
             f.assertCharge(before.counters, ComplaintCapacityCharges.NORMAL_RECEIPT)
-            if (status == 404) assertFalse(f.observations.any { it.first == OwnerCreateFixtureStep.PARENT_RESOURCE || it.first == OwnerCreateFixtureStep.PARENT_CONTENT })
+            if (status ==
+                404
+            ) {
+                assertFalse(f.observations.any { it.first == OwnerCreateFixtureStep.PARENT_RESOURCE || it.first == OwnerCreateFixtureStep.PARENT_CONTENT })
+            }
         }
         val fresh = e.attempt(report.id)
         val before = f.state()
         for ((request, status, code) in listOf(
             Triple(e.input(fresh).apply { removeHeader("If-Match") }, 428, "PRECONDITION_REQUIRED"),
-            Triple(e.input(fresh).apply { removeHeader("If-Match"); addHeader("If-Match", "*") }, 412, "PRECONDITION_FAILED"),
+            Triple(
+                e.input(fresh).apply {
+                    removeHeader("If-Match")
+                    addHeader("If-Match", "*")
+                },
+                412,
+                "PRECONDITION_FAILED",
+            ),
             Triple(e.input(fresh).apply { setContent("{}".toByteArray()) }, 400, "VALIDATION_FAILED"),
             Triple(e.input(fresh).apply { setContent("{\"subject\":\"x\",\"body\":\"\\ud800\"}".toByteArray()) }, 400, "VALIDATION_FAILED"),
             Triple(e.input(fresh, "invalid-token"), 401, "UNAUTHORIZED"),
@@ -254,7 +284,10 @@ class ComplaintOwnerEditIT {
     }
 
     @Test
-    fun `historical edit replay and status survive later edit erasure and exhausted or unavailable mutation admission without tuple leakage`() = withFixture { f, e ->
+    fun `historical edit replay and status survive later edit erasure and exhausted or unavailable mutation admission without tuple leakage`() = withFixture {
+            f,
+            e,
+        ->
         val report = f.attempt()
         assertEquals(201, f.create(report, e.creations).status)
         val first = e.attempt(report.id)
@@ -299,7 +332,8 @@ class ComplaintOwnerEditIT {
             f.observer.update(
                 "UPDATE complaint_idempotency_receipts SET created_at = now() - interval '9 days', completed_at = now() - interval '9 days', " +
                     "expires_at = now() - interval '1 day' WHERE actor_id = ? AND idempotency_key = ?",
-                f.actor.id, first.key,
+                f.actor.id,
+                first.key,
             ),
         )
         val expired = f.state()
@@ -526,8 +560,13 @@ class ComplaintOwnerEditIT {
         val report = f.attempt()
         assertEquals(201, f.create(report, e.creations).status)
         var version = 1L
-        for (point in listOf(OwnerCreateFixtureStep.CLAIM, OwnerCreateFixtureStep.CHARGE, OwnerCreateFixtureStep.PARENT_CONTENT,
-            OwnerCreateFixtureStep.EDIT_CONTENT, OwnerCreateFixtureStep.COMPLETE)) {
+        for (point in listOf(
+            OwnerCreateFixtureStep.CLAIM,
+            OwnerCreateFixtureStep.CHARGE,
+            OwnerCreateFixtureStep.PARENT_CONTENT,
+            OwnerCreateFixtureStep.EDIT_CONTENT,
+            OwnerCreateFixtureStep.COMPLETE,
+        )) {
             val attempt = e.attempt(report.id, body = "Fault round $version", version = version)
             val before = f.state()
             val events = semanticEvents(e)
@@ -555,7 +594,9 @@ class ComplaintOwnerEditIT {
                     1,
                     f.jdbc.queryForObject(
                         "SELECT count(*) FROM audit_log WHERE entity_id = ? AND action = 'COMPLAINT_CONTENT_EDITED' AND (detail->>'version')::bigint = ?",
-                        Int::class.java, report.id.toString(), version + 1,
+                        Int::class.java,
+                        report.id.toString(),
+                        version + 1,
                     ),
                 )
                 reachedAudit.set(true)
@@ -574,7 +615,8 @@ class ComplaintOwnerEditIT {
         assertEquals(
             1,
             f.observer.update(
-                "UPDATE complaint_capacity_counters SET free_units = 0, actual_units = hard_limit - recovery_reserved_units - test_reserved_units WHERE name = 'storage_bytes'",
+                "UPDATE complaint_capacity_counters SET free_units = 0, actual_units = hard_limit - " +
+                    "recovery_reserved_units - test_reserved_units WHERE name = 'storage_bytes'",
             ),
         )
         try {
@@ -583,7 +625,14 @@ class ComplaintOwnerEditIT {
             f.problem(e.status(attempt), 404, "OPERATION_NOT_FOUND")
             assertEquals(full, f.state())
         } finally {
-            assertEquals(1, f.observer.update("UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ? WHERE name = 'storage_bytes'", storage.free, storage.actual))
+            assertEquals(
+                1,
+                f.observer.update(
+                    "UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ? WHERE name = 'storage_bytes'",
+                    storage.free,
+                    storage.actual,
+                ),
+            )
         }
     }
 
@@ -645,7 +694,11 @@ class ComplaintOwnerEditIT {
                     if (mode == "TAIL") assertEquals(PersistenceDatabaseOutcome.COMMITTED, checkNotNull(observed).databaseOutcome)
                     assertEquals(200, e.status(attempt).status)
                 }
-                observed?.let { assertTrue(it.cleanupProven); assertNull(it.cause); assertTrue(it.suppressed.isEmpty()) }
+                observed?.let {
+                    assertTrue(it.cleanupProven)
+                    assertNull(it.cause)
+                    assertTrue(it.suppressed.isEmpty())
+                }
                 assertAcknowledgement(f, e.edit(attempt), report.id, 2)
                 f.assertCharge(before.counters, ComplaintCapacityCharges.OWNER_EDIT)
             }
@@ -668,9 +721,12 @@ class ComplaintOwnerEditIT {
     private fun immutableContent(f: ComplaintOwnerCreateFixture, id: UUID): String = checkNotNull(
         f.observer.queryForObject(
             "SELECT (to_jsonb(c) - 'subject' - 'body' - 'version' - 'updated_at')::text FROM complaints c WHERE id = ?",
-            String::class.java, id,
+            String::class.java,
+            id,
         ),
     )
 
-    private fun withFixture(test: (ComplaintOwnerCreateFixture, OwnerEditFixture) -> Unit) = withComplaintOwnerCreate(database.value) { f -> test(f, OwnerEditFixture(f)) }
+    private fun withFixture(test: (ComplaintOwnerCreateFixture, OwnerEditFixture) -> Unit) = withComplaintOwnerCreate(database.value) { f ->
+        test(f, OwnerEditFixture(f))
+    }
 }

@@ -73,7 +73,8 @@ internal class ComplaintOwnerOperationResponse {
         }
     }
 
-    @Suppress("TooGenericExceptionCaught")
+    // Keep the closed direct/status union inside the same generator and buffer-cleanup boundary.
+    @Suppress("TooGenericExceptionCaught", "NestedBlockDepth")
     fun encode(permit: ComplaintOwnerHistoryResponses.Permit, receipt: ComplaintOwnerEditReceipt, statusLookup: Boolean): ComplaintHistoryEncodedBody {
         check(permit.belongsTo(slots) && isOpen()) { "Complaint response refused." }
         val maximum = if (!statusLookup && receipt is ComplaintOwnerEditReceipt.Applied) 32 * 1024 else 16 * 1024
@@ -96,6 +97,7 @@ internal class ComplaintOwnerOperationResponse {
                             json.writeNumberField("version", receipt.version)
                             if (statusLookup) json.writeEndObject()
                         }
+
                         is ComplaintOwnerEditReceipt.Rejected -> {
                             json.writeStringField("outcome", "REJECTED")
                             json.writeNumberField("originalStatus", receipt.status)

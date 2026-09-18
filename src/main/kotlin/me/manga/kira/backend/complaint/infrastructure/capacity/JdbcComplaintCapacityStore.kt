@@ -22,8 +22,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
-import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentRejection
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentResult
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
@@ -31,9 +31,9 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationActivationCapacityV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationCapacityV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
-import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMutationOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
@@ -749,7 +749,14 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 operation.requireCapacityWrite(this, store.jdbc, rejection)
                 if (old.free[counter] == next.free[counter] && old.actual[counter] == next.actual[counter]) continue
                 check(
-                    store.jdbc.update(REFUND_COUNTER, next.free[counter], next.actual[counter], counter.storedName, old.free[counter], old.actual[counter]) == 1,
+                    store.jdbc.update(
+                        REFUND_COUNTER,
+                        next.free[counter],
+                        next.actual[counter],
+                        counter.storedName,
+                        old.free[counter],
+                        old.actual[counter],
+                    ) == 1,
                 )
             }
             operation.requireCapacityWrite(this, store.jdbc, rejection)
