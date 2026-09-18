@@ -35,6 +35,9 @@ internal class PersistenceEpochRotationSession private constructor(
     private var retained: CatalogEpochRotationCaptureOperation? = null
     private var stage = Stage.PREPARED
     private var clippingRead = false
+    private var maintenanceBudget: PersistenceComplaintMaintenanceFenceBudgetV1? = null
+    private var maintenanceStage = MaintenanceStage.NEW
+    private var observedMaintenanceLock: Boolean? = null
 
     internal fun begin() {
         requireCaller()
@@ -46,6 +49,8 @@ internal class PersistenceEpochRotationSession private constructor(
         connection.isReadOnly = false
         connection.transactionIsolation = Connection.TRANSACTION_READ_COMMITTED
         installLimits(EpochRotationLimits.STATEMENT_MILLIS)
+        acquireMaintenanceFence()
+        installLimits(EpochRotationLimits.STATEMENT_MILLIS) // Same remaining original work, before the existing exclusive E wait.
         connection.prepareStatement(EXCLUSIVE_EPOCH_FENCE).use { statement ->
             statement.executeQuery().use { row -> check(row.next() && !row.next()) }
         }
@@ -147,7 +152,17 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun callBudget(kind: PersistenceJdbcGuardCallKind): PersistenceTimeBudget {
         if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION) requireCaller()
-        if (kind === PersistenceJdbcGuardCallKind.BUSINESS) requireWork()
+        if (kind === PersistenceJdbcGuardCallKind.BUSINESS) {
+            requireWork()
+            maintenanceBudget?.let { prefix ->
+                requireMaintenanceOwner()
+                return try {
+                    prefix.dispatchBudget()
+                } catch (_: PersistenceBoundaryException) {
+                    refuseMaintenance(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+                }
+            }
+        }
         // No restarted emergency allowance: terminal cleanup continues under the original retained physical owner when this expires.
         return work ?: total
     }
@@ -159,7 +174,8 @@ internal class PersistenceEpochRotationSession private constructor(
         val budget = callBudget(kind)
         clippingRead = true
         try {
-            connection.setNetworkTimeout(INLINE, budget.remainingMillis(EpochRotationLimits.STATEMENT_MILLIS).toInt())
+            val ceiling = if (maintenanceBudget == null) EpochRotationLimits.STATEMENT_MILLIS else PersistenceComplaintMaintenanceFenceV1.DISPATCH_MILLIS
+            connection.setNetworkTimeout(INLINE, budget.remainingMillis(ceiling).toInt())
         } finally {
             clippingRead = false
         }
@@ -183,6 +199,85 @@ internal class PersistenceEpochRotationSession private constructor(
     private fun requireWork() {
         requireCaller()
         if (deadlineExpired() || problem.get() != null) throw failure()
+    }
+
+    /** Same concrete first-delivery owner and native guard; no pooled/alternate acquisition or SQL callback. */
+    @Suppress("TooGenericExceptionCaught")
+    private fun acquireMaintenanceFence() {
+        try {
+            requireMaintenanceOwner()
+            if (maintenanceStage !== MaintenanceStage.NEW) refuseMaintenance(PersistencePhaseFailureCode.WORK_FAILED)
+            maintenanceBudget = PersistenceComplaintMaintenanceFenceBudgetV1(checkNotNull(work))
+            maintenanceStage = MaintenanceStage.INSTALLING
+            installMaintenanceLimits()
+            maintenanceStage = MaintenanceStage.SETTINGS_RETURNED
+            requireMaintenanceRemaining()
+            maintenanceStage = MaintenanceStage.TRYING
+            observedMaintenanceLock = connection.prepareStatement(PersistenceComplaintMaintenanceFenceV1.TRY_SHARED_LOCK).use { statement ->
+                requireMaintenanceRemaining()
+                statement.executeQuery().use { row ->
+                    requireMaintenanceRemaining()
+                    if (!row.next()) refuseMaintenance(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    requireMaintenanceRemaining()
+                    val locked = row.getBoolean(1)
+                    requireMaintenanceRemaining()
+                    if (row.wasNull() || row.next()) refuseMaintenance(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    requireMaintenanceRemaining()
+                    locked
+                }
+            }
+            maintenanceStage = MaintenanceStage.OBSERVED
+            requireMaintenanceRemaining() // Includes boolean, descendant closes and guarded return before acceptance.
+            if (observedMaintenanceLock != true) refuseMaintenance(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            maintenanceStage = MaintenanceStage.ACCEPTED
+        } catch (cause: Throwable) {
+            maintenanceStage = MaintenanceStage.FAILED
+            val code = when (cause) {
+                is PersistenceBoundaryException -> PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED
+                is PersistencePhaseException -> cause.code
+                is InterruptedException -> {
+                    Thread.currentThread().interrupt()
+                    PersistencePhaseFailureCode.INTERRUPTED
+                }
+                else -> PersistencePhaseFailureCode.WORK_FAILED
+            }
+            refuseMaintenance(code)
+        } finally {
+            maintenanceBudget = null // Retirement/physical cleanup keeps the original attempt's custody and deadline.
+        }
+    }
+
+    private fun requireMaintenanceOwner() {
+        requireWork()
+        if (stage !== Stage.STARTING || !entry.jdbc.currentSession(this, epoch)) refuseMaintenance(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        attempt.requireCore(resource)
+    }
+
+    private fun requireMaintenanceRemaining(): Long {
+        requireMaintenanceOwner()
+        return try {
+            checkNotNull(maintenanceBudget).remainingMillis()
+        } catch (_: PersistenceBoundaryException) {
+            refuseMaintenance(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+        }
+    }
+
+    private fun installMaintenanceLimits() {
+        connection.prepareStatement(PersistenceComplaintMaintenanceFenceV1.LOCAL_LIMITS).use { statement ->
+            statement.setString(1, requireMaintenanceRemaining().toString() + "ms")
+            statement.setString(2, requireMaintenanceRemaining().toString() + "ms")
+            requireMaintenanceRemaining()
+            statement.executeQuery().use { row ->
+                requireMaintenanceRemaining()
+                if (!row.next() || row.next()) refuseMaintenance(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                requireMaintenanceRemaining()
+            }
+        }
+    }
+
+    private fun refuseMaintenance(code: PersistencePhaseFailureCode): Nothing {
+        problem.compareAndSet(null, code)
+        throw failure()
     }
 
     private fun query(sql: String, arguments: Array<Any?>): CatalogEpochRotationRowV1 {
@@ -214,6 +309,7 @@ internal class PersistenceEpochRotationSession private constructor(
     override fun toString(): String = "PersistenceEpochRotationSession(original-first-delivery,non-pooled,no-work-capability)"
 
     private enum class Stage { PREPARED, STARTING, EXCLUSIVE, LOCKED, SAMPLED, WRITTEN, REREAD, COMMITTED, RELEASED }
+    private enum class MaintenanceStage { NEW, INSTALLING, SETTINGS_RETURNED, TRYING, OBSERVED, ACCEPTED, FAILED }
 
     companion object {
         private val INLINE = Executor { it.run() }

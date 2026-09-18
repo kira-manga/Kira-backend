@@ -268,6 +268,7 @@ constructor(
         if (rechecksReadCommitted && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
+        selectedHolder.acquireMaintenanceFence(selected)
         selectedHolder.acquireFence(selected)
         requireWork()
         stage = Stage.WORK
@@ -834,6 +835,9 @@ constructor(
 
     internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection) = selectedHolder.requireFence(fence, selected)
 
+    internal fun requireComplaintMaintenanceFence(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection) =
+        selectedHolder.requireMaintenanceFence(fence, selected)
+
     internal fun requireDeletionControlSnapshot(snapshot: PersistenceDeletionControlSnapshot, selected: Connection) =
         selectedHolder.requireControlSnapshot(snapshot, selected)
 
@@ -1215,6 +1219,8 @@ constructor(
 
     /** Read-only guard view of this phase's retained resources, not another owner or finalizer. */
     private inner class SelectedHolderBoundary {
+        private val maintenanceFence = if (path.complaintMaintenanceWriter) PersistenceComplaintMaintenanceFenceV1(this@PersistencePhaseContext) else null
+        private var maintenanceLimitsRestored = false
         private val deletionFence = when (path) {
             PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
             PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
@@ -1253,7 +1259,25 @@ constructor(
         }
         private var fenceLimitsRestored = false
 
+        fun acquireMaintenanceFence(selected: Connection) {
+            maintenanceFence?.let {
+                it.acquire(selected, requireNotNull(work))
+                installLimits() // Restore only the original remaining allowance, before E or any path-specific lock.
+                maintenanceLimitsRestored = true
+            }
+        }
+
+        fun requireMaintenanceFence(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection) {
+            requireCaller()
+            if (stage !== Stage.SETTING_UP || maintenanceFence !== fence || connection !== selected) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireCurrent()
+            requireWork()
+        }
+
         fun acquireFence(selected: Connection) {
+            if (maintenanceFence != null && (!maintenanceFence.accepted() || !maintenanceLimitsRestored)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
             deletionFence?.let {
                 it.acquire(selected, requireNotNull(work))
                 installLimits() // Same remaining phase budget, only after an on-time true; never a new two-second allowance.
@@ -1288,14 +1312,19 @@ constructor(
         fun controlSnapshotCaptured(): Boolean = fenceAccepted() && fenceLimitsRestored && deletionControlSnapshot?.captured() == true
 
         fun businessBudget(): PersistenceTimeBudget {
-            if (deletionFence?.active() == true || deletionControlSnapshot?.active() == true) requireCurrent()
-            return deletionFence?.callBudget(requireNotNull(work)) ?: requireNotNull(work)
+            if (maintenanceFence?.active() == true || deletionFence?.active() == true || deletionControlSnapshot?.active() == true) requireCurrent()
+            val normal = deletionFence?.callBudget(requireNotNull(work)) ?: requireNotNull(work)
+            return maintenanceFence?.callBudget(normal) ?: normal
         }
 
-        fun readCeiling(): Long = deletionFence?.readCeiling(NORMAL_READ_MILLIS) ?: NORMAL_READ_MILLIS
+        fun readCeiling(): Long {
+            val normal = deletionFence?.readCeiling(NORMAL_READ_MILLIS) ?: NORMAL_READ_MILLIS
+            return maintenanceFence?.readCeiling(normal) ?: normal
+        }
 
         fun afterBusinessCall() {
             requireWork()
+            maintenanceFence?.requireRemaining()
             deletionFence?.requireRemaining()
         }
 

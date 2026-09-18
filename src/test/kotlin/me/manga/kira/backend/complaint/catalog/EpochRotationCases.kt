@@ -230,6 +230,31 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
                     "No control/catalog/counter lock may be held while the fresh session waits for the exclusive fence.",
                 )
                 if (renewWhileWaiting) {
+                    assertTrue(
+                        checkNotNull(
+                            observer.queryForObject(
+                                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory' AND mode = 'ShareLock' AND granted " +
+                                    "AND classid::bigint = ((hashtextextended('complaint-maintenance-v1', 0) >> 32) & 4294967295) " +
+                                    "AND objid::bigint = (hashtextextended('complaint-maintenance-v1', 0) & 4294967295) AND objsubid = 1)",
+                                Boolean::class.java,
+                                waiting.first.pid,
+                            ),
+                        ),
+                        "The original nonpooled capture must already hold M while actually waiting for E, before any control lock.",
+                    )
+                    assertTrue(
+                        checkNotNull(observer.queryForObject(
+                            "SELECT pg_try_advisory_xact_lock_shared(hashtextextended('complaint-maintenance-v1', 0))",
+                            Boolean::class.java,
+                        )),
+                    )
+                    assertFalse(
+                        checkNotNull(observer.queryForObject(
+                            "SELECT pg_try_advisory_xact_lock(hashtextextended('complaint-maintenance-v1', 0))",
+                            Boolean::class.java,
+                        )),
+                        "Shared SQL participation is compatible, but not an exclusive cut, provider drain or activation right.",
+                    )
                     val renewed = f.coordinator.lease.renew(campaign)
                     assertEquals(campaign.owner, renewed.owner)
                     assertEquals(campaign.token, renewed.token)
