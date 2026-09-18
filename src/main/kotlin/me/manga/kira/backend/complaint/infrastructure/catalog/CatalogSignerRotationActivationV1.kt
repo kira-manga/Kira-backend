@@ -154,7 +154,8 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     ): CatalogSignerRotationActivationResultV1 =
         run(Mode.CONTINUE, request, newSigningCredentials, primaryPutCredentials, primaryReadCredentials, replicaReadCredentials, previousInvocation)
 
-    @Suppress("TooGenericExceptionCaught")
+    // Keep this invocation's ordered effects, retained pending handoff and single original cleanup path together.
+    @Suppress("TooGenericExceptionCaught", "LongMethod", "CyclomaticComplexMethod")
     private fun run(
         selectedMode: Mode,
         request: CatalogSignerRotationFreezeRequestV1,
@@ -388,9 +389,17 @@ internal class CatalogSignerRotationActivationV1 private constructor(
     }
 
     private fun historyKind(initial: Boolean): CatalogSignerRotationActivationKindV1 = when (val local = snapshot) {
-        is LocalCatalogSnapshot.Prepared -> if (initial) CatalogSignerRotationActivationKindV1.INITIAL_PREPARED_READ else CatalogSignerRotationActivationKindV1.PREPARED_RECHECK
+        is LocalCatalogSnapshot.Prepared -> if (initial) {
+            CatalogSignerRotationActivationKindV1.INITIAL_PREPARED_READ
+        } else {
+            CatalogSignerRotationActivationKindV1.PREPARED_RECHECK
+        }
 
-        is LocalCatalogSnapshot.ProjectionPending -> if (initial) CatalogSignerRotationActivationKindV1.INITIAL_PENDING_READ else CatalogSignerRotationActivationKindV1.PENDING_RECHECK
+        is LocalCatalogSnapshot.ProjectionPending -> if (initial) {
+            CatalogSignerRotationActivationKindV1.INITIAL_PENDING_READ
+        } else {
+            CatalogSignerRotationActivationKindV1.PENDING_RECHECK
+        }
 
         is LocalCatalogSnapshot.Accepted -> if (local.head.generation == 2L) {
             if (initial) CatalogSignerRotationActivationKindV1.INITIAL_HEAD_READ else CatalogSignerRotationActivationKindV1.HEAD_RECHECK
@@ -788,6 +797,8 @@ internal class CatalogSignerRotationActivationV1 private constructor(
         requireLeaseAttempt(selected)
     }
 
+    // Keep the closed kind-to-stage matrix explicit, including every original identity and one-use arm.
+    @Suppress("CyclomaticComplexMethod")
     internal fun requireInputConstruction(
         kind: CatalogSignerRotationActivationKindV1,
         expected: CatalogSignerRotationActivationObservationV1?,
@@ -978,7 +989,8 @@ internal class CatalogSignerRotationActivationV1 private constructor(
         val persistedHere = stage === Stage.SIGNATURE && signatureSqlArmed && signatureOperation?.input?.original === this &&
             signatureOperation?.input?.kind === CatalogSignerRotationActivationKindV1.SIGNATURE && signatureOperation?.observation === value
         val alreadyStored = stage === Stage.RECHECK && mode === Mode.RECOVER && !signatureSqlIssued && !signConstructionIssued &&
-            reconciliationOperation?.input?.original === this && reconciliationOperation?.input?.kind === CatalogSignerRotationActivationKindV1.PREPARED_RECHECK &&
+            reconciliationOperation?.input?.original === this &&
+            reconciliationOperation?.input?.kind === CatalogSignerRotationActivationKindV1.PREPARED_RECHECK &&
             reconciliationOperation?.observation === value
         requireSignerRotation(
             release === selected && retainedHistory === value && (persistedHere || alreadyStored) &&

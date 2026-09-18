@@ -304,7 +304,8 @@ internal class PersistencePhaseOwnership private constructor(
         enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PROJECT, signerRotationActivation = original)
 
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
-    @Suppress("ThrowsCount", "TooGenericExceptionCaught", "LongMethod") // Keep ordered admission, custody and publication in one auditable entry.
+    // Keep ordered admission/custody/publication in one entry; concrete owner parameters must not become an interchangeable capability bag.
+    @Suppress("ThrowsCount", "TooGenericExceptionCaught", "LongMethod", "LongParameterList")
     private fun enter(
         path: PersistencePhasePath,
         deletionScope: ComplaintDataScope? = null,

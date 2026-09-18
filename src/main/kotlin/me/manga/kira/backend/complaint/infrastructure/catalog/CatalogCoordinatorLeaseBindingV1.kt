@@ -269,6 +269,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         }
     }
 
+    @Suppress("ComplexCondition") // Check the exact retained owner plus every incompatible named purpose together.
     internal fun requireRecoveryPurpose(original: CatalogSignerRotationPreparedRecoveryV1) {
         if (preparedRecovery !== original ||
             !coordinator.catalogSignerRotationRecovery || delivery != null || activation != null
@@ -284,6 +285,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
         }
     }
 
+    @Suppress("ComplexCondition") // Check the exact retained owner plus every incompatible named purpose together.
     internal fun requireActivationPurpose(original: CatalogSignerRotationActivationV1) {
         if (activation !== original || !coordinator.catalogSignerRotationActivation || preparedRecovery != null || initialAuthor != null || delivery != null) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)

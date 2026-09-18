@@ -221,6 +221,8 @@ internal class PersistenceJdbcDriverRoot(
 
     fun requestCatalogCoordinatorShutdown(): Boolean = catalogCoordinator.forbidStarts()
 
+    // Keep the four immutable named-purpose exclusions together before preserving the original signal.
+    @Suppress("ComplexCondition")
     private fun rethrowNamedSignerRotationSignal(failure: Throwable) {
         if (!catalogSignerRotationRecovery && !catalogSignerRotationAuthoring && !catalogSignerRotationDelivery && !catalogSignerRotationActivation) return
         if (failure is InterruptedException || failure is java.io.InterruptedIOException) {

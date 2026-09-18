@@ -103,6 +103,8 @@ internal class ComplaintDesiredProcessAssemblyV1 private constructor(
         assemble(inputs, acquired, sealerCredentials, finalizer = false, signerRotationActivation = true)
     }
 
+    // Keep cold target/operator selection and retention-before-construction custody in one ordered assembly.
+    @Suppress("LongMethod", "CyclomaticComplexMethod")
     private fun assemble(
         inputs: ComplaintDesiredDeploymentInputsV1,
         acquired: List<AcquiredVersionedSecret>,

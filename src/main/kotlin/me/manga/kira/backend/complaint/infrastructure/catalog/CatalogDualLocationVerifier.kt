@@ -342,7 +342,16 @@ internal object CatalogDualLocationVerifier {
         val currentTrustBundleSha256: String,
         private val common: CatalogCommonHeadEvidence?,
     ) {
-        enum class State { HEAD2, PREPARED_UNSIGNED, PREPARED_UNPUBLISHED, PREPARED_AWAIT_REPLICATION, PREPARED_DUAL_COPY, PROJECTION_PENDING_DUAL_COPY, PROJECTED3 }
+        enum class State {
+            HEAD2,
+            PREPARED_UNSIGNED,
+            PREPARED_UNPUBLISHED,
+            PREPARED_AWAIT_REPLICATION,
+            PREPARED_DUAL_COPY,
+            PROJECTION_PENDING_DUAL_COPY,
+            PROJECTED3,
+        }
+
         val evaluatedAtEpochSecond: Long = policy.evaluatedAtEpochSecond
         val requiredRetainUntilEpochSecond: Long = policy.requiredRetainUntilEpochSecond
         val objectVersion: String = records.last().read.metadata.requestBinding.versionId
@@ -404,6 +413,8 @@ internal object CatalogDualLocationVerifier {
         override fun toString(): String = "Activation3Readback(private-raw-fixed3,no-Sign-PUT-SQL-or-current-authority)"
 
         companion object {
+            // Keep actual snapshot classification, the raw fold and exact-prefix validation together.
+            @Suppress("CyclomaticComplexMethod")
             internal fun verify(
                 provider: CatalogReadbackPort,
                 initialBundleBytes: ByteArray,

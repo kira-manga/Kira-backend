@@ -311,6 +311,8 @@ internal class CatalogSignerRotationProbeJdbc(
 
     override fun <T : Any?> query(sql: String, rowMapper: RowMapper<T>): List<T> = observed(sql, emptyArray()) { super.query(sql, rowMapper) }
 
+    // Keep the exact observer selector together so the real no-argument JDBC dispatch is recorded only once.
+    @Suppress("ComplexCondition")
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>): T? {
         val path = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path") }
         return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT ||

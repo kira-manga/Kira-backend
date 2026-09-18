@@ -212,6 +212,8 @@ constructor(
 
     internal fun publishEntry() = entrySettlement.publishEntry()
 
+    // Keep transaction-status custody, exact resource validation and fence acquisition in their original order.
+    @Suppress("CyclomaticComplexMethod")
     internal fun begin() {
         requireCaller()
         if (stage !== Stage.PREPARED) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
@@ -1545,6 +1547,8 @@ constructor(
             requireWork()
         }
 
+        // The operation, input, owner and phase identities form one indivisible admission guard.
+        @Suppress("ComplexCondition")
         override fun retain(operation: CatalogSignerRotationActivationOperationV1, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
             if (retained != null || operation.input !== selectedInput || operation.input.original !== signerRotationActivation ||
@@ -1556,6 +1560,8 @@ constructor(
             retained = operation
         }
 
+        // Keep exact retained identities and the original fence check visible at the same boundary.
+        @Suppress("ComplexCondition")
         override fun requireRetained(operation: CatalogSignerRotationActivationOperationV1, jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, path)
             if (retained !== operation || operation.input !== selectedInput || operation.input.original !== signerRotationActivation ||
@@ -1566,6 +1572,8 @@ constructor(
             operation.input.requirePersistence(ownership, jdbc)
         }
 
+        // A result requires this exact retained operation, completion and positively proven original cleanup.
+        @Suppress("ComplexCondition")
         override fun requireCommitted(operation: CatalogSignerRotationActivationOperationV1) {
             if (retained !== operation || operation.input !== selectedInput || !completed() ||
                 !signerRotationActivationCleanupProven(operation.input.original)

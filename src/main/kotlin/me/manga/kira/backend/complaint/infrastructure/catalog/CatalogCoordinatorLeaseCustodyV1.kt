@@ -194,7 +194,8 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         /** Under the actual row lock, before the later-clock CAS; the floor is never a caller-supplied long. */
         internal fun requireHistoricalTokenFloor(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate, lockedToken: Long, lockedOwner: UUID?) {
             requireOperation(operation, selected)
-            if (delivery != null || activation != null) check(owner != lockedOwner) // Also exclude the latest real owner when an earlier recovery left no outcome artifact.
+            // Also exclude the latest real owner when an earlier recovery left no outcome artifact.
+            if (delivery != null || activation != null) check(owner != lockedOwner)
             recovery?.requireHistoricalLeaseFloor(binding, lockedToken)
             delivery?.requireHistoricalLeaseFloor(binding, lockedToken)
             activation?.requireHistoricalLeaseFloor(binding, lockedToken)
