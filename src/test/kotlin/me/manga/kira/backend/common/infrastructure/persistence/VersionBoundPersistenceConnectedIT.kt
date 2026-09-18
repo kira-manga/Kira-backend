@@ -71,6 +71,8 @@ import java.sql.SQLException
 /** Real owned PostgreSQL TLS, not a protocol peer, provider attestation, production profile or complete-D/activation proof. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
+// Keep one serial database lifecycle; focused Cases helpers own the individual behaviors.
+@Suppress("LargeClass")
 class VersionBoundPersistenceConnectedIT {
     private val database = lazy { PgLifecycleDatabaseFixture(VersionBoundPersistenceConnectedIT::class.java).also { it.start() } }
 
