@@ -303,6 +303,14 @@ internal class CatalogSignerRotationFreezeResultV1 private constructor(product: 
             owner.requireCleanedResult()
             return CatalogSignerRotationFreezeResultV1(product)
         }
+
+        internal fun completed(
+            owner: CatalogSignerRotationPreparedRecoveryV1,
+            product: CatalogSignerRotationFrozenProductV1,
+        ): CatalogSignerRotationFreezeResultV1 {
+            owner.requireCleanedResult(product)
+            return CatalogSignerRotationFreezeResultV1(product)
+        }
     }
 }
 

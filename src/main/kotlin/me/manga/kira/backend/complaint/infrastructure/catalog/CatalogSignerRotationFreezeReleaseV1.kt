@@ -6,16 +6,32 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogFrozenMutation
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 
 /** Fixed write-once effects and positive outcomes. Absence alone never authorizes Sign; there is no pin/reapproval protocol. */
-internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogSignerRotationInputsV1, budget: PersistenceTimeBudget) : AutoCloseable {
-    private val custody = CatalogSignerRotationReleaseCustodyV1.retain(inputs.request.releaseRoot, inputs.allocation, budget)
+internal class CatalogSignerRotationFreezeReleaseV1 private constructor(
+    private val inputs: CatalogSignerRotationInputsV1,
+    private val custody: CatalogSignerRotationReleaseCustodyV1,
+    private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
+) : AutoCloseable {
+    constructor(inputs: CatalogSignerRotationInputsV1, budget: PersistenceTimeBudget) :
+        this(inputs, CatalogSignerRotationReleaseCustodyV1.retain(inputs.request.releaseRoot, inputs.allocation, budget), null)
+
+    internal constructor(
+        original: CatalogSignerRotationPreparedRecoveryV1,
+        inputs: CatalogSignerRotationInputsV1,
+        custody: CatalogSignerRotationReleaseCustodyV1,
+    ) : this(inputs, custody, original) {
+        original.requireRecoveryReleaseInputs(inputs, custody)
+        requirePreparedInputs() // The original lock is still held. Never reopen/reallocate with the fresh lease token.
+    }
     private val allocationHash = Sha256.hex(inputs.allocation)
 
     fun openNew() {
+        requireRecovery(recovery == null)
         requireRecovery(custody.open() === CatalogSignerRotationCustodyObservationV1.CREATED)
         inputLeaves().forEach { (leaf, bytes) -> requireCreated(leaf, bytes) }
     }
 
     fun openExisting() {
+        requireRecovery(recovery == null)
         requireRecovery(custody.openExisting() === CatalogSignerRotationCustodyObservationV1.IDENTICAL_OBSERVED)
         requirePreparedInputs()
     }
@@ -26,9 +42,13 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARED, record("prepared-unsigned-head1"))
     }
 
-    fun armPrepare() = requireCreated(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
+    fun armPrepare() {
+        requireRecovery(recovery == null)
+        requireCreated(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
+    }
 
     fun prepared(local: CatalogSignerRotationObservationV1) {
+        requireRecovery(recovery == null)
         inputs.requireObservation(local)
         requireRecovery(sameSignerRotationMutation(checkNotNull(local.mutation), inputs.unsigned()))
         requireExact(CatalogSignerRotationReleaseLeafV1.PREPARE_ARMED, record("prepare-armed"))
@@ -36,6 +56,7 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
     }
 
     fun armSign(slot: Int, local: CatalogSignerRotationObservationV1) {
+        requireRecovery(recovery == null)
         requireRecovery(slot in 0..1)
         inputs.requireObservation(local)
         val mutation = checkNotNull(local.mutation)
@@ -54,6 +75,7 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
 
     /** Written only after the real fixed SDK adapter returns a verified signature AND proves its own cleanup. */
     fun preserveSignature(slot: Int, signature: ByteArray) {
+        requireRecovery(recovery == null)
         requireRecovery(slot in 0..1 && signature.size == OfflineTrustBundleProtocol.SIGNATURE_BYTES)
         val first = if (slot == 1) requireReturned(0) else null
         requireExact(armedLeaf(slot), signRecord(slot, first))
@@ -62,6 +84,7 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
     }
 
     fun armSignaturePersistence(slot: Int, after: CatalogFrozenMutation) {
+        requireRecovery(recovery == null)
         inputs.requireMutation(after)
         requireRecovery(slot in 0..1)
         for (index in 0..slot) requireRecovery(requireReturned(index).contentEquals(after.signatureSlots[index].signatureBytes))
@@ -70,6 +93,10 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
     }
 
     fun signaturePersisted(slot: Int, local: CatalogSignerRotationObservationV1) {
+        recovery?.let {
+            requireRecovery(slot == 1)
+            it.requirePersistedReplay(local)
+        }
         inputs.requireObservation(local)
         val mutation = checkNotNull(local.mutation)
         val expected = persistenceRecord(slot, mutation)
@@ -121,6 +148,7 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
     }
 
     fun signedPrepared(local: CatalogSignerRotationObservationV1): CatalogSignerRotationFrozenProductV1 {
+        recovery?.requirePersistedReplay(local)
         inputs.requireObservation(local)
         val mutation = checkNotNull(local.mutation)
         val signatures = requireBothReturnedSignatures()
@@ -189,7 +217,9 @@ internal class CatalogSignerRotationFreezeReleaseV1(private val inputs: CatalogS
     }
     private fun requireRecovery(condition: Boolean) = requireSignerRotation(condition, CatalogSignerRotationFreezeFailureV1.RECOVERY_REQUIRED)
 
-    override fun close() = custody.close()
+    override fun close() {
+        if (recovery == null) custody.close() // The concrete recovery owner retains/closes its same discovery custody.
+    }
     override fun toString(): String = "CatalogSignerRotationFreezeReleaseV1(fixed-write-once-history,redacted,no-human-approval-authority)"
 
     private companion object {

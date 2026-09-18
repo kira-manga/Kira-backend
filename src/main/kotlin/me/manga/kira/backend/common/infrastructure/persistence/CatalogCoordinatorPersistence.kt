@@ -26,6 +26,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val desiredInstallationOperator: Boolean get() = owner.desiredInstallationOperator
     internal val catalogGenesisAuthoring: Boolean get() = owner.catalogGenesisAuthoring
     internal val catalogGenesisFinalization: Boolean get() = owner.catalogGenesisFinalization
+    internal val catalogSignerRotationRecovery: Boolean get() = owner.catalogSignerRotationRecovery
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
@@ -69,6 +70,11 @@ internal class CatalogCoordinatorPersistence private constructor(
             return // No catalog writer, lease/rotation or readback executor is constructed on the operator root.
         }
         executor = ComplaintCatalogSnapshotPhaseExecutor(bound, JdbcCatalogSnapshotReader(jdbc))
+        if (catalogSignerRotationRecovery) {
+            leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
+            signerRotationExecutor = ComplaintCatalogSignerRotationPersistencePhaseExecutor(this, jdbc)
+            return // No G1, projection, epoch/cutoff or ordinary writer executor on the fixed recovery root.
+        }
         genesisExecutor = ComplaintCatalogGenesisPersistencePhaseExecutor(bound, jdbc)
         if (catalogGenesisAuthoring || catalogGenesisFinalization) return // Only the named attempt may select its three fixed phases.
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
@@ -96,7 +102,9 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     fun prepare(): PersistenceLifecycleObservation {
         requireResources()
-        if (desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery) {
+            return PersistenceLifecycleObservation.UNAVAILABLE
+        }
         checkNotNull(executor)
         return dataSource.prepareCatalogCoordinator()
     }
@@ -120,6 +128,15 @@ internal class CatalogCoordinatorPersistence private constructor(
         requireResources()
         if (!catalogGenesisFinalization) return PersistenceLifecycleObservation.UNAVAILABLE
         checkNotNull(genesisExecutor)
+        return dataSource.prepareCatalogCoordinator()
+    }
+
+    internal fun prepareCatalogSignerRotationRecovery(): PersistenceLifecycleObservation {
+        requireResources()
+        if (!catalogSignerRotationRecovery) return PersistenceLifecycleObservation.UNAVAILABLE
+        checkNotNull(executor)
+        checkNotNull(leaseExecutor)
+        checkNotNull(signerRotationExecutor)
         return dataSource.prepareCatalogCoordinator()
     }
 

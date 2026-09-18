@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinator
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCoordinatorLeaseReceiptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogCoordinatorLeaseStore
 import org.springframework.jdbc.core.JdbcTemplate
 
@@ -22,19 +23,36 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
     private val source = coordinator.dataSource
     private val custody = coordinator.leaseCustody
 
-    @Suppress("TooGenericExceptionCaught")
     fun acquire(binding: CatalogCoordinatorLeaseBindingV1): CatalogCoordinatorLeaseAcquisitionV1 {
+        binding.requireOrdinaryPurpose()
+        return acquire(binding, null)
+    }
+
+    internal fun acquirePreparedRecovery(
+        original: CatalogSignerRotationPreparedRecoveryV1,
+        binding: CatalogCoordinatorLeaseBindingV1,
+    ): CatalogCoordinatorLeaseAcquisitionV1 {
+        original.requireLeaseSelection(ownership, jdbc, binding)
+        return acquire(binding, original)
+    }
+
+    @Suppress("TooGenericExceptionCaught")
+    private fun acquire(
+        binding: CatalogCoordinatorLeaseBindingV1,
+        original: CatalogSignerRotationPreparedRecoveryV1?,
+    ): CatalogCoordinatorLeaseAcquisitionV1 {
         var attempt: CatalogCoordinatorLeaseCustodyV1.Attempt? = null
         try {
             requireEntryResources()
-            val retained = custody.acquire(binding, jdbc)
+            val retained = if (original == null) custody.acquire(binding, jdbc) else custody.acquirePreparedRecovery(original, binding, jdbc)
             attempt = retained
             try {
-                return CatalogCoordinatorLeaseAcquisitionV1.issuedBy(persist(retained))
+                return CatalogCoordinatorLeaseAcquisitionV1.issuedBy(persist(retained, recovery = original))
             } finally {
                 retained.finish()
             }
         } catch (problem: Throwable) {
+            original?.observeFailure(problem)
             throw attempt?.failure(problem) ?: bounded(problem)
         }
     }
@@ -50,6 +68,7 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
     private fun renew(campaign: CatalogCoordinatorLeaseCampaignV1, original: CatalogCutoffAttemptV1?): CatalogCoordinatorLeaseReceiptV1 {
         var attempt: CatalogCoordinatorLeaseCustodyV1.Attempt? = null
         try {
+            campaign.binding.requireOrdinaryPurpose()
             requireEntryResources()
             val retained = custody.renew(campaign, jdbc)
             attempt = retained
@@ -69,6 +88,7 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         campaign.close() // Locally stop first; SQL is a single authority-reducing attempt against this exact owner/token/B.
         var attempt: CatalogCoordinatorLeaseCustodyV1.Attempt? = null
         try {
+            campaign.binding.requireOrdinaryPurpose()
             requireEntryResources()
             val retained = custody.relinquish(campaign, jdbc)
             attempt = retained
@@ -94,11 +114,16 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
         coordinator.ownership === ownership && coordinator.manager === manager && coordinator.dataSource === source
 
     @Suppress("TooGenericExceptionCaught")
-    private fun persist(attempt: CatalogCoordinatorLeaseCustodyV1.Attempt, original: CatalogCutoffAttemptV1? = null): CatalogCoordinatorLeaseOperation {
+    private fun persist(
+        attempt: CatalogCoordinatorLeaseCustodyV1.Attempt,
+        original: CatalogCutoffAttemptV1? = null,
+        recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
+    ): CatalogCoordinatorLeaseOperation {
         attempt.requireRunning(jdbc)
         val store = JdbcCatalogCoordinatorLeaseStore(jdbc)
         val phase = when (attempt.path) {
-            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> ownership.enterComplaintCoordinatorLeaseAcquire()
+            PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE -> recovery?.let(ownership::enterComplaintSignerRotationRecoveryAcquire)
+                ?: ownership.enterComplaintCoordinatorLeaseAcquire()
 
             PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RENEW -> original?.let(ownership::enterComplaintCutoffRenew)
                 ?: ownership.enterComplaintCoordinatorLeaseRenew()
@@ -108,6 +133,7 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
             else -> error("Unsupported coordinator lease phase.")
         }
         var completed: CatalogCoordinatorLeaseOperation? = null
+        var closingFailure: Throwable? = null
         try {
             phase.begin() // Limits and original holder only: these three named paths deliberately have NO epoch fence.
             completed = when (attempt.path) {
@@ -122,8 +148,15 @@ internal class ComplaintCoordinatorLeasePersistencePhaseExecutor(private val coo
             attempt.abort()
             phase.recordFailure(problem)
         } finally {
-            phase.finish()
+            try {
+                closingFailure = runCatching(phase::finish).exceptionOrNull()
+                closingFailure?.let { recovery?.observeFailure(it) }
+            } finally {
+                recovery?.observePhaseCleanup(phase)
+            }
         }
+        recovery?.throwIfSignalled()
+        closingFailure?.let { throw it }
         return completed ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
     }
 

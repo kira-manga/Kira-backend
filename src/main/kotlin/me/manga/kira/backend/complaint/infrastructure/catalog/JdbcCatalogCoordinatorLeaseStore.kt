@@ -89,6 +89,7 @@ internal class CatalogCoordinatorLeaseOperation private constructor(
             val before = jdbc.query(LOCK_COORDINATOR_LEASE_CONTROL, { row, _ -> readControl(row) }, *arguments()).single()
             requireAt(Stage.RETAINED)
             val token = if (attempt.path === PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE) {
+                attempt.requireHistoricalTokenFloor(this, jdbc, before.token)
                 check(before.token < Long.MAX_VALUE)
                 Math.addExact(before.token, 1L)
             } else {

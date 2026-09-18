@@ -13,15 +13,20 @@ internal class PersistenceJdbcDriverRoot(
     internal val desiredInstallationOperator: Boolean = false,
     internal val catalogGenesisAuthoring: Boolean = false,
     internal val catalogGenesisFinalization: Boolean = false,
+    internal val catalogSignerRotationRecovery: Boolean = false,
 ) {
     init {
+        check(
+            !catalogSignerRotationRecovery ||
+                (!desiredInstallationOperator && !catalogGenesisAuthoring && !catalogGenesisFinalization && !sourceOnly && versionBound != null),
+        )
         check(!catalogGenesisFinalization || (!desiredInstallationOperator && !catalogGenesisAuthoring && !sourceOnly && versionBound != null))
         check(!desiredInstallationOperator || (!sourceOnly && versionBound != null && !epochRotationEnabled))
         check(!catalogGenesisAuthoring || (!desiredInstallationOperator && !sourceOnly && versionBound != null && !epochRotationEnabled))
     }
 
     private val namedCatalogOnly: Boolean
-        get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization
+        get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery
     private val publicTrust = versionBound?.adopt(this, endpoint, capacity, pathStyle, sourceOnly, desiredInstallationOperator, catalogGenesisAuthoring)
     val shutdown = AtomicBoolean()
     internal val versionBoundPools = versionBound?.createPools(this)
@@ -54,7 +59,7 @@ internal class PersistenceJdbcDriverRoot(
             // Seal even direct/later requests on these original participants, not merely the public start facade.
             ordinary.forbidStarts()
             deletion.forbidStarts()
-            if (catalogGenesisFinalization) {
+            if (catalogGenesisFinalization || catalogSignerRotationRecovery) {
                 epochRotationParticipant?.forbidStarts()
                 epochRotation?.seal() // Retain the exact dormant descriptor/inventory, never permit capture.
             }
@@ -76,6 +81,10 @@ internal class PersistenceJdbcDriverRoot(
     internal fun startCatalogGenesisFinalizationInfrastructure(): PersistenceLifecycleActivation =
         if (catalogGenesisFinalization) startRoot() else PersistenceLifecycleActivation.CLOSED
 
+    /** Same dormant TARGET inventory, but only scanner/Timer/coordinator may ever start on this root. */
+    internal fun startCatalogSignerRotationRecoveryInfrastructure(): PersistenceLifecycleActivation =
+        if (catalogSignerRotationRecovery) startRoot() else PersistenceLifecycleActivation.CLOSED
+
     private fun startRoot(): PersistenceLifecycleActivation {
         if (shutdown.get()) return PersistenceLifecycleActivation.CLOSED
         if (publicTrust?.readyFor(this) == false) return PersistenceLifecycleActivation.FAILED
@@ -83,6 +92,7 @@ internal class PersistenceJdbcDriverRoot(
         return runCatching { startActors() }.getOrElse { failure ->
             failed.set(true)
             requestShutdown()
+            rethrowSignerRotationRecoverySignal(failure)
             if (failure is InterruptedException) Thread.currentThread().interrupt()
             if (failure is Error) throw failure
             PersistenceLifecycleActivation.FAILED
@@ -97,6 +107,7 @@ internal class PersistenceJdbcDriverRoot(
         // Timer-only failure never changes the ordinary endpoint or installs a second controller.
         if (!sourceOnly) {
             runCatching { timer.start() }.onFailure { failure ->
+                rethrowSignerRotationRecoverySignal(failure)
                 if (failure is Error) throw failure
                 if (failure is InterruptedException) Thread.currentThread().interrupt()
             }
@@ -165,6 +176,7 @@ internal class PersistenceJdbcDriverRoot(
             }
         }.getOrElse { failure ->
             catalogCoordinator.forbidStarts()
+            rethrowSignerRotationRecoverySignal(failure)
             if (failure is InterruptedException) Thread.currentThread().interrupt()
             if (failure is Error) throw failure
             PersistenceLifecycleActivation.FAILED
@@ -172,6 +184,15 @@ internal class PersistenceJdbcDriverRoot(
     }
 
     fun requestCatalogCoordinatorShutdown(): Boolean = catalogCoordinator.forbidStarts()
+
+    private fun rethrowSignerRotationRecoverySignal(failure: Throwable) {
+        if (!catalogSignerRotationRecovery) return
+        if (failure is InterruptedException || failure is java.io.InterruptedIOException) {
+            Thread.currentThread().interrupt()
+            throw failure
+        }
+        if (failure is java.util.concurrent.CancellationException || failure is Error) throw failure
+    }
 
     internal fun prepareEpochRotation(): PersistenceLifecycleActivation {
         if (namedCatalogOnly) return PersistenceLifecycleActivation.CLOSED

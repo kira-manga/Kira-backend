@@ -34,6 +34,28 @@ internal class CatalogReadbackRefreshCustodyV1 {
         requireCatalogReadback(active.compareAndSet(attempt, null), CatalogReadbackFailure.CLOSE_FAILURE)
     }
 
+    internal fun reserveSignerRotationRecovery(original: CatalogSignerRotationPreparedRecoveryV1) {
+        requireConnectionFree()
+        original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+
+    internal fun requireSignerRotationRecovery(original: CatalogSignerRotationPreparedRecoveryV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+
+    internal fun requireSignerRotationRecoveryReplay(original: CatalogSignerRotationPreparedRecoveryV1, attempt: CatalogSignerRotationFreezeAttemptV1) {
+        requireSignerRotationRecovery(original)
+        requireCatalogReadback(original.ownsReplay(attempt), CatalogReadbackFailure.INVALID_POLICY)
+    }
+
+    internal fun releaseSignerRotationRecoveryAfterCleanup(original: CatalogSignerRotationPreparedRecoveryV1) {
+        requireConnectionFree()
+        original.requireActualCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
     internal fun reserve(factory: CurrentAcceptedCatalogRefreshV1, budgetMillis: Long, nanoTime: () -> Long): Attempt =
         reserve(factory, null, budgetMillis, nanoTime)
 

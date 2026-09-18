@@ -49,6 +49,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogProjectedHe
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationSqlInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
@@ -112,6 +113,8 @@ constructor(
     private val catalogPublisherWork: PersistenceTimeBudget? = null,
     private val catalogSignerRotationAttempt: CatalogSignerRotationFreezeAttemptV1? = null,
     private val catalogSignerRotationWork: PersistenceTimeBudget? = null,
+    private val signerRotationRecovery: CatalogSignerRotationPreparedRecoveryV1? = null,
+    private val signerRotationRecoveryWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -193,7 +196,8 @@ constructor(
         requireCaller()
         if (stage !== Stage.PREPARED) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
         stage = Stage.STARTING
-        val rechecksReadCommitted = firstDesiredAttempt != null || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null
+        val rechecksReadCommitted = firstDesiredAttempt != null || catalogPublisherAttempt != null ||
+            catalogSignerRotationAttempt != null || signerRotationRecovery != null
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
             setName(path.name)
             timeout = 2
@@ -321,14 +325,14 @@ constructor(
         // Rotation retains its pre-admission cap; ordinary phases begin after the real CHECKOUT consent, before its remaining tail.
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
-                ?: catalogPublisherWork ?: catalogSignerRotationWork
+                ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
     internal fun retainedPhaseCheckoutBudget(ceilingMillis: Long): PersistenceTimeBudget? {
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
-            ?: catalogPublisherWork ?: catalogSignerRotationWork
+            ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -676,6 +680,7 @@ constructor(
     internal fun recordFailure(problem: Throwable) {
         ownerDeleteAllApply.observeFailure(problem)
         catalogSignerRotationAttempt?.observeFailure(problem)
+        signerRotationRecovery?.observeFailure(problem)
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
@@ -691,6 +696,14 @@ constructor(
     }
 
     internal fun isOriginalCaller(): Boolean = caller.isCurrent()
+
+    /** Exact original snapshot/acquire context facts, including entry failures before enter returns. */
+    internal fun signerRotationRecoveryCleanupProven(original: CatalogSignerRotationPreparedRecoveryV1): Boolean =
+        caller.isCurrent() && signerRotationRecovery === original &&
+            path in setOf(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE) &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
     /** Lower/upper dispatch uses this budget; no business worker or copied Spring context exists. */
     internal fun callBudget(kind: PersistenceJdbcGuardCallKind): PersistenceTimeBudget {
@@ -813,6 +826,7 @@ constructor(
                 if (restoreInterrupt) Thread.currentThread().interrupt()
             } catch (problem: Throwable) {
                 catalogSignerRotationAttempt?.observeFailure(problem)
+                signerRotationRecovery?.observeFailure(problem)
                 // Discard raw restoration details, but retain unresolved custody instead of claiming settlement/refund.
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
@@ -888,7 +902,7 @@ constructor(
     /** Called outside F/G/T by the existing scanner; a later exact-epoch cut performs the retirement. */
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
-            ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: return false
+            ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
         return expired
@@ -915,7 +929,7 @@ constructor(
     internal fun transferCleanupBudget(): PersistenceTimeBudget {
         val budget = cleanupBudget()
         val genesisLifecycle = catalogAuthorAttempt != null || catalogFinalizerAttempt != null
-        if (genesisLifecycle || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null) {
+        if (genesisLifecycle || catalogPublisherAttempt != null || catalogSignerRotationAttempt != null || signerRotationRecovery != null) {
             return budget.systemCleanupSnapshot(WORK_MILLIS)
         }
         val ordinaryBudget = rotationAttempt == null && cutoffAttempt == null && catalogRefresh == null
@@ -929,6 +943,9 @@ constructor(
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
+        signerRotationRecovery?.let {
+            return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
+        }
         catalogSignerRotationAttempt?.let {
             return it.budget.systemCleanupSnapshot(EMERGENCY_MILLIS).also { selected -> emergency = selected }
         }
@@ -1010,6 +1027,7 @@ constructor(
                 true
             } catch (problem: Throwable) {
                 catalogSignerRotationAttempt?.observeFailure(problem)
+                signerRotationRecovery?.observeFailure(problem)
                 // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
                 ownership.retainCallerForRecovery(this@PersistencePhaseContext)
                 false

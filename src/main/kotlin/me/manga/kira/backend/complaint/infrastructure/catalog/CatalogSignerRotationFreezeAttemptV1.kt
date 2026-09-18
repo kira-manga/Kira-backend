@@ -16,19 +16,42 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /** Only its exact one-shot owner may retain/select this attempt; no supplied tuple, Result or callback can grant entry. */
-internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
-    private val owner: CatalogSignerRotationFreezeV1,
+internal class CatalogSignerRotationFreezeAttemptV1 private constructor(
+    private val owner: CatalogSignerRotationFreezeV1?,
+    private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
     internal val process: VersionBoundComplaintProcessConfiguration,
     internal val campaign: CatalogCoordinatorLeaseCampaignV1,
     internal val budget: PersistenceTimeBudget,
 ) {
+    internal constructor(
+        owner: CatalogSignerRotationFreezeV1,
+        process: VersionBoundComplaintProcessConfiguration,
+        campaign: CatalogCoordinatorLeaseCampaignV1,
+        budget: PersistenceTimeBudget,
+    ) : this(owner, null, process, campaign, budget)
+
+    internal constructor(
+        owner: CatalogSignerRotationPreparedRecoveryV1,
+        process: VersionBoundComplaintProcessConfiguration,
+        campaign: CatalogCoordinatorLeaseCampaignV1,
+        budget: PersistenceTimeBudget,
+    ) : this(null, owner, process, campaign, budget)
+
+    init {
+        recovery?.requireReplayConstruction(process, campaign, budget)
+    }
+
     private val caller = Thread.currentThread()
     private val coordinator = process.pools.catalogCoordinator
     private val ownership = coordinator.ownership
     private val jdbc = campaign.jdbc
     private val binding = campaign.binding.arguments()
     private val capacity = process.consumers.capacityPolicy.digestBytes()
-    internal val predecessorHash = campaign.binding.signerRotationPredecessorHash(process)
+    internal val predecessorHash = if (recovery == null) {
+        campaign.binding.signerRotationPredecessorHash(process)
+    } else {
+        campaign.binding.recoveredSignerRotationPredecessorHash(process, recovery)
+    }
     private var selectedInputs: CatalogSignerRotationInputsV1? = null
     internal val inputs: CatalogSignerRotationInputsV1 get() = checkNotNull(selectedInputs)
     private var selected: CatalogSignerRotationSqlInputV1? = null
@@ -44,7 +67,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
 
     init {
         requireConnectionFree()
-        campaign.binding.requireSignerRotationProcess(process)
+        requireProcess()
         campaign.binding.requirePersistence(ownership, jdbc)
         campaign.requireRotationContinuity(budget)
     }
@@ -53,20 +76,26 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
         requireConnectionFree()
         requireRunning()
         requireSignerRotation(!reserved && !released, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
-        coordinator.catalogRefreshCustody.reserveSignerRotation(this)
+        if (recovery == null) coordinator.catalogRefreshCustody.reserveSignerRotation(this)
+        else recovery.retainReplay(this, process, campaign, budget)
         reserved = true
     }
 
     internal fun bind(value: CatalogSignerRotationInputsV1) {
         requireRunning()
         requireSignerRotation(reserved && selectedInputs == null)
+        recovery?.requireReplayInputs(this, value)
         selectedInputs = value
     }
 
-    internal fun readInitial(): CatalogSignerRotationObservationV1 = execute(CatalogSignerRotationSqlInputV1.initial(this))
+    internal fun readInitial(): CatalogSignerRotationObservationV1 {
+        requireSigningAllowed()
+        return execute(CatalogSignerRotationSqlInputV1.initial(this))
+    }
     internal fun readPrepared(): CatalogSignerRotationObservationV1 = execute(CatalogSignerRotationSqlInputV1.prepared(this))
 
     internal fun prepare(readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback): CatalogSignerRotationObservationV1 {
+        requireSigningAllowed()
         val before = checkNotNull(latest)
         requireSignerRotation(before.mutation == null)
         requireReadback(before, readback)
@@ -85,6 +114,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
     internal fun persistSignature(before: CatalogSignerRotationObservationV1, after: CatalogFrozenMutation): CatalogSignerRotationObservationV1 {
         requireLatest(before)
         inputs.requireMutation(after)
+        recovery?.requireSignatureReplay(this, before, after)
         return execute(CatalogSignerRotationSqlInputV1.signature(this, before, after))
     }
 
@@ -135,6 +165,7 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
 
     internal fun requirePhaseEntry(candidate: PersistencePhaseOwnership, path: PersistencePhasePath) {
         requireRunning()
+        recovery?.requireReplayPhase(this, candidate, path)
         requireSignerRotation(candidate === ownership && selected?.path === path && !entered, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         entered = true
     }
@@ -246,20 +277,45 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
             CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
         )
         campaign.binding.requirePersistence(candidate, candidateJdbc)
-        coordinator.catalogRefreshCustody.requireSignerRotation(this)
+        requireSharedSlot()
     }
 
     internal fun requireRunning() {
         throwIfSignalled()
         requireSignerRotation(
-            caller === Thread.currentThread() && !failed && !released && owner.owns(this),
+            caller === Thread.currentThread() && !failed && !released && (owner?.owns(this) ?: checkNotNull(recovery).ownsReplay(this)),
             CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED,
         )
         requireSignerRotation(!sqlCleanupUnproven, CatalogSignerRotationFreezeFailureV1.CLEANUP_UNPROVEN)
-        owner.requireRunning()
-        campaign.binding.requireSignerRotationProcess(process)
+        if (owner != null) owner.requireRunning() else checkNotNull(recovery).requireRunning()
+        requireProcess()
         campaign.requireRotationContinuity(budget)
-        if (reserved) coordinator.catalogRefreshCustody.requireSignerRotation(this)
+        if (reserved) requireSharedSlot()
+    }
+
+    internal fun requireSigningAllowed() {
+        requireRunning()
+        requireSignerRotation(recovery == null, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+    }
+
+    internal fun requireRecoveryPurpose(candidate: PersistencePhaseOwnership) {
+        val original = recovery ?: throw CatalogSignerRotationFreezeExceptionV1(CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        original.requireReplayPhase(this, candidate, checkNotNull(selected).path)
+    }
+
+    internal fun requirePredecessor(readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback) {
+        if (recovery == null) campaign.binding.requireSignerRotationPredecessor(process, readback)
+        else campaign.binding.requireRecoveredSignerRotationPredecessor(process, recovery, readback)
+    }
+
+    private fun requireProcess() {
+        if (recovery == null) campaign.binding.requireSignerRotationProcess(process)
+        else campaign.binding.requireRecoveredSignerRotationProcess(process, recovery)
+    }
+
+    private fun requireSharedSlot() {
+        if (recovery == null) coordinator.catalogRefreshCustody.requireSignerRotation(this)
+        else coordinator.catalogRefreshCustody.requireSignerRotationRecoveryReplay(recovery, this)
     }
 
     /** Detached outside phase entry; never regenerate/hash full B under the control lock. */
@@ -271,6 +327,8 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
 
     internal fun bindingRecordValues(): Array<String> {
         requireConnectionFree()
+        // Fresh leadership never rewrites historical allocation bytes.
+        requireSignerRotation(recovery == null, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
         return (
             binding.map { if (it is ByteArray) HexFormat.of().formatHex(it) else it.toString() } +
                 listOf(HexFormat.of().formatHex(capacity), campaign.owner.toString(), campaign.token.toString())
@@ -288,13 +346,16 @@ internal class CatalogSignerRotationFreezeAttemptV1 internal constructor(
     }
 
     internal fun releaseAfterCleanup() {
-        owner.requireOwnedCleanup(this)
+        requireActualCleanup()
         if (!reserved) return
-        coordinator.catalogRefreshCustody.releaseSignerRotationAfterCleanup(this)
+        if (recovery == null) coordinator.catalogRefreshCustody.releaseSignerRotationAfterCleanup(this)
+        else recovery.releaseReplayAfterCleanup(this) // The parent still owns the one shared slot until its own cleanup is proven.
         released = true
     }
 
-    internal fun requireActualCleanup() = owner.requireOwnedCleanup(this)
+    internal fun requireActualCleanup() {
+        if (owner != null) owner.requireOwnedCleanup(this) else checkNotNull(recovery).requireReplayCleanup(this)
+    }
 
     override fun toString(): String = "CatalogSignerRotationFreezeAttemptV1(exact-cold-process-and-campaign,redacted)"
 }

@@ -58,6 +58,20 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogGenesisFinalizationWithEpochRotation(this)
     }
 
+    /** Fixed no-Sign recovery purpose on the same runtime principal; never an ordinary UNKNOWN launch grant. */
+    internal fun bindCatalogSignerRotationRecoveryOwner(epochRotation: Boolean): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogSignerRotationRecovery(this, epochRotation)
+    }
+
+    internal fun createCatalogSignerRotationRecoveryRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this,
+            epochRotationEnabled = epochRotation, catalogSignerRotationRecovery = true,
+        )
+    }
+
     internal fun createCatalogGenesisFinalizationRoot(): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(
@@ -123,7 +137,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
     ): OwnedPersistencePublicTrust {
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
-        if (root.catalogGenesisFinalization) requireFinalizerConfiguration()
+        if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery) requireFinalizerConfiguration()
         trust.adopt(root)
         adoptedRoot = root
         return trust

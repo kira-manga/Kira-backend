@@ -98,8 +98,11 @@ signature1 replacement, repair, alternate format or randomized retry occurs. Exi
 missing/partial pairs, mismatched bytes, identity/lease drift or uncertain cleanup refuses
 before Sign. Existing `resume` remains strictly both-returned and never Signs.
 
-Broader SQL-outcome reconciliation and restart provenance after PREPARED2 remain **internal
-unimplemented recovery states** in this slice—not a blanket “external recovery” classification.
+Broader SQL-outcome reconciliation and restart provenance through this ordinary Freeze entry remain
+**internal unimplemented recovery states**—not a blanket “external recovery” classification.
+The separate `COMPLAINT_CATALOG_PREPARED_ROTATION_RECOVERY_V1.md` describes a fresh-process,
+recovery-only candidate for both-returned PREPARED2 replay; it grants no fresh-process second Sign
+and its source handoff does not establish runtime acceptance.
 Truly lost provider response or trusted custody requires explicit recovery resolution.
 Complete rotation recovery is not claimed. Genuine overlap publication/projection and
 immediate activation3 are also **internal future work**, not capabilities supplied by this

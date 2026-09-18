@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.domain.catalog.requireCatalogReadback
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPreparedRecoveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotRows
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogSnapshotReader
@@ -57,6 +58,16 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         return capture(finalizer = attempt).validate(initial, trust, policy)
     }
 
+    /** Same actual snapshot operation; only the concrete recovery owner supplies its original allowance and retained inputs. */
+    internal fun loadPreparedRecovery(original: CatalogSignerRotationPreparedRecoveryV1, policy: CatalogReadbackPolicy): LocalCatalogSnapshot {
+        requireConnectionFree()
+        original.requireSnapshotSelection(ownership)
+        val initial = copyBundle(original.inputs.initialBytes())
+        val current = copyBundle(original.inputs.currentBytes())
+        val trust = OfflineTrustBundleVerifier.verify(current, policy.chain.trustBundlePolicy)
+        return capture(recovery = original).validate(initial, trust, policy).also { original.requireRunning() }
+    }
+
     /** No future PSS-envelope pin is needed to observe PREPARED bytes. Their presence is not signing/publication authority. */
     fun loadGenesisPreparation(currentBundleBytes: ByteArray, policy: OfflineCatalogChainReaderPolicy): UnverifiedGenesisPreparation {
         requireConnectionFree()
@@ -79,11 +90,14 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
         attempt: CatalogReadbackRefreshCustodyV1.Attempt? = null,
         author: CatalogGenesisFreezeAttemptV1? = null,
         finalizer: CatalogGenesisFinalizeAttemptV1? = null,
+        recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
     ): CatalogSnapshotRows {
         requireConnectionFree()
-        val phase = finalizer?.let(ownership::enterComplaintCatalogSnapshot) ?: author?.let(ownership::enterComplaintCatalogSnapshot)
+        val phase = recovery?.let(ownership::enterComplaintCatalogSnapshot) ?: finalizer?.let(ownership::enterComplaintCatalogSnapshot)
+            ?: author?.let(ownership::enterComplaintCatalogSnapshot)
             ?: attempt?.let(ownership::enterComplaintCatalogSnapshot) ?: ownership.enterComplaintCatalogSnapshot()
         var captured: CatalogSnapshotReadOperation? = null
+        var closingFailure: Throwable? = null
         try {
             phase.begin()
             author?.let { reader.authenticateGenesisAuthor(it, ownership) }
@@ -91,12 +105,20 @@ internal class ComplaintCatalogSnapshotPhaseExecutor(private val ownership: Pers
             captured = reader.read()
             author?.requireRunning()
             finalizer?.requireRunning()
+            recovery?.requireRunning()
             phase.commit()
         } catch (problem: Throwable) {
             phase.recordFailure(problem)
         } finally {
-            phase.finish()
+            try {
+                closingFailure = runCatching(phase::finish).exceptionOrNull()
+                closingFailure?.let { recovery?.observeFailure(it) }
+            } finally {
+                recovery?.observePhaseCleanup(phase)
+            }
         }
+        recovery?.throwIfSignalled()
+        closingFailure?.let { throw it }
         val operation = captured ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
         // The getter checks known commit + completed resource release before any local JSON/hash/signature work.
         return operation.rows

@@ -18,8 +18,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * wire adapters. In particular, a returned request is retained BEFORE any throwable post-prepare check.
  * No routes, credentials, evidence or effect eligibility are supplied through this transport join.
  */
-internal class CatalogSignerRotationReadbackHttpV1(private val owner: CatalogSignerRotationFreezeAttemptV1, private val readbackBudget: PersistenceTimeBudget) :
+internal class CatalogSignerRotationReadbackHttpV1 private constructor(
+    private val owner: CatalogSignerRotationFreezeAttemptV1?,
+    private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
+    private val readbackBudget: PersistenceTimeBudget,
+) :
     SdkHttpClient {
+    constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) : this(owner, null, budget)
+    internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) : this(null, owner, budget)
     private val closed = AtomicBoolean()
     private var opened = false
 
@@ -84,7 +90,7 @@ internal class CatalogSignerRotationReadbackHttpV1(private val owner: CatalogSig
     override fun toString(): String = "CatalogSignerRotationReadbackHttpV1(original-native-custody,redacted)"
 
     private fun requireWork() {
-        owner.requireRunning()
+        if (owner != null) owner.requireRunning() else checkNotNull(recovery).requireRunning()
         readbackBudget.remainingMillis(1)
         closeFailure?.let(::throwCleanup)
         workSignal?.let { throw it }
@@ -247,9 +253,14 @@ internal class CatalogSignerRotationReadbackHttpV1(private val owner: CatalogSig
 }
 
 /** The lower opens PRIMARY then REPLICA; both exact raw construction slots already belong to this invocation. */
-internal class CatalogSignerRotationReadbackHttpPairV1(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) : AutoCloseable {
-    private val primary = CatalogSignerRotationReadbackHttpV1(owner, budget)
-    private val replica = CatalogSignerRotationReadbackHttpV1(owner, budget)
+internal class CatalogSignerRotationReadbackHttpPairV1 private constructor(
+    private val primary: CatalogSignerRotationReadbackHttpV1,
+    private val replica: CatalogSignerRotationReadbackHttpV1,
+) : AutoCloseable {
+    constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
+    internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     private var primaryOpened = false
     private var replicaOpened = false
 

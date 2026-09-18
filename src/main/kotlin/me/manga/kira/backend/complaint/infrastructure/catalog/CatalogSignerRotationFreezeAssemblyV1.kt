@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogGetRequest
 import me.manga.kira.backend.complaint.domain.catalog.CatalogListRequest
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPort
 import me.manga.kira.backend.complaint.domain.catalog.CatalogVersionBody
+import me.manga.kira.backend.complaint.domain.catalog.LocalCatalogSnapshot
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.AwsCatalogSigningAdapterV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackAdapter
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
@@ -14,13 +15,22 @@ import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
 
 /** Original bounded two-Sign/three-read owner; does not acquire/rebuild the already-retained process, a writer pool or a PUT client. */
-internal class CatalogSignerRotationFreezeAssemblyV1(
-    private val attempt: CatalogSignerRotationFreezeAttemptV1,
+internal class CatalogSignerRotationFreezeAssemblyV1 private constructor(
+    private val attempt: CatalogSignerRotationFreezeAttemptV1?,
+    private val recovery: CatalogSignerRotationPreparedRecoveryV1?,
     private val signingHttpFactory: (() -> SdkHttpClient)?,
     private val readbackHttpFactory: (() -> SdkHttpClient)?,
     private val clock: Clock,
 ) : AutoCloseable {
-    private val files = CatalogSignerRotationInputFilesV1(attempt.budget)
+    constructor(attempt: CatalogSignerRotationFreezeAttemptV1, signing: (() -> SdkHttpClient)?, readback: (() -> SdkHttpClient)?, clock: Clock) :
+        this(attempt, null, signing, readback, clock)
+
+    internal constructor(original: CatalogSignerRotationPreparedRecoveryV1, readback: (() -> SdkHttpClient)?, clock: Clock) :
+        this(null, original, null, readback, clock)
+
+    private val budget = attempt?.budget ?: checkNotNull(recovery).budget
+    private val inputs: CatalogSignerRotationInputsV1 get() = attempt?.inputs ?: checkNotNull(recovery).inputs
+    private val files = CatalogSignerRotationInputFilesV1(budget)
     private val signers = arrayOfNulls<AwsCatalogSigningAdapterV1.Construction>(2)
     private val readbacks = mutableListOf<ReadbackRound>()
     private var acquired = false
@@ -29,10 +39,11 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
 
     fun acquire(request: CatalogSignerRotationFreezeRequestV1): CatalogSignerRotationInputsV1 {
         requireConnectionFree()
-        attempt.requireRunning()
+        requireRunning()
         requireSignerRotation(!acquired && !closed)
         acquired = true
-        return files.readInputs(request, attempt).also { attempt.requireRunning() }
+        return (if (attempt != null) files.readInputs(request, attempt) else files.readInputs(request, checkNotNull(recovery)))
+            .also { requireRunning() }
     }
 
     fun observe(
@@ -41,15 +52,36 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
         replicaCredentials: AwsSessionCredentials,
     ): CatalogDualLocationVerifier.SignerRotationAuthorReadback {
         requireConnectionFree()
-        attempt.requireRunning()
-        requireSignerRotation(acquired && !closed && readbacks.size < 3)
-        val inputs = attempt.inputs
+        requireRunning()
         inputs.requireObservation(local)
+        return observeSnapshot(local.localSnapshot, primaryCredentials, replicaCredentials).also {
+            requireSignerRotation(it.genesisBytes().contentEquals(local.genesis.signedEnvelopeBytes))
+        }
+    }
+
+    /** Only the genuine released snapshot retained by the concrete recovery owner, before it has any lease. */
+    internal fun observePreparedSnapshot(
+        local: LocalCatalogSnapshot.Prepared,
+        primaryCredentials: AwsSessionCredentials,
+        replicaCredentials: AwsSessionCredentials,
+    ): CatalogDualLocationVerifier.SignerRotationAuthorReadback {
+        checkNotNull(recovery).requireObservedSnapshot(local)
+        return observeSnapshot(local, primaryCredentials, replicaCredentials)
+    }
+
+    private fun observeSnapshot(
+        local: LocalCatalogSnapshot,
+        primaryCredentials: AwsSessionCredentials,
+        replicaCredentials: AwsSessionCredentials,
+    ): CatalogDualLocationVerifier.SignerRotationAuthorReadback {
+        requireConnectionFree()
+        requireRunning()
+        requireSignerRotation(acquired && !closed && readbacks.size < 3)
         val reader = inputs.reader
         val evaluatedAt = clock.instant()
-        attempt.requireRunning()
+        requireRunning()
         val policy = reader.policyAt(evaluatedAt)
-        val round = ReadbackRound(attempt.budget.capped(reader.totalAttemptMillis))
+        val round = ReadbackRound(budget.capped(reader.totalAttemptMillis))
         readbacks.add(round) // Both real raw-location/native owners retained before either construction starts.
         val readback = withSignerRotationCleanup(
             {
@@ -80,7 +112,7 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
                     inputs.initialBytes(),
                     inputs.currentBytes(),
                     policy,
-                    local.localSnapshot,
+                    local,
                 )
             },
             round::close,
@@ -89,14 +121,15 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
         reader.verifySignerRotationPredecessor(readback, evaluatedAt)
         requireSignerRotation(!clock.instant().isBefore(evaluatedAt))
         inputs.requirePredecessor(readback)
-        requireSignerRotation(readback.genesisBytes().contentEquals(local.genesis.signedEnvelopeBytes))
-        attempt.requireRunning()
+        requireRunning()
         return readback
     }
 
     fun sign(slot: Int, credentials: AwsSessionCredentials): ByteArray {
         requireConnectionFree()
-        attempt.requireRunning()
+        requireSignerRotation(recovery == null, CatalogSignerRotationFreezeFailureV1.PROCESS_REFUSED)
+        val attempt = checkNotNull(attempt)
+        attempt.requireSigningAllowed()
         requireSignerRotation(acquired && !closed && slot == nextSigner && slot in 0..1)
         nextSigner++ // A failed/unknown original Sign can never be retried by this owner.
         val key = attempt.inputs.writer.keys()[slot].signingKey
@@ -131,9 +164,10 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
 
     private inner class ReadbackRound(val budget: PersistenceTimeBudget) : AutoCloseable {
         val construction = S3CatalogReadbackAdapter.Construction()
-        val http = CatalogSignerRotationReadbackHttpPairV1(attempt, budget)
+        val http = if (attempt != null) CatalogSignerRotationReadbackHttpPairV1(attempt, budget)
+        else CatalogSignerRotationReadbackHttpPairV1(checkNotNull(recovery), budget)
         fun requireRunning() {
-            attempt.requireRunning()
+            this@CatalogSignerRotationFreezeAssemblyV1.requireRunning()
             budget.remainingMillis(1)
         }
         override fun close() = withSignerRotationCleanup(construction::close, http::close)
@@ -161,4 +195,8 @@ internal class CatalogSignerRotationFreezeAssemblyV1(
     }
 
     override fun toString(): String = "CatalogSignerRotationFreezeAssemblyV1(two-SDK-Sign-and-bounded-raw-read-custody,redacted)"
+
+    private fun requireRunning() {
+        if (attempt != null) attempt.requireRunning() else checkNotNull(recovery).requireRunning()
+    }
 }

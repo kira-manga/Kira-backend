@@ -56,7 +56,15 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
         return current.key
     }
 
-    fun openAllocation(expected: ByteArray, existingOnly: Boolean = false): CatalogSignerRotationCustodyObservationV1 {
+    fun openAllocation(expected: ByteArray, existingOnly: Boolean = false): CatalogSignerRotationCustodyObservationV1 =
+        openAllocationBytes(expected, existingOnly)
+
+    internal fun discoverExistingAllocation(): ByteArray {
+        openAllocationBytes(null, existingOnly = true)
+        return checkNotNull(readInventory(null)[ALLOCATION.name]).copyOf()
+    }
+
+    private fun openAllocationBytes(expected: ByteArray?, existingOnly: Boolean): CatalogSignerRotationCustodyObservationV1 {
         val selected = rootDirectory()
         val beforeLock = scan(selected, ROOT_NAMES)
         requireSignerRotationCustody(ALLOCATION_DIRECTORY !in beforeLock || LOCK_FILE in beforeLock, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
@@ -87,7 +95,7 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
             requireSignerRotationCustody(scan(allocationDirectory(), LEAF_NAMES).isEmpty(), CatalogSignerRotationCustodyFailureV1.INVENTORY_REFUSED)
             forceDirectory(allocationDirectory())
             forceDirectory(selected) // Persist the new directory's entry in its parent before any allocation record.
-            writePair(ALLOCATION, expected)
+            writePair(ALLOCATION, checkNotNull(expected))
         }
         readInventory(expected) // An existing directory with no complete allocation is never filled in.
         return if (created) CatalogSignerRotationCustodyObservationV1.CREATED else CatalogSignerRotationCustodyObservationV1.IDENTICAL_OBSERVED
@@ -256,7 +264,7 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
         checkedFile(rootDirectory(), LOCK_FILE, 0, WRITE_MODE)
     }
 
-    private fun readInventory(expectedAllocation: ByteArray): Map<String, ByteArray> {
+    private fun readInventory(expectedAllocation: ByteArray?): Map<String, ByteArray> {
         requireLiveLock()
         checkDirectories()
         requireSignerRotationCustody(scan(rootDirectory(), ROOT_NAMES) == ROOT_NAMES, CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
@@ -271,7 +279,9 @@ internal class LinuxSignerRotationReleaseFilesV1(private val owner: CatalogSigne
             requireSignerRotationCustody(present == (spec.completenessName in names), CatalogSignerRotationCustodyFailureV1.INCOMPLETE)
             if (present) result[spec.name] = readPair(spec)
         }
-        requireSignerRotationCustody(result[ALLOCATION.name]?.contentEquals(expectedAllocation) == true, CatalogSignerRotationCustodyFailureV1.DIFFERENT_BYTES)
+        if (expectedAllocation != null) {
+            requireSignerRotationCustody(result[ALLOCATION.name]?.contentEquals(expectedAllocation) == true, CatalogSignerRotationCustodyFailureV1.DIFFERENT_BYTES)
+        }
         checkDirectories()
         requireLiveLock()
         return result

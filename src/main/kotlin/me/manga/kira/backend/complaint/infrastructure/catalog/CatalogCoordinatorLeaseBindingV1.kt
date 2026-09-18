@@ -26,6 +26,7 @@ import java.util.UUID
 internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     private val process: VersionBoundComplaintProcessConfiguration,
     private val catalog: CatalogCommonHeadEvidence,
+    private val preparedRecovery: CatalogSignerRotationPreparedRecoveryV1? = null,
 ) {
     internal val coordinator = process.pools.catalogCoordinator
     private val ownership = coordinator.ownership
@@ -89,6 +90,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     /** The original J starts the one total budget before nonce generation, phase entry or handoff. */
     internal fun startEpochRotationBudget(): PersistenceTimeBudget {
+        requireOrdinaryPurpose()
         requireConnectionFree()
         if (epochRotationMillis !in 1..10_000) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         val budget = PersistenceTimeBudget.start(epochRotationMillis.toLong(), ownership.nanoClock)
@@ -98,6 +100,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     /** A NEW seal attempt has its own original same-J deadline, never rotation's spent budget. */
     internal fun startEpochSealBudget(): PersistenceTimeBudget {
+        requireOrdinaryPurpose()
         requireConnectionFree()
         val millis = journal.declaration().limits.deadlines.epochSealMillis
         val budget = PersistenceTimeBudget.start(millis.toLong(), ownership.nanoClock)
@@ -107,6 +110,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     /** Fixed cold D7/G1 author only. No supplied catalog tuple or rebuilt process can obtain this binding. */
     internal fun startSignerRotationBudget(selected: VersionBoundComplaintProcessConfiguration): PersistenceTimeBudget {
+        requireOrdinaryPurpose()
         requireConnectionFree()
         val writer = selected.catalogSignerRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         val budget = PersistenceTimeBudget.start(writer.deployment.totalAttemptMillis, ownership.nanoClock)
@@ -116,6 +120,11 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     /** Local identity/configuration checks only; safe while the fixed SQL phase owns the full-B row lock. */
     internal fun requireSignerRotationProcess(selected: VersionBoundComplaintProcessConfiguration) {
+        requireOrdinaryPurpose()
+        requireSignerRotationConfiguration(selected)
+    }
+
+    private fun requireSignerRotationConfiguration(selected: VersionBoundComplaintProcessConfiguration) {
         requireUnchangedConfiguration()
         val writer = process.catalogSignerRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         if (selected !== process || desired.desiredGeneration != 1L || catalogGeneration != 1L) {
@@ -125,6 +134,47 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         writer.requireRetained(process.pools, checkNotNull(process.catalogReadback))
+    }
+
+    internal fun requireRecoveredSignerRotationProcess(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationPreparedRecoveryV1,
+    ) {
+        requireRecoveryPurpose(original)
+        original.requireBoundProcess(this, selected)
+        requireSignerRotationConfiguration(selected)
+    }
+
+    internal fun recoveredSignerRotationPredecessorHash(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationPreparedRecoveryV1,
+    ): String {
+        requireRecoveredSignerRotationProcess(selected, original)
+        return catalog.chain.tail.envelopeSha256
+    }
+
+    internal fun requireRecoveredSignerRotationPredecessor(
+        selected: VersionBoundComplaintProcessConfiguration,
+        original: CatalogSignerRotationPreparedRecoveryV1,
+        readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback,
+    ) {
+        requireConnectionFree()
+        requireRecoveredSignerRotationProcess(selected, original)
+        val observed = readback.commonHeadEvidence()
+        requireCatalogReadback(observed.chain.tail == catalog.chain.tail && observed.chain.trust == catalog.chain.trust, CatalogReadbackFailure.HEAD_CONFLICT)
+    }
+
+    internal fun requireOrdinaryPurpose() {
+        if (preparedRecovery != null || coordinator.catalogSignerRotationRecovery) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun requireRecoveryPurpose(original: CatalogSignerRotationPreparedRecoveryV1) {
+        if (preparedRecovery !== original || !coordinator.catalogSignerRotationRecovery) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    /** Existing campaign bounding may discard diagnostics, but not this concrete recovery owner's original signal. */
+    internal fun observeRecoveryFailure(problem: Throwable) {
+        preparedRecovery?.observeFailure(problem)
     }
 
     internal fun signerRotationPredecessorHash(selected: VersionBoundComplaintProcessConfiguration): String {
@@ -146,12 +196,14 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
     }
 
     internal fun cutoffRouting(): VersionBoundComplaintJournalRouting {
+        requireOrdinaryPurpose()
         requireUnchangedConfiguration()
         return process.consumers.journalRouting.also { check(it.journalConfiguration === journal) }
     }
 
     /** Only the actual cold owner retained before this process's D4/G1; never a caller-selected replacement. */
     internal fun epochSealAcquisition(expectedLanes: JournalPublicationLanesV1): VersionBoundEpochSealAcquisitionV1 {
+        requireOrdinaryPurpose()
         requireUnchangedConfiguration()
         val selected = process.epochSealAcquisition ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         selected.requireRetained(cutoffRouting(), expectedLanes)
@@ -160,6 +212,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     /** Only the actual retained D3 resource; a fourth pool or independently assembled descriptor is not accepted. */
     internal fun epochRotationResource(): EpochRotationPersistence {
+        requireOrdinaryPurpose()
         val selected = process.epochRotation ?: throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         requireEpochRotation(selected)
         return selected
@@ -167,6 +220,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
 
     /** Identity/configuration checks only, safe inside either fixed phase; no connection, hash or provider work. */
     internal fun requireEpochRotation(selected: EpochRotationPersistence) {
+        requireOrdinaryPurpose()
         requireUnchangedConfiguration()
         if (process.epochRotation !== selected || process.pools.epochRotation !== selected || !selected.belongsTo(process.pools)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
@@ -187,6 +241,7 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentAcceptedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
+            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery, CatalogReadbackFailure.INVALID_POLICY)
             val catalog = refresh.catalogFor(process)
             requireCatalogReadback(catalog.chain.tail.generation == 1L, CatalogReadbackFailure.INVALID_POLICY)
             return CatalogCoordinatorLeaseBindingV1(process, catalog)
@@ -198,12 +253,24 @@ internal class CatalogCoordinatorLeaseBindingV1 private constructor(
             refresh: CurrentProjectedCatalogRefreshV1.Result,
         ): CatalogCoordinatorLeaseBindingV1 {
             requireConnectionFree()
+            requireCatalogReadback(!process.pools.catalogCoordinator.catalogSignerRotationRecovery, CatalogReadbackFailure.INVALID_POLICY)
             val catalog = refresh.catalogFor(process)
             requireCatalogReadback(
                 process.catalogReadback?.projectedCurrent == true && catalog.chain.tail.generation > 1L,
                 CatalogReadbackFailure.INVALID_POLICY,
             )
             return CatalogCoordinatorLeaseBindingV1(process, catalog)
+        }
+
+        /** Actual released snapshot/raw fold retained by one concrete owner; this purpose cannot start any normal campaign consumer. */
+        internal fun fromPreparedRecovery(
+            original: CatalogSignerRotationPreparedRecoveryV1,
+            process: VersionBoundComplaintProcessConfiguration,
+            readback: CatalogDualLocationVerifier.SignerRotationAuthorReadback,
+        ): CatalogCoordinatorLeaseBindingV1 {
+            requireConnectionFree()
+            original.requireBindingInputs(process, readback)
+            return CatalogCoordinatorLeaseBindingV1(process, readback.commonHeadEvidence(), original)
         }
 
         private fun digest(value: String): ByteArray {

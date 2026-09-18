@@ -17,16 +17,31 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
     private val inFlight = AtomicReference<Attempt?>()
 
     internal fun acquire(binding: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate): Attempt {
+        binding.requireOrdinaryPurpose()
+        return acquire(binding, jdbc, null)
+    }
+
+    internal fun acquirePreparedRecovery(
+        original: CatalogSignerRotationPreparedRecoveryV1,
+        binding: CatalogCoordinatorLeaseBindingV1,
+        jdbc: JdbcTemplate,
+    ): Attempt {
+        original.requireLeaseSelection(coordinator.ownership, jdbc, binding)
+        return acquire(binding, jdbc, original)
+    }
+
+    private fun acquire(binding: CatalogCoordinatorLeaseBindingV1, jdbc: JdbcTemplate, original: CatalogSignerRotationPreparedRecoveryV1?): Attempt {
         requireConnectionFree()
         requireBinding(binding, jdbc)
         active.get()?.retireIfExpired()
         if (active.get() != null) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
-        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null))
+        return reserve(Attempt(binding, jdbc, PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE, null, null, original))
     }
 
     @Suppress("TooGenericExceptionCaught")
     internal fun renew(campaign: CatalogCoordinatorLeaseCampaignV1, jdbc: JdbcTemplate): Attempt {
         try {
+            campaign.binding.requireOrdinaryPurpose()
             requireConnectionFree()
             requireCampaign(campaign, jdbc)
             val window = campaign.requireLocalWindow()
@@ -39,6 +54,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
 
     internal fun relinquish(campaign: CatalogCoordinatorLeaseCampaignV1, jdbc: JdbcTemplate): Attempt {
         campaign.close() // Stop new work/renewal before any entry/resource check, including a foreign-resource refusal.
+        campaign.binding.requireOrdinaryPurpose()
         requireConnectionFree()
         requireCampaign(campaign, jdbc)
         campaign.claimRelinquishment()
@@ -76,6 +92,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         internal val path: PersistencePhasePath,
         private val prior: CatalogCoordinatorLeaseCampaignV1?,
         private val priorWindow: CatalogCoordinatorLeaseCampaignV1.Window?,
+        private val recovery: CatalogSignerRotationPreparedRecoveryV1? = null,
     ) {
         internal val custody: CatalogCoordinatorLeaseCustodyV1 get() = this@CatalogCoordinatorLeaseCustodyV1
         private val caller = Thread.currentThread()
@@ -95,6 +112,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
                 refuse(PersistencePhaseFailureCode.WORK_FAILED)
             }
             requireBinding(binding, selected)
+            recovery?.requireLeaseAttempt(binding)
             if (Thread.currentThread().isInterrupted) refuse(PersistencePhaseFailureCode.INTERRUPTED)
             if (path !== PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH) {
                 requireLeaseWindow(clock.nanoTime() - startedAtNanos)
@@ -118,6 +136,12 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         internal fun sqlArguments(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate): Array<Any?> {
             requireOperation(operation, selected)
             return arguments
+        }
+
+        /** Under the actual row lock, before the later-clock CAS; the floor is never a caller-supplied long. */
+        internal fun requireHistoricalTokenFloor(operation: CatalogCoordinatorLeaseOperation, selected: JdbcTemplate, lockedToken: Long) {
+            requireOperation(operation, selected)
+            recovery?.requireHistoricalLeaseFloor(binding, lockedToken)
         }
 
         /** A historical receipt can be reread after success, but a failed/late original return can never recover one. */
@@ -173,6 +197,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
         }
 
         internal fun failure(problem: Throwable): PersistencePhaseException {
+            recovery?.observeFailure(problem)
             abort()
             return retained?.returnFailure(problem)
                 ?: (problem as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
@@ -188,6 +213,7 @@ internal class CatalogCoordinatorLeaseCustodyV1(private val coordinator: Catalog
                     (acquired ?: checkNotNull(prior)).requireLocalWindow() // Consume completion/response delay too.
                 }
             } catch (problem: Throwable) {
+                recovery?.observeFailure(problem)
                 abort()
                 throw problem
             } finally {
@@ -245,6 +271,7 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
             if (remaining <= 0) refuse(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
             return minOf(remaining, originalBudget.remainingMillis(ceilingMillis.toLong())).toInt()
         } catch (problem: Throwable) {
+            binding.observeRecoveryFailure(problem)
             close()
             throw boundedEpochRotationFailure(problem)
         }
@@ -271,6 +298,7 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
                 return maximumElapsedNanos - elapsed
             }
         } catch (problem: Throwable) {
+            binding.observeRecoveryFailure(problem)
             close()
             throw boundedEpochRotationFailure(problem)
         }
@@ -315,6 +343,7 @@ internal class CatalogCoordinatorLeaseCampaignV1 private constructor(attempt: Ca
 
     /** One resolution per genuine campaign; a failed or completed call cannot restart its J budget. */
     internal fun claimCutoffResolution() {
+        binding.requireOrdinaryPurpose()
         requireLocalWindow()
         if (!cutoffResolutionIssued.compareAndSet(false, true)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
     }

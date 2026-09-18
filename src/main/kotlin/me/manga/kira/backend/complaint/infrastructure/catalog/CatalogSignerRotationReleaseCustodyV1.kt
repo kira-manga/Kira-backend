@@ -25,7 +25,7 @@ import java.util.concurrent.CancellationException
  */
 internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
     root: Path,
-    private val allocationBytes: ByteArray,
+    private var allocationBytes: ByteArray?,
     private val originalBudget: PersistenceTimeBudget,
 ) : AutoCloseable {
     private val caller = Thread.currentThread()
@@ -40,22 +40,33 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
     /** Later stages may acquire existing custody only; absence never initializes a replacement allocation or lock. */
     fun openExisting(): CatalogSignerRotationCustodyObservationV1 = openAllocation(existingOnly = true)
 
+    /** Historical byte discovery under the original permanent lock; never creates or repairs missing custody. */
+    internal fun discoverExisting(): ByteArray = perform(State.RETAINED) {
+        requireSignerRotationCustody(allocationBytes == null, CatalogSignerRotationCustodyFailureV1.INVALID_STATE)
+        state = State.OPENING
+        claim(files.openRoot())
+        val actual = files.discoverExistingAllocation()
+        allocationBytes = actual.copyOf()
+        state = State.OPEN
+        actual
+    }
+
     private fun openAllocation(existingOnly: Boolean): CatalogSignerRotationCustodyObservationV1 = perform(State.RETAINED) {
         state = State.OPENING
         claim(files.openRoot()) // Before opening ANY descriptor for the permanent lock inode.
-        val observation = files.openAllocation(allocationBytes, existingOnly)
+        val observation = files.openAllocation(checkNotNull(allocationBytes), existingOnly)
         state = State.OPEN
         observation
     }
 
     fun putIfAbsent(leaf: CatalogSignerRotationReleaseLeafV1, bytes: ByteArray): CatalogSignerRotationCustodyObservationV1 = perform(State.OPEN) {
         requireSignerRotationCustody(bytes.size in 1..leaf.maximumBytes, CatalogSignerRotationCustodyFailureV1.INVALID_INPUT)
-        files.putIfAbsent(allocationBytes, leaf, bytes.copyOf())
+        files.putIfAbsent(checkNotNull(allocationBytes), leaf, bytes.copyOf())
     }
 
     /** A null is only absence under this held lock, not evidence that an effect was never attempted. */
     fun read(leaf: CatalogSignerRotationReleaseLeafV1): ByteArray? = perform(State.OPEN) {
-        files.read(allocationBytes, leaf)
+        files.read(checkNotNull(allocationBytes), leaf)
     }
 
     /**
@@ -195,6 +206,16 @@ internal class CatalogSignerRotationReleaseCustodyV1 private constructor(
                 CatalogSignerRotationCustodyFailureV1.INVALID_INPUT,
             )
             return CatalogSignerRotationReleaseCustodyV1(root, allocationBytes.copyOf(), originalBudget)
+        }
+
+        /** Same bounded root capture, but there is deliberately no expected new-token allocation to initialize. */
+        internal fun retainExisting(root: Path, originalBudget: PersistenceTimeBudget): CatalogSignerRotationReleaseCustodyV1 {
+            requireSignerRotationCustody(
+                root.fileSystem === FileSystems.getDefault() && root.isAbsolute && root == root.normalize() &&
+                    root.nameCount in 1..MAX_PATH_DEPTH && root.toString().length <= MAX_PATH_CHARS,
+                CatalogSignerRotationCustodyFailureV1.INVALID_INPUT,
+            )
+            return CatalogSignerRotationReleaseCustodyV1(root, null, originalBudget)
         }
 
         internal fun preserveInterruption(failure: Throwable) {
