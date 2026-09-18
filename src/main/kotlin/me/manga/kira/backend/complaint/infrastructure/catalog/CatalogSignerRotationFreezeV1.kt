@@ -136,6 +136,7 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
             }
             requireRunning()
         } catch (problem: Throwable) {
+            attempt.observeFailure(problem)
             failure = signerRotationSignal(problem)
             attempt.abort()
         } finally {

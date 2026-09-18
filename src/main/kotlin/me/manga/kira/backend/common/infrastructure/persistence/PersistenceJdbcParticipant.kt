@@ -20,7 +20,10 @@ internal class PersistenceJdbcParticipant(private val root: PersistenceJdbcDrive
     }
     private val strict = role !== PersistenceJdbcParticipantRole.ORDINARY
     private val operatorCoordinator =
-        (root.desiredInstallationOperator || root.catalogGenesisAuthoring || root.catalogGenesisFinalization || root.catalogSignerRotationRecovery) &&
+        (
+            root.desiredInstallationOperator || root.catalogGenesisAuthoring || root.catalogGenesisFinalization ||
+                root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring
+            ) &&
             role === PersistenceJdbcParticipantRole.CATALOG_COORDINATOR
     private val strictPolicy = when (role) {
         PersistenceJdbcParticipantRole.ORDINARY -> null
