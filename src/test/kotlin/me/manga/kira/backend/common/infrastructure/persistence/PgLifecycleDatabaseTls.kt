@@ -110,6 +110,7 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
         const val LISTEN_ADDRESSES = "127.0.0.1,127.0.0.2"
         val CLASS_NAMES = setOf(
             CLASS_NAME,
+            "me.manga.kira.backend.common.infrastructure.persistence.CatalogGenesisPublishInterruptionIT",
             "me.manga.kira.backend.complaint.journal.LiveJournalCoverageV1IT",
             "me.manga.kira.backend.complaint.journal.OwnerDeleteAllLiveJournalPublisherV1IT",
         )

@@ -234,6 +234,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.complaint.journal.OwnerDeleteAllLiveJournalPublisherV1IT",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgOwnedCutIntegrationTest",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgNativePhysicalCloseIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.CatalogGenesisPublishInterruptionIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,
                 ),
             )
