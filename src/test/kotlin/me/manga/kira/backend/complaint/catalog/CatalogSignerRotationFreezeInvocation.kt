@@ -134,10 +134,7 @@ internal class CatalogSignerRotationFreezeInvocation(private val f: CatalogSigne
         assertNoLostAssertions()
     }
 
-    fun continueSecondSign(
-        previous: CatalogSignerRotationFreezeInvocation,
-        request: CatalogSignerRotationFreezeRequestV1 = f.request,
-    ) = try {
+    fun continueSecondSign(previous: CatalogSignerRotationFreezeInvocation, request: CatalogSignerRotationFreezeRequestV1 = f.request) = try {
         firstSignerSlot = 1 // Expected request order, not a fabricated first response or inference from the request's ARN.
         operator.continueSecondSign(
             request,

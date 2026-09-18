@@ -122,10 +122,15 @@ internal class CatalogSignerRotationFreezeV1 private constructor(
             if (mode === Mode.FREEZE) retained.openNew() else retained.openExisting()
             product = when (mode) {
                 Mode.FREEZE -> freezePrepared(
-                    retained, checkNotNull(oldSigningCredentials), newSigningCredentials, primaryReadCredentials, replicaReadCredentials,
+                    retained,
+                    checkNotNull(oldSigningCredentials),
+                    newSigningCredentials,
+                    primaryReadCredentials,
+                    replicaReadCredentials,
                 )
 
                 Mode.RESUME -> resumePrepared(retained, primaryReadCredentials, replicaReadCredentials)
+
                 Mode.SECOND_SIGN -> continuePreparedSecondSign(retained, newSigningCredentials, primaryReadCredentials, replicaReadCredentials)
             }
             requireRunning()

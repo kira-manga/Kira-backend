@@ -425,7 +425,9 @@ internal class CatalogSignerRotationFreezeCases(private val f: CatalogSignerRota
         -> uncertainContinuationCustody(cut)
 
         CatalogSignerRotationContinuationCut.CURRENT_BINDING -> changedContinuationAuthority(expiredLease = false)
+
         CatalogSignerRotationContinuationCut.EXPIRED_LEASE -> changedContinuationAuthority(expiredLease = true)
+
         CatalogSignerRotationContinuationCut.NEW_ALLOWANCE -> expiredContinuationAllowance()
     }
 
