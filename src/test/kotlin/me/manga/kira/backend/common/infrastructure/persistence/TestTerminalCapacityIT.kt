@@ -4,6 +4,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStorageProfileV1
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.AfterAll
@@ -261,6 +262,156 @@ class TestTerminalCapacityIT {
         assertEquals(before, testTerminalDurableSnapshot(observer), "All synthetic rows roll back; every preexisting LIVE/TEST field and counter is preserved")
         // PostgreSQL may retain aborted heap/index/TOAST allocations. Rollback is not VACUUM or a physical-size reset.
         measureTestTerminalDurablePhysical(observer).record("rolled_back_allocations_may_remain")
+    }
+
+    @Test
+    fun rollbackMaximumScanRunAndEntryLifecyclesMeasureIndexesToastAndPromotedCharges() {
+        assertPromotedTerminalCapacityCharges()
+        val reader = ordinaryCleanupReader(database.value)
+        Flyway.configure().dataSource(reader).locations("classpath:db/migration").load().migrate()
+        val observer = JdbcTemplate(reader)
+        val scanTables = TEST_TERMINAL_SCAN_PROFILES.map { it.table }
+        val before = testTerminalScanSnapshot(observer)
+        assertTrue(scanTables.all { before.getValue(it).isEmpty() })
+        reader.connection.use { connection ->
+            connection.autoCommit = false
+            val sql = JdbcTemplate(SingleConnectionDataSource(connection, true)).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
+            try {
+                assertTestTerminalScanCapacitySchema(sql)
+                assertEquals(8192, sql.queryForObject("SELECT current_setting('block_size')::integer", Int::class.java),
+                    "This bounded TOAST observation selects the existing 8-KiB PostgreSQL fixture, not arbitrary page geometry")
+                assertTestTerminalScanInputBounds(sql, connection)
+                assertEquals(before, testTerminalScanSnapshot(sql), "Every boundary probe rolls back, including its accepted lower/upper cases")
+                // Aborted probes may already have allocated pages. Establish the physical baseline only after those rollbacks.
+                scanTables.forEach { table ->
+                    val physical = measureTestTerminalScanPhysical(sql, table).also { it.record("baseline_after_boundary_rollback") }
+                    assertEquals(0L, physical.toastValues)
+                    assertEquals(0L, physical.toastChunks)
+                    assertEquals(0L, physical.toastPayload)
+                }
+                for (pass in 1..2) assertEquals(1, insertTestTerminalScan(sql, "complaint_journal_scan_runs", testTerminalScanRun(pass)))
+                val entries = (1..2).flatMap { pass ->
+                    listOf("INSTALLATION_MANIFEST", "TEST_RUN_PURGE", "EPOCH_SEAL").mapIndexed { index, kind ->
+                        // Each pass holds the same three independent maximum-sized object/version inputs.
+                        testTerminalScanEntry(pass, kind, 801 + index)
+                    }
+                }
+                entries.forEach { assertEquals(1, insertTestTerminalScan(sql, "complaint_journal_scan_entries", it)) }
+                assertEquals(2L, sql.queryForObject("SELECT count(*) FROM complaint_journal_scan_runs WHERE scan_id = ?", Long::class.java, TEST_TERMINAL_SCAN_PAIR))
+                assertEquals(6L, sql.queryForObject("SELECT count(*) FROM complaint_journal_scan_entries WHERE scan_id = ?", Long::class.java, TEST_TERMINAL_SCAN_PAIR))
+                assertEquals(3L, sql.queryForObject(
+                    "SELECT count(*) FROM (SELECT object_key,object_version FROM complaint_journal_scan_entries WHERE scan_id = ? " +
+                        "GROUP BY object_key,object_version HAVING count(*) = 2 AND count(DISTINCT pass) = 2) pairs",
+                    Long::class.java, TEST_TERMINAL_SCAN_PAIR,
+                ))
+                val populated = testTerminalScanSnapshot(sql)
+
+                fun measure(stage: String) {
+                    for (pass in 1..2) for (table in scanTables) {
+                        val sizes = measureTestTerminalScanCapacity(sql, table, pass)
+                        val charge = if (table == "complaint_journal_scan_runs") TestTerminalCapacityChargesV1.SCAN_RUN else TestTerminalCapacityChargesV1.SCAN_ENTRY
+                        val price = charge[ComplaintCapacityCounter.STORAGE_BYTES]
+                        assertTrue(Math.multiplyExact(8L, sizes.sum()) <= price, "Actual detoasted row and all index inputs must fit the promoted logical envelope")
+                        println("TEST_TERMINAL_SCAN_PROFILE_V1 table=$table stage=$stage pass=$pass logical_components=$sizes storage_charge=$price")
+                    }
+                    val runs = measureTestTerminalScanPhysical(sql, "complaint_journal_scan_runs").also { it.record(stage) }
+                    val rows = measureTestTerminalScanPhysical(sql, "complaint_journal_scan_entries").also { it.record(stage) }
+                    assertTrue(runs.heapMain > 0 && runs.indexes.values.all { it > 0 })
+                    assertEquals(0L, runs.toastValues, "The run's optional 32-byte manifest is inline; its allocated TOAST index is still reported")
+                    assertEquals(0L, runs.toastChunks)
+                    assertEquals(0L, runs.toastPayload)
+                    assertTrue(rows.heapMain > 0 && rows.indexes.values.all { it > 0 })
+                    assertTrue(rows.toastHeapMain > 0 && rows.toastIndexes.values.all { it > 0 })
+                    assertTrue(rows.toastValues >= 6 && rows.toastChunks >= 6 && rows.toastPayload >= 6 * 1024L,
+                        "Observe actual external uncompressed key/version payloads, not only detoasted composites")
+                    // A 3776-byte logical run charge is smaller than one cold page. Physical pages/history are NOT bounded by that price.
+                }
+
+                // Separate rollback branches measure every SQL-legal state without claiming authenticated completion or replay policy.
+                for (state in listOf("SCANNING", "COMPLETE", "ABANDONED")) {
+                    testTerminalDurableSavepoint(connection) {
+                        if (state != "SCANNING") for (pass in 1..2) assertEquals(1, populateTestTerminalScanRun(sql, pass, state))
+                        assertTestTerminalScanStoredRuns(sql, state)
+                        for (replay in listOf("PENDING", "APPLIED", "VERIFIED_ONLY", "RETIRED")) {
+                            if (replay != "PENDING") assertEquals(6, sql.update(
+                                "UPDATE complaint_journal_scan_entries SET replay_state = ? WHERE scan_id = ? AND data_scope_id = ?",
+                                replay, TEST_TERMINAL_SCAN_PAIR, TEST_TERMINAL_CAPACITY_SCOPE,
+                            ))
+                            assertTestTerminalScanStoredEntries(sql, entries.map { it + ("replay_state" to replay) })
+                            measure("${state}_$replay")
+                        }
+                        // Scan APPLIED is merely a V14 replay shape, not the forbidden APPLIED terminal-publication state.
+                        assertEquals(before - scanTables.toSet(), testTerminalScanSnapshot(sql) - scanTables.toSet(),
+                            "Synthetic scans do not change LIVE/TEST controls, runs, sidecars, publications, reservations or accounting")
+                    }
+                    assertEquals(populated, testTerminalScanSnapshot(sql), "Each state branch restores every scan field; allocated pages need not shrink")
+                }
+                assertTestTerminalDurableSqlRejected(connection, "23503", "fk_complaint_scan_entry_run") {
+                    sql.update("DELETE FROM complaint_journal_scan_runs WHERE scan_id = ?", TEST_TERMINAL_SCAN_PAIR)
+                }
+                assertEquals(populated, testTerminalScanSnapshot(sql))
+                testTerminalDurableSavepoint(connection) {
+                    // Raw SQL deletion order only: no accepted inventory, authenticated scan-pool recycle, actual refund or reserve write.
+                    assertEquals(6, sql.update("DELETE FROM complaint_journal_scan_entries WHERE scan_id = ?", TEST_TERMINAL_SCAN_PAIR))
+                    assertEquals(2, sql.update("DELETE FROM complaint_journal_scan_runs WHERE scan_id = ?", TEST_TERMINAL_SCAN_PAIR))
+                    assertEquals(before, testTerminalScanSnapshot(sql))
+                    scanTables.forEach { table ->
+                        val physical = measureTestTerminalScanPhysical(sql, table).also { it.record("deleted_inside_rollback_probe") }
+                        assertEquals(0L, physical.toastValues)
+                        assertEquals(0L, physical.toastChunks)
+                        assertEquals(0L, physical.toastPayload)
+                    }
+                }
+                assertEquals(populated, testTerminalScanSnapshot(sql), "Rolling back deletion restores both passes and all six entries together")
+            } finally {
+                connection.rollback()
+            }
+        }
+        assertEquals(before, testTerminalScanSnapshot(observer), "Every original LIVE/TEST row field and counter survives; no activation or persistent scan writer ran")
+        scanTables.forEach { measureTestTerminalScanPhysical(observer, it).record("rolled_back_allocations_may_remain") }
+        // Two pass rows plus six representative maximum entries were measured, not all 2R retained versions or a complete reserve.
+    }
+
+    private fun assertPromotedTerminalCapacityCharges() {
+        val charges = TestTerminalCapacityChargesV1
+        val storage = ComplaintCapacityCounter.STORAGE_BYTES
+        assertEquals("TEST_TERMINAL_CAPACITY_V1", charges.PROFILE)
+        assertEquals(22, ComplaintCapacityCounter.entries.size)
+        assertEquals(131072, charges.MAX_CATALOG_DOCUMENT_BYTES)
+        assertEquals(131072, OfflineTrustBundleProtocol.MAX_ENVELOPE_BYTES)
+        val documentDatum = 8L * ((131072L + 4L + 7L) / 8L)
+        assertEquals(3219968L, 8L * (2L * documentDatum + 140336L))
+        assertEquals(3219968L, charges.SCOPED_CATALOG_STORAGE_BYTES)
+        assertEquals(5632L, charges.ACTIVE_RUN_STORAGE_BYTES)
+        assertEquals(1074240L, charges.MAXIMUM_TERMINAL_RUN_STORAGE_BYTES)
+        assertEquals(1074240L - 5632L, charges.TERMINAL_RUN_DELTA_STORAGE_BYTES)
+        assertEquals(1599808L, charges.CONTROL_STORAGE_BYTES)
+        assertEquals(16384L, charges.SYSTEM_NOTICE_STORAGE_BYTES)
+        assertEquals(248L, charges.SCAN_RUN_HEAP_BYTES)
+        assertEquals(224L, charges.SCAN_RUN_INDEX_BYTES)
+        assertEquals(8L * (32L + 152L + 64L + 56L + 72L + 96L), charges.SCAN_RUN_STORAGE_BYTES)
+        assertEquals(3776L, charges.SCAN_RUN_STORAGE_BYTES)
+        assertEquals(2368L, charges.SCAN_ENTRY_HEAP_BYTES)
+        assertEquals(2344L, charges.SCAN_ENTRY_INDEX_BYTES)
+        assertEquals(8L * (32L + 80L + 2256L + 2120L + 72L + 80L + 72L), charges.SCAN_ENTRY_STORAGE_BYTES)
+        assertEquals(37696L, charges.SCAN_ENTRY_STORAGE_BYTES)
+        // Fixed earlier price/counter evidence, not another MAIN alias or a replay of the original sizing test.
+        for ((name, actual, expected) in listOf(
+            Triple("installation share", charges.INSTALLATION_SHARE, mapOf(ComplaintCapacityCounter.INSTALLATION_IDS to 1L, ComplaintCapacityCounter.APP_INSTALLATIONS to 1L, storage to 32768L)),
+            Triple("audit", charges.AUDIT, mapOf(ComplaintCapacityCounter.AUDIT_ROWS to 1L, storage to 65536L)),
+            Triple("publication with reservation", charges.PUBLICATION_WITH_RESERVATION, mapOf(ComplaintCapacityCounter.JOURNAL_PUBLICATIONS to 1L, ComplaintCapacityCounter.RECOVERY_RESERVATIONS to 1L, storage to 278528L)),
+            Triple("scoped catalog", charges.SCOPED_CATALOG, mapOf(ComplaintCapacityCounter.CATALOG_MUTATIONS to 1L, storage to 3219968L)),
+            Triple("active run", charges.ACTIVE_RUN, mapOf(ComplaintCapacityCounter.TEST_RUNS to 1L, storage to 5632L)),
+            Triple("terminal run delta", charges.TERMINAL_RUN_DELTA, mapOf(storage to 1068608L)),
+            Triple("control", charges.CONTROL, mapOf(ComplaintCapacityCounter.JOURNAL_CONTROL to 1L, storage to 1599808L)),
+            Triple("system notice", charges.SYSTEM_NOTICE, mapOf(ComplaintCapacityCounter.COMPLAINT_ROWS to 1L, storage to 16384L)),
+            Triple("notice with resource", charges.NOTICE_WITH_RESOURCE, mapOf(ComplaintCapacityCounter.COMPLAINT_ROWS to 1L, ComplaintCapacityCounter.RESOURCE_IDS to 1L, storage to 32768L)),
+            Triple("sidecar", charges.SIDECAR, mapOf(storage to 1340736L)),
+            Triple("scan run", charges.SCAN_RUN, mapOf(ComplaintCapacityCounter.SCAN_RUNS to 1L, storage to 3776L)),
+            Triple("scan entry", charges.SCAN_ENTRY, mapOf(ComplaintCapacityCounter.SCAN_ENTRIES to 1L, storage to 37696L)),
+        )) {
+            for (counter in ComplaintCapacityCounter.entries) assertEquals(expected[counter] ?: 0L, actual[counter], "$name / $counter")
+        }
     }
 
     private fun assertExistingSeparateCharges() {

@@ -217,3 +217,157 @@ internal val TEST_TERMINAL_CAPACITY_PROFILES = listOf(
         ),
     ),
 )
+
+/** Separate scan qualification inventory: the older capacity list and its existing callers remain unchanged. */
+internal val TEST_TERMINAL_SCAN_PROFILES = listOf(
+    TestTerminalCapacityProfile(
+        "complaint_journal_scan_runs",
+        "scan_id:uuid,pass:smallint,data_scope_id:uuid,test_only:boolean,restore_identity:uuid," +
+            "desired_generation:bigint,fencing_token:bigint,writer_generation:uuid,cutoff_epoch:bigint," +
+            "maximum_entries:bigint,maximum_bytes:bigint,entry_count:bigint,entry_bytes:bigint," +
+            "state:character varying(16),manifest_hash:bytea,started_at:timestamp with time zone,finished_at:timestamp with time zone",
+        listOf(
+            TestTerminalCapacityIndex("pk_complaint_scan_runs", "scan_id,pass", null, "0 0"),
+            TestTerminalCapacityIndex("uq_complaint_scan_scope", "scan_id,pass,data_scope_id", null, "0 0 0"),
+            TestTerminalCapacityIndex("idx_complaint_scan_scope", "data_scope_id,state,scan_id,pass", null, "0 0 0 0"),
+        ),
+    ),
+    TestTerminalCapacityProfile(
+        "complaint_journal_scan_entries",
+        "scan_id:uuid,pass:smallint,data_scope_id:uuid,test_only:boolean,object_key:text,object_version:text," +
+            "ciphertext_hash:bytea,semantic_hash:bytea,event_id:character varying(43),event_kind:character varying(32)," +
+            "writer_generation:uuid,journal_epoch:bigint,entry_bytes:bigint,replay_state:character varying(16)",
+        listOf(
+            TestTerminalCapacityIndex("pk_complaint_scan_entries", "scan_id,pass,object_key,object_version", null, "0 0 0 0"),
+            TestTerminalCapacityIndex("idx_complaint_scan_entry_run", "scan_id,pass,data_scope_id", null, "0 0 0"),
+            TestTerminalCapacityIndex("idx_complaint_scan_entry_replay", "scan_id,pass,replay_state", null, "0 0 0"),
+            TestTerminalCapacityIndex("idx_complaint_scan_entry_scope", "data_scope_id,scan_id,pass", null, "0 0 0"),
+        ),
+    ),
+)
+
+internal fun assertTestTerminalScanCapacitySchema(sql: JdbcTemplate) {
+    val migration = "V14__backend_owned_complaints.sql"
+    val bytes = checkNotNull(TestTerminalCapacityProfile::class.java.getResourceAsStream("/db/migration/$migration")).use { it.readBytes() }
+    assertEquals(TERMINAL_MIGRATION_HASHES.getValue(migration), HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)))
+    assertEquals(listOf(17, 14), TEST_TERMINAL_SCAN_PROFILES.map { it.types.size })
+    TEST_TERMINAL_SCAN_PROFILES.forEach { profile ->
+        val nullable = if (profile.table == "complaint_journal_scan_runs") setOf("manifest_hash", "finished_at") else setOf("event_id")
+        assertEquals(profile.types.map { (name, type) -> Triple(name, type, name !in nullable) }, sql.query(
+            "SELECT attname,format_type(atttypid,atttypmod),attnotnull FROM pg_attribute " +
+                "WHERE attrelid = ?::regclass AND attnum > 0 AND NOT attisdropped ORDER BY attnum",
+            { row, _ -> Triple(row.getString(1), row.getString(2), row.getBoolean(3)) }, profile.table,
+        ))
+        val actual = sql.query(TERMINAL_INDEX_QUERY, { row, _ ->
+            val name = row.getString(1)
+            assertEquals(name.startsWith("pk_") || name.startsWith("uq_"), row.getBoolean(4), name)
+            assertTrue(row.getBoolean(5), "Unpriced scan INCLUDE column: $name")
+            TestTerminalCapacityIndex(name, sqlShape(row.getString(2))!!, sqlShape(row.getString(3)), row.getString(6), row.getString(7))
+        }, profile.table)
+        assertEquals(profile.indexes.sortedBy { it.name }.map { it.copy(keys = sqlShape(it.keys)!!) }, actual)
+        assertEquals(profile.indexes.size.toLong(), sql.queryForObject(
+            "SELECT count(*) FROM pg_index WHERE indrelid = ?::regclass AND indisvalid AND indisready " +
+                "AND indpred IS NULL AND indexprs IS NULL AND indnatts = indnkeyatts", Long::class.java, profile.table,
+        ))
+    }
+    assertEquals(listOf("fk_complaint_scan_entry_run:complaint_journal_scan_runs:a:r:false:false"), sql.query(
+        "SELECT conname,confrelid::regclass::text,confupdtype::text,confdeltype::text,condeferrable,condeferred " +
+            "FROM pg_constraint WHERE conrelid = 'complaint_journal_scan_entries'::regclass AND contype = 'f' ORDER BY conname",
+        { row, _ -> (1..4).joinToString(":") { row.getString(it) } + ":${row.getBoolean(5)}:${row.getBoolean(6)}" },
+    ))
+    assertEquals(listOf("scan_id,pass,data_scope_id" to "scan_id,pass,data_scope_id"), sql.query(
+        "SELECT (SELECT string_agg(a.attname::text,',' ORDER BY k.n) FROM unnest(f.conkey) WITH ORDINALITY k(attnum,n) " +
+            "JOIN pg_attribute a ON a.attrelid = f.conrelid AND a.attnum = k.attnum), " +
+            "(SELECT string_agg(a.attname::text,',' ORDER BY k.n) FROM unnest(f.confkey) WITH ORDINALITY k(attnum,n) " +
+            "JOIN pg_attribute a ON a.attrelid = f.confrelid AND a.attnum = k.attnum) " +
+            "FROM pg_constraint f WHERE f.conrelid = 'complaint_journal_scan_entries'::regclass " +
+            "AND f.conname = 'fk_complaint_scan_entry_run' AND f.convalidated",
+        { row, _ -> row.getString(1) to row.getString(2) },
+    ))
+    assertEquals(true, sql.queryForObject(
+        "SELECT EXISTS (SELECT 1 FROM pg_index i WHERE i.indexrelid = 'idx_complaint_scan_entry_run'::regclass " +
+            "AND (SELECT array_agg(k.attnum ORDER BY k.n) FROM unnest(i.indkey::smallint[]) WITH ORDINALITY k(attnum,n)) = f.conkey) " +
+            "FROM pg_constraint f WHERE f.conrelid = 'complaint_journal_scan_entries'::regclass AND f.conname = 'fk_complaint_scan_entry_run'",
+        Boolean::class.java,
+    ))
+}
+
+/** Independent field/index envelopes, not aliases of the MAIN constants being qualified. */
+internal fun measureTestTerminalScanCapacity(sql: JdbcTemplate, table: String, pass: Int): List<Long> {
+    val profile = TEST_TERMINAL_SCAN_PROFILES.single { it.table == table }
+    fun inline(name: String): String = when (val type = profile.types.getValue(name)) {
+        "bytea" -> "$name || ''::bytea"
+        else -> if (type == "text" || type.startsWith("character varying")) "$name || ''::text" else name
+    }
+    val fields = listOf(profile.types.keys.toList()) + profile.indexes.map { it.keys.split(',') }
+    val projections = fields.joinToString(",") { columns -> "pg_column_size(ROW(${columns.joinToString(",", transform = ::inline)}))" }
+    val sizes = sql.query("SELECT $projections FROM $table WHERE scan_id = ? AND pass = ?", { row, _ ->
+        fields.indices.map { row.getLong(it + 1) }
+    }, TEST_TERMINAL_SCAN_PAIR, pass)
+    assertTrue(sizes.isNotEmpty())
+    val heapBound = if (table == "complaint_journal_scan_runs") 32L + 152 + 64 else 32L + 80 + 2256
+    val indexBounds = if (table == "complaint_journal_scan_runs") listOf(56L, 72L, 96L) else listOf(2120L, 72L, 80L, 72L)
+    val minimum = if (table == "complaint_journal_scan_runs") 128L else 2048L + 64
+    sizes.forEach { row ->
+        assertTrue(row.first() in minimum..heapBound, "Full detoasted maximum scan fields, not compressed/TOAST pointers: $table")
+        row.drop(1).zip(indexBounds).forEachIndexed { index, (bytes, bound) ->
+            assertTrue(bytes in 1L..bound, "Unqualified scan index input: ${profile.indexes[index].name}")
+        }
+    }
+    // Return component-wise maxima over the independent kind variants; each component is bounded above separately.
+    return fields.indices.map { index -> sizes.maxOf { it[index] } }
+}
+
+internal data class TestTerminalScanPhysical(
+    val table: String,
+    val heapMain: Long,
+    val heapAuxiliary: Long,
+    val indexes: Map<String, Long>,
+    val toastHeapMain: Long,
+    val toastAuxiliary: Long,
+    val toastIndexes: Map<String, Long>,
+    val total: Long,
+    val toastValues: Long,
+    val toastChunks: Long,
+    val toastPayload: Long,
+) {
+    fun record(stage: String) {
+        println("TEST_TERMINAL_SCAN_PROFILE_V1 table=$table stage=$stage heap=$heapMain heap_aux=$heapAuxiliary indexes=$indexes " +
+            "toast_heap=$toastHeapMain toast_aux=$toastAuxiliary toast_indexes=$toastIndexes total=$total " +
+            "toast_values=$toastValues toast_chunks=$toastChunks toast_payload=$toastPayload")
+    }
+}
+
+/** Physical pages are observations, NOT the 3776/37696 logical prices or an unlimited update-history allowance. */
+internal fun measureTestTerminalScanPhysical(sql: JdbcTemplate, table: String): TestTerminalScanPhysical {
+    val profile = TEST_TERMINAL_SCAN_PROFILES.single { it.table == table }
+    val toast = checkNotNull(sql.queryForObject("SELECT reltoastrelid::regclass::text FROM pg_class WHERE oid = ?::regclass", String::class.java, table))
+    require(toast.matches(Regex("pg_toast\\.pg_toast_[0-9]+")))
+    fun relation(name: String): List<Long> = checkNotNull(sql.queryForObject(
+        "SELECT pg_relation_size(?::regclass),pg_table_size(?::regclass),pg_total_relation_size(?::regclass)",
+        { row, _ -> (1..3).map { row.getLong(it) } }, name, name, name,
+    ))
+    fun indexes(name: String): Map<String, Long> = sql.query(
+        "SELECT idx.relname,pg_relation_size(idx.oid)+pg_relation_size(idx.oid,'fsm')+pg_relation_size(idx.oid,'vm')+pg_relation_size(idx.oid,'init') " +
+            "FROM pg_index i JOIN pg_class idx ON idx.oid = i.indexrelid WHERE i.indrelid = ?::regclass ORDER BY idx.relname",
+        { row, _ -> row.getString(1) to row.getLong(2) }, name,
+    ).toMap()
+    val heap = relation(table)
+    val toasted = relation(toast)
+    val parentIndexes = indexes(table)
+    val toastIndexes = indexes(toast)
+    val chunks = checkNotNull(sql.queryForObject(
+        "SELECT count(DISTINCT chunk_id),count(*),coalesce(sum(octet_length(chunk_data)),0) FROM $toast",
+        { row, _ -> (1..3).map { row.getLong(it) } },
+    ))
+    assertEquals(profile.indexes.map { it.name }.sorted(), parentIndexes.keys.toList())
+    assertEquals(1, toastIndexes.size)
+    assertEquals(heap[2], heap[1] + parentIndexes.values.sum())
+    assertEquals(toasted[2], toasted[1] + toastIndexes.values.sum())
+    return TestTerminalScanPhysical(table, heap[0], heap[1] - heap[0] - toasted[2], parentIndexes,
+        toasted[0], toasted[1] - toasted[0], toastIndexes, heap[2], chunks[0], chunks[1], chunks[2]).also { measured ->
+        assertTrue(listOf(measured.heapMain, measured.heapAuxiliary, measured.toastHeapMain, measured.toastAuxiliary).all { it >= 0 })
+        assertEquals(measured.total, measured.heapMain + measured.heapAuxiliary + measured.indexes.values.sum() +
+            measured.toastHeapMain + measured.toastAuxiliary + measured.toastIndexes.values.sum())
+    }
+}
