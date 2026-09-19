@@ -29,6 +29,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     epochRotation: Boolean = false,
     private val desiredOperator: Boolean = false,
     private val catalogAuthor: Boolean = false,
+    private val testActivation: Boolean = false,
 ) : AutoCloseable {
     private val trustParent = database.versionBoundTls().publicTrustParent()
     private val suppliedPassword = when {
@@ -79,6 +80,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         when {
             desiredOperator -> configuration.bindDesiredInstallationOperatorOwner()
             catalogAuthor -> configuration.bindCatalogGenesisAuthoringOwner()
+            testActivation -> configuration.bindCatalogTestRunActivationOwner()
             epochRotation -> configuration.bindLifecycleOwnerWithEpochRotation()
             else -> configuration.bindLifecycleOwner()
         },
@@ -93,7 +95,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private var closed = false
 
     init {
-        check(listOf(desiredOperator, catalogAuthor, epochRotation).count { it } <= 1)
+        check(listOf(desiredOperator, catalogAuthor, testActivation, epochRotation).count { it } <= 1)
         suppliedPassword.fill(0) // The connected path must use its captured acquisition, never a later caller buffer.
     }
 
@@ -104,6 +106,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         pools = when {
             desiredOperator -> owner.bindDesiredInstallationOperatorPools(nanoClock)
             catalogAuthor -> owner.bindCatalogGenesisAuthoringPools(nanoClock)
+            testActivation -> owner.bindCatalogTestRunActivationPools(nanoClock)
             else -> owner.bindVersionBoundPools(profile, nanoClock)
         }
         // The original owner retains partial-shell custody if either named binding throws. The operator never selects TEST.
@@ -114,7 +117,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     }
 
     fun start() {
-        check(!desiredOperator && !catalogAuthor)
+        check(!desiredOperator && !catalogAuthor && !testActivation)
         assertEquals(PersistenceLifecycleActivation.STARTED, pools.ordinary.start(), client.name)
         awaitLifecycleFact { owner.snapshot().ordinaryReady && owner.snapshot().timerReady }
         assertEquals(PersistenceLifecycleObservation.READY, pools.ordinary.observePreparation())
@@ -132,6 +135,14 @@ internal class VersionBoundPersistenceConnectedFixture(
     fun startCatalogGenesisAuthoring() {
         check(catalogAuthor)
         assertEquals(PersistenceLifecycleObservation.READY, owner.prepareCatalogGenesisAuthoring())
+        assertEquals(PersistenceLifecycleObservation.READY, pools.catalogCoordinator.observePreparation())
+        assertFalse(owner.snapshot().ordinaryReady || owner.snapshot().deletionReady)
+        awaitLifecycleFact { owner.snapshot().catalogCoordinatorReady && owner.snapshot().timerReady }
+    }
+
+    fun startCatalogTestRunActivation() {
+        check(testActivation)
+        assertEquals(PersistenceLifecycleObservation.READY, owner.prepareCatalogTestRunActivation())
         assertEquals(PersistenceLifecycleObservation.READY, pools.catalogCoordinator.observePreparation())
         assertFalse(owner.snapshot().ordinaryReady || owner.snapshot().deletionReady)
         awaitLifecycleFact { owner.snapshot().catalogCoordinatorReady && owner.snapshot().timerReady }

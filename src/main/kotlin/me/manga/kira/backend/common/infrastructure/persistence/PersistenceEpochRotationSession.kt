@@ -29,12 +29,13 @@ internal class PersistenceEpochRotationSession private constructor(
     private val problem = AtomicReference<PersistencePhaseFailureCode?>()
     private val retired = AtomicBoolean()
     private val context = PersistenceJdbcGuardContext.forEpochRotation(entry.jdbc, epoch, this, entry.driverCut)
-    private val connection = EpochRotationConnectionCalls(entry, context).proxy
+    private val connection = EpochRotationConnectionCalls(entry, context, this).proxy
 
     @Volatile private var work: PersistenceTimeBudget? = null
     private var retained: CatalogEpochRotationCaptureOperation? = null
     private var stage = Stage.PREPARED
     private var clippingRead = false
+    private var readCapKind: PersistenceJdbcGuardCallKind? = null
     private var maintenanceBudget: PersistenceComplaintMaintenanceFenceBudgetV1? = null
     private var maintenanceStage = MaintenanceStage.NEW
     private var observedMaintenanceLock: Boolean? = null
@@ -48,6 +49,7 @@ internal class PersistenceEpochRotationSession private constructor(
         connection.autoCommit = false
         connection.isReadOnly = false
         connection.transactionIsolation = Connection.TRANSACTION_READ_COMMITTED
+        if (connection.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) refuseMaintenance(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         installLimits(EpochRotationLimits.STATEMENT_MILLIS)
         acquireMaintenanceFence()
         installLimits(EpochRotationLimits.STATEMENT_MILLIS) // Same remaining original work, before the existing exclusive E wait.
@@ -154,10 +156,10 @@ internal class PersistenceEpochRotationSession private constructor(
         if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION) requireCaller()
         if (kind === PersistenceJdbcGuardCallKind.BUSINESS) {
             requireWork()
-            maintenanceBudget?.let { prefix ->
+            if (healthyMaintenancePrefix()) {
                 requireMaintenanceOwner()
                 return try {
-                    prefix.dispatchBudget()
+                    checkNotNull(maintenanceBudget).dispatchBudget()
                 } catch (_: PersistenceBoundaryException) {
                     refuseMaintenance(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
                 }
@@ -167,17 +169,53 @@ internal class PersistenceEpochRotationSession private constructor(
         return work ?: total
     }
 
+    /** Acceptance only. Every lower cleanup admission/arm keeps the original work/total allowance. */
+    internal fun maintenanceCleanupBudget(): PersistenceTimeBudget? {
+        if (!healthyMaintenancePrefix()) return null
+        return try {
+            requireMaintenanceOwner()
+            checkNotNull(maintenanceBudget).dispatchBudget()
+        } catch (_: PersistenceBoundaryException) {
+            problem.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+            null
+        } catch (failure: PersistencePhaseException) {
+            if (failure.code !== PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED) throw failure
+            null // Prefix refusal does not replace or extend the original cleanup allowance.
+        }
+    }
+
+    /** No replacement allowance: the exact call's acceptance cap includes its native/core return tails. */
+    internal fun maintenanceDispatchReturned(kind: PersistenceJdbcGuardCallKind, admitted: PersistenceTimeBudget?) {
+        if (kind === PersistenceJdbcGuardCallKind.CANCELLATION || !healthyMaintenancePrefix()) return
+        try {
+            checkNotNull(admitted).remainingMillis(PersistenceComplaintMaintenanceFenceV1.DISPATCH_MILLIS)
+        } catch (_: PersistenceBoundaryException) {
+            if (kind !== PersistenceJdbcGuardCallKind.CLEANUP) refuseMaintenance(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+            // Do not turn an actually returned native close into cleanup failure. The next mandatory
+            // requireMaintenanceOwner/work check refuses ACCEPTED using this original sticky TIME.
+            problem.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+        }
+    }
+
+    private fun healthyMaintenancePrefix(): Boolean = stage === Stage.STARTING && problem.get() == null && maintenanceBudget != null
+
+    /** Only our private read-cap reclip may inherit cleanup admission after a prefix refusal. */
+    internal fun connectionKind(method: Method): PersistenceJdbcGuardCallKind =
+        if (clippingRead && method.name == "setNetworkTimeout") checkNotNull(readCapKind) else PersistenceJdbcGuardCallKind.BUSINESS
+
     /** Every guarded descendant dispatch reclips the actual native read cap, not only the initial query. */
     internal fun beforeJdbcCall(kind: PersistenceJdbcGuardCallKind) {
         if (kind === PersistenceJdbcGuardCallKind.CANCELLATION || clippingRead) return
         requireCaller()
-        val budget = callBudget(kind)
+        readCapKind = kind
         clippingRead = true
         try {
+            val budget = callBudget(kind)
             val ceiling = if (maintenanceBudget == null) EpochRotationLimits.STATEMENT_MILLIS else PersistenceComplaintMaintenanceFenceV1.DISPATCH_MILLIS
             connection.setNetworkTimeout(INLINE, budget.remainingMillis(ceiling).toInt())
         } finally {
             clippingRead = false
+            readCapKind = null
         }
     }
 
@@ -229,6 +267,12 @@ internal class PersistenceEpochRotationSession private constructor(
             maintenanceStage = MaintenanceStage.OBSERVED
             requireMaintenanceRemaining() // Includes boolean, descendant closes and guarded return before acceptance.
             if (observedMaintenanceLock != true) refuseMaintenance(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            maintenanceStage = MaintenanceStage.READING_GATE
+            val gate = PersistenceComplaintMaintenanceGateV1.read(connection)
+            requireMaintenanceRemaining()
+            gate.requireUnownedOpen() // The direct epoch owner is never a TEST activation continuation.
+            maintenanceStage = MaintenanceStage.GATE_OBSERVED
+            requireMaintenanceRemaining()
             maintenanceStage = MaintenanceStage.ACCEPTED
         } catch (cause: Throwable) {
             maintenanceStage = MaintenanceStage.FAILED
@@ -309,7 +353,7 @@ internal class PersistenceEpochRotationSession private constructor(
     override fun toString(): String = "PersistenceEpochRotationSession(original-first-delivery,non-pooled,no-work-capability)"
 
     private enum class Stage { PREPARED, STARTING, EXCLUSIVE, LOCKED, SAMPLED, WRITTEN, REREAD, COMMITTED, RELEASED }
-    private enum class MaintenanceStage { NEW, INSTALLING, SETTINGS_RETURNED, TRYING, OBSERVED, ACCEPTED, FAILED }
+    private enum class MaintenanceStage { NEW, INSTALLING, SETTINGS_RETURNED, TRYING, OBSERVED, READING_GATE, GATE_OBSERVED, ACCEPTED, FAILED }
 
     companion object {
         private val INLINE = Executor { it.run() }
@@ -327,7 +371,11 @@ internal class PersistenceEpochRotationSession private constructor(
 }
 
 /** Private JDBC reflection stays inside the owner. Native outputs use the existing child/invocation ledger before use. */
-private class EpochRotationConnectionCalls(private val entry: PersistencePhysicalEntry, private val context: PersistenceJdbcGuardContext) : InvocationHandler {
+private class EpochRotationConnectionCalls(
+    private val entry: PersistencePhysicalEntry,
+    private val context: PersistenceJdbcGuardContext,
+    private val session: PersistenceEpochRotationSession,
+) : InvocationHandler {
     val proxy: Connection = Proxy.newProxyInstance(Connection::class.java.classLoader, arrayOf(Connection::class.java), this) as Connection
     private val graph = PhysicalJdbcDescendants(context, proxy)
 
@@ -344,7 +392,7 @@ private class EpochRotationConnectionCalls(private val entry: PersistencePhysica
         check(method.declaringClass === Connection::class.java || method.declaringClass === Wrapper::class.java)
         if (method.name == "unwrap" || method.name == "close" || method.name == "abort") PersistenceJdbcGuardContext.refuse()
         if (method.name == "isWrapperFor") return false
-        val call = context.enterRoot(PersistenceJdbcGuardCallKind.BUSINESS)
+        val call = context.enterRoot(session.connectionKind(method))
         var invoked = false
         var returned = false
         var wrapping = false

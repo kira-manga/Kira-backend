@@ -31,6 +31,7 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVer
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDetailReadOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintCatalogGenesisPublishRecheckOperationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallOperationV1
@@ -58,6 +59,9 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRef
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationInputV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationInputV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
@@ -137,6 +141,8 @@ constructor(
     private val signerRotationDeliveryWork: PersistenceTimeBudget? = null,
     private val signerRotationActivation: CatalogSignerRotationActivationV1? = null,
     private val signerRotationActivationWork: PersistenceTimeBudget? = null,
+    private val testRunActivation: CatalogTestRunActivationV1? = null,
+    private val testRunActivationWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -186,6 +192,7 @@ constructor(
     internal val installationCurrentState: PersistenceInstallationCurrentState = InstallationCurrentStateBoundary()
     internal val ownerHistory: PersistenceOwnerHistory = OwnerHistoryBoundary()
     internal val ownerDetail: PersistenceOwnerDetail = OwnerDetailBoundary()
+    internal val adminRead: PersistenceComplaintAdminRead = AdminReadBoundary()
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerEdit: PersistenceOwnerEdit = OwnerEditBoundary()
     internal val ownerDelete: PersistenceOwnerDelete = OwnerDeleteBoundary()
@@ -207,6 +214,7 @@ constructor(
     internal val catalogSignerRotation: PersistenceCatalogSignerRotationV1 = CatalogSignerRotationBoundary()
     internal val catalogSignerRotationFinalization: PersistenceCatalogSignerRotationFinalizationV1 = CatalogSignerRotationFinalizationBoundary()
     internal val catalogSignerRotationActivation: PersistenceCatalogSignerRotationActivationV1 = CatalogSignerRotationActivationBoundary()
+    internal val catalogTestRunActivation: PersistenceCatalogTestRunActivationV1 = CatalogTestRunActivationBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -230,14 +238,17 @@ constructor(
         if (stage !== Stage.PREPARED) refuse(PersistencePhaseFailureCode.MANAGER_REFUSED)
         stage = Stage.STARTING
         val rechecksReadCommitted = firstDesiredAttempt != null || catalogPublisherAttempt != null ||
-            catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationDelivery != null || signerRotationActivation != null
+            catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationDelivery != null || signerRotationActivation != null ||
+                testRunActivation != null || path.complaintMaintenanceWriter
+        val adminReadCommitted = path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION ||
+            path === PersistencePhasePath.COMPLAINT_ADMIN_SEARCH || path === PersistencePhasePath.COMPLAINT_ADMIN_DETAIL
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
             setName(path.name)
             timeout = 2
             isReadOnly = path.readOnly
-            // Desired-state pending/pristine checks deliberately take a fresh statement snapshot
-            // AFTER the LIVE control lock. Never inherit a role/database REPEATABLE READ default.
-            if (desiredAttempt != null || rechecksReadCommitted) {
+            // Durable maintenance checks need a fresh statement snapshot AFTER M; selected desired/catalog
+            // owners also recheck AFTER control. Set isolation from begin, never after a snapshot exists.
+            if (desiredAttempt != null || rechecksReadCommitted || adminReadCommitted) {
                 isolationLevel = TransactionDefinition.ISOLATION_READ_COMMITTED
             }
         }
@@ -265,7 +276,7 @@ constructor(
         requireWork()
         stage = Stage.SETTING_UP
         installLimits()
-        if (rechecksReadCommitted && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
+        if ((rechecksReadCommitted || adminReadCommitted) && selected.transactionIsolation != Connection.TRANSACTION_READ_COMMITTED) {
             refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         selectedHolder.acquireMaintenanceFence(selected)
@@ -360,7 +371,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork
+                ?: signerRotationActivationWork ?: testRunActivationWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -368,7 +379,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork
+            ?: signerRotationActivationWork ?: testRunActivationWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -613,6 +624,11 @@ constructor(
 
         PersistencePhasePath.COMPLAINT_OWNER_DETAIL -> ownerDetail.completed()
 
+        PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
+        PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
+        PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
+        -> adminRead.completed()
+
         PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE,
@@ -659,6 +675,12 @@ constructor(
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PROJECT,
         -> catalogSignerRotationActivation.completed()
+
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+        -> catalogTestRunActivation.completed()
 
         PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST -> signedGenesisFirstDesired.completed()
 
@@ -753,6 +775,7 @@ constructor(
         signerRotationAuthor?.observeFailure(problem)
         signerRotationDelivery?.observeFailure(problem)
         signerRotationActivation?.observeFailure(problem)
+        testRunActivation?.observeFailure(problem)
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
@@ -816,6 +839,29 @@ constructor(
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
+    internal fun testRunActivationCleanupProven(original: CatalogTestRunActivationV1): Boolean =
+        caller.isCurrent() && testRunActivation === original && path.catalogTestRunActivation &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
+    internal fun initialTestActivationPrepare(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection): Boolean {
+        selectedHolder.requireMaintenanceFence(fence, selected)
+        if (path !== PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE) return false
+        val original = testRunActivation ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requireInitialMaintenancePrepare(ownership)
+        return true
+    }
+
+    internal fun requireComplaintMaintenanceGate(
+        fence: PersistenceComplaintMaintenanceFenceV1,
+        selected: Connection,
+        gate: PersistenceComplaintMaintenanceGateV1,
+    ) {
+        selectedHolder.requireMaintenanceFence(fence, selected)
+        if (testRunActivation == null) gate.requireUnownedOpen() else testRunActivation.requireMaintenanceGate(ownership, path, gate)
+    }
+
     /** Lower/upper dispatch uses this budget; no business worker or copied Spring context exists. */
     internal fun callBudget(kind: PersistenceJdbcGuardCallKind): PersistenceTimeBudget {
         if (kind === PersistenceJdbcGuardCallKind.CANCELLATION) {
@@ -831,6 +877,14 @@ constructor(
         return cleanupBudget()
     }
 
+    /** Acceptance only; original cleanup admission/execution always keeps cleanupBudget(). */
+    internal fun maintenanceCleanupBudget(): PersistenceTimeBudget? = selectedHolder.maintenanceCleanupBudget()
+
+    /** The original admitted guard retains its own acceptance cap through native/core finalizers. */
+    internal fun maintenanceDispatchReturned(kind: PersistenceJdbcGuardCallKind, admitted: PersistenceTimeBudget?) {
+        if (kind !== PersistenceJdbcGuardCallKind.CANCELLATION) selectedHolder.maintenanceDispatchReturned(kind, admitted)
+    }
+
     internal fun connectionKind(method: Method, arguments: Array<out Any?>?): PersistenceJdbcGuardCallKind = jdbcCapabilities.classify(method, arguments)
 
     internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection) = selectedHolder.requireFence(fence, selected)
@@ -844,11 +898,11 @@ constructor(
     /** Reclips the actual JDBC read cap before every upper call, without recursion or a new time budget. */
     internal fun beforeJdbcCall(kind: PersistenceJdbcGuardCallKind) {
         if (kind === PersistenceJdbcGuardCallKind.CANCELLATION || changingReadCap || restoringReadCap) return
-        val budget = callBudget(kind)
-        val selected = connection ?: return
         readCapKind = kind
         changingReadCap = true
         try {
+            val budget = callBudget(kind)
+            val selected = connection ?: return
             if (originalReadCap == null) originalReadCap = selected.networkTimeout
             val ceiling = if (budget === emergency) EMERGENCY_READ_MILLIS else selectedHolder.readCeiling()
             selected.setNetworkTimeout(INLINE, budget.remainingMillis(ceiling).toInt())
@@ -944,6 +998,7 @@ constructor(
                 signerRotationAuthor?.observeFailure(problem)
                 signerRotationDelivery?.observeFailure(problem)
                 signerRotationActivation?.observeFailure(problem)
+                testRunActivation?.observeFailure(problem)
                 // Discard raw restoration details, but retain unresolved custody instead of claiming settlement/refund.
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
@@ -1020,7 +1075,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1060,13 +1115,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null
+        signerRotationActivation != null || testRunActivation != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1146,6 +1201,7 @@ constructor(
                 signerRotationAuthor?.observeFailure(problem)
                 signerRotationDelivery?.observeFailure(problem)
                 signerRotationActivation?.observeFailure(problem)
+                testRunActivation?.observeFailure(problem)
                 // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
                 ownership.retainCallerForRecovery(this@PersistencePhaseContext)
                 false
@@ -1243,6 +1299,8 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -1316,6 +1374,34 @@ constructor(
             val normal = deletionFence?.callBudget(requireNotNull(work)) ?: requireNotNull(work)
             return maintenanceFence?.callBudget(normal) ?: normal
         }
+
+        fun maintenanceCleanupBudget(): PersistenceTimeBudget? {
+            if (!healthyMaintenancePrefix()) return null
+            requireCurrent()
+            return try {
+                checkNotNull(maintenanceFence).callBudget(checkNotNull(work))
+            } catch (problem: PersistencePhaseException) {
+                if (problem.code !== PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED) throw problem
+                // This SAME original close first observed expiry. Failure is already sticky, but its
+                // separate original cleanup allowance still owns every lower admission/first close.
+                null
+            }
+        }
+
+        fun maintenanceDispatchReturned(kind: PersistenceJdbcGuardCallKind, admitted: PersistenceTimeBudget?) {
+            if (!healthyMaintenancePrefix()) return
+            try {
+                checkNotNull(admitted).remainingMillis(PersistenceComplaintMaintenanceFenceV1.DISPATCH_MILLIS)
+            } catch (_: PersistenceBoundaryException) {
+                // Nested lower cleanup must return its genuine successful-close fact to the upper
+                // guard. Throwing here would counterfeit an upper CLEANUP_FAILURE. The mandatory
+                // owner/work check before ACCEPTED sees this sticky TIME refusal instead.
+                if (kind !== PersistenceJdbcGuardCallKind.CLEANUP) refuse(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
+                recordFailure(PersistencePhaseException(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED))
+            }
+        }
+
+        private fun healthyMaintenancePrefix(): Boolean = stage === Stage.SETTING_UP && failure.get() == null && maintenanceFence?.active() == true
 
         fun readCeiling(): Long {
             val normal = deletionFence?.readCeiling(NORMAL_READ_MILLIS) ?: NORMAL_READ_MILLIS
@@ -1659,6 +1745,65 @@ constructor(
 
             else -> false
         }
+    }
+
+    private inner class CatalogTestRunActivationBoundary : PersistenceCatalogTestRunActivationV1 {
+        private var selectedInput: CatalogTestRunActivationInputV1? = null
+        private var retained: CatalogTestRunActivationOperationV1? = null
+
+        override fun requireOperation(input: CatalogTestRunActivationInputV1, jdbc: JdbcTemplate) {
+            if (input.original !== testRunActivation || input.path !== path || !testPath()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, path)
+            if (selectedInput != null || (input.requiresEpochFence && !selectedHolder.fenceReady())) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            input.requirePersistence(ownership, jdbc)
+            selectedInput = input
+            installLimits()
+            requireWork()
+        }
+
+        // The operation, input, owner and phase identities form one indivisible admission guard.
+        @Suppress("ComplexCondition")
+        override fun retain(operation: CatalogTestRunActivationOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained != null || operation.input !== selectedInput || operation.input.original !== testRunActivation ||
+                !operation.belongsTo(this@PersistencePhaseContext, path)
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            operation.input.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        // Keep exact retained identities and the original fence check visible at the same boundary.
+        @Suppress("ComplexCondition")
+        override fun requireRetained(operation: CatalogTestRunActivationOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.input !== selectedInput || operation.input.original !== testRunActivation ||
+                (operation.input.requiresEpochFence && !selectedHolder.fenceReady())
+            ) {
+                refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            operation.input.requirePersistence(ownership, jdbc)
+        }
+
+        // A result requires this exact retained operation, completion and positively proven original cleanup.
+        @Suppress("ComplexCondition")
+        override fun requireCommitted(operation: CatalogTestRunActivationOperationV1) {
+            if (retained !== operation || operation.input !== selectedInput || !completed() ||
+                !testRunActivationCleanupProven(operation.input.original)
+            ) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let {
+            it.input === selectedInput && it.input.original === testRunActivation && it.completedFor(this@PersistencePhaseContext)
+        } == true
+
+        private fun testPath(): Boolean = path.catalogTestRunActivation
     }
 
     /** Row-only lease phases: no fence is acquired or required, so renewal remains independent of epoch rotation. */
@@ -2496,6 +2641,49 @@ constructor(
         }
 
         override fun requireCommitted(operation: ComplaintOwnerHistoryReadOperation) {
+            if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext, path)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true
+    }
+
+    /** Three observation paths; only their original concrete operation can expose a physically released result. */
+    private inner class AdminReadBoundary : PersistenceComplaintAdminRead {
+        private var issued = false
+        private var retained: ComplaintAdminReadOperation? = null
+
+        override fun requireAuthentication(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+        override fun requireSearch(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_SEARCH)
+        override fun requireDetail(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
+
+        private fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            requireStepUpResource(jdbc, expected)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintAdminReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintAdminReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun connection(operation: ComplaintAdminReadOperation, jdbc: JdbcTemplate): Connection {
+            requireRetained(operation, jdbc)
+            return connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintAdminReadOperation) {
             if (!caller.isCurrent() || retained !== operation || !operation.completedFor(this@PersistencePhaseContext, path)) {
                 failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             }

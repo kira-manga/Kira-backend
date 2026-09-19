@@ -32,6 +32,12 @@ internal class S3CatalogReadbackFixture {
     var now = 0L
     var respond: (SdkHttpRequest) -> S3CatalogReply = ::chainReply
 
+    /** Genuine arbitrary raw fixture chain through the same S3Client XML/metadata/body decoder. */
+    fun respondWithChain(generations: List<ByteArray>, retainedUntilEpochSecond: Long) {
+        val retained = generations.map(ByteArray::copyOf)
+        respond = { request -> chainReply(request, retained, retainedUntilEpochSecond) }
+    }
+
     fun adapter(
         trustBytes: ByteArray = catalog.current,
         policy: OfflineTrustBundlePolicy = OfflineTrustBundleFixture.policy(minimumVersion = 9),
@@ -103,19 +109,23 @@ internal class S3CatalogReadbackFixture {
         )
     }
 
-    private fun chainReply(http: SdkHttpRequest): S3CatalogReply {
+    private fun chainReply(http: SdkHttpRequest): S3CatalogReply = chainReply(http, catalog.bytes, CatalogReadbackFixture.RETAIN_UNTIL)
+
+    private fun chainReply(http: SdkHttpRequest, generations: List<ByteArray>, retainedUntilEpochSecond: Long): S3CatalogReply {
         val location = OfflineTrustBundleFixture.locations.single { http.encodedPath().startsWith("/${it.bucket}") }
         if (!http.rawQueryParameters().containsKey("versions")) {
             val key = http.encodedPath().removePrefix("/${location.bucket}/")
-            val index = catalog.bytes.indices.single { CatalogReadbackProtocol.key(it + 1L) == key }
+            val index = generations.indices.single { CatalogReadbackProtocol.key(it + 1L) == key }
             val version = http.firstMatchingRawQueryParameter("versionId").orElseThrow()
             check(version == "catalog-version-${index + 1}")
-            return getReply(CatalogGetRequest(location, key, version), catalog.bytes[index])
+            return getReply(CatalogGetRequest(location, key, version), generations[index]).apply {
+                headers = headers + ("x-amz-object-lock-retain-until-date" to listOf(Instant.ofEpochSecond(retainedUntilEpochSecond).toString()))
+            }
         }
         val marker = http.firstMatchingRawQueryParameter("key-marker").orElse(null)
         val cursor = marker?.let { CatalogListCursor(it, http.firstMatchingRawQueryParameter("version-id-marker").orElseThrow()) }
         val maximum = http.firstMatchingRawQueryParameter("max-keys").orElseThrow().toInt()
-        val all = catalog.bytes.mapIndexed { index, bytes ->
+        val all = generations.mapIndexed { index, bytes ->
             CatalogListedVersion(CatalogReadbackProtocol.key(index + 1L), "catalog-version-${index + 1}", bytes.size.toLong())
         }
         val start = if (marker == null) 0 else all.indexOfFirst { it.key == marker } + 1

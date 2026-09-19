@@ -8,6 +8,7 @@ import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcDriverRoot
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePublicTrustRelease
+import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceTestInputs
@@ -45,6 +46,7 @@ internal class ComplaintProcessPoolFixture(
     parent: Path = Path.of("/deliberately-not-created/complaint-process-test"),
     private val retained: Boolean = false,
     epochRotation: Boolean = false,
+    private val testActivation: Boolean = false,
 ) : AutoCloseable {
     val configuration = VersionBoundPersistenceConfiguration.fromAcquired(
         password,
@@ -56,10 +58,19 @@ internal class ComplaintProcessPoolFixture(
         trust,
         parent,
     )
-    val owner = if (epochRotation) configuration.bindLifecycleOwnerWithEpochRotation() else configuration.bindLifecycleOwner()
+    val owner = when {
+        testActivation -> configuration.bindCatalogTestRunActivationOwner()
+        epochRotation -> configuration.bindLifecycleOwnerWithEpochRotation()
+        else -> configuration.bindLifecycleOwner()
+    }
     val root: PersistenceJdbcDriverRoot = poolTestField(owner, "root")
 
-    fun bind(): VersionBoundPersistencePools = owner.bindVersionBoundPools()
+    init {
+        check(!testActivation || !epochRotation)
+    }
+
+    fun bind(): VersionBoundPersistencePools =
+        if (testActivation) owner.bindCatalogTestRunActivationPools(SystemPersistenceNanoClock) else owner.bindVersionBoundPools()
 
     override fun close() {
         checkNotNull(owner.versionBoundPools).close()

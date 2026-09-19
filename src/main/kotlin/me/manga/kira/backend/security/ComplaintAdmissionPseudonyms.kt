@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
@@ -22,6 +23,10 @@ internal class ComplaintAdmissionBucketKey(val generation: String, private val d
 }
 
 internal object ComplaintAdmissionPseudonyms {
+    /** One distinct ADMIN family combines search/detail without an installation-shaped surrogate. */
+    fun adminReadActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii("ADMIN_READ")))
+
     fun ingressIp(keys: List<ComplaintAdmissionKey>, canonicalIp: ByteArray): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("IP"), ascii("INGRESS"), canonicalIp))
 

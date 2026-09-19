@@ -2,8 +2,10 @@ package me.manga.kira.backend.security
 
 import jakarta.servlet.http.HttpServletRequest
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailRequestContext
@@ -19,9 +21,11 @@ import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import java.security.GeneralSecurityException
 import java.security.ProviderException
 import java.util.IdentityHashMap
+import java.util.UUID
 
 /** Identity alone grants nothing: only the owning live registry can recognize this view. */
 internal class ComplaintIngressContext :
+    ComplaintAdminReadRequestContext,
     ComplaintOwnerDetailRequestContext,
     ComplaintOwnerHistoryRequestContext,
     ComplaintOwnerOperationContext,
@@ -51,6 +55,7 @@ internal class ComplaintIngressAdmission(
     private val deleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Disabled,
     private val editPolicy: ComplaintOwnerEditAdmissionPolicy = ComplaintOwnerEditAdmissionPolicy.Disabled,
     private val ownerDeletePolicy: ComplaintOwnerDeleteAdmissionPolicy = ComplaintOwnerDeleteAdmissionPolicy.Disabled,
+    private val adminReadPolicy: ComplaintAdminReadAdmissionPolicy = ComplaintAdminReadAdmissionPolicy.Disabled,
 ) {
     private val lock = Any()
     private val keys = ComplaintAdmissionKeyRing(configuration)
@@ -150,6 +155,49 @@ internal class ComplaintIngressAdmission(
     internal fun startOwnerHistory(context: ComplaintIngressContext) {
         requireConnectionFree()
         locked { startAttempt(context, SemanticOperation.OWNER_HISTORY) }
+    }
+
+    internal fun startAdminSearch(context: ComplaintIngressContext) = startAdminRead(context, SemanticOperation.ADMIN_SEARCH)
+
+    internal fun startAdminDetail(context: ComplaintIngressContext) = startAdminRead(context, SemanticOperation.ADMIN_DETAIL)
+
+    private fun startAdminRead(context: ComplaintIngressContext, operation: SemanticOperation) {
+        requireConnectionFree()
+        locked {
+            if (adminReadPolicy !is ComplaintAdminReadAdmissionPolicy.Bounded) refuseComplaintAdmission()
+            startAttempt(context, operation)
+        }
+    }
+
+    /** The concrete adapter calls only after the real current-ADMIN preflight has physically released. */
+    internal fun chargeAdminRead(context: ComplaintIngressContext, actor: UUID, scope: ComplaintDataScope, identity: Any) {
+        requireConnectionFree()
+        locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.ADMIN_SEARCH && state.operation !== SemanticOperation.ADMIN_DETAIL ||
+                state.admission != null || !scope.testOnly
+            ) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            val limits = adminReadPolicy as? ComplaintAdminReadAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
+            val now = time()
+            // Share the existing finite minute-store allocation, not a second actor-key map/budget.
+            ownerReads.charge(
+                ComplaintAdmissionPseudonyms.adminReadActor(keys.keys(), actor, scope).map { ComplaintAdmissionCharge(it, limits.perMinute) },
+                now,
+            )
+            state.admission = identity
+            state.admittedAt = now
+        }
+    }
+
+    internal fun consumeAdminRead(context: ComplaintIngressContext, identity: Any) {
+        requireConnectionFree()
+        locked {
+            val state = unconsumedAdmission(context, identity)
+            if (state.operation !== SemanticOperation.ADMIN_SEARCH && state.operation !== SemanticOperation.ADMIN_DETAIL) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            state.consumed = true
+        }
     }
 
     /** Lower counter primitive: only the concrete history adapter calls after a real, released token-state read. */
@@ -658,6 +706,8 @@ internal class ComplaintIngressAdmission(
         BOOTSTRAP,
         ENROLLMENT,
         OWNER_HISTORY,
+        ADMIN_SEARCH,
+        ADMIN_DETAIL,
         OWNER_STATUS,
         OWNER_CREATE,
         OWNER_REPLY,

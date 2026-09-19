@@ -90,6 +90,12 @@ internal class PersistenceJdbcGuardContext private constructor(
 
     internal fun hasPhase(): Boolean = phase != null
 
+    /** Fixed maintenance-prefix return checks only; failed-prefix emergency cleanup remains separately owned. */
+    internal fun maintenanceDispatchReturned(kind: PersistenceJdbcGuardCallKind, admitted: PersistenceTimeBudget?) {
+        phase?.maintenanceDispatchReturned(kind, admitted)
+        (lineage as? Lineage.Rotation)?.session?.maintenanceDispatchReturned(kind, admitted)
+    }
+
     internal fun requiresClosedInputs(): Boolean = phase != null || lineage is Lineage.Rotation
 
     /** Only a sticky APPLY outcome veto; the attached original phase still owns all release facts. */
@@ -118,13 +124,20 @@ internal class PersistenceJdbcGuardContext private constructor(
         if (!ownership.permitsCleanup(identity.epoch)) refuse()
         val rotation = (lineage as? Lineage.Rotation)?.session
         rotation?.beforeJdbcCall(kind)
+        // A maintenance deadline refuses acceptance, not the same original close. No prefix cap
+        // reaches cleanup's epoch/creator/native admission, including later clock samples there.
+        val maintenanceAcceptance = if (kind === PersistenceJdbcGuardCallKind.CLEANUP) {
+            phase?.maintenanceCleanupBudget() ?: rotation?.maintenanceCleanupBudget()
+        } else {
+            null
+        }
         val budget = phase?.callBudget(kind) ?: rotation?.callBudget(kind)
         val token = when (kind) {
             PersistenceJdbcGuardCallKind.BUSINESS -> identity.epoch.enterForeground(budget)
             PersistenceJdbcGuardCallKind.CLEANUP -> identity.epoch.enterCleanup(identity.cleanup, budget)
             PersistenceJdbcGuardCallKind.CANCELLATION -> identity.epoch.enterCancellation(budget)
         } ?: refuse()
-        return wrapToken(identity, token, kind, budget)
+        return wrapToken(identity, token, kind, budget, maintenanceAcceptance)
     }
 
     fun requireCurrent(identity: PersistenceJdbcGuardIdentity) {
@@ -464,10 +477,11 @@ internal class PersistenceJdbcGuardContext private constructor(
         token: PersistenceProducerEpoch.Call,
         kind: PersistenceJdbcGuardCallKind,
         budget: PersistenceTimeBudget? = null,
+        maintenanceAcceptanceBudget: PersistenceTimeBudget? = null,
     ): PersistenceJdbcGuardCall {
         var wrapped = false
         try {
-            val call = PersistenceJdbcGuardCall.prepare(this, identity, token, kind, frames.get(), budget)
+            val call = PersistenceJdbcGuardCall.prepare(this, identity, token, kind, frames.get(), budget, maintenanceAcceptanceBudget)
             frames.set(call)
             wrapped = true
             return call

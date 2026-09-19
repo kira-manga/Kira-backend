@@ -32,6 +32,11 @@ internal class ComplaintOwnerHistoryResponses {
 
     fun isOpen(): Boolean = !closed.get()
 
+    /** The concrete Admin read serializer shares this exact aggregate-eight owner, not a second semaphore. */
+    internal fun requirePermit(permit: Permit) {
+        if (!permit.belongsTo(semaphore) || !isOpen()) throw ComplaintHistorySerializationFailure()
+    }
+
     // Keep every bounded-writer guard and cleanup/rethrow branch explicit.
     @Suppress("TooGenericExceptionCaught", "SwallowedException", "ThrowsCount")
     fun encode(permit: Permit, page: ComplaintOwnerHistoryPage): ComplaintHistoryEncodedBody {

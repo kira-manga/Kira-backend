@@ -43,6 +43,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMuta
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
@@ -90,6 +91,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForCatalogSignerRotationActivation(operation: CatalogSignerRotationActivationOperationV1): LockedCatalogSignerRotationActivation =
         LockedCatalogSignerRotationActivation.lock(this, operation)
+
+    internal fun lockForCatalogTestRunActivation(operation: CatalogTestRunActivationOperationV1): LockedCatalogTestRunActivation =
+        LockedCatalogTestRunActivation.lock(this, operation)
 
     internal fun lockForOwnerCreate(operation: ComplaintOwnerCreateOperation): LockedOwnerCreate = LockedOwnerCreate.lock(this, operation)
 
@@ -750,6 +754,71 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedCatalogSignerRotationActivation(store, operation, store.readLockedLedger())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    /** Arbitrary supported prefix, first TEST only. Future projection/reserve must fit but are never spent here. */
+    internal class LockedCatalogTestRunActivation private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: CatalogTestRunActivationOperationV1,
+        private val before: ComplaintCapacityLedger,
+        private val dailyLimit: Long,
+    ) {
+        private var issued = false
+        private var settled = false
+        internal fun belongsTo(candidate: CatalogTestRunActivationOperationV1): Boolean = operation === candidate
+        internal fun settledFor(candidate: CatalogTestRunActivationOperationV1): Boolean = belongsTo(candidate) && settled
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun settle(candidate: CatalogTestRunActivationOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                val (rows, creating) = operation.requireCounterSettlement(this, store.jdbc)
+                issued = true
+                val frozen = operation.input.frozen
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                check(expected.contentEquals(frozen.capacityDigest()))
+                val balance = before.balance
+                // The P digest alone does not authenticate different declared hard/creation/daily limits.
+                check(balance.hardLimit == frozen.policy.hardLimit && balance.creationLimit == frozen.policy.creationLimit && dailyLimit == frozen.policy.dailyEnrollmentLimit)
+                check(rows.toLong() == frozen.generation - if (creating) 1L else 0L)
+                check(balance.actual[ComplaintCapacityCounter.CATALOG_MUTATIONS] == rows.toLong())
+                check(balance.actual[ComplaintCapacityCounter.TEST_RUNS] == 0L && balance.testReserved == ComplaintCapacityVector.ZERO)
+                if (!creating) check(balance.actual[ComplaintCapacityCounter.STORAGE_BYTES] >= frozen.prepareCharge[ComplaintCapacityCounter.STORAGE_BYTES])
+                val prepared = if (creating) before.chargeCreation(expected, frozen.prepareCharge) else before
+                prepared.chargeCreation(expected, frozen.projectionCharge).reserveTest(expected, frozen.reserve)
+                if (creating) {
+                    val after = prepared.balance
+                    for (counter in ComplaintCapacityEncoding.lockOrder().filter { frozen.prepareCharge[it] != 0L }) {
+                        operation.requireCounterSettlement(this, store.jdbc)
+                        check(
+                            store.jdbc.update(
+                                CHARGE_ENROLLMENT_COUNTER,
+                                after.free[counter], after.actual[counter], after.testReserved[counter], counter.storedName, counter.storedOrdinal, expected,
+                                balance.hardLimit[counter], balance.creationLimit[counter], balance.free[counter], balance.actual[counter],
+                                balance.recoveryReserved[counter], balance.testReserved[counter],
+                            ) == 1,
+                        )
+                    }
+                }
+                operation.requireCounterSettlement(this, store.jdbc)
+                settled = true // Reload neither charges, reserves, refunds nor reopens anything.
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: CatalogTestRunActivationOperationV1): LockedCatalogTestRunActivation {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val counters = store.readLockedCounters()
+                    return LockedCatalogTestRunActivation(store, operation, counters.ledger, counters.daily.dailyLimit)
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

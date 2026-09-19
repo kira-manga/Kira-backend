@@ -26,10 +26,15 @@ import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryIden
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryLeaseCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryProviderCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoverySqlCut
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationBoundaryCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationPreparedCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
+import me.manga.kira.backend.complaint.catalog.EpochMaintenanceClock
+import me.manga.kira.backend.complaint.catalog.EpochMaintenanceGateCut
 import me.manga.kira.backend.complaint.catalog.EpochRotationCases
+import me.manga.kira.backend.complaint.catalog.EpochRotationMaintenanceCases
 import me.manga.kira.backend.complaint.catalog.HeldEpochSealBudgetCases
 import me.manga.kira.backend.complaint.catalog.HeldEpochSealCases
 import me.manga.kira.backend.complaint.catalog.HeldEpochSealCleanupCases
@@ -41,6 +46,8 @@ import me.manga.kira.backend.complaint.catalog.HeldSealPreparationCut
 import me.manga.kira.backend.complaint.catalog.HeldSealStopCut
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
+import me.manga.kira.backend.complaint.catalog.TestActivationCustodyCut
+import me.manga.kira.backend.complaint.catalog.TestActivationRefusalCut
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
@@ -897,6 +904,69 @@ class VersionBoundPersistenceConnectedIT {
         }
     }
 
+    @Test
+    fun testActivationPreparesExactUnsignedRowAndChargesOnlyOnce() = withFixture(testActivation = true) {
+        CatalogTestRunActivationPreparedCases.prepareAndReload(it)
+    }
+
+    @Test
+    fun testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry() = withFixture(testActivation = true) {
+        CatalogTestRunActivationPreparedCases.freshOwnerRecovery(it)
+    }
+
+    @Test
+    fun testActivationClosedPurposeAndNakedInputsRefuseBeforeSql() = withFixture(testActivation = true) {
+        CatalogTestRunActivationBoundaryCases.closedPurposeAndNakedInputs(it)
+    }
+
+    @Test
+    fun testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift() {
+        TestActivationRefusalCut.entries.forEach { cut ->
+            withFixture(testActivation = true) {
+                CatalogTestRunActivationBoundaryCases.refusesUntrustedOrInsufficientPreimage(it, cut)
+            }
+        }
+    }
+
+    @Test
+    fun testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds() = withFixture(testActivation = true) {
+        CatalogTestRunActivationBoundaryCases.sharedMaintenanceBlocksBeforeEpochAndFreshAttemptSucceeds(it)
+    }
+
+    @Test
+    fun testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody() {
+        TestActivationCustodyCut.entries.forEach { cut ->
+            withFixture(testActivation = true) {
+                CatalogTestRunActivationBoundaryCases.failuresRetainOriginalCustody(it, cut)
+            }
+        }
+    }
+
+    @Test
+    fun directEpochMaintenanceCloseDeadlinePreservesActualCleanupAndVetoesAcceptance() {
+        for (resultSet in listOf(true, false)) {
+            for (admission in listOf(false, true)) {
+                val clock = EpochMaintenanceClock()
+                withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                    withEpochRotation(tls) { EpochRotationMaintenanceCases.closeDeadline(it, clock, resultSet, admission) }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture() {
+        EpochMaintenanceGateCut.entries.forEach { cut ->
+            val clock = EpochMaintenanceClock()
+            withFixture(epochRotation = true, nanoClock = clock) { tls ->
+                val invoke = { withEpochRotation(tls) { EpochRotationMaintenanceCases.gateAndIsolation(it, clock, cut) } }
+                if (cut === EpochMaintenanceGateCut.ROLE_DEFAULT_REPEATABLE_READ) {
+                    EpochRotationMaintenanceCases.withRoleRepeatableRead(tls, invoke)
+                } else invoke()
+            }
+        }
+    }
+
     private fun withPairedFixture(
         epochRotation: Boolean = false,
         test: (VersionBoundPersistenceConnectedFixture, VersionBoundPersistenceConnectedFixture) -> Unit,
@@ -917,8 +987,9 @@ class VersionBoundPersistenceConnectedIT {
         profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,
         epochRotation: Boolean = false,
         nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+        testActivation: Boolean = false,
         test: (VersionBoundPersistenceConnectedFixture) -> Unit,
-    ) = VersionBoundPersistenceConnectedFixture(database.value, client, epochRotation).use { fixture ->
+    ) = VersionBoundPersistenceConnectedFixture(database.value, client, epochRotation, testActivation = testActivation).use { fixture ->
         fixture.bind(profile, nanoClock)
         test(fixture)
     }

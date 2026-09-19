@@ -17,9 +17,10 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
     internal val catalogSignerRotationAuthoring: Boolean get() = root.catalogSignerRotationAuthoring
     internal val catalogSignerRotationDelivery: Boolean get() = root.catalogSignerRotationDelivery
     internal val catalogSignerRotationActivation: Boolean get() = root.catalogSignerRotationActivation
+    internal val catalogTestRunActivation: Boolean get() = root.catalogTestRunActivation
     private val namedCatalogOnly: Boolean
         get() = desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization ||
-            catalogSignerRotationRecovery || catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation
+            catalogSignerRotationRecovery || catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation || catalogTestRunActivation
     internal val versionBoundPools: VersionBoundPersistencePools? get() = root.versionBoundPools
     internal val epochRotation: EpochRotationPersistence? get() = root.epochRotation
     internal val complaintContainment = PersistenceComplaintContainment()
@@ -104,6 +105,20 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
     internal fun bindCatalogSignerRotationDeliveryPools(nanoClock: PersistenceNanoClock): VersionBoundPersistencePools {
         if (!catalogSignerRotationDelivery) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
         return checkNotNull(versionBoundPools).bind(this, PersistencePoolLaunchProfile.UNKNOWN, nanoClock)
+    }
+
+    internal fun bindCatalogTestRunActivationPools(nanoClock: PersistenceNanoClock): VersionBoundPersistencePools {
+        if (!catalogTestRunActivation) rejectPersistenceBoundary(PersistenceBoundaryFailureCode.JDBC_CONFIGURATION_FAILED)
+        return checkNotNull(versionBoundPools).bind(this, PersistencePoolLaunchProfile.UNKNOWN, nanoClock)
+    }
+
+    internal fun prepareCatalogTestRunActivation(): PersistenceLifecycleObservation {
+        requireConnectionFree()
+        if (!catalogTestRunActivation || catalogResources == null || ownershipLockHeld()) return PersistenceLifecycleObservation.UNAVAILABLE
+        if (root.startCatalogTestRunActivationInfrastructure() !== PersistenceLifecycleActivation.STARTED) {
+            return PersistenceLifecycleObservation.UNAVAILABLE
+        }
+        return checkNotNull(catalogResources).prepareCatalogTestRunActivation()
     }
 
     internal fun bindCatalogSignerRotationActivationPools(nanoClock: PersistenceNanoClock): VersionBoundPersistencePools {
@@ -273,6 +288,9 @@ internal class PersistenceJdbcLifecycleOwner private constructor(private val roo
             configuration: VersionBoundPersistenceConfiguration,
             epochRotation: Boolean,
         ): PersistenceJdbcLifecycleOwner = PersistenceJdbcLifecycleOwner(configuration.createCatalogSignerRotationDeliveryRoot(epochRotation))
+
+        internal fun catalogTestRunActivation(configuration: VersionBoundPersistenceConfiguration): PersistenceJdbcLifecycleOwner =
+            PersistenceJdbcLifecycleOwner(configuration.createCatalogTestRunActivationRoot())
 
         internal fun catalogSignerRotationActivation(
             configuration: VersionBoundPersistenceConfiguration,

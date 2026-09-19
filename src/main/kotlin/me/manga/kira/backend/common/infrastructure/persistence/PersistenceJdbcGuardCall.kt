@@ -11,6 +11,7 @@ internal class PersistenceJdbcGuardCall private constructor(
     private val kind: PersistenceJdbcGuardCallKind,
     private val parent: PersistenceJdbcGuardCall?,
     internal val budget: PersistenceTimeBudget?,
+    private val maintenanceAcceptanceBudget: PersistenceTimeBudget?,
 ) {
     private val actualCaller = Thread.currentThread()
     private var output: Any? = null
@@ -89,6 +90,9 @@ internal class PersistenceJdbcGuardCall private constructor(
             }
         }
         finishReturned = true // Includes driver/core finally return, not merely a claimed producer end.
+        if (finishedSuccessfully) {
+            context.maintenanceDispatchReturned(kind, if (kind === PersistenceJdbcGuardCallKind.CLEANUP) maintenanceAcceptanceBudget else budget)
+        }
     }
 
     internal fun admitsCreator(lease: PersistenceJdbcLease, dispatch: PersistenceJdbcDispatch.Frame): Boolean =
@@ -304,6 +308,7 @@ internal class PersistenceJdbcGuardCall private constructor(
             kind: PersistenceJdbcGuardCallKind,
             parent: PersistenceJdbcGuardCall?,
             budget: PersistenceTimeBudget? = null,
-        ): PersistenceJdbcGuardCall = PersistenceJdbcGuardCall(context, identity, token, kind, parent, budget)
+            maintenanceAcceptanceBudget: PersistenceTimeBudget? = null,
+        ): PersistenceJdbcGuardCall = PersistenceJdbcGuardCall(context, identity, token, kind, parent, budget, maintenanceAcceptanceBudget)
     }
 }

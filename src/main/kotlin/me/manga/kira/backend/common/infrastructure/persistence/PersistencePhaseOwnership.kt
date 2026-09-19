@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFree
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisPublishAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogReadbackRefreshCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationDeliveryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationInitialAuthorV1
@@ -135,6 +136,13 @@ internal class PersistencePhaseOwnership private constructor(
 
     /** Exact-ID owner detail, using the same ordinary read budget and original resource owner. */
     internal fun enterComplaintOwnerDetail(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_DETAIL)
+
+    /** Current ADMIN and bounded TEST-only reads. Observations grant no mode, maintenance or projection authority. */
+    internal fun enterComplaintAdminReadAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
+
+    internal fun enterComplaintAdminSearch(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_SEARCH)
+
+    internal fun enterComplaintAdminDetail(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
 
     /** TEST-dormant create/status share only the existing ordinary owner; no activation is inferred. */
     internal fun enterComplaintOwnerOperationAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION)
@@ -328,6 +336,19 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintSignerRotationActivationProject(original: CatalogSignerRotationActivationV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PROJECT, signerRotationActivation = original)
 
+    /** Concrete cold TEST owner only; no caller-selected phase, ordinary root or LIVE substitution. */
+    internal fun enterComplaintTestRunActivationSnapshot(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationAcquire(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationPrepare(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationReload(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD, testRunActivation = original)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     // Keep ordered admission/custody/publication in one entry; concrete owner parameters must not become an interchangeable capability bag.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught", "LongMethod", "LongParameterList")
@@ -347,6 +368,7 @@ internal class PersistencePhaseOwnership private constructor(
         signerRotationAuthor: CatalogSignerRotationInitialAuthorV1? = null,
         signerRotationDelivery: CatalogSignerRotationDeliveryV1? = null,
         signerRotationActivation: CatalogSignerRotationActivationV1? = null,
+        testRunActivation: CatalogTestRunActivationV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -360,6 +382,7 @@ internal class PersistencePhaseOwnership private constructor(
         requireSignerRotationAuthorEntry(path, catalogSignerRotationAttempt, signerRotationAuthor)
         requireSignerRotationDeliveryEntry(path, signerRotationDelivery)
         requireSignerRotationActivationEntry(path, signerRotationActivation)
+        requireTestRunActivationEntry(path, testRunActivation)
         catalogRefresh?.requireProjectedPersistence(this)
         desiredAttempt?.requirePhaseEntry(this, path)
         firstDesiredAttempt?.requirePhaseEntry(this, path)
@@ -371,6 +394,7 @@ internal class PersistencePhaseOwnership private constructor(
         signerRotationAuthor?.requirePhaseEntry(this, path)
         signerRotationDelivery?.requirePhaseEntry(this, path)
         signerRotationActivation?.requirePhaseEntry(this, path)
+        testRunActivation?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
@@ -385,6 +409,7 @@ internal class PersistencePhaseOwnership private constructor(
         val signerRotationAuthorWork = signerRotationAuthor?.phaseBudget?.capped(2_000)
         val signerRotationDeliveryWork = signerRotationDelivery?.budget?.capped(2_000)
         val signerRotationActivationWork = signerRotationActivation?.budget?.capped(2_000)
+        val testRunActivationWork = testRunActivation?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -433,6 +458,8 @@ internal class PersistencePhaseOwnership private constructor(
                 signerRotationDeliveryWork,
                 signerRotationActivation,
                 signerRotationActivationWork,
+                testRunActivation,
+                testRunActivationWork,
             )
             phase = prepared
             // Retain before any publication/permit effect, including entry failures that never return a phase to the executor.
@@ -441,6 +468,7 @@ internal class PersistencePhaseOwnership private constructor(
             signerRotationAuthor?.retainPhase(prepared)
             signerRotationDelivery?.retainPhase(prepared)
             signerRotationActivation?.retainPhase(prepared)
+            testRunActivation?.retainPhase(prepared)
             check(phases.compareAndSet(slot, null, prepared))
             current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
             if (!path.source) prepared.reserveComplaintClaim()
@@ -453,6 +481,7 @@ internal class PersistencePhaseOwnership private constructor(
             signerRotationAuthor?.observeFailure(failure)
             signerRotationDelivery?.observeFailure(failure)
             signerRotationActivation?.observeFailure(failure)
+            testRunActivation?.observeFailure(failure)
             try {
                 phase?.entryPublicationFailed()
             } catch (cleanup: Throwable) {
@@ -461,6 +490,7 @@ internal class PersistencePhaseOwnership private constructor(
                 signerRotationAuthor?.observeFailure(cleanup)
                 signerRotationDelivery?.observeFailure(cleanup)
                 signerRotationActivation?.observeFailure(cleanup)
+                testRunActivation?.observeFailure(cleanup)
                 throw PersistencePhaseException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED, cleanupProven = false)
             } finally {
                 phase?.let { catalogSignerRotationAttempt?.observePhaseCleanup(it) }
@@ -468,6 +498,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { signerRotationAuthor?.observePhaseCleanup(it) }
                 phase?.let { signerRotationDelivery?.observePhaseCleanup(it) }
                 phase?.let { signerRotationActivation?.observePhaseCleanup(it) }
+                phase?.let { testRunActivation?.observePhaseCleanup(it) }
             }
             // Only the genuinely unused entry was cleaned here; preserve an already bounded reason.
             throw failure as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
@@ -562,6 +593,14 @@ internal class PersistencePhaseOwnership private constructor(
         }
     }
 
+    private fun requireTestRunActivationEntry(path: PersistencePhasePath, original: CatalogTestRunActivationV1?) {
+        if ((selection as? Selection.CatalogCoordinator)?.testActivating != true) {
+            if (original != null || path.catalogTestRunActivation) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            return
+        }
+        if (original == null || !path.catalogTestRunActivation) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
     internal fun detach(phase: PersistencePhaseContext, slot: Int) {
         check(phases.compareAndSet(slot, phase, null)) // A late old completion cannot erase a new permit.
     }
@@ -623,6 +662,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_HISTORY_PAGE,
                 PersistencePhasePath.COMPLAINT_OWNER_DETAIL,
+                PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
+                PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
+                PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE,
@@ -662,6 +704,10 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -718,6 +764,7 @@ internal class PersistencePhaseOwnership private constructor(
             val signerAuthoring: Boolean get() = resources.catalogSignerRotationAuthoring
             val signerDelivering: Boolean get() = resources.catalogSignerRotationDelivery
             val signerActivating: Boolean get() = resources.catalogSignerRotationActivation
+            val testActivating: Boolean get() = resources.catalogTestRunActivation
             override val dataSource: GuardedDataSource get() = resources.dataSource
             override val manager: GuardedJdbcTransactionManager get() = resources.manager
             override val ownerLimit: Int get() = 1
@@ -726,6 +773,7 @@ internal class PersistencePhaseOwnership private constructor(
 
             override fun acquire(path: PersistencePhasePath): LocalPersistencePermit? {
                 val allowed = when {
+                    testActivating -> TEST_RUN_ACTIVATION_PATHS
                     resources.desiredInstallationOperator -> DESIRED_INSTALL_PATHS
                     authoring -> CATALOG_AUTHOR_PATHS
                     finalizing -> CATALOG_FINALIZER_PATHS
@@ -744,6 +792,12 @@ internal class PersistencePhaseOwnership private constructor(
     }
 
     companion object {
+        private val TEST_RUN_ACTIVATION_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+        )
         private val SIGNER_ROTATION_ACTIVATION_EFFECT_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
@@ -925,6 +979,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
     COMPLAINT_OWNER_HISTORY_PAGE,
     COMPLAINT_OWNER_DETAIL,
+    COMPLAINT_ADMIN_READ_AUTHENTICATION,
+    COMPLAINT_ADMIN_SEARCH,
+    COMPLAINT_ADMIN_DETAIL,
     COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
     COMPLAINT_OWNER_CREATE_PREFLIGHT,
     COMPLAINT_OWNER_CREATE,
@@ -950,6 +1007,10 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
     COMPLAINT_CATALOG_SIGNER_ROTATION_COMPLETE,
     COMPLAINT_CATALOG_SIGNER_ROTATION_PROJECT,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -971,12 +1032,19 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
     ;
 
+    internal val catalogTestRunActivation: Boolean
+        get() = this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE ||
+            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD
+
     internal val source: Boolean
         get() = this === SOURCE_GRANT_CLEANUP || this === SOURCE_STEP_UP_SNAPSHOT || this === SOURCE_STEP_UP_ISSUANCE
 
     /** SQL participation only. Mixed write/no-op paths enter before branching; observations keep their existing policy. */
     internal val complaintMaintenanceWriter: Boolean
         get() = when (this) {
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
             COMPLAINT_GRANT_CLEANUP,
             COMPLAINT_STEP_UP_ISSUANCE,
             COMPLAINT_ADMIN_AUDIT,
@@ -1019,6 +1087,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
             -> true
 
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
             COMPLAINT_STEP_UP_SNAPSHOT,
             COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
             COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
@@ -1031,6 +1100,9 @@ internal enum class PersistencePhasePath {
             COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
             COMPLAINT_OWNER_HISTORY_PAGE,
             COMPLAINT_OWNER_DETAIL,
+            COMPLAINT_ADMIN_READ_AUTHENTICATION,
+            COMPLAINT_ADMIN_SEARCH,
+            COMPLAINT_ADMIN_DETAIL,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
             COMPLAINT_OWNER_REPLY_PREFLIGHT,
@@ -1057,12 +1129,16 @@ internal enum class PersistencePhasePath {
 
     internal val readOnly: Boolean
         get() = when (this) {
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
             COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
             COMPLAINT_INSTALLATION_DELETION_PREFLIGHT,
             COMPLAINT_INSTALLATION_CURRENT_STATE,
             COMPLAINT_OWNER_HISTORY_AUTHENTICATION,
             COMPLAINT_OWNER_HISTORY_PAGE,
             COMPLAINT_OWNER_DETAIL,
+            COMPLAINT_ADMIN_READ_AUTHENTICATION,
+            COMPLAINT_ADMIN_SEARCH,
+            COMPLAINT_ADMIN_DETAIL,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
             COMPLAINT_OWNER_REPLY_PREFLIGHT,

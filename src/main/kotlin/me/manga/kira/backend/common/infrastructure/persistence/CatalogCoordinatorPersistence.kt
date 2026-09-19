@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationActivationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunActivationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDesiredInstallPhaseExecutor
@@ -32,6 +33,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val catalogSignerRotationAuthoring: Boolean get() = owner.catalogSignerRotationAuthoring
     internal val catalogSignerRotationDelivery: Boolean get() = owner.catalogSignerRotationDelivery
     internal val catalogSignerRotationActivation: Boolean get() = owner.catalogSignerRotationActivation
+    internal val catalogTestRunActivation: Boolean get() = owner.catalogTestRunActivation
     internal val manager = GuardedJdbcTransactionManager(dataSource)
     internal val catalogRefreshCustody = CatalogReadbackRefreshCustodyV1()
     internal val leaseCustody = CatalogCoordinatorLeaseCustodyV1(this)
@@ -52,6 +54,9 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     private var signerRotationFinalizationExecutor: ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1? = null
     private var signerRotationActivationExecutor: ComplaintCatalogSignerRotationActivationPhaseExecutorV1? = null
+
+    private var testRunActivationExecutor: ComplaintCatalogTestRunActivationPhaseExecutorV1? = null
+    internal val testRunActivation: ComplaintCatalogTestRunActivationPhaseExecutorV1 get() = checkNotNull(testRunActivationExecutor)
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
     internal val snapshot: ComplaintCatalogSnapshotPhaseExecutor get() = checkNotNull(executor)
@@ -77,6 +82,10 @@ internal class CatalogCoordinatorPersistence private constructor(
         val bound = PersistencePhaseOwnership.catalogCoordinator(this, nanoClock)
         phaseOwner = bound
         val jdbc = JdbcTemplate(dataSource).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
+        if (catalogTestRunActivation) {
+            testRunActivationExecutor = ComplaintCatalogTestRunActivationPhaseExecutorV1(this, jdbc)
+            return // Only dedicated TEST snapshot/lease/PREPARE/reload. No old snapshot, LIVE lease or producer effects.
+        }
         if (desiredInstallationOperator) {
             desiredExecutor = ComplaintDesiredInstallPhaseExecutor(this, jdbc)
             firstDesiredExecutor = ComplaintSignedGenesisFirstDPhaseExecutor(this, jdbc)
@@ -140,7 +149,7 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     private fun requiresNamedPreparation(): Boolean =
         desiredInstallationOperator || catalogGenesisAuthoring || catalogGenesisFinalization || catalogSignerRotationRecovery ||
-            catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation
+            catalogSignerRotationAuthoring || catalogSignerRotationDelivery || catalogSignerRotationActivation || catalogTestRunActivation
 
     /** Only the named operator owner can start the infrastructure for this route. */
     internal fun prepareDesiredInstallationOperator(): PersistenceLifecycleObservation {
@@ -198,6 +207,13 @@ internal class CatalogCoordinatorPersistence private constructor(
         checkNotNull(executor)
         checkNotNull(leaseExecutor)
         checkNotNull(signerRotationActivationExecutor)
+        return dataSource.prepareCatalogCoordinator()
+    }
+
+    internal fun prepareCatalogTestRunActivation(): PersistenceLifecycleObservation {
+        requireResources()
+        if (!catalogTestRunActivation) return PersistenceLifecycleObservation.UNAVAILABLE
+        checkNotNull(testRunActivationExecutor)
         return dataSource.prepareCatalogCoordinator()
     }
 

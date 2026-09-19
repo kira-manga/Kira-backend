@@ -81,6 +81,19 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         return PersistenceJdbcLifecycleOwner.catalogSignerRotationActivation(this, epochRotation)
     }
 
+    /** Same TARGET descriptor/full D; only the cold TEST PREPARE/reload coordinator can start. */
+    internal fun bindCatalogTestRunActivationOwner(): PersistenceJdbcLifecycleOwner {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcLifecycleOwner.catalogTestRunActivation(this)
+    }
+
+    internal fun createCatalogTestRunActivationRoot(): PersistenceJdbcDriverRoot {
+        requireFinalizerConfiguration()
+        return PersistenceJdbcDriverRoot(
+            endpoint, ordinaryCapacity, PersistencePathStyle.POSIX, versionBound = this, catalogTestRunActivation = true,
+        )
+    }
+
     internal fun createCatalogSignerRotationDeliveryRoot(epochRotation: Boolean): PersistenceJdbcDriverRoot {
         requireFinalizerConfiguration()
         return PersistenceJdbcDriverRoot(
@@ -196,7 +209,7 @@ internal class VersionBoundPersistenceConfiguration private constructor(
         requireConfiguration(actualEndpoint === endpoint && capacity == ordinaryCapacity && pathStyle === PersistencePathStyle.POSIX && !sourceOnly)
         requireConfiguration(operatorOnly == desiredInstallationOperator && authorOnly == catalogGenesisAuthoring)
         if (root.catalogGenesisFinalization || root.catalogSignerRotationRecovery || root.catalogSignerRotationAuthoring ||
-            root.catalogSignerRotationDelivery || root.catalogSignerRotationActivation
+            root.catalogSignerRotationDelivery || root.catalogSignerRotationActivation || root.catalogTestRunActivation
         ) {
             requireFinalizerConfiguration()
         }

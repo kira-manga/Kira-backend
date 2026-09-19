@@ -222,6 +222,7 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationCurrentStateIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerHistoryIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",

@@ -5,6 +5,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
 import me.manga.kira.backend.complaint.domain.JournalWriterV1
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
@@ -51,6 +52,7 @@ internal enum class ActivationEvidencePrefix { GENESIS, ROTATED, INVENTORY_ROTAT
 internal fun withActivationEvidence(
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
+    testActivation: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -62,11 +64,32 @@ internal fun withActivationEvidence(
             limits = original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
         ),
     )
-    ComplaintProcessPoolFixture().use { database ->
+    ComplaintProcessPoolFixture(testActivation = testActivation).use { database ->
         val pools = database.bind()
         JournalPublicationLanesV1(journal).use { lanes ->
             action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, pools, lanes))
         }
+    }
+}
+
+/** The same signed evidence, consumers and lanes on the existing original TLS TEST-only root. */
+internal fun withActivationEvidence(
+    tls: VersionBoundPersistenceConnectedFixture,
+    prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
+    selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
+    action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
+) {
+    val rotations = OfflineCatalogRotationFixture.chain()
+    val registry = rotations.genesis.manifest.initialWriterRegistry
+    val original = fullTestJournal().declaration()
+    val journal = TestOwnerDeleteJournalConfigurationV1.of(
+        original.copy(
+            writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
+            limits = original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
+        ),
+    )
+    JournalPublicationLanesV1(journal).use { lanes ->
+        action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes))
     }
 }
 
@@ -128,6 +151,19 @@ internal class CatalogTestRunActivationEvidenceFixture(
 
     fun process(desiredGeneration: Long = 7): VersionBoundTestNamespaceProcessV1 {
         val writer = journal.declaration().writer
+        return VersionBoundTestNamespaceProcessV1.fromRetained(
+            consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
+            lanes, reader, activation,
+        )
+    }
+
+    /** Reuses the original signed prefix/configuration; no randomized re-signing changes its raw identity. */
+    fun processOn(pools: VersionBoundPersistencePools, desiredGeneration: Long = 7): VersionBoundTestNamespaceProcessV1 {
+        val writer = journal.declaration().writer
+        val activation = FullTestCatalogInputs.activation(
+            pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
+            OfflineTrustBundleFixture.registryBytes(rotations.genesis.manifest.initialWriterRegistry),
+        )
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
             lanes, reader, activation,

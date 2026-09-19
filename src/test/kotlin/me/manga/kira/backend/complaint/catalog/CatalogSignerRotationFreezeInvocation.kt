@@ -19,6 +19,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPendingLeaseSqlV1.LOCK_SIGNER_ROTATION_PENDING_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPendingLeaseSqlV1.READ_SIGNER_ROTATION_PENDING_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINALIZATION
@@ -296,6 +298,7 @@ internal class CatalogSignerRotationProbeJdbc(
     private val coordinator: CatalogCoordinatorPersistence,
     private val observeDeliveryQueries: Boolean = false,
     private val observeActivationQueries: Boolean = false,
+    private val observeTestActivationQueries: Boolean = false,
 ) : JdbcTemplate(coordinator.dataSource) {
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<CatalogSignerRotationSqlCall>()
@@ -325,7 +328,9 @@ internal class CatalogSignerRotationProbeJdbc(
     }
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>, vararg args: Any?): T? =
-        if ((observeDeliveryQueries || observeActivationQueries) && sql == DELIVERY_AUTHENTICATE) {
+        if (((observeDeliveryQueries || observeActivationQueries || observeTestActivationQueries) && sql == DELIVERY_AUTHENTICATE) ||
+            (observeTestActivationQueries && sql in setOf(CatalogTestRunActivationSqlV1.readHistory, CatalogTestRunActivationSqlV1.lockHistory))
+        ) {
             observed(sql, args) { super.query(sql, rse, *args) }
         } else {
             super.query(sql, rse, *args) // Existing RowMapper routes remain observed exactly once.
@@ -355,7 +360,7 @@ internal class CatalogSignerRotationProbeJdbc(
         assertSame(coordinator.dataSource, dataSource)
         assertEquals(setOf(coordinator.dataSource), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(1, coordinator.activeSnapshotOwners())
-        assertEquals(path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, holder.connection.isReadOnly)
+        assertEquals(path in setOf(PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT, PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT), holder.connection.isReadOnly)
         // This fixture leaves the role default READ COMMITTED unchanged; G1/lease do not acquire rotation's explicit override.
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, holder.connection.transactionIsolation)
         assertEquals(sql.count { it == '?' }, arguments.size)
@@ -381,6 +386,10 @@ internal class CatalogSignerRotationProbeJdbc(
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
         val step = when {
+            observeTestActivationQueries && sql == DELIVERY_AUTHENTICATE -> "test-activation-authenticate"
+
+            observeTestActivationQueries && testActivationStep(sql) != null -> checkNotNull(testActivationStep(sql))
+
             observeActivationQueries && sql == DELIVERY_AUTHENTICATE -> "activation-authenticate"
 
             observeActivationQueries && sql == DELIVERY_GATES -> "activation-gates"
@@ -402,6 +411,7 @@ internal class CatalogSignerRotationProbeJdbc(
         action().also { result ->
             // Count the unchanged real query result only; never alter a row, mapper, holder or accepted history.
             if (observeActivationQueries && result is List<*>) returnedRowCounts[call] = result.size
+            if (observeTestActivationQueries && result is CatalogTestRunActivationHistoryV1) returnedRowCounts[call] = result.size
             if (step == "catalog") assertCatalogLock(holder.connection)
             afterSql(step)
         }
@@ -412,11 +422,15 @@ internal class CatalogSignerRotationProbeJdbc(
 
     private fun expectedSharedFence(path: PersistencePhasePath): Boolean = when (path) {
         PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
         -> false
 
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
@@ -443,6 +457,19 @@ internal class CatalogSignerRotationProbeJdbc(
                 assertFalse(row.next())
             }
         }
+    }
+
+    private fun testActivationStep(sql: String): String? = when (sql) {
+        CatalogTestRunActivationSqlV1.readControl -> "test-control-read"
+        CatalogTestRunActivationSqlV1.lockControl -> "test-control-lock"
+        CatalogTestRunActivationSqlV1.acquireLease -> "test-lease-acquire"
+        CatalogTestRunActivationSqlV1.currentLease -> "test-current-lease"
+        CatalogTestRunActivationSqlV1.readHistory -> "test-history-read"
+        CatalogTestRunActivationSqlV1.lockHistory -> "test-history-lock"
+        CatalogTestRunActivationSqlV1.preflight -> "test-preflight"
+        CatalogTestRunActivationSqlV1.closeControl -> "test-close-control"
+        CatalogTestRunActivationSqlV1.insertPrepared -> "test-insert-prepared"
+        else -> null
     }
 
     @Suppress("CyclomaticComplexMethod") // One exhaustive SQL-observation label table, not additional test paths or application control flow.
