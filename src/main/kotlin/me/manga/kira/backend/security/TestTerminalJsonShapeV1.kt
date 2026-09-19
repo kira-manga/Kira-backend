@@ -8,6 +8,7 @@ import com.fasterxml.jackson.core.StreamReadFeature
 import me.manga.kira.backend.complaint.domain.JournalDecoderLimitsV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalFailureV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProfileV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSyntaxV1
 import me.manga.kira.backend.complaint.domain.terminal.requireTestTerminal
 
@@ -15,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.terminal.requireTestTerminal
 internal enum class TestTerminalDocumentV1 {
     ENCODING, INSTALLATION_MANIFEST, PURGE, SEAL_SET, DENIAL_SET, EPOCH_SEAL, EVENT_HEADER, SEAL_HEADER,
     ENTRY, OBJECT_REF, SEAL_REF, COUNT_HASH, MANIFEST_SUMMARY, DENIAL_RANGE, DENIAL_CUT, POLICY, EVIDENCE, INVENTORY_WITNESS,
+    PROGRESS, COMPLETED_CUT, INSTALLATION_READ, SOURCE_HIGH_WATER,
 }
 
 /** Fixed bounded preflight for this one profile. The ordinary parser and its accepted language are unchanged. */
@@ -37,6 +39,7 @@ internal class TestTerminalJsonShapeV1(limits: JournalDecoderLimitsV1) {
 
     fun maximumBytes(kind: TestTerminalDocumentV1): Int = when (kind) {
         TestTerminalDocumentV1.EVENT_HEADER, TestTerminalDocumentV1.SEAL_HEADER -> minOf(maximumPlaintextBytes, TestTerminalProfileV1.MAX_HEADER_BYTES)
+        TestTerminalDocumentV1.PROGRESS -> minOf(maximumPlaintextBytes, TestTerminalProgressV1.MAX_CANONICAL_BYTES)
         else -> maximumPlaintextBytes
     }
 
@@ -117,7 +120,8 @@ internal class TestTerminalJsonShapeV1(limits: JournalDecoderLimitsV1) {
             "schemaVersion publicationEpoch activationCatalogGeneration chunkIndex chunkCount installationCount retiredCount deletedCount " +
                 "finalOrdinaryEpoch count epochStartInclusive epochEndInclusive version byteCount startedAtEpochSecond completedAtEpochSecond " +
                 "versionCount denialEffectiveAtEpochSecond lastSessionExpiryEpochSecond acceptedRequestBoundSeconds eventCount preparingFencingToken " +
-                "envelopeSchemaVersion payloadSchemaVersion",
+                "envelopeSchemaVersion payloadSchemaVersion desiredGeneration fencingToken framedByteCount enrolledCount reservationCount " +
+                "installationsFramedBytes chunkSetFramedBytes",
         )
         val CHILDREN = mapOf(
             "object" to TestTerminalDocumentV1.OBJECT_REF,
@@ -132,11 +136,15 @@ internal class TestTerminalJsonShapeV1(limits: JournalDecoderLimitsV1) {
             "boundEvidence" to TestTerminalDocumentV1.EVIDENCE,
             "firstInventory" to TestTerminalDocumentV1.INVENTORY_WITNESS,
             "secondInventory" to TestTerminalDocumentV1.INVENTORY_WITNESS,
+            "denial" to TestTerminalDocumentV1.DENIAL_CUT,
+            "sourceHighWater" to TestTerminalDocumentV1.SOURCE_HIGH_WATER,
         )
         val ARRAYS = mapOf(
             "entries" to ArrayField(TestTerminalDocumentV1.ENTRY, TestTerminalProfileV1.MAX_ENTRIES_PER_CHUNK),
             "records" to ArrayField(TestTerminalDocumentV1.SEAL_REF, TestTerminalProfileV1.MAX_SEALS),
             "ranges" to ArrayField(TestTerminalDocumentV1.DENIAL_RANGE, TestTerminalProfileV1.MAX_DENIAL_RANGES),
+            "completedCuts" to ArrayField(TestTerminalDocumentV1.COMPLETED_CUT, TestTerminalProgressV1.MAX_COMPLETED_CUTS),
+            "installationReads" to ArrayField(TestTerminalDocumentV1.INSTALLATION_READ, TestTerminalProgressV1.MAX_INSTALLATION_READS),
         )
 
         fun fields(kind: TestTerminalDocumentV1): Set<String> = when (kind) {
@@ -170,6 +178,18 @@ internal class TestTerminalJsonShapeV1(limits: JournalDecoderLimitsV1) {
             TestTerminalDocumentV1.POLICY -> names("policyId version sha256")
             TestTerminalDocumentV1.EVIDENCE -> names("sha256 byteCount")
             TestTerminalDocumentV1.INVENTORY_WITNESS -> names("startedAtEpochSecond completedAtEpochSecond versionCount byteCount sha256")
+            TestTerminalDocumentV1.PROGRESS -> SET + names(
+                "documentKind configurationSha256 terminalEncodingSha256 completedCuts installationReads",
+            )
+            TestTerminalDocumentV1.COMPLETED_CUT -> names(
+                "writerGeneration prefixKind epochStartInclusive epochEndInclusive scanId databaseIdentity restoreIdentity " +
+                    "desiredGeneration fencingToken framedByteCount denial",
+            )
+            TestTerminalDocumentV1.INSTALLATION_READ -> names(
+                "databaseIdentity restoreIdentity desiredGeneration fencingToken startedAtEpochSecond completedAtEpochSecond sourceHighWater " +
+                    "installationCount retiredCount deletedCount chunkCount installationsSha256 installationsFramedBytes chunkSetSha256 chunkSetFramedBytes",
+            )
+            TestTerminalDocumentV1.SOURCE_HIGH_WATER -> names("enrolledCount reservationCount greatestReservationId sourceSha256 framedByteCount")
         }
 
         fun names(value: String): Set<String> = value.split(' ').toSet()

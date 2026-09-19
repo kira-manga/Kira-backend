@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEventHeaderV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalExceptionV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalFailureV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalInstallationManifestV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPurgeV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSealHeaderV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSealSetV1
@@ -86,6 +87,14 @@ internal class TestTerminalJsonV1(journal: TestOwnerDeleteJournalConfigurationV1
         return encode(value, TestTerminalDocumentV1.DENIAL_SET, TestTerminalDenialSetV1.serializer())
     }
 
+    fun progress(bytes: ByteArray): TestTerminalProgressV1 =
+        decode(bytes, TestTerminalDocumentV1.PROGRESS, TestTerminalProgressV1.serializer()).also { bindProgress(it) }
+
+    fun encodeProgress(value: TestTerminalProgressV1): ByteArray {
+        bindProgress(value)
+        return encode(value, TestTerminalDocumentV1.PROGRESS, TestTerminalProgressV1.serializer())
+    }
+
     fun eventHeader(bytes: ByteArray): TestTerminalEventHeaderV1 =
         decode(bytes, TestTerminalDocumentV1.EVENT_HEADER, TestTerminalEventHeaderV1.serializer()).also { bindHeader(it) }
 
@@ -127,6 +136,29 @@ internal class TestTerminalJsonV1(journal: TestOwnerDeleteJournalConfigurationV1
     private fun bindSeal(value: TestTerminalEpochSealV1) {
         requireTestTerminal(value.dataScopeId == scope && value.writerGeneration == writer)
         requireTestTerminal(value.eventCount <= declaration.limits.capacity.maximumRetainedVersions, TestTerminalFailureV1.LIMIT_EXCEEDED)
+    }
+
+    /** Actual J ceilings on supplied observations, not accepted D/N, current leases or complete inventories. */
+    private fun bindProgress(value: TestTerminalProgressV1) {
+        requireTestTerminal(value.dataScopeId == scope)
+        val capacity = declaration.limits.capacity
+        value.completedCuts().forEach { cut ->
+            requireTestTerminal(
+                cut.denial.firstInventory.versionCount <= capacity.maximumRetainedVersions &&
+                    cut.denial.secondInventory.versionCount <= capacity.maximumRetainedVersions &&
+                    cut.framedByteCount <= capacity.maximumScanStagingBytes,
+                TestTerminalFailureV1.LIMIT_EXCEEDED,
+            )
+        }
+        value.installationReads().forEach { read ->
+            requireTestTerminal(
+                read.sourceHighWater.framedByteCount <= capacity.maximumScanStagingBytes &&
+                    read.installationsFramedBytes <= capacity.maximumScanStagingBytes &&
+                    read.chunkSetFramedBytes <= capacity.maximumScanStagingBytes &&
+                    read.chunkCount.toLong() < capacity.maximumRetainedVersions,
+                TestTerminalFailureV1.LIMIT_EXCEEDED,
+            )
+        }
     }
 
     private fun bindHeader(value: TestTerminalEventHeaderV1) {
