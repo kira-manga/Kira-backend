@@ -1,0 +1,69 @@
+// Nonshipping build boundary only: no project/source/dependency/publication rewrite.
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import org.gradle.api.GradleException
+import org.gradle.api.publish.maven.tasks.PublishToMavenLocal
+import org.gradle.api.publish.maven.tasks.PublishToMavenRepository
+import org.gradle.api.tasks.testing.Test
+
+def check = { boolean ok, String reason -> if (!ok) throw new GradleException(reason) }
+def control = new File(System.getenv('KIRA_RUNTIME_CONTROL')).canonicalFile
+def binding = new JsonSlurper().parse(new File(control, 'runtime-binding.json'))
+def stage = System.getenv('KIRA_RUNTIME_STAGE')
+def staging = new File(System.getenv('KIRA_PUBLIC_RUNTIME'), 'maven').canonicalFile
+def receipt = new File(System.getenv('KIRA_RUNTIME_STAGE_ROOT'), 'publication-result.json')
+check(binding.status == 'BOUND' && binding.primary_authority == 'ADMITTED_BY_PRIMARY', 'Runtime preparation is inert')
+check(stage in ['engine', 'driver'], 'Only two reconstruction stages')
+def selected = binding[stage].tasks as Set
+check((gradle.startParameter.taskNames as Set) == selected && gradle.startParameter.excludedTaskNames.empty,
+    'Only exact local publication tasks; no exclusions')
+check(!gradle.startParameter.writeDependencyLocks && gradle.startParameter.lockedDependenciesToUpdate.empty,
+    'Never update dependency locks')
+def digest = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+
+gradle.beforeProject { p ->
+    p.tasks.withType(PublishToMavenLocal).configureEach { task ->
+        task.onlyIf {
+            check(stage == 'engine' && task.path in selected &&
+                System.getProperty('maven.repo.local') == staging.path, 'No ambient Maven-local publication')
+            true
+        }
+    }
+    p.tasks.withType(PublishToMavenRepository).configureEach { task ->
+        task.onlyIf {
+            check(stage == 'driver' && task.path in selected && task.repository.url == staging.toURI(),
+                'No remote or unrelated Maven publication')
+            true
+        }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    check(graph.allTasks.findAll { it instanceof Test }.empty, 'Dependency reconstruction is not a test run')
+    def publications = graph.allTasks.findAll { it instanceof PublishToMavenLocal || it instanceof PublishToMavenRepository }
+    check((publications.collect { it.path } as Set) == selected && publications.every { it.enabled },
+        'All and only selected real local publication tasks must be enabled')
+    check(!graph.allTasks.any { it.name in ['bootJar', 'bootBuildImage', 'publish', 'publishToMavenLocal'] },
+        'No aggregate/distribution publication')
+}
+
+gradle.buildFinished { result ->
+    def publications = selected.collect { path ->
+        def task = gradle.rootProject.tasks.getByPath(path)
+        def publication = task.publication
+        def state = task.state
+        [task: path, group: publication.groupId, module: publication.artifactId, version: publication.version,
+            executed: state.executed, skipped: state.skipped, upToDate: state.upToDate, didWork: state.didWork,
+            failure: state.failure?.class?.name,
+            artifacts: publication.artifacts.collect { artifact ->
+                def file = artifact.file.canonicalFile
+                [file: file.path, classifier: artifact.classifier ?: '', extension: artifact.extension,
+                    bytes: file.isFile() ? file.length() : null, sha256: file.isFile() ? digest(file) : null]
+            }]
+    }
+    receipt.text = JsonOutput.prettyPrint(JsonOutput.toJson([
+        stage: stage, buildFailure: result.failure?.class?.name, publications: publications,
+        graph: gradle.taskGraph.allTasks.collect { it.path }, nonshipping: true,
+    ])) + '\n'
+}
