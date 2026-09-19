@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.security.EpochSealAttemptV1
 import me.manga.kira.backend.security.JournalDataKeyRequestV1
+import me.manga.kira.backend.security.TestTerminalAttemptV1
 import java.nio.ByteBuffer
 import java.util.Base64
 
@@ -176,6 +177,7 @@ internal class JournalKmsCall(
     private val started: Long,
     private val nanoTime: () -> Long,
     private val sealAttempt: EpochSealAttemptV1? = null,
+    private val terminalAttempt: TestTerminalAttemptV1? = null,
 ) {
     val context: Map<String, String> = mapOf(JournalKmsRequestProfile.CONTEXT_KEY to contextValue)
     val encodedWrapped: String? = wrapped?.let { Base64.getEncoder().encodeToString(it) }
@@ -192,7 +194,8 @@ internal class JournalKmsCall(
         requireJournalKms(elapsed >= 0 && elapsed < maximum)
         val local = maximum - elapsed
         val current = sealAttempt?.remainingProviderMillis(timeoutMillis)?.toLong()?.times(1_000_000L) ?: local
-        return minOf(local, current)
+        val terminal = terminalAttempt?.remainingProviderMillis(timeoutMillis)?.toLong()?.times(1_000_000L) ?: local
+        return minOf(local, current, terminal)
     }
 
     fun clearInput() {
