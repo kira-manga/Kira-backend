@@ -1,10 +1,12 @@
 package me.manga.kira.backend.complaint.domain
 
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalScanPoolV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.EnumSource
@@ -251,6 +253,7 @@ class ComplaintCapacityLedgerTest {
             { ledger, expected -> ledger.reserveTest(expected, vector(1)) },
             { ledger, expected -> ledger.spendTestReserve(expected, vector(1), vector(1)) },
             { ledger, expected -> ledger.releaseTestReserve(expected, vector(1)) },
+            { ledger, expected -> ledger.recycleTestScanPool(expected, TestTerminalScanPoolV1(1), ComplaintCapacityVector.ZERO, ComplaintCapacityVector.ZERO) },
         )
         for (operation in operations) {
             for (current in listOf(open, closed)) {
@@ -278,6 +281,126 @@ class ComplaintCapacityLedgerTest {
     @Test
     fun `ledger diagnostic does not expose balances or trusted configuration`() {
         assertEquals("ComplaintCapacityLedger(redacted)", ledger(hard = 100, creation = 100).toString())
+    }
+
+    @Test
+    fun testScanPoolRecycleConservesClosedAccountingAndCanBeRespent() {
+        val pool = TestTerminalScanPoolV1(3)
+        val unused = pool.chargeFor(1, 2)
+        val paid = pool.ceiling - unused
+        val retainedActual = ComplaintCapacityCharges.AUDIT
+        val otherTest = ComplaintCapacityCharges.AUDIT.scaled(2)
+        val recovery = ComplaintCapacityCharges.RESOURCE_ID
+        val initial = scanLedger(paid + retainedActual, unused + otherTest, recovery)
+
+        // Assumed exact paid-row removal: this fixture does not establish its transaction or authority.
+        val recycled = initial.recycleTestScanPool(digest, pool, unused, paid)
+        assertEquals(initial.balance.free, recycled.balance.free)
+        assertEquals(retainedActual, recycled.balance.actual)
+        assertEquals(pool.ceiling + otherTest, recycled.balance.testReserved)
+        assertEquals(recovery, recycled.balance.recoveryReserved)
+        assertEquals(initial.balance.committedUnits, recycled.balance.committedUnits)
+        assertSame(initial.configuration, recycled.configuration)
+        assertNotSame(initial, recycled)
+
+        val respent = recycled.spendTestReserve(digest, pool.ceiling, ComplaintCapacityVector.ZERO)
+        assertEquals(initial.balance.free, respent.balance.free)
+        assertEquals(retainedActual + pool.ceiling, respent.balance.actual)
+        assertEquals(otherTest, respent.balance.testReserved)
+        assertEquals(recovery, respent.balance.recoveryReserved)
+        val recycledAgain = respent.recycleTestScanPool(digest, pool, ComplaintCapacityVector.ZERO, pool.ceiling)
+        val finalUnusedRelease = recycledAgain.releaseTestReserve(digest, pool.ceiling)
+        assertEquals(initial.balance.free + pool.ceiling, finalUnusedRelease.balance.free)
+        assertEquals(retainedActual, finalUnusedRelease.balance.actual)
+        assertEquals(otherTest, finalUnusedRelease.balance.testReserved)
+        assertEquals(recovery, finalUnusedRelease.balance.recoveryReserved)
+        listOf(initial, recycled, respent, recycledAgain, finalUnusedRelease).forEach(::assertConserved)
+
+        assertFailure(ComplaintCapacityFailureCode.CREATION_CLOSED) { initial.reserveTest(digest, paid) }
+        val globallyRefunded = initial.refundActual(digest, paid)
+        assertFailure(ComplaintCapacityFailureCode.CREATION_CLOSED) { globallyRefunded.reserveTest(digest, paid) }
+        assertEquals(paid + retainedActual, initial.balance.actual)
+        assertEquals(unused + otherTest, initial.balance.testReserved)
+    }
+
+    @Test
+    fun testScanPoolRecycleRejectsAggregateMismatchWithoutPartialTransfers() {
+        val pool = TestTerminalScanPoolV1(2)
+        val unused = pool.chargeFor(1, 1)
+        val paid = pool.ceiling - unused
+        val dimensions = listOf(ComplaintCapacityCounter.SCAN_RUNS, ComplaintCapacityCounter.SCAN_ENTRIES, ComplaintCapacityCounter.STORAGE_BYTES)
+        for (counter in dimensions) {
+            val missingActual = scanLedger(paid.with(counter, paid[counter] - 1), unused)
+            val missingReserve = scanLedger(paid, unused.with(counter, unused[counter] - 1))
+            for (invalid in listOf(missingActual, missingReserve)) {
+                val before = invalid.balance
+                // The whole declared materialized/unused pool must fit, even for zero or smaller use.
+                for (removed in listOf(ComplaintCapacityVector.ZERO, pool.chargeFor(0, 1))) {
+                    assertFailure(ComplaintCapacityFailureCode.INSUFFICIENT_UNITS) {
+                        invalid.recycleTestScanPool(digest, pool, unused, removed)
+                    }
+                    assertSame(before, invalid.balance)
+                    assertConserved(invalid)
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testScanPoolRecycleCapsDedicatedCreditDespiteUnrelatedHeadroom() {
+        val pool = TestTerminalScanPoolV1(2)
+        val unused = pool.chargeFor(1, 2)
+        val paid = pool.ceiling - unused
+        val otherPaidPools = pool.ceiling.scaled(2)
+        val otherUnusedPools = pool.ceiling.scaled(2)
+        val initial = scanLedger(paid + otherPaidPools, unused + otherUnusedPools)
+        val oneEntryOver = pool.chargeFor(1, 3)
+        assertTrue(oneEntryOver.fitsWithin(initial.balance.actual))
+        val before = initial.balance
+        assertFailure(ComplaintCapacityFailureCode.RESERVATION_EXCEEDED) {
+            initial.recycleTestScanPool(digest, pool, unused, oneEntryOver)
+        }
+        assertSame(before, initial.balance)
+
+        val full = initial.recycleTestScanPool(digest, pool, unused, paid)
+        assertEquals(otherPaidPools, full.balance.actual)
+        assertEquals(pool.ceiling + otherUnusedPools, full.balance.testReserved)
+        assertEquals(initial.balance.free, full.balance.free)
+        assertConserved(full)
+        // A durable writer must supply the new unused value; numbers alone do not authenticate replay.
+        assertFailure(ComplaintCapacityFailureCode.RESERVATION_EXCEEDED) {
+            full.recycleTestScanPool(digest, pool, pool.ceiling, pool.chargeFor(0, 1))
+        }
+
+        val maximumPool = TestTerminalScanPoolV1(TestTerminalScanPoolV1.MAX_RETAINED_VERSIONS_BY_STORAGE_ARITHMETIC)
+        val maximum = ComplaintCapacityLedger(
+            ComplaintCapacityConfiguration.of(digest, true),
+            ComplaintCapacityBalance(maximumPool.ceiling, ComplaintCapacityVector.ZERO, ComplaintCapacityVector.ZERO, maximumPool.ceiling),
+        )
+        val transferred = maximum.recycleTestScanPool(digest, maximumPool, ComplaintCapacityVector.ZERO, maximumPool.ceiling)
+        assertEquals(ComplaintCapacityVector.ZERO, transferred.balance.actual)
+        assertEquals(ComplaintCapacityVector.ZERO, transferred.balance.free)
+        assertEquals(ComplaintCapacityVector.ZERO, transferred.balance.recoveryReserved)
+        assertEquals(maximumPool.ceiling, transferred.balance.testReserved)
+        assertEquals(maximumPool.ceiling, maximum.balance.actual)
+        assertConserved(transferred)
+    }
+
+    private fun scanLedger(
+        actual: ComplaintCapacityVector,
+        testReserved: ComplaintCapacityVector,
+        recoveryReserved: ComplaintCapacityVector = ComplaintCapacityVector.ZERO,
+    ): ComplaintCapacityLedger {
+        val free = vector(10)
+        val hard = free + actual + recoveryReserved + testReserved
+        return ComplaintCapacityLedger(
+            ComplaintCapacityConfiguration.of(digest, true),
+            ComplaintCapacityBalance(hard, ComplaintCapacityVector.ZERO, free, actual, recoveryReserved, testReserved),
+        )
+    }
+
+    private fun assertConserved(ledger: ComplaintCapacityLedger) {
+        assertEquals(ledger.balance.hardLimit, ledger.balance.free + ledger.balance.actual + ledger.balance.recoveryReserved + ledger.balance.testReserved)
     }
 
     private fun ledger(hard: Long, creation: Long, actual: Long = 0, recovery: Long = 0, test: Long = 0, closed: Boolean = false): ComplaintCapacityLedger =
