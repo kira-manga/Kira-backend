@@ -18,6 +18,8 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisCreat
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisSignatureV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogInventoryManifestV2
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogRotationManifestV1
+import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationManifestV3
+import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationSyntaxV3
 import me.manga.kira.backend.complaint.domain.catalog.OfflineRequiredSignerV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleException
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleFailure
@@ -43,6 +45,7 @@ internal class OfflineCatalogChainAuthentication private constructor(
     var rotation: CatalogRotationState = CatalogRotationState.Stable(initialSigner)
         private set
     private val seenSignerIds = mutableSetOf(initialSigner.keyId)
+    private var testRunActivationAppended = false
 
     fun append(
         claims: CatalogGenerationAuthenticationClaims,
@@ -51,6 +54,7 @@ internal class OfflineCatalogChainAuthentication private constructor(
         envelopeBytes: ByteArray,
         policy: OfflineCatalogChainReaderPolicy,
     ) {
+        requireOfflineTrustBundle(!testRunActivationAppended)
         validateClaims(claims, policy)
         val next = nextRotation(claims)
         verifySignatures(claims.requiredSignerPolicy, signatures, manifestBytes)
@@ -58,6 +62,29 @@ internal class OfflineCatalogChainAuthentication private constructor(
         rotation = next
         latestApproval = claims.approvals.maxOf { it.approvedAtEpochSecond }
         tail = CatalogTailEvidence(claims.generation, Sha256.hex(manifestBytes), Sha256.hex(envelopeBytes), claims.catalogWriterGenerationId)
+    }
+
+    /** Dedicated first TEST record only. Old claims/append remain strictly empty-history and cannot follow this tail. */
+    fun appendTestRunActivation(
+        manifest: OfflineCatalogTestRunActivationManifestV3,
+        signatures: List<OfflineCatalogGenesisSignatureV1>,
+        manifestBytes: ByteArray,
+        envelopeBytes: ByteArray,
+        policy: OfflineCatalogChainReaderPolicy,
+    ) {
+        requireOfflineTrustBundle(!testRunActivationAppended)
+        OfflineCatalogTestRunActivationSyntaxV3.validateManifest(manifest)
+        validatePredecessor(manifest.operationToken, manifest.generation, manifest.previousEnvelopeSha256, manifest.initialTrustBundleEnvelopeSha256)
+        requireOfflineTrustBundle(manifest.initialWriterRegistry == registry && manifest.oldestRestoreTimeEpochSecond == oldestRestoreTimeEpochSecond)
+        validateWriterAndApprovals(manifest.catalogWriterGenerationId, manifest.creation, manifest.approvals, manifest.requiredSignerPolicy, policy)
+        val stable = rotation as? CatalogRotationState.Stable
+        requireOfflineTrustBundle(
+            stable != null && manifest.requiredSignerPolicy.mode == "SINGLE" && manifest.requiredSignerPolicy.members == listOf(stable.active),
+        )
+        verifySignatures(manifest.requiredSignerPolicy, signatures, manifestBytes)
+        latestApproval = manifest.approvals.maxOf { it.approvedAtEpochSecond }
+        tail = CatalogTailEvidence(manifest.generation, Sha256.hex(manifestBytes), Sha256.hex(envelopeBytes), manifest.catalogWriterGenerationId)
+        testRunActivationAppended = true
     }
 
     fun finish() {
@@ -87,38 +114,51 @@ internal class OfflineCatalogChainAuthentication private constructor(
     }
 
     private fun validateClaims(claims: CatalogGenerationAuthenticationClaims, policy: OfflineCatalogChainReaderPolicy) {
-        requireOfflineTrustBundle(OfflineBootstrapGrammar.uuidV4(claims.operationToken))
-        // Both raw readers bound the generation count before next(); the predecessor begins at one.
-        requireOfflineTrustBundle(claims.generation == tail.generation + 1 && claims.previousEnvelopeSha256 == tail.envelopeSha256)
-        requireOfflineTrustBundle(
-            claims.initialTrustBundleEnvelopeSha256 == trust.initialBundleEnvelopeSha256,
-            OfflineTrustBundleFailure.BUNDLE_HASH_MISMATCH,
-        )
+        validatePredecessor(claims.operationToken, claims.generation, claims.previousEnvelopeSha256, claims.initialTrustBundleEnvelopeSha256)
         requireOfflineTrustBundle(
             claims.initialWriterRegistry == registry && claims.history == history &&
                 claims.oldestRestoreTimeEpochSecond == oldestRestoreTimeEpochSecond,
         )
+        validateWriterAndApprovals(claims.catalogWriterGenerationId, claims.creation, claims.approvals, claims.requiredSignerPolicy, policy)
+    }
+
+    private fun validatePredecessor(operationToken: String, generation: Long, previousEnvelopeSha256: String, initialTrustBundleEnvelopeSha256: String) {
+        requireOfflineTrustBundle(OfflineBootstrapGrammar.uuidV4(operationToken))
+        // Both raw readers bound the generation count before next(); the predecessor begins at one.
+        requireOfflineTrustBundle(generation == tail.generation + 1 && previousEnvelopeSha256 == tail.envelopeSha256)
         requireOfflineTrustBundle(
-            claims.catalogWriterGenerationId == registry.catalogWriter.generationId &&
-                claims.catalogWriterGenerationId in policy.currentWriterGenerationIds,
+            initialTrustBundleEnvelopeSha256 == trust.initialBundleEnvelopeSha256,
+            OfflineTrustBundleFailure.BUNDLE_HASH_MISMATCH,
+        )
+    }
+
+    private fun validateWriterAndApprovals(
+        catalogWriterGenerationId: String,
+        creation: OfflineCatalogGenesisCreationV1,
+        approvals: List<OfflineCatalogGenesisApprovalV1>,
+        requiredSignerPolicy: CatalogSignerPolicyV1,
+        policy: OfflineCatalogChainReaderPolicy,
+    ) {
+        requireOfflineTrustBundle(
+            catalogWriterGenerationId == registry.catalogWriter.generationId && catalogWriterGenerationId in policy.currentWriterGenerationIds,
             OfflineTrustBundleFailure.POLICY_MISMATCH,
         )
-        val created = claims.creation.createdAtEpochSecond
+        val created = creation.createdAtEpochSecond
         requireOfflineTrustBundle(created in latestApproval..CatalogLogicalInventoryProtocol.LAST_EPOCH_SECOND)
-        val ids = claims.approvals.map { it.approverId }
+        val ids = approvals.map { it.approverId }
         requireOfflineTrustBundle(ids.size == 2 && ids.distinct().size == 2 && ids == ids.sorted())
         requireOfflineTrustBundle(
             ids.all { it in registry.catalogWriter.catalogApproverIds && it in policy.currentApproverIds },
             OfflineTrustBundleFailure.POLICY_MISMATCH,
         )
-        requireOfflineTrustBundle(claims.creation.creatorId in ids)
-        requireOfflineTrustBundle(claims.approvals.all { it.approvedAtEpochSecond in created..CatalogLogicalInventoryProtocol.LAST_EPOCH_SECOND })
-        requireOfflineTrustBundle(claims.requiredSignerPolicy.threshold == "ALL_MEMBERS")
+        requireOfflineTrustBundle(creation.creatorId in ids)
+        requireOfflineTrustBundle(approvals.all { it.approvedAtEpochSecond in created..CatalogLogicalInventoryProtocol.LAST_EPOCH_SECOND })
+        requireOfflineTrustBundle(requiredSignerPolicy.threshold == "ALL_MEMBERS")
         requireOfflineTrustBundle(
-            claims.requiredSignerPolicy.members.all { it.algorithmId == OfflineTrustBundleProtocol.ALGORITHM_ID },
+            requiredSignerPolicy.members.all { it.algorithmId == OfflineTrustBundleProtocol.ALGORITHM_ID },
             OfflineTrustBundleFailure.UNSUPPORTED_ALGORITHM,
         )
-        requireOfflineTrustBundle(claims.requiredSignerPolicy.members.all { it in keys }, OfflineTrustBundleFailure.POLICY_MISMATCH)
+        requireOfflineTrustBundle(requiredSignerPolicy.members.all { it in keys }, OfflineTrustBundleFailure.POLICY_MISMATCH)
     }
 
     private fun nextRotation(claims: CatalogGenerationAuthenticationClaims): CatalogRotationState {

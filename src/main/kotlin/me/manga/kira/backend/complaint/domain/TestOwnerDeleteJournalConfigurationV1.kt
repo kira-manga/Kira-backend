@@ -6,33 +6,59 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.complaint.domain.catalog.InitialJournalLocationV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
+import me.manga.kira.backend.security.ImmutableSecretVersion
 import java.util.HexFormat
+import java.util.UUID
 
 /** Immutable TEST declarations only: no registered run, provider policy proof, projection or current authority. */
 internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private val stored: TestOwnerDeleteJournalDeclarationV1) {
     val scope: ComplaintDataScope get() = stored.scope
     val ordinaryPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/ordinary/"
     val sealTerminalPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/seal-terminal/"
-    private val canonical = CanonicalJson.canonicalize(
-        TestOwnerDeleteJournalDocumentV1.serializer(),
-        TestOwnerDeleteJournalDocumentV1(
-            "kira-complaint-journal-configuration", 1, "kcj-1", "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
-            stored.writer, stored.journalLocation, ordinaryPrefix, sealTerminalPrefix, stored.authorities,
-            stored.routing.activeKeyId,
-            stored.routing.keys.map { TestOwnerDeleteRoutingKeyDocumentV1(it.keyId, it.secret.resourceArn, it.secret.versionId) },
-            stored.routing.retentionSeconds, stored.routing.minimumRotationIntervalSeconds, stored.encryption, stored.recovery, stored.limits,
-            "KJEV-1/OWNER_DELETE/INSTALLATION/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
-        ),
-    ).toByteArray(Charsets.UTF_8)
+    private val wireDocument = TestOwnerDeleteJournalDocumentV1(
+        "kira-complaint-journal-configuration", 1, "kcj-1", "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
+        stored.writer, stored.journalLocation, ordinaryPrefix, sealTerminalPrefix, stored.authorities,
+        stored.routing.activeKeyId,
+        stored.routing.keys.map { TestOwnerDeleteRoutingKeyDocumentV1(it.keyId, it.secret.resourceArn, it.secret.versionId) },
+        stored.routing.retentionSeconds, stored.routing.minimumRotationIntervalSeconds, stored.encryption, stored.recovery, stored.limits,
+        "KJEV-1/OWNER_DELETE/INSTALLATION/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
+    )
+    private val canonical = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), wireDocument).toByteArray(Charsets.UTF_8)
     val sha256: String = Sha256.hex(canonical)
 
     fun digestBytes(): ByteArray = HexFormat.of().parseHex(sha256)
     fun canonicalBytes(): ByteArray = canonical.copyOf()
     fun declaration(): TestOwnerDeleteJournalDeclarationV1 = stored.copy(routing = stored.routing.copy(keys = stored.routing.keys.toList()))
 
+    /** The existing flat TEST-J wire shape, not arbitrary JSON or a LIVE-to-TEST conversion. */
+    fun document(): TestOwnerDeleteJournalDocumentV1 = wireDocument.snapshot()
+
     override fun toString(): String = "TestOwnerDeleteJournalConfigurationV1(TEST,declaration-only)"
 
     companion object {
+        /** Re-enter all existing TEST declaration validation and require the exact canonical round-trip. */
+        fun fromDocument(input: TestOwnerDeleteJournalDocumentV1): TestOwnerDeleteJournalConfigurationV1 {
+            require(input.dataScopeKind == "TEST" && OfflineBootstrapGrammar.uuidV4(input.dataScopeId)) { INVALID }
+            require(input.routingKeys.size in 1..4) { INVALID }
+            val snapshot = input.snapshot()
+            val checked = of(
+                TestOwnerDeleteJournalDeclarationV1(
+                    ComplaintDataScope.of(UUID.fromString(snapshot.dataScopeId)), snapshot.writer, snapshot.journalLocation, snapshot.authorities,
+                    JournalRoutingV1(
+                        snapshot.activeRoutingKeyId,
+                        snapshot.routingKeys.map {
+                            JournalRoutingKeyV1(it.keyId, ImmutableSecretVersion.awsSecretsManager(it.resourceArn, it.versionId))
+                        },
+                        snapshot.routingRetentionSeconds, snapshot.routingMinimumRotationIntervalSeconds,
+                    ),
+                    snapshot.encryption, snapshot.recovery, snapshot.limits,
+                ),
+            )
+            val bytes = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), snapshot).toByteArray(Charsets.UTF_8)
+            require(bytes.contentEquals(checked.canonical)) { INVALID }
+            return checked
+        }
+
         fun of(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 {
             require(input.scope.testOnly && OfflineBootstrapGrammar.uuidV4(input.scope.id.toString())) { INVALID }
             require(input.routing.keys.size in 1..4) { INVALID }
@@ -139,10 +165,10 @@ internal data class TestOwnerDeleteJournalDeclarationV1(
 )
 
 @Serializable
-private data class TestOwnerDeleteRoutingKeyDocumentV1(val keyId: String, val resourceArn: String, val versionId: String)
+internal data class TestOwnerDeleteRoutingKeyDocumentV1(val keyId: String, val resourceArn: String, val versionId: String)
 
 @Serializable
-private data class TestOwnerDeleteJournalDocumentV1(
+internal data class TestOwnerDeleteJournalDocumentV1(
     val kind: String, val schemaVersion: Int, val canonicalizerId: String, val profile: String,
     val dataScopeKind: String, val dataScopeId: String, val writer: JournalWriterV1,
     val journalLocation: InitialJournalLocationV1, val ordinaryPrefix: String, val sealTerminalPrefix: String,
@@ -150,3 +176,5 @@ private data class TestOwnerDeleteJournalDocumentV1(
     val routingRetentionSeconds: Long, val routingMinimumRotationIntervalSeconds: Long,
     val encryption: JournalKmsKeyV1, val recovery: JournalRecoveryV1, val limits: JournalLimitsV1, val protocol: String,
 )
+
+internal fun TestOwnerDeleteJournalDocumentV1.snapshot(): TestOwnerDeleteJournalDocumentV1 = copy(routingKeys = routingKeys.toList())
