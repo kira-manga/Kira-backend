@@ -93,7 +93,7 @@ class ComplaintAdminContentHttpTest {
             input().apply { queryString = "dataScopeId=${ComplaintDataScope.LIVE.id}" } to 400,
             input().apply { method = "POST" } to 404,
             input().apply { requestURI += "/" } to 404,
-            input().apply { requestURI = requestURI.replace(id.toString(), id.toString().uppercase()) } to 404,
+            input().apply { requestURI = checkNotNull(requestURI).replace(id.toString(), id.toString().uppercase()) } to 404,
             input().apply { contentType = "text/plain" } to 415,
             input().apply { addHeader("Content-Encoding", "gzip") } to 415,
             input().apply { addHeader("Transfer-Encoding", "chunked") } to 400,
@@ -367,7 +367,7 @@ class ComplaintAdminContentHttpTest {
         for (request in listOf(
             statusInput(STATUS), statusInput(CLOSURE, """{"reason":"OTHER: raw compatibility"}"""),
             statusInput(CLOSURE).replace("If-Match", "\"complaint-$id-v8\""),
-            statusInput(CLOSURE).apply { requestURI = requestURI.replace(id.toString(), key.toString()); replace("If-Match", "\"complaint-$key-v7\"") },
+            statusInput(CLOSURE).apply { requestURI = checkNotNull(requestURI).replace(id.toString(), key.toString()); replace("If-Match", "\"complaint-$key-v7\"") },
             statusInput(CLOSURE).apply { queryString = "dataScopeId=${key}" },
         )) {
             assertEquals(200, f.send(request).status)
