@@ -32,6 +32,8 @@ import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationCompletio
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationCompletionCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationCompletionRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationPreparedCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationProjectionCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationProjectionRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
@@ -59,6 +61,12 @@ import me.manga.kira.backend.complaint.catalog.TestActivationCompletionCopyCut
 import me.manga.kira.backend.complaint.catalog.TestActivationDeliveryBoundaryCut
 import me.manga.kira.backend.complaint.catalog.TestActivationDeliveryRaceCut
 import me.manga.kira.backend.complaint.catalog.TestActivationPendingReplayCut
+import me.manga.kira.backend.complaint.catalog.TestActivationProjectionBindingCut
+import me.manga.kira.backend.complaint.catalog.TestActivationProjectionBoundaryCut
+import me.manga.kira.backend.complaint.catalog.TestActivationProjectionCapacityCut
+import me.manga.kira.backend.complaint.catalog.TestActivationProjectionLifetimeCut
+import me.manga.kira.backend.complaint.catalog.TestActivationProjectionReplayCut
+import me.manga.kira.backend.complaint.catalog.TestActivationProjectionSqlCut
 import me.manga.kira.backend.complaint.catalog.TestActivationPutUnreturnedCut
 import me.manga.kira.backend.complaint.catalog.TestActivationRefusalCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedCorruptionCut
@@ -1088,6 +1096,88 @@ class VersionBoundPersistenceConnectedIT {
     fun testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple() {
         TestActivationPendingReplayCut.entries.forEach { cut ->
             withFixture(testActivation = true) { CatalogTestRunActivationCompletionBoundaryCases.pendingReloadRefusesChangedExactPair(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectsAtomicPaidEffectAndRetainsClosedGates() = withFixture(testActivation = true) {
+        CatalogTestRunActivationProjectionCases.atomicTenRowEffect(it, ActivationEvidencePrefix.INVENTORY_ROTATED)
+    }
+
+    @Test
+    fun testActivationProjectionHonorsCapacityAndColdReplayDoesNotChargeAgain() {
+        for (cut in listOf(TestActivationProjectionCapacityCut.EXACT_CREATION, TestActivationProjectionCapacityCut.ONE_OVER_CREATION)) {
+            withFixture(testActivation = true) { CatalogTestRunActivationProjectionCases.capacityBoundary(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes() {
+        for (cut in listOf(
+            TestActivationProjectionBindingCut.FULL_D,
+            TestActivationProjectionBindingCut.GLOBAL_CORE_AFTER_CAPTURE,
+            TestActivationProjectionBindingCut.CAPACITY_P_AFTER_CAPTURE,
+            TestActivationProjectionBindingCut.HISTORY_AFTER_CAPTURE,
+            TestActivationProjectionBindingCut.DIFFERENT_SIGNED_RAW,
+        )) {
+            withFixture(testActivation = true) { CatalogTestRunActivationProjectionCases.bindingRefusal(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot() {
+        for (cut in listOf(
+            TestActivationProjectionBoundaryCut.FOREIGN_LEASE_AFTER_CAPTURE,
+            TestActivationProjectionBoundaryCut.MAX_LEASE,
+            TestActivationProjectionBoundaryCut.CONCURRENT_ROOT,
+        )) {
+            withFixture(testActivation = true) { CatalogTestRunActivationProjectionCases.lockingAndLeaseRefusal(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectionRollbackAndKnownCommitKeepOriginalOutcomeCustody() {
+        for (cut in listOf(
+            TestActivationProjectionSqlCut.BEFORE_PROJECT_ARM,
+            TestActivationProjectionSqlCut.AFTER_COUNTERS,
+            TestActivationProjectionSqlCut.AUDIT_TWO,
+            TestActivationProjectionSqlCut.AUDIT_FOUR,
+            TestActivationProjectionSqlCut.BEFORE_COMMIT,
+            TestActivationProjectionSqlCut.DEFERRED_COMMIT_ROLLBACK_UNKNOWN,
+            TestActivationProjectionSqlCut.KNOWN_COMMITTED_AFTER_COMMIT,
+        )) {
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true) { CatalogTestRunActivationProjectionRecoveryCases.sqlCut(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectionColdReplayRejectsPartialEffectsAndContradictoryCustody() {
+        for (cut in listOf(
+            TestActivationProjectionReplayCut.PREPARED,
+            TestActivationProjectionReplayCut.MISSING_COMPLETION_OUTCOMES,
+            TestActivationProjectionReplayCut.MISSING_PROJECT_ARM,
+            TestActivationProjectionReplayCut.PARTIAL_NOTICE,
+            TestActivationProjectionReplayCut.COHERENT_COUNTER_DRIFT,
+            TestActivationProjectionReplayCut.OLD_PENDING_CATALOG_BACKUP,
+            TestActivationProjectionReplayCut.CONTRADICTORY_PROJECT_OUTCOME,
+            TestActivationProjectionReplayCut.PROJECT_LEASE_FLOOR,
+        )) {
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true) { CatalogTestRunActivationProjectionRecoveryCases.coldReplay(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures() {
+        for (cut in listOf(
+            TestActivationProjectionLifetimeCut.SECOND_RAW_DEADLINE,
+            TestActivationProjectionLifetimeCut.CANCELLATION_AFTER_RUN,
+            TestActivationProjectionLifetimeCut.ROOT_CLOSE,
+            TestActivationProjectionLifetimeCut.PHASE_RELEASE,
+        )) {
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true) { CatalogTestRunActivationProjectionRecoveryCases.originalLifetime(it, clock, cut) }
         }
     }
 

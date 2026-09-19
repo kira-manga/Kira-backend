@@ -6,13 +6,15 @@ import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
+import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogPrimaryPutAcknowledgementV1
 import java.time.Instant
 import java.util.UUID
 
 /**
  * Append-only TEST delivery custody on the ORIGINAL freeze allocation. There is no Sign method,
- * replacement root, absent-arm recovery PUT, PROJECT, or retroactive original-outcome repair.
+ * replacement root, absent-arm recovery PUT, or retroactive original-outcome repair. PROJECT has
+ * only two additional bounded leaves on that same root, not a portable continuation capability.
  */
 @Suppress("TooManyFunctions", "LargeClass")
 internal class CatalogTestRunActivationDeliveryReleaseV1(
@@ -23,10 +25,11 @@ internal class CatalogTestRunActivationDeliveryReleaseV1(
     private val custody: CatalogTestRunActivationReleaseCustodyV1,
     allocation: ByteArray,
     publishing: Boolean,
+    private val projecting: Boolean = false,
 ) {
     init {
         requireConnectionFree()
-        original.requireDeliveryReleaseCapture(freeze, custody, input, signed, publishing)
+        original.requireDeliveryReleaseCapture(freeze, custody, input, signed, publishing, projecting)
         freeze.requireDeliveryPrefix()
     }
 
@@ -40,11 +43,18 @@ internal class CatalogTestRunActivationDeliveryReleaseV1(
     private var completeArm: Arm? = null
     private var completeOutcome: Outcome? = null
     private var pendingOutcome: Outcome? = null
+    private var projectArm: ProjectArm? = null
+    private var projectOutcome: ProjectOutcome? = null
+    private var newProjectArm = false
     private var newPublicationArm = false
     private var publicationArmConsumed = false
     private var dual: CatalogTestRunActivationDeliveryReadbackV1? = null
 
     init {
+        if (!projecting) {
+            requireTestActivation(custody.read(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED) == null &&
+                custody.read(CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME) == null)
+        }
         publicationArm = custody.read(CatalogTestRunActivationReleaseLeafV1.PUBLICATION_ARMED)?.let {
             val values = decode(it, "publication-armed", 7)
             val lease = lease(values.drop(4))
@@ -78,36 +88,57 @@ internal class CatalogTestRunActivationDeliveryReleaseV1(
             }
             completeOutcome = custody.read(CatalogTestRunActivationReleaseLeafV1.COMPLETE_OUTCOME)?.let { outcome(it, "completed-pending") }
             pendingOutcome = custody.read(CatalogTestRunActivationReleaseLeafV1.PENDING_RELOAD_OUTCOME)?.let {
-                outcome(it, "pending-reloaded").also { value -> requireTestActivation(value.completedAt == checkNotNull(completeOutcome).completedAt) }
+                outcome(it, "pending-reloaded").also { value ->
+                    if (!projecting) requireTestActivation(completeOutcome != null)
+                    completeOutcome?.let { completed -> requireTestActivation(value.completedAt == completed.completedAt) }
+                }
             }
+            projectArm = custody.read(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED)?.let(::parseProjectArm)
+            projectOutcome = custody.read(CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME)?.let(::parseProjectOutcome)
         }
         // A separate recovery entry never interprets missing custody as permission to create a new PUT.
         requireTestActivation(if (publishing) publicationArm == null else publicationArm != null, CatalogTestRunActivationFailureV1.STATE_REFUSED)
     }
 
     internal fun requireSnapshot(snapshot: CatalogTestRunActivationSnapshotV1) {
-        freeze.requireDeliverySnapshot(snapshot)
+        if (projecting) freeze.requireProjectionSnapshot(snapshot) else freeze.requireDeliverySnapshot(snapshot)
         requireTestActivation(snapshot.control.leaseToken >= historicalLeaseFloor())
         val completed = snapshot.completedTail
         if (completed == null) {
-            requireTestActivation(completeOutcome == null && pendingOutcome == null)
+            requireTestActivation(!projecting && completeOutcome == null && pendingOutcome == null && projectArm == null && projectOutcome == null)
         } else {
             requireTestActivation(completeArm != null)
             val values = decode(checkNotNull(dualRecord), "dual-copy", 8)
             completed.requireCustody(values[4], epoch(values[5]), checkNotNull(primaryCopy), checkNotNull(replicaCopy))
             completeOutcome?.let { requireTestActivation(completed.completedAt == it.completedAt) }
             pendingOutcome?.let { requireTestActivation(completed.completedAt == it.completedAt) }
+            val arm = projectArm
+            if (completed.projectedAt == null) {
+                requireTestActivation(projectOutcome == null)
+                arm?.let {
+                    requireTestActivation(completed.completedAt == it.completedAt)
+                    snapshot.projectionRows?.let { rows ->
+                        requireTestActivation(rows.counters.semanticHash == it.beforeCapacityHash && rows.projectedCapacityHash == it.afterCapacityHash)
+                    }
+                }
+            } else {
+                requireTestActivation(projecting && arm != null)
+                requireTestActivation(completed.completedAt == checkNotNull(arm).completedAt)
+                snapshot.projectionRows?.let { requireTestActivation(it.counters.semanticHash == arm.afterCapacityHash) }
+                projectOutcome?.let { requireTestActivation(completed.completedAt == it.completedAt && completed.projectedAt == it.projectedAt) }
+            }
         }
     }
 
     internal fun requireAcquisition(value: CatalogTestRunActivationLeaseV1) {
         freeze.requireAcquisition(value)
         requireTestActivation(value.token > historicalLeaseFloor() && value.owner !in historicalOwners())
-        listOfNotNull(publicationArm, completeArm).forEach { requireTestActivation(value.expiresAt.isAfter(it.lease.expiresAt)) }
+        listOfNotNull(publicationArm?.lease, completeArm?.lease, projectArm?.lease).forEach { requireTestActivation(value.expiresAt.isAfter(it.expiresAt)) }
     }
 
     internal fun requireReadback(proof: CatalogTestRunActivationDeliveryReadbackV1) {
         original.requireDeliveryProof(this, proof)
+        if (projecting) requireTestActivation(proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY)
         if (proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.UNPUBLISHED) {
             requireTestActivation(acknowledgement == null && awaiting == null && primaryCopy == null && replicaCopy == null && dualRecord == null && completeArm == null)
             return
@@ -231,6 +262,88 @@ internal class CatalogTestRunActivationDeliveryReleaseV1(
         }
     }
 
+    /** Eleven bounded strings: allocation/envelope/dual/complete time, exact before+after capacity hashes and original lease. */
+    internal fun armProject(proof: CatalogTestRunActivationDeliveryReadbackV1) {
+        original.requireProjectArm(this, proof)
+        requireTestActivation(projecting && !newProjectArm)
+        requireReadback(proof)
+        requirePublicationArm()
+        requireDualRecords()
+        requireExact(CatalogTestRunActivationReleaseLeafV1.COMPLETE_ARMED, checkNotNull(completeArm).bytes)
+        val snapshot = original.custodySnapshot()
+        requireSnapshot(snapshot)
+        val completed = checkNotNull(snapshot.completedTail)
+        val rows = checkNotNull(snapshot.projectionRows)
+        requireTestActivation(completed.projectedAt == null && rows.projectedAt == null)
+        val old = projectArm
+        if (old == null) {
+            val current = original.custodyLease()
+            requireAcquisition(current)
+            val bytes = record("project-armed", Sha256.hex(checkNotNull(dualRecord)), completed.completedAt.toString(),
+                rows.counters.semanticHash, rows.projectedCapacityHash, *leaseValues(current))
+            requireCreated(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED, bytes)
+            projectArm = parseProjectArm(bytes)
+            newProjectArm = true
+        } else {
+            // Never replace an old arm or rebase its capacity preimage. The fresh grant is DB-only and same-owner.
+            requireExact(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED, old.bytes)
+        }
+    }
+
+    /** Only this arm's own known-committed, originally released PROJECT can append its outcome. */
+    internal fun projected(snapshot: CatalogTestRunActivationSnapshotV1) {
+        original.requireProjected(this, snapshot)
+        requireSnapshot(snapshot)
+        requireDualRecords()
+        val arm = checkNotNull(projectArm)
+        requireExact(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED, arm.bytes)
+        val completed = checkNotNull(snapshot.completedTail)
+        requireTestActivation(completed.projectedAt != null)
+        if (arm.lease.same(original.custodyLease())) {
+            requireTestActivation(newProjectArm && projectOutcome == null)
+            val bytes = record("project-outcome", Sha256.hex(arm.bytes), completed.completedAt.toString(), checkNotNull(completed.projectedAt).toString(), *arm.lease.values())
+            requireCreated(CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME, bytes)
+            projectOutcome = parseProjectOutcome(bytes)
+        }
+    }
+
+    internal fun projectedReloaded(snapshot: CatalogTestRunActivationSnapshotV1) {
+        original.requireProjectedReload(this, snapshot)
+        requireSnapshot(snapshot)
+        requireDualRecords()
+        val arm = checkNotNull(projectArm)
+        requireExact(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED, arm.bytes)
+        if (arm.lease.same(original.custodyLease())) {
+            requireTestActivation(newProjectArm)
+            requireExact(CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME, checkNotNull(projectOutcome).bytes)
+        } // Cold exact replay never fills an old missing outcome, nor claims that old cleanup was repaired.
+    }
+
+    private fun parseProjectArm(bytes: ByteArray): ProjectArm {
+        requireTestActivation(projecting && bytes.size <= CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED.maximumBytes)
+        val values = decode(bytes, "project-armed", 11)
+        requireTestActivation(values[4] == Sha256.hex(checkNotNull(dualRecord)))
+        val completedAt = canonicalInstant(values[5])
+        completeOutcome?.let { requireTestActivation(it.completedAt == completedAt) }
+        pendingOutcome?.let { requireTestActivation(it.completedAt == completedAt) }
+        requireTestActivation(OfflineBootstrapGrammar.sha256(values[6]) && OfflineBootstrapGrammar.sha256(values[7]) && values[6] != values[7])
+        val selected = lease(values.drop(8))
+        requireTestActivation(selected.token > checkNotNull(completeArm).lease.token && selected.owner !in historicalOwners())
+        listOfNotNull(publicationArm?.lease, completeArm?.lease).forEach { requireTestActivation(selected.expiresAt.isAfter(it.expiresAt)) }
+        return ProjectArm(bytes.copyOf(), selected, completedAt, values[6], values[7])
+    }
+
+    /** Ten strings, including the exact arm hash; no missing COMPLETE/PENDING receipt is synthesized. */
+    private fun parseProjectOutcome(bytes: ByteArray): ProjectOutcome {
+        requireTestActivation(projecting && bytes.size <= CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME.maximumBytes)
+        val values = decode(bytes, "project-outcome", 10)
+        val arm = checkNotNull(projectArm)
+        val completedAt = canonicalInstant(values[5])
+        val projectedAt = canonicalInstant(values[6])
+        requireTestActivation(values[4] == Sha256.hex(arm.bytes) && lease(values.drop(7)) == arm.lease && completedAt == arm.completedAt && !projectedAt.isBefore(completedAt))
+        return ProjectOutcome(bytes.copyOf(), completedAt, projectedAt)
+    }
+
     private fun requirePublicationArm() = requireExact(CatalogTestRunActivationReleaseLeafV1.PUBLICATION_ARMED, checkNotNull(publicationArm).bytes)
 
     private fun requireDualRecords() {
@@ -248,8 +361,8 @@ internal class CatalogTestRunActivationDeliveryReleaseV1(
         }
     }
 
-    private fun historicalLeaseFloor(): Long = maxOf(freeze.deliveryLeaseFloor(), publicationArm?.lease?.token ?: 0L, completeArm?.lease?.token ?: 0L)
-    private fun historicalOwners(): Set<UUID> = freeze.deliveryHistoricalOwners() + listOfNotNull(publicationArm?.lease?.owner, completeArm?.lease?.owner)
+    private fun historicalLeaseFloor(): Long = maxOf(freeze.deliveryLeaseFloor(), publicationArm?.lease?.token ?: 0L, completeArm?.lease?.token ?: 0L, projectArm?.lease?.token ?: 0L)
+    private fun historicalOwners(): Set<UUID> = freeze.deliveryHistoricalOwners() + listOfNotNull(publicationArm?.lease?.owner, completeArm?.lease?.owner, projectArm?.lease?.owner)
     private fun requireAfterOrSame(value: Lease, before: Lease) {
         requireTestActivation(value.token >= before.token)
         if (value.token == before.token) requireTestActivation(value == before)
@@ -283,12 +396,14 @@ internal class CatalogTestRunActivationDeliveryReleaseV1(
 
     private class Arm(val bytes: ByteArray, val lease: Lease)
     private class Outcome(val bytes: ByteArray, val completedAt: Instant)
+    private class ProjectArm(val bytes: ByteArray, val lease: Lease, val completedAt: Instant, val beforeCapacityHash: String, val afterCapacityHash: String)
+    private class ProjectOutcome(val bytes: ByteArray, val completedAt: Instant, val projectedAt: Instant)
     private data class Lease(val owner: UUID, val token: Long, val expiresAt: Instant) {
         fun same(value: CatalogTestRunActivationLeaseV1): Boolean = owner == value.owner && token == value.token && expiresAt == value.expiresAt
         fun values(): Array<String> = arrayOf(owner.toString(), token.toString(), expiresAt.toString())
     }
 
-    override fun toString(): String = "CatalogTestRunActivationDeliveryReleaseV1(original-freeze-custody,one-PUT,no-Sign-or-PROJECT)"
+    override fun toString(): String = "CatalogTestRunActivationDeliveryReleaseV1(original-freeze-custody,closed-first-PROJECT,no-issuer)"
 
     companion object {
         private const val DOMAIN = "catalog-test-run-activation-freeze-v1"

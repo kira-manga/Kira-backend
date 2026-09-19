@@ -60,14 +60,17 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
         )
         val adminWriters = setOf(PersistencePhasePath.COMPLAINT_ADMIN_EDIT, PersistencePhasePath.COMPLAINT_ADMIN_STATUS)
         val writers = oldWriters + testWriters + adminWriters
-        assertEquals(89, PersistencePhasePath.entries.size)
+        assertEquals(92, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
-        assertEquals(8, testWriters.size)
+        assertEquals(11, testWriters.size)
         assertEquals(2, adminWriters.size)
-        assertEquals(50, writers.size)
+        assertEquals(53, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,

@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationPendingLeaseSqlV1.READ_SIGNER_ROTATION_PENDING_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationReleaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
@@ -333,6 +334,7 @@ internal class CatalogSignerRotationProbeJdbc(
                 CatalogTestRunActivationSqlV1.readHistory, CatalogTestRunActivationSqlV1.lockHistory,
                 CatalogTestRunActivationSqlV1.readSignedHistory, CatalogTestRunActivationSqlV1.lockSignedHistory,
                 CatalogTestRunActivationSqlV1.readCompletedHistory, CatalogTestRunActivationSqlV1.lockCompletedHistory,
+                CatalogTestRunActivationSqlV1.readProjectionHistory, CatalogTestRunActivationSqlV1.lockProjectionHistory,
             ))
         ) {
             observed(sql, args) { super.query(sql, rse, *args) }
@@ -440,6 +442,9 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
@@ -468,6 +473,7 @@ internal class CatalogSignerRotationProbeJdbc(
         }
     }
 
+    @Suppress("CyclomaticComplexMethod") // Exact SQL-observation labels, not additional application branches.
     private fun testActivationStep(sql: String): String? = when (sql) {
         CatalogTestRunActivationSqlV1.readControl -> "test-control-read"
         CatalogTestRunActivationSqlV1.lockControl -> "test-control-lock"
@@ -489,6 +495,28 @@ internal class CatalogSignerRotationProbeJdbc(
         CatalogTestRunActivationSqlV1.lockCompletedHistory -> "test-completed-history-lock"
         CatalogTestRunActivationSqlV1.complete -> "test-complete"
         CatalogTestRunActivationSqlV1.markPending -> "test-mark-pending"
+        CatalogTestRunActivationSqlV1.readProjectionControl -> "test-project-control-read"
+        CatalogTestRunActivationSqlV1.lockProjectionControl -> "test-project-global-lock"
+        CatalogTestRunActivationSqlV1.readProjectionHistory -> "test-projection-history-read"
+        CatalogTestRunActivationSqlV1.lockProjectionHistory -> "test-projection-history-lock"
+        CatalogTestRunActivationSqlV1.readProjectionTail -> "test-projection-tail"
+        CatalogTestRunActivationProjectionSqlV1.sampleTime -> "test-project-time"
+        CatalogTestRunActivationProjectionSqlV1.insertRun -> "test-project-run"
+        CatalogTestRunActivationProjectionSqlV1.insertControl -> "test-project-control"
+        CatalogTestRunActivationProjectionSqlV1.insertResources -> "test-project-resources"
+        CatalogTestRunActivationProjectionSqlV1.insertNotices -> "test-project-notices"
+        CatalogTestRunActivationProjectionSqlV1.insertFirstNoticeAudit -> "test-project-audit:0"
+        CatalogTestRunActivationProjectionSqlV1.insertSecondNoticeAudit -> "test-project-audit:1"
+        CatalogTestRunActivationProjectionSqlV1.insertActivatedAudit -> "test-project-audit:2"
+        CatalogTestRunActivationProjectionSqlV1.insertProjectedAudit -> "test-project-audit:3"
+        CatalogTestRunActivationProjectionSqlV1.project -> "test-project"
+        CatalogTestRunActivationProjectionSqlV1.clearPending -> "test-clear-pending"
+        CatalogTestRunActivationProjectionSqlV1.readEffect -> "test-project-effect"
+        CatalogTestRunActivationProjectionSqlV1.lockScopeControl -> "test-project-control-lock"
+        CatalogTestRunActivationProjectionSqlV1.lockRun -> "test-project-run-lock"
+        CatalogTestRunActivationProjectionSqlV1.lockResources -> "test-project-resources-lock"
+        CatalogTestRunActivationProjectionSqlV1.lockNotices -> "test-project-notices-lock"
+        CatalogTestRunActivationProjectionSqlV1.lockAudits -> "test-project-audits-lock"
         else -> null
     }
 

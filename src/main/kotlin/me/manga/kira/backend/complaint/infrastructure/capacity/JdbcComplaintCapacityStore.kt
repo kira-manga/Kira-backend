@@ -47,7 +47,9 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisMuta
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationActivationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFinalizationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationKindV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionCountersV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
@@ -117,8 +119,10 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     private fun readLockedLedger(): ComplaintCapacityLedger = readLockedCounters().ledger
 
-    private fun readLockedCounters(): LockedCounters {
-        val rows = jdbc.query(LOCK_COUNTERS, { result, _ -> readCounter(result) })
+    private fun readLockedCounters(): LockedCounters = readCounters(LOCK_COUNTERS)
+
+    private fun readCounters(sql: String): LockedCounters {
+        val rows = jdbc.query(sql, { result, _ -> readCounter(result) })
         check(rows.map { it.counter } == ComplaintCapacityEncoding.lockOrder()) // Cardinality, order and exact unique catalogue together.
         val expected = checkNotNull(expectedPolicyDigest)
         val configuration = rows.first().configuration
@@ -138,6 +142,16 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             ),
         )
         return LockedCounters(ledger, checkNotNull(rows.single { it.counter === ComplaintCapacityCounter.INSTALLATION_IDS }.daily))
+    }
+
+    /** Only after the same22 counter rows are already locked; no backward lock acquisition during effect rereads. */
+    private fun projectionCounters(counters: LockedCounters): CatalogTestRunActivationProjectionCountersV1 {
+        val rows = jdbc.query(TEST_PROJECTION_COUNTER_FINGERPRINTS, { result, _ ->
+            val counter = ComplaintCapacityEncoding.counter(requiredInt(result, "accounting_version"), requiredInt(result, "ordinal"), checkNotNull(result.getString("name")))
+            counter to checkNotNull(result.getBytes("row_digest")).also { check(it.size == 32) }
+        })
+        check(rows.map { it.first } == ComplaintCapacityEncoding.lockOrder())
+        return CatalogTestRunActivationProjectionCountersV1(counters.ledger.configuration, counters.ledger.balance, counters.daily, rows.map { it.second })
     }
 
     private fun readCounter(result: ResultSet): CounterRow {
@@ -769,17 +783,40 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
-    /** Arbitrary supported prefix, first TEST only. Future projection/reserve must fit but are never spent here. */
+    /** First TEST only. Original PREPARE pays C; only the named atomic PROJECT pays its exact effect and reserve. */
     internal class LockedCatalogTestRunActivation private constructor(
         private val store: JdbcComplaintCapacityStore,
         private val operation: CatalogTestRunActivationOperationV1,
         private val before: ComplaintCapacityLedger,
-        private val dailyLimit: Long,
+        private val daily: ComplaintDailyAdmission,
+        private val projectionBefore: CatalogTestRunActivationProjectionCountersV1?,
     ) {
         private var issued = false
         private var settled = false
+        private var projectionSettled: CatalogTestRunActivationProjectionCountersV1? = null
         internal fun belongsTo(candidate: CatalogTestRunActivationOperationV1): Boolean = operation === candidate
         internal fun settledFor(candidate: CatalogTestRunActivationOperationV1): Boolean = belongsTo(candidate) && settled
+
+        internal fun projectionBefore(candidate: CatalogTestRunActivationOperationV1): CatalogTestRunActivationProjectionCountersV1 {
+            check(candidate === operation)
+            operation.requireProjectionCounterRead(this, store.jdbc)
+            return checkNotNull(projectionBefore)
+        }
+
+        /** Reread only already-held counters. Row bytes/xmin must still equal the original settlement, including daily state. */
+        @Suppress("TooGenericExceptionCaught")
+        internal fun rereadProjection(candidate: CatalogTestRunActivationOperationV1): CatalogTestRunActivationProjectionCountersV1 {
+            try {
+                check(candidate === operation && settled)
+                operation.requireProjectionCounterRead(this, store.jdbc)
+                val observed = store.projectionCounters(store.readCounters(READ_COUNTERS))
+                observed.requireSame(checkNotNull(projectionSettled))
+                operation.requireProjectionCounterRead(this, store.jdbc)
+                return observed
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
 
         @Suppress("TooGenericExceptionCaught")
         internal fun settle(candidate: CatalogTestRunActivationOperationV1) {
@@ -792,11 +829,18 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 check(expected.contentEquals(frozen.capacityDigest()))
                 val balance = before.balance
                 // The P digest alone does not authenticate different declared hard/creation/daily limits.
-                check(balance.hardLimit == frozen.policy.hardLimit && balance.creationLimit == frozen.policy.creationLimit && dailyLimit == frozen.policy.dailyEnrollmentLimit)
+                check(balance.hardLimit == frozen.policy.hardLimit && balance.creationLimit == frozen.policy.creationLimit && daily.dailyLimit == frozen.policy.dailyEnrollmentLimit)
                 check(rows.toLong() == frozen.generation - if (creating) 1L else 0L)
                 check(balance.actual[ComplaintCapacityCounter.CATALOG_MUTATIONS] == rows.toLong())
-                check(balance.actual[ComplaintCapacityCounter.TEST_RUNS] == 0L && balance.testReserved == ComplaintCapacityVector.ZERO)
                 if (!creating) check(balance.actual[ComplaintCapacityCounter.STORAGE_BYTES] >= frozen.prepareCharge[ComplaintCapacityCounter.STORAGE_BYTES])
+                if (operation.input.projecting) {
+                    check(!creating && projectionBefore != null)
+                    settleProjection()
+                    operation.requireCounterSettlement(this, store.jdbc)
+                    settled = true
+                    return
+                }
+                check(projectionBefore == null && balance.actual[ComplaintCapacityCounter.TEST_RUNS] == 0L && balance.testReserved == ComplaintCapacityVector.ZERO)
                 val prepared = if (creating) before.chargeCreation(expected, frozen.prepareCharge) else before
                 prepared.chargeCreation(expected, frozen.projectionCharge).reserveTest(expected, frozen.reserve)
                 if (creating) {
@@ -820,13 +864,52 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             }
         }
 
+        private fun settleProjection() {
+            val input = operation.input
+            val frozen = input.frozen
+            val expected = checkNotNull(store.expectedPolicyDigest)
+            val physicalBefore = checkNotNull(projectionBefore)
+            val projected = checkNotNull(checkNotNull(input.expected).completedTail).projectedAt != null
+            val writing = input.kind === CatalogTestRunActivationKindV1.PROJECT
+            check(!writing || !projected)
+            input.expected.projectionRows?.counters?.requireSame(physicalBefore)
+            before.configuration.requireCreationAllowed(expected)
+            val after = if (projected) {
+                check(before.balance.actual[ComplaintCapacityCounter.TEST_RUNS] == 1L && before.balance.testReserved == frozen.reserve)
+                check((frozen.prepareCharge + frozen.projectionCharge).fitsWithin(before.balance.actual))
+                before
+            } else {
+                check(before.balance.actual[ComplaintCapacityCounter.TEST_RUNS] == 0L && before.balance.testReserved == ComplaintCapacityVector.ZERO)
+                val prospective = before.chargeCreation(expected, frozen.projectionCharge).reserveTest(expected, frozen.reserve)
+                if (writing) prospective else before // A reload proves future fit but never materializes the promise.
+            }
+            if (writing) {
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    if (frozen.projectionCharge[counter] == 0L && frozen.reserve[counter] == 0L) continue
+                    operation.requireCounterSettlement(this, store.jdbc)
+                    check(store.jdbc.update(CHARGE_ENROLLMENT_COUNTER,
+                        after.balance.free[counter], after.balance.actual[counter], after.balance.testReserved[counter],
+                        counter.storedName, counter.storedOrdinal, expected,
+                        before.balance.hardLimit[counter], before.balance.creationLimit[counter], before.balance.free[counter],
+                        before.balance.actual[counter], before.balance.recoveryReserved[counter], before.balance.testReserved[counter]) == 1)
+                }
+            }
+            operation.requireCounterSettlement(this, store.jdbc)
+            val observed = store.projectionCounters(store.readCounters(READ_COUNTERS))
+            observed.requireSettled(physicalBefore, after.balance)
+            if (!writing) observed.requireSame(physicalBefore)
+            operation.requireCounterSettlement(this, store.jdbc)
+            projectionSettled = observed
+        }
+
         companion object {
             @Suppress("TooGenericExceptionCaught")
             internal fun lock(store: JdbcComplaintCapacityStore, operation: CatalogTestRunActivationOperationV1): LockedCatalogTestRunActivation {
                 try {
                     operation.beginCounterLock(store.jdbc)
                     val counters = store.readLockedCounters()
-                    return LockedCatalogTestRunActivation(store, operation, counters.ledger, counters.daily.dailyLimit)
+                    val projection = if (operation.input.projecting) store.projectionCounters(counters) else null
+                    return LockedCatalogTestRunActivation(store, operation, counters.ledger, counters.daily, projection)
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }
@@ -1728,6 +1811,13 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             FROM complaint_capacity_counters
             ORDER BY name COLLATE "C"
             FOR UPDATE
+        """.trimIndent()
+        val READ_COUNTERS = LOCK_COUNTERS.removeSuffix("\nFOR UPDATE")
+        val TEST_PROJECTION_COUNTER_FINGERPRINTS = """
+            SELECT c.name, c.ordinal, c.accounting_version,
+                CASE WHEN octet_length((to_jsonb(c))::text) BETWEEN 1 AND 4096
+                    THEN sha256(convert_to((to_jsonb(c) || jsonb_build_object('row_xmin', c.xmin::text))::text, 'UTF8')) END AS row_digest
+            FROM complaint_capacity_counters c ORDER BY c.name COLLATE "C" LIMIT 23
         """.trimIndent()
         val REFUND_COUNTER = """
             UPDATE complaint_capacity_counters

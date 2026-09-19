@@ -23,6 +23,7 @@ internal class CatalogTestRunActivationSnapshotV1(
     val history: CatalogTestRunActivationHistoryV1,
     val signedTail: CatalogTestRunActivationSignedTailV1? = null,
     val completedTail: CatalogTestRunActivationCompletedTailV1? = null,
+    val projectionRows: CatalogTestRunActivationProjectionRowsV1? = null,
 ) {
     internal fun requireExpected(input: CatalogTestRunActivationFrozenV1, prepared: Boolean, signed: CatalogTestRunActivationSignedV1? = null) {
         check(completedTail == null)
@@ -35,19 +36,35 @@ internal class CatalogTestRunActivationSnapshotV1(
         if (prepared) check(control.maintenanceClosed && control.creationClosed)
     }
 
-    internal fun requireSame(other: CatalogTestRunActivationSnapshotV1, closed: Boolean) {
+    internal fun requireSame(other: CatalogTestRunActivationSnapshotV1, closed: Boolean, compareProjection: Boolean = true) {
         control.requireSame(other.control, closed)
         history.requireSame(other.history)
         if (signedTail == null) check(other.signedTail == null) else signedTail.requireSame(checkNotNull(other.signedTail))
         if (completedTail == null) check(other.completedTail == null) else completedTail.requireSame(checkNotNull(other.completedTail))
+        if (compareProjection) {
+            if (projectionRows == null) check(other.projectionRows == null) else projectionRows.requireSame(checkNotNull(other.projectionRows))
+        }
     }
 
     internal fun requireDelivery(input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1) {
+        check(completedTail?.projectedAt == null && projectionRows == null)
         check(signed.frozen === input)
         checkNotNull(signedTail).requireExact(signed)
         history.requireExpected(input.generation, prepared = true, signed = true, completed = completedTail != null)
         control.requireDelivery(input, signed, completedTail != null)
     }
+
+    internal fun requireProjection(input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1) {
+        check(signed.frozen === input)
+        checkNotNull(signedTail).requireExact(signed)
+        val completed = checkNotNull(completedTail)
+        history.requireExpected(input.generation, prepared = true, signed = true, completed = true)
+        control.requireProjection(input, signed, completed.projectedAt != null)
+        projectionRows?.let { check(it.projectedAt == completed.projectedAt) }
+    }
+
+    internal fun withProjection(rows: CatalogTestRunActivationProjectionRowsV1): CatalogTestRunActivationSnapshotV1 =
+        CatalogTestRunActivationSnapshotV1(control, history, signedTail, completedTail, rows)
 
     override fun toString(): String = "CatalogTestRunActivationSnapshotV1(detached,no-authority)"
 }
@@ -85,6 +102,19 @@ internal class CatalogTestRunActivationControlV1 private constructor(
         if (completed) {
             check(head.generation == input.generation && head.envelopeSha256 == signed.envelopeSha256 && pendingToken == input.token)
         } else requirePredecessor(input)
+    }
+
+    fun requireProjection(input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1, projected: Boolean) {
+        check(maintenanceClosed && creationClosed && catalogWriter == input.catalogWriter && trustHash == input.currentTrustHash)
+        check(databaseIdentity == input.databaseIdentity && restoreIdentity == input.restoreIdentity && eventWriter == input.eventWriter)
+        check(head.generation == input.generation && head.envelopeSha256 == signed.envelopeSha256)
+        check(pendingToken == if (projected) null else input.token)
+    }
+
+    fun requireProjectionTransition(before: CatalogTestRunActivationControlV1, input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1) {
+        check(core == before.core && before.maintenanceClosed && before.creationClosed && head == before.head)
+        requireProjection(input, signed, projected = true)
+        before.requireProjection(input, signed, projected = before.pendingToken == null)
     }
 
     /** The delivery query normalizes ONLY head/hash/pending to the original predecessor for this byte comparison. */
@@ -205,6 +235,11 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
         check(prepared && signed && completed && before.prepared && before.signed && size == before.size &&
             predecessorDigest.contentEquals(before.predecessorDigest))
         if (before.completed) requireSame(before)
+    }
+
+    fun requireProjectionTransition(before: CatalogTestRunActivationHistoryV1) {
+        check(prepared && signed && completed && before.prepared && before.signed && before.completed && size == before.size &&
+            predecessorDigest.contentEquals(before.predecessorDigest))
     }
 
     internal fun custodyPrefixHash(): String {

@@ -68,7 +68,7 @@ internal class CatalogTestRunActivationDeliveryReadbackV1 private constructor(
         ): CatalogTestRunActivationDeliveryReadbackV1 {
             requireConnectionFree()
             original.requireProviderRunning()
-            snapshot.requireDelivery(input, signed)
+            original.requireRawDeliverySnapshot(snapshot, input, signed)
             val reader = original.process.catalogReadback
             val initial = reader.initialBundleBytes()
             val current = reader.currentBundleBytes()

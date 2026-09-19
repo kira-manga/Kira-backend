@@ -372,6 +372,15 @@ internal class PersistencePhaseOwnership private constructor(
     internal fun enterComplaintTestRunActivationPendingReload(original: CatalogTestRunActivationV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD, testRunActivation = original)
 
+    internal fun enterComplaintTestRunActivationProjectReload(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationProject(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationProjectedReload(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD, testRunActivation = original)
+
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     // Keep ordered admission/custody/publication in one entry; concrete owner parameters must not become an interchangeable capability bag.
     @Suppress("ThrowsCount", "TooGenericExceptionCaught", "LongMethod", "LongParameterList")
@@ -740,6 +749,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -834,6 +846,9 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
         )
         private val SIGNER_ROTATION_ACTIVATION_EFFECT_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
@@ -1057,6 +1072,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
     COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
     COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -1083,7 +1101,8 @@ internal enum class PersistencePhasePath {
             this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD ||
             this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD ||
             this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE ||
-            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD
+            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD ||
+            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD
 
     internal val source: Boolean
         get() = this === SOURCE_GRANT_CLEANUP || this === SOURCE_STEP_UP_SNAPSHOT || this === SOURCE_STEP_UP_ISSUANCE
@@ -1099,6 +1118,9 @@ internal enum class PersistencePhasePath {
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
             COMPLAINT_GRANT_CLEANUP,
             COMPLAINT_STEP_UP_ISSUANCE,
             COMPLAINT_ADMIN_AUDIT,

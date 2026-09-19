@@ -116,6 +116,10 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
     private val pendingHash: ByteArray?,
     private val pendingTestPrepared: Boolean,
     val projectedTestClosed: Boolean,
+    private val projectedTestToken: UUID?,
+    private val projectedTestScope: UUID?,
+    private val projectedUnsigned: ByteArray?,
+    private val projectedHash: ByteArray?,
 ) {
     internal fun requireUnownedOpen() {
         if (pendingTestToken != null || projectedTestClosed) throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
@@ -129,6 +133,11 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
     internal fun matchesPending(token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray): Boolean =
         maintenanceClosed && creationClosed && !pendingTestPrepared && !projectedTestClosed && pendingTestToken == token && pendingTestScope == scope &&
             pendingUnsigned.contentEquals(unsigned) && pendingHash.contentEquals(hash)
+
+    /** Exact closed accepted-head facts only; the original TEST owner still authenticates both raw copies and the complete effect. */
+    internal fun matchesProjected(token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray): Boolean =
+        maintenanceClosed && creationClosed && projectedTestClosed && pendingTestToken == null && !pendingTestPrepared &&
+            projectedTestToken == token && projectedTestScope == scope && projectedUnsigned.contentEquals(unsigned) && projectedHash.contentEquals(hash)
 
     override fun toString(): String = "PersistenceComplaintMaintenanceGateV1(bounded-facts,no-continuation-authority)"
 
@@ -147,10 +156,18 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
                 val hash = rows.getBytes("test_hash")?.copyOf()
                 val prepared = rows.getBoolean("test_prepared").also { check(!rows.wasNull()) }
                 val projected = rows.getBoolean("projected_test_closed").also { check(!rows.wasNull()) }
-                if (rows.next() || (token != null && (scope == null || unsigned == null || hash == null))) {
+                val projectedToken = rows.getObject("projected_test_token", UUID::class.java)
+                val projectedScope = rows.getObject("projected_test_scope", UUID::class.java)
+                val projectedUnsigned = rows.getBytes("projected_test_unsigned")?.copyOf()
+                val projectedHash = rows.getBytes("projected_test_hash")?.copyOf()
+                if (rows.next() || (token != null && (scope == null || unsigned == null || hash == null)) ||
+                    (projected && (projectedToken == null || projectedScope == null || projectedUnsigned == null || projectedHash == null))) {
                     throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
                 }
-                PersistenceComplaintMaintenanceGateV1(closed, creation, token, scope, unsigned, hash, prepared, projected)
+                PersistenceComplaintMaintenanceGateV1(
+                    closed, creation, token, scope, unsigned, hash, prepared, projected,
+                    projectedToken, projectedScope, projectedUnsigned, projectedHash,
+                )
             }
         }
 
@@ -179,7 +196,8 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
                     OR (p.state = 'COMPLETED' AND c.pending_projection_token = p.operation_token
                         AND c.accepted_catalog_generation = p.successor_generation AND h.operation_token = p.operation_token))
                 AND (h.operation_type IS DISTINCT FROM 'TEST_RUN_ACTIVATION'
-                    OR (h.test_only AND complaint_scope_valid(h.data_scope_id, h.test_only)))
+                    OR (h.test_only AND complaint_scope_valid(h.data_scope_id, h.test_only)
+                        AND octet_length(h.unsigned_bytes) BETWEEN 1 AND 131072 AND octet_length(h.unsigned_hash) = 32))
                 AND (p.operation_type IS DISTINCT FROM 'TEST_RUN_ACTIVATION'
                     OR (p.test_only AND complaint_scope_valid(p.data_scope_id, p.test_only)
                         AND octet_length(p.unsigned_bytes) BETWEEN 1 AND 131072 AND octet_length(p.unsigned_hash) = 32))) IS TRUE AS valid,
@@ -190,7 +208,13 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
                     THEN p.unsigned_bytes END AS test_unsigned,
                 CASE WHEN p.operation_type = 'TEST_RUN_ACTIVATION' AND octet_length(p.unsigned_hash) = 32 THEN p.unsigned_hash END AS test_hash,
                 (p.operation_type = 'TEST_RUN_ACTIVATION' AND p.state = 'PREPARED') IS TRUE AS test_prepared,
-                (h.operation_type = 'TEST_RUN_ACTIVATION' AND h.projected_at IS NOT NULL AND c.maintenance_closed) IS TRUE AS projected_test_closed
+                (h.operation_type = 'TEST_RUN_ACTIVATION' AND h.projected_at IS NOT NULL AND c.maintenance_closed) IS TRUE AS projected_test_closed,
+                CASE WHEN h.operation_type = 'TEST_RUN_ACTIVATION' AND h.projected_at IS NOT NULL THEN h.operation_token END AS projected_test_token,
+                CASE WHEN h.operation_type = 'TEST_RUN_ACTIVATION' AND h.projected_at IS NOT NULL THEN h.data_scope_id END AS projected_test_scope,
+                CASE WHEN h.operation_type = 'TEST_RUN_ACTIVATION' AND h.projected_at IS NOT NULL AND octet_length(h.unsigned_bytes) BETWEEN 1 AND 131072
+                    THEN h.unsigned_bytes END AS projected_test_unsigned,
+                CASE WHEN h.operation_type = 'TEST_RUN_ACTIVATION' AND h.projected_at IS NOT NULL AND octet_length(h.unsigned_hash) = 32
+                    THEN h.unsigned_hash END AS projected_test_hash
             FROM complaint_journal_control c
             LEFT JOIN pending p ON true
             LEFT JOIN complaint_catalog_mutations h ON h.successor_generation = c.accepted_catalog_generation

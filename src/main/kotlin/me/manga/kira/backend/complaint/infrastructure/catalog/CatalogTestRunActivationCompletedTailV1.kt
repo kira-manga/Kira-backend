@@ -13,10 +13,13 @@ internal class CatalogTestRunActivationCompletedTailV1 private constructor(
     private val replica: ByteArray,
     private val replicaHash: ByteArray,
     val completedAt: Instant,
+    val projectedAt: Instant?,
 ) {
     fun arguments(): Array<Any?> = arrayOf(
         objectVersion, Timestamp.from(retainUntil), primary.copyOf(), primaryHash.copyOf(), replica.copyOf(), replicaHash.copyOf(), Timestamp.from(completedAt),
     )
+
+    fun projectionArguments(): Array<Any?> = arguments() + arrayOf(projectedAt?.let(Timestamp::from))
 
     fun requireExact(proof: CatalogTestRunActivationDeliveryReadbackV1) {
         check(proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY)
@@ -26,6 +29,17 @@ internal class CatalogTestRunActivationCompletedTailV1 private constructor(
     }
 
     fun requireSame(other: CatalogTestRunActivationCompletedTailV1) {
+        check(projectedAt == other.projectedAt)
+        requireCompletionSame(other)
+    }
+
+    fun requireProjectionTransition(other: CatalogTestRunActivationCompletedTailV1) {
+        check(projectedAt != null && !projectedAt.isBefore(completedAt))
+        requireCompletionSame(other)
+        other.projectedAt?.let { check(projectedAt == it) }
+    }
+
+    private fun requireCompletionSame(other: CatalogTestRunActivationCompletedTailV1) {
         check(objectVersion == other.objectVersion && retainUntil == other.retainUntil && completedAt == other.completedAt)
         check(primary.contentEquals(other.primary) && primaryHash.contentEquals(other.primaryHash) &&
             replica.contentEquals(other.replica) && replicaHash.contentEquals(other.replicaHash))
@@ -39,7 +53,7 @@ internal class CatalogTestRunActivationCompletedTailV1 private constructor(
     override fun toString(): String = "CatalogTestRunActivationCompletedTailV1(bounded-exact-row,no-projection-or-run-authority)"
 
     companion object {
-        fun copy(row: ResultSet): CatalogTestRunActivationCompletedTailV1? {
+        fun copy(row: ResultSet, projection: Boolean = false): CatalogTestRunActivationCompletedTailV1? {
             check(row.requiredTestActivationBoolean("valid"))
             val completed = row.requiredTestActivationBoolean("completed")
             val version = row.getString("object_version")
@@ -49,6 +63,7 @@ internal class CatalogTestRunActivationCompletedTailV1 private constructor(
             val replica = row.getBytes("replica_evidence_bytes")
             val replicaHash = row.getBytes("replica_evidence_hash")
             val completedAt = row.getTimestamp("completed_at")?.toInstant()
+            val projectedAt = if (projection) row.getTimestamp("projected_at")?.toInstant() else null
             if (!completed) {
                 check(version == null && retainUntil == null && primary == null && primaryHash == null && replica == null && replicaHash == null && completedAt == null)
                 return null
@@ -56,7 +71,7 @@ internal class CatalogTestRunActivationCompletedTailV1 private constructor(
             check(primary != null && primary.size in 1..65536 && primaryHash != null && primaryHash.size == 32)
             check(replica != null && replica.size in 1..65536 && replicaHash != null && replicaHash.size == 32)
             return CatalogTestRunActivationCompletedTailV1(
-                checkNotNull(version), checkNotNull(retainUntil), primary.copyOf(), primaryHash.copyOf(), replica.copyOf(), replicaHash.copyOf(), checkNotNull(completedAt),
+                checkNotNull(version), checkNotNull(retainUntil), primary.copyOf(), primaryHash.copyOf(), replica.copyOf(), replicaHash.copyOf(), checkNotNull(completedAt), projectedAt,
             )
         }
     }
@@ -68,7 +83,7 @@ internal class CatalogTestRunActivationDeliveryTailV1 private constructor(
     val completed: CatalogTestRunActivationCompletedTailV1?,
 ) {
     companion object {
-        fun copy(row: ResultSet, expected: CatalogTestRunActivationSignedV1): CatalogTestRunActivationDeliveryTailV1 =
-            CatalogTestRunActivationDeliveryTailV1(checkNotNull(CatalogTestRunActivationSignedTailV1.copy(row, expected)), CatalogTestRunActivationCompletedTailV1.copy(row))
+        fun copy(row: ResultSet, expected: CatalogTestRunActivationSignedV1, projection: Boolean = false): CatalogTestRunActivationDeliveryTailV1 =
+            CatalogTestRunActivationDeliveryTailV1(checkNotNull(CatalogTestRunActivationSignedTailV1.copy(row, expected)), CatalogTestRunActivationCompletedTailV1.copy(row, projection))
     }
 }

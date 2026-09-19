@@ -51,10 +51,10 @@ internal object CatalogTestRunActivationSqlV1 {
             || jsonb_build_object('accepted_catalog_generation', e.predecessor_generation, 'accepted_catalog_hash', e.predecessor_hash,
                 'pending_projection_token', NULL::uuid))::text
     """.trimIndent()
-    private val deliveryControlSelect = """
+    private fun continuationControlSelect(bound: String): String = """
         $deliveryExpected
-        SELECT ($deliveryControlBound) IS TRUE AS valid,
-            CASE WHEN ($deliveryControlBound) IS TRUE THEN $deliveryPreimage END AS core_preimage,
+        SELECT ($bound) IS TRUE AS valid,
+            CASE WHEN ($bound) IS TRUE THEN $deliveryPreimage END AS core_preimage,
             c.maintenance_closed, c.creation_closed, c.accepted_catalog_generation,
             CASE WHEN octet_length(c.accepted_catalog_hash) = 32 THEN c.accepted_catalog_hash END AS accepted_catalog_hash,
             c.database_identity, c.restore_identity, c.event_writer_generation, c.catalog_writer_generation,
@@ -62,8 +62,15 @@ internal object CatalogTestRunActivationSqlV1 {
             c.lease_owner, c.lease_token, c.lease_expires_at, c.pending_projection_token
         FROM complaint_journal_control c CROSS JOIN expected e WHERE c.data_scope_id = $GLOBAL
     """.trimIndent()
-    val readDeliveryControl = deliveryControlSelect
-    val lockDeliveryControl = deliveryControlSelect + "\nFOR UPDATE OF c"
+    val readDeliveryControl = continuationControlSelect(deliveryControlBound)
+    val lockDeliveryControl = readDeliveryControl + "\nFOR UPDATE OF c"
+    private val projectionControlBound = """
+        $controlBaseBound AND c.maintenance_closed AND c.creation_closed
+        AND c.accepted_catalog_generation = e.generation AND c.accepted_catalog_hash = e.envelope_hash
+        AND (c.pending_projection_token = e.token OR c.pending_projection_token IS NULL)
+    """.trimIndent()
+    val readProjectionControl = continuationControlSelect(projectionControlBound)
+    val lockProjectionControl = readProjectionControl + "\nFOR UPDATE OF c"
 
     /** Post-lock sample; no earlier clock value or transaction-start now() may authorize the lease. */
     val acquireLease = """
@@ -83,15 +90,15 @@ internal object CatalogTestRunActivationSqlV1 {
         FROM complaint_journal_control c CROSS JOIN sampled WHERE c.data_scope_id = $GLOBAL
     """.trimIndent()
 
-    private val mutationColumnsMatch = """
+    private val mutationIdentityMatch = """
         m.operation_token = ?::uuid AND m.data_scope_id = ?::uuid AND m.predecessor_generation = ? AND m.predecessor_hash = ?::bytea
         AND m.successor_generation = ? AND m.catalog_writer_generation = ?::uuid AND m.approval_bytes = ?::bytea AND m.approval_hash = ?::bytea
         AND m.unsigned_bytes = ?::bytea AND m.unsigned_hash = ?::bytea AND m.signer_one_id = ? AND m.signer_one_algorithm = ?
         AND m.object_key = ? AND m.created_at = ?::timestamptz AND m.operation_type = 'TEST_RUN_ACTIVATION' AND m.test_only
         AND m.canonicalizer = 'kcj-1' AND m.signer_policy = 'SINGLE'
         AND m.signer_two_id IS NULL AND m.signer_two_algorithm IS NULL AND m.signer_two_signature IS NULL
-        AND m.projected_at IS NULL
     """.trimIndent()
+    private val mutationColumnsMatch = "$mutationIdentityMatch AND m.projected_at IS NULL"
     private val preparedState = """
         m.state = 'PREPARED' AND m.object_version IS NULL AND m.retain_until IS NULL
         AND m.primary_evidence_bytes IS NULL AND m.primary_evidence_hash IS NULL AND m.replica_evidence_bytes IS NULL AND m.replica_evidence_hash IS NULL
@@ -105,12 +112,17 @@ internal object CatalogTestRunActivationSqlV1 {
     """.trimIndent()
     private val preparedMatch = "$preparedColumnsMatch AND $unsignedSignatureMatch"
     private val signedPreparedMatch = "$preparedColumnsMatch AND $signedSignatureMatch"
-    private val completedBound = """
-        m.state = 'COMPLETED' AND m.projected_at IS NULL AND m.completed_at IS NOT NULL AND m.completed_at >= m.created_at
+    private val completedEvidenceBound = """
+        m.state = 'COMPLETED' AND m.completed_at IS NOT NULL AND m.completed_at >= m.created_at
         AND complaint_finite_times(m.completed_at, m.retain_until)
         AND complaint_opaque_valid(m.object_version, 1024) AND m.object_version <> 'null' AND m.retain_until IS NOT NULL
         AND complaint_bytes_match(m.primary_evidence_bytes, m.primary_evidence_hash, 65536)
         AND complaint_bytes_match(m.replica_evidence_bytes, m.replica_evidence_hash, 65536)
+    """.trimIndent()
+    private val completedBound = "$completedEvidenceBound AND m.projected_at IS NULL"
+    private val projectionCompletedBound = """
+        $completedEvidenceBound AND complaint_finite_times(m.projected_at)
+        AND (m.projected_at IS NULL OR m.projected_at >= m.completed_at)
     """.trimIndent()
     private val completedMatch = """
         $mutationColumnsMatch AND $signedSignatureMatch AND $completedBound
@@ -118,7 +130,13 @@ internal object CatalogTestRunActivationSqlV1 {
         AND m.primary_evidence_hash = ?::bytea AND m.replica_evidence_bytes = ?::bytea AND m.replica_evidence_hash = ?::bytea
         AND m.completed_at = ?::timestamptz
     """.trimIndent()
-    private val historyBound = """
+    private val projectionMatch = """
+        $mutationIdentityMatch AND $signedSignatureMatch AND $projectionCompletedBound
+        AND m.object_version = ? AND m.retain_until = ?::timestamptz AND m.primary_evidence_bytes = ?::bytea
+        AND m.primary_evidence_hash = ?::bytea AND m.replica_evidence_bytes = ?::bytea AND m.replica_evidence_hash = ?::bytea
+        AND m.completed_at = ?::timestamptz AND m.projected_at IS NOT DISTINCT FROM ?::timestamptz
+    """.trimIndent()
+    private fun historyBound(completionBound: String): String = """
         m.canonicalizer = 'kcj-1' AND complaint_is_v4(m.operation_token) AND complaint_is_v4(m.catalog_writer_generation)
         AND m.successor_generation BETWEEN 1 AND 65536 AND m.predecessor_generation = m.successor_generation - 1
         AND complaint_digest_valid(m.predecessor_hash) AND complaint_bytes_match(m.approval_bytes, m.approval_hash, 4096)
@@ -135,7 +153,7 @@ internal object CatalogTestRunActivationSqlV1 {
                 AND octet_length(m.unsigned_bytes) <= 131072
                 AND ((m.state = 'PREPARED' AND (($unsignedSignatureMatch) OR (octet_length(m.signer_one_signature) = 384
                         AND complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 131072))))
-                    OR (($completedBound) AND octet_length(m.signer_one_signature) = 384
+                    OR (($completionBound) AND octet_length(m.signer_one_signature) = 384
                         AND complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 131072))))
             OR (m.data_scope_id IS NULL AND m.test_only IS NULL AND m.state = 'COMPLETED' AND m.completed_at IS NOT NULL AND m.projected_at IS NOT NULL
                 AND complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 8388608)
@@ -189,12 +207,12 @@ internal object CatalogTestRunActivationSqlV1 {
 
     // Six fixed-width columns, <256 encoded payload bytes/row, at most the original65536+1 overflow sentinel.
     // fetch128 limits driver buffering even for rejected histories; the overflow row must fail, never truncate acceptance.
-    private fun historySelect(tailMatch: String): String = """
-        SELECT ($tailMatch) IS TRUE AS prepared_matches, ($historyBound) IS TRUE AS valid,
+    private fun historySelect(tailMatch: String, bound: String = historyBound(completedBound)): String = """
+        SELECT ($tailMatch) IS TRUE AS prepared_matches, ($bound) IS TRUE AS valid,
             m.successor_generation,
-            CASE WHEN ($historyBound) IS TRUE THEN sha256($rowFrame) END AS row_digest,
-            CASE WHEN ($historyBound) IS TRUE AND m.state = 'COMPLETED' THEN sha256($rawFrame) END AS raw_binding,
-            CASE WHEN ($historyBound) IS TRUE AND m.state = 'COMPLETED' THEN timestamptz_send(m.retain_until) END AS retain_until_wire
+            CASE WHEN ($bound) IS TRUE THEN sha256($rowFrame) END AS row_digest,
+            CASE WHEN ($bound) IS TRUE AND m.state = 'COMPLETED' THEN sha256($rawFrame) END AS raw_binding,
+            CASE WHEN ($bound) IS TRUE AND m.state = 'COMPLETED' THEN timestamptz_send(m.retain_until) END AS retain_until_wire
         FROM complaint_catalog_mutations m ORDER BY m.successor_generation LIMIT ?
     """.trimIndent()
     val readHistory = historySelect(preparedMatch)
@@ -203,6 +221,8 @@ internal object CatalogTestRunActivationSqlV1 {
     val lockSignedHistory = readSignedHistory + "\nFOR UPDATE"
     val readCompletedHistory = historySelect(completedMatch)
     val lockCompletedHistory = readCompletedHistory + "\nFOR UPDATE"
+    val readProjectionHistory = historySelect(projectionMatch, historyBound(projectionCompletedBound))
+    val lockProjectionHistory = readProjectionHistory + "\nFOR UPDATE"
 
     /** At most ONE exact TEST tail, bounded before detaching; never raw historical rows or a parser under locks. */
     val readPreparedTail = """
@@ -227,6 +247,24 @@ internal object CatalogTestRunActivationSqlV1 {
             CASE WHEN ($completedBound) THEN m.replica_evidence_bytes END AS replica_evidence_bytes,
             CASE WHEN ($completedBound) THEN m.replica_evidence_hash END AS replica_evidence_hash,
             CASE WHEN ($completedBound) THEN m.completed_at END AS completed_at
+        FROM complaint_catalog_mutations m WHERE m.successor_generation = ?
+    """.trimIndent()
+
+    /** One exact completed TEST tail, pending or projected; PREPARED and partial evidence are never projectable. */
+    val readProjectionTail = """
+        SELECT (($mutationIdentityMatch) AND ($signedSignatureMatch) AND ($projectionCompletedBound)) IS TRUE AS valid,
+            m.state = 'COMPLETED' AS completed,
+            CASE WHEN octet_length(m.signer_one_signature) = 384 THEN m.signer_one_signature END AS signature_bytes,
+            CASE WHEN complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 131072) THEN m.envelope_bytes END AS envelope_bytes,
+            CASE WHEN octet_length(m.envelope_hash) = 32 THEN m.envelope_hash END AS envelope_hash,
+            CASE WHEN ($projectionCompletedBound) THEN m.object_version END AS object_version,
+            CASE WHEN ($projectionCompletedBound) THEN m.retain_until END AS retain_until,
+            CASE WHEN ($projectionCompletedBound) THEN m.primary_evidence_bytes END AS primary_evidence_bytes,
+            CASE WHEN ($projectionCompletedBound) THEN m.primary_evidence_hash END AS primary_evidence_hash,
+            CASE WHEN ($projectionCompletedBound) THEN m.replica_evidence_bytes END AS replica_evidence_bytes,
+            CASE WHEN ($projectionCompletedBound) THEN m.replica_evidence_hash END AS replica_evidence_hash,
+            CASE WHEN ($projectionCompletedBound) THEN m.completed_at END AS completed_at,
+            CASE WHEN ($projectionCompletedBound) THEN m.projected_at END AS projected_at
         FROM complaint_catalog_mutations m WHERE m.successor_generation = ?
     """.trimIndent()
 

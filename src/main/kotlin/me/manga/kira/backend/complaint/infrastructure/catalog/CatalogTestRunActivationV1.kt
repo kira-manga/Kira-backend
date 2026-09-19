@@ -35,9 +35,9 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Original cold TEST owner for PREPARE/freeze and separately armed delivery to COMPLETED/pending.
- * Old diagnostic receipts grant no Sign or PUT. No path has PROJECT, reopening, a run issuer,
- * registration or any global provider/ingress-drain assertion.
+ * Original cold TEST owner for PREPARE/freeze, separately armed delivery and atomic first PROJECT.
+ * Old diagnostic receipts grant no next phase. Projection keeps both gates closed and supplies no
+ * run admission, reopening, registration or global provider/ingress-drain assertion.
  */
 @Suppress("TooManyFunctions", "LargeClass")
 internal class CatalogTestRunActivationV1 private constructor(
@@ -68,6 +68,7 @@ internal class CatalogTestRunActivationV1 private constructor(
     private var freezing = false
     private var delivering = false
     private var deliveryPublishing = false
+    private var projecting = false
     private var failed = false
     private var reserved = false
     private var released = false
@@ -109,9 +110,20 @@ internal class CatalogTestRunActivationV1 private constructor(
     private var completeArmed = false
     private var completeOperation: CatalogTestRunActivationOperationV1? = null
     private var pendingReloadOperation: CatalogTestRunActivationOperationV1? = null
+    private var projectionReadbacks = 0
+    private var projectionCaptureOperation: CatalogTestRunActivationOperationV1? = null
+    private var projectionCapturedSnapshot: CatalogTestRunActivationSnapshotV1? = null
+    private var projectionReloadOperation: CatalogTestRunActivationOperationV1? = null
+    private var projectionGrant: ProjectionGrant? = null
+    private var projectArmIssued = false
+    private var projectArmed = false
+    private var projectionDispatchIssued = false
+    private var projectOperation: CatalogTestRunActivationOperationV1? = null
+    private var projectedReloadOperation: CatalogTestRunActivationOperationV1? = null
     private var allowedResult = false
     private var allowedSignedResult = false
     private var allowedCompletedResult = false
+    private var allowedProjectedResult = false
     private var lastWall: Instant? = null
     private var selectedKind: CatalogTestRunActivationKindV1? = null
     private var inputConstructionClaimed = false
@@ -176,6 +188,137 @@ internal class CatalogTestRunActivationV1 private constructor(
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
     ): CatalogTestRunCompletedPendingV1 = runDelivery(releaseRoot, unsignedCanonicalBytes, null, primaryReadCredentials, replicaReadCredentials, pendingOnly = true)
+
+    /** Fresh cold owner and original custody only. No supplied prior receipt, run declaration, Sign or PUT credential. */
+    fun projectCompleted(
+        releaseRoot: Path,
+        unsignedCanonicalBytes: ByteArray,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogTestRunProjectedV1 = runProjection(releaseRoot, unsignedCanonicalBytes, primaryReadCredentials, replicaReadCredentials)
+
+    @Suppress("TooGenericExceptionCaught", "LongMethod")
+    private fun runProjection(root: Path, bytes: ByteArray, primary: AwsSessionCredentials, replica: AwsSessionCredentials): CatalogTestRunProjectedV1 {
+        requireTestActivation(caller === Thread.currentThread(), CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
+        var success = false
+        var failure: Throwable? = null
+        try {
+            requireConnectionFree()
+            requireRunning()
+            requireTestActivation(!entered && stage === Stage.NEW)
+            entered = true
+            recovering = true
+            delivering = true
+            projecting = true
+            coordinator.catalogRefreshCustody.reserveTestRunActivation(this)
+            reserved = true
+            stage = Stage.CAPTURE
+            frozen = CatalogTestRunActivationFrozenV1.capture(this, bytes)
+            val allocation = openExistingCustody(root)
+            deliveryRelease = CatalogTestRunActivationDeliveryReleaseV1(this, checkNotNull(frozen), checkNotNull(signed),
+                checkNotNull(release), checkNotNull(custody), allocation, publishing = false, projecting = true)
+            stage = Stage.SNAPSHOT
+            snapshotOperation = execute(CatalogTestRunActivationKindV1.SNAPSHOT)
+            originalSnapshot = checkNotNull(snapshotOperation).snapshot
+            expectedSnapshot = originalSnapshot
+            checkNotNull(deliveryRelease).requireSnapshot(checkNotNull(originalSnapshot))
+            requireTestActivation(originalSnapshot?.completedTail != null, CatalogTestRunActivationFailureV1.STATE_REFUSED)
+            observeDelivery(primary, replica)
+            requireTestActivation(deliveryReadback?.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY)
+            stage = Stage.ACQUIRE
+            leaseOwner = UUID.randomUUID()
+            leaseStartedAtNanos = ownership.nanoClock.nanoTime()
+            leaseOperation = execute(CatalogTestRunActivationKindV1.LEASE_ACQUIRE)
+            lease = checkNotNull(leaseOperation).lease
+            requireActualLease()
+            checkNotNull(deliveryRelease).requireAcquisition(checkNotNull(lease))
+            stage = Stage.PROJECT_CAPTURE
+            projectionCaptureOperation = execute(CatalogTestRunActivationKindV1.PROJECT_RELOAD)
+            expectedSnapshot = checkNotNull(projectionCaptureOperation).snapshot
+            projectionCapturedSnapshot = expectedSnapshot
+            checkNotNull(deliveryRelease).requireSnapshot(checkNotNull(expectedSnapshot))
+            observeDelivery(primary, replica) // Second genuinely cleaned raw traversal, never a reused first proof.
+            stage = Stage.PROJECT_RECHECK
+            projectionReloadOperation = execute(CatalogTestRunActivationKindV1.PROJECT_RELOAD)
+            expectedSnapshot = checkNotNull(projectionReloadOperation).snapshot
+            checkNotNull(deliveryRelease).requireSnapshot(checkNotNull(expectedSnapshot))
+            if (checkNotNull(checkNotNull(expectedSnapshot).completedTail).projectedAt == null) {
+                retainProjectionGrant()
+                stage = Stage.ARM_PROJECT
+                spendProjectionGrant() // Spent before root I/O, then bound to the one original PROJECT phase.
+                projectArmIssued = true
+                checkNotNull(deliveryRelease).armProject(checkNotNull(deliveryReadback))
+                projectArmed = true
+                stage = Stage.PROJECT
+                projectOperation = execute(CatalogTestRunActivationKindV1.PROJECT)
+                expectedSnapshot = checkNotNull(projectOperation).snapshot
+                checkNotNull(deliveryRelease).projected(checkNotNull(expectedSnapshot))
+            }
+            stage = Stage.PROJECTED_RELOAD
+            projectedReloadOperation = execute(CatalogTestRunActivationKindV1.PROJECTED_RELOAD)
+            expectedSnapshot = checkNotNull(projectedReloadOperation).snapshot
+            checkNotNull(deliveryRelease).projectedReloaded(checkNotNull(expectedSnapshot))
+            requireActualLease()
+            requireSqlCleanup()
+            deliveryAssembly.requireProviderCleanup()
+            success = true
+        } catch (problem: Throwable) {
+            observeFailure(problem)
+            failed = true
+            failure = problem
+        } finally {
+            runCatching(::close).exceptionOrNull()?.let { failure = preferSignerRotationCleanup(failure, it) }
+        }
+        throwIfSignalled()
+        failure?.let { throw boundedTestActivationFailure(it) }
+        requireTestActivation(success)
+        allowedProjectedResult = true
+        return CatalogTestRunProjectedV1.issuedBy(this)
+    }
+
+    private fun retainProjectionGrant() {
+        requireConnectionFree()
+        requireRunning()
+        requireSqlCleanup()
+        val operation = checkNotNull(projectionReloadOperation)
+        operation.requireReleased()
+        val snapshot = operation.snapshot
+        requireTestActivation(projecting && stage === Stage.PROJECT_RECHECK && projectionGrant == null && projectionReadbacks == 2 &&
+            operation.input.original === this && operation.input.kind === CatalogTestRunActivationKindV1.PROJECT_RELOAD &&
+            operation.input.expected === projectionCaptureOperation?.snapshot && snapshot === expectedSnapshot && snapshot.projectionRows != null &&
+            snapshot.completedTail?.projectedAt == null && operation.input.deliveryProof === deliveryReadback && operation.input.lease === lease)
+        requireRawVerified()
+        projectionGrant = ProjectionGrant(operation, operation.input, snapshot, checkNotNull(deliveryReadback), checkNotNull(lease))
+    }
+
+    private fun spendProjectionGrant() {
+        requireConnectionFree()
+        requireRunning()
+        requireSqlCleanup()
+        val grant = requireProjectionGrant()
+        requireTestActivation(stage === Stage.ARM_PROJECT && !grant.spent && !projectArmIssued && !projectArmed)
+        grant.operation.requireReleased()
+        grant.spent = true
+    }
+
+    private fun requireProjectionGrant(): ProjectionGrant {
+        val grant = checkNotNull(projectionGrant)
+        requireTestActivation(projecting && !deliveryPublishing && grant.operation === projectionReloadOperation && grant.input === grant.operation.input &&
+            grant.input.original === this && grant.input.frozen === frozen && grant.input.signed === signed &&
+            grant.input.projecting && grant.snapshot === expectedSnapshot && grant.input.expected === projectionCapturedSnapshot &&
+            grant.proof === deliveryReadback && grant.lease === lease && projectionReadbacks == 2)
+        return grant
+    }
+
+    /** Original selected PROJECT operation only. No detached grant/receipt crosses this boundary. */
+    internal fun requireProjectionDispatch(operation: CatalogTestRunActivationOperationV1) {
+        requireRunning()
+        val grant = requireProjectionGrant()
+        requireTestActivation(stage === Stage.PROJECT && grant.spent && projectArmIssued && projectArmed && !projectionDispatchIssued &&
+            activeInput === operation.input && selectedKind === CatalogTestRunActivationKindV1.PROJECT &&
+            originalPhase === PersistencePhaseOwnership.current() && operation.input.expected === grant.snapshot)
+        projectionDispatchIssued = true
+    }
 
     @Suppress("TooGenericExceptionCaught", "LongMethod")
     private fun runDelivery(
@@ -282,6 +425,7 @@ internal class CatalogTestRunActivationV1 private constructor(
         stage = Stage.DELIVERY_READBACK
         deliveryReadback = deliveryAssembly.observe(checkNotNull(originalSnapshot), checkNotNull(frozen), checkNotNull(signed), primary, replica)
         checkNotNull(deliveryRelease).requireReadback(checkNotNull(deliveryReadback))
+        if (projecting) projectionReadbacks++
     }
 
     @Suppress("TooGenericExceptionCaught", "LongMethod")
@@ -504,25 +648,38 @@ internal class CatalogTestRunActivationV1 private constructor(
             CatalogTestRunActivationKindV1.SNAPSHOT -> stage === Stage.SNAPSHOT && snapshotOperation == null && expectedSnapshot == null && lease == null
             CatalogTestRunActivationKindV1.LEASE_ACQUIRE -> stage === Stage.ACQUIRE && snapshotOperation != null && expectedSnapshot === originalSnapshot &&
                 leaseOperation == null && lease == null && leaseOwner != null && leaseStartedAtNanos != null
-            CatalogTestRunActivationKindV1.PREPARE -> stage === Stage.PREPARE && !recovering && preparedOperation == null &&
+            CatalogTestRunActivationKindV1.PREPARE -> !projecting && stage === Stage.PREPARE && !recovering && preparedOperation == null &&
                 expectedSnapshot === originalSnapshot && leaseOperation != null && lease != null &&
                 (!freezing || (prepareArmIssued && prepareArmed && release != null))
-            CatalogTestRunActivationKindV1.PREPARED_RELOAD -> stage === Stage.RELOAD && reloadOperation == null && leaseOperation != null && lease != null &&
+            CatalogTestRunActivationKindV1.PREPARED_RELOAD -> !projecting && stage === Stage.RELOAD && reloadOperation == null && leaseOperation != null && lease != null &&
                 ((recovering && preparedOperation == null && expectedSnapshot === originalSnapshot) ||
                     (!recovering && preparedOperation != null && preparedSnapshot === expectedSnapshot))
-            CatalogTestRunActivationKindV1.SIGNATURE -> freezing && stage === Stage.SIGNATURE && signatureOperation == null &&
+            CatalogTestRunActivationKindV1.SIGNATURE -> !projecting && freezing && stage === Stage.SIGNATURE && signatureOperation == null &&
                 signatureSqlArmIssued && signatureSqlArmed && signed != null && leaseOperation != null && lease != null &&
                 ((reloadOperation != null && reloadOperation?.snapshot === expectedSnapshot) ||
                     (recovering && reloadOperation == null && expectedSnapshot === originalSnapshot && expectedSnapshot?.signedTail != null))
-            CatalogTestRunActivationKindV1.SIGNED_RELOAD -> freezing && stage === Stage.SIGNED_RELOAD && signedReloadOperation == null &&
+            CatalogTestRunActivationKindV1.SIGNED_RELOAD -> !projecting && freezing && stage === Stage.SIGNED_RELOAD && signedReloadOperation == null &&
                 signatureOperation != null && signatureOperation?.snapshot === expectedSnapshot && signed != null && signatureSqlArmed
-            CatalogTestRunActivationKindV1.DELIVERY_RELOAD -> delivering && stage === Stage.DELIVERY_RELOAD && deliveryReloadOperation == null &&
+            CatalogTestRunActivationKindV1.DELIVERY_RELOAD -> !projecting && delivering && stage === Stage.DELIVERY_RELOAD && deliveryReloadOperation == null &&
                 leaseOperation != null && lease != null && signed != null && deliveryReadback != null && expectedSnapshot === originalSnapshot
-            CatalogTestRunActivationKindV1.COMPLETE -> delivering && stage === Stage.COMPLETE && completeOperation == null &&
+            CatalogTestRunActivationKindV1.COMPLETE -> !projecting && delivering && stage === Stage.COMPLETE && completeOperation == null &&
                 completeArmIssued && completeArmed && signed != null && leaseOperation != null && lease != null &&
                 deliveryReloadOperation?.snapshot === expectedSnapshot && deliveryReadback?.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY
-            CatalogTestRunActivationKindV1.PENDING_RELOAD -> delivering && stage === Stage.PENDING_RELOAD && pendingReloadOperation == null &&
+            CatalogTestRunActivationKindV1.PENDING_RELOAD -> !projecting && delivering && stage === Stage.PENDING_RELOAD && pendingReloadOperation == null &&
                 completeOperation != null && completeOperation?.snapshot === expectedSnapshot && signed != null && completeArmed
+            CatalogTestRunActivationKindV1.PROJECT_RELOAD -> projecting && signed != null && leaseOperation != null && lease != null &&
+                deliveryReadback?.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY && projectionGrant == null &&
+                ((stage === Stage.PROJECT_CAPTURE && projectionCaptureOperation == null && projectionReloadOperation == null &&
+                    expectedSnapshot === originalSnapshot && projectionReadbacks == 1) ||
+                    (stage === Stage.PROJECT_RECHECK && projectionCaptureOperation != null && projectionReloadOperation == null &&
+                        expectedSnapshot === projectionCapturedSnapshot && projectionReadbacks == 2))
+            CatalogTestRunActivationKindV1.PROJECT -> projecting && stage === Stage.PROJECT && projectOperation == null &&
+                projectArmIssued && projectArmed && !projectionDispatchIssued && projectionGrant?.spent == true &&
+                projectionReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail?.projectedAt == null
+            CatalogTestRunActivationKindV1.PROJECTED_RELOAD -> projecting && stage === Stage.PROJECTED_RELOAD && projectedReloadOperation == null &&
+                projectionReadbacks == 2 && lease != null && signed != null && expectedSnapshot?.completedTail?.projectedAt != null &&
+                ((projectOperation != null && projectOperation?.snapshot === expectedSnapshot && projectionDispatchIssued && projectArmed) ||
+                    (projectOperation == null && projectionReloadOperation?.snapshot === expectedSnapshot && projectionGrant == null && !projectArmIssued))
         }
         requireTestActivation(allowed, CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
         if (kind !== CatalogTestRunActivationKindV1.SNAPSHOT) {
@@ -569,6 +726,7 @@ internal class CatalogTestRunActivationV1 private constructor(
     }
 
     internal fun delivering(): Boolean { requireInputValues(); return delivering }
+    internal fun projecting(): Boolean { requireInputValues(); return projecting }
 
     internal fun deliveryProofInput(): CatalogTestRunActivationDeliveryReadbackV1? {
         requireInputValues()
@@ -582,7 +740,7 @@ internal class CatalogTestRunActivationV1 private constructor(
             candidate === ownership && jdbc.dataSource === source && activeInput === input && input.original === this &&
                 input.kind === selectedKind && input.frozen === frozen && input.expected === expectedSnapshot && input.lease === lease &&
                 input.leaseOwner == leaseOwner && input.recovering == recovering && input.signed === signed && inputConstructionClaimed &&
-                input.delivering == delivering && input.deliveryProof === deliveryReadback,
+                input.delivering == delivering && input.projecting == projecting && input.deliveryProof === deliveryReadback,
             CatalogTestRunActivationFailureV1.PROCESS_REFUSED,
         )
     }
@@ -630,7 +788,7 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun requireInitialMaintenancePrepare(candidate: PersistencePhaseOwnership) {
         requireMaintenanceSelection(candidate, PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE)
-        requireTestActivation(!recovering && stage === Stage.PREPARE && preparedOperation == null && expectedSnapshot === originalSnapshot)
+        requireTestActivation(!projecting && !recovering && stage === Stage.PREPARE && preparedOperation == null && expectedSnapshot === originalSnapshot)
         predecessor.requireVerified(checkNotNull(originalSnapshot), checkNotNull(frozen))
         requireActualLease()
     }
@@ -645,23 +803,29 @@ internal class CatalogTestRunActivationV1 private constructor(
                 gate.requireUnownedOpen()
             }
             CatalogTestRunActivationKindV1.LEASE_ACQUIRE -> when {
+                projecting -> requireProjectionGate(gate)
                 delivering -> requireDeliveryGate(gate)
                 recovering -> requirePreparedGate(gate)
                 else -> gate.requireUnownedOpen()
             }
             CatalogTestRunActivationKindV1.PREPARED_RELOAD -> {
-                requireTestActivation(recovering || (preparedOperation != null && preparedSnapshot === expectedSnapshot))
+                requireTestActivation(!projecting && (recovering || (preparedOperation != null && preparedSnapshot === expectedSnapshot)))
                 requirePreparedGate(gate)
             }
             CatalogTestRunActivationKindV1.SIGNATURE, CatalogTestRunActivationKindV1.SIGNED_RELOAD -> {
-                requireTestActivation(freezing && signatureSqlArmed && signed != null && input.signed === signed)
+                requireTestActivation(!projecting && freezing && signatureSqlArmed && signed != null && input.signed === signed)
                 requireActualLease()
                 requirePreparedGate(gate)
             }
             CatalogTestRunActivationKindV1.DELIVERY_RELOAD, CatalogTestRunActivationKindV1.COMPLETE, CatalogTestRunActivationKindV1.PENDING_RELOAD -> {
-                requireTestActivation(delivering && signed != null && input.signed === signed && input.deliveryProof === deliveryReadback)
+                requireTestActivation(!projecting && delivering && signed != null && input.signed === signed && input.deliveryProof === deliveryReadback)
                 requireActualLease()
                 requireDeliveryGate(gate)
+            }
+            CatalogTestRunActivationKindV1.PROJECT_RELOAD, CatalogTestRunActivationKindV1.PROJECT, CatalogTestRunActivationKindV1.PROJECTED_RELOAD -> {
+                requireTestActivation(projecting && delivering && !deliveryPublishing && signed != null && input.signed === signed && input.deliveryProof === deliveryReadback)
+                requireActualLease()
+                requireProjectionGate(gate)
             }
         }
     }
@@ -672,7 +836,7 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireTestActivation(candidate === ownership && originalPhase === PersistencePhaseOwnership.current() && phaseEntered && inputConstructionClaimed &&
             input.original === this && selectedKind === input.kind && input.path === path && input.frozen === frozen &&
             input.expected === expectedSnapshot && input.lease === lease && input.recovering == recovering && input.signed === signed &&
-            input.delivering == delivering && input.deliveryProof === deliveryReadback,
+            input.delivering == delivering && input.projecting == projecting && input.deliveryProof === deliveryReadback,
             CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
         requireRawVerified()
     }
@@ -683,11 +847,20 @@ internal class CatalogTestRunActivationV1 private constructor(
     }
 
     private fun requireDeliveryGate(gate: PersistenceComplaintMaintenanceGateV1) {
-        requireTestActivation(delivering && deliveryRelease != null && signed != null)
+        requireTestActivation(!projecting && delivering && deliveryRelease != null && signed != null)
         val input = checkNotNull(frozen)
         val matches = if (checkNotNull(expectedSnapshot).completedTail != null) {
             gate.matchesPending(input.token, input.scope, input.unsignedBytes(), input.unsignedHash())
         } else gate.matchesPrepared(input.token, input.scope, input.unsignedBytes(), input.unsignedHash())
+        requireTestActivation(matches, CatalogTestRunActivationFailureV1.STATE_REFUSED)
+    }
+
+    private fun requireProjectionGate(gate: PersistenceComplaintMaintenanceGateV1) {
+        requireTestActivation(projecting && delivering && !deliveryPublishing && deliveryRelease != null && signed != null)
+        val input = checkNotNull(frozen)
+        val completed = checkNotNull(checkNotNull(expectedSnapshot).completedTail)
+        val matches = if (completed.projectedAt == null) gate.matchesPending(input.token, input.scope, input.unsignedBytes(), input.unsignedHash())
+        else gate.matchesProjected(input.token, input.scope, input.unsignedBytes(), input.unsignedHash())
         requireTestActivation(matches, CatalogTestRunActivationFailureV1.STATE_REFUSED)
     }
 
@@ -711,10 +884,18 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireTestActivation((!delivering && stage === Stage.READBACK && leaseStartedAtNanos == null) ||
             (stage === Stage.RECHECK_READBACK && freezing && !recovering && preparedOperation != null && prepareArmed && lease != null && !signReadbackRechecked) ||
             (delivering && stage === Stage.DELIVERY_READBACK && deliveryRelease != null && signed != null &&
-                ((leaseStartedAtNanos == null && deliveryReloadOperation == null) ||
-                    (deliveryPublishing && putConstructionIssued && publicationAcknowledgement != null && deliveryReloadOperation != null))) ||
-            (delivering && deliveryPublishing && stage === Stage.PUT && publicationArmed && putConstructionIssued && publicationAcknowledgement == null),
+                ((leaseStartedAtNanos == null && deliveryReloadOperation == null && projectionReadbacks == 0) ||
+                    (!projecting && deliveryPublishing && putConstructionIssued && publicationAcknowledgement != null && deliveryReloadOperation != null) ||
+                    (projecting && !deliveryPublishing && projectionReadbacks == 1 && projectionCaptureOperation != null &&
+                        expectedSnapshot === projectionCapturedSnapshot && projectionReloadOperation == null && lease != null))) ||
+            (!projecting && delivering && deliveryPublishing && stage === Stage.PUT && publicationArmed && putConstructionIssued && publicationAcknowledgement == null),
             CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
+    }
+
+    internal fun requireRawDeliverySnapshot(snapshot: CatalogTestRunActivationSnapshotV1, input: CatalogTestRunActivationFrozenV1, value: CatalogTestRunActivationSignedV1) {
+        requireProviderRunning()
+        requireTestActivation(delivering && originalSnapshot === snapshot && frozen === input && signed === value)
+        if (projecting) snapshot.requireProjection(input, value) else snapshot.requireDelivery(input, value)
     }
 
     internal fun custodySnapshot(): CatalogTestRunActivationSnapshotV1 {
@@ -813,13 +994,15 @@ internal class CatalogTestRunActivationV1 private constructor(
         input: CatalogTestRunActivationFrozenV1,
         value: CatalogTestRunActivationSignedV1,
         publishing: Boolean,
+        projection: Boolean,
     ) {
         requireConnectionFree()
         requireRunning()
         requireSqlCleanup()
         requireTestActivation(delivering && !freezing && recovering && stage === Stage.EXISTING_CUSTODY && release === freeze &&
             custody === selected && frozen === input && signed === value && value.frozen === input &&
-            publishing == deliveryPublishing && deliveryRelease == null && snapshotOperation == null && lease == null)
+            publishing == deliveryPublishing && projection == projecting && (!projection || !publishing) &&
+            deliveryRelease == null && snapshotOperation == null && lease == null)
     }
 
     internal fun requireDeliveryObservation(
@@ -848,7 +1031,7 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun requirePublicationArm(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
         requireDeliveryRelease(selected)
-        requireTestActivation(stage === Stage.ARM_PUBLICATION && deliveryPublishing && publicationArmIssued && !publicationArmed &&
+        requireTestActivation(!projecting && stage === Stage.ARM_PUBLICATION && deliveryPublishing && publicationArmIssued && !publicationArmed &&
             !putConstructionIssued && publicationAcknowledgement == null && proof === deliveryReadback &&
             proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.UNPUBLISHED &&
             deliveryReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail == null)
@@ -856,7 +1039,7 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun requirePutConstruction(selected: CatalogTestRunActivationDeliveryAssemblyV1, input: CatalogTestRunActivationFrozenV1, value: CatalogTestRunActivationSignedV1) {
         requireDeliveryRelease(checkNotNull(deliveryRelease))
-        requireTestActivation(deliveryAssembly === selected && frozen === input && signed === value && stage === Stage.PUT && deliveryPublishing &&
+        requireTestActivation(!projecting && deliveryAssembly === selected && frozen === input && signed === value && stage === Stage.PUT && deliveryPublishing &&
             publicationArmIssued && publicationArmed && !putConstructionIssued && publicationAcknowledgement == null &&
             deliveryReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail == null)
         putConstructionIssued = true // Spent before durable reread, budget checks, or native SDK/raw-client construction.
@@ -865,32 +1048,54 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun requirePublicationAcknowledgement(selected: CatalogTestRunActivationDeliveryReleaseV1, value: CatalogPrimaryPutAcknowledgementV1) {
         requireDeliveryRelease(selected)
-        requireTestActivation(stage === Stage.PUT && deliveryPublishing && publicationArmed && putConstructionIssued && publicationAcknowledgement === value)
+        requireTestActivation(!projecting && stage === Stage.PUT && deliveryPublishing && publicationArmed && putConstructionIssued && publicationAcknowledgement === value)
         deliveryAssembly.requireAcknowledgement(value)
     }
 
     internal fun requireDeliveryEvidence(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
         requireDeliveryRelease(selected)
-        requireTestActivation(stage === Stage.DELIVERY_EVIDENCE && proof === deliveryReadback && deliveryReloadOperation?.snapshot === expectedSnapshot)
+        requireTestActivation(!projecting && stage === Stage.DELIVERY_EVIDENCE && proof === deliveryReadback && deliveryReloadOperation?.snapshot === expectedSnapshot)
     }
 
     internal fun requireCompletionArm(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
         requireDeliveryRelease(selected)
-        requireTestActivation(stage === Stage.ARM_COMPLETE && completeArmIssued && !completeArmed && completeOperation == null &&
+        requireTestActivation(!projecting && stage === Stage.ARM_COMPLETE && completeArmIssued && !completeArmed && completeOperation == null &&
             proof === deliveryReadback && proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY &&
             deliveryReloadOperation?.snapshot === expectedSnapshot)
     }
 
     internal fun requireCompletedDelivery(selected: CatalogTestRunActivationDeliveryReleaseV1, snapshot: CatalogTestRunActivationSnapshotV1) {
         requireDeliveryRelease(selected)
-        requireTestActivation(stage === Stage.COMPLETE && completeArmed && completeOperation?.snapshot === snapshot &&
+        requireTestActivation(!projecting && stage === Stage.COMPLETE && completeArmed && completeOperation?.snapshot === snapshot &&
             expectedSnapshot === snapshot && snapshot.completedTail != null)
     }
 
     internal fun requirePendingReload(selected: CatalogTestRunActivationDeliveryReleaseV1, snapshot: CatalogTestRunActivationSnapshotV1) {
         requireDeliveryRelease(selected)
-        requireTestActivation(stage === Stage.PENDING_RELOAD && completeArmed && completeOperation != null &&
+        requireTestActivation(!projecting && stage === Stage.PENDING_RELOAD && completeArmed && completeOperation != null &&
             pendingReloadOperation?.snapshot === snapshot && expectedSnapshot === snapshot && snapshot.completedTail != null)
+    }
+
+    internal fun requireProjectArm(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
+        requireDeliveryRelease(selected)
+        val grant = requireProjectionGrant()
+        requireTestActivation(stage === Stage.ARM_PROJECT && grant.spent && projectArmIssued && !projectArmed && !projectionDispatchIssued &&
+            projectOperation == null && proof === grant.proof && projectionReloadOperation?.snapshot === expectedSnapshot &&
+            expectedSnapshot?.completedTail?.projectedAt == null && expectedSnapshot?.projectionRows != null)
+    }
+
+    internal fun requireProjected(selected: CatalogTestRunActivationDeliveryReleaseV1, snapshot: CatalogTestRunActivationSnapshotV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(projecting && stage === Stage.PROJECT && projectArmed && projectionGrant?.spent == true && projectionDispatchIssued &&
+            projectOperation?.input?.original === this && projectOperation?.input?.kind === CatalogTestRunActivationKindV1.PROJECT &&
+            projectOperation?.snapshot === snapshot && snapshot === expectedSnapshot && snapshot.completedTail?.projectedAt != null && snapshot.projectionRows != null)
+    }
+
+    internal fun requireProjectedReload(selected: CatalogTestRunActivationDeliveryReleaseV1, snapshot: CatalogTestRunActivationSnapshotV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(projecting && stage === Stage.PROJECTED_RELOAD && projectionReadbacks == 2 &&
+            projectedReloadOperation?.input?.original === this && projectedReloadOperation?.input?.kind === CatalogTestRunActivationKindV1.PROJECTED_RELOAD &&
+            projectedReloadOperation?.snapshot === snapshot && snapshot === expectedSnapshot && snapshot.completedTail?.projectedAt != null && snapshot.projectionRows != null)
     }
 
     internal fun sampleWallTime(): Instant {
@@ -1007,7 +1212,7 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun preparedReceiptInput(): CatalogTestRunActivationFrozenV1 {
         requireActualCleanup()
-        requireTestActivation(!freezing && allowedResult && released && closeFailure == null && reloadOperation?.input?.original === this &&
+        requireTestActivation(!projecting && !delivering && !freezing && allowedResult && released && closeFailure == null && reloadOperation?.input?.original === this &&
             reloadOperation?.input?.kind === CatalogTestRunActivationKindV1.PREPARED_RELOAD && reloadOperation?.snapshot === expectedSnapshot)
         checkNotNull(reloadOperation).requireReleased()
         budget.remainingMillis(1)
@@ -1016,7 +1221,7 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun signedReceiptInput(): Pair<CatalogTestRunActivationFrozenV1, CatalogTestRunActivationSignedV1> {
         requireActualCleanup()
-        requireTestActivation(freezing && allowedSignedResult && released && closeFailure == null &&
+        requireTestActivation(!projecting && freezing && allowedSignedResult && released && closeFailure == null &&
             signedReloadOperation?.input?.original === this && signedReloadOperation?.input?.kind === CatalogTestRunActivationKindV1.SIGNED_RELOAD &&
             signedReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.signedTail != null)
         checkNotNull(signatureOperation).requireReleased()
@@ -1028,7 +1233,7 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun completedReceiptInput(): Triple<CatalogTestRunActivationFrozenV1, CatalogTestRunActivationSignedV1, CatalogTestRunActivationCompletedTailV1> {
         requireActualCleanup()
-        requireTestActivation(delivering && !freezing && allowedCompletedResult && released && closeFailure == null &&
+        requireTestActivation(!projecting && delivering && !freezing && allowedCompletedResult && released && closeFailure == null &&
             pendingReloadOperation?.input?.original === this && pendingReloadOperation?.input?.kind === CatalogTestRunActivationKindV1.PENDING_RELOAD &&
             pendingReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail != null)
         checkNotNull(completeOperation).requireReleased()
@@ -1038,7 +1243,24 @@ internal class CatalogTestRunActivationV1 private constructor(
         return Triple(checkNotNull(frozen), checkNotNull(signed), checkNotNull(checkNotNull(expectedSnapshot).completedTail))
     }
 
-    override fun toString(): String = if (delivering) {
+    internal fun projectedReceiptInput(): Triple<CatalogTestRunActivationFrozenV1, CatalogTestRunActivationSignedV1, CatalogTestRunActivationCompletedTailV1> {
+        requireActualCleanup()
+        requireTestActivation(projecting && delivering && !freezing && !deliveryPublishing && allowedProjectedResult && released && closeFailure == null &&
+            projectionReadbacks == 2 && projectedReloadOperation?.input?.original === this &&
+            projectedReloadOperation?.input?.kind === CatalogTestRunActivationKindV1.PROJECTED_RELOAD &&
+            projectedReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail?.projectedAt != null && expectedSnapshot?.projectionRows != null)
+        checkNotNull(projectionCaptureOperation).requireReleased()
+        checkNotNull(projectionReloadOperation).requireReleased()
+        projectOperation?.requireReleased()
+        checkNotNull(projectedReloadOperation).requireReleased()
+        deliveryAssembly.requireProviderCleanup()
+        budget.remainingMillis(1)
+        return Triple(checkNotNull(frozen), checkNotNull(signed), checkNotNull(checkNotNull(expectedSnapshot).completedTail))
+    }
+
+    override fun toString(): String = if (projecting) {
+        "CatalogTestRunActivationV1(first-PROJECT-closed,no-admission-or-reopen-authority,redacted)"
+    } else if (delivering) {
         "CatalogTestRunActivationV1(COMPLETED-pending-boundary,no-PROJECT-or-run-authority,redacted)"
     } else if (freezing) {
         "CatalogTestRunActivationV1(signed-PREPARED-boundary,no-PUT-or-run-authority,redacted)"
@@ -1049,8 +1271,18 @@ internal class CatalogTestRunActivationV1 private constructor(
     private enum class Stage {
         NEW, CAPTURE, EXISTING_CUSTODY, SNAPSHOT, READBACK, ACQUIRE, ALLOCATE, ARM_PREPARE, PREPARE,
         RECHECK_READBACK, RELOAD, ARM_SIGN, SIGN, ARM_SIGNATURE, SIGNATURE, SIGNED_RELOAD,
-        DELIVERY_READBACK, DELIVERY_RELOAD, ARM_PUBLICATION, PUT, DELIVERY_EVIDENCE, ARM_COMPLETE, COMPLETE, PENDING_RELOAD, CLOSED,
+        DELIVERY_READBACK, DELIVERY_RELOAD, ARM_PUBLICATION, PUT, DELIVERY_EVIDENCE, ARM_COMPLETE, COMPLETE, PENDING_RELOAD,
+        PROJECT_CAPTURE, PROJECT_RECHECK, ARM_PROJECT, PROJECT, PROJECTED_RELOAD, CLOSED,
     }
+
+    /** Never returned or accepted by another owner. Its original released input/proof/snapshot/lease stay bound for one dispatch. */
+    private class ProjectionGrant(
+        val operation: CatalogTestRunActivationOperationV1,
+        val input: CatalogTestRunActivationInputV1,
+        val snapshot: CatalogTestRunActivationSnapshotV1,
+        val proof: CatalogTestRunActivationDeliveryReadbackV1,
+        val lease: CatalogTestRunActivationLeaseV1,
+    ) { var spent = false }
 
     companion object {
         private const val LEASE_NANOS = 30_000_000_000L
@@ -1139,6 +1371,28 @@ internal class CatalogTestRunCompletedPendingV1 private constructor(
             val (input, signed, completed) = original.completedReceiptInput()
             return CatalogTestRunCompletedPendingV1(input.token, input.scope, input.generation, HexFormat.of().formatHex(input.unsignedHash()),
                 signed.envelopeSha256, completed.objectVersion, completed.completedAt)
+        }
+    }
+}
+
+/** Historical diagnostic only. ACTIVE rows and this receipt cannot issue credentials, enable routing or reopen gates. */
+internal class CatalogTestRunProjectedV1 private constructor(
+    val operationToken: UUID,
+    val dataScopeId: UUID,
+    val generation: Long,
+    val unsignedSha256: String,
+    val envelopeSha256: String,
+    val objectVersion: String,
+    val completedAt: Instant,
+    val projectedAt: Instant,
+) {
+    override fun toString(): String = "CatalogTestRunProjectedV1(exact-historical-effect,no-admission-or-reopen-authority,redacted)"
+
+    companion object {
+        internal fun issuedBy(original: CatalogTestRunActivationV1): CatalogTestRunProjectedV1 {
+            val (input, signed, completed) = original.projectedReceiptInput()
+            return CatalogTestRunProjectedV1(input.token, input.scope, input.generation, HexFormat.of().formatHex(input.unsignedHash()),
+                signed.envelopeSha256, completed.objectVersion, completed.completedAt, checkNotNull(completed.projectedAt))
         }
     }
 }

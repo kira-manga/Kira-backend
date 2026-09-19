@@ -82,8 +82,17 @@ internal class CatalogTestRunActivationReleaseV1(
 
     internal fun requireDeliverySnapshot(snapshot: CatalogTestRunActivationSnapshotV1) {
         requireDeliveryPrefix()
+        requireNoProjectionLeaves()
         requireTestActivation(snapshot.control.custodyBytes().contentEquals(global) && snapshot.history.custodyPrefixHash() == binding[8])
         snapshot.requireDelivery(input, checkNotNull(returned))
+        requireTestActivation(snapshot.control.leaseToken >= historicalLease().token)
+    }
+
+    /** Separate completed-only branch; the original global preimage is never replaced with target TEST full D. */
+    internal fun requireProjectionSnapshot(snapshot: CatalogTestRunActivationSnapshotV1) {
+        requireDeliveryPrefix()
+        requireTestActivation(snapshot.control.custodyBytes().contentEquals(global) && snapshot.history.custodyPrefixHash() == binding[8])
+        snapshot.requireProjection(input, checkNotNull(returned))
         requireTestActivation(snapshot.control.leaseToken >= historicalLease().token)
     }
 
@@ -93,6 +102,7 @@ internal class CatalogTestRunActivationReleaseV1(
     /** Exact global SQL preimage and full history prefix, never the not-yet-created target D substituted for global D. */
     internal fun requireSnapshot(snapshot: CatalogTestRunActivationSnapshotV1) {
         requireConnectionFree()
+        requireNoProjectionLeaves()
         requireTestActivation(snapshot.control.custodyBytes().contentEquals(global) && snapshot.history.custodyPrefixHash() == binding[8])
         val prepared = snapshot.history.size.toLong() == input.generation
         snapshot.requireExpected(input, prepared, if (snapshot.signedTail == null) null else checkNotNull(returned))
@@ -103,6 +113,11 @@ internal class CatalogTestRunActivationReleaseV1(
         }
         if (persisted != null || outcome != null) requireTestActivation(snapshot.signedTail != null)
         if (!created) requireTestActivation(prepared && snapshot.control.leaseToken >= historicalLease().token)
+    }
+
+    private fun requireNoProjectionLeaves() {
+        requireTestActivation(custody.read(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED) == null &&
+            custody.read(CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME) == null)
     }
 
     internal fun requireAcquisition(value: CatalogTestRunActivationLeaseV1) {

@@ -123,6 +123,7 @@ internal class PreparedActivationRows(
     ))
     private val inserted = mutableListOf<UUID>()
     private var ownsPrepared = false
+    private var ownsProjectionRows = false
     val http = S3CatalogReadbackFixture()
     val intent = CatalogTestRunActivationEvidenceFixture.manifestBytes(evidence.manifest)
 
@@ -140,6 +141,22 @@ internal class PreparedActivationRows(
     /** Isolation ownership only, retained before the genuine unsigned or signed PREPARE can commit or fail. */
     fun retainPreparedToken() {
         ownsPrepared = true
+    }
+
+    /** Test isolation only, before PROJECT can create its exact signed scope/notice subjects. */
+    fun retainProjectionRows() {
+        check(ownsPrepared && !ownsProjectionRows)
+        val scope = evidence.journal.scope.id
+        val notices = evidence.manifest.activationRecord.run.noticeSeeds.map { UUID.fromString(it.resourceId) }
+        for (table in listOf("complaint_test_runs", "complaint_journal_control")) {
+            check(observer.queryForObject("SELECT count(*) FROM $table WHERE data_scope_id = ?", Long::class.java, scope) == 0L)
+        }
+        for (table in listOf("complaint_resource_ids", "complaints")) {
+            check(observer.queryForObject("SELECT count(*) FROM $table WHERE data_scope_id = ? OR id IN (?, ?)", Long::class.java,
+                scope, notices[0], notices[1]) == 0L)
+        }
+        check(observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ?", Long::class.java, scope) == 0L)
+        ownsProjectionRows = true
     }
 
     fun reload(owner: CatalogTestRunActivationV1): CatalogTestRunPreparedV1 =
@@ -293,6 +310,20 @@ internal class PreparedActivationRows(
                 "(SELECT $columns FROM jsonb_populate_record(NULL::complaint_journal_control, ?::jsonb)) WHERE data_scope_id = ?",
             originalControl, live,
         ))
+        if (ownsProjectionRows) {
+            // SignedActivationObservation closes all original actors before this outer rows owner.
+            // Never truncate or delete a foreign scope/subject; this is not a production purge.
+            val scope = evidence.journal.scope.id
+            val notices = evidence.manifest.activationRecord.run.noticeSeeds.map { UUID.fromString(it.resourceId) }
+            observer.update(
+                "DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND entity_id IN (?, ?, ?, ?)",
+                scope, notices[0].toString(), notices[1].toString(), scope.toString(), token.toString(),
+            )
+            observer.update("DELETE FROM complaints WHERE data_scope_id = ? AND id IN (?, ?)", scope, notices[0], notices[1])
+            observer.update("DELETE FROM complaint_resource_ids WHERE data_scope_id = ? AND id IN (?, ?)", scope, notices[0], notices[1])
+            observer.update("DELETE FROM complaint_journal_control WHERE data_scope_id = ? AND test_only", scope)
+            observer.update("DELETE FROM complaint_test_runs WHERE data_scope_id = ? AND test_only", scope)
+        }
         if (ownsPrepared) observer.update("DELETE FROM complaint_catalog_mutations WHERE operation_token = ?", token)
         inserted.asReversed().forEach { observer.update("DELETE FROM complaint_catalog_mutations WHERE operation_token = ?", it) }
     }

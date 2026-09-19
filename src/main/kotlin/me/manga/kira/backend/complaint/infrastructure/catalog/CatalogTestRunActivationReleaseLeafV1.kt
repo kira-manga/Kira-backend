@@ -3,7 +3,7 @@ package me.manga.kira.backend.complaint.infrastructure.catalog
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationProtocol
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 
-/** One closed TEST freeze/delivery inventory. No rotation, PROJECT, issuer or later-run leaves. */
+/** One closed first-TEST freeze/delivery/PROJECT inventory. No rotation, issuer or later-run leaves. */
 internal enum class CatalogTestRunActivationReleaseLeafV1(internal val fileName: String, internal val maximumBytes: Int) {
     APPROVED_INTENT("approved-intent", OfflineCatalogTestRunActivationProtocol.MAX_DOCUMENT_BYTES),
     FULL_CONFIGURATION("full-configuration", 524288),
@@ -31,6 +31,8 @@ internal enum class CatalogTestRunActivationReleaseLeafV1(internal val fileName:
     COMPLETE_ARMED("complete-armed", 1024),
     COMPLETE_OUTCOME("complete-outcome", 1024),
     PENDING_RELOAD_OUTCOME("pending-reload-outcome", 1024),
+    PROJECT_ARMED("project-armed", 1024),
+    PROJECT_OUTCOME("project-outcome", 1024),
 }
 
 internal enum class CatalogTestRunActivationCustodyObservationV1 { CREATED, IDENTICAL_OBSERVED }

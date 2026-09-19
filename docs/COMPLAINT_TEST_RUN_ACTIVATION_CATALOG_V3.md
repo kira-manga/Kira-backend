@@ -218,18 +218,30 @@ or globally lowered to the schema3 document cap.
 
 ## Deferred producers and verification
 
-`CatalogFrozenManifestParser`, `CatalogLocalSnapshotVerifier`'s frozen mutation
-paths, `JdbcCatalogSnapshotReader`, scoped control/acceptance observations,
-PREPARED recovery, durable gate/preflight, complete-history ID uniqueness,
-mutation/projection, SQL capacity transfer, namespace/current-state registration,
-phase/custody/issuer and runtime composition remain closed to this profile.
-Observing a valid signed generation is not permission to issue a TEST credential
-or enable a journal prefix. Legacy migration is excluded; new-backend backup and
-journal recovery obligations remain.
+The separate, dormant `CatalogTestRunActivationV1` owner now has source paths for
+PREPARE/signature custody, conditional PRIMARY publication, COMPLETE/pending and
+`projectCompleted`. PROJECT starts a fresh original owner, verifies two genuinely
+read and cleaned schema3 dual-copy rounds around locked capture/recheck, and spends
+a private one-use grant. Its single transaction creates one run, one closed TEST
+control, two resource IDs, two SYSTEM notices and four fixed SYSTEM audits; it pays
+the exact projection charge and unused terminal reserve, marks the mutation and
+clears its pending token. PREPARE is not charged again. Exact cold reconciliation
+requires original custody, the full effect and exact capacity balances; it does not
+rewrite domain/catalog/counter rows or manufacture an older missing outcome.
 
-This MAIN-only source cohort requires independent tests/review: canonical/history
-goldens, original schema1/2 rejection regressions, valid rotated and inventory
-prefixes, stale signer/overlap/history/inventory/D/J/accounting/notice substitution,
-exact/one-over bounds, and raw dual-copy/missing/divergent/checksum/retention/close
-failures using the existing fixtures. No build, test, analyzer, runtime or provider
-verification is asserted by this document.
+These are **unvalidated source paths**, not activation or release readiness. The
+original schema1/2 readers (`CatalogFrozenManifestParser`, `CatalogLocalSnapshotVerifier`
+and `JdbcCatalogSnapshotReader`) are not generalized into schema3 authority.
+Namespace/current-state registration, credential issuance, routing, reopening and
+runtime composition remain separate unfinished producers. Both maintenance and
+creation gates stay closed after PROJECT. An ACTIVE row or historical diagnostic
+receipt grants none of these capabilities and cannot repair an original uncertain
+commit or cleanup failure. Legacy migration remains excluded; new-backend backup,
+installation-credential recovery and journal recovery obligations remain.
+
+Focused projection/recovery test source accompanies the implementation, but no
+compilation, test, analyzer, runtime or provider PASS is asserted here. Independent
+actual-diff review and the pending predecessor/projection checks remain required.
+Genuine committed-UNKNOWN PROJECT transport loss is still an unauthored material
+test gap; deferred-constraint rollback and known-COMMITTED callback failure are
+not substitutes. Platform/provider qualification is not inferred from fixtures.

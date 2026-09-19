@@ -29,6 +29,9 @@ internal enum class CatalogTestRunActivationKindV1(val path: PersistencePhasePat
     DELIVERY_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD),
     COMPLETE(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE),
     PENDING_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD),
+    PROJECT_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT_RELOAD),
+    PROJECT(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT),
+    PROJECTED_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD),
 }
 
 /** Detached exact input for ONE selected phase. Only its original owner can construct or spend it. */
@@ -43,12 +46,14 @@ internal class CatalogTestRunActivationInputV1 private constructor(
     internal val signed: CatalogTestRunActivationSignedV1?,
     internal val delivering: Boolean,
     internal val deliveryProof: CatalogTestRunActivationDeliveryReadbackV1?,
+    internal val projecting: Boolean,
 ) {
     val path: PersistencePhasePath get() = kind.path
     val requiresEpochFence: Boolean get() = kind === CatalogTestRunActivationKindV1.PREPARE || kind === CatalogTestRunActivationKindV1.PREPARED_RELOAD ||
         kind === CatalogTestRunActivationKindV1.SIGNATURE || kind === CatalogTestRunActivationKindV1.SIGNED_RELOAD ||
         kind === CatalogTestRunActivationKindV1.DELIVERY_RELOAD || kind === CatalogTestRunActivationKindV1.COMPLETE ||
-        kind === CatalogTestRunActivationKindV1.PENDING_RELOAD
+        kind === CatalogTestRunActivationKindV1.PENDING_RELOAD || kind === CatalogTestRunActivationKindV1.PROJECT_RELOAD ||
+        kind === CatalogTestRunActivationKindV1.PROJECT || kind === CatalogTestRunActivationKindV1.PROJECTED_RELOAD
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) = original.requireInput(this, ownership, jdbc)
 
@@ -60,7 +65,7 @@ internal class CatalogTestRunActivationInputV1 private constructor(
             original.requireInputConstruction(kind)
             return CatalogTestRunActivationInputV1(
                 original, kind, original.frozenInput(), original.expectedSnapshot(), original.currentLease(), original.acquisitionOwner(), original.recovering(),
-                original.signedInput(), original.delivering(), original.deliveryProofInput(),
+                original.signedInput(), original.delivering(), original.deliveryProofInput(), original.projecting(),
             )
         }
     }
@@ -106,6 +111,15 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
         storedManifest.activationRecord.run.noticeSeeds[1].noticeKey, runHash, storedManifest.activationRecord.run.installationLimit,
         generation, Timestamp.from(Instant.ofEpochSecond(storedManifest.creation.createdAtEpochSecond)),
     )
+    // Only the original retained full-D declaration creates these detached values, before checkout.
+    private val projectionValues: Array<Any?> = arrayOf(
+        scope, runHash, storedManifest.activationRecord.run.installationLimit, generation,
+        storedManifest.activationRecord.run.desiredGeneration, storedManifest.activationRecord.run.implementationSchema,
+        databaseIdentity, restoreIdentity, eventWriter, catalogWriter, HexFormat.of().parseHex(currentTrustHash),
+        noticeIds[0], storedManifest.activationRecord.run.noticeSeeds[0].noticeKey,
+        noticeIds[1], storedManifest.activationRecord.run.noticeSeeds[1].noticeKey,
+        reserve.toLongArray().joinToString(",", "{", "}"),
+    )
 
     fun manifest(): OfflineCatalogTestRunActivationManifestV3 = storedManifest.snapshot()
     fun unsignedBytes(): ByteArray = unsigned.copyOf()
@@ -113,11 +127,17 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
     fun predecessorHashBytes(): ByteArray = predecessorDigest.copyOf()
     fun approvalBytes(): ByteArray = approvals.copyOf()
     fun capacityDigest(): ByteArray = policyDigest.copyOf()
+    fun projectionNoticeIds(): List<UUID> = noticeIds.toList()
 
     /** Fixed fourteen V14 PREPARED columns, assembled before checkout. No JDBC Array/stream/JSON parsing under locks. */
     fun preparedArguments(): Array<Any?> = copyArguments(preparedValues)
 
     fun preflightArguments(): Array<Any?> = copyArguments(preflightValues)
+
+    fun projectionArguments(signed: CatalogTestRunActivationSignedV1, at: Instant): Array<Any?> {
+        check(signed.frozen === this)
+        return copyArguments(projectionValues) + arrayOf(HexFormat.of().parseHex(signed.envelopeSha256), Timestamp.from(at), token)
+    }
 
     private fun copyArguments(values: Array<Any?>): Array<Any?> = values.map { value ->
         when (value) {
