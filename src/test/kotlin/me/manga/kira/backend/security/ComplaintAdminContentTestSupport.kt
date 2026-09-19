@@ -15,11 +15,13 @@ internal fun adminContentTestIngress(
     perHour: Int = 60,
     policy: ComplaintAdmissionPolicy = admissionTestPolicy(),
     content: ComplaintAdminContentAdmissionPolicy = ComplaintAdminContentAdmissionPolicy.Bounded(capacity, members, prune, perHour),
+    status: ComplaintAdminStatusAdmissionPolicy = ComplaintAdminStatusAdmissionPolicy.Disabled,
 ): ComplaintIngressAdmission = ComplaintIngressAdmission(
     ClientIpResolver(KiraSecurityProperties()), policy, admissionTestKeys(), clock,
     editPolicy = ComplaintOwnerEditAdmissionPolicy.Bounded(capacity, members, prune),
     adminReadPolicy = ComplaintAdminReadAdmissionPolicy.Bounded(),
     adminContentPolicy = content,
+    adminStatusPolicy = status,
 )
 
 internal fun adminContentTestRequest(

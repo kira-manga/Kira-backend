@@ -13,9 +13,12 @@ object ComplaintStateMachine {
         ComplaintStatus.NOT_PLANNED,
     )
 
+    /** The HTTP target vocabulary and the locked transition share this one policy. */
+    fun isStatusTarget(target: ComplaintStatus): Boolean = target in statusTargets
+
     fun transition(current: ComplaintModerationState, target: ComplaintStatus): ComplaintModerationState {
         requireMutable(current)
-        if (target !in statusTargets) throw ComplaintRuleException(ComplaintRuleCode.INVALID_STATUS_TARGET)
+        if (!isStatusTarget(target)) throw ComplaintRuleException(ComplaintRuleCode.INVALID_STATUS_TARGET)
         if (current.status == target) throw ComplaintRuleException(ComplaintRuleCode.NO_CHANGE)
         return current.copy(status = target, version = nextVersion(current), closure = null)
     }

@@ -3,8 +3,10 @@ package me.manga.kira.backend.complaint.catalog
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
+import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
@@ -65,6 +67,7 @@ internal class SignedActivationObservation(
     val signing = AwsJournalKmsFixture()
     val signatures = mutableListOf<ByteArray>()
     var beforeSign: () -> Unit = {}
+    var additionalCleanupObservation: () -> Unit = {}
     private val assertion = AtomicReference<AssertionError?>()
     private val probes = linkedMapOf<VersionBoundPersistenceConnectedFixture, CatalogSignerRotationProbeJdbc>()
     private val originals = mutableListOf<CatalogTestRunActivationV1>()
@@ -138,6 +141,18 @@ internal class SignedActivationObservation(
         ).also(originals::add)
     }
 
+    fun beginDelivery(
+        selected: VersionBoundPersistenceConnectedFixture,
+        putFactory: () -> SdkHttpClient,
+        readbackFactory: () -> SdkHttpClient,
+        process: VersionBoundTestNamespaceProcessV1 = if (selected === tls) rows.evidence.process else rows.evidence.processOn(selected.pools),
+    ): CatalogTestRunActivationV1 {
+        probe(selected)
+        return CatalogTestRunActivationV1.withDeliveryHttpFixtures(
+            process, CatalogTestRunActivationEvidenceFixture.INSTALLATION_LIMIT, putFactory, readbackFactory, WALL_CLOCK,
+        ).also(originals::add)
+    }
+
     fun freeze(original: CatalogTestRunActivationV1, bytes: ByteArray = rows.intent, releaseRoot: Path = root): CatalogTestRunSignedPreparedV1 {
         rows.retainPreparedToken() // Before even a failed COMMIT can make this exact operation durable.
         return original.prepareAndFreeze(releaseRoot, bytes, AwsJournalKmsFixture.CREDENTIALS,
@@ -147,11 +162,15 @@ internal class SignedActivationObservation(
     fun recover(original: CatalogTestRunActivationV1, bytes: ByteArray = rows.intent, releaseRoot: Path = root): CatalogTestRunSignedPreparedV1 =
         original.recoverSignature(releaseRoot, bytes, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
 
-    fun withFreshOwner(action: (VersionBoundPersistenceConnectedFixture) -> Unit) {
-        tls.close() // End the actual original root before opening the new graph.
+    fun withFreshOwner(
+        previous: VersionBoundPersistenceConnectedFixture = tls,
+        nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
+        action: (VersionBoundPersistenceConnectedFixture) -> Unit,
+    ) {
+        previous.close() // End the actual original root before opening the new graph.
         rows.awaitRealLeaseExpiry() // No SQL backdating, replacement lease result or old budget revival.
         VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true).use { fresh ->
-            fresh.bind()
+            fresh.bind(nanoClock = nanoClock)
             probe(fresh)
             fresh.startCatalogTestRunActivation()
             action(fresh)
@@ -279,6 +298,7 @@ internal class SignedActivationObservation(
         val disposed = originals.map { original -> runCatching {
             runCatching(original::close)
             (ownedCutField(original, "assembly") as? AutoCloseable)?.let { runCatching(it::close) }
+            (ownedCutField(original, "deliveryAssembly") as? AutoCloseable)?.let { runCatching(it::close) }
             (ownedCutField(original, "custody") as? AutoCloseable)?.let { custody ->
                 runCatching(custody::close) // Only its actual retained handles; no state/receipt reset or replacement owner.
                 val files: Any = poolTestField(custody, "files")
@@ -293,6 +313,7 @@ internal class SignedActivationObservation(
             releasedSql()
             assertEquals(signing.createdClients, signing.closedClients)
             assertEquals(rows.http.createdClients, rows.http.closedClients)
+            additionalCleanupObservation()
             assertNoLostAssertions()
         }
         val removed = runCatching {

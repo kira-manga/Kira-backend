@@ -332,6 +332,7 @@ internal class CatalogSignerRotationProbeJdbc(
             (observeTestActivationQueries && sql in setOf(
                 CatalogTestRunActivationSqlV1.readHistory, CatalogTestRunActivationSqlV1.lockHistory,
                 CatalogTestRunActivationSqlV1.readSignedHistory, CatalogTestRunActivationSqlV1.lockSignedHistory,
+                CatalogTestRunActivationSqlV1.readCompletedHistory, CatalogTestRunActivationSqlV1.lockCompletedHistory,
             ))
         ) {
             observed(sql, args) { super.query(sql, rse, *args) }
@@ -436,6 +437,9 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
@@ -478,6 +482,13 @@ internal class CatalogSignerRotationProbeJdbc(
         CatalogTestRunActivationSqlV1.lockSignedHistory -> "test-signed-history-lock"
         CatalogTestRunActivationSqlV1.readPreparedTail -> "test-prepared-tail"
         CatalogTestRunActivationSqlV1.persistSignature -> "test-signature"
+        CatalogTestRunActivationSqlV1.readDeliveryControl -> "test-delivery-control-read"
+        CatalogTestRunActivationSqlV1.lockDeliveryControl -> "test-delivery-control-lock"
+        CatalogTestRunActivationSqlV1.readDeliveryTail -> "test-delivery-tail"
+        CatalogTestRunActivationSqlV1.readCompletedHistory -> "test-completed-history-read"
+        CatalogTestRunActivationSqlV1.lockCompletedHistory -> "test-completed-history-lock"
+        CatalogTestRunActivationSqlV1.complete -> "test-complete"
+        CatalogTestRunActivationSqlV1.markPending -> "test-mark-pending"
         else -> null
     }
 

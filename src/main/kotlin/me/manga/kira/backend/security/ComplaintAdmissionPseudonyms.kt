@@ -1,6 +1,7 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusTuple
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
@@ -33,6 +34,18 @@ internal object ComplaintAdmissionPseudonyms {
         listOf(
             domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
             ascii(ComplaintAdminContentTuple.OPERATION), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
+        ),
+    )
+
+    /** Status and closure share ONE actor+scope allowance, distinct from the existing ADMIN_EDIT bucket. */
+    fun adminStatusActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii("ADMIN_STATUS_CLOSURE")))
+
+    fun adminStatusMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintAdminStatusTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
+            ascii(tuple.operation.name), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
         ),
     )
 

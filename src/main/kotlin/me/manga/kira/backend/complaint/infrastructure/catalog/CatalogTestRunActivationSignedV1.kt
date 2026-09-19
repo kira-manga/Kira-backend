@@ -25,6 +25,7 @@ internal class CatalogTestRunActivationSignedV1 private constructor(
     fun signatureBytes(): ByteArray = signature.copyOf()
     fun envelopeBytes(): ByteArray = envelope.copyOf()
     fun signatureArguments(): Array<Any?> = arrayOf(signature.copyOf(), envelope.copyOf(), envelopeDigest.copyOf())
+    fun deliveryControlArguments(): Array<Any?> = arrayOf(frozen.generation - 1L, frozen.predecessorHashBytes(), frozen.generation, envelopeDigest.copyOf(), frozen.token)
 
     /** Byte comparison only, including under the fixed SQL lock. Parsing/crypto already happened connection-free. */
     fun requireExact(actualSignature: ByteArray, actualEnvelope: ByteArray, actualHash: ByteArray) {

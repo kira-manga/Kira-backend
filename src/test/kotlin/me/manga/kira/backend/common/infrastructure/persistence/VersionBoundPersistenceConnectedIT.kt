@@ -28,6 +28,9 @@ import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryLeas
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryProviderCut
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoverySqlCut
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationBoundaryCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationCompletionBoundaryCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationCompletionCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationCompletionRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationPreparedCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRecoveryCases
@@ -50,6 +53,13 @@ import me.manga.kira.backend.complaint.catalog.HeldSealStopCut
 import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.TestActivationCustodyCut
+import me.manga.kira.backend.complaint.catalog.TestActivationCompleteLifecycleCut
+import me.manga.kira.backend.complaint.catalog.TestActivationCompleteSqlCut
+import me.manga.kira.backend.complaint.catalog.TestActivationCompletionCopyCut
+import me.manga.kira.backend.complaint.catalog.TestActivationDeliveryBoundaryCut
+import me.manga.kira.backend.complaint.catalog.TestActivationDeliveryRaceCut
+import me.manga.kira.backend.complaint.catalog.TestActivationPendingReplayCut
+import me.manga.kira.backend.complaint.catalog.TestActivationPutUnreturnedCut
 import me.manga.kira.backend.complaint.catalog.TestActivationRefusalCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedCorruptionCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedInputCut
@@ -1005,6 +1015,79 @@ class VersionBoundPersistenceConnectedIT {
     fun testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows() {
         TestActivationSignedCorruptionCut.entries.forEach { cut ->
             withFixture(testActivation = true) { CatalogTestRunActivationSignedCases.coldCorruptionRefusesWithoutRepair(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload() {
+        for (prefix in listOf(ActivationEvidencePrefix.GENESIS, ActivationEvidencePrefix.ROTATED, ActivationEvidencePrefix.INVENTORY_ROTATED)) {
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionCases.stablePrefixAndColdPending(it, prefix) }
+        }
+    }
+
+    @Test
+    fun testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput() = withFixture(testActivation = true) {
+        CatalogTestRunActivationCompletionCases.lostAcknowledgementLagAndReadOnlyRecovery(it)
+    }
+
+    @Test
+    fun testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared() = withFixture(testActivation = true) {
+        CatalogTestRunActivationCompletionCases.acknowledgedReplicaLagKeepsItsArmAndPendingReloadCannotAdoptPrepared(it)
+    }
+
+    @Test
+    fun testActivationConflictingRawCopiesNeverCompleteOrReput() {
+        TestActivationCompletionCopyCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionCases.rawCopyConflictsNeverCompleteOrReput(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup() {
+        TestActivationPutUnreturnedCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionRecoveryCases.unreturnedPutArmCannotRepublish(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair() {
+        TestActivationCompleteSqlCut.entries.forEach { cut ->
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionRecoveryCases.completeSqlGapsRecoverWithoutOldOutcomeRepair(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationCompletionBudgetCancellationAndFileCleanupStayClosed() {
+        TestActivationCompleteLifecycleCut.entries.forEach { cut ->
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionRecoveryCases.originalBudgetCancellationAndFileCleanupCannotRevive(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion() = withFixture(testActivation = true) {
+        CatalogTestRunActivationCompletionBoundaryCases.unsignedDiagnosticCannotPublish(it)
+    }
+
+    @Test
+    fun testActivationDeliveryRefusesLiveLeaseUnarmedRecoveryFullDGlobalDAndSignedRowDrift() {
+        TestActivationDeliveryBoundaryCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionBoundaryCases.prePutRefusal(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion() {
+        TestActivationDeliveryRaceCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionBoundaryCases.postPutBindingRace(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple() {
+        TestActivationPendingReplayCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationCompletionBoundaryCases.pendingReloadRefusesChangedExactPair(it, cut) }
         }
     }
 

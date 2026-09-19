@@ -410,6 +410,7 @@ internal enum class OwnerCreateFixtureStep {
     RESOURCE,
     CONTENT,
     EDIT_CONTENT,
+    ADMIN_STATUS_CHANGE,
     COMPLETE,
 }
 
@@ -464,6 +465,7 @@ internal class OwnerCreateFixtureJdbc(private val fixture: ComplaintOwnerCreateF
         sql.startsWith("INSERT INTO complaint_resource_ids") -> OwnerCreateFixtureStep.RESOURCE
         sql.contains("INSERT INTO complaints") -> OwnerCreateFixtureStep.CONTENT
         sql.contains("UPDATE complaints SET subject") || sql.contains("UPDATE complaints SET type = ?, subject = ?, body = ?") -> OwnerCreateFixtureStep.EDIT_CONTENT
+        sql.contains("UPDATE complaints SET status = ?") -> OwnerCreateFixtureStep.ADMIN_STATUS_CHANGE
         sql.contains("UPDATE complaint_idempotency_receipts") -> OwnerCreateFixtureStep.COMPLETE
         else -> null
     }

@@ -22,8 +22,10 @@ internal class CatalogTestRunActivationSnapshotV1(
     val control: CatalogTestRunActivationControlV1,
     val history: CatalogTestRunActivationHistoryV1,
     val signedTail: CatalogTestRunActivationSignedTailV1? = null,
+    val completedTail: CatalogTestRunActivationCompletedTailV1? = null,
 ) {
     internal fun requireExpected(input: CatalogTestRunActivationFrozenV1, prepared: Boolean, signed: CatalogTestRunActivationSignedV1? = null) {
+        check(completedTail == null)
         control.requirePredecessor(input)
         history.requireExpected(input.generation, prepared, signed != null)
         if (signed == null) check(signedTail == null) else {
@@ -37,6 +39,14 @@ internal class CatalogTestRunActivationSnapshotV1(
         control.requireSame(other.control, closed)
         history.requireSame(other.history)
         if (signedTail == null) check(other.signedTail == null) else signedTail.requireSame(checkNotNull(other.signedTail))
+        if (completedTail == null) check(other.completedTail == null) else completedTail.requireSame(checkNotNull(other.completedTail))
+    }
+
+    internal fun requireDelivery(input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1) {
+        check(signed.frozen === input)
+        checkNotNull(signedTail).requireExact(signed)
+        history.requireExpected(input.generation, prepared = true, signed = true, completed = completedTail != null)
+        control.requireDelivery(input, signed, completedTail != null)
     }
 
     override fun toString(): String = "CatalogTestRunActivationSnapshotV1(detached,no-authority)"
@@ -53,18 +63,35 @@ internal class CatalogTestRunActivationControlV1 private constructor(
     private val catalogWriter: UUID,
     private val trustHash: String,
     val leaseToken: Long,
+    val pendingToken: UUID?,
 ) {
     fun requirePredecessor(input: CatalogTestRunActivationFrozenV1) {
+        check(pendingToken == null)
         check(head.generation == input.generation - 1L && head.envelopeSha256 == input.predecessorHash && catalogWriter == input.catalogWriter)
         check(databaseIdentity == input.databaseIdentity && restoreIdentity == input.restoreIdentity && eventWriter == input.eventWriter)
         check(trustHash == input.currentTrustHash)
     }
 
     fun requireSame(other: CatalogTestRunActivationControlV1, closed: Boolean) {
-        check(core == other.core)
+        check(core == other.core && head == other.head && pendingToken == other.pendingToken)
         if (closed) check(maintenanceClosed && creationClosed) else {
             check(maintenanceClosed == other.maintenanceClosed && creationClosed == other.creationClosed)
         }
+    }
+
+    fun requireDelivery(input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1, completed: Boolean) {
+        check(maintenanceClosed && creationClosed && catalogWriter == input.catalogWriter && trustHash == input.currentTrustHash)
+        check(databaseIdentity == input.databaseIdentity && restoreIdentity == input.restoreIdentity && eventWriter == input.eventWriter)
+        if (completed) {
+            check(head.generation == input.generation && head.envelopeSha256 == signed.envelopeSha256 && pendingToken == input.token)
+        } else requirePredecessor(input)
+    }
+
+    /** The delivery query normalizes ONLY head/hash/pending to the original predecessor for this byte comparison. */
+    fun requireCompletionTransition(before: CatalogTestRunActivationControlV1, input: CatalogTestRunActivationFrozenV1, signed: CatalogTestRunActivationSignedV1) {
+        check(core == before.core && before.maintenanceClosed && before.creationClosed)
+        requireDelivery(input, signed, completed = true)
+        before.requireDelivery(input, signed, completed = before.pendingToken != null)
     }
 
     /** Private exact global preimage only, deliberately distinct from the target full-D configuration. */
@@ -87,6 +114,7 @@ internal class CatalogTestRunActivationControlV1 private constructor(
                 row.getObject("event_writer_generation", UUID::class.java), checkNotNull(row.getObject("catalog_writer_generation", UUID::class.java)),
                 HexFormat.of().formatHex(checkNotNull(row.getBytes("trust_bundle_hash"))),
                 row.requiredTestActivationLong("lease_token"),
+                row.getObject("pending_projection_token", UUID::class.java),
             )
         }
     }
@@ -145,17 +173,19 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
     val size: Int,
     private val prepared: Boolean,
     private val signed: Boolean,
+    private val completed: Boolean,
     private val digest: ByteArray,
     private val predecessorDigest: ByteArray,
     private val rawBindings: ByteArray?,
     private val retainedUntilMicros: LongArray?,
 ) {
-    fun requireExpected(generation: Long, prepared: Boolean, signed: Boolean = false) {
-        check(this.prepared == prepared && this.signed == signed && size.toLong() == generation - 1L + (if (prepared) 1L else 0L))
+    fun requireExpected(generation: Long, prepared: Boolean, signed: Boolean = false, completed: Boolean = false) {
+        check(this.prepared == prepared && this.signed == signed && this.completed == completed &&
+            size.toLong() == generation - 1L + (if (prepared) 1L else 0L))
     }
 
     fun requireSame(other: CatalogTestRunActivationHistoryV1) {
-        check(size == other.size && prepared == other.prepared && signed == other.signed && digest.contentEquals(other.digest))
+        check(size == other.size && prepared == other.prepared && signed == other.signed && completed == other.completed && digest.contentEquals(other.digest))
     }
 
     fun requireUnchangedPrefix(before: CatalogTestRunActivationHistoryV1, appended: Boolean) {
@@ -167,8 +197,14 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
     }
 
     fun requireSignatureTransition(before: CatalogTestRunActivationHistoryV1) {
-        check(prepared && signed && before.prepared && size == before.size && predecessorDigest.contentEquals(before.predecessorDigest))
+        check(prepared && signed && !completed && !before.completed && before.prepared && size == before.size && predecessorDigest.contentEquals(before.predecessorDigest))
         if (before.signed) requireSame(before) // Exact signed replay changes neither tail nor any historical column.
+    }
+
+    fun requireCompletionTransition(before: CatalogTestRunActivationHistoryV1) {
+        check(prepared && signed && completed && before.prepared && before.signed && size == before.size &&
+            predecessorDigest.contentEquals(before.predecessorDigest))
+        if (before.completed) requireSame(before)
     }
 
     internal fun custodyPrefixHash(): String {
@@ -225,7 +261,7 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
         private const val HISTORY_DOMAIN = "kira-test-activation-sql-history-v1"
 
         /** JDBC's original ResultSet is consumed to exhaustion; no List<Row>, signature or textual preimage escapes. */
-        fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean, signed: Boolean = false): CatalogTestRunActivationHistoryV1 {
+        fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean, signed: Boolean = false, completed: Boolean = false): CatalogTestRunActivationHistoryV1 {
             val predecessorCount = Math.toIntExact(input.generation - 1L)
             val bindings = if (retainRaw) ByteArray(Math.multiplyExact(predecessorCount, HASH_BYTES)) else null
             val retention = if (retainRaw) LongArray(predecessorCount) else null
@@ -259,9 +295,10 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
             }
             check(count in predecessorCount..input.maximumGenerations)
             check(!signed || prepared)
+            check(!completed || signed)
             all.update(long(count.toLong()))
             prefix.update(long(predecessorCount.toLong()))
-            return CatalogTestRunActivationHistoryV1(count, prepared, signed, all.digest(), prefix.digest(), bindings, retention)
+            return CatalogTestRunActivationHistoryV1(count, prepared, signed, completed, all.digest(), prefix.digest(), bindings, retention)
         }
 
         private fun historyDigest(): MessageDigest = MessageDigest.getInstance("SHA-256").apply { update(HISTORY_DOMAIN.toByteArray(Charsets.UTF_8)) }

@@ -51,4 +51,7 @@ object ComplaintCapacityCharges {
 
     // Same prepaid installation content lifecycle, but a distinct typed ADMIN_EDIT producer/allocation.
     val ADMIN_EDIT: ComplaintCapacityVector = NORMAL_RECEIPT + AUDIT
+
+    // Status and closure share a distinct typed allocation; the prepaid content envelope includes all closure bytes.
+    val ADMIN_STATUS: ComplaintCapacityVector = NORMAL_RECEIPT + AUDIT
 }

@@ -18,6 +18,9 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackFailure
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogSigningExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogSigningFailureV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogPrimaryPutAcknowledgementV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogPrimaryPutExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.aws.CatalogPrimaryPutFailureV1
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
@@ -32,9 +35,9 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Original cold TEST owner for released snapshot/readback/lease/PREPARE and one explicitly durable freeze path.
- * The old prepare/reload diagnostic path has no Sign custody. Neither path has PUT, COMPLETED, PROJECT,
- * reopening, a run issuer or any global provider/ingress-drain assertion.
+ * Original cold TEST owner for PREPARE/freeze and separately armed delivery to COMPLETED/pending.
+ * Old diagnostic receipts grant no Sign or PUT. No path has PROJECT, reopening, a run issuer,
+ * registration or any global provider/ingress-drain assertion.
  */
 @Suppress("TooManyFunctions", "LargeClass")
 internal class CatalogTestRunActivationV1 private constructor(
@@ -44,6 +47,7 @@ internal class CatalogTestRunActivationV1 private constructor(
     readbackFactory: (() -> SdkHttpClient)?,
     private val clock: Clock,
     signingFactory: (() -> SdkHttpClient)? = null,
+    putFactory: (() -> SdkHttpClient)? = null,
 ) : AutoCloseable {
     private val caller = Thread.currentThread()
     private val coordinator = process.pools.catalogCoordinator
@@ -57,10 +61,13 @@ internal class CatalogTestRunActivationV1 private constructor(
     internal val expectedDeclaration = CatalogTestRunActivationCanonicalV3.fromRetained(process, installationLimit)
     private val predecessor = CatalogTestRunActivationPredecessorV1(this, readbackFactory)
     private val assembly = CatalogTestRunActivationAssemblyV1(this, signingFactory)
+    private val deliveryAssembly = CatalogTestRunActivationDeliveryAssemblyV1(this, putFactory, readbackFactory, clock)
     private var stage = Stage.NEW
     private var entered = false
     private var recovering = false
     private var freezing = false
+    private var delivering = false
+    private var deliveryPublishing = false
     private var failed = false
     private var reserved = false
     private var released = false
@@ -91,8 +98,20 @@ internal class CatalogTestRunActivationV1 private constructor(
     private var signed: CatalogTestRunActivationSignedV1? = null
     private var signatureOperation: CatalogTestRunActivationOperationV1? = null
     private var signedReloadOperation: CatalogTestRunActivationOperationV1? = null
+    private var deliveryRelease: CatalogTestRunActivationDeliveryReleaseV1? = null
+    private var deliveryReadback: CatalogTestRunActivationDeliveryReadbackV1? = null
+    private var deliveryReloadOperation: CatalogTestRunActivationOperationV1? = null
+    private var publicationArmIssued = false
+    private var publicationArmed = false
+    private var putConstructionIssued = false
+    private var publicationAcknowledgement: CatalogPrimaryPutAcknowledgementV1? = null
+    private var completeArmIssued = false
+    private var completeArmed = false
+    private var completeOperation: CatalogTestRunActivationOperationV1? = null
+    private var pendingReloadOperation: CatalogTestRunActivationOperationV1? = null
     private var allowedResult = false
     private var allowedSignedResult = false
+    private var allowedCompletedResult = false
     private var lastWall: Instant? = null
     private var selectedKind: CatalogTestRunActivationKindV1? = null
     private var inputConstructionClaimed = false
@@ -132,6 +151,138 @@ internal class CatalogTestRunActivationV1 private constructor(
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
     ): CatalogTestRunSignedPreparedV1 = runSigned(true, releaseRoot, unsignedCanonicalBytes, null, primaryReadCredentials, replicaReadCredentials)
+
+    /** Existing original Sign custody only; one newly armed PRIMARY conditional PUT. Never re-Sign or PROJECT. */
+    fun deliverAndComplete(
+        releaseRoot: Path,
+        unsignedCanonicalBytes: ByteArray,
+        primaryPutCredentials: AwsSessionCredentials,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogTestRunCompletedPendingV1 = runDelivery(releaseRoot, unsignedCanonicalBytes, primaryPutCredentials, primaryReadCredentials, replicaReadCredentials)
+
+    /** Existing PUT arm and genuine raw dual copies only; there is no PUT/Sign credential or old receipt input. */
+    fun recoverCompletion(
+        releaseRoot: Path,
+        unsignedCanonicalBytes: ByteArray,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogTestRunCompletedPendingV1 = runDelivery(releaseRoot, unsignedCanonicalBytes, null, primaryReadCredentials, replicaReadCredentials)
+
+    /** Strict already-COMPLETED/pending replay. No prepared adoption, new PUT, Sign or projection. */
+    fun reloadPending(
+        releaseRoot: Path,
+        unsignedCanonicalBytes: ByteArray,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogTestRunCompletedPendingV1 = runDelivery(releaseRoot, unsignedCanonicalBytes, null, primaryReadCredentials, replicaReadCredentials, pendingOnly = true)
+
+    @Suppress("TooGenericExceptionCaught", "LongMethod")
+    private fun runDelivery(
+        root: Path,
+        bytes: ByteArray,
+        putCredentials: AwsSessionCredentials?,
+        primary: AwsSessionCredentials,
+        replica: AwsSessionCredentials,
+        pendingOnly: Boolean = false,
+    ): CatalogTestRunCompletedPendingV1 {
+        requireTestActivation(caller === Thread.currentThread(), CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
+        var success = false
+        var failure: Throwable? = null
+        try {
+            requireConnectionFree()
+            requireRunning()
+            requireTestActivation(!entered && stage === Stage.NEW)
+            entered = true
+            recovering = true // Only existing freeze custody and existing signed SQL; never another PREPARE or Sign.
+            delivering = true
+            deliveryPublishing = putCredentials != null
+            coordinator.catalogRefreshCustody.reserveTestRunActivation(this)
+            reserved = true
+            stage = Stage.CAPTURE
+            frozen = CatalogTestRunActivationFrozenV1.capture(this, bytes)
+            val allocation = openExistingCustody(root)
+            deliveryRelease = CatalogTestRunActivationDeliveryReleaseV1(this, checkNotNull(frozen), checkNotNull(signed),
+                checkNotNull(release), checkNotNull(custody), allocation, deliveryPublishing)
+            stage = Stage.SNAPSHOT
+            snapshotOperation = execute(CatalogTestRunActivationKindV1.SNAPSHOT)
+            originalSnapshot = checkNotNull(snapshotOperation).snapshot
+            expectedSnapshot = originalSnapshot
+            checkNotNull(deliveryRelease).requireSnapshot(checkNotNull(originalSnapshot))
+            requireTestActivation(!pendingOnly || originalSnapshot?.completedTail != null, CatalogTestRunActivationFailureV1.STATE_REFUSED)
+            requireSqlCleanup()
+            observeDelivery(primary, replica)
+            if (deliveryPublishing) {
+                requireTestActivation(checkNotNull(deliveryReadback).state === CatalogTestRunActivationDeliveryReadbackV1.State.UNPUBLISHED)
+            } else {
+                requireTestActivation(checkNotNull(deliveryReadback).state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY,
+                    CatalogTestRunActivationFailureV1.DELIVERY_PENDING)
+            }
+            stage = Stage.ACQUIRE
+            leaseOwner = UUID.randomUUID()
+            leaseStartedAtNanos = ownership.nanoClock.nanoTime()
+            leaseOperation = execute(CatalogTestRunActivationKindV1.LEASE_ACQUIRE)
+            lease = checkNotNull(leaseOperation).lease
+            requireActualLease()
+            checkNotNull(deliveryRelease).requireAcquisition(checkNotNull(lease))
+            stage = Stage.DELIVERY_RELOAD
+            deliveryReloadOperation = execute(CatalogTestRunActivationKindV1.DELIVERY_RELOAD)
+            expectedSnapshot = checkNotNull(deliveryReloadOperation).snapshot
+            checkNotNull(deliveryRelease).requireSnapshot(checkNotNull(expectedSnapshot))
+            if (deliveryPublishing) {
+                stage = Stage.ARM_PUBLICATION
+                publicationArmIssued = true
+                checkNotNull(deliveryRelease).armPublication(checkNotNull(deliveryReadback))
+                publicationArmed = true
+                stage = Stage.PUT
+                val acknowledgement = deliveryAssembly.put(checkNotNull(frozen), checkNotNull(signed), checkNotNull(putCredentials))
+                publicationAcknowledgement = acknowledgement
+                checkNotNull(deliveryRelease).acknowledged(acknowledgement)
+                observeDelivery(primary, replica)
+            }
+            stage = Stage.DELIVERY_EVIDENCE
+            val proof = checkNotNull(deliveryReadback)
+            if (proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.AWAIT_REPLICATION) {
+                checkNotNull(deliveryRelease).awaitReplication(proof)
+                throw CatalogTestRunActivationExceptionV1(CatalogTestRunActivationFailureV1.DELIVERY_PENDING)
+            }
+            requireTestActivation(proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY, CatalogTestRunActivationFailureV1.DELIVERY_PENDING)
+            checkNotNull(deliveryRelease).preserveDual(proof)
+            stage = Stage.ARM_COMPLETE
+            completeArmIssued = true
+            checkNotNull(deliveryRelease).armComplete(proof)
+            completeArmed = true
+            stage = Stage.COMPLETE
+            completeOperation = execute(CatalogTestRunActivationKindV1.COMPLETE)
+            expectedSnapshot = checkNotNull(completeOperation).snapshot
+            checkNotNull(deliveryRelease).completed(checkNotNull(expectedSnapshot))
+            stage = Stage.PENDING_RELOAD
+            pendingReloadOperation = execute(CatalogTestRunActivationKindV1.PENDING_RELOAD)
+            expectedSnapshot = checkNotNull(pendingReloadOperation).snapshot
+            checkNotNull(deliveryRelease).pendingReloaded(checkNotNull(expectedSnapshot))
+            requireActualLease()
+            requireSqlCleanup()
+            deliveryAssembly.requireProviderCleanup()
+            success = true
+        } catch (problem: Throwable) {
+            observeFailure(problem)
+            failed = true
+            failure = problem
+        } finally {
+            runCatching(::close).exceptionOrNull()?.let { failure = preferSignerRotationCleanup(failure, it) }
+        }
+        throwIfSignalled()
+        failure?.let { throw boundedTestActivationFailure(it) }
+        requireTestActivation(success)
+        allowedCompletedResult = true
+        return CatalogTestRunCompletedPendingV1.issuedBy(this)
+    }
+
+    private fun observeDelivery(primary: AwsSessionCredentials, replica: AwsSessionCredentials) {
+        stage = Stage.DELIVERY_READBACK
+        deliveryReadback = deliveryAssembly.observe(checkNotNull(originalSnapshot), checkNotNull(frozen), checkNotNull(signed), primary, replica)
+        checkNotNull(deliveryRelease).requireReadback(checkNotNull(deliveryReadback))
+    }
 
     @Suppress("TooGenericExceptionCaught", "LongMethod")
     private fun runSigned(
@@ -232,7 +383,7 @@ internal class CatalogTestRunActivationV1 private constructor(
         return CatalogTestRunSignedPreparedV1.issuedBy(this)
     }
 
-    private fun openExistingCustody(root: Path) {
+    private fun openExistingCustody(root: Path): ByteArray {
         stage = Stage.EXISTING_CUSTODY
         val held = CatalogTestRunActivationReleaseCustodyV1.retainExisting(root, budget)
         custody = held // Retained before any filesystem/native construction.
@@ -240,6 +391,7 @@ internal class CatalogTestRunActivationV1 private constructor(
         val binding = checkNotNull(held.read(CatalogTestRunActivationReleaseLeafV1.BINDING))
         release = CatalogTestRunActivationReleaseV1(this, checkNotNull(frozen), held, allocation, binding, created = false)
         signed = checkNotNull(release).returnedSignature()
+        return allocation
     }
 
     private fun allocateAndArmPrepare(root: Path) {
@@ -364,10 +516,17 @@ internal class CatalogTestRunActivationV1 private constructor(
                     (recovering && reloadOperation == null && expectedSnapshot === originalSnapshot && expectedSnapshot?.signedTail != null))
             CatalogTestRunActivationKindV1.SIGNED_RELOAD -> freezing && stage === Stage.SIGNED_RELOAD && signedReloadOperation == null &&
                 signatureOperation != null && signatureOperation?.snapshot === expectedSnapshot && signed != null && signatureSqlArmed
+            CatalogTestRunActivationKindV1.DELIVERY_RELOAD -> delivering && stage === Stage.DELIVERY_RELOAD && deliveryReloadOperation == null &&
+                leaseOperation != null && lease != null && signed != null && deliveryReadback != null && expectedSnapshot === originalSnapshot
+            CatalogTestRunActivationKindV1.COMPLETE -> delivering && stage === Stage.COMPLETE && completeOperation == null &&
+                completeArmIssued && completeArmed && signed != null && leaseOperation != null && lease != null &&
+                deliveryReloadOperation?.snapshot === expectedSnapshot && deliveryReadback?.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY
+            CatalogTestRunActivationKindV1.PENDING_RELOAD -> delivering && stage === Stage.PENDING_RELOAD && pendingReloadOperation == null &&
+                completeOperation != null && completeOperation?.snapshot === expectedSnapshot && signed != null && completeArmed
         }
         requireTestActivation(allowed, CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
         if (kind !== CatalogTestRunActivationKindV1.SNAPSHOT) {
-            predecessor.requireVerified(checkNotNull(originalSnapshot), checkNotNull(frozen))
+            requireRawVerified()
         }
         inputConstructionClaimed = true
     }
@@ -405,8 +564,16 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     internal fun signedInput(): CatalogTestRunActivationSignedV1? {
         requireInputValues()
-        requireTestActivation(signed == null || (freezing && signed?.frozen === frozen))
+        requireTestActivation(signed == null || ((freezing || delivering) && signed?.frozen === frozen))
         return signed
+    }
+
+    internal fun delivering(): Boolean { requireInputValues(); return delivering }
+
+    internal fun deliveryProofInput(): CatalogTestRunActivationDeliveryReadbackV1? {
+        requireInputValues()
+        requireTestActivation(deliveryReadback == null || delivering)
+        return deliveryReadback
     }
 
     internal fun requireInput(input: CatalogTestRunActivationInputV1, candidate: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
@@ -414,7 +581,8 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireTestActivation(
             candidate === ownership && jdbc.dataSource === source && activeInput === input && input.original === this &&
                 input.kind === selectedKind && input.frozen === frozen && input.expected === expectedSnapshot && input.lease === lease &&
-                input.leaseOwner == leaseOwner && input.recovering == recovering && input.signed === signed && inputConstructionClaimed,
+                input.leaseOwner == leaseOwner && input.recovering == recovering && input.signed === signed && inputConstructionClaimed &&
+                input.delivering == delivering && input.deliveryProof === deliveryReadback,
             CatalogTestRunActivationFailureV1.PROCESS_REFUSED,
         )
     }
@@ -476,7 +644,11 @@ internal class CatalogTestRunActivationV1 private constructor(
                 requireInitialMaintenancePrepare(candidate)
                 gate.requireUnownedOpen()
             }
-            CatalogTestRunActivationKindV1.LEASE_ACQUIRE -> if (recovering) requirePreparedGate(gate) else gate.requireUnownedOpen()
+            CatalogTestRunActivationKindV1.LEASE_ACQUIRE -> when {
+                delivering -> requireDeliveryGate(gate)
+                recovering -> requirePreparedGate(gate)
+                else -> gate.requireUnownedOpen()
+            }
             CatalogTestRunActivationKindV1.PREPARED_RELOAD -> {
                 requireTestActivation(recovering || (preparedOperation != null && preparedSnapshot === expectedSnapshot))
                 requirePreparedGate(gate)
@@ -486,6 +658,11 @@ internal class CatalogTestRunActivationV1 private constructor(
                 requireActualLease()
                 requirePreparedGate(gate)
             }
+            CatalogTestRunActivationKindV1.DELIVERY_RELOAD, CatalogTestRunActivationKindV1.COMPLETE, CatalogTestRunActivationKindV1.PENDING_RELOAD -> {
+                requireTestActivation(delivering && signed != null && input.signed === signed && input.deliveryProof === deliveryReadback)
+                requireActualLease()
+                requireDeliveryGate(gate)
+            }
         }
     }
 
@@ -494,14 +671,32 @@ internal class CatalogTestRunActivationV1 private constructor(
         val input = checkNotNull(activeInput)
         requireTestActivation(candidate === ownership && originalPhase === PersistencePhaseOwnership.current() && phaseEntered && inputConstructionClaimed &&
             input.original === this && selectedKind === input.kind && input.path === path && input.frozen === frozen &&
-            input.expected === expectedSnapshot && input.lease === lease && input.recovering == recovering && input.signed === signed,
+            input.expected === expectedSnapshot && input.lease === lease && input.recovering == recovering && input.signed === signed &&
+            input.delivering == delivering && input.deliveryProof === deliveryReadback,
             CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
-        predecessor.requireVerified(checkNotNull(originalSnapshot), checkNotNull(frozen))
+        requireRawVerified()
     }
 
     private fun requirePreparedGate(gate: PersistenceComplaintMaintenanceGateV1) {
         val input = checkNotNull(frozen)
         requireTestActivation(gate.matchesPrepared(input.token, input.scope, input.unsignedBytes(), input.unsignedHash()), CatalogTestRunActivationFailureV1.STATE_REFUSED)
+    }
+
+    private fun requireDeliveryGate(gate: PersistenceComplaintMaintenanceGateV1) {
+        requireTestActivation(delivering && deliveryRelease != null && signed != null)
+        val input = checkNotNull(frozen)
+        val matches = if (checkNotNull(expectedSnapshot).completedTail != null) {
+            gate.matchesPending(input.token, input.scope, input.unsignedBytes(), input.unsignedHash())
+        } else gate.matchesPrepared(input.token, input.scope, input.unsignedBytes(), input.unsignedHash())
+        requireTestActivation(matches, CatalogTestRunActivationFailureV1.STATE_REFUSED)
+    }
+
+    private fun requireRawVerified() {
+        if (delivering) {
+            val proof = checkNotNull(deliveryReadback)
+            proof.requireSource(checkNotNull(originalSnapshot), checkNotNull(frozen), checkNotNull(signed))
+            deliveryAssembly.requireVerified(proof)
+        } else predecessor.requireVerified(checkNotNull(originalSnapshot), checkNotNull(frozen))
     }
 
     internal fun requireReadback(selected: CatalogTestRunActivationPredecessorV1, snapshot: CatalogTestRunActivationSnapshotV1, input: CatalogTestRunActivationFrozenV1) {
@@ -513,8 +708,12 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireConnectionFree()
         requireRunning()
         requireSqlCleanup()
-        requireTestActivation((stage === Stage.READBACK && leaseStartedAtNanos == null) ||
-            (stage === Stage.RECHECK_READBACK && freezing && !recovering && preparedOperation != null && prepareArmed && lease != null && !signReadbackRechecked),
+        requireTestActivation((!delivering && stage === Stage.READBACK && leaseStartedAtNanos == null) ||
+            (stage === Stage.RECHECK_READBACK && freezing && !recovering && preparedOperation != null && prepareArmed && lease != null && !signReadbackRechecked) ||
+            (delivering && stage === Stage.DELIVERY_READBACK && deliveryRelease != null && signed != null &&
+                ((leaseStartedAtNanos == null && deliveryReloadOperation == null) ||
+                    (deliveryPublishing && putConstructionIssued && publicationAcknowledgement != null && deliveryReloadOperation != null))) ||
+            (delivering && deliveryPublishing && stage === Stage.PUT && publicationArmed && putConstructionIssued && publicationAcknowledgement == null),
             CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
     }
 
@@ -522,14 +721,14 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireConnectionFree()
         requireRunning()
         requireSqlCleanup()
-        requireTestActivation(freezing)
+        requireTestActivation(freezing || delivering)
         return checkNotNull(expectedSnapshot)
     }
 
     internal fun custodyLease(): CatalogTestRunActivationLeaseV1 {
         requireConnectionFree()
         requireSqlCleanup()
-        requireTestActivation(freezing)
+        requireTestActivation(freezing || delivering)
         requireActualLease()
         return checkNotNull(lease)
     }
@@ -538,7 +737,7 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireConnectionFree()
         requireRunning()
         requireSqlCleanup()
-        requireTestActivation(freezing && custody === selected && frozen === input && release == null && created == !recovering &&
+        requireTestActivation((freezing || delivering) && custody === selected && frozen === input && release == null && created == !recovering &&
             ((created && stage === Stage.ALLOCATE && expectedSnapshot === originalSnapshot && lease != null) ||
                 (!created && stage === Stage.EXISTING_CUSTODY && snapshotOperation == null && lease == null)))
     }
@@ -606,6 +805,92 @@ internal class CatalogTestRunActivationV1 private constructor(
         requireRelease(selected)
         requireTestActivation(stage === Stage.SIGNED_RELOAD && signatureSqlArmed && signatureOperation != null && signedReloadOperation?.snapshot === snapshot &&
             expectedSnapshot === snapshot && snapshot.signedTail != null)
+    }
+
+    internal fun requireDeliveryReleaseCapture(
+        freeze: CatalogTestRunActivationReleaseV1,
+        selected: CatalogTestRunActivationReleaseCustodyV1,
+        input: CatalogTestRunActivationFrozenV1,
+        value: CatalogTestRunActivationSignedV1,
+        publishing: Boolean,
+    ) {
+        requireConnectionFree()
+        requireRunning()
+        requireSqlCleanup()
+        requireTestActivation(delivering && !freezing && recovering && stage === Stage.EXISTING_CUSTODY && release === freeze &&
+            custody === selected && frozen === input && signed === value && value.frozen === input &&
+            publishing == deliveryPublishing && deliveryRelease == null && snapshotOperation == null && lease == null)
+    }
+
+    internal fun requireDeliveryObservation(
+        selected: CatalogTestRunActivationDeliveryAssemblyV1,
+        snapshot: CatalogTestRunActivationSnapshotV1,
+        input: CatalogTestRunActivationFrozenV1,
+        value: CatalogTestRunActivationSignedV1,
+    ) {
+        requireProviderRunning()
+        requireTestActivation(deliveryAssembly === selected && stage === Stage.DELIVERY_READBACK &&
+            originalSnapshot === snapshot && snapshotOperation?.snapshot === snapshot && frozen === input && signed === value)
+    }
+
+    internal fun requireDeliveryProof(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
+        requireConnectionFree()
+        requireRunning()
+        requireSqlCleanup()
+        requireTestActivation(delivering && !freezing && deliveryRelease === selected && deliveryReadback === proof)
+        requireRawVerified()
+    }
+
+    private fun requireDeliveryRelease(selected: CatalogTestRunActivationDeliveryReleaseV1) {
+        requireDeliveryProof(selected, checkNotNull(deliveryReadback))
+        requireActualLease()
+    }
+
+    internal fun requirePublicationArm(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(stage === Stage.ARM_PUBLICATION && deliveryPublishing && publicationArmIssued && !publicationArmed &&
+            !putConstructionIssued && publicationAcknowledgement == null && proof === deliveryReadback &&
+            proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.UNPUBLISHED &&
+            deliveryReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail == null)
+    }
+
+    internal fun requirePutConstruction(selected: CatalogTestRunActivationDeliveryAssemblyV1, input: CatalogTestRunActivationFrozenV1, value: CatalogTestRunActivationSignedV1) {
+        requireDeliveryRelease(checkNotNull(deliveryRelease))
+        requireTestActivation(deliveryAssembly === selected && frozen === input && signed === value && stage === Stage.PUT && deliveryPublishing &&
+            publicationArmIssued && publicationArmed && !putConstructionIssued && publicationAcknowledgement == null &&
+            deliveryReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail == null)
+        putConstructionIssued = true // Spent before durable reread, budget checks, or native SDK/raw-client construction.
+        checkNotNull(deliveryRelease).consumePublicationArm()
+    }
+
+    internal fun requirePublicationAcknowledgement(selected: CatalogTestRunActivationDeliveryReleaseV1, value: CatalogPrimaryPutAcknowledgementV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(stage === Stage.PUT && deliveryPublishing && publicationArmed && putConstructionIssued && publicationAcknowledgement === value)
+        deliveryAssembly.requireAcknowledgement(value)
+    }
+
+    internal fun requireDeliveryEvidence(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(stage === Stage.DELIVERY_EVIDENCE && proof === deliveryReadback && deliveryReloadOperation?.snapshot === expectedSnapshot)
+    }
+
+    internal fun requireCompletionArm(selected: CatalogTestRunActivationDeliveryReleaseV1, proof: CatalogTestRunActivationDeliveryReadbackV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(stage === Stage.ARM_COMPLETE && completeArmIssued && !completeArmed && completeOperation == null &&
+            proof === deliveryReadback && proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY &&
+            deliveryReloadOperation?.snapshot === expectedSnapshot)
+    }
+
+    internal fun requireCompletedDelivery(selected: CatalogTestRunActivationDeliveryReleaseV1, snapshot: CatalogTestRunActivationSnapshotV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(stage === Stage.COMPLETE && completeArmed && completeOperation?.snapshot === snapshot &&
+            expectedSnapshot === snapshot && snapshot.completedTail != null)
+    }
+
+    internal fun requirePendingReload(selected: CatalogTestRunActivationDeliveryReleaseV1, snapshot: CatalogTestRunActivationSnapshotV1) {
+        requireDeliveryRelease(selected)
+        requireTestActivation(stage === Stage.PENDING_RELOAD && completeArmed && completeOperation != null &&
+            pendingReloadOperation?.snapshot === snapshot && expectedSnapshot === snapshot && snapshot.completedTail != null)
     }
 
     internal fun sampleWallTime(): Instant {
@@ -697,7 +982,7 @@ internal class CatalogTestRunActivationV1 private constructor(
         stage = Stage.CLOSED
         closeFailure = CatalogTestRunActivationExceptionV1(CatalogTestRunActivationFailureV1.CLEANUP_UNPROVEN)
         val outcomes = listOf(
-            runCatching(predecessor::close), runCatching(assembly::close), runCatching { custody?.close() },
+            runCatching(predecessor::close), runCatching(assembly::close), runCatching(deliveryAssembly::close), runCatching { custody?.close() },
             runCatching(::requireConnectionFree), runCatching(::requireSqlCleanup), runCatching(::throwIfSignalled),
             runCatching {
                 requireTestActivation(!Thread.currentThread().isInterrupted, CatalogTestRunActivationFailureV1.INTERRUPTED)
@@ -741,7 +1026,21 @@ internal class CatalogTestRunActivationV1 private constructor(
         return checkNotNull(frozen) to checkNotNull(signed)
     }
 
-    override fun toString(): String = if (freezing) {
+    internal fun completedReceiptInput(): Triple<CatalogTestRunActivationFrozenV1, CatalogTestRunActivationSignedV1, CatalogTestRunActivationCompletedTailV1> {
+        requireActualCleanup()
+        requireTestActivation(delivering && !freezing && allowedCompletedResult && released && closeFailure == null &&
+            pendingReloadOperation?.input?.original === this && pendingReloadOperation?.input?.kind === CatalogTestRunActivationKindV1.PENDING_RELOAD &&
+            pendingReloadOperation?.snapshot === expectedSnapshot && expectedSnapshot?.completedTail != null)
+        checkNotNull(completeOperation).requireReleased()
+        checkNotNull(pendingReloadOperation).requireReleased()
+        deliveryAssembly.requireProviderCleanup()
+        budget.remainingMillis(1)
+        return Triple(checkNotNull(frozen), checkNotNull(signed), checkNotNull(checkNotNull(expectedSnapshot).completedTail))
+    }
+
+    override fun toString(): String = if (delivering) {
+        "CatalogTestRunActivationV1(COMPLETED-pending-boundary,no-PROJECT-or-run-authority,redacted)"
+    } else if (freezing) {
         "CatalogTestRunActivationV1(signed-PREPARED-boundary,no-PUT-or-run-authority,redacted)"
     } else {
         "CatalogTestRunActivationV1(PREPARED-only,not-run-or-Sign-authority,redacted)"
@@ -749,7 +1048,8 @@ internal class CatalogTestRunActivationV1 private constructor(
 
     private enum class Stage {
         NEW, CAPTURE, EXISTING_CUSTODY, SNAPSHOT, READBACK, ACQUIRE, ALLOCATE, ARM_PREPARE, PREPARE,
-        RECHECK_READBACK, RELOAD, ARM_SIGN, SIGN, ARM_SIGNATURE, SIGNATURE, SIGNED_RELOAD, CLOSED,
+        RECHECK_READBACK, RELOAD, ARM_SIGN, SIGN, ARM_SIGNATURE, SIGNATURE, SIGNED_RELOAD,
+        DELIVERY_READBACK, DELIVERY_RELOAD, ARM_PUBLICATION, PUT, DELIVERY_EVIDENCE, ARM_COMPLETE, COMPLETE, PENDING_RELOAD, CLOSED,
     }
 
     companion object {
@@ -774,6 +1074,15 @@ internal class CatalogTestRunActivationV1 private constructor(
             readback: () -> SdkHttpClient,
             clock: Clock,
         ): CatalogTestRunActivationV1 = CatalogTestRunActivationV1(process, installationLimit, startBudget(process), readback, clock, signing)
+
+        /** Raw PUT/read-only seams only; no Sign credentials, returned proof or asserted cleanup. */
+        internal fun withDeliveryHttpFixtures(
+            process: VersionBoundTestNamespaceProcessV1,
+            installationLimit: Long,
+            put: () -> SdkHttpClient,
+            readback: () -> SdkHttpClient,
+            clock: Clock,
+        ): CatalogTestRunActivationV1 = CatalogTestRunActivationV1(process, installationLimit, startBudget(process), readback, clock, putFactory = put)
 
         private fun startBudget(process: VersionBoundTestNamespaceProcessV1): PersistenceTimeBudget {
             requireConnectionFree()
@@ -813,7 +1122,28 @@ internal class CatalogTestRunSignedPreparedV1 private constructor(
     }
 }
 
-internal enum class CatalogTestRunActivationFailureV1 { INPUT_REFUSED, PROCESS_REFUSED, STATE_REFUSED, TIME_BUDGET_EXHAUSTED, INTERRUPTED, CLEANUP_UNPROVEN }
+/** Diagnostic pending checkpoint only. No production API accepts this as PROJECT, registration, drain or reopen permission. */
+internal class CatalogTestRunCompletedPendingV1 private constructor(
+    val operationToken: UUID,
+    val dataScopeId: UUID,
+    val generation: Long,
+    val unsignedSha256: String,
+    val envelopeSha256: String,
+    val objectVersion: String,
+    val completedAt: Instant,
+) {
+    override fun toString(): String = "CatalogTestRunCompletedPendingV1(COMPLETED-pending,no-PROJECT-or-run-authority,redacted)"
+
+    companion object {
+        internal fun issuedBy(original: CatalogTestRunActivationV1): CatalogTestRunCompletedPendingV1 {
+            val (input, signed, completed) = original.completedReceiptInput()
+            return CatalogTestRunCompletedPendingV1(input.token, input.scope, input.generation, HexFormat.of().formatHex(input.unsignedHash()),
+                signed.envelopeSha256, completed.objectVersion, completed.completedAt)
+        }
+    }
+}
+
+internal enum class CatalogTestRunActivationFailureV1 { INPUT_REFUSED, PROCESS_REFUSED, STATE_REFUSED, DELIVERY_PENDING, TIME_BUDGET_EXHAUSTED, INTERRUPTED, CLEANUP_UNPROVEN }
 
 /** Bounded only: no SQL, provider, credential, approval or original diagnostic graph is attached. */
 internal class CatalogTestRunActivationExceptionV1(val code: CatalogTestRunActivationFailureV1) : RuntimeException("Catalog TEST activation refused: ${code.name}.")
@@ -836,6 +1166,7 @@ private fun boundedTestActivationFailure(problem: Throwable): CatalogTestRunActi
         problem is CatalogTestRunActivationCustodyExceptionV1 && problem.code === CatalogTestRunActivationCustodyFailureV1.CLEANUP_UNCERTAIN ->
             CatalogTestRunActivationFailureV1.CLEANUP_UNPROVEN
         problem is CatalogSigningExceptionV1 && problem.code === CatalogSigningFailureV1.CLOSE_FAILURE -> CatalogTestRunActivationFailureV1.CLEANUP_UNPROVEN
+        problem is CatalogPrimaryPutExceptionV1 && problem.code === CatalogPrimaryPutFailureV1.CLOSE_FAILURE -> CatalogTestRunActivationFailureV1.CLEANUP_UNPROVEN
         else -> CatalogTestRunActivationFailureV1.STATE_REFUSED
     }
     return CatalogTestRunActivationExceptionV1(code)

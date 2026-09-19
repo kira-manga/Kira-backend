@@ -57,13 +57,17 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
         )
-        val adminWriter = PersistencePhasePath.COMPLAINT_ADMIN_EDIT
-        val writers = oldWriters + testWriters + adminWriter
-        assertEquals(84, PersistencePhasePath.entries.size)
+        val adminWriters = setOf(PersistencePhasePath.COMPLAINT_ADMIN_EDIT, PersistencePhasePath.COMPLAINT_ADMIN_STATUS)
+        val writers = oldWriters + testWriters + adminWriters
+        assertEquals(89, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
-        assertEquals(5, testWriters.size)
-        assertEquals(46, writers.size)
+        assertEquals(8, testWriters.size)
+        assertEquals(2, adminWriters.size)
+        assertEquals(50, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -109,17 +113,19 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
             PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
             PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
+            PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT,
         )
         val snapshot = PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT
         assertEquals(30, oldObservations.size)
-        assertEquals(4, adminObservations.size)
-        assertEquals(35, (oldObservations + adminObservations + snapshot).size)
+        assertEquals(5, adminObservations.size)
+        assertEquals(36, (oldObservations + adminObservations + snapshot).size)
         assertEquals(oldObservations + adminObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
         assertEquals(testWriters + snapshot, PersistencePhasePath.entries.filter { it.catalogTestRunActivation }.toSet())
         assertTrue(snapshot.readOnly)
         assertFalse(testWriters.any { it.readOnly })
-        assertFalse(adminWriter.readOnly)
+        assertFalse(adminWriters.any { it.readOnly })
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)
+        assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT.readOnly)
     }
 
     @Test

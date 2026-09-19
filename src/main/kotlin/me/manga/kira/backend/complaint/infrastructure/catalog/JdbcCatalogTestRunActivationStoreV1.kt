@@ -10,7 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapa
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 
-/** Named TEST snapshot/row-only lease/PREPARE/signature/exact reload only. No publication or projection transition. */
+/** Named TEST snapshot/lease/PREPARE/signature/COMPLETE-pending SQL only. No provider or projection transition. */
 internal class JdbcCatalogTestRunActivationStoreV1(private val jdbc: JdbcTemplate) {
     fun execute(input: CatalogTestRunActivationInputV1, capacity: JdbcComplaintCapacityStore): CatalogTestRunActivationOperationV1 =
         CatalogTestRunActivationOperationV1.execute(jdbc, input, capacity)
@@ -58,6 +58,8 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
                 CatalogTestRunActivationKindV1.LEASE_ACQUIRE -> acquireLease()
                 CatalogTestRunActivationKindV1.PREPARE, CatalogTestRunActivationKindV1.PREPARED_RELOAD,
                 CatalogTestRunActivationKindV1.SIGNATURE, CatalogTestRunActivationKindV1.SIGNED_RELOAD -> prepareOrReload(capacity)
+                CatalogTestRunActivationKindV1.DELIVERY_RELOAD, CatalogTestRunActivationKindV1.COMPLETE,
+                CatalogTestRunActivationKindV1.PENDING_RELOAD -> completeOrReload(capacity)
             }
             requireRetained()
             stage = Stage.COMPLETE
@@ -71,7 +73,8 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
         check(input.expected == null && input.lease == null && input.leaseOwner == null)
         val control = readControl(lock = false)
         val value = readSnapshot(control, lock = false)
-        value.requireExpected(input.frozen, prepared = input.recovering, signed = expectedSignature(value))
+        if (input.delivering) value.requireDelivery(input.frozen, checkNotNull(input.signed))
+        else value.requireExpected(input.frozen, prepared = input.recovering, signed = expectedSignature(value))
         readControl(lock = false).requireSame(control, closed = false)
         requireAt(Stage.RETAINED)
         captured = value
@@ -84,7 +87,8 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
         val owner = checkNotNull(input.leaseOwner)
         val control = readControl(lock = true)
         control.requireSame(expected.control, closed = false)
-        control.requirePredecessor(input.frozen)
+        if (input.delivering) control.requireDelivery(input.frozen, checkNotNull(input.signed), expected.completedTail != null)
+        else control.requirePredecessor(input.frozen)
         stage = Stage.CONTROL_LOCKED
         val lease = jdbc.query(CatalogTestRunActivationSqlV1.acquireLease, { row, _ -> CatalogTestRunActivationLeaseV1.copy(row) }, owner).single()
         requireAt(Stage.CONTROL_LOCKED)
@@ -149,6 +153,67 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
         captured = after
     }
 
+    /** Existing exact signed TEST only: shared M -> E -> global control -> fresh lease -> catalog/history -> counters. */
+    private fun completeOrReload(capacity: JdbcComplaintCapacityStore) {
+        check(input.delivering && input.recovering)
+        val signed = checkNotNull(input.signed)
+        val proof = checkNotNull(input.deliveryProof)
+        val completing = input.kind === CatalogTestRunActivationKindV1.COMPLETE
+        val pending = input.kind === CatalogTestRunActivationKindV1.PENDING_RELOAD
+        if (completing || pending) check(proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY)
+        val expected = checkNotNull(input.expected)
+        val control = readControl(lock = true)
+        control.requireSame(expected.control, closed = false)
+        control.requireDelivery(input.frozen, signed, expected.completedTail != null)
+        stage = Stage.CONTROL_LOCKED
+        requireCurrentLease()
+        check(jdbc.query(TRY_CATALOG_LOCK, { row, _ -> row.requiredTestActivationBoolean("locked") }).single())
+        requireAt(Stage.CONTROL_LOCKED)
+        stage = Stage.CATALOG_LOCKED
+        val before = readSnapshot(control, lock = true)
+        before.requireDelivery(input.frozen, signed)
+        before.requireSame(expected, closed = false)
+        before.completedTail?.requireExact(proof)
+        if (pending) check(before.completedTail != null)
+        lockedSnapshot = before
+        stage = Stage.HISTORY_LOCKED
+        requireProjectionPreflight()
+        val locked = capacity.lockForCatalogTestRunActivation(this)
+        requireAt(Stage.COUNTERS_LOCKING)
+        check(locked.belongsTo(this))
+        counters = locked
+        stage = Stage.SETTLING_COUNTERS
+        locked.settle(this) // Existing charge/fit checks only. No PREPARE, reserve, refund, daily update or projection charge.
+        requireAt(Stage.SETTLING_COUNTERS)
+        check(locked.settledFor(this))
+        stage = Stage.WRITING
+        requireCurrentLease()
+        if (completing && before.completedTail == null) {
+            check(jdbc.update(CatalogTestRunActivationSqlV1.complete,
+                *proof.completionArguments(), *input.frozen.preparedArguments(), *signed.signatureArguments()) == 1)
+            requireAt(Stage.WRITING)
+            requireCurrentLease()
+            check(jdbc.update(CatalogTestRunActivationSqlV1.markPending,
+                *signed.deliveryControlArguments(), *checkNotNull(input.lease).arguments()) == 1)
+        }
+        // Exact already-completed replay performs NO UPDATE, preserving timestamp, row bytes and xmin.
+        requireAt(Stage.WRITING)
+        stage = Stage.REREADING
+        val after = readSnapshot(readControl(lock = false), lock = false)
+        after.requireDelivery(input.frozen, signed)
+        if (completing) {
+            checkNotNull(after.completedTail).requireExact(proof)
+            after.control.requireCompletionTransition(before.control, input.frozen, signed)
+            after.history.requireCompletionTransition(before.history)
+            checkNotNull(after.signedTail).requireSame(checkNotNull(before.signedTail))
+            before.completedTail?.let { checkNotNull(after.completedTail).requireSame(it) }
+        } else after.requireSame(before, closed = false)
+        requireProjectionPreflight()
+        requireCurrentLease()
+        requireAt(Stage.REREADING)
+        captured = after
+    }
+
     private fun requireProjectionPreflight() {
         requireRetained()
         check(jdbc.query(CatalogTestRunActivationSqlV1.preflight, { row, _ -> row.requiredTestActivationBoolean("allowed") }, *input.frozen.preflightArguments()).single())
@@ -157,9 +222,13 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
 
     private fun readControl(lock: Boolean): CatalogTestRunActivationControlV1 {
         requireRetained()
+        val sql = if (input.delivering) {
+            if (lock) CatalogTestRunActivationSqlV1.lockDeliveryControl else CatalogTestRunActivationSqlV1.readDeliveryControl
+        } else if (lock) CatalogTestRunActivationSqlV1.lockControl else CatalogTestRunActivationSqlV1.readControl
         val value = jdbc.query(
-            if (lock) CatalogTestRunActivationSqlV1.lockControl else CatalogTestRunActivationSqlV1.readControl,
+            sql,
             { row, _ -> CatalogTestRunActivationControlV1.copy(row) },
+            *(if (input.delivering) checkNotNull(input.signed).deliveryControlArguments() else emptyArray<Any?>()),
         ).single()
         requireRetained()
         return value
@@ -172,6 +241,16 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
     }
 
     private fun readSnapshot(control: CatalogTestRunActivationControlV1, lock: Boolean): CatalogTestRunActivationSnapshotV1 {
+        if (input.delivering) {
+            val signed = checkNotNull(input.signed)
+            requireRetained()
+            val tail = jdbc.query(
+                CatalogTestRunActivationSqlV1.readDeliveryTail, { row, _ -> CatalogTestRunActivationDeliveryTailV1.copy(row, signed) },
+                *input.frozen.preparedArguments(), *signed.signatureArguments(), input.frozen.generation,
+            ).single()
+            requireRetained()
+            return CatalogTestRunActivationSnapshotV1(control, readHistory(lock, signed = true, completed = tail.completed), tail.signed, tail.completed)
+        }
         val tail = input.signed?.let { signed ->
             requireRetained()
             jdbc.query(
@@ -185,21 +264,26 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
     private fun expectedSignature(snapshot: CatalogTestRunActivationSnapshotV1): CatalogTestRunActivationSignedV1? =
         if (snapshot.signedTail == null) null else checkNotNull(input.signed)
 
-    private fun readHistory(lock: Boolean, signed: Boolean): CatalogTestRunActivationHistoryV1 {
+    private fun readHistory(lock: Boolean, signed: Boolean, completed: CatalogTestRunActivationCompletedTailV1? = null): CatalogTestRunActivationHistoryV1 {
         requireRetained()
         check(jdbc.fetchSize == CatalogTestRunActivationHistoryV1.FETCH_ROWS)
-        val sql = if (signed) {
+        val sql = if (completed != null) {
+            check(input.delivering && signed)
+            if (lock) CatalogTestRunActivationSqlV1.lockCompletedHistory else CatalogTestRunActivationSqlV1.readCompletedHistory
+        } else if (signed) {
             if (lock) CatalogTestRunActivationSqlV1.lockSignedHistory else CatalogTestRunActivationSqlV1.readSignedHistory
         } else {
             if (lock) CatalogTestRunActivationSqlV1.lockHistory else CatalogTestRunActivationSqlV1.readHistory
         }
         val arguments = input.frozen.preparedArguments() +
-            (if (signed) checkNotNull(input.signed).signatureArguments() else emptyArray<Any?>()) + arrayOf<Any?>(input.frozen.maximumGenerations + 1)
+            (if (signed) checkNotNull(input.signed).signatureArguments() else emptyArray<Any?>()) +
+            (completed?.arguments() ?: emptyArray<Any?>()) + arrayOf<Any?>(input.frozen.maximumGenerations + 1)
         val rows = checkNotNull(
             jdbc.query(
                 sql,
                 ResultSetExtractor { result ->
-                    CatalogTestRunActivationHistoryV1.read(result, input.frozen, retainRaw = input.kind === CatalogTestRunActivationKindV1.SNAPSHOT, signed = signed)
+                    CatalogTestRunActivationHistoryV1.read(result, input.frozen, retainRaw = input.kind === CatalogTestRunActivationKindV1.SNAPSHOT,
+                        signed = signed, completed = completed != null)
                 },
                 *arguments,
             ),
@@ -236,7 +320,7 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
         check(stage === expected)
     }
 
-    override fun toString(): String = "CatalogTestRunActivationOperationV1(original-signed-PREPARED-only,no-publication-or-run-authority)"
+    override fun toString(): String = "CatalogTestRunActivationOperationV1(original-TEST-COMPLETE-pending,no-provider-or-run-authority)"
 
     private enum class Stage { RETAINED, CONTROL_LOCKED, CATALOG_LOCKED, HISTORY_LOCKED, COUNTERS_LOCKING, SETTLING_COUNTERS, WRITING, REREADING, COMPLETE, FAILED }
 

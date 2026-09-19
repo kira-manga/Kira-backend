@@ -72,6 +72,24 @@ internal class CatalogTestRunActivationReleaseV1(
 
     internal fun returnedSignature(): CatalogTestRunActivationSignedV1 = checkNotNull(returned)
 
+    /** Existing original Sign custody only. Missing old outcome receipts are not manufactured by delivery. */
+    internal fun requireDeliveryPrefix() {
+        requireConnectionFree()
+        requireTestActivation(!created)
+        requireReturnedPrefix()
+        requireExact(CatalogTestRunActivationReleaseLeafV1.SIGNATURE_SQL_ARMED, checkNotNull(signatureSqlArm).bytes)
+    }
+
+    internal fun requireDeliverySnapshot(snapshot: CatalogTestRunActivationSnapshotV1) {
+        requireDeliveryPrefix()
+        requireTestActivation(snapshot.control.custodyBytes().contentEquals(global) && snapshot.history.custodyPrefixHash() == binding[8])
+        snapshot.requireDelivery(input, checkNotNull(returned))
+        requireTestActivation(snapshot.control.leaseToken >= historicalLease().token)
+    }
+
+    internal fun deliveryLeaseFloor(): Long = historicalLease().token
+    internal fun deliveryHistoricalOwners(): Set<UUID> = setOf(originalLease.owner, historicalLease().owner)
+
     /** Exact global SQL preimage and full history prefix, never the not-yet-created target D substituted for global D. */
     internal fun requireSnapshot(snapshot: CatalogTestRunActivationSnapshotV1) {
         requireConnectionFree()

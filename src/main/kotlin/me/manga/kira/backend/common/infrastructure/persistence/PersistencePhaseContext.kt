@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import jakarta.persistence.EntityManager
 import me.manga.kira.backend.audit.infrastructure.ComplaintAuditSelectedHolder
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusTuple
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -24,6 +25,7 @@ import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.SessionPreflightResult
 import me.manga.kira.backend.complaint.domain.SessionRefreshResult
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminStatusMutation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationDeletionPreflightOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationSessionOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
@@ -75,6 +77,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSnapshotReadOperation
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.security.ComplaintAdmittedAdminContent
+import me.manga.kira.backend.security.ComplaintAdmittedAdminStatus
 import me.manga.kira.backend.security.ComplaintAdmittedEnrollmentWrite
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerCreate
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDeleteAll
@@ -197,6 +200,7 @@ constructor(
     internal val ownerDetail: PersistenceOwnerDetail = OwnerDetailBoundary()
     internal val adminRead: PersistenceComplaintAdminRead = AdminReadBoundary()
     internal val adminContent: PersistenceComplaintAdminContent = AdminContentBoundary()
+    internal val adminStatus: PersistenceComplaintAdminStatus = AdminStatusBoundary()
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerEdit: PersistenceOwnerEdit = OwnerEditBoundary()
     internal val ownerDelete: PersistenceOwnerDelete = OwnerDeleteBoundary()
@@ -246,7 +250,8 @@ constructor(
                 testRunActivation != null || path.complaintMaintenanceWriter
         val adminReadCommitted = path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION ||
             path === PersistencePhasePath.COMPLAINT_ADMIN_SEARCH || path === PersistencePhasePath.COMPLAINT_ADMIN_DETAIL ||
-                path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT
+                path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT ||
+                path === PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
             setName(path.name)
             timeout = 2
@@ -638,6 +643,10 @@ constructor(
         PersistencePhasePath.COMPLAINT_ADMIN_EDIT,
         -> adminContent.completed()
 
+        PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT,
+        PersistencePhasePath.COMPLAINT_ADMIN_STATUS,
+        -> adminStatus.completed()
+
         PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
         PersistencePhasePath.COMPLAINT_OWNER_CREATE,
@@ -691,6 +700,9 @@ constructor(
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
         -> catalogTestRunActivation.completed()
 
         PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST -> signedGenesisFirstDesired.completed()
@@ -1314,6 +1326,9 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -2373,6 +2388,88 @@ constructor(
         }
 
         override fun requireCommitted(operation: ComplaintAdminContentOperation) {
+            if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true && (!write || claimed)
+    }
+
+    /** Fixed ADMIN_STATUS/ADMIN_CLOSURE only; content/read capabilities cannot substitute this producer. */
+    private inner class AdminStatusBoundary : PersistenceComplaintAdminStatus {
+        private var issued = false
+        private var retained: ComplaintAdminStatusMutation? = null
+        private val admissionIdentity = Any()
+        private var admission: ComplaintAdmittedAdminStatus? = null
+        private var claimed = false
+        private var boundsChecked = false
+        private val write: Boolean get() = path === PersistencePhasePath.COMPLAINT_ADMIN_STATUS
+
+        override fun bindStatus(handoff: ComplaintAdmittedAdminStatus) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || !write || admission != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            admission = handoff
+            ComplaintIngressAdmission.bindAdminStatus(handoff, admissionIdentity)
+        }
+
+        override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            if (expected !in setOf(
+                    PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT,
+                    PersistencePhasePath.COMPLAINT_ADMIN_STATUS,
+                )
+            ) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            requireStepUpResource(jdbc, expected)
+            if (issued || (write && admission == null)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun claimStatus(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate, tuple: ComplaintAdminStatusTuple) {
+            requireRetained(operation, jdbc)
+            if (!write || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.claimAdminStatus(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, tuple)
+            claimed = true
+        }
+
+        override fun checkGrantWrite(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (!write || !claimed || boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkAdminStatusClaim(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity)
+        }
+
+        override fun checkStatusBounds(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger) {
+            requireRetained(operation, jdbc)
+            if (!claimed || boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkAdminStatusBounds(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity, ledger)
+            boundsChecked = true
+        }
+
+        override fun checkStatusWrite(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (!claimed || !boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkAdminStatusWrite(admission ?: refuse(PersistencePhaseFailureCode.WORK_FAILED), admissionIdentity)
+        }
+
+        override fun entityManager(operation: ComplaintAdminStatusMutation, jdbc: JdbcTemplate): EntityManager {
+            checkStatusWrite(operation, jdbc)
+            return createdEntityManager ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintAdminStatusMutation) {
             if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             requireSuccessfulResult()
         }

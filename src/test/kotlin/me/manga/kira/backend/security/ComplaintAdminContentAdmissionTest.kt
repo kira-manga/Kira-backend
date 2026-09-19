@@ -3,6 +3,8 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusOperation
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusTuple
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityBalance
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityConfiguration
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
@@ -108,6 +110,152 @@ class ComplaintAdminContentAdmissionTest {
     }
 
     @Test
+    fun statusAndClosureShareOneLowerableHourButNotContentQuotaWhileAllThreeUseTheOriginalFiniteStores() {
+        assertEquals(60, ComplaintAdminStatusAdmissionPolicy.Bounded(policy, 2, 1).perHour)
+        for (limit in listOf(-1, 0, 61, Int.MAX_VALUE)) {
+            assertThrows<IllegalArgumentException> { ComplaintAdminStatusAdmissionPolicy.Bounded(policy, 2, 1, limit) }
+        }
+        val defaults = Counters()
+        repeat(60) { defaults.status(statusTuple(if (it % 2 == 0) STATUS else CLOSURE), 0) }
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { defaults.status(statusTuple(), 0) }
+        val counters = Counters(perHour = 2)
+        val content = tuple()
+        val transition = statusTuple(original = content)
+        val closure = statusTuple(CLOSURE, content)
+        counters.status(transition, 0)
+        repeat(20) { counters.status(transition, 1) }
+        counters.status(closure, 1) // Same key/target/digest, different operation: never dedup as the first intent.
+        val denied = statusTuple()
+        assertEquals(3600L, admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { counters.status(denied, 1) }.retryAfterSeconds)
+        counters.admin(content, 1)
+        counters.admin(tuple(), 1)
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { counters.admin(tuple(), 1) }
+        counters.status(statusTuple(original = tuple(selectedActor = UUID.randomUUID())), 1)
+        counters.status(statusTuple(original = tuple(selectedScope = ComplaintDataScope.of(UUID.randomUUID()))), 1)
+        val hour = ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS
+        assertEquals(1L, admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { counters.status(denied, hour - 1) }.retryAfterSeconds)
+        counters.status(denied, hour)
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { counters.status(statusTuple(), hour) }
+        counters.status(statusTuple(), hour + 1)
+
+        val keys = counters.ring.keys()
+        val variants = listOf(
+            transition, closure,
+            statusTuple(original = tuple(selectedActor = UUID.randomUUID(), key = content.key, target = content.targetId)),
+            statusTuple(original = tuple(selectedScope = ComplaintDataScope.of(UUID.randomUUID()), key = content.key, target = content.targetId)),
+            statusTuple(original = tuple(key = UUID.randomUUID(), target = content.targetId)),
+            statusTuple(original = tuple(key = content.key, target = UUID.randomUUID())),
+            statusTuple(original = tuple(key = content.key, target = content.targetId, digest = ByteArray(32) { 9 })),
+        ).map { ComplaintAdmissionPseudonyms.adminStatusMember(keys, it) }
+        assertEquals(variants.size, variants.toSet().size)
+        assertNotEquals(variants.first(), ComplaintAdmissionPseudonyms.adminContentMember(keys, content))
+        val family = ComplaintAdmissionPseudonyms.adminStatusActor(keys, actor, scope)
+        assertNotEquals(family, ComplaintAdmissionPseudonyms.adminContentActor(keys, actor, scope))
+        assertNotEquals(family, ComplaintAdmissionPseudonyms.adminReadActor(keys, actor, scope))
+        assertNotEquals(family, ComplaintAdmissionPseudonyms.ownerEditDeleteActor(keys, ScopedInstallationId(actor, scope)))
+        assertTrue(variants.flatten().all { it.toString() == "ComplaintAdmissionBucketKey(redacted)" })
+        val rotated = Counters(perHour = 1)
+        rotated.status(transition, 0)
+        rotated.ring.rotate(admissionTestKey(3), 1)
+        rotated.status(transition, 2)
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { rotated.status(closure, 2) }
+
+        val owner = ComplaintOwnerEditTuple(ScopedInstallationId(actor, scope), UUID.randomUUID(), UUID.randomUUID(), ByteArray(32))
+        val sharedMembers = adminStatusTestIngress(members = 3, prune = 1)
+        admit(sharedMembers, content)
+        ownerAdmit(sharedMembers, owner)
+        statusAdmit(sharedMembers, transition)
+        statusAdmit(sharedMembers, transition)
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { statusAdmit(sharedMembers, closure) }
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { admit(sharedMembers, tuple()) }
+        val sharedEvents = adminStatusTestIngress(policy = admissionTestPolicy(semanticBuckets = 2, semanticEvents = 3))
+        statusAdmit(sharedEvents, transition)
+        admit(sharedEvents, content)
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { ownerAdmit(sharedEvents, owner) }
+        statusAdmit(sharedEvents, closure)
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { admit(sharedEvents, tuple()) }
+        statusAdmit(sharedEvents, transition)
+    }
+
+    @Test
+    fun moderationHandoffIsDefaultDisabledAndBoundToItsOriginalIngressThreadPhaseOperationTupleAndDeadline() {
+        val original = statusTuple()
+        val phase = Any()
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) {
+            ComplaintIngressAdmission.bindAdminStatus(object : ComplaintAdmittedAdminStatus {}, phase)
+        }
+        val disabled = adminContentTestIngress()
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { statusAdmit(disabled, original) }
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { statusAdmit(adminStatusTestIngress(clock = MutableAdmissionTestClock()), original) }
+        assertThrows<IllegalArgumentException> { adminStatusTestIngress(members = 1) }
+        assertThrows<IllegalArgumentException> {
+            adminStatusTestIngress(members = 2, status = ComplaintAdminStatusAdmissionPolicy.Bounded(policy, 3, 128))
+        }
+        val guard = adminStatusTestIngress()
+        val foreign = adminStatusTestIngress()
+        lateinit var retained: ComplaintAdmittedAdminStatus
+        guard.withIngress(adminStatusTestRequest(STATUS, scope, original.targetId)) { context ->
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { foreign.startAdminStatus(context) }
+            val resource = Any()
+            TransactionSynchronizationManager.bindResource(resource, Any())
+            try { assertThrows<PersistencePhaseException> { guard.startAdminStatus(context) } } finally {
+                TransactionSynchronizationManager.unbindResource(resource)
+            }
+            guard.startAdminStatus(context)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.admitAdminContent(context, tuple()) }
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.admitAdminStatus(ComplaintIngressContext(), original) }
+            retained = guard.admitAdminStatus(context, original)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.admitAdminStatus(context, original) }
+            OwnedCallerTestScope().use { callers ->
+                callers.launch { admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.bindAdminStatus(retained, phase) } }.value()
+            }
+            ComplaintIngressAdmission.bindAdminStatus(retained, phase)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.bindAdminStatus(retained, phase) }
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.checkAdminStatusClaim(retained, phase) }
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.claimAdminStatus(retained, Any(), original) }
+            val copied = ComplaintAdminStatusTuple(original.actor, original.scope, original.key, original.targetId, original.operation, original.fingerprintBytes())
+            assertTrue(original.matches(copied))
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.claimAdminStatus(retained, phase, copied) }
+            val wrongOperation = ComplaintAdminStatusTuple(original.actor, original.scope, original.key, original.targetId, CLOSURE, original.fingerprintBytes())
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.claimAdminStatus(retained, phase, wrongOperation) }
+            ComplaintIngressAdmission.claimAdminStatus(retained, phase, original)
+            ComplaintIngressAdmission.checkAdminStatusClaim(retained, phase)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.claimAdminStatus(retained, phase, original) }
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.checkAdminStatusWrite(retained, phase) }
+            val mismatched = ComplaintCapacityPolicyV1.of(policy.hardLimit, policy.creationLimit.with(ComplaintCapacityCounter.RESOURCE_IDS, 8_000_000), 100)
+            admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { ComplaintIngressAdmission.checkAdminStatusBounds(retained, phase, ledger(mismatched)) }
+            ComplaintIngressAdmission.checkAdminStatusBounds(retained, phase, ledger(policy))
+            ComplaintIngressAdmission.checkAdminStatusWrite(retained, phase)
+        }
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.checkAdminStatusWrite(retained, phase) }
+        guard.withIngress(adminContentTestRequest(scope, original.targetId)) { context ->
+            guard.startAdminContent(context)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.admitAdminStatus(context, original) }
+        }
+        val timed = adminStatusTestIngress(perHour = 1)
+        timed.withIngress(adminStatusTestRequest(STATUS, scope, original.targetId)) { context ->
+            timed.startAdminStatus(context)
+            val admitted = timed.admitAdminStatus(context, original)
+            val issuedAt = System.nanoTime()
+            ComplaintIngressAdmission.bindAdminStatus(admitted, phase)
+            while (System.nanoTime() - issuedAt < ComplaintAdmissionPolicy.ADMISSION_LIFETIME_NANOS) LockSupport.parkNanos(1_000_000)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.claimAdminStatus(admitted, phase, original) }
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ComplaintIngressAdmission.bindAdminStatus(admitted, Any()) }
+        }
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { statusAdmit(timed, statusTuple(CLOSURE)) }
+        statusAdmit(timed, original)
+    }
+
+    private fun statusTuple(operation: ComplaintAdminStatusOperation = STATUS, original: ComplaintAdminContentTuple = tuple()): ComplaintAdminStatusTuple =
+        ComplaintAdminStatusTuple(original.actor, original.scope, original.key, original.targetId, operation, original.fingerprintBytes())
+
+    private fun statusAdmit(guard: ComplaintIngressAdmission, tuple: ComplaintAdminStatusTuple) =
+        guard.withIngress(adminStatusTestRequest(tuple.operation, tuple.scope, tuple.targetId)) { context ->
+            guard.startAdminStatus(context)
+            guard.admitAdminStatus(context, tuple)
+        }
+
+    @Test
     fun defaultDisabledAndOriginalOneUseHandoffRejectForgeryDifferentOperationThreadPhaseTupleAndDeadlineRenewal() {
         val original = tuple()
         val phase = Any()
@@ -206,6 +354,7 @@ class ComplaintAdminContentAdmissionTest {
         val members = ComplaintMutationAdmissionMembers(memberLimit, prune)
         val quotas = ComplaintAdmissionWindowStore(4096, 131072, 128, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS, ComplaintAdmissionPolicy.SESSION_WINDOW_NANOS)
         private val admin = ComplaintAdminContentAdmissionStore(ComplaintAdminContentAdmissionPolicy.Bounded(ownerCreateTestCapacityPolicy(), memberLimit, prune, perHour), members)
+        private val status = ComplaintAdminStatusAdmissionStore(ComplaintAdminStatusAdmissionPolicy.Bounded(ownerCreateTestCapacityPolicy(), memberLimit, prune, perHour), members)
         private val owner = ComplaintOwnerEditAdmissionStore(ComplaintOwnerEditAdmissionPolicy.Bounded(ownerCreateTestCapacityPolicy(), memberLimit, prune), members)
 
         fun admin(tuple: ComplaintAdminContentTuple, now: Long) {
@@ -217,5 +366,15 @@ class ComplaintAdminContentAdmissionTest {
             val keys = ring.keys()
             owner.admit(ComplaintAdmissionPseudonyms.ownerEditMember(keys, tuple), ComplaintAdmissionPseudonyms.ownerEditDeleteActor(keys, tuple.installation), quotas, now)
         }
+
+        fun status(tuple: ComplaintAdminStatusTuple, now: Long) {
+            val keys = ring.keys()
+            status.admit(ComplaintAdmissionPseudonyms.adminStatusMember(keys, tuple), ComplaintAdmissionPseudonyms.adminStatusActor(keys, tuple.actor, tuple.scope), quotas, now)
+        }
+    }
+
+    private companion object {
+        val STATUS = ComplaintAdminStatusOperation.ADMIN_STATUS
+        val CLOSURE = ComplaintAdminStatusOperation.ADMIN_CLOSURE
     }
 }

@@ -12,6 +12,7 @@ import jakarta.servlet.http.HttpServletRequestWrapper
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.complaint.application.ComplaintAdminContentService
+import me.manga.kira.backend.complaint.application.ComplaintAdminStatusService
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentFailure
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentInput
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentPort
@@ -20,13 +21,26 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminContentRejected
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentRejection
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentRequest
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusFailure
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusFingerprint
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusInput
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusOperation
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusPort
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusRejected
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusRejection
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusRequest
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintReportTextRejected
+import me.manga.kira.backend.complaint.domain.ComplaintValidationException
 import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.adminContentTestIngress
 import me.manga.kira.backend.security.adminContentTestRequest
+import me.manga.kira.backend.security.adminStatusTestRequest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -274,6 +288,224 @@ class ComplaintAdminContentHttpTest {
         }
     }
 
+    @Test
+    fun statusAndClosureAcceptOnlyTheirExactSingleFieldAndStrongCanonicalTargetPrecondition() {
+        for (operation in ComplaintAdminStatusOperation.entries) {
+            val field = if (operation == STATUS) "status" else "reason"
+            val value = if (operation == STATUS) "PLANNED" else "key: opaque"
+            val valid = """{"$field":"$value"}"""
+            val invalid = listOf(
+                "{}", "[]", "null", body, "$valid {}", """{"$field":null}""", """{"$field":1}""",
+                """{"$field":{}}""", """{"$field":"$value","$field":"$value"}""",
+                """{"status":"OPEN","reason":"private"}""",
+                if (operation == STATUS) """{"reason":"x"}""" else """{"status":"OPEN"}""",
+            ) + listOf("actorId", "closedAt", "provenance", "closureReason", "type", "subject", "body", "metadata", "owner", "id").map {
+                """{"$field":"$value","$it":"private"}"""
+            }
+            for (raw in invalid) {
+                val f = StatusFixture()
+                assertEquals(400, f.send(statusInput(operation, raw)).status)
+                assertEquals(0, f.calls)
+            }
+            for ((request, expected) in listOf(
+                statusInput(operation).apply { removeHeader("If-Match") } to 428,
+                statusInput(operation).apply { addHeader("If-Match", "\"complaint-$id-v7\"") } to 412,
+                statusInput(operation).replace("If-Match", "W/\"complaint-$id-v7\"") to 412,
+                statusInput(operation).replace("If-Match", "*") to 412,
+                statusInput(operation).replace("If-Match", "\"complaint-$id-v07\"") to 412,
+                statusInput(operation).replace("If-Match", "\"complaint-$key-v7\"") to 412,
+                statusInput(operation).replace("If-Match", "\"complaint-$id-v9223372036854775808\"") to 412,
+                statusInput(operation).apply { removeHeader("Authorization") } to 401,
+                statusInput(operation).apply { addHeader("Authorization", "Bearer duplicate") } to 400,
+                statusInput(operation).apply { queryString = "dataScopeId=${scope.id}&dataScopeId=${scope.id}" } to 400,
+                statusInput(operation).apply { queryString = "dataScopeId=${ComplaintDataScope.LIVE.id}" } to 400,
+                statusInput(operation).apply { addHeader("If-None-Match", "*") } to 400,
+                statusInput(operation).apply { addHeader("X-Kira-Admin-Step-Up", "other-proof") } to 400,
+                statusInput(operation).replace("X-Kira-Idempotency-Key", "not-a-key") to 400,
+                statusInput(operation).apply { method = "PUT" } to 404,
+                statusInput(operation).apply { requestURI += "/" } to 404,
+                statusInput(operation).apply { requestURI = "/api/v1/admin/complaints/$id/reopen" } to 404,
+                statusInput(operation).apply { contentType = "text/plain" } to 415,
+                statusInput(operation).apply { addHeader("Content-Encoding", "gzip") } to 415,
+                statusInput(operation).replace("Content-Length", "1") to 400,
+                statusInput(operation).apply { dispatcherType = DispatcherType.ASYNC } to 503,
+            )) {
+                val f = StatusFixture()
+                val response = f.send(request)
+                assertEquals(expected, response.status)
+                assertNull(response.getHeader(CONSUMED))
+                assertEquals(0, f.calls)
+            }
+            val f = StatusFixture()
+            assertEquals(200, f.send(statusInput(operation, valid)).status)
+            assertEquals(operation, checkNotNull(f.parsed).operation)
+        }
+        for (status in listOf("OPEN", "IN_PROGRESS", "PLANNED", "RESOLVED", "NOT_PLANNED")) {
+            val f = StatusFixture()
+            assertEquals(200, f.send(statusInput(STATUS, """{"status":"$status"}""")).status)
+            assertEquals(status, (f.parsed as ComplaintAdminStatusInput.Transition).status.name)
+        }
+        for (status in listOf("CLOSED", "PINNED", "UNKNOWN", "open", " OPEN ", "", "FUTURE")) {
+            val f = StatusFixture()
+            assertEquals(400, f.send(statusInput(STATUS, """{"status":"$status"}""")).status)
+            assertEquals(0, f.calls, "Forbidden target statuses are syntactic 400s, never a claim or normalized closure.")
+        }
+    }
+
+    @Test
+    fun moderationNormalizationFramingAndExactRawCapRemainBoundedWithoutInventingAuthenticatedAuthority() {
+        val f = StatusFixture()
+        assertEquals(200, f.send(statusInput(CLOSURE)).status)
+        assertEquals("  key: opaque\r\nreason \n", (f.parsed as ComplaintAdminStatusInput.Closure).reason)
+        val normalized = ComplaintAdminStatusRequest.normalize(checkNotNull(f.parsed))
+        assertEquals("key: opaque\nreason", normalized.reason)
+        val fingerprint = ComplaintAdminStatusFingerprint.of(normalized).encoded
+        assertEquals(200, f.send(statusInput(CLOSURE, """{"reason":"key: opaque\nreason"}""")).status)
+        assertEquals(fingerprint, ComplaintAdminStatusFingerprint.of(ComplaintAdminStatusRequest.normalize(checkNotNull(f.parsed))).encoded)
+        assertEquals(200, f.send(statusInput(CLOSURE).replace("If-Match", " \t\"complaint-$id-v7\"\t ")).status)
+        assertEquals(fingerprint, ComplaintAdminStatusFingerprint.of(ComplaintAdminStatusRequest.normalize(checkNotNull(f.parsed))).encoded)
+        for (request in listOf(
+            statusInput(STATUS), statusInput(CLOSURE, """{"reason":"OTHER: raw compatibility"}"""),
+            statusInput(CLOSURE).replace("If-Match", "\"complaint-$id-v8\""),
+            statusInput(CLOSURE).apply { requestURI = requestURI.replace(id.toString(), key.toString()); replace("If-Match", "\"complaint-$key-v7\"") },
+            statusInput(CLOSURE).apply { queryString = "dataScopeId=${key}" },
+        )) {
+            assertEquals(200, f.send(request).status)
+            assertNotEquals(fingerprint, ComplaintAdminStatusFingerprint.of(ComplaintAdminStatusRequest.normalize(checkNotNull(f.parsed))).encoded)
+        }
+        val maximumReason = "🙂".repeat(500)
+        val escaped = maximumReason.toCharArray().joinToString("") { "\\u" + it.code.toString(16).padStart(4, '0') }
+        assertEquals(200, f.send(statusInput(CLOSURE, """{"reason":"$escaped"}""")).status)
+        val maximum = ComplaintAdminStatusRequest.normalize(checkNotNull(f.parsed))
+        assertEquals(maximumReason, maximum.reason)
+        val frame = ComplaintAdminStatusFingerprint.frameBytes(maximum)
+        try { assertTrue(frame.size <= ComplaintAdminStatusFingerprint.MAX_FRAME_BYTES) } finally { frame.fill(0) }
+        for (raw in listOf(
+            """{"reason":""}""", """{"reason":" \t\n"}""", """{"reason":"x\u0000"}""", """{"reason":"\ud800"}""",
+            """{"reason":"${"🙂".repeat(501)}"}""",
+        )) {
+            assertEquals(200, f.send(statusInput(CLOSURE, raw)).status, "This supplied-data port does not impersonate the real authenticated normalizer.")
+            assertThrows<ComplaintValidationException> { ComplaintAdminStatusRequest.normalize(checkNotNull(f.parsed)) }
+        }
+        for (operation in ComplaintAdminStatusOperation.entries) {
+            assertEquals(400, StatusFixture().send(statusInput(operation).apply {
+                setContent(byteArrayOf(0xc3.toByte(), 0x28)); replace("Content-Length", "2")
+            }).status)
+            for ((size, declared) in listOf(16_384 to true, 16_385 to true, 16_385 to false)) {
+                val original = statusInput(operation)
+                val bytes = original.contentAsByteArray!! + ByteArray(size - original.contentAsByteArray!!.size) { 32 }
+                var acquisitions = 0
+                var consumed = 0
+                var retained: ByteArray? = null
+                original.removeHeader("Content-Length")
+                original.addHeader(if (declared) "Content-Length" else "Transfer-Encoding", if (declared) size.toString() else "chunked")
+                val request = object : HttpServletRequestWrapper(original) {
+                    override fun getInputStream(): ServletInputStream {
+                        acquisitions++
+                        check(!declared || size <= 16_384) { "Declared oversize may not open the stream." }
+                        return object : ServletInputStream() {
+                            override fun isFinished(): Boolean = consumed == bytes.size
+                            override fun isReady(): Boolean = true
+                            override fun setReadListener(listener: ReadListener) = Unit
+                            override fun read(): Int = if (consumed == bytes.size) -1 else bytes[consumed++].toInt() and 255
+                            override fun readNBytes(length: Int): ByteArray {
+                                assertEquals(16_385, length)
+                                return super.readNBytes(length).also { retained = it }
+                            }
+                        }
+                    }
+                }
+                val selected = StatusFixture()
+                assertEquals(if (size == 16_384) 200 else 413, selected.send(request).status)
+                assertEquals(if (declared && size > 16_384) 0 else 1, acquisitions)
+                assertEquals(if (acquisitions == 0) 0 else size, consumed)
+                assertEquals(if (size == 16_384) 1 else 0, selected.calls)
+                retained?.let { assertTrue(it.all { byte -> byte == 0.toByte() }) }
+            }
+        }
+    }
+
+    @Test
+    fun moderationAcksAndProblemsKeepLosslessLongHistoricalConsumptionAndOriginalSharedEightThroughDelivery() {
+        for (operation in ComplaintAdminStatusOperation.entries) {
+            for (version in listOf(9_007_199_254_740_993L, Long.MAX_VALUE)) {
+                val f = StatusFixture().apply { receipt = ComplaintAdminStatusReceipt.Applied(id, version) }
+                val response = f.send(statusInput(operation))
+                assertEquals(200, response.status)
+                assertEquals("{\"id\":\"$id\",\"version\":$version}", response.contentAsString)
+                assertEquals("\"complaint-$id-v$version\"", response.getHeader("ETag"))
+                val parsed = mapper.readTree(response.contentAsByteArray)
+                assertEquals(setOf("id", "version"), parsed.fieldNames().asSequence().toSet())
+                assertTrue(parsed["version"].isIntegralNumber)
+                assertEquals(version, parsed["version"].longValue())
+                envelope(response, confirmed = true)
+            }
+            for (code in ComplaintAdminStatusRejection.entries) {
+                val response = StatusFixture().apply { receipt = ComplaintAdminStatusReceipt.Rejected(code) }.send(statusInput(operation))
+                assertEquals(code.status, response.status)
+                assertEquals(code.name, mapper.readTree(response.contentAsByteArray)["errors"][0]["code"].asText())
+                assertNull(response.getHeader("ETag"))
+                assertFalse(response.contentAsString.contains("key: opaque"))
+                envelope(response, confirmed = true)
+            }
+            val closed = MockHttpServletResponse()
+            val unread = object : HttpServletRequestWrapper(statusInput(operation)) {
+                override fun getInputStream(): ServletInputStream = error("Dormant moderation route may not read a body.")
+            }
+            DisabledComplaintRoutesFilter().doFilter(unread, closed, FilterChain { _, _ -> error("Moderation route must stay unregistered.") })
+            assertEquals(404, closed.status)
+            assertNull(closed.getHeader(CONSUMED))
+        }
+        val f = StatusFixture()
+        val reads = ComplaintAdminReadResponses(f.common.owner)
+        val held = List(4) { checkNotNull(reads.acquire()) } + List(3) { checkNotNull(f.common.responses.acquire()) } + checkNotNull(f.responses.acquire())
+        try {
+            for (operation in ComplaintAdminStatusOperation.entries) {
+                assertEquals(503, f.send(object : HttpServletRequestWrapper(statusInput(operation)) {
+                    override fun getInputStream(): ServletInputStream = error("The original shared eight is full.")
+                }).status)
+                assertEquals(0, f.calls)
+            }
+        } finally { held.forEach { it.close() } }
+        for (problem in listOf(false, true)) {
+            val selected = StatusFixture().apply { if (problem) failure = ComplaintAdminStatusRejected(ComplaintAdminStatusFailure.UNAVAILABLE) }
+            val prefix = ByteArrayOutputStream()
+            var sends = 0
+            var retained: ByteArray? = null
+            val response = object : MockHttpServletResponse() {
+                override fun getOutputStream(): ServletOutputStream = object : ServletOutputStream() {
+                    override fun isReady(): Boolean = true
+                    override fun setWriteListener(listener: WriteListener) = Unit
+                    override fun write(value: Int): Unit = error("Fixed buffered sender expected")
+                    override fun write(bytes: ByteArray, offset: Int, count: Int) {
+                        requireConnectionFree()
+                        sends++
+                        retained = bytes
+                        val others = List(7) { checkNotNull(selected.common.responses.acquire()) }
+                        try {
+                            assertNull(selected.responses.acquire(), "Success and problem delivery both retain the original moderation slot.")
+                            prefix.write(bytes, offset, minOf(12, count))
+                            throw IOException("Synthetic private moderation delivery failure")
+                        } finally { others.forEach { it.close() } }
+                    }
+                }
+            }
+            val failed = assertThrows<IOException> { selected.handler.handleRequest(statusInput(CLOSURE), response) }
+            assertEquals("Complaint response delivery failed.", failed.message)
+            assertNull(failed.cause)
+            assertTrue(failed.suppressed.isEmpty())
+            assertEquals(1, sends)
+            assertEquals(12, prefix.size())
+            assertEquals(if (problem) 503 else 200, response.status)
+            assertEquals(if (problem) emptyList<String>() else listOf("true"), response.getHeaders(CONSUMED).toList())
+            if (!problem) assertTrue(checkNotNull(retained).all { it == 0.toByte() })
+            List(8) { checkNotNull(selected.responses.acquire()) }.forEach { it.close() }
+        }
+    }
+
+    private fun statusInput(operation: ComplaintAdminStatusOperation, raw: String = if (operation == STATUS) """{"status":"IN_PROGRESS"}""" else """{"reason":"  key: opaque\r\nreason \n"}"""): MockHttpServletRequest =
+        adminStatusTestRequest(operation, scope, id, key, 7, "synthetic-token", "private-proof", raw)
+
     private fun input(value: String = body): MockHttpServletRequest = adminContentTestRequest(scope, id, key, 7, "synthetic-token", "private-proof", value)
 
     private fun MockHttpServletRequest.replace(name: String, value: String): MockHttpServletRequest = apply {
@@ -320,5 +552,34 @@ class ComplaintAdminContentHttpTest {
         fun send(request: HttpServletRequest): MockHttpServletResponse = MockHttpServletResponse().also { handler.handleRequest(request, it) }
     }
 
-    private companion object { const val CONSUMED = "X-Kira-Admin-Step-Up-Consumed" }
+    /** Reuse the content ingress/response owner; this port is supplied-data only, never real admission or commit evidence. */
+    private inner class StatusFixture(val common: Fixture = Fixture()) {
+        val responses = ComplaintAdminStatusResponses(common.owner)
+        var calls = 0
+        var parsed: ComplaintAdminStatusInput? = null
+        var receipt: ComplaintAdminStatusReceipt = ComplaintAdminStatusReceipt.Applied(id, 8)
+        var failure: ComplaintAdminStatusRejected? = null
+        val handler = ComplaintAdminStatusHttpHandler(
+            ComplaintAdminStatusService(object : ComplaintAdminStatusPort {
+                override fun change(context: ComplaintAdminStatusRequestContext, bearer: String, proof: String?, input: ComplaintAdminStatusInput): ComplaintAdminStatusReceipt {
+                    requireConnectionFree()
+                    common.ingress.requireLiveContext(context as ComplaintIngressContext)
+                    assertEquals("synthetic-token", bearer)
+                    assertEquals("private-proof", proof)
+                    calls++
+                    parsed = input
+                    failure?.let { throw it }
+                    return receipt
+                }
+            }), common.ingress, responses,
+        )
+
+        fun send(request: HttpServletRequest): MockHttpServletResponse = MockHttpServletResponse().also { handler.handleRequest(request, it) }
+    }
+
+    private companion object {
+        const val CONSUMED = "X-Kira-Admin-Step-Up-Consumed"
+        val STATUS = ComplaintAdminStatusOperation.ADMIN_STATUS
+        val CLOSURE = ComplaintAdminStatusOperation.ADMIN_CLOSURE
+    }
 }

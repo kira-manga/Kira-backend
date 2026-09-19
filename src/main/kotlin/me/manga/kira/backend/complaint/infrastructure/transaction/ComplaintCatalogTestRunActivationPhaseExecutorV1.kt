@@ -11,7 +11,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActi
 import me.manga.kira.backend.complaint.infrastructure.catalog.JdbcCatalogTestRunActivationStoreV1
 import org.springframework.jdbc.core.JdbcTemplate
 
-/** No external effect or projection exists on this named coordinator. Every result awaits its original holder's release. */
+/** Fixed TEST SQL only; never a provider call or projection. Every result awaits its original holder's release. */
 internal class ComplaintCatalogTestRunActivationPhaseExecutorV1(
     private val coordinator: CatalogCoordinatorPersistence,
     private val jdbc: JdbcTemplate,
@@ -35,6 +35,9 @@ internal class ComplaintCatalogTestRunActivationPhaseExecutorV1(
             CatalogTestRunActivationKindV1.PREPARED_RELOAD -> coordinator.ownership.enterComplaintTestRunActivationReload(input.original)
             CatalogTestRunActivationKindV1.SIGNATURE -> coordinator.ownership.enterComplaintTestRunActivationSignature(input.original)
             CatalogTestRunActivationKindV1.SIGNED_RELOAD -> coordinator.ownership.enterComplaintTestRunActivationSignedReload(input.original)
+            CatalogTestRunActivationKindV1.DELIVERY_RELOAD -> coordinator.ownership.enterComplaintTestRunActivationDeliveryReload(input.original)
+            CatalogTestRunActivationKindV1.COMPLETE -> coordinator.ownership.enterComplaintTestRunActivationComplete(input.original)
+            CatalogTestRunActivationKindV1.PENDING_RELOAD -> coordinator.ownership.enterComplaintTestRunActivationPendingReload(input.original)
         }
         var operation: CatalogTestRunActivationOperationV1? = null
         var closingFailure: Throwable? = null
@@ -61,5 +64,5 @@ internal class ComplaintCatalogTestRunActivationPhaseExecutorV1(
         return actual
     }
 
-    override fun toString(): String = "ComplaintCatalogTestRunActivationPhaseExecutorV1(signed-PREPARED-only,no-provider-or-run-authority)"
+    override fun toString(): String = "ComplaintCatalogTestRunActivationPhaseExecutorV1(TEST-COMPLETE-pending-boundary,no-provider-or-run-authority)"
 }

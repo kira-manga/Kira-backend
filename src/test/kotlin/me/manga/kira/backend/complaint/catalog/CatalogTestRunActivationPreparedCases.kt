@@ -284,7 +284,8 @@ internal class PreparedActivationRows(
 
     override fun close() {
         requireConnectionFree()
-        val columns = "accepted_catalog_generation, accepted_catalog_hash, trust_bundle_hash, catalog_writer_generation, " +
+        // Fixture isolation after original actors retire, not PROJECT or a cleanup/outcome receipt for an activation owner.
+        val columns = "accepted_catalog_generation, accepted_catalog_hash, pending_projection_token, trust_bundle_hash, catalog_writer_generation, " +
             "database_identity, restore_identity, event_writer_generation, desired_configuration_hash, maintenance_closed, creation_closed, " +
             "lease_owner, lease_token, lease_expires_at, updated_at"
         assertEquals(1, observer.update(

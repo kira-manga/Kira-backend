@@ -682,7 +682,8 @@ private data class GenesisCopyEvidenceV1(
     val replicationStatus: String,
 )
 
-private fun copyEvidence(metadata: CatalogObjectMetadata, hash: String): ByteArray {
+/** Stable copy bytes only; the concrete raw owner must separately retain their actual observation/cleanup. */
+internal fun copyEvidence(metadata: CatalogObjectMetadata, hash: String): ByteArray {
     val value = GenesisCopyEvidenceV1(
         1, CanonicalJson.CANON_VERSION, metadata.requestBinding.location, metadata.requestBinding.key,
         metadata.requestBinding.versionId, metadata.contentLength, hash, checkNotNull(metadata.objectLockMode),

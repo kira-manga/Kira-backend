@@ -26,6 +26,9 @@ internal enum class CatalogTestRunActivationKindV1(val path: PersistencePhasePat
     PREPARED_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD),
     SIGNATURE(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE),
     SIGNED_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD),
+    DELIVERY_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_DELIVERY_RELOAD),
+    COMPLETE(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_COMPLETE),
+    PENDING_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PENDING_RELOAD),
 }
 
 /** Detached exact input for ONE selected phase. Only its original owner can construct or spend it. */
@@ -38,10 +41,14 @@ internal class CatalogTestRunActivationInputV1 private constructor(
     internal val leaseOwner: UUID?,
     internal val recovering: Boolean,
     internal val signed: CatalogTestRunActivationSignedV1?,
+    internal val delivering: Boolean,
+    internal val deliveryProof: CatalogTestRunActivationDeliveryReadbackV1?,
 ) {
     val path: PersistencePhasePath get() = kind.path
     val requiresEpochFence: Boolean get() = kind === CatalogTestRunActivationKindV1.PREPARE || kind === CatalogTestRunActivationKindV1.PREPARED_RELOAD ||
-        kind === CatalogTestRunActivationKindV1.SIGNATURE || kind === CatalogTestRunActivationKindV1.SIGNED_RELOAD
+        kind === CatalogTestRunActivationKindV1.SIGNATURE || kind === CatalogTestRunActivationKindV1.SIGNED_RELOAD ||
+        kind === CatalogTestRunActivationKindV1.DELIVERY_RELOAD || kind === CatalogTestRunActivationKindV1.COMPLETE ||
+        kind === CatalogTestRunActivationKindV1.PENDING_RELOAD
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) = original.requireInput(this, ownership, jdbc)
 
@@ -53,7 +60,7 @@ internal class CatalogTestRunActivationInputV1 private constructor(
             original.requireInputConstruction(kind)
             return CatalogTestRunActivationInputV1(
                 original, kind, original.frozenInput(), original.expectedSnapshot(), original.currentLease(), original.acquisitionOwner(), original.recovering(),
-                original.signedInput(),
+                original.signedInput(), original.delivering(), original.deliveryProofInput(),
             )
         }
     }
@@ -76,6 +83,7 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
     val scope: UUID = UUID.fromString(storedManifest.activationRecord.run.testRunId)
     val generation: Long = storedManifest.generation
     val predecessorHash: String = storedManifest.previousEnvelopeSha256
+    private val predecessorDigest = HexFormat.of().parseHex(predecessorHash)
     val catalogWriter: UUID = UUID.fromString(storedManifest.catalogWriterGenerationId)
     val currentTrustHash: String = original.process.catalogReadback.currentTrustBundleSha256
     val databaseIdentity: UUID = original.process.databaseIdentity
@@ -88,7 +96,7 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
     private val runHash = HexFormat.of().parseHex(storedManifest.activationRecord.run.configurationSha256)
     private val noticeIds = storedManifest.activationRecord.run.noticeSeeds.map { UUID.fromString(it.resourceId) }
     private val preparedValues: Array<Any?> = arrayOf(
-        token, scope, generation - 1, HexFormat.of().parseHex(predecessorHash), generation, catalogWriter,
+        token, scope, generation - 1, predecessorDigest, generation, catalogWriter,
         approvals, approvalDigest, unsigned, unsignedDigest,
         storedManifest.requiredSignerPolicy.members.single().keyId, storedManifest.requiredSignerPolicy.members.single().algorithmId,
         CatalogReadbackProtocol.key(generation), Timestamp.from(Instant.ofEpochSecond(storedManifest.creation.createdAtEpochSecond)),
@@ -102,6 +110,7 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
     fun manifest(): OfflineCatalogTestRunActivationManifestV3 = storedManifest.snapshot()
     fun unsignedBytes(): ByteArray = unsigned.copyOf()
     fun unsignedHash(): ByteArray = unsignedDigest.copyOf()
+    fun predecessorHashBytes(): ByteArray = predecessorDigest.copyOf()
     fun approvalBytes(): ByteArray = approvals.copyOf()
     fun capacityDigest(): ByteArray = policyDigest.copyOf()
 

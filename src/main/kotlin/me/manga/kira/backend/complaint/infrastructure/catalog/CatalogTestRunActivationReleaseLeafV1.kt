@@ -3,7 +3,7 @@ package me.manga.kira.backend.complaint.infrastructure.catalog
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationProtocol
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 
-/** One closed TEST freeze inventory. No rotation, PUT, COMPLETE, PROJECT or later-run leaves. */
+/** One closed TEST freeze/delivery inventory. No rotation, PROJECT, issuer or later-run leaves. */
 internal enum class CatalogTestRunActivationReleaseLeafV1(internal val fileName: String, internal val maximumBytes: Int) {
     APPROVED_INTENT("approved-intent", OfflineCatalogTestRunActivationProtocol.MAX_DOCUMENT_BYTES),
     FULL_CONFIGURATION("full-configuration", 524288),
@@ -22,6 +22,15 @@ internal enum class CatalogTestRunActivationReleaseLeafV1(internal val fileName:
     SIGNATURE_SQL_ARMED("signature-sql-armed", 1024),
     SIGNATURE_SQL_PERSISTED("signature-sql-persisted", 1024),
     FREEZE_OUTCOME("freeze-outcome", 1024),
+    PUBLICATION_ARMED("publication-armed", 1024),
+    PUBLICATION_ACKNOWLEDGED("publication-acknowledged", 4096),
+    PUBLICATION_AWAIT_REPLICATION("publication-await-replication", 4096),
+    PRIMARY_COPY("primary-copy", 65536),
+    REPLICA_COPY("replica-copy", 65536),
+    PUBLICATION_DUAL_COPY("publication-dual-copy", 4096),
+    COMPLETE_ARMED("complete-armed", 1024),
+    COMPLETE_OUTCOME("complete-outcome", 1024),
+    PENDING_RELOAD_OUTCOME("pending-reload-outcome", 1024),
 }
 
 internal enum class CatalogTestRunActivationCustodyObservationV1 { CREATED, IDENTICAL_OBSERVED }

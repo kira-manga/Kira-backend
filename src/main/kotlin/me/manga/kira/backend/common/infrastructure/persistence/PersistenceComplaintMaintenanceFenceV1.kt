@@ -125,6 +125,11 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
         maintenanceClosed && creationClosed && pendingTestPrepared && !projectedTestClosed && pendingTestToken == token && pendingTestScope == scope &&
             pendingUnsigned.contentEquals(unsigned) && pendingHash.contentEquals(hash)
 
+    /** READ_GATE already binds the sole nonprojected COMPLETED row to accepted head/hash/writer and pending token. */
+    internal fun matchesPending(token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray): Boolean =
+        maintenanceClosed && creationClosed && !pendingTestPrepared && !projectedTestClosed && pendingTestToken == token && pendingTestScope == scope &&
+            pendingUnsigned.contentEquals(unsigned) && pendingHash.contentEquals(hash)
+
     override fun toString(): String = "PersistenceComplaintMaintenanceGateV1(bounded-facts,no-continuation-authority)"
 
     companion object {

@@ -20,6 +20,7 @@ import me.manga.kira.backend.audit.infrastructure.ComplaintOwnerDeleteAllAuditIn
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityBalance
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityConfiguration
@@ -37,6 +38,7 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogGenesisCapacity
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationActivationCapacityV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationCapacityV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminStatusMutation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
@@ -102,6 +104,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForOwnerEdit(operation: ComplaintOwnerEditOperation): LockedOwnerEdit = LockedOwnerEdit.lock(this, operation)
 
     internal fun lockForAdminContent(operation: ComplaintAdminContentOperation): LockedAdminContent = LockedAdminContent.lock(this, operation)
+
+    internal fun lockForAdminStatus(operation: ComplaintAdminStatusMutation): LockedAdminStatus = LockedAdminStatus.lock(this, operation)
 
     internal fun lockForOwnerDeleteAll(operation: ComplaintOwnerDeleteAllOperation): LockedOwnerDeleteAll = LockedOwnerDeleteAll.lock(this, operation)
 
@@ -1081,6 +1085,89 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
+    /** Status and closure share this receipt/audit charge; closure bytes belong to the prepaid content lifecycle. */
+    internal class LockedAdminStatus private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: ComplaintAdminStatusMutation,
+        private val after: ComplaintCapacityLedger,
+    ) {
+        private var charged = false
+        private var receiptOnly = false
+        private var audit: ChargedComplaintAudit? = null
+
+        internal fun belongsTo(candidate: ComplaintAdminStatusMutation): Boolean = operation === candidate
+        internal fun chargedFor(candidate: ComplaintAdminStatusMutation): Boolean = belongsTo(candidate) && charged
+
+        internal fun completedFor(candidate: ComplaintAdminStatusMutation, receipt: ComplaintAdminStatusReceipt?): Boolean =
+            chargedFor(candidate) && when (receipt) {
+                is ComplaintAdminStatusReceipt.Applied -> !receiptOnly && audit?.completedFor(candidate) == true
+                is ComplaintAdminStatusReceipt.Rejected -> receiptOnly && audit == null
+                null -> false
+            }
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun keepReceiptOnly(candidate: ComplaintAdminStatusMutation) {
+            try {
+                check(candidate === operation && charged && !receiptOnly && audit == null)
+                val retained = after.refundActual(checkNotNull(store.expectedPolicyDigest), ComplaintCapacityCharges.AUDIT)
+                persist(after.balance, retained.balance, rejection = true)
+                receiptOnly = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun prepaidAudit(candidate: ComplaintAdminStatusMutation): ChargedComplaintAudit {
+            try {
+                check(candidate === operation && charged && !receiptOnly && audit == null)
+                val result = ChargedComplaintAudit.prepaidAdminStatus(this, operation)
+                audit = result
+                return result
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        private fun persist(old: ComplaintCapacityBalance, next: ComplaintCapacityBalance, rejection: Boolean) {
+            for (counter in ADMIN_STATUS_COUNTERS) {
+                operation.requireCapacityWrite(this, store.jdbc, rejection)
+                if (old.free[counter] == next.free[counter] && old.actual[counter] == next.actual[counter]) continue
+                check(
+                    store.jdbc.update(
+                        REFUND_COUNTER,
+                        next.free[counter],
+                        next.actual[counter],
+                        counter.storedName,
+                        old.free[counter],
+                        old.actual[counter],
+                    ) == 1,
+                )
+            }
+            operation.requireCapacityWrite(this, store.jdbc, rejection)
+        }
+
+        override fun toString(): String = "LockedAdminStatus(redacted)"
+
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: ComplaintAdminStatusMutation): LockedAdminStatus {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val before = store.readLockedLedger()
+                    val after = before.chargeCreation(checkNotNull(store.expectedPolicyDigest), ComplaintCapacityCharges.ADMIN_STATUS)
+                    val allocation = LockedAdminStatus(store, operation, after)
+                    operation.retainCapacity(allocation, store.jdbc, before)
+                    allocation.persist(before.balance, after.balance, rejection = false)
+                    allocation.charged = true
+                    return allocation
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
     /** A real new pair, its daily admission and scope-only audit share this one-use locked allocation. */
     internal class LockedInstallationEnrollment private constructor(
         private val store: JdbcComplaintCapacityStore,
@@ -1404,6 +1491,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
         internal fun belongsTo(candidate: ComplaintAdminContentOperation): Boolean = source is Source.AdminContent && source.operation === candidate
 
+        internal fun belongsTo(candidate: ComplaintAdminStatusMutation): Boolean = source is Source.AdminStatus && source.operation === candidate
+
         internal fun chargedFor(candidate: ComplaintGrantConsumption): Boolean = belongsTo(candidate) && charged
 
         internal fun chargedFor(candidate: ComplaintDeletionOperation): Boolean = belongsTo(candidate) && charged
@@ -1413,6 +1502,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun chargedFor(candidate: ComplaintOwnerEditOperation): Boolean = belongsTo(candidate) && charged
 
         internal fun chargedFor(candidate: ComplaintAdminContentOperation): Boolean = belongsTo(candidate) && charged
+
+        internal fun chargedFor(candidate: ComplaintAdminStatusMutation): Boolean = belongsTo(candidate) && charged
 
         internal fun completedFor(candidate: ComplaintGrantConsumption): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
 
@@ -1424,6 +1515,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
         internal fun completedFor(candidate: ComplaintAdminContentOperation): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
 
+        internal fun completedFor(candidate: ComplaintAdminStatusMutation): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
+
         internal fun beginInsert(candidate: ComplaintAuditInsertion, entry: CountedComplaintAuditEntry): ComplaintAuditSelectedHolder {
             val holder = source.holder(this)
             check(insertion == null && candidate.belongsTo(this) && entry.mutation === mutation)
@@ -1431,6 +1524,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             if (source is Source.OwnerCreate) source.operation.requireAuditEntry(entry)
             if (source is Source.OwnerEdit) source.operation.requireAuditEntry(entry)
             if (source is Source.AdminContent) source.operation.requireAuditEntry(entry)
+            if (source is Source.AdminStatus) source.operation.requireAuditEntry(entry)
             insertion = candidate // Spent before either insert; a failed insert can never reuse its allocation.
             return holder
         }
@@ -1508,6 +1602,18 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                     ComplaintAuditSelectedHolder.Ordinary(operation.auditEntityManager(charged))
                 override fun failed(problem: Throwable): Nothing = operation.failed(problem)
             }
+
+            /** The concrete status/closure audit was prepaid before all domain locks. Generic charge entry stays forbidden. */
+            class AdminStatus(val operation: ComplaintAdminStatusMutation) : Source {
+                override fun beginCharge(jdbc: JdbcTemplate): Nothing = failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+                override fun retainCharge(charged: ChargedComplaintAudit, jdbc: JdbcTemplate): Nothing =
+                    failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+                override fun requireCharge(charged: ChargedComplaintAudit, jdbc: JdbcTemplate): Nothing =
+                    failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+                override fun holder(charged: ChargedComplaintAudit): ComplaintAuditSelectedHolder =
+                    ComplaintAuditSelectedHolder.Ordinary(operation.auditEntityManager(charged))
+                override fun failed(problem: Throwable): Nothing = operation.failed(problem)
+            }
         }
 
         companion object {
@@ -1556,6 +1662,17 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 return charged
             }
 
+            internal fun prepaidAdminStatus(
+                allocation: LockedAdminStatus,
+                operation: ComplaintAdminStatusMutation,
+            ): ChargedComplaintAudit {
+                check(allocation.chargedFor(operation))
+                val charged = ChargedComplaintAudit(Source.AdminStatus(operation), operation.prepaidAuditMutation(allocation))
+                charged.charged = true
+                operation.retainPrepaidAudit(allocation, charged)
+                return charged
+            }
+
             @Suppress("TooGenericExceptionCaught")
             private fun charge(store: JdbcComplaintCapacityStore, source: Source, mutation: ComplaintAuditMutation): ChargedComplaintAudit {
                 try {
@@ -1596,6 +1713,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         val OWNER_CREATE_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.OWNER_CREATE[it] > 0 }
         val OWNER_EDIT_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.OWNER_EDIT[it] > 0 }
         val ADMIN_EDIT_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.ADMIN_EDIT[it] > 0 }
+        val ADMIN_STATUS_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.ADMIN_STATUS[it] > 0 }
         val ENROLLMENT_COUNTERS = listOf(
             ComplaintCapacityCounter.APP_INSTALLATIONS,
             ComplaintCapacityCounter.AUDIT_ROWS,
