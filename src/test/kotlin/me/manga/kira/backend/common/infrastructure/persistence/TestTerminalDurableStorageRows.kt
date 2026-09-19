@@ -6,12 +6,12 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
-import org.postgresql.util.PSQLException
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.sql.Connection
+import java.sql.SQLException
 import java.sql.Timestamp
 import java.time.Instant
 import java.util.Base64
@@ -152,12 +152,18 @@ internal fun assertTestTerminalDurableSqlRejected(
     action: () -> Unit,
 ) = testTerminalDurableSavepoint(connection) {
     val failure = assertThrows<DataIntegrityViolationException> { action() }
-    val postgres = failure.mostSpecificCause as PSQLException
+    // The owned PostgreSQL driver is intentionally runtimeOnly. Inspect its actual structured
+    // server error through the same JDBC/reflection seam used by existing wire-failure tests.
+    val postgres = failure.mostSpecificCause as SQLException
+    assertEquals("org.postgresql.util.PSQLException", postgres.javaClass.name)
     assertEquals(state, postgres.sqlState)
-    if (constraint != null) assertEquals(constraint, postgres.serverErrorMessage?.constraint)
+    val server = requireNotNull(postgres.javaClass.getMethod("getServerErrorMessage").invoke(postgres))
+    assertEquals("org.postgresql.util.ServerErrorMessage", server.javaClass.name)
+    val actualConstraint = server.javaClass.getMethod("getConstraint").invoke(server)
+    if (constraint != null) assertEquals(constraint, actualConstraint)
     if (guard) {
-        assertNull(postgres.serverErrorMessage?.constraint, "The current-row transition guard, not a later CHECK, must reject this rewrite")
-        assertEquals("Invalid TEST terminal storage transition", postgres.serverErrorMessage?.message)
+        assertNull(actualConstraint, "The current-row transition guard, not a later CHECK, must reject this rewrite")
+        assertEquals("Invalid TEST terminal storage transition", server.javaClass.getMethod("getMessage").invoke(server))
     }
 }
 
