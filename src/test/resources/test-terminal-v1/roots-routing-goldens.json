@@ -1,0 +1,626 @@
+{
+  "status": "INDEPENDENT_SYNTHETIC_LITERALS_NOT_PRODUCT_VERIFICATION",
+  "scope_id": "00000000-0000-4000-8000-000000000001",
+  "writer_generation": "c3333333-3333-4333-8333-333333333333",
+  "keys": [
+    {
+      "routing_key_id": "test-route-01",
+      "synthetic_key_hex": "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+    },
+    {
+      "routing_key_id": "test-route-02",
+      "synthetic_key_hex": "262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f404142434445"
+    },
+    {
+      "routing_key_id": "test-route-03",
+      "synthetic_key_hex": "4b4c4d4e4f505152535455565758595a5b5c5d5e5f606162636465666768696a"
+    },
+    {
+      "routing_key_id": "test-route-04",
+      "synthetic_key_hex": "707172737475767778797a7b7c7d7e7f808182838485868788898a8b8c8d8e8f"
+    }
+  ],
+  "roots": {
+    "installations": {
+      "count": 2,
+      "frames": [
+        [
+          "kira-test-installations-v1",
+          "00000000-0000-4000-8000-000000000001",
+          "4",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "570454fd98e3554a6d645d2db4568dd62d6de599ec50a02b700a8764c7d1d43c",
+          "2",
+          "1",
+          "1"
+        ],
+        [
+          "00000000-0000-4000-8000-000000000002",
+          "RETIRED"
+        ],
+        [
+          "00000000-0000-4000-8000-000000000003",
+          "DELETED"
+        ]
+      ],
+      "framed_bytes": 396,
+      "sha256": "8e82f728e4a2540dc4d352ac892fa039daa1ac6b7bb840093d057585c1ebee71"
+    },
+    "emptyInstallations": {
+      "count": 0,
+      "frames": [
+        [
+          "kira-test-installations-v1",
+          "00000000-0000-4000-8000-000000000001",
+          "4",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "570454fd98e3554a6d645d2db4568dd62d6de599ec50a02b700a8764c7d1d43c",
+          "0",
+          "0",
+          "0"
+        ]
+      ],
+      "framed_bytes": 294,
+      "sha256": "92a918a88c7414a15793569b0a9ae12b0ede6d3ca4066b44031b7536ea52e8dc"
+    },
+    "emptyChunks": {
+      "count": 0,
+      "frames": [
+        [
+          "kira-test-manifest-chunks-v1",
+          "00000000-0000-4000-8000-000000000001",
+          "4",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "0"
+        ]
+      ],
+      "framed_bytes": 150,
+      "sha256": "c4e2970adf0b77b05421570bdaffa903575d6ab531c9b9f01715388cdddc0ad9"
+    },
+    "preTerminalSeals": {
+      "count": 1,
+      "canonical_utf8": "[{\"epochEndInclusive\":2,\"epochStartInclusive\":1,\"object\":{\"canonicalSha256\":\"fe72e6d15b78c92024f16c17eaed3efa26bd3d2c0600c45a0c9f5b3aa36f8503\",\"ciphertextSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"objectKey\":\"complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev\",\"objectVersion\":\"version-1\"},\"precedingSealSha256\":\"\",\"role\":\"ORDINARY\",\"sealId\":\"p5x78De5TG3IXbWN9zFgxrscRyglwf6v_Uj5WRk7d-U\",\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}]",
+      "sha256": "0e19dd0eebf83f799fb1070a7c2ab633ffee0f65003d2a6e3678b1bdfc8f2386"
+    },
+    "preTerminalInventory": {
+      "count": 6,
+      "frames": [
+        [
+          "kira-test-preterminal-inventory-v1",
+          "00000000-0000-4000-8000-000000000001",
+          "4",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "6"
+        ],
+        [
+          "c3333333-3333-4333-8333-333333333333",
+          "OWNER_DELETE",
+          "1",
+          "1",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "version-1",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ],
+        [
+          "c3333333-3333-4333-8333-333333333333",
+          "OWNER_DELETE",
+          "1",
+          "1",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "version-2",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        ],
+        [
+          "c3333333-3333-4333-8333-333333333333",
+          "OWNER_DELETE",
+          "1",
+          "1",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ],
+        [
+          "c3333333-3333-4333-8333-333333333333",
+          "OWNER_DELETE",
+          "1",
+          "1",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          "𐀀",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        ],
+        [
+          "c3333333-3333-4333-8333-333333333333",
+          "EPOCH_SEAL",
+          "1",
+          "2",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev",
+          "version-1",
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "fe72e6d15b78c92024f16c17eaed3efa26bd3d2c0600c45a0c9f5b3aa36f8503"
+        ],
+        [
+          "c3333333-3333-4333-8333-333333333333",
+          "EPOCH_SEAL",
+          "1",
+          "2",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev",
+          "version-2",
+          "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        ]
+      ],
+      "framed_bytes": 2783,
+      "sha256": "b5e4d8f92ab314e3b1f5146d12252b380be8c6d297b1be1efa0889579a986598"
+    },
+    "chunks": {
+      "count": 1,
+      "frames": [
+        [
+          "kira-test-manifest-chunks-v1",
+          "00000000-0000-4000-8000-000000000001",
+          "4",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "1"
+        ],
+        [
+          "0",
+          "9aTWJOQRflA76KvTp7asHGYh0LzJMaoSh9223aV44RY",
+          "2",
+          "1",
+          "1",
+          "bb591596b3e58d0e6653a73254d96717ea1ce6332686894a568e321381b55fac",
+          "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-01/installation-manifest/nRQjVqbLBv4MsPuGso34Dn3FIF1bWd3XXglUxQH-p-U.kjev",
+          "version-1",
+          "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "8e613cef048b9b07204c81a71f7eca093748ef1735ef4ce9e6284f44d9739159"
+        ]
+      ],
+      "framed_bytes": 639,
+      "sha256": "a70926fb2e70f0abe121559fbea84f7959e4decaed5ad7f0ce06d72a7e7d2739"
+    }
+  },
+  "inventory": [
+    {
+      "writerGeneration": "c3333333-3333-4333-8333-333333333333",
+      "objectKind": "OWNER_DELETE",
+      "epochStartInclusive": 1,
+      "epochEndInclusive": 1,
+      "object": {
+        "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "objectVersion": "version-1",
+        "ciphertextSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "canonicalSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    },
+    {
+      "writerGeneration": "c3333333-3333-4333-8333-333333333333",
+      "objectKind": "OWNER_DELETE",
+      "epochStartInclusive": 1,
+      "epochEndInclusive": 1,
+      "object": {
+        "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "objectVersion": "version-2",
+        "ciphertextSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "canonicalSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    {
+      "writerGeneration": "c3333333-3333-4333-8333-333333333333",
+      "objectKind": "OWNER_DELETE",
+      "epochStartInclusive": 1,
+      "epochEndInclusive": 1,
+      "object": {
+        "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "objectVersion": "",
+        "ciphertextSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "canonicalSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    },
+    {
+      "writerGeneration": "c3333333-3333-4333-8333-333333333333",
+      "objectKind": "OWNER_DELETE",
+      "epochStartInclusive": 1,
+      "epochEndInclusive": 1,
+      "object": {
+        "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/ordinary/writer/c3333333-3333-4333-8333-333333333333/epoch/0000000000000000001/test-route-01/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+        "objectVersion": "𐀀",
+        "ciphertextSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "canonicalSha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    },
+    {
+      "writerGeneration": "c3333333-3333-4333-8333-333333333333",
+      "objectKind": "EPOCH_SEAL",
+      "epochStartInclusive": 1,
+      "epochEndInclusive": 2,
+      "object": {
+        "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev",
+        "objectVersion": "version-1",
+        "ciphertextSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "canonicalSha256": "fe72e6d15b78c92024f16c17eaed3efa26bd3d2c0600c45a0c9f5b3aa36f8503"
+      }
+    },
+    {
+      "writerGeneration": "c3333333-3333-4333-8333-333333333333",
+      "objectKind": "EPOCH_SEAL",
+      "epochStartInclusive": 1,
+      "epochEndInclusive": 2,
+      "object": {
+        "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev",
+        "objectVersion": "version-2",
+        "ciphertextSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "canonicalSha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      }
+    }
+  ],
+  "manifest_ref": {
+    "objectKey": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-01/installation-manifest/nRQjVqbLBv4MsPuGso34Dn3FIF1bWd3XXglUxQH-p-U.kjev",
+    "objectVersion": "version-1",
+    "ciphertextSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "canonicalSha256": "8e613cef048b9b07204c81a71f7eca093748ef1735ef4ce9e6284f44d9739159"
+  },
+  "descriptors": {
+    "EPOCH_SEAL": {
+      "canonical_utf8": "{\"dataScopeId\":\"00000000-0000-4000-8000-000000000001\",\"dataScopeKind\":\"TEST\",\"epochEndInclusive\":2,\"epochStartInclusive\":1,\"eventCount\":2,\"eventManifestSha256\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"objectKind\":\"EPOCH_SEAL\",\"precedingSealSha256\":\"\",\"preparingFencingToken\":17,\"schemaVersion\":1,\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}",
+      "sha256": "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+    },
+    "INSTALLATION_MANIFEST": {
+      "canonical_utf8": "{\"activationCatalogGeneration\":4,\"activationCatalogSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"chunkCount\":1,\"chunkIndex\":0,\"configurationSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"dataScopeId\":\"00000000-0000-4000-8000-000000000001\",\"dataScopeKind\":\"TEST\",\"deletedCount\":1,\"entries\":[{\"disposition\":\"RETIRED\",\"installationId\":\"00000000-0000-4000-8000-000000000002\"},{\"disposition\":\"DELETED\",\"installationId\":\"00000000-0000-4000-8000-000000000003\"}],\"entriesSha256\":\"bb591596b3e58d0e6653a73254d96717ea1ce6332686894a568e321381b55fac\",\"eventKind\":\"INSTALLATION_MANIFEST\",\"installationCount\":2,\"installationsSha256\":\"8e82f728e4a2540dc4d352ac892fa039daa1ac6b7bb840093d057585c1ebee71\",\"publicationEpoch\":3,\"retiredCount\":1,\"schemaVersion\":1,\"terminalEncodingSha256\":\"570454fd98e3554a6d645d2db4568dd62d6de599ec50a02b700a8764c7d1d43c\",\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}",
+      "sha256": "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+    },
+    "TEST_RUN_PURGE": {
+      "canonical_utf8": "{\"activationCatalogGeneration\":4,\"activationCatalogSha256\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"configurationSha256\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"dataScopeId\":\"00000000-0000-4000-8000-000000000001\",\"dataScopeKind\":\"TEST\",\"eventKind\":\"TEST_RUN_PURGE\",\"finalOrdinaryEpoch\":2,\"finalOrdinarySeal\":{\"epochEndInclusive\":2,\"epochStartInclusive\":1,\"object\":{\"canonicalSha256\":\"fe72e6d15b78c92024f16c17eaed3efa26bd3d2c0600c45a0c9f5b3aa36f8503\",\"ciphertextSha256\":\"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"objectKey\":\"complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev\",\"objectVersion\":\"version-1\"},\"precedingSealSha256\":\"\",\"role\":\"ORDINARY\",\"sealId\":\"p5x78De5TG3IXbWN9zFgxrscRyglwf6v_Uj5WRk7d-U\",\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"},\"installationManifest\":{\"chunkCount\":1,\"chunksSha256\":\"a70926fb2e70f0abe121559fbea84f7959e4decaed5ad7f0ce06d72a7e7d2739\",\"deletedCount\":1,\"installationCount\":2,\"installationsSha256\":\"8e82f728e4a2540dc4d352ac892fa039daa1ac6b7bb840093d057585c1ebee71\",\"retiredCount\":1},\"preTerminalInventory\":{\"count\":6,\"sha256\":\"b5e4d8f92ab314e3b1f5146d12252b380be8c6d297b1be1efa0889579a986598\"},\"preTerminalSeals\":{\"count\":1,\"sha256\":\"0e19dd0eebf83f799fb1070a7c2ab633ffee0f65003d2a6e3678b1bdfc8f2386\"},\"publicationEpoch\":3,\"schemaVersion\":1,\"terminalEncodingSha256\":\"570454fd98e3554a6d645d2db4568dd62d6de599ec50a02b700a8764c7d1d43c\",\"writerGeneration\":\"c3333333-3333-4333-8333-333333333333\"}",
+      "sha256": "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+    }
+  },
+  "routes": {
+    "EPOCH_SEAL": [
+      {
+        "routing_key_id": "test-route-01",
+        "journal_id": "p5x78De5TG3IXbWN9zFgxrscRyglwf6v_Uj5WRk7d-U",
+        "object_id": "ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-01/epoch-seal/ZtMuggxA6oRpfoLlr42XVyHfAQ4q8Q4uvF92j_o__KI.kjev",
+        "id_fields": [
+          "kira-test-epoch-seal-id-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-01",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "key_fields": [
+          "kira-test-epoch-seal-object-key-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-01",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "id_frame_hex": "0000001a6b6972612d746573742d65706f63682d7365616c2d69642d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30310000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532",
+        "key_frame_hex": "000000226b6972612d746573742d65706f63682d7365616c2d6f626a6563742d6b65792d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30310000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532"
+      },
+      {
+        "routing_key_id": "test-route-02",
+        "journal_id": "YpCQwuPbacXhrDLEfKPZDlwRHImWgcyRwJ8YZqvLPGg",
+        "object_id": "9wavWBhYpCrq2VxBius9h9owqVuHoVHIZntKrBFAAqs",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-02/epoch-seal/9wavWBhYpCrq2VxBius9h9owqVuHoVHIZntKrBFAAqs.kjev",
+        "id_fields": [
+          "kira-test-epoch-seal-id-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-02",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "key_fields": [
+          "kira-test-epoch-seal-object-key-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-02",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "id_frame_hex": "0000001a6b6972612d746573742d65706f63682d7365616c2d69642d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30320000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532",
+        "key_frame_hex": "000000226b6972612d746573742d65706f63682d7365616c2d6f626a6563742d6b65792d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30320000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532"
+      },
+      {
+        "routing_key_id": "test-route-03",
+        "journal_id": "0CwYYCTSwpsHAwn7yDMjJGEcO4dPjQPTZD8G8aobb3Q",
+        "object_id": "sHHGDt-soqWXGuqspuSBYCwAuu7-L_OuFJ6I8-MvtJE",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-03/epoch-seal/sHHGDt-soqWXGuqspuSBYCwAuu7-L_OuFJ6I8-MvtJE.kjev",
+        "id_fields": [
+          "kira-test-epoch-seal-id-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-03",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "key_fields": [
+          "kira-test-epoch-seal-object-key-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-03",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "id_frame_hex": "0000001a6b6972612d746573742d65706f63682d7365616c2d69642d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30330000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532",
+        "key_frame_hex": "000000226b6972612d746573742d65706f63682d7365616c2d6f626a6563742d6b65792d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30330000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532"
+      },
+      {
+        "routing_key_id": "test-route-04",
+        "journal_id": "uS1CmHF8Ne_WRQVxZ5WGEsY07K4spSmxH90qWbHcv7o",
+        "object_id": "hy4sKF6xtvKjLy-VdmZJ-VBI1kITDsJEiZ1y81na6ls",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/2/test-route-04/epoch-seal/hy4sKF6xtvKjLy-VdmZJ-VBI1kITDsJEiZ1y81na6ls.kjev",
+        "id_fields": [
+          "kira-test-epoch-seal-id-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-04",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "key_fields": [
+          "kira-test-epoch-seal-object-key-v1",
+          "EPOCH_SEAL",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "2",
+          "test-route-04",
+          "f1a36e71ce59819ebd0f72cc83d9baab8757a72b467b61a648f1b50f8f626c52"
+        ],
+        "id_frame_hex": "0000001a6b6972612d746573742d65706f63682d7365616c2d69642d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30340000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532",
+        "key_frame_hex": "000000226b6972612d746573742d65706f63682d7365616c2d6f626a6563742d6b65792d76310000000a45504f43485f5345414c0000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001320000000d746573742d726f7574652d30340000004066316133366537316365353938313965626430663732636338336439626161623837353761373262343637623631613634386631623530663866363236633532"
+      }
+    ],
+    "INSTALLATION_MANIFEST": [
+      {
+        "routing_key_id": "test-route-01",
+        "journal_id": "9aTWJOQRflA76KvTp7asHGYh0LzJMaoSh9223aV44RY",
+        "object_id": "nRQjVqbLBv4MsPuGso34Dn3FIF1bWd3XXglUxQH-p-U",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-01/installation-manifest/nRQjVqbLBv4MsPuGso34Dn3FIF1bWd3XXglUxQH-p-U.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-01",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-01",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30310000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30310000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865"
+      },
+      {
+        "routing_key_id": "test-route-02",
+        "journal_id": "aA3k6Z9M3NFVTD9xd0gCMumZHCE6lsGkTO-00r62Ris",
+        "object_id": "mcrJyH_oayMlR628dka3qthKV4E3L3vnpY0JH9E2w5c",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-02/installation-manifest/mcrJyH_oayMlR628dka3qthKV4E3L3vnpY0JH9E2w5c.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-02",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-02",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30320000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30320000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865"
+      },
+      {
+        "routing_key_id": "test-route-03",
+        "journal_id": "1xCjXHHzUM8r6zt5nXMCNGNmqX_b-1miXxVFC7VnjUc",
+        "object_id": "JHjK3-vWi6_PT6SfR13v0aFBxb_RtRxogxPpMWzLUs8",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-03/installation-manifest/JHjK3-vWi6_PT6SfR13v0aFBxb_RtRxogxPpMWzLUs8.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-03",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-03",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30330000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30330000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865"
+      },
+      {
+        "routing_key_id": "test-route-04",
+        "journal_id": "WfUv8BUpDo8AmU6GCibfZggFeWVIkA1_SgMRc2EUWoI",
+        "object_id": "1AA-U6Oh9cA3zFjr9HKUakbBgFR1j6eVUws_-IOLO2M",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-04/installation-manifest/1AA-U6Oh9cA3zFjr9HKUakbBgFR1j6eVUws_-IOLO2M.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-04",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "INSTALLATION_MANIFEST",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-04",
+          "76e65e19e4dc4b8036fe5a29ad8d1e73f9a7f50ccba393b193bb7a871bedfc8e"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30340000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d763100000015494e5354414c4c4154494f4e5f4d414e49464553540000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30340000004037366536356531396534646334623830333666653561323961643864316537336639613766353063636261333933623139336262376138373162656466633865"
+      }
+    ],
+    "TEST_RUN_PURGE": [
+      {
+        "routing_key_id": "test-route-01",
+        "journal_id": "oUD0t0IEXHmiYMa1By-cpRkppwHM3q9QMf-_-cPM6E4",
+        "object_id": "hz1OKKDVa1L9mbtSdxkQdhQHZZmffyk7PeZNGRLBd4k",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-01/test-run-purge/hz1OKKDVa1L9mbtSdxkQdhQHZZmffyk7PeZNGRLBd4k.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-01",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-01",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30310000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30310000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632"
+      },
+      {
+        "routing_key_id": "test-route-02",
+        "journal_id": "TgXjrmM6syV8l7ebA5NhalEAYHTUqIJGtq62-QspuzM",
+        "object_id": "qVHycE85QDRnlVk0XV4YIMvgD-CKh361VKItKVIDyaw",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-02/test-run-purge/qVHycE85QDRnlVk0XV4YIMvgD-CKh361VKItKVIDyaw.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-02",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-02",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30320000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30320000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632"
+      },
+      {
+        "routing_key_id": "test-route-03",
+        "journal_id": "-MrNVkr2oDvUeuStN-FNGHtlUNNy-tkvl4oREkJ7o_w",
+        "object_id": "AGyF4CwGDsrhrV1pII7KCvFTBgCxY-dLvMjyEb8LpKc",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-03/test-run-purge/AGyF4CwGDsrhrV1pII7KCvFTBgCxY-dLvMjyEb8LpKc.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-03",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-03",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30330000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30330000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632"
+      },
+      {
+        "routing_key_id": "test-route-04",
+        "journal_id": "tCwSi_cADHTyK7FmkSwwoXYWd4XQL67gdEFD49kfxjQ",
+        "object_id": "SKvr0jHrCdDkKQ0X2TuhQtPBtkEymv9nFOxVxQ8unhc",
+        "object_key": "complaints/journal/v1/c3333333-3333-4333-8333-333333333333/test/00000000-0000-4000-8000-000000000001/seal-terminal/3/test-route-04/test-run-purge/SKvr0jHrCdDkKQ0X2TuhQtPBtkEymv9nFOxVxQ8unhc.kjev",
+        "id_fields": [
+          "kira-test-terminal-event-id-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-04",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "key_fields": [
+          "kira-test-terminal-object-key-v1",
+          "TEST_RUN_PURGE",
+          "c3333333-3333-4333-8333-333333333333",
+          "TEST",
+          "00000000-0000-4000-8000-000000000001",
+          "3",
+          "test-route-04",
+          "f888e5e2cc40993154e50f7a6012ce314f12ad44933251679e473b39c3205cf2"
+        ],
+        "id_frame_hex": "0000001e6b6972612d746573742d7465726d696e616c2d6576656e742d69642d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30340000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632",
+        "key_frame_hex": "000000206b6972612d746573742d7465726d696e616c2d6f626a6563742d6b65792d76310000000e544553545f52554e5f50555247450000002463333333333333332d333333332d343333332d383333332d33333333333333333333333300000004544553540000002430303030303030302d303030302d343030302d383030302d30303030303030303030303100000001330000000d746573742d726f7574652d30340000004066383838653565326363343039393331353465353066376136303132636533313466313261643434393333323531363739653437336233396333323035636632"
+      }
+    ]
+  }
+}
