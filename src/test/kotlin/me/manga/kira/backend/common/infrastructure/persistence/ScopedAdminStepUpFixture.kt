@@ -44,12 +44,15 @@ internal class ScopedStepUpFixture(
     expected: ByteArray? = counters.syntheticPolicyDigest(),
     grantJdbc: JdbcTemplate? = null,
     counterJdbc: JdbcTemplate? = null,
+    phaseClock: Clock? = null,
 ) {
     val clock = StepUpFixtureClock(ordinary.cutoff)
+    // Existing step-up tests keep their original clock; actual DB-time consumers can issue current real proofs.
+    private val selectedClock = phaseClock ?: clock
     val properties = KiraAdminStudioProperties()
     val jdbc = ScopedStepUpJdbc(ordinary)
     val capacity = JdbcComplaintCapacityStore(counterJdbc ?: jdbc, expected)
-    val store = JdbcScopedAdminStepUpStore(grantJdbc ?: jdbc, capacity, clock, properties)
+    val store = JdbcScopedAdminStepUpStore(grantJdbc ?: jdbc, capacity, selectedClock, properties)
     val cleanups = mutableListOf<StepUpPhaseObservation>()
     var beforeCleanup: () -> Unit = {}
     val sourceCleanup = OrdinaryPersistencePhaseExecutor(
@@ -61,7 +64,7 @@ internal class ScopedStepUpFixture(
                 return ordinary.sourceStore.deleteEligibleSourceGrants(cutoff)
             }
         },
-        clock,
+        selectedClock,
     )
     val complaintCleanup = ComplaintGrantCleanupPhaseExecutor(
         ordinary.ownership,
@@ -72,7 +75,7 @@ internal class ScopedStepUpFixture(
                 return JdbcComplaintGrantCleanupStore(ordinary.jdbc, capacity).deleteEligibleComplaintGrantsAndRefund(cutoff)
             }
         },
-        clock,
+        selectedClock,
     )
     val phases = ScopedAdminStepUpPhaseExecutor(ordinary.ownership, store, sourceCleanup, complaintCleanup)
     val dependencies = StepUpExternalObservation(ordinary, jdbc)

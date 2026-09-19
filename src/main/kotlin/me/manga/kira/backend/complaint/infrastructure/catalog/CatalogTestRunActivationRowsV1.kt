@@ -21,16 +21,22 @@ import java.util.UUID
 internal class CatalogTestRunActivationSnapshotV1(
     val control: CatalogTestRunActivationControlV1,
     val history: CatalogTestRunActivationHistoryV1,
+    val signedTail: CatalogTestRunActivationSignedTailV1? = null,
 ) {
-    internal fun requireExpected(input: CatalogTestRunActivationFrozenV1, prepared: Boolean) {
+    internal fun requireExpected(input: CatalogTestRunActivationFrozenV1, prepared: Boolean, signed: CatalogTestRunActivationSignedV1? = null) {
         control.requirePredecessor(input)
-        history.requireExpected(input.generation, prepared)
+        history.requireExpected(input.generation, prepared, signed != null)
+        if (signed == null) check(signedTail == null) else {
+            check(prepared && signed.frozen === input)
+            checkNotNull(signedTail).requireExact(signed)
+        }
         if (prepared) check(control.maintenanceClosed && control.creationClosed)
     }
 
     internal fun requireSame(other: CatalogTestRunActivationSnapshotV1, closed: Boolean) {
         control.requireSame(other.control, closed)
         history.requireSame(other.history)
+        if (signedTail == null) check(other.signedTail == null) else signedTail.requireSame(checkNotNull(other.signedTail))
     }
 
     override fun toString(): String = "CatalogTestRunActivationSnapshotV1(detached,no-authority)"
@@ -61,6 +67,12 @@ internal class CatalogTestRunActivationControlV1 private constructor(
         }
     }
 
+    /** Private exact global preimage only, deliberately distinct from the target full-D configuration. */
+    internal fun custodyBytes(): ByteArray {
+        requireConnectionFree()
+        return core.toByteArray(Charsets.UTF_8).also { check(it.size in 1..524288) }
+    }
+
     override fun toString(): String = "CatalogTestRunActivationControlV1(exact-global-preimage,redacted)"
 
     companion object {
@@ -76,6 +88,38 @@ internal class CatalogTestRunActivationControlV1 private constructor(
                 HexFormat.of().formatHex(checkNotNull(row.getBytes("trust_bundle_hash"))),
                 row.requiredTestActivationLong("lease_token"),
             )
+        }
+    }
+}
+
+/** Only the one TEST tail can detach raw bytes; the historical stream still has six fixed-width columns. */
+internal class CatalogTestRunActivationSignedTailV1 private constructor(
+    private val signature: ByteArray,
+    private val envelope: ByteArray,
+    private val hash: ByteArray,
+) {
+    fun requireExact(expected: CatalogTestRunActivationSignedV1) = expected.requireExact(signature, envelope, hash)
+
+    fun requireSame(other: CatalogTestRunActivationSignedTailV1) {
+        check(signature.contentEquals(other.signature) && envelope.contentEquals(other.envelope) && hash.contentEquals(other.hash))
+    }
+
+    override fun toString(): String = "CatalogTestRunActivationSignedTailV1(bounded-exact-row-bytes,no-authority)"
+
+    companion object {
+        fun copy(row: ResultSet, expected: CatalogTestRunActivationSignedV1): CatalogTestRunActivationSignedTailV1? {
+            check(row.requiredTestActivationBoolean("valid"))
+            val signature = row.getBytes("signature_bytes")
+            val envelope = row.getBytes("envelope_bytes")
+            val hash = row.getBytes("envelope_hash")
+            if (signature == null) {
+                check(envelope == null && hash == null)
+                return null
+            }
+            val signedEnvelope = checkNotNull(envelope)
+            val envelopeHash = checkNotNull(hash)
+            check(signature.size == 384 && signedEnvelope.size in 1..131072 && envelopeHash.size == 32)
+            return CatalogTestRunActivationSignedTailV1(signature.copyOf(), signedEnvelope.copyOf(), envelopeHash.copyOf()).also { it.requireExact(expected) }
         }
     }
 }
@@ -100,25 +144,36 @@ internal class CatalogTestRunActivationLeaseV1 private constructor(val owner: UU
 internal class CatalogTestRunActivationHistoryV1 private constructor(
     val size: Int,
     private val prepared: Boolean,
+    private val signed: Boolean,
     private val digest: ByteArray,
     private val predecessorDigest: ByteArray,
     private val rawBindings: ByteArray?,
     private val retainedUntilMicros: LongArray?,
 ) {
-    fun requireExpected(generation: Long, prepared: Boolean) {
-        check(this.prepared == prepared && size.toLong() == generation - 1L + (if (prepared) 1L else 0L))
+    fun requireExpected(generation: Long, prepared: Boolean, signed: Boolean = false) {
+        check(this.prepared == prepared && this.signed == signed && size.toLong() == generation - 1L + (if (prepared) 1L else 0L))
     }
 
     fun requireSame(other: CatalogTestRunActivationHistoryV1) {
-        check(size == other.size && prepared == other.prepared && digest.contentEquals(other.digest))
+        check(size == other.size && prepared == other.prepared && signed == other.signed && digest.contentEquals(other.digest))
     }
 
     fun requireUnchangedPrefix(before: CatalogTestRunActivationHistoryV1, appended: Boolean) {
         if (appended) {
-            check(prepared && !before.prepared && size == before.size + 1 && predecessorDigest.contentEquals(before.digest))
+            check(prepared && !signed && !before.prepared && size == before.size + 1 && predecessorDigest.contentEquals(before.digest))
         } else {
             requireSame(before)
         }
+    }
+
+    fun requireSignatureTransition(before: CatalogTestRunActivationHistoryV1) {
+        check(prepared && signed && before.prepared && size == before.size && predecessorDigest.contentEquals(before.predecessorDigest))
+        if (before.signed) requireSame(before) // Exact signed replay changes neither tail nor any historical column.
+    }
+
+    internal fun custodyPrefixHash(): String {
+        requireConnectionFree()
+        return HexFormat.of().formatHex(predecessorDigest)
     }
 
     /** Connection-free raw binding. The caller must additionally fold the real full dual-copy chain and its Stable signer. */
@@ -170,7 +225,7 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
         private const val HISTORY_DOMAIN = "kira-test-activation-sql-history-v1"
 
         /** JDBC's original ResultSet is consumed to exhaustion; no List<Row>, signature or textual preimage escapes. */
-        fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean): CatalogTestRunActivationHistoryV1 {
+        fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean, signed: Boolean = false): CatalogTestRunActivationHistoryV1 {
             val predecessorCount = Math.toIntExact(input.generation - 1L)
             val bindings = if (retainRaw) ByteArray(Math.multiplyExact(predecessorCount, HASH_BYTES)) else null
             val retention = if (retainRaw) LongArray(predecessorCount) else null
@@ -203,9 +258,10 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
                 count++
             }
             check(count in predecessorCount..input.maximumGenerations)
+            check(!signed || prepared)
             all.update(long(count.toLong()))
             prefix.update(long(predecessorCount.toLong()))
-            return CatalogTestRunActivationHistoryV1(count, prepared, all.digest(), prefix.digest(), bindings, retention)
+            return CatalogTestRunActivationHistoryV1(count, prepared, signed, all.digest(), prefix.digest(), bindings, retention)
         }
 
         private fun historyDigest(): MessageDigest = MessageDigest.getInstance("SHA-256").apply { update(HISTORY_DOMAIN.toByteArray(Charsets.UTF_8)) }

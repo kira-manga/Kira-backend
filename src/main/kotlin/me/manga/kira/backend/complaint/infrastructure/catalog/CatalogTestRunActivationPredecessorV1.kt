@@ -21,7 +21,7 @@ internal class CatalogTestRunActivationPredecessorV1(
     private val original: CatalogTestRunActivationV1,
     private val httpFactory: (() -> SdkHttpClient)?,
 ) : AutoCloseable {
-    private var round: ReadbackRound? = null
+    private val rounds = mutableListOf<ReadbackRound>()
     private var verifiedSnapshot: CatalogTestRunActivationSnapshotV1? = null
     private var verifiedInput: CatalogTestRunActivationFrozenV1? = null
     private var closed = false
@@ -34,11 +34,13 @@ internal class CatalogTestRunActivationPredecessorV1(
     ) {
         requireConnectionFree()
         original.requireReadback(this, snapshot, input)
-        requireTestActivation(!closed && round == null)
+        requireTestActivation(!closed && rounds.size < 2)
+        verifiedSnapshot = null
+        verifiedInput = null
         val reader = original.process.catalogReadback
         val policy = reader.policyAt(original.sampleWallTime())
         val actual = ReadbackRound(original.budget.capped(minOf(reader.totalAttemptMillis, 10_000L)))
-        round = actual // SDK and both real native owners are retained BEFORE any factory/provider callback.
+        rounds.add(actual) // SDK and both real native owners are retained BEFORE any factory/provider callback.
         withSignerRotationCleanup(
             {
                 actual.requireRunning()
@@ -67,7 +69,7 @@ internal class CatalogTestRunActivationPredecessorV1(
     /** Also used under the later original SQL phase: local identity/cleanup predicates only, no provider/JSON/crypto. */
     internal fun requireVerified(snapshot: CatalogTestRunActivationSnapshotV1, input: CatalogTestRunActivationFrozenV1) {
         requireTestActivation(!closed && verifiedSnapshot === snapshot && verifiedInput === input)
-        checkNotNull(round).requireCleanup()
+        checkNotNull(rounds.lastOrNull()).requireCleanup()
     }
 
     @Suppress("TooGenericExceptionCaught")
@@ -140,7 +142,10 @@ internal class CatalogTestRunActivationPredecessorV1(
 
     override fun close() {
         closed = true
-        round?.close()
+        val outcomes = rounds.map { runCatching(it::close) }
+        var failure: Throwable? = null
+        outcomes.forEach { it.exceptionOrNull()?.let { problem -> failure = preferSignerRotationCleanup(failure, problem) } }
+        failure?.let { throw it }
     }
 
     private inner class ReadbackRound(val budget: PersistenceTimeBudget) : AutoCloseable {

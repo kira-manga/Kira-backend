@@ -86,7 +86,12 @@ internal object CatalogTestRunActivationPreparedCases {
     }
 }
 
-internal fun withPreparedActivationRows(tls: VersionBoundPersistenceConnectedFixture, action: (PreparedActivationRows) -> Unit) {
+internal fun withPreparedActivationRows(
+    tls: VersionBoundPersistenceConnectedFixture,
+    prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
+    selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
+    action: (PreparedActivationRows) -> Unit,
+) {
     val source = ordinaryCleanupReader(tls.database)
     Flyway.configure().dataSource(source).locations("classpath:db/migration").load().migrate()
     val observer = JdbcTemplate(source).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
@@ -95,7 +100,7 @@ internal fun withPreparedActivationRows(tls: VersionBoundPersistenceConnectedFix
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}; " +
             "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}",
     )
-    withActivationEvidence(tls) { evidence ->
+    withActivationEvidence(tls, prefix, selectedSigner) { evidence ->
         SyntheticComplaintCounters(observer, Instant.ofEpochSecond(CatalogReadbackFixture.EVALUATED_AT)).use { counters ->
             PreparedActivationRows(evidence, observer, counters).use { rows ->
                 rows.seed()
@@ -119,7 +124,7 @@ internal class PreparedActivationRows(
     private val inserted = mutableListOf<UUID>()
     private var ownsPrepared = false
     val http = S3CatalogReadbackFixture()
-    private val intent = CatalogTestRunActivationEvidenceFixture.manifestBytes(evidence.manifest)
+    val intent = CatalogTestRunActivationEvidenceFixture.manifestBytes(evidence.manifest)
 
     fun begin(process: VersionBoundTestNamespaceProcessV1 = evidence.process): CatalogTestRunActivationV1 =
         CatalogTestRunActivationV1.withHttpFixture(
@@ -128,8 +133,13 @@ internal class PreparedActivationRows(
         )
 
     fun prepare(owner: CatalogTestRunActivationV1): CatalogTestRunPreparedV1 {
-        ownsPrepared = true // Retain exact token before a commit or its return can fail.
+        retainPreparedToken()
         return owner.prepare(intent, S3CatalogReadbackFixture.credentials, S3CatalogReadbackFixture.credentials)
+    }
+
+    /** Isolation ownership only, retained before the genuine unsigned or signed PREPARE can commit or fail. */
+    fun retainPreparedToken() {
+        ownsPrepared = true
     }
 
     fun reload(owner: CatalogTestRunActivationV1): CatalogTestRunPreparedV1 =
@@ -213,6 +223,10 @@ internal class PreparedActivationRows(
         assertArrayEquals(hash(intent), prepared["unsigned_hash"] as ByteArray)
         for (column in listOf("signer_one_signature", "envelope_bytes", "envelope_hash", "object_version", "retain_until",
             "primary_evidence_bytes", "replica_evidence_bytes", "completed_at", "projected_at")) assertNull(prepared[column], column)
+        assertClosedAndHeadUnchanged()
+    }
+
+    fun assertClosedAndHeadUnchanged() {
         val control = observer.queryForMap("SELECT * FROM complaint_journal_control WHERE data_scope_id = ?", live)
         assertEquals(true, control["maintenance_closed"])
         assertEquals(true, control["creation_closed"])

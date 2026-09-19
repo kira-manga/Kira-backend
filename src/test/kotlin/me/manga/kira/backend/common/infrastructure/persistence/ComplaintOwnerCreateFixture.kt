@@ -394,6 +394,7 @@ internal data class OwnerCreateFixtureState(
 
 internal enum class OwnerCreateFixtureStep {
     AUTH,
+    ADMIN_GRANT_LOCK,
     OBSERVE,
     CLAIM,
     COUNTERS,
@@ -448,6 +449,7 @@ internal class OwnerCreateFixtureJdbc(private val fixture: ComplaintOwnerCreateF
     private fun step(sql: String): OwnerCreateFixtureStep? = when {
         sql.contains("LEFT JOIN complaint_idempotency_receipts") -> OwnerCreateFixtureStep.OBSERVE
         sql.startsWith("WITH actor AS") -> OwnerCreateFixtureStep.AUTH
+        sql.contains("FROM admin_step_up_grants") && sql.contains("token_hash") && sql.contains("FOR UPDATE") -> OwnerCreateFixtureStep.ADMIN_GRANT_LOCK
         sql.startsWith("INSERT INTO complaint_idempotency_receipts") -> OwnerCreateFixtureStep.CLAIM
         sql.startsWith("SELECT name, ordinal, accounting_version") -> OwnerCreateFixtureStep.COUNTERS
         sql.startsWith("UPDATE complaint_capacity_counters") -> OwnerCreateFixtureStep.CHARGE
@@ -461,7 +463,7 @@ internal class OwnerCreateFixtureJdbc(private val fixture: ComplaintOwnerCreateF
         sql.startsWith("DELETE FROM complaint_resource_ids") -> OwnerCreateFixtureStep.DISCARD_RESOURCE
         sql.startsWith("INSERT INTO complaint_resource_ids") -> OwnerCreateFixtureStep.RESOURCE
         sql.contains("INSERT INTO complaints") -> OwnerCreateFixtureStep.CONTENT
-        sql.contains("UPDATE complaints SET subject") -> OwnerCreateFixtureStep.EDIT_CONTENT
+        sql.contains("UPDATE complaints SET subject") || sql.contains("UPDATE complaints SET type = ?, subject = ?, body = ?") -> OwnerCreateFixtureStep.EDIT_CONTENT
         sql.contains("UPDATE complaint_idempotency_receipts") -> OwnerCreateFixtureStep.COMPLETE
         else -> null
     }

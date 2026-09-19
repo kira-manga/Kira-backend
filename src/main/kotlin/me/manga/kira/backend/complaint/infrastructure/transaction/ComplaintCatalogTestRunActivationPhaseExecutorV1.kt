@@ -33,6 +33,8 @@ internal class ComplaintCatalogTestRunActivationPhaseExecutorV1(
             CatalogTestRunActivationKindV1.LEASE_ACQUIRE -> coordinator.ownership.enterComplaintTestRunActivationAcquire(input.original)
             CatalogTestRunActivationKindV1.PREPARE -> coordinator.ownership.enterComplaintTestRunActivationPrepare(input.original)
             CatalogTestRunActivationKindV1.PREPARED_RELOAD -> coordinator.ownership.enterComplaintTestRunActivationReload(input.original)
+            CatalogTestRunActivationKindV1.SIGNATURE -> coordinator.ownership.enterComplaintTestRunActivationSignature(input.original)
+            CatalogTestRunActivationKindV1.SIGNED_RELOAD -> coordinator.ownership.enterComplaintTestRunActivationSignedReload(input.original)
         }
         var operation: CatalogTestRunActivationOperationV1? = null
         var closingFailure: Throwable? = null
@@ -59,5 +61,5 @@ internal class ComplaintCatalogTestRunActivationPhaseExecutorV1(
         return actual
     }
 
-    override fun toString(): String = "ComplaintCatalogTestRunActivationPhaseExecutorV1(PREPARED-only,no-provider-or-run-authority)"
+    override fun toString(): String = "ComplaintCatalogTestRunActivationPhaseExecutorV1(signed-PREPARED-only,no-provider-or-run-authority)"
 }

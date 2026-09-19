@@ -8,7 +8,7 @@ import org.junit.jupiter.api.assertThrows
 
 class PersistenceComplaintMaintenanceFenceV1Test {
     @Test
-    fun `all forty old writers and three TEST maintenance paths participate while thirty four observations and three SOURCE paths do not`() {
+    fun `every admitted phase has an explicit maintenance lock classification`() {
         val oldWriters = setOf(
             PersistencePhasePath.COMPLAINT_GRANT_CLEANUP,
             PersistencePhasePath.COMPLAINT_STEP_UP_ISSUANCE,
@@ -55,12 +55,15 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
         )
-        val writers = oldWriters + testWriters
-        assertEquals(80, PersistencePhasePath.entries.size)
+        val adminWriter = PersistencePhasePath.COMPLAINT_ADMIN_EDIT
+        val writers = oldWriters + testWriters + adminWriter
+        assertEquals(84, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
-        assertEquals(3, testWriters.size)
-        assertEquals(43, writers.size)
+        assertEquals(5, testWriters.size)
+        assertEquals(46, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -105,15 +108,18 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
             PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
             PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
+            PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
         )
         val snapshot = PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT
         assertEquals(30, oldObservations.size)
-        assertEquals(3, adminObservations.size)
-        assertEquals(34, (oldObservations + adminObservations + snapshot).size)
+        assertEquals(4, adminObservations.size)
+        assertEquals(35, (oldObservations + adminObservations + snapshot).size)
         assertEquals(oldObservations + adminObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
         assertEquals(testWriters + snapshot, PersistencePhasePath.entries.filter { it.catalogTestRunActivation }.toSet())
         assertTrue(snapshot.readOnly)
         assertFalse(testWriters.any { it.readOnly })
+        assertFalse(adminWriter.readOnly)
+        assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)
     }
 
     @Test

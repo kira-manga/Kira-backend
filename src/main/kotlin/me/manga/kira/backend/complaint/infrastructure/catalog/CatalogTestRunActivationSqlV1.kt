@@ -52,17 +52,24 @@ internal object CatalogTestRunActivationSqlV1 {
         FROM complaint_journal_control c CROSS JOIN sampled WHERE c.data_scope_id = $GLOBAL
     """.trimIndent()
 
-    private val preparedMatch = """
+    private val preparedColumnsMatch = """
         m.operation_token = ?::uuid AND m.data_scope_id = ?::uuid AND m.predecessor_generation = ? AND m.predecessor_hash = ?::bytea
         AND m.successor_generation = ? AND m.catalog_writer_generation = ?::uuid AND m.approval_bytes = ?::bytea AND m.approval_hash = ?::bytea
         AND m.unsigned_bytes = ?::bytea AND m.unsigned_hash = ?::bytea AND m.signer_one_id = ? AND m.signer_one_algorithm = ?
         AND m.object_key = ? AND m.created_at = ?::timestamptz AND m.operation_type = 'TEST_RUN_ACTIVATION' AND m.test_only
         AND m.canonicalizer = 'kcj-1' AND m.signer_policy = 'SINGLE' AND m.state = 'PREPARED'
-        AND m.signer_one_signature IS NULL AND m.signer_two_id IS NULL AND m.signer_two_algorithm IS NULL AND m.signer_two_signature IS NULL
-        AND m.envelope_bytes IS NULL AND m.envelope_hash IS NULL AND m.object_version IS NULL AND m.retain_until IS NULL
+        AND m.signer_two_id IS NULL AND m.signer_two_algorithm IS NULL AND m.signer_two_signature IS NULL
+        AND m.object_version IS NULL AND m.retain_until IS NULL
         AND m.primary_evidence_bytes IS NULL AND m.primary_evidence_hash IS NULL AND m.replica_evidence_bytes IS NULL AND m.replica_evidence_hash IS NULL
         AND m.completed_at IS NULL AND m.projected_at IS NULL
     """.trimIndent()
+    private const val unsignedSignatureMatch = "m.signer_one_signature IS NULL AND m.envelope_bytes IS NULL AND m.envelope_hash IS NULL"
+    private val signedSignatureMatch = """
+        m.signer_one_signature = ?::bytea AND m.envelope_bytes = ?::bytea AND m.envelope_hash = ?::bytea
+        AND octet_length(m.signer_one_signature) = 384 AND complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 131072)
+    """.trimIndent()
+    private val preparedMatch = "$preparedColumnsMatch AND $unsignedSignatureMatch"
+    private val signedPreparedMatch = "$preparedColumnsMatch AND $signedSignatureMatch"
     private val historyBound = """
         m.canonicalizer = 'kcj-1' AND complaint_is_v4(m.operation_token) AND complaint_is_v4(m.catalog_writer_generation)
         AND m.successor_generation BETWEEN 1 AND 65536 AND m.predecessor_generation = m.successor_generation - 1
@@ -77,7 +84,9 @@ internal object CatalogTestRunActivationSqlV1 {
         AND coalesce(octet_length(m.envelope_hash) = 32, true) AND coalesce(octet_length(m.primary_evidence_hash) = 32, true)
         AND coalesce(octet_length(m.replica_evidence_hash) = 32, true) AND (m.object_version IS NULL OR complaint_opaque_valid(m.object_version, 1024))
         AND ((m.operation_type = 'TEST_RUN_ACTIVATION' AND m.test_only AND complaint_scope_valid(m.data_scope_id, m.test_only)
-                AND octet_length(m.unsigned_bytes) <= 131072 AND m.state = 'PREPARED')
+                AND octet_length(m.unsigned_bytes) <= 131072 AND m.state = 'PREPARED'
+                AND (($unsignedSignatureMatch) OR (octet_length(m.signer_one_signature) = 384
+                    AND complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 131072))))
             OR (m.data_scope_id IS NULL AND m.test_only IS NULL AND m.state = 'COMPLETED' AND m.completed_at IS NOT NULL AND m.projected_at IS NOT NULL
                 AND complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 8388608)
                 AND octet_length(m.signer_one_signature) = 384
@@ -130,16 +139,33 @@ internal object CatalogTestRunActivationSqlV1 {
 
     // Six fixed-width columns, <256 encoded payload bytes/row, at most the original65536+1 overflow sentinel.
     // fetch128 limits driver buffering even for rejected histories; the overflow row must fail, never truncate acceptance.
-    private val historySelect = """
-        SELECT ($preparedMatch) IS TRUE AS prepared_matches, ($historyBound) IS TRUE AS valid,
+    private fun historySelect(tailMatch: String): String = """
+        SELECT ($tailMatch) IS TRUE AS prepared_matches, ($historyBound) IS TRUE AS valid,
             m.successor_generation,
             CASE WHEN ($historyBound) IS TRUE THEN sha256($rowFrame) END AS row_digest,
             CASE WHEN ($historyBound) IS TRUE AND m.state = 'COMPLETED' THEN sha256($rawFrame) END AS raw_binding,
             CASE WHEN ($historyBound) IS TRUE AND m.state = 'COMPLETED' THEN timestamptz_send(m.retain_until) END AS retain_until_wire
         FROM complaint_catalog_mutations m ORDER BY m.successor_generation LIMIT ?
     """.trimIndent()
-    val readHistory = historySelect
-    val lockHistory = historySelect + "\nFOR UPDATE"
+    val readHistory = historySelect(preparedMatch)
+    val lockHistory = readHistory + "\nFOR UPDATE"
+    val readSignedHistory = historySelect(signedPreparedMatch)
+    val lockSignedHistory = readSignedHistory + "\nFOR UPDATE"
+
+    /** At most ONE exact TEST tail, bounded before detaching; never raw historical rows or a parser under locks. */
+    val readPreparedTail = """
+        SELECT (($preparedColumnsMatch) AND (($unsignedSignatureMatch) OR ($signedSignatureMatch))) IS TRUE AS valid,
+            CASE WHEN octet_length(m.signer_one_signature) = 384 THEN m.signer_one_signature END AS signature_bytes,
+            CASE WHEN complaint_bytes_match(m.envelope_bytes, m.envelope_hash, 131072) THEN m.envelope_bytes END AS envelope_bytes,
+            CASE WHEN octet_length(m.envelope_hash) = 32 THEN m.envelope_hash END AS envelope_hash
+        FROM complaint_catalog_mutations m WHERE m.successor_generation = ?
+    """.trimIndent()
+
+    /** The caller must already hold the original TEST M/E/control/history order and a fresh post-lock lease sample. */
+    val persistSignature = """
+        UPDATE complaint_catalog_mutations m SET signer_one_signature = ?::bytea, envelope_bytes = ?::bytea, envelope_hash = ?::bytea
+        WHERE ($preparedMatch)
+    """.trimIndent()
 
     /** Reads only: no not-yet-created scope row is locked and no later-class row is taken ahead of counters. */
     val preflight = """

@@ -21,6 +21,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActi
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationKindV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunPreparedV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunSignedPreparedV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunActivationPhaseExecutorV1
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -57,6 +58,7 @@ internal object CatalogTestRunActivationBoundaryCases {
         }
         assertThrows<CatalogTestRunActivationExceptionV1> { CatalogTestRunActivationFrozenV1.capture(owner, rows.evidence.assembled()) }
         assertThrows<CatalogTestRunActivationExceptionV1> { CatalogTestRunPreparedV1.issuedBy(owner) }
+        assertThrows<CatalogTestRunActivationExceptionV1> { CatalogTestRunSignedPreparedV1.issuedBy(owner) }
         assertThrows<CatalogTestRunActivationExceptionV1> { tls.pools.catalogCoordinator.ownership.enterComplaintTestRunActivationPrepare(owner) }
         owner.close()
         assertTrue(probe.calls.isEmpty() && rows.http.requests.isEmpty())
@@ -175,7 +177,12 @@ internal object CatalogTestRunActivationBoundaryCases {
         probe.assertNoLostAssertions()
         rows.assertPrepareCharge(before)
         val paths = probe.calls.map { it.path }.distinct()
-        assertEquals(CatalogTestRunActivationKindV1.entries.map { it.path }, paths)
+        assertEquals(listOf(
+            CatalogTestRunActivationKindV1.SNAPSHOT,
+            CatalogTestRunActivationKindV1.LEASE_ACQUIRE,
+            CatalogTestRunActivationKindV1.PREPARE,
+            CatalogTestRunActivationKindV1.PREPARED_RELOAD,
+        ).map { it.path }, paths)
         rows.assertHttpReleased()
     }
 

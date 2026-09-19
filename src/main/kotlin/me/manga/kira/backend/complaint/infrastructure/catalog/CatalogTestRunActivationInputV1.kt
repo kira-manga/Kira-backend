@@ -24,6 +24,8 @@ internal enum class CatalogTestRunActivationKindV1(val path: PersistencePhasePat
     LEASE_ACQUIRE(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE),
     PREPARE(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE),
     PREPARED_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD),
+    SIGNATURE(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE),
+    SIGNED_RELOAD(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD),
 }
 
 /** Detached exact input for ONE selected phase. Only its original owner can construct or spend it. */
@@ -35,9 +37,11 @@ internal class CatalogTestRunActivationInputV1 private constructor(
     internal val lease: CatalogTestRunActivationLeaseV1?,
     internal val leaseOwner: UUID?,
     internal val recovering: Boolean,
+    internal val signed: CatalogTestRunActivationSignedV1?,
 ) {
     val path: PersistencePhasePath get() = kind.path
-    val requiresEpochFence: Boolean get() = kind === CatalogTestRunActivationKindV1.PREPARE || kind === CatalogTestRunActivationKindV1.PREPARED_RELOAD
+    val requiresEpochFence: Boolean get() = kind === CatalogTestRunActivationKindV1.PREPARE || kind === CatalogTestRunActivationKindV1.PREPARED_RELOAD ||
+        kind === CatalogTestRunActivationKindV1.SIGNATURE || kind === CatalogTestRunActivationKindV1.SIGNED_RELOAD
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) = original.requireInput(this, ownership, jdbc)
 
@@ -49,6 +53,7 @@ internal class CatalogTestRunActivationInputV1 private constructor(
             original.requireInputConstruction(kind)
             return CatalogTestRunActivationInputV1(
                 original, kind, original.frozenInput(), original.expectedSnapshot(), original.currentLease(), original.acquisitionOwner(), original.recovering(),
+                original.signedInput(),
             )
         }
     }
@@ -97,6 +102,7 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
     fun manifest(): OfflineCatalogTestRunActivationManifestV3 = storedManifest.snapshot()
     fun unsignedBytes(): ByteArray = unsigned.copyOf()
     fun unsignedHash(): ByteArray = unsignedDigest.copyOf()
+    fun approvalBytes(): ByteArray = approvals.copyOf()
     fun capacityDigest(): ByteArray = policyDigest.copyOf()
 
     /** Fixed fourteen V14 PREPARED columns, assembled before checkout. No JDBC Array/stream/JSON parsing under locks. */

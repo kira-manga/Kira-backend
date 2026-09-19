@@ -48,4 +48,7 @@ object ComplaintCapacityCharges {
 
     // The existing INSTALLATION content envelope already covers every legal edit; no new content/ID slot or refund.
     val OWNER_EDIT: ComplaintCapacityVector = NORMAL_RECEIPT + AUDIT
+
+    // Same prepaid installation content lifecycle, but a distinct typed ADMIN_EDIT producer/allocation.
+    val ADMIN_EDIT: ComplaintCapacityVector = NORMAL_RECEIPT + AUDIT
 }

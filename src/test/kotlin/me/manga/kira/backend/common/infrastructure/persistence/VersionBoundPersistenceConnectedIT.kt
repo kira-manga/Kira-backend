@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.ActivationEvidencePrefix
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisFreezeCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCases
 import me.manga.kira.backend.complaint.catalog.CatalogGenesisPublishCliCases
@@ -28,6 +29,8 @@ import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoveryProv
 import me.manga.kira.backend.complaint.catalog.CatalogSignerRotationRecoverySqlCut
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationPreparedCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedCases
+import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
@@ -48,6 +51,12 @@ import me.manga.kira.backend.complaint.catalog.ProcessBoundCatalogGenesisCases
 import me.manga.kira.backend.complaint.catalog.SealCanonicalCases
 import me.manga.kira.backend.complaint.catalog.TestActivationCustodyCut
 import me.manga.kira.backend.complaint.catalog.TestActivationRefusalCut
+import me.manga.kira.backend.complaint.catalog.TestActivationSignedCorruptionCut
+import me.manga.kira.backend.complaint.catalog.TestActivationSignedInputCut
+import me.manga.kira.backend.complaint.catalog.TestActivationSignedLifecycleCut
+import me.manga.kira.backend.complaint.catalog.TestActivationSignedRaceCut
+import me.manga.kira.backend.complaint.catalog.TestActivationSignedSqlCut
+import me.manga.kira.backend.complaint.catalog.TestActivationSignedUnreturnedCut
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
@@ -71,6 +80,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedG
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDCompletionCases
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDConcurrencyCases
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationCompletionCut
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationTestClock
 import me.manga.kira.backend.complaint.infrastructure.admission.withDesiredInstallation
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -939,6 +949,62 @@ class VersionBoundPersistenceConnectedIT {
             withFixture(testActivation = true) {
                 CatalogTestRunActivationBoundaryCases.failuresRetainOriginalCustody(it, cut)
             }
+        }
+    }
+
+    @Test
+    fun testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload() {
+        for (prefix in listOf(ActivationEvidencePrefix.GENESIS, ActivationEvidencePrefix.ROTATED, ActivationEvidencePrefix.INVENTORY_ROTATED)) {
+            withFixture(testActivation = true) { CatalogTestRunActivationSignedCases.stablePrefixAndExactReload(it, prefix) }
+        }
+    }
+
+    @Test
+    fun testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign() = withFixture(testActivation = true) {
+        CatalogTestRunActivationSignedCases.diagnosticAndColdUnsignedRefuse(it)
+    }
+
+    @Test
+    fun testActivationUnreturnedDurableSignArmsNeverResign() {
+        TestActivationSignedUnreturnedCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationSignedRecoveryCases.unreturnedArmCannotSignAgain(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign() {
+        TestActivationSignedSqlCut.entries.forEach { cut ->
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true, nanoClock = clock) { CatalogTestRunActivationSignedRecoveryCases.savedBytesRecoverWithoutResign(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationSignedOriginalBudgetCancellationAndFileCleanupStayClosed() {
+        TestActivationSignedLifecycleCut.entries.forEach { cut ->
+            val clock = DesiredInstallationTestClock()
+            withFixture(testActivation = true, nanoClock = clock) { CatalogTestRunActivationSignedRecoveryCases.originalLifecycleCannotRevive(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationSignedPathRejectsKeyScopeFullDAndCanonicalPredecessorDrift() {
+        TestActivationSignedInputCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationSignedCases.inputRefusal(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces() {
+        TestActivationSignedRaceCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationSignedCases.originalAndAllocationRaces(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows() {
+        TestActivationSignedCorruptionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { CatalogTestRunActivationSignedCases.coldCorruptionRefusesWithoutRepair(it, cut) }
         }
     }
 

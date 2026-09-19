@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
@@ -23,6 +24,18 @@ internal class ComplaintAdmissionBucketKey(val generation: String, private val d
 }
 
 internal object ComplaintAdmissionPseudonyms {
+    /** ADMIN+scope is domain-separated from owner writes and Admin-read's minute store. */
+    fun adminContentActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii(ComplaintAdminContentTuple.OPERATION)))
+
+    fun adminContentMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintAdminContentTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
+            ascii(ComplaintAdminContentTuple.OPERATION), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
+        ),
+    )
+
     /** One distinct ADMIN family combines search/detail without an installation-shaped surrogate. */
     fun adminReadActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
         derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii("ADMIN_READ")))

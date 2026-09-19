@@ -144,6 +144,10 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintAdminDetail(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
 
+    internal fun enterComplaintAdminEditPreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT)
+
+    internal fun enterComplaintAdminEdit(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_EDIT)
+
     /** TEST-dormant create/status share only the existing ordinary owner; no activation is inferred. */
     internal fun enterComplaintOwnerOperationAuthentication(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION)
 
@@ -348,6 +352,12 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintTestRunActivationReload(original: CatalogTestRunActivationV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationSignature(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE, testRunActivation = original)
+
+    internal fun enterComplaintTestRunActivationSignedReload(original: CatalogTestRunActivationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD, testRunActivation = original)
 
     // Refusals precede their own side effects; catch every entry failure to settle only unused custody and retain bounded reasons.
     // Keep ordered admission/custody/publication in one entry; concrete owner parameters must not become an interchangeable capability bag.
@@ -665,6 +675,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
                 PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
+                PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
+                PersistencePhasePath.COMPLAINT_ADMIN_EDIT,
                 PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_OWNER_CREATE,
@@ -708,6 +720,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
+                PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -797,6 +811,8 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
+            PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
         )
         private val SIGNER_ROTATION_ACTIVATION_EFFECT_PATHS = setOf(
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
@@ -982,6 +998,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_ADMIN_READ_AUTHENTICATION,
     COMPLAINT_ADMIN_SEARCH,
     COMPLAINT_ADMIN_DETAIL,
+    COMPLAINT_ADMIN_EDIT_PREFLIGHT,
+    COMPLAINT_ADMIN_EDIT,
     COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
     COMPLAINT_OWNER_CREATE_PREFLIGHT,
     COMPLAINT_OWNER_CREATE,
@@ -1011,6 +1029,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
     COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
     COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
+    COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_READ,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_PREPARE,
     COMPLAINT_CATALOG_SIGNER_ROTATION_ACTIVATION_SIGNATURE,
@@ -1034,7 +1054,8 @@ internal enum class PersistencePhasePath {
 
     internal val catalogTestRunActivation: Boolean
         get() = this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE ||
-            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD
+            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD ||
+            this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE || this === COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD
 
     internal val source: Boolean
         get() = this === SOURCE_GRANT_CLEANUP || this === SOURCE_STEP_UP_SNAPSHOT || this === SOURCE_STEP_UP_ISSUANCE
@@ -1045,6 +1066,8 @@ internal enum class PersistencePhasePath {
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
+            COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
             COMPLAINT_GRANT_CLEANUP,
             COMPLAINT_STEP_UP_ISSUANCE,
             COMPLAINT_ADMIN_AUDIT,
@@ -1062,6 +1085,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_OWNER_CREATE,
             COMPLAINT_OWNER_REPLY,
             COMPLAINT_OWNER_EDIT,
+            COMPLAINT_ADMIN_EDIT,
             COMPLAINT_DELETION_MUTATION,
             COMPLAINT_CATALOG_GENESIS_PREPARE,
             COMPLAINT_CATALOG_GENESIS_SIGNATURE,
@@ -1103,6 +1127,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_ADMIN_READ_AUTHENTICATION,
             COMPLAINT_ADMIN_SEARCH,
             COMPLAINT_ADMIN_DETAIL,
+            COMPLAINT_ADMIN_EDIT_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
             COMPLAINT_OWNER_REPLY_PREFLIGHT,
@@ -1139,6 +1164,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_ADMIN_READ_AUTHENTICATION,
             COMPLAINT_ADMIN_SEARCH,
             COMPLAINT_ADMIN_DETAIL,
+            COMPLAINT_ADMIN_EDIT_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             COMPLAINT_OWNER_CREATE_PREFLIGHT,
             COMPLAINT_OWNER_REPLY_PREFLIGHT,

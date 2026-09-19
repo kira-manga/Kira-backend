@@ -329,7 +329,10 @@ internal class CatalogSignerRotationProbeJdbc(
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>, vararg args: Any?): T? =
         if (((observeDeliveryQueries || observeActivationQueries || observeTestActivationQueries) && sql == DELIVERY_AUTHENTICATE) ||
-            (observeTestActivationQueries && sql in setOf(CatalogTestRunActivationSqlV1.readHistory, CatalogTestRunActivationSqlV1.lockHistory))
+            (observeTestActivationQueries && sql in setOf(
+                CatalogTestRunActivationSqlV1.readHistory, CatalogTestRunActivationSqlV1.lockHistory,
+                CatalogTestRunActivationSqlV1.readSignedHistory, CatalogTestRunActivationSqlV1.lockSignedHistory,
+            ))
         ) {
             observed(sql, args) { super.query(sql, rse, *args) }
         } else {
@@ -431,6 +434,8 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_SIGNATURE,
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_FINAL_READ,
@@ -469,6 +474,10 @@ internal class CatalogSignerRotationProbeJdbc(
         CatalogTestRunActivationSqlV1.preflight -> "test-preflight"
         CatalogTestRunActivationSqlV1.closeControl -> "test-close-control"
         CatalogTestRunActivationSqlV1.insertPrepared -> "test-insert-prepared"
+        CatalogTestRunActivationSqlV1.readSignedHistory -> "test-signed-history-read"
+        CatalogTestRunActivationSqlV1.lockSignedHistory -> "test-signed-history-lock"
+        CatalogTestRunActivationSqlV1.readPreparedTail -> "test-prepared-tail"
+        CatalogTestRunActivationSqlV1.persistSignature -> "test-signature"
         else -> null
     }
 

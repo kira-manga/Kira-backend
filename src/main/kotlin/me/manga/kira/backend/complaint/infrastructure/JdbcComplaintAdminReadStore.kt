@@ -37,6 +37,12 @@ internal class JdbcComplaintAdminReadStore(private val jdbc: JdbcTemplate, priva
         return ComplaintAdminReadOperation.authentication(jdbc, identity)
     }
 
+    /** Current normal ADMIN only: a historical content receipt must not require an ACTIVE run. */
+    fun authenticateContentIdentity(identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation {
+        require(identity.scope == testScope) { "Admin content scope refused." }
+        return ComplaintAdminReadOperation.contentAuthentication(jdbc, identity)
+    }
+
     fun search(identity: ComplaintAdminReadIdentity, query: ComplaintAdminSearchQuery, position: ComplaintAdminReadPosition?): ComplaintAdminReadOperation {
         require(identity.scope == testScope && query.scope == testScope) { "Admin read scope refused." }
         return ComplaintAdminReadOperation.search(jdbc, identity, query, position)
@@ -83,6 +89,7 @@ internal class ComplaintAdminReadOperation private constructor(
     private val phase: PersistencePhaseContext,
     private val jdbc: JdbcTemplate,
     private val path: PersistencePhasePath,
+    private val currentAdminOnly: Boolean,
 ) {
     private var completed = false
     private var captured: ComplaintAdminReadRows? = null
@@ -101,7 +108,7 @@ internal class ComplaintAdminReadOperation private constructor(
         phase.adminRead.requireRetained(this, jdbc)
         identity.requireCurrent()
         val sql = when (path) {
-            PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> AUTH_SQL
+            PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> if (currentAdminOnly) CONTENT_AUTH_SQL else AUTH_SQL
             PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> searchSql(checkNotNull(query), position)
             PersistencePhasePath.COMPLAINT_ADMIN_DETAIL -> DETAIL_SQL
             else -> error("Admin read phase refused.")
@@ -181,6 +188,10 @@ internal class ComplaintAdminReadOperation private constructor(
         fun authentication(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation =
             capture(jdbc, identity, null, null, null, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
 
+        /** Comparison-only authentication observation, never the private Admin-read adapter handoff. */
+        fun contentAuthentication(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation =
+            capture(jdbc, identity, null, null, null, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION, currentAdminOnly = true)
+
         fun search(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity, query: ComplaintAdminSearchQuery, position: ComplaintAdminReadPosition?): ComplaintAdminReadOperation =
             capture(jdbc, identity, query, position, null, PersistencePhasePath.COMPLAINT_ADMIN_SEARCH)
 
@@ -195,16 +206,18 @@ internal class ComplaintAdminReadOperation private constructor(
             position: ComplaintAdminReadPosition?,
             id: UUID?,
             path: PersistencePhasePath,
+            currentAdminOnly: Boolean = false,
         ): ComplaintAdminReadOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
+                check(!currentAdminOnly || path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
                 when (path) {
                     PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> phase.adminRead.requireAuthentication(jdbc)
                     PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> phase.adminRead.requireSearch(jdbc)
                     PersistencePhasePath.COMPLAINT_ADMIN_DETAIL -> phase.adminRead.requireDetail(jdbc)
                     else -> error("Admin read phase refused.")
                 }
-                val operation = ComplaintAdminReadOperation(phase, jdbc, path)
+                val operation = ComplaintAdminReadOperation(phase, jdbc, path, currentAdminOnly)
                 phase.adminRead.retain(operation, jdbc)
                 operation.execute(identity, query, position, id)
                 return operation
@@ -262,6 +275,23 @@ internal class ComplaintAdminReadOperation private constructor(
         """.trimIndent()
 
         internal val AUTH_SQL = "$PRINCIPAL_SQL SELECT verdict FROM principal"
+
+        // The scope is still fixed by the concrete store. Only this identity observation omits run state;
+        // old search/detail authentication and their data snapshots keep the original ACTIVE-run checks.
+        private val CONTENT_AUTH_SQL = """
+            WITH supplied AS (
+                SELECT ?::uuid AS user_id, ?::uuid AS data_scope_id, ?::text AS credential_version,
+                    ?::timestamptz AS valid_from, ?::timestamptz AS valid_until
+            )
+            SELECT CASE
+                WHEN u.id IS NULL OR u.enabled IS NOT TRUE OR u.credential_version < 0
+                    OR u.credential_version::text IS DISTINCT FROM s.credential_version
+                    OR clock_timestamp() >= s.valid_until
+                    OR (s.valid_from IS NOT NULL AND clock_timestamp() < s.valid_from) THEN 'UNAUTHORIZED'
+                WHEN u.role IS DISTINCT FROM 'ADMIN' THEN 'FORBIDDEN'
+                ELSE 'ALLOWED' END AS verdict
+            FROM supplied s LEFT JOIN users u ON u.id = s.user_id
+        """.trimIndent()
 
         private val COLUMNS = """
             c.id, c.kind, c.type, c.status, c.ownership, c.notice_key, c.parent_resource_id, c.platform,
