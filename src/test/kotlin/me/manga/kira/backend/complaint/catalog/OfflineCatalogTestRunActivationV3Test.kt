@@ -198,6 +198,11 @@ class OfflineCatalogTestRunActivationV3Test {
                 CatalogFrozenManifestParser.unsigned(3, CatalogTestRunActivationEvidenceFixture.manifestBytes(f.manifest), f.policy.limits)
             }.code)
             assertEquals(CatalogReadbackFailure.INVALID_LOCAL_STATE, assertThrows<CatalogReadbackException> {
+                CatalogFrozenManifestParser.schemaVersion(f.envelopeBytes, f.policy.limits)
+            }.code)
+            // The legacy signed parser checks arrays before schema dispatch: TEST's fixed22
+            // capacity vectors exceed its unchanged generic16 ceiling.
+            assertEquals(CatalogReadbackFailure.LIMIT_EXCEEDED, assertThrows<CatalogReadbackException> {
                 CatalogFrozenManifestParser.signed(f.envelopeBytes, f.policy.limits)
             }.code)
         }
