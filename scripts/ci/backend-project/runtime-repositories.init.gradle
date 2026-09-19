@@ -1,0 +1,71 @@
+// Backend only. Fresh normal Maven/Gradle metadata resolution; no dependency/source/classpath replacement.
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+def check = { boolean ok, String reason -> if (!ok) throw new GradleException(reason) }
+def runtime = new File(System.getenv('KIRA_PUBLIC_RUNTIME')).canonicalFile
+def staging = new File(runtime, 'maven').canonicalFile
+def manifest = new JsonSlurper().parse(new File(runtime, 'runtime-manifest.json'))
+def digest = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+check(manifest.schema == 1 && manifest.status == 'NEW_UNQUALIFIED_VERIFICATION_RUNTIME' &&
+    manifest.qualified == false && manifest.historicalBinaryIdentityClaimed == false &&
+    manifest.cleanup.engine == true && manifest.cleanup.driver == true, 'No fresh cleaned runtime reconstruction')
+def actual = [:]
+java.nio.file.Files.walk(staging.toPath()).withCloseable { paths ->
+    paths.forEach { path ->
+        check(!java.nio.file.Files.isSymbolicLink(path), 'No staged symlinks')
+        if (!java.nio.file.Files.isDirectory(path)) {
+            check(java.nio.file.Files.isRegularFile(path), 'Only regular staged artifacts')
+            def relative = staging.toPath().relativize(path).toString()
+            actual[relative] = [sha256: digest(path.toFile()), bytes: java.nio.file.Files.size(path)]
+        }
+    }
+}
+check(actual == manifest.mavenFiles, 'Fresh Maven files changed or additional supplier appeared')
+
+gradle.beforeProject { p ->
+    check(p.path == ':' && p.name == 'kira-backend', 'Only the standalone backend consumes this init')
+    p.repositories.exclusiveContent {
+        forRepository {
+            maven {
+                name = 'KiraRebuiltSourceEngine'
+                url = staging.toURI()
+                metadataSources { gradleMetadata(); mavenPom() }
+            }
+        }
+        filter { includeGroup('me.manga.kira.source') }
+    }
+}
+
+gradle.projectsEvaluated {
+    def p = gradle.rootProject
+    check(p.findProperty('kiraUseMavenLocal') == 'false' &&
+        p.findProperty('kiraOwnedPgVerificationRepository') == staging.path &&
+        p.repositories.findByName('KiraOwnedPgVerification')?.url == staging.toURI(),
+        'Use normal exclusive file repositories, not mavenLocal/stock fallback')
+    check(!System.getenv('KIRA_OWNED_PG_REPOSITORY_URL') && !System.getenv('KIRA_PACKAGES_READ_TOKEN'),
+        'No private dependency transport')
+    def records = [:]
+    ['compileClasspath', 'testCompileClasspath', 'productionRuntimeClasspath', 'runtimeClasspath', 'testRuntimeClasspath'].each { name ->
+        def resolved = p.configurations.getByName(name).incoming.artifacts.artifacts
+        def engine = resolved.findAll { it.id.componentIdentifier instanceof ModuleComponentIdentifier &&
+            it.id.componentIdentifier.group == 'me.manga.kira.source' }
+        check((engine.collect { it.id.componentIdentifier.module } as Set) == (['source-contract-jvm', 'source-engine-jvm'] as Set),
+            'Exactly the normal JVM variants must resolve from KMP module metadata')
+        records[name] = engine.collect { artifact ->
+            def id = artifact.id.componentIdentifier
+            def expected = manifest.engineArtifacts.findAll {
+                it.group == id.group && it.module == id.module && it.version == id.version && it.kind == 'binary'
+            }
+            check(expected.size() == 1 && id.version == '0.1.0' && digest(artifact.file) == expected[0].sha256,
+                'Normal Engine variant does not match this newly built runtime')
+            [component: id.displayName, sha256: digest(artifact.file), bytes: artifact.file.length()]
+        }
+    }
+    def output = new File(System.getenv('KIRA_PUBLIC_RUN'), 'backend-build/public-source-verification')
+    output.mkdirs()
+    new File(output, 'fresh-engine-resolution.json').text = JsonOutput.prettyPrint(JsonOutput.toJson(records)) + '\n'
+}
