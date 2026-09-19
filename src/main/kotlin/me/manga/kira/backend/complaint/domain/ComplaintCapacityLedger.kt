@@ -1,5 +1,7 @@
 package me.manga.kira.backend.complaint.domain
 
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalScanPoolV1
+
 /**
  * Pure accounting only. A caller must lock/revalidate the configuration, exact scoped obligation and
  * affected rows, then commit the resulting balances with those rows in one transaction. These methods
@@ -85,6 +87,26 @@ class ComplaintCapacityLedger(val configuration: ComplaintCapacityConfiguration,
     fun releaseTestReserve(expectedDigest: ByteArray, provedUnused: ComplaintCapacityVector): ComplaintCapacityLedger {
         configuration.requireMatching(expectedDigest)
         return next(balance.copy(free = balance.free + provedUnused, testReserved = balance.testReserved - provedUnused))
+    }
+
+    /**
+     * Recycle only exact paid scan-pool rows physically removed in the same future fenced transaction.
+     * The declared pool/unused values have numerical checks, not scoped-row or replay authority. The
+     * writer must reconstruct their exact ownership, retain required witnesses and credit the run's
+     * unused vector with the same delete/counter commit. Global free and creation admission are unchanged.
+     */
+    internal fun recycleTestScanPool(
+        expectedDigest: ByteArray,
+        pool: TestTerminalScanPoolV1,
+        unusedPool: ComplaintCapacityVector,
+        removed: ComplaintCapacityVector,
+    ): ComplaintCapacityLedger {
+        configuration.requireMatching(expectedDigest)
+        pool.unusedAfterRecycle(unusedPool, removed)
+        if (!unusedPool.fitsWithin(balance.testReserved) || !(pool.ceiling - unusedPool).fitsWithin(balance.actual)) {
+            rejectCapacity(ComplaintCapacityFailureCode.INSUFFICIENT_UNITS)
+        }
+        return next(balance.copy(actual = balance.actual - removed, testReserved = balance.testReserved + removed))
     }
 
     private fun requireCreationHeadroom(charge: ComplaintCapacityVector) {
