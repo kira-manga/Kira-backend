@@ -52,11 +52,22 @@ padding bits. The basename is a routing token, not necessarily object_id. The
 canonicalizer column and digest **do not** validate canonical JSON semantics or
 authenticate KJEV. Actual J may require narrower limits than the storage ceilings.
 
+The sidecars are **temporary local terminal bookkeeping**, not additional permanent
+recovery evidence. They remain present and paid throughout ordinary PURGING batches;
+only the future authenticated atomic final-PURGED transaction may remove/refund them,
+before removing their publication/control parents. Accepted catalog/WORM evidence
+and the retained run/installation-ID/audit records carry the required recovery
+semantics. A PURGED replay must not recreate these sidecars or other mutable rows.
+
 INSERT accepts only CANONICAL, with all nine frozen fields NULL. A current-row
 trigger permits exactly one CANONICAL→WIRE_FROZEN transition without changing any
 canonical identity/declaration/content column. WIRE_FROZEN requires every frozen
-field, exact wire checksum and exact metadata. No rewrite, back-transition,
-delete or replacement of retained canonical bytes is allowed. Exact same-state
+field, exact wire checksum and exact metadata. No rewrite, back-transition or
+replacement of retained canonical bytes is allowed. DELETE of CANONICAL is rejected;
+WIRE_FROZEN is only **local DELETE eligibility**, not proof of catalog acceptance,
+verified publication, completed purge or released accounting. The required future
+fixed settlement writer must establish those facts; the trigger does not query or
+authenticate another row to manufacture authority. Exact same-state
 no-op UPDATE is suppressed by the BEFORE trigger (affected-row count **zero**),
 avoiding a new tuple for retries. This does not provide a commit/release proof or
 make UPDATE count a winner-selection API. No JDBC executor is supplied here.
@@ -148,12 +159,18 @@ zero manifest chunks, **not** zero purge/seal obligation. The maximum is4113
 sidecars /5511288384 logical bytes. These ceilings neither establish the real
 enrollment limit nor prove that a complete activation reserve fits policy P.
 
-Every retained row keeps its actual storage charge after run purge. Only genuine
-unused reserve may be refunded; no GC/deletion permission or slot release is
-implied. Future admission must atomically convert the matching run reserve to
-actual storage on first canonical insertion under genuine ordered ownership,
+Every retained row keeps its actual storage charge until its physical removal in
+the genuine final-PURGED transaction. That transaction must delete sidecars before
+their RESTRICT-linked publication/control parents, decrement each exact actual
+sidecar charge once, and separately release only the proved-unused reserve. This
+is not permission for ordinary PURGING batches, generic GC, a row-shaped DTO or a
+WIRE_FROZEN label to delete anything. No slot is released early or reused to replace
+a frozen winner. Future admission must atomically convert the matching run reserve
+to actual storage on first canonical insertion under genuine ordered ownership,
 avoid charging replay/conflict twice, preserve the whole frozen lifecycle envelope
-and keep charge with the winning durable row across restart and takeover.
+and keep charge with the winning durable row across restart and takeover. Any
+failed final transaction rolls back sidecar/parent deletes and all counter changes;
+after PURGED, replay verifies retained evidence without recreating the sidecars.
 
 **Not total terminal or activation reserve.** Canonical publications and their
 physical reservation rows, run/control growth, activation and terminal catalogs,

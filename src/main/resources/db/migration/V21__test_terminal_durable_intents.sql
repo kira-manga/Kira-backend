@@ -121,6 +121,9 @@ CREATE TABLE complaint_test_terminal_intents (
 -- Fixed current-row comparison only: no table lookups, late-bound SQL helper calls, authority
 -- predicates or writes. All canonical identity bytes remain fixed once inserted. A retry must
 -- reload the winning frozen row rather than replacing randomness, metadata or retention fields.
+-- WIRE_FROZEN is only local DELETE eligibility, never terminal-settlement authority. The future
+-- trusted final-PURGED transaction alone may delete/refund these temporary rows, before their
+-- publication/control parents. Ordinary PURGING batches cannot remove them; PURGED never recreates them.
 CREATE FUNCTION complaint_test_terminal_guard() RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -132,6 +135,9 @@ BEGIN
         RETURN NEW;
     END IF;
     IF TG_OP = 'DELETE' THEN
+        IF OLD.state = 'WIRE_FROZEN' THEN
+            RETURN OLD;
+        END IF;
         RAISE EXCEPTION USING ERRCODE = '23514', MESSAGE = 'Invalid TEST terminal storage transition';
     END IF;
     IF NEW IS NOT DISTINCT FROM OLD THEN
