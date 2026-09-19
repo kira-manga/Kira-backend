@@ -7,6 +7,8 @@ import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.JournalWriterV1
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalDocumentV1
@@ -124,7 +126,19 @@ internal class CatalogTestRunActivationEvidenceFixture(
     val reader = VersionBoundCatalogReadbackConfigurationV1.fromIndependentProjectedInputs(
         initial, current, policy, Sha256.hex(prefix.first()), S3CatalogReadbackLimits(), 600_000, pageSize = 1,
     )
-    private val consumers = BoundTestComplaintConsumerFixture(journal).configuration()
+    private val consumers = BoundTestComplaintConsumerFixture(journal).let { fixture ->
+        val original = fixture.base.capacity
+        // N=501/R=10,000 needs 839,125,696 storage units across PREPARE/projection/reserve.
+        // Select this synthetic P BEFORE the consumers and full D exist, never by changing frozen limits.
+        val capacity = if (pools.catalogCoordinator.catalogTestRunActivation) {
+            ComplaintCapacityPolicyV1.of(
+                original.hardLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 2_000_000_000),
+                original.creationLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 1_800_000_000),
+                original.dailyEnrollmentLimit,
+            )
+        } else original
+        fixture.configuration(capacity = capacity)
+    }
     private val activation = FullTestCatalogInputs.activation(
         pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
         OfflineTrustBundleFixture.registryBytes(rotations.genesis.manifest.initialWriterRegistry),

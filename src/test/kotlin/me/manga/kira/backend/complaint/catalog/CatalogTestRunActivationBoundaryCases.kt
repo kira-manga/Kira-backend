@@ -10,6 +10,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersi
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationFailureV1
@@ -83,9 +86,7 @@ internal object CatalogTestRunActivationBoundaryCases {
                 TestActivationRefusalCut.POLICY_DIGEST -> rows.observer.update(
                     "UPDATE complaint_capacity_counters SET configuration_hash = ? WHERE name = 'storage_bytes'", ByteArray(32) { 0x63 },
                 )
-                TestActivationRefusalCut.FUTURE_RESERVE -> rows.observer.update(
-                    "UPDATE complaint_capacity_counters SET free_units = 3219968, actual_units = hard_limit - 3219968 WHERE name = 'storage_bytes'",
-                )
+                TestActivationRefusalCut.FUTURE_RESERVE -> leaveFutureReserveWithoutCreationHeadroom(rows)
                 else -> Unit
             }
             val before = rows.counters.snapshot()
@@ -248,6 +249,39 @@ internal object CatalogTestRunActivationBoundaryCases {
         val field = coordinator.javaClass.getDeclaredField("testRunActivationExecutor").apply { check(trySetAccessible()) }
         field.set(coordinator, ComplaintCatalogTestRunActivationPhaseExecutorV1(coordinator, jdbc))
         return jdbc // Same source/manager, installed BEFORE any original owner/input exists.
+    }
+
+    private fun leaveFutureReserveWithoutCreationHeadroom(rows: PreparedActivationRows) {
+        val policy = rows.evidence.process.consumers.capacityPolicy
+        val accounting = rows.evidence.manifest.activationRecord.run.accounting
+        val prepare = ComplaintCapacityVector.of(accounting.activationCatalogPrepareActual.toLongArray())
+        val projection = ComplaintCapacityVector.of(accounting.activationProjectionActual.toLongArray())
+        val reserve = ComplaintCapacityVector.of(accounting.originalUnusedReserve.toLongArray())
+        val future = prepare + projection + reserve
+        val storage = ComplaintCapacityCounter.STORAGE_BYTES
+        val actual = Math.addExact(Math.subtractExact(policy.creationLimit[storage], future[storage]), 1L)
+        val free = Math.subtractExact(policy.hardLimit[storage], actual)
+        assertTrue(actual >= 0L && reserve[storage] > 0L)
+        assertEquals(1, rows.observer.update(
+            "UPDATE complaint_capacity_counters SET actual_units = ?, free_units = ? WHERE name = ? " +
+                "AND configuration_hash = ? AND hard_limit = ? AND creation_limit = ?",
+            actual, free, storage.storedName, policy.digestBytes(), policy.hardLimit[storage], policy.creationLimit[storage],
+        ))
+        assertEquals(true, rows.observer.queryForObject(
+            "SELECT bool_and(NOT configuration_closed AND recovery_reserved_units = 0 AND test_reserved_units = 0) FROM complaint_capacity_counters",
+            Boolean::class.java,
+        ))
+        val state = rows.counters.snapshot()
+        val committed = ComplaintCapacityVector.of(ComplaintCapacityEncoding.vectorOrder().map { counter ->
+            val observed = state.getValue(counter.storedName)
+            assertEquals(policy.hardLimit[counter] - observed.free, observed.actual)
+            observed.actual
+        }.toLongArray())
+        assertTrue((committed + prepare).fitsWithin(policy.creationLimit), "PREPARE alone must be a legal creation charge.")
+        assertTrue((committed + prepare + projection).fitsWithin(policy.creationLimit), "Projection alone still fits after PREPARE.")
+        assertTrue((committed + future).fitsWithin(policy.hardLimit), "This cut is not exhausted hard-limit/free capacity.")
+        assertFalse((committed + future).fitsWithin(policy.creationLimit), "Only the complete future reserve lacks creation headroom.")
+        assertEquals(policy.creationLimit[storage] + 1L, (committed + future)[storage])
     }
 
     private fun active(coordinator: CatalogCoordinatorPersistence): Any? =
