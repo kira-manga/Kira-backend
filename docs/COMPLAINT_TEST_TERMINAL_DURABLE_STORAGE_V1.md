@@ -26,8 +26,10 @@ sidecar kind and **no** ordinary publication reference.
 
 Every column is NOT NULL except publication_ref and the nine frozen fields. Four
 unique B-tree indexes exist: operation-token PK, `(data_scope_id,object_kind,
-object_ordinal)`, object key and object ID. RESTRICT FKs require an existing run,
-existing scoped control, and, for events, existing `(publication_ref,data_scope_id)`.
+object_ordinal)`, object key and object ID. A fifth, nonunique B-tree index leads
+with `(publication_ref,data_scope_id)` to support that referencing FK. RESTRICT
+FKs require an existing run, existing scoped control, and, for events, existing
+`(publication_ref,data_scope_id)`.
 These are row relations, **not** authenticated correspondence with that run,
 publication kind/bytes, configuration, activation, current fence or live authority.
 
@@ -132,12 +134,14 @@ and 32-byte conservative overhead per index tuple:
 | scope/kind/ordinal index | 96 |
 | object-key index | 1064 |
 | object-ID index | 80 |
-| Sum indexes | 1288 |
-| **ROW = 8 × (heap + indexes)** | **1339968** |
+| publication/scope FK index | 96 |
+| Sum indexes | 1384 |
+| **ROW = 8 × (heap + indexes)** | **1340736** |
 
 The variable sum is `d(32)+d(43)+d(1024)+d(64)+7*d(32)+d(43)+d(16)`
 `+d(65536)+d(16)+d(98304)+d(44)+d(24)+d(10)+d(512)`. The fixed padding is
 `8+3*16+8+8+4*8+4*8` for schema, UUIDs, boolean, ordinal, bigints and timestamps.
+The publication/scope supporting-index tuple is `32+d(43)+16=96` bytes.
 
 This is **pending independent PostgreSQL/index/TOAST sizing and acceptance**,
 not a promise about physical pages, MVCC, WAL, replication, backup or vacuum.
@@ -156,7 +160,7 @@ The existing `TestTerminalProfileV1` defines500 entries per chunk,4096 chunks,
 N in0..2048000, `maximumIntentCount(N)=ceil(N/500)+1+16` and
 `sidecarStorageHighWater(N)=ROW*maximumIntentCount(N)`. Zero installations means
 zero manifest chunks, **not** zero purge/seal obligation. The maximum is4113
-sidecars /5511288384 logical bytes. These ceilings neither establish the real
+sidecars /5514447168 logical bytes. These ceilings neither establish the real
 enrollment limit nor prove that a complete activation reserve fits policy P.
 
 Every retained row keeps its actual storage charge until its physical removal in

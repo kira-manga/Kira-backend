@@ -118,6 +118,9 @@ CREATE TABLE complaint_test_terminal_intents (
     ) IS TRUE)
 );
 
+CREATE INDEX idx_complaint_test_terminal_publication
+    ON complaint_test_terminal_intents (publication_ref, data_scope_id);
+
 -- Fixed current-row comparison only: no table lookups, late-bound SQL helper calls, authority
 -- predicates or writes. All canonical identity bytes remain fixed once inserted. A retry must
 -- reload the winning frozen row rather than replacing randomness, metadata or retention fields.
