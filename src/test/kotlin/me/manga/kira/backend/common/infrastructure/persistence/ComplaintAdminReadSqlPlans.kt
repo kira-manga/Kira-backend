@@ -11,7 +11,6 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminReadOperatio
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
-import org.postgresql.PGStatement
 import java.sql.Connection
 import java.sql.PreparedStatement
 import java.time.Instant
@@ -91,7 +90,11 @@ private fun verifyAdminPrepared(
 ) {
     connection.prepareStatement(sql).use { statement ->
         statement.queryTimeout = 2
-        statement.unwrap(PGStatement::class.java).prepareThreshold = 1
+        // The driver is runtimeOnly: use only its public interface, as the existing PG probe helpers do.
+        val pgStatement = Class.forName("org.postgresql.PGStatement", false, statement.javaClass.classLoader)
+        val vendor = checkNotNull(pgStatement.cast(statement.unwrap(pgStatement)))
+        pgStatement.getMethod("setPrepareThreshold", Int::class.javaPrimitiveType).invoke(vendor, 1)
+        assertEquals(1, pgStatement.getMethod("getPrepareThreshold").invoke(vendor))
         // Real ordinary executions warm auto selection BEFORE EXPLAIN can affect that statement's history.
         repeat(8) {
             bind(statement)
