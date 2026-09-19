@@ -1,0 +1,403 @@
+{
+  "checker": {
+    "group": "org.checkerframework",
+    "module": "checker-qual",
+    "sha256": "857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288",
+    "version": "3.55.1"
+  },
+  "driver": {
+    "abi_descriptors": {
+      "actualEnd": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Invocation;)V",
+      "arm": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Invocation;)V",
+      "armOpening": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;)V",
+      "attach": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;Ljava/sql/Connection;Ljava/lang/Object;Ljava/lang/Object;)Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Root;",
+      "cleanupOpening": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;)V",
+      "disarm": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Invocation;)V",
+      "drainState": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Invocation;)I",
+      "endOpening": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;)V",
+      "firstCloseState": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;)I",
+      "invocationState": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Invocation;)I",
+      "isLive": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Owner;Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;)Z",
+      "life": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Owner;Ljava/lang/Object;Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;Z)Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;",
+      "lifeKind": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;)I",
+      "liveNativeChildren": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Root;)J",
+      "openingState": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;)I",
+      "owner": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Root;)Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Owner;",
+      "prepareInvocation": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Owner;Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/reflect/Method;[Ljava/lang/Object;[Ljava/lang/Object;[Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;[I)Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Invocation;",
+      "prepareOpening": "(Ljava/sql/Driver;Ljava/lang/Object;)Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;",
+      "prepareRuntime": "()V",
+      "recordReturned": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Opening;Ljava/sql/Connection;)V",
+      "retentionState": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Root;)I",
+      "revoke": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Owner;Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Life;)Z",
+      "rootState": "(Lorg/postgresql/jdbc/KiraOwnedJdbcCut$Root;)I"
+    },
+    "archive_bytes": 2378289,
+    "archive_sha256": "615e15e573ba34241ad6fe395a0148e2c4d529ece9738814bc22e8b0dad57d7e",
+    "archive_uncompressed_limit": 67108864,
+    "archive_url": "https://codeload.github.com/pgjdbc/pgjdbc/tar.gz/77df98e4e66c12936ded3478a0954f6f580bad99",
+    "build_seconds": 1200,
+    "commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+    "gradle_version": "9.4.1",
+    "recipe_files": {
+      "0001-native-owned-cut.patch": {
+        "bytes": 105172,
+        "sha256": "40180292afc345327ce8ae84613477fc7618007b1305b7398838eb5c1aa26c9b"
+      },
+      "0002-native-lifetime-correction.patch": {
+        "bytes": 4616,
+        "sha256": "6e1289b1c8bb896467c18788215771ac87e1e5def1c17b8dbad6aac581cad3e9"
+      },
+      "0003-native-owned-cut-regressions.patch": {
+        "bytes": 75780,
+        "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3"
+      },
+      "0004-native-annotation-correction.patch": {
+        "bytes": 561,
+        "sha256": "c40a13d18f0598e10ce44b964aba932430c416861e9f5ec8dc5b209abae1d231"
+      },
+      "0005-native-retention-getter-corrections.patch": {
+        "bytes": 69947,
+        "sha256": "148c46711689a27c5e1a2a9cb42c081d823eb93347d610806b81475695f98f05"
+      },
+      "0006-private-publication.patch": {
+        "bytes": 6084,
+        "sha256": "bd1b4f6848ffb3f43a57f8f29a7181bf8feaecf52825e0112307c07314f2e9bf"
+      },
+      "ABI.md": {
+        "bytes": 12717,
+        "sha256": "ffbd51a0593348d28e65a83e56056b8226442838aef61973eb360e8d3bfecfaf"
+      },
+      "LICENSE.pgjdbc": {
+        "bytes": 1321,
+        "sha256": "5be1f67a4d62692cc2fc8b81a71088943fc4c1462bd76fd2f04bc0e965ca6d53"
+      },
+      "README.md": {
+        "bytes": 13309,
+        "sha256": "4c8f1c5b3840cdaed6580691b2b27ba8f825f63ba09677814fcf7f6a6a037366"
+      },
+      "runtime-publication.json": {
+        "bytes": 8179,
+        "sha256": "8f204a3ffb4851a159b02cd0e5e6b5fa8d8fc728cc98a4f479001d443d1ed800"
+      },
+      "series": {
+        "bytes": 224,
+        "sha256": "1393575be71f675b24ef0c9856631cd6bd86ddae9c75991363defb9c1a833f69"
+      },
+      "source-manifest.json": {
+        "bytes": 8363,
+        "sha256": "8d5ade0eab38beaefa028885a5eda76319cb0a0c1586ce4966d504b3ef16b122"
+      },
+      "test-source-manifest.json": {
+        "bytes": 4211,
+        "sha256": "a7f8ccceafeb801603591684a8a188e9c0c93aaba1b4d8b503d1c3abff04263a"
+      },
+      "upstream.lock.json": {
+        "bytes": 3023,
+        "sha256": "206a235ed902af6624a1b2a52da2295b3fc783b7fa9da2039514bea2ab956be9"
+      }
+    },
+    "recipe_path": "vendor/pgjdbc-owned-cut",
+    "recipe_public_base": "2016e2caea1c3347d71c98275e539f9ca6df2bde",
+    "tasks": [
+      ":postgresql:publishKiraOwnedCutPublicationToKiraOwnedPgVerificationRepository"
+    ],
+    "upstream_files": 1012,
+    "version": "42.7.12-kira.1"
+  },
+  "engine": {
+    "annotatedTagObject": "e2dcd4463b17974cc804467641a7278464bb3527",
+    "build_seconds": 900,
+    "commit": "ed184165ebd3ee7f0d1db533cc40ca5a0868fdda",
+    "files": {
+      ".github/workflows/ci.yml": {
+        "bytes": 722,
+        "mode": "100644",
+        "sha256": "26a52d371466c5d7209348c25a5073667a5e91f7c6d1d3822203aba3589fed6f"
+      },
+      ".github/workflows/publish.yml": {
+        "bytes": 1207,
+        "mode": "100644",
+        "sha256": "cc79cc6885605157dc140b795fd8d135aa497cd0e4b8405da31e09fbd982750a"
+      },
+      ".gitignore": {
+        "bytes": 59,
+        "mode": "100644",
+        "sha256": "bc309b09636bd39b27ee08e6c403f21eab0a24c6addd91f8d10b915b2c066ce7"
+      },
+      "AGENTS.md": {
+        "bytes": 1716,
+        "mode": "100644",
+        "sha256": "b93ab05b86e7f16e766f470813cb49163f1547a2c77dd991719414291c080e46"
+      },
+      "README.md": {
+        "bytes": 1237,
+        "mode": "100644",
+        "sha256": "59292673cf80ca4c6c360bae2cf616ffef95eb0110a103fc2b7e7227c027158c"
+      },
+      "build.gradle.kts": {
+        "bytes": 334,
+        "mode": "100644",
+        "sha256": "609cef402ddba6ebf083cd3cbbc89c202171a4dd3749fece8bcd46cf3abe5b28"
+      },
+      "gradle.properties": {
+        "bytes": 177,
+        "mode": "100644",
+        "sha256": "56f1fa1ecfc78a68940462d50794a0d3165027841dba0a9502df8e03df4a8bd9"
+      },
+      "gradle/libs.versions.toml": {
+        "bytes": 978,
+        "mode": "100644",
+        "sha256": "cebe923affad01ff26806e9dad867d69d155e0bc67afc3466e9ac293116bad5b"
+      },
+      "gradle/wrapper/gradle-wrapper.jar": {
+        "bytes": 43739,
+        "mode": "100644",
+        "sha256": "9687bf4e8beb2c293cfd1393cbf2854ef68f921757302116033f476289abf7b0"
+      },
+      "gradle/wrapper/gradle-wrapper.properties": {
+        "bytes": 252,
+        "mode": "100644",
+        "sha256": "1d126b2f29d1a87825e57ae7a7a1b1cc06f8dcbc89dd614dc6a5b493244ba2cc"
+      },
+      "gradlew": {
+        "bytes": 8752,
+        "mode": "100755",
+        "sha256": "734b3879d3501dce471cf0522d3bcbafe76873d9fc5129345b67fb43bd15e933"
+      },
+      "gradlew.bat": {
+        "bytes": 2872,
+        "mode": "100644",
+        "sha256": "2209f919a22528af59a2af2ad97e8d056cca18e39f7d87aa3fd549a73b180150"
+      },
+      "settings.gradle.kts": {
+        "bytes": 404,
+        "mode": "100644",
+        "sha256": "314080eaa2dbc822fe3cce39b5e86c4412f5b3f373b0f970959958221768b6a9"
+      },
+      "source-contract/build.gradle.kts": {
+        "bytes": 1506,
+        "mode": "100644",
+        "sha256": "28f5ee3121fc228093bc316d7d517ebfca861e7a956bb4eee99f37eed31c9334"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/Execution.kt": {
+        "bytes": 3017,
+        "mode": "100644",
+        "sha256": "64a45f44a86d37ffd6f8542c235e9c509cb9fa38d2735a369dcd58c5bba3bf42"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/SourceBaseUrl.kt": {
+        "bytes": 2494,
+        "mode": "100644",
+        "sha256": "8c42dfe7a969fae3c4dd8a39a31eabf50e256f38471781a9e99e575c59efc9c0"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/SourceConfigParser.kt": {
+        "bytes": 1038,
+        "mode": "100644",
+        "sha256": "c777e81a8509310bfa7d5251d8d7a1f15d393a0ae905b7d0a812eca00d76c30a"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/SourceEngine.kt": {
+        "bytes": 739,
+        "mode": "100644",
+        "sha256": "ced8f6af76f6e06089aa09a01ae524159ef9a73296cf271eb37bd6769e1f72c1"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/Strategies.kt": {
+        "bytes": 1043,
+        "mode": "100644",
+        "sha256": "3328f377efdd03357337691091940db4ae33887c1c1302d4d714c2b873ac3b5e"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/Validation.kt": {
+        "bytes": 1359,
+        "mode": "100644",
+        "sha256": "e76cb2256634a18f4b0c5d12d4d92ddcc8de6eb15fc94936c8825efbec750367"
+      },
+      "source-contract/src/commonMain/kotlin/me/manga/kira/sources/contracts/model/SourceConfig.kt": {
+        "bytes": 15826,
+        "mode": "100644",
+        "sha256": "04e38d50118a4b5234abcf2e3b4ba232dbec1670c2e2d8fa4ab76c3fd0ec8e5d"
+      },
+      "source-contract/src/commonTest/kotlin/me/manga/kira/sources/contracts/SourceBaseUrlTest.kt": {
+        "bytes": 751,
+        "mode": "100644",
+        "sha256": "e03fc3b8b1caa21a419c2df05d596764e72f57c10fc2d78cb07f576a88e1b30b"
+      },
+      "source-engine/build.gradle.kts": {
+        "bytes": 1724,
+        "mode": "100644",
+        "sha256": "f134f850e25b2508c9914c04f5f7e1917c546c667467969c01b21c8497a952a4"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/DefaultSourceConfigValidator.kt": {
+        "bytes": 31938,
+        "mode": "100644",
+        "sha256": "3adf68b8de90c6296ca407c13cc5bbd207911c202a5835f51023a0ea73621e9f"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/DefaultStrategyRegistry.kt": {
+        "bytes": 1549,
+        "mode": "100644",
+        "sha256": "9b23d28fd7f197313aadd73f0b438ea0950dca00ecb92a6b777afe51e8b04f5a"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/GenericSourceEngine.kt": {
+        "bytes": 33733,
+        "mode": "100644",
+        "sha256": "7b3b3ae34a47ea09eb4c9854e884db15c102c4b4415778be766d584f8f598926"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/DateStrategies.kt": {
+        "bytes": 1345,
+        "mode": "100644",
+        "sha256": "f77a0039b69bb9ff1711e6cf018f54a88ea39ae11c4bc89a46c2877c6888e14d"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/Extractor.kt": {
+        "bytes": 10474,
+        "mode": "100644",
+        "sha256": "03f67ae856a58c00b8d8e8cecc1e5c9f68296542a65e876eeb3866d9d65ab7c9"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/FilterRequestComposer.kt": {
+        "bytes": 9148,
+        "mode": "100644",
+        "sha256": "fab14186017c29cf251783a126a3ce8c598fe3aa2ee658325b8d963eed8de454"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/JsonEscape.kt": {
+        "bytes": 1545,
+        "mode": "100644",
+        "sha256": "ad5ab1a695f82881294dadf5df6af6e09b3fb61db815912c97007a9868890121"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/JsonPath.kt": {
+        "bytes": 3632,
+        "mode": "100644",
+        "sha256": "496d69d18998cb6ae1c9f884950420af4be245b6d3b151435e88c2af9e18dfdd"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/Templates.kt": {
+        "bytes": 718,
+        "mode": "100644",
+        "sha256": "9c108931e0a42068fb380dcea441a65a1fa460c12fc3dcf869350cbf7422e937"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/Transforms.kt": {
+        "bytes": 4627,
+        "mode": "100644",
+        "sha256": "887aeefd7b54746a68ae31790aaa1f2ef0eb78d0ee93b6a2fb2f801f089dfea0"
+      },
+      "source-engine/src/commonMain/kotlin/me/manga/kira/sources/engine/internal/UrlEncode.kt": {
+        "bytes": 1034,
+        "mode": "100644",
+        "sha256": "63cee872944212966257893d9a14ed55c0c940455414c556ca586afd95f9d541"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/DefaultSourceConfigValidatorFilterTest.kt": {
+        "bytes": 23102,
+        "mode": "100644",
+        "sha256": "3a54a3532170c7d902835ae2433431d30f55c85c185d8ccf348367ee7de8b43f"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/DefaultSourceConfigValidatorTest.kt": {
+        "bytes": 15545,
+        "mode": "100644",
+        "sha256": "143de8d1f784c5b0371776e33e0267d4970d526b76ffda2113d2e437ffbcc45e"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientBlacklistTest.kt": {
+        "bytes": 2737,
+        "mode": "100644",
+        "sha256": "9813e9e81e82aab67c8a31899e6773702fa68db51e80867780828b82a36bb880"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientChapterPaginationTest.kt": {
+        "bytes": 7662,
+        "mode": "100644",
+        "sha256": "d7912fd4e69c574c4f35e4fd37860fc57b9bd0505bd870dd213035686311329a"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientFilterRequestTest.kt": {
+        "bytes": 10251,
+        "mode": "100644",
+        "sha256": "2cfa0952d58e66cc5005a8e5679148b1d9c18e318ceb3c36c61ffcdcfde6bdd3"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientHtmlGoldenTest.kt": {
+        "bytes": 3509,
+        "mode": "100644",
+        "sha256": "6f191d9dc5685584884e0af6e9340ad6e1a643667b4d65c494addd1507657fc2"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientJsonGoldenTest.kt": {
+        "bytes": 4274,
+        "mode": "100644",
+        "sha256": "14e73be3db193e02a2092cbfafaf6a4291742fad3df29cfdc2ca2c99fc811784"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientPostJsonFilterRootTest.kt": {
+        "bytes": 6071,
+        "mode": "100644",
+        "sha256": "681f50bbe2a746c11a95ff66f66955b53791e87a595014efc8d8b1be11c18076"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientScriptJsonTest.kt": {
+        "bytes": 4019,
+        "mode": "100644",
+        "sha256": "2d3c98879955a57bd7eaec845868e09499d1ce5f485356afe02f555814f88fe5"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GenericSourceClientSeparateChaptersTest.kt": {
+        "bytes": 5670,
+        "mode": "100644",
+        "sha256": "1135996287cc3e232085eb06a4b9a488d36d6e1ebb71389f120828e20d7b2cac"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/GoldenFixtures.kt": {
+        "bytes": 8468,
+        "mode": "100644",
+        "sha256": "7305d193aed06c11370d4ca5a8e51061b85b74a810c493b22472dc4936eaf333"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/internal/FilterRequestComposerTest.kt": {
+        "bytes": 13646,
+        "mode": "100644",
+        "sha256": "214e357bcb35e016f6e5da431285a3fa2982e4237e2e8685758c8d51e053813a"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/internal/JsonPathTest.kt": {
+        "bytes": 1926,
+        "mode": "100644",
+        "sha256": "979190612398e43c7df104efe5e4e948fadbc146e831f032a2655cbf5341ba12"
+      },
+      "source-engine/src/commonTest/kotlin/me/manga/kira/sources/engine/internal/TransformsTest.kt": {
+        "bytes": 4113,
+        "mode": "100644",
+        "sha256": "0a3a2703008b3197d615a4fd3ea08e22d2a33b0166dd1fb8157a526a392db1a4"
+      },
+      "source-testkit/build.gradle.kts": {
+        "bytes": 1622,
+        "mode": "100644",
+        "sha256": "2a7c1aca30b226c7e9481c2489768b9618fcfb19cffc64eb38b4d72c6b1ba9cb"
+      },
+      "source-testkit/src/commonMain/kotlin/me/manga/kira/sources/testkit/FixtureTransport.kt": {
+        "bytes": 1768,
+        "mode": "100644",
+        "sha256": "2af1420ed6c1c6177761d0c3f19fc4cdd0adb61db64bc71e408692853a745bde"
+      },
+      "source-testkit/src/commonTest/kotlin/me/manga/kira/sources/testkit/FixtureTransportTest.kt": {
+        "bytes": 1253,
+        "mode": "100644",
+        "sha256": "26593192732af6ed1c6574fac9f65a619f8c8f1f37b4dd5bc4fffdf95c8cf185"
+      }
+    },
+    "gradle_version": "9.6.1",
+    "repository": "https://github.com/kira-manga/kira-source-engine.git",
+    "tasks": [
+      ":source-contract:publishKotlinMultiplatformPublicationToMavenLocal",
+      ":source-contract:publishJvmPublicationToMavenLocal",
+      ":source-engine:publishKotlinMultiplatformPublicationToMavenLocal",
+      ":source-engine:publishJvmPublicationToMavenLocal"
+    ],
+    "tree": "14e46a1ead24b5757d612fd55031e440f5304661",
+    "version": "0.1.0"
+  },
+  "limits": {
+    "active_stage_log_bytes": 33554432,
+    "admit_disk_free_bytes": 8589934592,
+    "admit_mem_available_bytes": 6442450944,
+    "cleanup_seconds_per_stage": 90,
+    "fetch_seconds": 180,
+    "floor_disk_free_bytes": 3221225472,
+    "floor_mem_available_bytes": 2147483648,
+    "resource_sample_seconds": 30,
+    "stage_log_bytes": 8388608
+  },
+  "not_claimed": [
+    "historical W01 or Native07 binary identity",
+    "production artifact qualification",
+    "remote publication",
+    "backend source acceptance",
+    "test execution",
+    "App29 completion"
+  ],
+  "owned_helper_sha256": "ac6fb4b61186c09ab06f9b4a543cb58e65dcbcdfe6ba405f6afbe1814b7fc455",
+  "primary_authority": "ADMITTED_BY_PRIMARY",
+  "profile": "PUBLIC_SOURCE_REBUILT_NONSHIPPING_RUNTIME_V1",
+  "schema": 1,
+  "status": "BOUND"
+}
