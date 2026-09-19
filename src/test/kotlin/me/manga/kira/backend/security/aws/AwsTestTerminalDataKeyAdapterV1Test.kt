@@ -240,21 +240,34 @@ class AwsTestTerminalDataKeyAdapterV1Test {
         }
         run {
             val f = TestTerminalCodecTestFixtureV1()
-            val attempt = f.attempt(kind, PersistenceTimeBudget.start(100, PersistenceNanoClock { f.nanos }))
+            var enclosingNanos = 0L
+            var prepareHooks = 0
+            val attempt = f.attempt(kind, PersistenceTimeBudget.start(5000, PersistenceNanoClock { enclosingNanos }))
             val http = httpFixture(f)
             val slow = JournalKmsHttpReply(generateDocument(f.journal.declaration().encryption.keyArn,
                 TestTerminalCryptoReferenceV1.key(), TestTerminalCryptoReferenceV1.wrapped())).apply {
                 chunkSize = 3
-                beforeRead = { f.nanos += 7_000_000 }
+                beforeRead = { enclosingNanos += 7_000_000 }
             }
             http.respond = { slow }
+            http.afterPrepare = {
+                prepareHooks++
+                enclosingNanos = 4_980_000_000
+            }
             adapter(f, attempt, http).use { owner ->
-                f.nanos = 80_000_000
+                // SDK setup retains actual J's 1000ms; only the original enclosing clock advances at the HTTP boundary.
+                enclosingNanos = 4_000_000_000
                 rejected { owner.generate(request(f, kind)) }
-                rejected { owner.generate(request(f, kind)) }
+                assertEquals(1, prepareHooks)
                 assertEquals(1, http.requests.size)
                 assertEquals(3, slow.reads, "quick reads cannot restart the remaining original 20ms")
+                assertEquals(5_001_000_000L, enclosingNanos)
+                assertEquals(0L, f.nanos, "local call clock is fixed; each sample must recheck the original enclosing budget")
                 assertReleased(slow)
+                rejected { owner.generate(request(f, kind)) }
+                assertEquals(1, prepareHooks)
+                assertEquals(1, http.requests.size)
+                assertEquals(3, slow.reads)
             }
             assertEquals(1, http.closedClients)
         }
