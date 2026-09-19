@@ -19,7 +19,7 @@ internal class CatalogTestRunActivationCompletedTailV1 private constructor(
         objectVersion, Timestamp.from(retainUntil), primary.copyOf(), primaryHash.copyOf(), replica.copyOf(), replicaHash.copyOf(), Timestamp.from(completedAt),
     )
 
-    fun projectionArguments(): Array<Any?> = arguments() + arrayOf(projectedAt?.let(Timestamp::from))
+    fun projectionArguments(): Array<Any?> = arguments().plus(elements = arrayOf<Any?>(projectedAt?.let(Timestamp::from)))
 
     fun requireExact(proof: CatalogTestRunActivationDeliveryReadbackV1) {
         check(proof.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY)

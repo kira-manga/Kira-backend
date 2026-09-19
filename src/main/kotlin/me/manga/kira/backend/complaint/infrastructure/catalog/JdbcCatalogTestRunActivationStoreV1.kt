@@ -454,10 +454,10 @@ internal class CatalogTestRunActivationOperationV1 private constructor(
         } else {
             if (lock) CatalogTestRunActivationSqlV1.lockHistory else CatalogTestRunActivationSqlV1.readHistory
         }
-        val arguments = input.frozen.preparedArguments() +
-            (if (signed) checkNotNull(input.signed).signatureArguments() else emptyArray<Any?>()) +
-            (if (input.projecting) checkNotNull(completed).projectionArguments() else completed?.arguments() ?: emptyArray<Any?>()) +
-            arrayOf<Any?>(input.frozen.maximumGenerations + 1)
+        val arguments = input.frozen.preparedArguments()
+            .plus(elements = if (signed) checkNotNull(input.signed).signatureArguments() else emptyArray<Any?>())
+            .plus(elements = if (input.projecting) checkNotNull(completed).projectionArguments() else completed?.arguments() ?: emptyArray<Any?>())
+            .plus(elements = arrayOf<Any?>(input.frozen.maximumGenerations + 1))
         val rows = checkNotNull(
             jdbc.query(
                 sql,

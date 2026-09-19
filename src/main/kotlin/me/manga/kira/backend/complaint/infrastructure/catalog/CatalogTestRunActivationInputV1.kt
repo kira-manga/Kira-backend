@@ -136,7 +136,7 @@ internal class CatalogTestRunActivationFrozenV1 private constructor(
 
     fun projectionArguments(signed: CatalogTestRunActivationSignedV1, at: Instant): Array<Any?> {
         check(signed.frozen === this)
-        return copyArguments(projectionValues) + arrayOf(HexFormat.of().parseHex(signed.envelopeSha256), Timestamp.from(at), token)
+        return copyArguments(projectionValues).plus(elements = arrayOf<Any?>(HexFormat.of().parseHex(signed.envelopeSha256), Timestamp.from(at), token))
     }
 
     private fun copyArguments(values: Array<Any?>): Array<Any?> = values.map { value ->
