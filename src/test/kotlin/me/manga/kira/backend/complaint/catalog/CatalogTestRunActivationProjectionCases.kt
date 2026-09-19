@@ -27,7 +27,9 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.ConnectionHolder
+import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
 import java.sql.Timestamp
@@ -358,25 +360,7 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
 
     fun assertProjected(receipt: CatalogTestRunProjectedV1? = null, before: Map<String, ProjectionCounterObservation> = initialCounters) {
         f.signed.releasedSql()
-        val mutation = f.signed.row()
-        val at = (mutation["projected_at"] as Timestamp).toInstant()
-        val completedAt = (mutation["completed_at"] as Timestamp).toInstant()
-        assertTrue(at >= completedAt && at.epochSecond in 0..253402300799L)
-        assertEquals("COMPLETED", mutation["state"])
-        assertEquals(catalogTuple, tupleWithoutProjection(), "PROJECT cannot replace completion, signature, copies or unsigned bytes.")
-        assertEquals(prefix, f.rows.history().dropLast(1))
-        assertEquals(globalCore, globalCore(), "The original global D/core is not the new TEST control or capacity P.")
-        val head = f.head()
-        assertEquals(f.rows.evidence.generation, head["accepted_catalog_generation"])
-        assertArrayEquals(hash(f.envelope), head["accepted_catalog_hash"] as ByteArray)
-        assertNull(head["pending_projection_token"])
-        assertEquals(true, head["maintenance_closed"])
-        assertEquals(true, head["creation_closed"])
-        assertRun(at)
-        assertControl(at)
-        assertNotices(at)
-        assertAudits(at)
-        assertCounters(before)
+        val (completedAt, at) = assertProjectedSql(f.rows.observer, before)
         custody.forEach { (path, value) -> assertEquals(value, f.signed.leaves()[path], "No old arm/outcome is rewritten.") }
         receipt?.let {
             assertEquals(f.signed.token, it.operationToken)
@@ -388,16 +372,52 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
             assertEquals(completedAt, it.completedAt)
             assertEquals(at, it.projectedAt)
         }
-        for (table in listOf("app_installations", "complaint_installation_ids", "complaint_journal_publications")) {
-            assertEquals(0L, f.rows.observer.queryForObject("SELECT count(*) FROM $table WHERE data_scope_id = ?", Long::class.java, scope),
-                "An ACTIVE row grants no enrollment, issuer, publication, routing or migration authority: $table")
-        }
         f.assertNoLostAssertions()
     }
 
-    private fun assertRun(at: Instant) {
-        assertEquals(1L, f.rows.observer.queryForObject("SELECT count(*) FROM complaint_test_runs", Long::class.java))
-        val row = f.rows.observer.queryForMap("SELECT * FROM complaint_test_runs WHERE data_scope_id = ?", scope)
+    /** The same exact SQL oracle on a preopened independent observer, while the original caller still owns PROJECT. */
+    fun assertDurableProjection(connection: Connection): Map<String, List<String>> {
+        val observer = JdbcTemplate(SingleConnectionDataSource(connection, true)).apply { queryTimeout = 1 }
+        assertEquals(10L, effectCount(connection))
+        assertProjectedSql(observer, initialCounters)
+        return image(connection)
+    }
+
+    private fun assertProjectedSql(observer: JdbcTemplate, before: Map<String, ProjectionCounterObservation>): Pair<Instant, Instant> {
+        val mutation = observer.queryForMap("SELECT * FROM complaint_catalog_mutations WHERE operation_token = ?", f.signed.token)
+        val at = (mutation["projected_at"] as Timestamp).toInstant()
+        val completedAt = (mutation["completed_at"] as Timestamp).toInstant()
+        assertTrue(at >= completedAt && at.epochSecond in 0..253402300799L)
+        assertEquals("COMPLETED", mutation["state"])
+        assertEquals(catalogTuple, tupleWithoutProjection(observer), "PROJECT cannot replace completion, signature, copies or unsigned bytes.")
+        assertEquals(prefix, observer.queryForList(
+            "SELECT to_jsonb(m)::text FROM complaint_catalog_mutations m ORDER BY successor_generation", String::class.java,
+        ).dropLast(1))
+        assertEquals(globalCore, globalCore(observer), "The original global D/core is not the new TEST control or capacity P.")
+        val head = observer.queryForMap(
+            "SELECT accepted_catalog_generation, accepted_catalog_hash, pending_projection_token, maintenance_closed, creation_closed " +
+                "FROM complaint_journal_control WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id,
+        )
+        assertEquals(f.rows.evidence.generation, head["accepted_catalog_generation"])
+        assertArrayEquals(hash(f.envelope), head["accepted_catalog_hash"] as ByteArray)
+        assertNull(head["pending_projection_token"])
+        assertEquals(true, head["maintenance_closed"])
+        assertEquals(true, head["creation_closed"])
+        assertRun(at, observer)
+        assertControl(at, observer)
+        assertNotices(at, observer)
+        assertAudits(at, observer)
+        assertCounters(before, observer)
+        for (table in listOf("app_installations", "complaint_installation_ids", "complaint_journal_publications")) {
+            assertEquals(0L, observer.queryForObject("SELECT count(*) FROM $table WHERE data_scope_id = ?", Long::class.java, scope),
+                "An ACTIVE row grants no enrollment, issuer, publication, routing or migration authority: $table")
+        }
+        return completedAt to at
+    }
+
+    private fun assertRun(at: Instant, observer: JdbcTemplate) {
+        assertEquals(1L, observer.queryForObject("SELECT count(*) FROM complaint_test_runs", Long::class.java))
+        val row = observer.queryForMap("SELECT * FROM complaint_test_runs WHERE data_scope_id = ?", scope)
         assertFields(row, mapOf("data_scope_id" to scope, "test_only" to true, "state" to "ACTIVE",
             "configuration_hash" to hashHex(run.configurationSha256), "accounting_version" to 1L,
             "installation_limit" to run.installationLimit, "enrolled_count" to 0L,
@@ -405,13 +425,13 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
             setOf("original_reserve", "unused_reserve"))
         for (column in listOf("original_reserve", "unused_reserve")) {
             assertEquals(run.accounting.originalUnusedReserve.joinToString(",", "{", "}"),
-                f.rows.observer.queryForObject("SELECT $column::text FROM complaint_test_runs WHERE data_scope_id = ?", String::class.java, scope))
+                observer.queryForObject("SELECT $column::text FROM complaint_test_runs WHERE data_scope_id = ?", String::class.java, scope))
         }
     }
 
-    private fun assertControl(at: Instant) {
+    private fun assertControl(at: Instant, observer: JdbcTemplate) {
         val writer = f.rows.evidence.journal.declaration().writer
-        val row = f.rows.observer.queryForMap("SELECT * FROM complaint_journal_control WHERE data_scope_id = ?", scope)
+        val row = observer.queryForMap("SELECT * FROM complaint_journal_control WHERE data_scope_id = ?", scope)
         assertFields(row, mapOf("data_scope_id" to scope, "test_only" to true, "publication_epoch" to 1L,
             "desired_generation" to run.desiredGeneration, "implementation_schema" to run.implementationSchema.toLong(),
             "desired_configuration_hash" to hashHex(run.configurationSha256), "database_identity" to UUID.fromString(writer.databaseIdentity),
@@ -423,25 +443,25 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
         // Every omitted field, including all rotation/checkpoint/seal/V19 LIVE-only links, was asserted NULL above.
     }
 
-    private fun assertNotices(at: Instant) {
-        assertEquals(2L, f.rows.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ?", Long::class.java, scope))
-        assertEquals(2L, f.rows.observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, scope))
+    private fun assertNotices(at: Instant, observer: JdbcTemplate) {
+        assertEquals(2L, observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ?", Long::class.java, scope))
+        assertEquals(2L, observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, scope))
         run.noticeSeeds.forEach { notice ->
             assertEquals(1, notice.definitionVersion)
             val id = UUID.fromString(notice.resourceId)
-            val resource = f.rows.observer.queryForMap("SELECT * FROM complaint_resource_ids WHERE id = ?", id)
+            val resource = observer.queryForMap("SELECT * FROM complaint_resource_ids WHERE id = ?", id)
             assertFields(resource, mapOf("id" to id, "data_scope_id" to scope, "test_only" to true, "state" to "LIVE", "created_at" to Timestamp.from(at)))
-            val content = f.rows.observer.queryForMap("SELECT * FROM complaints WHERE id = ?", id)
+            val content = observer.queryForMap("SELECT * FROM complaints WHERE id = ?", id)
             assertFields(content, mapOf("id" to id, "data_scope_id" to scope, "test_only" to true, "ownership" to "SYSTEM",
                 "kind" to "NOTICE", "status" to "PINNED", "notice_key" to notice.noticeKey,
                 "created_at" to Timestamp.from(at), "updated_at" to Timestamp.from(at), "version" to 1L))
         }
     }
 
-    private fun assertAudits(at: Instant) {
-        val rows = f.rows.observer.queryForList("SELECT * FROM audit_log WHERE complaint_data_scope_id = ? ORDER BY id", scope)
+    private fun assertAudits(at: Instant, observer: JdbcTemplate) {
+        val rows = observer.queryForList("SELECT * FROM audit_log WHERE complaint_data_scope_id = ? ORDER BY id", scope)
         assertEquals(4, rows.size)
-        assertEquals(existingAudits + 4L, f.rows.observer.queryForObject("SELECT count(*) FROM audit_log", Long::class.java))
+        assertEquals(existingAudits + 4L, observer.queryForObject("SELECT count(*) FROM audit_log", Long::class.java))
         val expected = run.noticeSeeds.map { Triple("COMPLAINT_CREATED", "complaint", it.resourceId) } + listOf(
             Triple("COMPLAINT_TEST_RUN_ACTIVATED", "complaint_test_run", scope.toString()),
             Triple("COMPLAINT_CATALOG_PROJECTED", "complaint_catalog", f.signed.token.toString()),
@@ -456,11 +476,11 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
         }
     }
 
-    private fun assertCounters(before: Map<String, ProjectionCounterObservation>) {
+    private fun assertCounters(before: Map<String, ProjectionCounterObservation>, observer: JdbcTemplate) {
         val expectedCharge = TestTerminalCapacityChargesV1.ACTIVE_RUN + TestTerminalCapacityChargesV1.CONTROL +
             TestTerminalCapacityChargesV1.NOTICE_WITH_RESOURCE.scaled(2) + TestTerminalCapacityChargesV1.AUDIT.scaled(4)
         assertEquals(expectedCharge.toLongArray().toList(), run.accounting.activationProjectionActual)
-        val after = counters()
+        val after = counters(observer)
         ComplaintCapacityEncoding.lockOrder().forEach { counter ->
             val old = before.getValue(counter.storedName)
             val current = after.getValue(counter.storedName)
@@ -476,7 +496,7 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
         }
     }
 
-    fun counters(): Map<String, ProjectionCounterObservation> = f.rows.observer.query(
+    fun counters(observer: JdbcTemplate = f.rows.observer): Map<String, ProjectionCounterObservation> = observer.query(
         "SELECT name, jsonb_build_array(to_jsonb(c), c.xmin::text)::text AS full_row, " +
             "(to_jsonb(c) - ARRAY['free_units','actual_units','test_reserved_units','updated_at'])::text AS preserved, " +
             "free_units, actual_units, test_reserved_units, recovery_reserved_units, hard_limit FROM complaint_capacity_counters c ORDER BY ordinal",
@@ -485,20 +505,21 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
     ).toMap()
 
     /** Direct observer JDBC, never a second Spring participant while the intentional PROJECT cut owns SQL. */
-    fun image(): Map<String, List<String>> = checkNotNull(f.rows.observer.dataSource).connection.use { connection ->
-        linkedMapOf<String, List<String>>().also { images ->
-            images["global"] = strings(connection, "SELECT (to_jsonb(c) - ARRAY['lease_owner','lease_token','lease_expires_at','updated_at'])::text " +
-                "FROM complaint_journal_control c WHERE data_scope_id = '${ComplaintDataScope.LIVE.id}'")
-            images["catalog"] = strings(connection, "SELECT jsonb_build_array(to_jsonb(m), m.xmin::text)::text FROM complaint_catalog_mutations m ORDER BY successor_generation")
-            images["counters"] = strings(connection, "SELECT jsonb_build_array(to_jsonb(c), c.xmin::text)::text FROM complaint_capacity_counters c ORDER BY ordinal")
-            for (table in listOf("complaint_test_runs", "complaint_journal_control", "complaint_resource_ids", "complaints")) {
-                images[table] = strings(connection, "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = '$scope' ORDER BY to_jsonb(t)::text")
-            }
-            images["audits"] = strings(connection, "SELECT jsonb_build_array(to_jsonb(a), a.xmin::text)::text FROM audit_log a WHERE complaint_data_scope_id = '$scope' ORDER BY id")
+    fun image(): Map<String, List<String>> = checkNotNull(f.rows.observer.dataSource).connection.use(::image)
+
+    fun image(connection: Connection): Map<String, List<String>> = linkedMapOf<String, List<String>>().also { images ->
+        images["global"] = strings(connection, "SELECT (to_jsonb(c) - ARRAY['lease_owner','lease_token','lease_expires_at','updated_at'])::text " +
+            "FROM complaint_journal_control c WHERE data_scope_id = '${ComplaintDataScope.LIVE.id}'")
+        images["catalog"] = strings(connection, "SELECT jsonb_build_array(to_jsonb(m), m.xmin::text)::text FROM complaint_catalog_mutations m ORDER BY successor_generation")
+        images["counters"] = strings(connection, "SELECT jsonb_build_array(to_jsonb(c), c.xmin::text)::text FROM complaint_capacity_counters c ORDER BY ordinal")
+        for (table in listOf("complaint_test_runs", "complaint_journal_control", "complaint_resource_ids", "complaints")) {
+            images[table] = strings(connection, "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = '$scope' ORDER BY to_jsonb(t)::text")
         }
+        images["audits"] = strings(connection, "SELECT jsonb_build_array(to_jsonb(a), a.xmin::text)::text FROM audit_log a WHERE complaint_data_scope_id = '$scope' ORDER BY id")
     }
 
     fun effectCount(connection: Connection): Long = connection.createStatement().use { statement ->
+        statement.queryTimeout = 1
         statement.executeQuery("SELECT " + listOf("complaint_test_runs", "complaint_journal_control", "complaint_resource_ids", "complaints").joinToString(" + ") {
             "(SELECT count(*) FROM $it WHERE data_scope_id = '$scope')"
         } + " + (SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = '$scope')").use { row ->
@@ -584,11 +605,11 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
         statement.executeQuery().use { row -> assertTrue(row.next()); row.getBoolean(1).also { assertFalse(row.next()) } }
     }
 
-    private fun tupleWithoutProjection(): String = checkNotNull(f.rows.observer.queryForObject(
+    private fun tupleWithoutProjection(observer: JdbcTemplate = f.rows.observer): String = checkNotNull(observer.queryForObject(
         "SELECT (to_jsonb(m) - 'projected_at')::text FROM complaint_catalog_mutations m WHERE operation_token = ?", String::class.java, f.signed.token,
     ))
 
-    private fun globalCore(): String = checkNotNull(f.rows.observer.queryForObject(
+    private fun globalCore(observer: JdbcTemplate = f.rows.observer): String = checkNotNull(observer.queryForObject(
         "SELECT (to_jsonb(c) - ARRAY['lease_owner','lease_token','lease_expires_at','updated_at','pending_projection_token'])::text " +
             "FROM complaint_journal_control c WHERE data_scope_id = ?", String::class.java, ComplaintDataScope.LIVE.id,
     ))
@@ -606,6 +627,7 @@ internal class ProjectionActivationObservation(val f: CompletionActivationObserv
     }
 
     private fun strings(connection: Connection, sql: String): List<String> = connection.createStatement().use { statement ->
+        statement.queryTimeout = 1
         statement.executeQuery(sql).use { rows -> buildList { while (rows.next()) add(rows.getString(1)) } }
     }
 

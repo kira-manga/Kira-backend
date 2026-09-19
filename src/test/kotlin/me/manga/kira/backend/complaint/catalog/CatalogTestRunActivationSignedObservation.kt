@@ -169,7 +169,8 @@ internal class SignedActivationObservation(
     ) {
         previous.close() // End the actual original root before opening the new graph.
         rows.awaitRealLeaseExpiry() // No SQL backdating, replacement lease result or old budget revival.
-        VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true).use { fresh ->
+        // The endpoint participates in full D: transport-loss fixtures keep it unchanged from freeze through cold replay.
+        VersionBoundPersistenceConnectedFixture(tls.database, testActivation = true, endpointPort = tls.endpointPort).use { fresh ->
             fresh.bind(nanoClock = nanoClock)
             probe(fresh)
             fresh.startCatalogTestRunActivation()

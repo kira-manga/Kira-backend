@@ -75,6 +75,7 @@ import me.manga.kira.backend.complaint.catalog.TestActivationSignedLifecycleCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedRaceCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedSqlCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedUnreturnedCut
+import me.manga.kira.backend.complaint.catalog.assertTestActivationProjectLostCommitResponse
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
@@ -1148,6 +1149,17 @@ class VersionBoundPersistenceConnectedIT {
         )) {
             val clock = DesiredInstallationTestClock()
             withFixture(testActivation = true) { CatalogTestRunActivationProjectionRecoveryCases.sqlCut(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testActivationProjectionLostCommitResponseRetainsUnknownAndColdReplaysReadOnly() {
+        PgLifecycleTlsCommitForwarder(database.value).use { forwarder ->
+            forwarder.start()
+            VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, endpointPort = forwarder.port).use { tls ->
+                tls.bind()
+                assertTestActivationProjectLostCommitResponse(tls, forwarder)
+            }
         }
     }
 

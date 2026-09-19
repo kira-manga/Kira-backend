@@ -53,9 +53,9 @@ internal enum class TestActivationProjectionLifetimeCut {
 
 /**
  * Actual DML/PG rollback, known COMMITTED callback failure and retained native/root/phase failures.
- * Genuine committed-UNKNOWN PROJECT transport loss is NOT_AUTHORED here: the existing held-COMMIT
- * relay is plaintext/ordinary-only, not the retained TLS TEST fixture. Neither callback failure nor
- * deferred-constraint rollback is renamed to claim that missing scenario.
+ * The separate CatalogTestRunActivationProjectLostCommitCase uses real PostgreSQL through an
+ * opaque TLS forwarder. Neither callback failure nor deferred-constraint rollback below is
+ * renamed to claim committed-UNKNOWN transport loss.
  */
 internal object CatalogTestRunActivationProjectionRecoveryCases {
     fun sqlCut(

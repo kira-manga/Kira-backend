@@ -30,6 +30,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private val desiredOperator: Boolean = false,
     private val catalogAuthor: Boolean = false,
     private val testActivation: Boolean = false,
+    internal val endpointPort: Int = database.port,
 ) : AutoCloseable {
     private val trustParent = database.versionBoundTls().publicTrustParent()
     private val suppliedPassword = when {
@@ -50,7 +51,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         desiredOperator -> VersionBoundPersistenceConfiguration.forDesiredInstallationOperator(
             acquired,
             if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
-            database.port,
+            endpointPort,
             PgLifecycleDatabaseSettings.DATABASE,
             database.versionBoundTls().publicTrust(client == ConnectedTlsClient.WRONG_CA),
             trustParent,
@@ -59,7 +60,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         catalogAuthor -> VersionBoundPersistenceConfiguration.forCatalogGenesisAuthoring(
             acquired,
             if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
-            database.port,
+            endpointPort,
             PgLifecycleDatabaseSettings.DATABASE,
             database.versionBoundTls().publicTrust(client == ConnectedTlsClient.WRONG_CA),
             trustParent,
@@ -68,7 +69,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         else -> VersionBoundPersistenceConfiguration.fromAcquired(
             acquired,
             if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
-            database.port,
+            endpointPort,
             PgLifecycleDatabaseSettings.DATABASE,
             PgLifecycleDatabaseSettings.CANDIDATE,
             2,
