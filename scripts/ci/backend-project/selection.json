@@ -1,0 +1,382 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 22,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPrepareIT",
+      "cohort": "manifest_representative_diagnostic",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineStrictDrainPreparesPaidPublicationReservedZeroPromiseAndCanonicalSidecarAtomically",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestInstallationManifestPrepareIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "c47a429c5bbc839148371acce3fdb39df22ac53efeb8d1d2c9dca00776f97417",
+      "xml_names": [
+        "genuineStrictDrainPreparesPaidPublicationReservedZeroPromiseAndCanonicalSidecarAtomically()"
+      ]
+    },
+    {
+      "annotation_line": 74,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryFreshRootRegistersSealedCurrentStateWithoutProjectOrMutationAdmission",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryFreshRootRegistersSealedCurrentStateWithoutProjectOrMutationAdmission()"
+      ]
+    },
+    {
+      "annotation_line": 79,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryFreshRootReusesCommittedPaidCutWithoutSecondCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryFreshRootReusesCommittedPaidCutWithoutSecondCharge()"
+      ]
+    },
+    {
+      "annotation_line": 92,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryChangedFullDRefusesBeforeNativeReadback",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryChangedFullDRefusesBeforeNativeReadback()"
+      ]
+    },
+    {
+      "annotation_line": 95,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryChangedDatabaseIdentityRefusesWithoutRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryChangedDatabaseIdentityRefusesWithoutRepair()"
+      ]
+    },
+    {
+      "annotation_line": 98,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryChangedRestoreIdentityRefusesWithoutRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryChangedRestoreIdentityRefusesWithoutRepair()"
+      ]
+    },
+    {
+      "annotation_line": 101,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryChangedEventWriterRefusesWithoutRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryChangedEventWriterRefusesWithoutRepair()"
+      ]
+    },
+    {
+      "annotation_line": 104,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryChangedCatalogWriterRefusesWithoutRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryChangedCatalogWriterRefusesWithoutRepair()"
+      ]
+    },
+    {
+      "annotation_line": 107,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryMissingRawReplicaCannotRegister",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryMissingRawReplicaCannotRegister()"
+      ]
+    },
+    {
+      "annotation_line": 112,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryChangedRawEnvelopeCannotRegister",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryChangedRawEnvelopeCannotRegister()"
+      ]
+    },
+    {
+      "annotation_line": 117,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryUnattributedUnusedReserveCannotBeRepaid",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryUnattributedUnusedReserveCannotBeRepaid()"
+      ]
+    },
+    {
+      "annotation_line": 122,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryInstallationManifestProgressRemainsFailClosed",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryInstallationManifestProgressRemainsFailClosed()"
+      ]
+    },
+    {
+      "annotation_line": 127,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryCaptureRollbackCannotIssueOrReadProvider",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryCaptureRollbackCannotIssueOrReadProvider()"
+      ]
+    },
+    {
+      "annotation_line": 130,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryCaptureNativeCommitUnknownRetainsOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryCaptureNativeCommitUnknownRetainsOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 133,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryCaptureAcknowledgmentLossCannotIssueOrReadProvider",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryCaptureAcknowledgmentLossCannotIssueOrReadProvider()"
+      ]
+    },
+    {
+      "annotation_line": 136,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryCaptureUnresolvedReleaseRetainsOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryCaptureUnresolvedReleaseRetainsOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 139,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryRecheckRollbackCannotIssueAfterRawReadback",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryRecheckRollbackCannotIssueAfterRawReadback()"
+      ]
+    },
+    {
+      "annotation_line": 142,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryRecheckNativeCommitUnknownRetainsOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryRecheckNativeCommitUnknownRetainsOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 145,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryRecheckAcknowledgmentLossCannotIssue",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryRecheckAcknowledgmentLossCannotIssue()"
+      ]
+    },
+    {
+      "annotation_line": 148,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryRecheckUnresolvedReleaseRetainsOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryRecheckUnresolvedReleaseRetainsOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 140,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainOwnerFamiliesIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminUnattributedAuditUseRefusesResidualRelease",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainOwnerFamiliesIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "d02037b53d807ef10af999b5132eaa8e9c727d05b7e493e910b7c097eb301f41",
+      "xml_names": [
+        "registeredAdminUnattributedAuditUseRefusesResidualRelease()"
+      ]
+    },
+    {
+      "annotation_line": 145,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainOwnerFamiliesIT",
+      "cohort": "corrected_failure",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredAdminWrongActorAttributionRefusesResidualRelease",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainOwnerFamiliesIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "d02037b53d807ef10af999b5132eaa8e9c727d05b7e493e910b7c097eb301f41",
+      "xml_names": [
+        "registeredAdminWrongActorAttributionRefusesResidualRelease()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPublicationIT",
+      "cohort": "manifest_representative_diagnostic",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualPaidPrepareFreezesAuthenticatesClosesAndVerifiesWithoutReceiptRunOrCapacityWrites",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestInstallationManifestPublicationIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "76b326ce38f231a9f89c1ed7f3ae4b57fe669c06c48bcd9ea79ad48db180a9b1",
+      "xml_names": [
+        "actualPaidPrepareFreezesAuthenticatesClosesAndVerifiesWithoutReceiptRunOrCapacityWrites()"
+      ]
+    },
+    {
+      "annotation_line": 84,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_real_process_boundary",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryTwoJvmPreCutReassemblesRegistersAndDrainsWithoutProjectionOrEnrollment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryTwoJvmPreCutReassemblesRegistersAndDrainsWithoutProjectionOrEnrollment()"
+      ]
+    },
+    {
+      "annotation_line": 88,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "new_real_process_boundary",
+      "expected_invocations_from_annotation": 1,
+      "method": "coldTestRecoveryTwoJvmCommittedWitnessIsReadmittedWithoutRescanOrSecondCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+      "source_sha256": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+      "xml_names": [
+        "coldTestRecoveryTwoJvmCommittedWitnessIsReadmittedWithoutRescanOrSecondCharge()"
+      ]
+    }
+  ],
+  "expected_selected_methods": 25,
+  "expected_total": 25,
+  "selection_basis": {
+    "corrected_failures": 21,
+    "manifest_representative_diagnostic": 2,
+    "new_real_process_boundary": 2,
+    "other_manifest_failures_deferred_pending_common_cause": 25,
+    "previous_run": "35542073052",
+    "purpose": "Verify reviewed concrete cold/Admin fixture corrections and actual fresh-process boundary; locate manifest first unexpected refusal before replaying blocked descendants.",
+    "unchanged_passing_not_repeated": 72
+  },
+  "source_sha": "310f0ff2b6d68c23e86caa7aa37f8c6ceb15aa68",
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestInstallationManifestPrepareIT.kt": "c47a429c5bbc839148371acce3fdb39df22ac53efeb8d1d2c9dca00776f97417",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestInstallationManifestPublicationIT.kt": "76b326ce38f231a9f89c1ed7f3ae4b57fe669c06c48bcd9ea79ad48db180a9b1",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt": "6eab8bfc1494e29f3631a16948a07803210f6df7a73e723fb0d0ebe8b65dd64d",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainOwnerFamiliesIT.kt": "d02037b53d807ef10af999b5132eaa8e9c727d05b7e493e910b7c097eb301f41"
+  },
+  "status": "BOUND_NOT_RUN",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPrepareIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPublicationIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT": 21,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainOwnerFamiliesIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPrepareIT.genuineStrictDrainPreparesPaidPublicationReservedZeroPromiseAndCanonicalSidecarAtomically",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryFreshRootRegistersSealedCurrentStateWithoutProjectOrMutationAdmission",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryFreshRootReusesCommittedPaidCutWithoutSecondCharge",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryChangedFullDRefusesBeforeNativeReadback",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryChangedDatabaseIdentityRefusesWithoutRepair",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryChangedRestoreIdentityRefusesWithoutRepair",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryChangedEventWriterRefusesWithoutRepair",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryChangedCatalogWriterRefusesWithoutRepair",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryMissingRawReplicaCannotRegister",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryChangedRawEnvelopeCannotRegister",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryUnattributedUnusedReserveCannotBeRepaid",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryInstallationManifestProgressRemainsFailClosed",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryCaptureRollbackCannotIssueOrReadProvider",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryCaptureNativeCommitUnknownRetainsOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryCaptureAcknowledgmentLossCannotIssueOrReadProvider",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryCaptureUnresolvedReleaseRetainsOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryRecheckRollbackCannotIssueAfterRawReadback",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryRecheckNativeCommitUnknownRetainsOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryRecheckAcknowledgmentLossCannotIssue",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryRecheckUnresolvedReleaseRetainsOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainOwnerFamiliesIT.registeredAdminUnattributedAuditUseRefusesResidualRelease",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainOwnerFamiliesIT.registeredAdminWrongActorAttributionRefusesResidualRelease",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPublicationIT.actualPaidPrepareFreezesAuthenticatesClosesAndVerifiesWithoutReceiptRunOrCapacityWrites",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryTwoJvmPreCutReassemblesRegistersAndDrainsWithoutProjectionOrEnrollment",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.coldTestRecoveryTwoJvmCommittedWitnessIsReadmittedWithoutRescanOrSecondCharge"
+  ]
+}
