@@ -44,6 +44,12 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationDriftCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealCasesV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealFailureCasesV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHistoryCutV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealProviderCutV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealLifetimeCutV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
 import me.manga.kira.backend.complaint.catalog.TestRunVerifiedOwnerDeleteCases
 import me.manga.kira.backend.complaint.catalog.TestRunPreparedOwnerDeleteCases
 import me.manga.kira.backend.complaint.catalog.TestRunOwnerDeletePageCases
@@ -1274,6 +1280,63 @@ class VersionBoundPersistenceConnectedIT {
                 withFixture(testActivation = true) { TestRunSealingCases.completionFailure(it, cut, auditPhase) }
             }
         }
+    }
+
+    @Test
+    fun testRunOrdinarySealEmptyRunAtomicPhasesAndImmutableReplay() = withFixture(testActivation = true) {
+        TestOrdinarySealCasesV1.emptyAndReplay(it)
+    }
+
+    @Test
+    fun testRunOrdinarySealCompleteLocalHistoryIncludesFulfilledAndExpiredReceipts() {
+        for (expired in listOf(false, true)) withFixture(testActivation = true) { TestOrdinarySealCasesV1.completeHistory(it, expired) }
+    }
+
+    @Test
+    fun testRunOrdinarySealRefusesPendingOrphanForeignUnsupportedAndSecondPassChange() {
+        TestOrdinarySealHistoryCutV1.entries.forEach { cut -> withFixture(testActivation = true) { TestOrdinarySealCasesV1.invalidHistory(it, cut) } }
+    }
+
+    @Test
+    fun testRunOrdinarySealRequiresColdInputAndCannotRecreateVerifiedVersion() {
+        withFixture(testActivation = true) { TestOrdinarySealCasesV1.absentColdInputRefuses(it) }
+        withFixture(testActivation = true) { TestOrdinarySealCasesV1.missingVerifiedObjectNeverReput(it) }
+    }
+
+    @Test
+    fun testRunOrdinarySealPrepareAndFreezeRequireCommittedOriginalRelease() {
+        for (step in listOf(TestOrdinarySealStepV1.PREPARE, TestOrdinarySealStepV1.FREEZE)) {
+            TestRegistrationCompletionCut.entries.forEach { cut ->
+                withFixture(testActivation = true) { TestOrdinarySealFailureCasesV1.completion(it, step, cut) }
+            }
+        }
+    }
+
+    @Test
+    fun testRunOrdinarySealVerifyCompletionCannotReencryptOrDoubleCharge() {
+        TestRegistrationCompletionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestOrdinarySealFailureCasesV1.completion(it, TestOrdinarySealStepV1.VERIFY, cut) }
+        }
+    }
+
+    @Test
+    fun testRunOrdinarySealLostPutAcknowledgmentUsesOneExactRepeat() = withFixture(testActivation = true) {
+        TestOrdinarySealFailureCasesV1.lostPutAcknowledgment(it)
+    }
+
+    @Test
+    fun testRunOrdinarySealRejectsWrongRoleVersionWireMetadataAndRetention() {
+        TestOrdinarySealProviderCutV1.entries.forEach { cut -> withFixture(testActivation = true) { TestOrdinarySealFailureCasesV1.badProvider(it, cut) } }
+    }
+
+    @Test
+    fun testRunOrdinarySealLifetimeSignalsAndDatabaseFenceVetoVerify() {
+        TestOrdinarySealLifetimeCutV1.entries.forEach { cut -> withFixture(testActivation = true) { TestOrdinarySealFailureCasesV1.lifetime(it, cut) } }
+    }
+
+    @Test
+    fun testRunOrdinarySealFailedNativeCloseRetainsSharedLane() = withFixture(testActivation = true) {
+        TestOrdinarySealFailureCasesV1.failedNativeCloseKeepsLane(it)
     }
 
     @Test

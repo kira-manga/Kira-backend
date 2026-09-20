@@ -17,6 +17,7 @@ import javax.crypto.spec.SecretKeySpec
 internal class TestTerminalRoutingV1 private constructor(
     journal: TestOwnerDeleteJournalConfigurationV1,
     private val keys: List<RoutingKey>,
+    private val retainedOwner: TestOwnerDeleteJournalRoutingV1? = null,
 ) {
     private val declaration = journal.declaration()
     private val json = TestTerminalJsonV1(journal)
@@ -38,18 +39,22 @@ internal class TestTerminalRoutingV1 private constructor(
     private fun routes(kind: Kind, epoch: Long, descriptor: String): TestTerminalRoutesV1 {
         val candidates = keys.map { key ->
             val keyId = key.binding.logicalKeyId
-            val objectId = mac(key, kind.keyDomain, kind.wireKind, epoch, descriptor)
-            val journalId = mac(key, kind.idDomain, kind.wireKind, epoch, descriptor)
+            val objectId = mac(key, kind, epoch, descriptor, true)
+            val journalId = mac(key, kind, epoch, descriptor, false)
             TestTerminalRouteV1(keyId, "$prefix$epoch/$keyId/${kind.path}/$objectId.kjev", journalId)
         }
         return TestTerminalRoutesV1(candidates.single { it.routingKeyId == declaration.routing.activeKeyId }, candidates)
     }
 
-    private fun mac(key: RoutingKey, domain: String, kind: String, epoch: Long, descriptor: String): String {
-        val frame = TestTerminalFramesV1.bytes(listOf(domain, kind, writer, "TEST", scope, epoch.toString(), key.binding.logicalKeyId, descriptor))
+    private fun mac(key: RoutingKey, kind: Kind, epoch: Long, descriptor: String, objectKey: Boolean): String {
+        val domain = if (objectKey) kind.keyDomain else kind.idDomain
+        val frame = TestTerminalFramesV1.bytes(listOf(domain, kind.wireKind, writer, "TEST", scope, epoch.toString(), key.binding.logicalKeyId, descriptor))
         try {
-            val digest = Mac.getInstance("HmacSHA256").run {
-                init(key.secret)
+            val digest = if (retainedOwner != null) {
+                requireTestTerminal(kind === Kind.SEAL, TestTerminalFailureV1.KEY_FAILURE)
+                retainedOwner.epochSealMac(key.binding.logicalKeyId, epoch, descriptor, objectKey)
+            } else Mac.getInstance("HmacSHA256").run {
+                init(checkNotNull(key.secret))
                 doFinal(frame)
             }
             return try {
@@ -66,7 +71,7 @@ internal class TestTerminalRoutingV1 private constructor(
 
     override fun toString(): String = "TestTerminalRoutingV1(TEST,redacted,no-intent-or-provider-authority)"
 
-    private class RoutingKey(val binding: VersionedSecretBinding, val secret: SecretKeySpec)
+    private class RoutingKey(val binding: VersionedSecretBinding, val secret: SecretKeySpec?)
 
     private enum class Kind(val wireKind: String, val path: String, val idDomain: String, val keyDomain: String) {
         INSTALLATION_MANIFEST(
@@ -77,6 +82,10 @@ internal class TestTerminalRoutingV1 private constructor(
     }
 
     companion object {
+        /** Retained production-key bridge is deliberately seal-only; dormant event fixtures are unchanged. */
+        internal fun fromRetained(owner: TestOwnerDeleteJournalRoutingV1): TestTerminalRoutingV1 =
+            TestTerminalRoutingV1(owner.journalConfiguration, owner.descriptors().map { RoutingKey(it, null) }, owner)
+
         fun fromAcquired(journal: TestOwnerDeleteJournalConfigurationV1, secrets: List<AcquiredVersionedSecret>): TestTerminalRoutingV1 {
             val inputs = TestTerminalSyntaxV1.snapshot(secrets, 4).sortedBy { it.descriptor.logicalKeyId }
             val declared = journal.declaration().routing.keys
@@ -103,7 +112,7 @@ internal class TestTerminalRoutingV1 private constructor(
             val comparisons = ArrayList<ComplaintAdmissionKey>(keys.size)
             try {
                 keys.forEach { key ->
-                    val bytes = key.secret.encoded
+                    val bytes = checkNotNull(key.secret).encoded
                     val comparison = try {
                         ComplaintAdmissionKey(key.binding.logicalKeyId, bytes)
                     } finally {

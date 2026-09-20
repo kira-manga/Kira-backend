@@ -95,6 +95,23 @@ class TestTerminalRoutingV1Test {
     }
 
     @Test
+    fun retainedOrdinaryConsumerMatchesExistingSealCandidatesButCannotDeriveTerminalEvents() {
+        val acquired = f.acquired()
+        val original = TestOwnerDeleteJournalRoutingV1.fromAcquired(f.journal, acquired)
+        val retained = TestTerminalRoutingV1.fromRetained(original)
+        val expected = TestTerminalRoutingV1.fromAcquired(f.journal, acquired).deriveEpochSeal(f.ordinarySeal)
+        assertEquals(original.descriptors(), retained.descriptors())
+        assertEquals(expected.active, retained.deriveEpochSeal(f.ordinarySeal).active)
+        assertEquals(expected.candidates(), retained.deriveEpochSeal(f.ordinarySeal).candidates())
+        assertEquals(TestTerminalFailureV1.KEY_FAILURE,
+            terminalRejected { retained.deriveInstallationManifest(f.manifest) }.code)
+        assertEquals(TestTerminalFailureV1.KEY_FAILURE,
+            terminalRejected { retained.derivePurge(f.purge) }.code)
+        assertEquals(expected.candidates(), retained.deriveEpochSeal(f.ordinarySeal).candidates(),
+            "Refusing terminal-event use neither replaces nor destroys the original retained seal keys.")
+    }
+
+    @Test
     fun descriptorAndHeaderContextMutationsCannotBorrowAnotherFamilyIdentity() {
         val acquired = f.acquired()
         val routing = TestTerminalRoutingV1.fromAcquired(f.journal, acquired)

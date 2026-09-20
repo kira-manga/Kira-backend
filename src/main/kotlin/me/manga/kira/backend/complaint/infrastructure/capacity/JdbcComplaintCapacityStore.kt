@@ -55,6 +55,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActi
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionCountersV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
 import me.manga.kira.backend.security.StepUpGrantIssuance
@@ -89,6 +90,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestReserveSpend(operation: ComplaintTestReserveSpendOperation): LockedTestReserveSpend = LockedTestReserveSpend.lock(this, operation)
 
     internal fun lockForTestRunSealedAudit(operation: TestRunSealingOperationV1): LockedTestRunSealedAudit = LockedTestRunSealedAudit.lock(this, operation)
+    internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
 
     internal fun lockForInstallationEnrollment(operation: ComplaintInstallationEnrollmentOperation): LockedInstallationEnrollment =
         LockedInstallationEnrollment.lock(this, operation)
@@ -1492,6 +1494,52 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedTestRunSealedAudit(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    internal class LockedTestOrdinarySeal private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestOrdinarySealOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+
+        internal fun completedFor(candidate: TestOrdinarySealOperationV1): Boolean = operation === candidate && completed
+
+        internal fun settle(candidate: TestOrdinarySealOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc)
+                issued = true
+                val before = counters.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.actual[counter] == after.actual[counter] && before.recoveryReserved[counter] == after.recoveryReserved[counter] &&
+                        before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_RESERVE_COUNTER,
+                        after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        override fun toString(): String = "LockedTestOrdinarySeal(original-run-paid-ordinary-seal,redacted)"
+
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestOrdinarySeal(store, operation, store.readLockedCounters())
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

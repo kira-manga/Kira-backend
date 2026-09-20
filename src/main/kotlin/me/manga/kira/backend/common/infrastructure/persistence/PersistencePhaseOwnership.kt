@@ -7,6 +7,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesired
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
@@ -96,6 +97,9 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestRunSealedAudit(original: TestRunSealingV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT, testRunSealer = original)
+
+    internal fun enterTestOrdinarySeal(original: TestRunOrdinarySealV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL, testOrdinarySealer = original)
 
     internal fun enterTestRunOwnerDeleteReload(original: TestRunOwnerDeleteContinuationV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, testRunOwnerDelete = original)
@@ -435,6 +439,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRunActivation: CatalogTestRunActivationV1? = null,
         testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
         testRunSealer: TestRunSealingV1? = null,
+        testOrdinarySealer: TestRunOrdinarySealV1? = null,
         testRunOwnerDelete: TestRunOwnerDeleteContinuationV1? = null,
     ): PersistencePhaseContext {
         try {
@@ -451,6 +456,9 @@ internal class PersistencePhaseOwnership private constructor(
         requireSignerRotationActivationEntry(path, signerRotationActivation)
         requireTestRunActivationEntry(path, testRunActivation)
         if ((path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION) != (testRegistration != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if ((path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL) != (testOrdinarySealer != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if (path.testRunSealing != (testRunSealer != null)) {
@@ -474,6 +482,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRunActivation?.requirePhaseEntry(this, path)
         testRegistration?.requirePhaseEntry(this, path)
         testRunSealer?.requirePhaseEntry(this, path)
+        testOrdinarySealer?.requirePhaseEntry(this, path)
         testRunOwnerDelete?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
@@ -492,6 +501,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testRunActivationWork = testRunActivation?.budget?.capped(2_000)
         val testRegistrationWork = testRegistration?.budget?.capped(2_000)
         val testRunSealingWork = testRunSealer?.budget?.capped(2_000)
+        val testOrdinarySealWork = testOrdinarySealer?.budget?.capped(2_000)
         val testRunOwnerDeleteWork = testRunOwnerDelete?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
@@ -547,6 +557,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testRegistrationWork,
                 testRunSealer,
                 testRunSealingWork,
+                testOrdinarySealer,
+                testOrdinarySealWork,
                 testRunOwnerDelete,
                 testRunOwnerDeleteWork,
             )
@@ -560,6 +572,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunActivation?.retainPhase(prepared)
             testRegistration?.retainPhase(prepared)
             testRunSealer?.retainPhase(prepared)
+            testOrdinarySealer?.retainPhase(prepared)
             testRunOwnerDelete?.retainPhase(prepared)
             check(phases.compareAndSet(slot, null, prepared))
             current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
@@ -576,6 +589,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunActivation?.observeFailure(failure)
             testRegistration?.observeFailure(failure)
             testRunSealer?.observeFailure(failure)
+            testOrdinarySealer?.observeFailure(failure)
             testRunOwnerDelete?.observeFailure(failure)
             try {
                 phase?.entryPublicationFailed()
@@ -588,6 +602,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunActivation?.observeFailure(cleanup)
                 testRegistration?.observeFailure(cleanup)
                 testRunSealer?.observeFailure(cleanup)
+                testOrdinarySealer?.observeFailure(cleanup)
                 testRunOwnerDelete?.observeFailure(cleanup)
                 throw PersistencePhaseException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED, cleanupProven = false)
             } finally {
@@ -599,6 +614,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testRunActivation?.observePhaseCleanup(it) }
                 phase?.let { testRegistration?.observePhaseCleanup(it) }
                 phase?.let { testRunSealer?.observePhaseCleanup(it) }
+                phase?.let { testOrdinarySealer?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDelete?.observePhaseCleanup(it) }
             }
             // Only the genuinely unused entry was cleaned here; preserve an already bounded reason.
@@ -802,6 +818,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
+                PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
                 PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -980,6 +997,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
+            PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PREPARE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_SIGNATURE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -1131,6 +1149,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_NAMESPACE_REGISTRATION,
     COMPLAINT_TEST_RUN_SEAL,
     COMPLAINT_TEST_RUN_SEALED_AUDIT,
+    COMPLAINT_TEST_ORDINARY_SEAL,
     COMPLAINT_CATALOG_GENESIS_PREPARE,
     COMPLAINT_CATALOG_GENESIS_SIGNATURE,
     COMPLAINT_CATALOG_GENESIS_COMPLETE,
@@ -1194,6 +1213,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_NAMESPACE_REGISTRATION, // SELECT FOR UPDATE needs M/RC; only its typed owner admits the closed TEST gate.
             COMPLAINT_TEST_RUN_SEAL,
             COMPLAINT_TEST_RUN_SEALED_AUDIT,
+            COMPLAINT_TEST_ORDINARY_SEAL,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
             COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,

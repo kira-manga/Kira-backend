@@ -387,7 +387,7 @@ internal class AwsEpochSealStsAdapter private constructor(
 }
 
 /** All actually returned partial resources remain reachable; an unreturned factory/build is never proven quiescent. */
-private class EpochSealStsClientOwner(
+internal class EpochSealStsClientOwner(
     private val region: Region,
     private val credentials: AwsSessionCredentials,
     private val limits: AwsEpochSealStsLimits,

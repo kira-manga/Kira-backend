@@ -40,6 +40,7 @@ internal class BoundedJournalSdkHttpClientV1(
 
     fun begin(call: JournalS3RequestV1) = beginProjected(JournalS3WireBindingV1.of(call))
     fun begin(call: TestOwnerDeleteS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
+    fun begin(call: TestOrdinarySealS3CallV1) = beginProjected(JournalS3WireBindingV1.of(call))
     private fun beginProjected(call: JournalS3WireBindingV1) {
         call.check()
         requireJournalPublication(!closed.get() && active.get() == null && expected.compareAndSet(null, call))
@@ -59,6 +60,7 @@ internal class BoundedJournalSdkHttpClientV1(
 
     fun observation(call: JournalS3RequestV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
     fun observation(call: TestOwnerDeleteS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
+    fun observation(call: TestOrdinarySealS3CallV1): JournalS3HttpObservationV1? = observationProjected(retained(call))
     private fun observationProjected(call: JournalS3WireBindingV1): JournalS3HttpObservationV1? {
         checkCall(call)
         val exchange = active.get()
@@ -68,6 +70,7 @@ internal class BoundedJournalSdkHttpClientV1(
 
     fun dispatched(call: JournalS3RequestV1): Boolean = dispatchedProjected(retained(call))
     fun dispatched(call: TestOwnerDeleteS3CallV1): Boolean = dispatchedProjected(retained(call))
+    fun dispatched(call: TestOrdinarySealS3CallV1): Boolean = dispatchedProjected(retained(call))
     private fun dispatchedProjected(call: JournalS3WireBindingV1): Boolean {
         checkCall(call)
         return active.get()?.wasDispatched() == true
@@ -75,6 +78,7 @@ internal class BoundedJournalSdkHttpClientV1(
 
     private fun retained(call: JournalS3RequestV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
     private fun retained(call: TestOwnerDeleteS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
+    private fun retained(call: TestOrdinarySealS3CallV1): JournalS3WireBindingV1 = checkNotNull(expected.get()).also { requireJournalPublication(it.matches(call)) }
 
     @Synchronized
     fun finishRequest() = journalPublicationClose {

@@ -33,6 +33,20 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
         return TestOwnerDeleteJournalRoutesV1(candidates.single { it.routingKeyId == activeKeyId }, candidates)
     }
 
+    /** Only the two fixed TEST seal domains, using THESE keys; no arbitrary-frame or second-material bridge. */
+    internal fun epochSealMac(keyId: String, epoch: Long, descriptor: String, objectKey: Boolean): ByteArray {
+        require(epoch > 0 && descriptor.matches(Regex("[0-9a-f]{64}"))) { INVALID_CONFIGURATION }
+        val domain = if (objectKey) "kira-test-epoch-seal-object-key-v1" else "kira-test-epoch-seal-id-v1"
+        val frame = TestTerminalFramesV1.bytes(listOf(domain, "EPOCH_SEAL", writerGeneration, "TEST",
+            journalConfiguration.scope.id.toString(), epoch.toString(), keyId, descriptor))
+        return try {
+            Mac.getInstance("HmacSHA256").run {
+                init(keys.single { it.binding.logicalKeyId == keyId }.secretKey)
+                doFinal(frame)
+            }
+        } finally { frame.fill(0) }
+    }
+
     /** Fixed-family comparison tags from these actual HMAC keys, never a caller's second retained-material list. */
     fun admissionForbiddenFamily(): ComplaintAdmissionForbiddenFamily {
         val copies = keys.map { it.secretKey.encoded }

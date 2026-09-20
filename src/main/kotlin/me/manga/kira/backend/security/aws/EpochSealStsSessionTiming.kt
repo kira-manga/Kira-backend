@@ -1,17 +1,24 @@
 package me.manga.kira.backend.security.aws
 
 import me.manga.kira.backend.security.EpochSealAttemptV1
+import me.manga.kira.backend.security.TestTerminalAttemptV1
 import java.time.Duration
 import java.time.Instant
 import kotlin.math.abs
 
 /** Sampled BEFORE AssumeRole dispatch. Neither an AWS expiration nor cleanup renews/revokes a DB lease. */
-internal class EpochSealStsSessionTiming(
-    private val original: EpochSealAttemptV1,
+internal class EpochSealStsSessionTiming private constructor(
+    private val live: EpochSealAttemptV1?,
+    private val test: TestTerminalAttemptV1?,
     private val limits: AwsEpochSealStsLimits,
     private val nanoTime: () -> Long,
     private val wallClock: () -> Instant,
 ) {
+    constructor(original: EpochSealAttemptV1, limits: AwsEpochSealStsLimits, nanoTime: () -> Long, wallClock: () -> Instant) :
+        this(original, null, limits, nanoTime, wallClock)
+    constructor(original: TestTerminalAttemptV1, limits: AwsEpochSealStsLimits, nanoTime: () -> Long, wallClock: () -> Instant) :
+        this(null, original, limits, nanoTime, wallClock)
+
     private val started = nanoTime()
     private val wallStarted = wallClock()
     private var lastElapsed = 0L
@@ -20,7 +27,7 @@ internal class EpochSealStsSessionTiming(
 
     @Synchronized
     fun requireUsable(expiration: Instant) {
-        val remainingSeal = original.remainingMillis(Int.MAX_VALUE)
+        val remainingSeal = live?.remainingMillis(Int.MAX_VALUE) ?: checkNotNull(test).remainingMillis(Int.MAX_VALUE)
         val elapsed = nanoTime() - started
         val wall = wallClock()
         val uncertainty = limits.clockUncertaintyMillis

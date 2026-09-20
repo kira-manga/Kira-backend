@@ -57,8 +57,9 @@ internal fun withSignedActivationRows(
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
     createGlobal: Int = 2,
+    ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     action: (SignedActivationObservation) -> Unit,
-) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal) { rows ->
+) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp) { rows ->
     SignedActivationObservation(tls, rows).use { observed ->
         observed.probe(tls) // The real template is installed before any owner/input exists.
         tls.startCatalogTestRunActivation()

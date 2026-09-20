@@ -16,7 +16,7 @@ internal object OwnerDeletePersistenceSql {
     """.trimIndent()
     val AUTHENTICATE = "$ACTOR SELECT actor.platform FROM (SELECT 1) seed LEFT JOIN actor ON true"
 
-    private val RECEIPT_COLUMNS = """
+    internal val RECEIPT_COLUMNS = """
         r.actor_id, r.idempotency_key, r.operation, r.data_scope_id, r.test_only, r.state,
         CASE WHEN cardinality(r.target_ids) = 1 THEN r.target_ids[1] END AS target_id,
         CASE WHEN octet_length(r.fingerprint) = 32 THEN r.fingerprint END AS fingerprint,
@@ -127,8 +127,11 @@ internal object OwnerDeletePersistenceSql {
                 routing_key_id, object_key, canonicalizer, event_bytes, semantic_hash, state, created_at)
         VALUES (?, ?, true, ?, ?, 'OWNER_DELETE', 1, ?, ?, 'kcj-1', ?, ?, 'PREPARED', clock_timestamp()) RETURNING created_at
     """.trimIndent()
-    private val PUBLICATION_COLUMNS = """
-        event_id, data_scope_id, test_only, writer_generation, journal_epoch, event_kind, target_count, routing_key_id, object_key,
+    internal val PUBLICATION_COLUMNS = """
+        CASE WHEN octet_length(event_id) = 43 THEN event_id END AS event_id,
+        data_scope_id, test_only, writer_generation, journal_epoch, event_kind, target_count,
+        CASE WHEN octet_length(routing_key_id) BETWEEN 1 AND 128 THEN routing_key_id END AS routing_key_id,
+        CASE WHEN octet_length(object_key) BETWEEN 1 AND 1024 THEN object_key END AS object_key,
         canonicalizer, state, created_at,
         CASE WHEN octet_length(object_version) BETWEEN 1 AND 1024 THEN object_version END AS object_version,
         CASE WHEN octet_length(ciphertext_hash) = 32 THEN ciphertext_hash END AS ciphertext_hash,

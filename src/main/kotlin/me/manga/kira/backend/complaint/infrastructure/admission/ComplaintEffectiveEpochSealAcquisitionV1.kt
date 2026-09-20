@@ -33,7 +33,7 @@ internal object ComplaintEffectiveEpochSealAcquisitionV1 {
         }
     }
 
-    private fun deployment(value: EpochSealDeploymentMappingV1): JsonObject = buildJsonObject {
+    internal fun deployment(value: EpochSealDeploymentMappingV1): JsonObject = buildJsonObject {
         put("ordinary", event(value.ordinary))
         put("sealTerminal", event(value.sealTerminal))
         put("recovery", event(value.recovery))
@@ -71,13 +71,13 @@ internal object ComplaintEffectiveEpochSealAcquisitionV1 {
         put("stableId", value.stableId)
     }
 
-    private fun policy(value: InitialPolicyReferenceV1): JsonObject = buildJsonObject {
+    internal fun policy(value: InitialPolicyReferenceV1): JsonObject = buildJsonObject {
         put("policyId", value.policyId)
         put("version", value.version)
         put("sha256", value.sha256)
     }
 
-    private fun sdk(region: String, limits: AwsEpochSealStsLimits): JsonObject = buildJsonObject {
+    internal fun sdk(region: String, limits: AwsEpochSealStsLimits): JsonObject = buildJsonObject {
         put("protocolVersion", 1)
         put("apiVersion", EpochSealStsProtocol.VERSION)
         put("wireProtocol", "QUERY_XML_BOUNDED_PREFLIGHT")
@@ -110,7 +110,7 @@ internal object ComplaintEffectiveEpochSealAcquisitionV1 {
      * Exact LIST request prefix can lexically match sibling keys; later readback must reject those.
      * The existing opaque KMS context is unchanged: no decoded-field context condition is invented.
      */
-    private fun sessionPolicy(): JsonObject = buildJsonObject {
+    internal fun sessionPolicy(): JsonObject = buildJsonObject {
         put("protocolVersion", 1)
         put("profile", "EXACT_SEAL_OBJECT_LIST_PREFIX_AND_DECLARED_KMS_KEY")
         put("maximumPolicyChars", EpochSealStsPolicy.MAX_POLICY_CHARS)

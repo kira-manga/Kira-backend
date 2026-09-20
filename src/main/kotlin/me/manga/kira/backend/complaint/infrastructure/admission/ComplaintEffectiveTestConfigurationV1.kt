@@ -49,6 +49,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
                 },
             )
             put("catalogActivation", owner.catalogActivation.inventory())
+            // Absence preserves the previous profile/preimage exactly and cannot publish a seal.
+            owner.ordinarySeal?.let { put("ordinarySeal", it.inventory()) }
         }
         return CanonicalJson.canonicalize(result).toByteArray(Charsets.UTF_8)
     }

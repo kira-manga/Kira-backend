@@ -23,7 +23,7 @@ internal class PersistenceDeletionFence(private val phase: PersistencePhaseConte
             stage = FenceStage.SETTINGS_RETURNED
             requireRemaining()
             stage = FenceStage.TRYING
-            observedLock = connection.prepareStatement(TRY_SHARED_FENCE).use { statement ->
+            observedLock = connection.prepareStatement(if (phase.path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL) TRY_TEST_SEAL_EXCLUSIVE_FENCE else TRY_SHARED_FENCE).use { statement ->
                 statement.executeQuery().use { result ->
                     if (!result.next()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
                     val locked = result.getBoolean(1)
@@ -88,6 +88,8 @@ internal class PersistenceDeletionFence(private val phase: PersistencePhaseConte
 
     companion object {
         // One fixed database-wide namespace, separate from future leader/catalog locks. No session-lock fallback.
+        // Fixed TEST cutoff/manifest sequence excludes concurrent epoch participants; never upgrade after row locks.
+        private const val TRY_TEST_SEAL_EXCLUSIVE_FENCE = "SELECT pg_try_advisory_xact_lock(hashtextextended('complaint-journal-epoch', 0))"
         private const val TRY_SHARED_FENCE = "SELECT pg_try_advisory_xact_lock_shared(hashtextextended('complaint-journal-epoch', 0))"
         private const val FENCE_LIMITS = "SELECT set_config('statement_timeout', ?, true), set_config('lock_timeout', ?, true)"
     }

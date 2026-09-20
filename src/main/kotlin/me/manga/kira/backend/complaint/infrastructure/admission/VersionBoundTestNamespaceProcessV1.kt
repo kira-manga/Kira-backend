@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundTestAc
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -29,6 +30,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val publicationLanes: JournalPublicationLanesV1,
     val catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
     val catalogActivation: VersionBoundTestActivationConfigurationV1,
+    val ordinarySeal: VersionBoundTestOrdinarySealV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -119,12 +121,17 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
                 consumers.ownerCreatePolicy.pruneBatch == consumers.ownerDeletePolicy.pruneBatch,
         ) { INVALID_TEST_PROCESS_CONFIGURATION }
         catalogActivation.requireRetained(pools, catalogReadback, journal)
+        ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
+        ordinarySeal?.requireCatalogReferences(catalogActivation.putAuthority, catalogActivation.signAuthority)
+        require(ordinarySeal == null || ordinarySeal.retention.environment == catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
     }
 
     override fun toString(): String = "VersionBoundTestNamespaceProcessV1(PRE_CUTOVER_TEST,memory,redacted,no-authority)"
 
     companion object {
-        /** No optional writer, supplied D/preimage, LIVE conversion, activation result or current-state input. */
+        /** No supplied D/preimage, LIVE conversion or current-state input. Optional seal intake is cold and fixture-only. */
         fun fromRetained(
             consumers: VersionBoundTestComplaintConsumerConfigurationV1,
             pools: VersionBoundPersistencePools,
@@ -135,11 +142,12 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             publicationLanes: JournalPublicationLanesV1,
             catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
             catalogActivation: VersionBoundTestActivationConfigurationV1,
+            ordinarySeal: VersionBoundTestOrdinarySealV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal,
             )
         }
 

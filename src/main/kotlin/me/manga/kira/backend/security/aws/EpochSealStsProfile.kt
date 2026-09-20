@@ -4,6 +4,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.security.EpochSealAttemptV1
+import me.manga.kira.backend.security.TestTerminalAttemptV1
+import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSyntaxV1
 import java.util.Base64
 
 /** Finite lower-protocol settings, not a hard native/DNS completion guarantee or a DB lease. */
@@ -103,9 +106,20 @@ internal object EpochSealStsPolicy {
         } finally {
             decoded.fill(0)
         }
-        val bucket = "arn:aws:s3:::${declaration.journalLocation.bucket}"
+        return exactPolicy(declaration.journalLocation.bucket, key, declaration.encryption.keyArn)
+    }
+
+    /** Separate fixed TEST EPOCH_SEAL grammar; never a LIVE configuration cast or wildcard. */
+    fun forKey(journal: TestOwnerDeleteJournalConfigurationV1, key: String, epoch: Long): String {
+        val declaration = journal.declaration()
+        val routingId = TestTerminalSyntaxV1.terminalKey(key, declaration.writer.generationId, journal.scope.id.toString(), epoch, "epoch-seal")
+        requireEpochSealSts(routingId in declaration.routing.keys.map { it.keyId }, EpochSealStsFailure.INVALID_INPUT)
+        return exactPolicy(declaration.journalLocation.bucket, key, declaration.encryption.keyArn)
+    }
+
+    private fun exactPolicy(bucketName: String, key: String, kms: String): String {
+        val bucket = "arn:aws:s3:::$bucketName"
         val objectArn = "$bucket/$key"
-        val kms = declaration.encryption.keyArn
         // The current KMS context is one opaque encoded value. No decoded field is invented as an IAM condition.
         val policy = buildString {
             append("""{"Version":"2012-10-17","Statement":[{"Effect":"Deny","NotAction":[$OBJECT_AND_KMS_ACTIONS,""")
@@ -133,7 +147,11 @@ internal object EpochSealStsPolicy {
 }
 
 /** A stricter acquisition slice retains, never restarts, the original enclosing seal attempt. */
-internal class EpochSealStsAcquisition(val original: EpochSealAttemptV1, private val nanoTime: () -> Long) {
+internal class EpochSealStsAcquisition private constructor(
+    private val live: EpochSealAttemptV1?, private val test: TestTerminalAttemptV1?, private val nanoTime: () -> Long,
+) {
+    constructor(original: EpochSealAttemptV1, nanoTime: () -> Long) : this(original, null, nanoTime)
+    constructor(original: TestTerminalAttemptV1, nanoTime: () -> Long) : this(null, original, nanoTime)
     private val started = nanoTime()
     private var lastElapsed = 0L
     private var failed = false
@@ -148,7 +166,7 @@ internal class EpochSealStsAcquisition(val original: EpochSealAttemptV1, private
         lastElapsed = elapsed
         val remaining = ((9_000_000_000L - elapsed) / 1_000_000).toInt()
         requireEpochSealSts(remaining > 0, EpochSealStsFailure.DEADLINE_EXHAUSTED)
-        return original.remainingProviderMillis(minOf(ceiling, remaining))
+        return live?.remainingProviderMillis(minOf(ceiling, remaining)) ?: checkNotNull(test).remainingProviderMillis(minOf(ceiling, remaining))
     }
 
     override fun toString(): String = "EpochSealStsAcquisition(original-budget,no-lease-authority)"

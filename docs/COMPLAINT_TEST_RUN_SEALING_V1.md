@@ -24,6 +24,10 @@ are independently creation-charged. Later terminal progress is outside this oper
 Free capacity, recovery reserve and daily admission remain unchanged. This operation does
 not spend `TERMINAL_RUN_DELTA` or claim that the complete terminal tuple is durable.
 
+The separate [first ordinary seal source slice](COMPLAINT_TEST_ORDINARY_SEAL_V1.md)
+consumes this already-paid barrier/audit through the same live registration. Its
+cold HTTP-fixture-only intake does not change this operation or open deployment.
+
 Each attempt has one original finite budget and sticky failures. Losing an acknowledgment
 does not rehabilitate that original attempt. After actual resource cleanup, a new attempt
 using the same still-live registration can resume a committed seal/audit without renewing

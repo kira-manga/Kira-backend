@@ -33,8 +33,9 @@ internal fun withCompletionActivationRows(
     tls: VersionBoundPersistenceConnectedFixture,
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     createGlobal: Int = 2,
+    ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     action: (CompletionActivationObservation) -> Unit,
-) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal) { signed ->
+) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp) { signed ->
     val before = signed.rows.counters.snapshot()
     val original = signed.begin()
     val prepared = try {

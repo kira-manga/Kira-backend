@@ -12,6 +12,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochSealCu
 import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.security.JournalCodecAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -36,6 +38,7 @@ internal class JournalPublicationLanesV1 private constructor(
     private val privacy = HashSet<OwnerDeleteAllReservation>()
     private val cutoff = HashSet<OwnerDeleteAllReservation>()
     private val seals = HashSet<CatalogEpochSealCustodyV1>()
+    private val testSeals = HashSet<TestOrdinarySealCustodyV1>()
     private var stopping = false
 
     internal fun requireJournal(expected: ComplaintJournalConfigurationV1) = requireJournalPublication(journal === expected)
@@ -138,8 +141,28 @@ internal class JournalPublicationLanesV1 private constructor(
         closeOwners(owned)
     }
 
+    internal fun tryTestOrdinarySeal(owner: TestOrdinarySealCustodyV1): Boolean {
+        if (!lock.tryLock()) return false
+        try {
+            if (stopping || owner.acquisitionStopped() || privacy.isNotEmpty() || testPrivacy.isNotEmpty() || routineCount() >= limits.routinePublicationLanes) return false
+            owner.requireLane(this)
+            return testSeals.add(owner)
+        } finally { lock.unlock() }
+    }
+    internal fun requireTestOrdinarySealRunning(owner: TestOrdinarySealCustodyV1) = lock.withLock {
+        requireJournalPublication(!stopping && !owner.acquisitionStopped() && owner in testSeals)
+    }
+    internal fun releaseTestOrdinarySeal(owner: TestOrdinarySealCustodyV1) {
+        owner.requireClosedLane(this)
+        lock.withLock { testSeals.remove(owner) }
+    }
+    internal fun closeTestOrdinarySealAcquisition(acquisition: VersionBoundTestOrdinarySealV1) {
+        val owned = lock.withLock { testSeals.filter { it.belongsTo(acquisition) } }
+        closeOwners(owned)
+    }
+
     // Call only under the registry lock. Widen before every addition, including held/failed seal owners.
-    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size
+    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size + testSeals.size
 
     fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routineCount().toInt(), privacy.size + testPrivacy.size) }
 
@@ -167,6 +190,7 @@ internal class JournalPublicationLanesV1 private constructor(
                 addAll(testPrivacy)
                 addAll(cutoff)
                 addAll(seals)
+                addAll(testSeals)
             }
         }
         closeOwners(owned)

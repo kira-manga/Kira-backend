@@ -56,6 +56,7 @@ internal fun withActivationEvidence(
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
     testActivation: Boolean = false,
+    ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -70,7 +71,7 @@ internal fun withActivationEvidence(
     ComplaintProcessPoolFixture(testActivation = testActivation).use { database ->
         val pools = database.bind()
         JournalPublicationLanesV1(journal).use { lanes ->
-            action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, pools, lanes))
+            action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, pools, lanes, ordinarySealHttp = ordinarySealHttp))
         }
     }
 }
@@ -81,6 +82,7 @@ internal fun withActivationEvidence(
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
     createGlobal: Int = 2,
+    ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -93,7 +95,7 @@ internal fun withActivationEvidence(
         ),
     )
     JournalPublicationLanesV1(journal).use { lanes ->
-        action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal))
+        action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp))
     }
 }
 
@@ -110,6 +112,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     val pools: VersionBoundPersistencePools,
     private val lanes: JournalPublicationLanesV1,
     createGlobal: Int = 2,
+    ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
 ) {
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
@@ -146,6 +149,9 @@ internal class CatalogTestRunActivationEvidenceFixture(
         pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
         OfflineTrustBundleFixture.registryBytes(rotations.genesis.manifest.initialWriterRegistry),
     )
+    // Only this explicit synthetic fixture input is pinned before process/full-D, signed intent and PROJECT.
+    private val ordinarySeal = ordinarySealHttp?.owner(consumers.journalRouting, lanes,
+        reader.chainPolicy.trustBundlePolicy.expectedEnvironment, rotations.genesis.manifest.initialWriterRegistry.catalogWriter)
     val process = process()
     val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, INSTALLATION_LIMIT)
     val generation = prefix.size + 1L
@@ -170,7 +176,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         val writer = journal.declaration().writer
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            lanes, reader, activation,
+            lanes, reader, activation, ordinarySeal,
         )
     }
 
@@ -183,7 +189,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         )
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            lanes, reader, activation,
+            lanes, reader, activation, ordinarySeal,
         )
     }
 

@@ -13,6 +13,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.actualPool
 import me.manga.kira.backend.complaint.catalog.FullTestCatalogInputs
 import me.manga.kira.backend.complaint.catalog.OfflineCatalogRotationFixture
 import me.manga.kira.backend.complaint.catalog.OfflineTrustBundleFixture
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
 import me.manga.kira.backend.complaint.catalog.VersionBoundCatalogReadbackTestFixture
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
@@ -30,6 +31,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundTestAc
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.security.AcquiredVersionedSecret
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
@@ -48,6 +51,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -114,6 +118,79 @@ class VersionBoundTestNamespaceProcessV1Test {
                     pools.descriptors().forEach { assertSame(password, it.authenticationPassword) }
                     root.requireUnchangedConfiguration()
                 }
+                assertEquals(0L, lanes.activeOwners().totalOwners)
+            }
+            assertEquals(lookups, fixture.base.lookups)
+            assertCold(pools)
+        }
+
+    @Test
+    fun `optional ordinary seal owner changes only its cold D inventory and cannot borrow another retained owner`() =
+        ComplaintProcessPoolFixture().use { database ->
+            val fixture = BoundTestComplaintConsumerFixture()
+            val consumers = fixture.configuration()
+            val pools = database.bind()
+            val lookups = fixture.base.lookups
+            JournalPublicationLanesV1(fixture.journal).use { lanes ->
+                val reader = VersionBoundCatalogReadbackTestFixture.settings()
+                val activation = FullTestCatalogInputs.activation(pools, fixture.journal, reader)
+                val environment = reader.chainPolicy.trustBundlePolicy.expectedEnvironment
+                val absent = process(consumers, pools, lanes, reader, activation)
+                val absentBytes = absent.canonicalBytes()
+                assertNull(absent.ordinarySeal)
+                assertFalse("ordinarySeal" in document(absent))
+                fun unopened(http: TestOrdinarySealHttpFixtureV1) {
+                    assertEquals(0, http.sts.createdClients + http.kms.createdClients + http.s3Created)
+                    assertTrue(http.sts.requests.isEmpty() && http.kms.requests.isEmpty() && http.requests.isEmpty())
+                }
+                TestOrdinarySealHttpFixtureV1().use { http ->
+                    val owner = http.owner(consumers.journalRouting, lanes, environment, FullTestCatalogInputs.registry().catalogWriter)
+                    val present = process(consumers, pools, lanes, reader, activation, ordinarySeal = owner)
+                    assertSame(owner, present.ordinarySeal)
+                    assertDifferent(absent, present, "optional cold owner")
+                    val encoded = document(present)
+                    assertEquals(document(absent).toMap(), encoded.filterKeys { it != "ordinarySeal" })
+                    val seal = encoded.getValue("ordinarySeal").jsonObject
+                    assertEquals("CONTROLLED_TEST_ONLY_FIRST_ORDINARY_EPOCH_SEAL", seal.getValue("profile").jsonPrimitive.content)
+                    assertEquals("ABSENT_EXTERNAL_VERIFICATION_REQUIRED", seal.getValue("externalIntake").jsonPrimitive.content)
+                    val retention = seal.getValue("retention").jsonObject
+                    val writer = fixture.journal.declaration().writer
+                    mapOf("environment" to environment, "dataScopeId" to fixture.journal.scope.id.toString(),
+                        "writerGeneration" to writer.generationId, "databaseIdentity" to writer.databaseIdentity,
+                        "restoreIdentity" to writer.restoreIdentity, "lastPreRunRestoreHorizon" to http.horizon.toString()).forEach { (key, value) ->
+                        assertEquals(value, retention.getValue(key).jsonPrimitive.content, key)
+                    }
+                    for (changed in listOf(
+                        { TestOrdinarySealHttpFixtureV1(horizon = http.horizon.plusSeconds(1)) },
+                        { TestOrdinarySealHttpFixtureV1(horizonPolicy = http.horizonPolicy.copy(version = 2)) },
+                    )) changed().use { next ->
+                        val nextOwner = next.owner(consumers.journalRouting, lanes, environment, FullTestCatalogInputs.registry().catalogWriter)
+                        val nextRoot = process(consumers, pools, lanes, reader, activation, ordinarySeal = nextOwner)
+                        assertDifferent(present, nextRoot, "independent retention horizon/policy")
+                        assertEquals(document(absent).toMap(), document(nextRoot).filterKeys { it != "ordinarySeal" })
+                        unopened(next)
+                    }
+                    val otherRouting = TestOwnerDeleteJournalRoutingV1.fromAcquired(fixture.journal, fixture.routingSecrets)
+                    val otherConsumers = fixture.configuration(keys = fixture.inputs(routing = otherRouting))
+                    assertThrows<TestOrdinarySealExceptionV1> { process(otherConsumers, pools, lanes, reader, activation, ordinarySeal = owner) }
+                    present.requireUnchangedConfiguration()
+                    unopened(http)
+                }
+                TestOrdinarySealHttpFixtureV1().use { http ->
+                    val foreign = http.owner(consumers.journalRouting, lanes, "foreign-test-environment", FullTestCatalogInputs.registry().catalogWriter)
+                    assertThrows<IllegalArgumentException> { process(consumers, pools, lanes, reader, activation, ordinarySeal = foreign) }
+                    unopened(http)
+                }
+                val catalog = FullTestCatalogInputs.registry().catalogWriter
+                for (changed in listOf(catalog.copy(putAuthority = catalog.putAuthority.copy(principalId = "foreign-test-put")),
+                    catalog.copy(signAuthority = catalog.signAuthority.copy(principalId = "foreign-test-sign")))) {
+                    TestOrdinarySealHttpFixtureV1().use { http ->
+                        val foreign = http.owner(consumers.journalRouting, lanes, environment, changed)
+                        assertThrows<TestOrdinarySealExceptionV1> { process(consumers, pools, lanes, reader, activation, ordinarySeal = foreign) }
+                        unopened(http)
+                    }
+                }
+                assertArrayEquals(absentBytes, absent.canonicalBytes())
                 assertEquals(0L, lanes.activeOwners().totalOwners)
             }
             assertEquals(lookups, fixture.base.lookups)
@@ -580,8 +657,9 @@ class VersionBoundTestNamespaceProcessV1Test {
         schema: Int = 1,
         database: UUID = UUID.fromString(consumers.journalConfiguration.declaration().writer.databaseIdentity),
         restore: UUID = UUID.fromString(consumers.journalConfiguration.declaration().writer.restoreIdentity),
+        ordinarySeal: VersionBoundTestOrdinarySealV1? = null,
     ): VersionBoundTestNamespaceProcessV1 = VersionBoundTestNamespaceProcessV1.fromRetained(
-        consumers, pools, schema, generation, database, restore, lanes, reader, activation,
+        consumers, pools, schema, generation, database, restore, lanes, reader, activation, ordinarySeal,
     )
 
     private fun document(root: VersionBoundTestNamespaceProcessV1): JsonObject = Json.parseToJsonElement(root.canonicalBytes().decodeToString()).jsonObject

@@ -6,6 +6,13 @@ accepted TEST activation, terminal producer, provider call, configuration/DI or
 post-commit/original-holder-released dispatch authority. The word `WIRE_FROZEN` is
 a local storage state, not evidence of any of those facts.
 
+This document describes the storage prerequisite itself. The later
+[registered first ordinary seal slice](COMPLAINT_TEST_ORDINARY_SEAL_V1.md) adds a
+controlled HTTP-fixture-only writer for EPOCH_SEAL ordinal0, with actual original
+SQL/SDK custody and immutable winner reload. Its source is NOT_COMPILED / NOT_RUN;
+deployed authenticated intake and all later terminal/settlement writers remain
+absent. Storage constructors and `WIRE_FROZEN` alone still confer no authority.
+
 V14, V17 and V19 are unchanged. In particular, V14 publications still contain only
 their existing event kinds and terminal events cannot become ordinary `APPLIED`
 rows. V19's seven LIVE seal-link fields remain forbidden on TEST publications.
@@ -181,6 +188,7 @@ physical reservation rows, run/control growth, activation and terminal catalogs,
 notices and resource IDs, every audit, both scan rows and all staging, denial and
 session witnesses, and terminal settlement remain separate paid obligations. No
 missing inventory or price is treated as zero. Schema3 activation/projected
-registration, authenticated content freeze, durable winner reload, original-holder
-release/custody, provider publication and terminal settlement remain unimplemented
-and require their own complete bounded producer and independent gates.
+registration and the controlled first ordinary seal now have separate source
+slices; they are not supplied by these storage types. Complete terminal content,
+lineage/denial evidence, later seals, deployed publication intake and terminal
+settlement still require their own bounded producers and independent gates.

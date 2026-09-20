@@ -322,8 +322,9 @@ internal fun withPendingProjectionRows(
     tls: VersionBoundPersistenceConnectedFixture,
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     createGlobal: Int = 2,
+    ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     action: (ProjectionActivationObservation) -> Unit,
-) = withCompletionActivationRows(tls, prefix, createGlobal = createGlobal) { f ->
+) = withCompletionActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp) { f ->
     f.rows.retainProjectionRows()
     f.http.replicateOnPut = true
     f.signed.withFreshOwner { publishing ->
