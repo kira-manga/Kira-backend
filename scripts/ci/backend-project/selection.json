@@ -1,0 +1,2879 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 10,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "every admitted phase has an explicit maintenance lock classification",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "06fed16987464cb5e2a331b983a46131d5a27b6f62f7553d4e52425ff3e57a00",
+      "xml_names": [
+        "every admitted phase has an explicit maintenance lock classification()"
+      ]
+    },
+    {
+      "annotation_line": 137,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "settings M and fresh gate dispatch cap at seventy five without restarting the hundred millisecond prefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "06fed16987464cb5e2a331b983a46131d5a27b6f62f7553d4e52425ff3e57a00",
+      "xml_names": [
+        "settings M and fresh gate dispatch cap at seventy five without restarting the hundred millisecond prefix()"
+      ]
+    },
+    {
+      "annotation_line": 165,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "earlier original work deadline clips settings and native dispatch without a new phase allowance",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "06fed16987464cb5e2a331b983a46131d5a27b6f62f7553d4e52425ff3e57a00",
+      "xml_names": [
+        "earlier original work deadline clips settings and native dispatch without a new phase allowance()"
+      ]
+    },
+    {
+      "annotation_line": 183,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "fractional last millisecond exact expiry and overrun cannot become zero unlimited timeouts",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "06fed16987464cb5e2a331b983a46131d5a27b6f62f7553d4e52425ff3e57a00",
+      "xml_names": [
+        "fractional last millisecond exact expiry and overrun cannot become zero unlimited timeouts()"
+      ]
+    },
+    {
+      "annotation_line": 36,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "named writer holds shared M on its original holder restores limits and releases only after its real commit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "named writer holds shared M on its original holder restores limits and releases only after its real commit()"
+      ]
+    },
+    {
+      "annotation_line": 90,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "exclusive M refuses the real writer try before DML while the SQL observation keeps its existing E only prefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "exclusive M refuses the real writer try before DML while the SQL observation keeps its existing E only prefix()"
+      ]
+    },
+    {
+      "annotation_line": 131,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "settings and guarded dispatch consume the same prefix and late settings never execute the try",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "settings and guarded dispatch consume the same prefix and late settings never execute the try()"
+      ]
+    },
+    {
+      "annotation_line": 162,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "late real true M or returned gate cleanup stays in the original prefix until its own rollback releases the lock",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "late real true M or returned gate cleanup stays in the original prefix until its own rollback releases the lock()"
+      ]
+    },
+    {
+      "annotation_line": 196,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "losing the selected holder between settings and try cannot repair borrow or commit after refusal",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "losing the selected holder between settings and try cannot repair borrow or commit after refusal()"
+      ]
+    },
+    {
+      "annotation_line": 227,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "freshPostMaintenanceGateSeesCommittedTestPreparedWithoutAControlPointer",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "freshPostMaintenanceGateSeesCommittedTestPreparedWithoutAControlPointer()"
+      ]
+    },
+    {
+      "annotation_line": 290,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "durableTestDenialsAndNoTestCompatibilityUseConsistentGlobalAndAcceptedRows",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "durableTestDenialsAndNoTestCompatibilityUseConsistentGlobalAndAcceptedRows()"
+      ]
+    },
+    {
+      "annotation_line": 352,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualRepeatableReadBeforeMaintenanceIsRefusedAndTheOriginalTransactionResets",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "actualRepeatableReadBeforeMaintenanceIsRefusedAndTheOriginalTransactionResets()"
+      ]
+    },
+    {
+      "annotation_line": 402,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "originalGateChildCloseExpiryAtAdmissionOrReturnKeepsOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintMaintenanceFencePrefixIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1574ca02e1617cc824cdedad17942803d08ba7a2c45c487ba3f354f93706fee8",
+      "xml_names": [
+        "originalGateChildCloseExpiryAtAdmissionOrReturnKeepsOriginalCleanup()"
+      ]
+    },
+    {
+      "annotation_line": 66,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actual normal JWT and two installations produce51 tied search rows cursor and exact details without writes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "actual normal JWT and two installations produce51 tied search rows cursor and exact details without writes()"
+      ]
+    },
+    {
+      "annotation_line": 143,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "scope LIVE pending owner and pending resource are hidden while transitive children survive erased content",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "scope LIVE pending owner and pending resource are hidden while transitive children survive erased content()"
+      ]
+    },
+    {
+      "annotation_line": 179,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actual qualified normal decoder rejects family signature issuer audience type and raw generation violations",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "actual qualified normal decoder rejects family signature issuer audience type and raw generation violations()"
+      ]
+    },
+    {
+      "annotation_line": 205,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "bounded malformed signed-token envelopes reject before invoking the actual decoder",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "bounded malformed signed-token envelopes reject before invoking the actual decoder()"
+      ]
+    },
+    {
+      "annotation_line": 219,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "DB role enabled and credential generation remain authoritative over diagnostic ADMIN and USER claims",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "DB role enabled and credential generation remain authoritative over diagnostic ADMIN and USER claims()"
+      ]
+    },
+    {
+      "annotation_line": 235,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "released authentication cannot cache role enabled or generation for either data query including empty matches",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "released authentication cannot cache role enabled or generation for either data query including empty matches()"
+      ]
+    },
+    {
+      "annotation_line": 268,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "data query reads current target and reservation snapshot after released preflight rather than cached content",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "data query reads current target and reservation snapshot after released preflight rather than cached content()"
+      ]
+    },
+    {
+      "annotation_line": 292,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "cursor validation precedes SQL but a signed matching cursor is never current ADMIN authority",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "cursor validation precedes SQL but a signed matching cursor is never current ADMIN authority()"
+      ]
+    },
+    {
+      "annotation_line": 311,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "only the original adapter thread ingress and one use can consume real ADMIN authentication",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "only the original adapter thread ingress and one use can consume real ADMIN authentication()"
+      ]
+    },
+    {
+      "annotation_line": 333,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "original five second handoff age is not renewed before data phase admission",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "original five second handoff age is not renewed before data phase admission()"
+      ]
+    },
+    {
+      "annotation_line": 347,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actual authentication precedes lowerable combined read quota and Disabled stops before decoder or SQL",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "actual authentication precedes lowerable combined read quota and Disabled stops before decoder or SQL()"
+      ]
+    },
+    {
+      "annotation_line": 368,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "concrete operations require exact phase resource and retained operation not arbitrary caller completion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "concrete operations require exact phase resource and retained operation not arbitrary caller completion()"
+      ]
+    },
+    {
+      "annotation_line": 400,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "all three ordinary observations require actual commit cleanup and original release before successful results",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "all three ordinary observations require actual commit cleanup and original release before successful results()"
+      ]
+    },
+    {
+      "annotation_line": 431,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real SQL rollback and committed completion tail failure never publish retained Admin success",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "real SQL rollback and committed completion tail failure never publish retained Admin success()"
+      ]
+    },
+    {
+      "annotation_line": 459,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "new Admin phases request and actually use READ COMMITTED under a real REPEATABLE READ role default",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "new Admin phases request and actually use READ COMMITTED under a real REPEATABLE READ role default()"
+      ]
+    },
+    {
+      "annotation_line": 490,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "ordinary Admin reads acquire neither maintenance nor epoch fence and cannot issue DML or audit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "ordinary Admin reads acquire neither maintenance nor epoch fence and cannot issue DML or audit()"
+      ]
+    },
+    {
+      "annotation_line": 529,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "unchanged sourceOnly admission refuses all three Admin paths before a resource acquisition",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "unchanged sourceOnly admission refuses all three Admin paths before a resource acquisition()"
+      ]
+    },
+    {
+      "annotation_line": 545,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "bounded invalid stored row closes shared responses without a partial page or detail",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "bounded invalid stored row closes shared responses without a partial page or detail()"
+      ]
+    },
+    {
+      "annotation_line": 573,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "eight real stale-credential401 deliveries keep acquired shared slots while ninth avoids decoder and SQL",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "eight real stale-credential401 deliveries keep acquired shared slots while ninth avoids decoder and SQL()"
+      ]
+    },
+    {
+      "annotation_line": 609,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actual new SQL has bounded scoped prepared results and plans for custom generic and automatic sessions",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminReadIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "86dd97cb39a55bd7f699826cc54670c0849ea702becd3d58001687c06081027c",
+      "xml_names": [
+        "actual new SQL has bounded scoped prepared results and plans for custom generic and automatic sessions()"
+      ]
+    },
+    {
+      "annotation_line": 56,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "search and detail emit only closed Admin fields and exact integer versions beyond double precision",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "search and detail emit only closed Admin fields and exact integer versions beyond double precision()"
+      ]
+    },
+    {
+      "annotation_line": 112,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "method path duplicate framing encoded scope and closed input failures precede the domain producer",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "method path duplicate framing encoded scope and closed input failures precede the domain producer()"
+      ]
+    },
+    {
+      "annotation_line": 149,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "direct search stream stops at32769 bytes while bodyless detail reads at most one byte",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "direct search stream stops at32769 bytes while bodyless detail reads at most one byte()"
+      ]
+    },
+    {
+      "annotation_line": 170,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "finite header count character and total budgets reject before reading input",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "finite header count character and total budgets reject before reading input()"
+      ]
+    },
+    {
+      "annotation_line": 189,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "real ingress admission is charged before request buffering including parse failures",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "real ingress admission is charged before request buffering including parse failures()"
+      ]
+    },
+    {
+      "annotation_line": 201,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "ninth shared owner or Admin response permit fails before buffering and producer invocation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "ninth shared owner or Admin response permit fails before buffering and producer invocation()"
+      ]
+    },
+    {
+      "annotation_line": 223,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "eight blocked401403404429 problems retain original ingress and acquired shared slots through delivery",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "eight blocked401403404429 problems retain original ingress and acquired shared slots through delivery()"
+      ]
+    },
+    {
+      "annotation_line": 264,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "complete maximal escaped response retains the shared permit through connection free delivery then erases bytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "complete maximal escaped response retains the shared permit through connection free delivery then erases bytes()"
+      ]
+    },
+    {
+      "annotation_line": 299,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "fifty maximum legal rows respect item and aggregate limits and no extra top level notices",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "fifty maximum legal rows respect item and aggregate limits and no extra top level notices()"
+      ]
+    },
+    {
+      "annotation_line": 311,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "escaped overflow closes the one shared response owner before any success prefix or ETag",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "escaped overflow closes the one shared response owner before any success prefix or ETag()"
+      ]
+    },
+    {
+      "annotation_line": 330,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "all problems are fixed allowlisted envelopes with one401 challenge and no sensitive inputs",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "all problems are fixed allowlisted envelopes with one401 challenge and no sensitive inputs()"
+      ]
+    },
+    {
+      "annotation_line": 357,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "partial buffered success or problem delivery is never appended retried or retained",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "partial buffered success or problem delivery is never appended retried or retained()"
+      ]
+    },
+    {
+      "annotation_line": 379,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "problem committed guard and sender faults are sanitized once and preserve interruption",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "problem committed guard and sender faults are sanitized once and preserve interruption()"
+      ]
+    },
+    {
+      "annotation_line": 415,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "redispatch asynchronous and interrupted callers never reach the producer",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "redispatch asynchronous and interrupted callers never reach the producer()"
+      ]
+    },
+    {
+      "annotation_line": 436,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "unchanged production disabled filter denies both Admin routes before any body or bearer work",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminReadHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "951511bd36a0ec792d87ccb095082b22d722b3e97d9dcd57615aec410674597f",
+      "xml_names": [
+        "unchanged production disabled filter denies both Admin routes before any body or bearer work()"
+      ]
+    },
+    {
+      "annotation_line": 20,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "omittedAndExplicitDefaultsProduceDetachedNormalizedQueries",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "omittedAndExplicitDefaultsProduceDetachedNormalizedQueries()"
+      ]
+    },
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "everyAllowedEnumAndAllExplicitFiltersArePreservedWithoutBroadening",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "everyAllowedEnumAndAllExplicitFiltersArePreservedWithoutBroadening()"
+      ]
+    },
+    {
+      "annotation_line": 78,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "requiredScopeIsCanonicalNonzeroRfcVariantV4AndNeverCoerced",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "requiredScopeIsCanonicalNonzeroRfcVariantV4AndNeverCoerced()"
+      ]
+    },
+    {
+      "annotation_line": 89,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "closedFieldTypesNullabilityAndEnumSpellingAreNeverCoerced",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "closedFieldTypesNullabilityAndEnumSpellingAreNeverCoerced()"
+      ]
+    },
+    {
+      "annotation_line": 104,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "unknownAndRawOrEscapedDuplicateKeysAreRejectedForEveryField",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "unknownAndRawOrEscapedDuplicateKeysAreRejectedForEveryField()"
+      ]
+    },
+    {
+      "annotation_line": 133,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "rootNestedTrailingAndNonstandardJsonFormsFailClosed",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "rootNestedTrailingAndNonstandardJsonFormsFailClosed()"
+      ]
+    },
+    {
+      "annotation_line": 146,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "exactThirtyTwoKiBBoundPrecedesDecodingAndAllowsLargeTrimmedWhitespace",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "exactThirtyTwoKiBBoundPrecedesDecodingAndAllowsLargeTrimmedWhitespace()"
+      ]
+    },
+    {
+      "annotation_line": 160,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "malformedUtf8AndEscapedUnpairedSurrogatesNeverBecomeReplacementCharacters",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "malformedUtf8AndEscapedUnpairedSurrogatesNeverBecomeReplacementCharacters()"
+      ]
+    },
+    {
+      "annotation_line": 180,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "limitsRequireLexicalJsonIntegersOneThroughFifty",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "limitsRequireLexicalJsonIntegersOneThroughFifty()"
+      ]
+    },
+    {
+      "annotation_line": 190,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "searchTextUsesExistingUnicodeCrLfControlBeforeTrimAndCodePointRules",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "searchTextUsesExistingUnicodeCrLfControlBeforeTrimAndCodePointRules()"
+      ]
+    },
+    {
+      "annotation_line": 208,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "strictUtcDatesPreserveFiniteMicrosecondsAndNormalizeFractionAliases",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "strictUtcDatesPreserveFiniteMicrosecondsAndNormalizeFractionAliases()"
+      ]
+    },
+    {
+      "annotation_line": 232,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "invalidCalendarLeapSecondOffsetAndRoundedDateFormsAreRejected",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "invalidCalendarLeapSecondOffsetAndRoundedDateFormsAreRejected()"
+      ]
+    },
+    {
+      "annotation_line": 248,
+      "class": "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "cursorEnvelopeRequiresCanonicalBoundedBase64ButDoesNotAuthenticatePayload",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/parsing/ComplaintAdminSearchParserTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "97d9657e52faa43dba8521f560f9b9683064bb30eb49fd7ae7119725e2404ed2",
+      "xml_names": [
+        "cursorEnvelopeRequiresCanonicalBoundedBase64ButDoesNotAuthenticatePayload()"
+      ]
+    },
+    {
+      "annotation_line": 35,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "independentFramingBindsNormalizedSelectionAndNonV4NoticePosition",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "independentFramingBindsNormalizedSelectionAndNonV4NoticePosition()"
+      ]
+    },
+    {
+      "annotation_line": 85,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "omittedExplicitAndNormalizedDefaultsMatchAndCursorIsExcluded",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "omittedExplicitAndNormalizedDefaultsMatchAndCursorIsExcluded()"
+      ]
+    },
+    {
+      "annotation_line": 110,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "actorScopeAndEverySelectionFilterBindTheCursor",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "actorScopeAndEverySelectionFilterBindTheCursor()"
+      ]
+    },
+    {
+      "annotation_line": 139,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "fixedRouteDirectionActorKindAndDomainsCannotBeSubstituted",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "fixedRouteDirectionActorKindAndDomainsCannotBeSubstituted()"
+      ]
+    },
+    {
+      "annotation_line": 159,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "envelopeBoundsSignatureSizesAndNoncanonicalBase64AliasesAreRefused",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "envelopeBoundsSignatureSizesAndNoncanonicalBase64AliasesAreRefused()"
+      ]
+    },
+    {
+      "annotation_line": 183,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "authenticatedMalformedPayloadLengthsTruncationAndTrailingBytesAreSanitized",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "authenticatedMalformedPayloadLengthsTruncationAndTrailingBytesAreSanitized()"
+      ]
+    },
+    {
+      "annotation_line": 206,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "positionsAcceptFiniteMicrosecondsAndAnyResourceUuidButNeverNormalizeInvalidNanos",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "positionsAcceptFiniteMicrosecondsAndAnyResourceUuidButNeverNormalizeInvalidNanos()"
+      ]
+    },
+    {
+      "annotation_line": 230,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "expiryIsExclusiveAndMaximumFutureSkewIsSixtySeconds",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "expiryIsExclusiveAndMaximumFutureSkewIsSixtySeconds()"
+      ]
+    },
+    {
+      "annotation_line": 251,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedVerifierRotationAcceptsOldKeysOnlyUntilTheOriginalExpiry",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "retainedVerifierRotationAcceptsOldKeysOnlyUntilTheOriginalExpiry()"
+      ]
+    },
+    {
+      "annotation_line": 265,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "configurationRejectsWeakUnknownOversizedDuplicateAndEffectivelyReusedKeys",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "configurationRejectsWeakUnknownOversizedDuplicateAndEffectivelyReusedKeys()"
+      ]
+    },
+    {
+      "annotation_line": 290,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "configurationAcceptsExactRingKeyIdKeySizeAndForbiddenListBounds",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "configurationAcceptsExactRingKeyIdKeySizeAndForbiddenListBounds()"
+      ]
+    },
+    {
+      "annotation_line": 305,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "defensiveKeyCopiesAndRedactedViewsSurviveCallerMutation",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "defensiveKeyCopiesAndRedactedViewsSurviveCallerMutation()"
+      ]
+    },
+    {
+      "annotation_line": 330,
+      "class": "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "encodingAndDecodingRefuseRetainedSpringPersistenceBeforeCursorWork",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminCursorCodecTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a0c5f3a1c5341a13f9b175062143836d0e836e9cfc9c4a9fc60a31b8a404d0ee",
+      "xml_names": [
+        "encodingAndDecodingRefuseRetainedSpringPersistenceBeforeCursorWork()"
+      ]
+    },
+    {
+      "annotation_line": 20,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "search and detail share exact60 per ADMIN scope minute without borrowing the owner read bucket",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "search and detail share exact60 per ADMIN scope minute without borrowing the owner read bucket()"
+      ]
+    },
+    {
+      "annotation_line": 43,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "approved policy is lowerable only and omitted policy remains Disabled",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "approved policy is lowerable only and omitted policy remains Disabled()"
+      ]
+    },
+    {
+      "annotation_line": 60,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "only live original thread registry named operation and one use admit the opaque identity",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "only live original thread registry named operation and one use admit the opaque identity()"
+      ]
+    },
+    {
+      "annotation_line": 91,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "five second lifetime cannot renew through charge or consume and a spent charge is not refunded",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "five second lifetime cannot renew through charge or consume and a spent charge is not refunded()"
+      ]
+    },
+    {
+      "annotation_line": 113,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "rotation cannot reset a charged Admin quota and overlap uses the same bounded store",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "rotation cannot reset a charged Admin quota and overlap uses the same bounded store()"
+      ]
+    },
+    {
+      "annotation_line": 135,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "Admin and owner rows share finite cardinality and event budgets with no live eviction or new actor map",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "Admin and owner rows share finite cardinality and event budgets with no live eviction or new actor map()"
+      ]
+    },
+    {
+      "annotation_line": 153,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "minute expiry backlog is bounded and cannot evict live Admin quotas to admit extra actors",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "minute expiry backlog is bounded and cannot evict live Admin quotas to admit extra actors()"
+      ]
+    },
+    {
+      "annotation_line": 164,
+      "class": "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "Admin semantic start charge and consume all refuse retained Spring resources before mutating quota",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminReadAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "26afeeac3422d0e541c893ec968d80445bac76ad6effb1462be48af59f000f38",
+      "xml_names": [
+        "Admin semantic start charge and consume all refuse retained Spring resources before mutating quota()"
+      ]
+    },
+    {
+      "annotation_line": 393,
+      "class": "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "G1 actual PREPARED insert prepays complete lifecycle heap and all five indexes",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/catalog/JdbcCatalogSnapshotIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "6346a4fe5d5e1ed6ebd894c5951a73b62fb3a8676c530e8b9e65cb0aba8a3ec3",
+      "xml_names": [
+        "G1 actual PREPARED insert prepays complete lifecycle heap and all five indexes()"
+      ]
+    },
+    {
+      "annotation_line": 403,
+      "class": "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "G1 genuine signature persists and rereads exactly while repeat and sparse reuse never charge again",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/catalog/JdbcCatalogSnapshotIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "6346a4fe5d5e1ed6ebd894c5951a73b62fb3a8676c530e8b9e65cb0aba8a3ec3",
+      "xml_names": [
+        "G1 genuine signature persists and rereads exactly while repeat and sparse reuse never charge again()"
+      ]
+    },
+    {
+      "annotation_line": 433,
+      "class": "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "G1 final exact dual readback completes and projects once with closed control and zero free capacity",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/catalog/JdbcCatalogSnapshotIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "6346a4fe5d5e1ed6ebd894c5951a73b62fb3a8676c530e8b9e65cb0aba8a3ec3",
+      "xml_names": [
+        "G1 final exact dual readback completes and projects once with closed control and zero free capacity()"
+      ]
+    },
+    {
+      "annotation_line": 350,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder()"
+      ]
+    },
+    {
+      "annotation_line": 55,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintAuditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "one selected PID and transaction commit fixture receipt real grant counters Admin protected fixture and shared audit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OrdinaryComplaintAuditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "d93b6559cbf4b59e9803fcc2628a35c2868485c441a2422bf240129a66c5243a",
+      "xml_names": [
+        "one selected PID and transaction commit fixture receipt real grant counters Admin protected fixture and shared audit()"
+      ]
+    },
+    {
+      "annotation_line": 26,
+      "class": "me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationHistoryBoundTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "compactHistoryKeepsPackedBoundsAndRejectsOverflowWidthsOrChangedPrefixes",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/catalog/CatalogTestRunActivationHistoryBoundTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "a9dac2a7b252c50127c4133a573dc6c1585102826aa8027a5d1b4871a3eb55ed",
+      "xml_names": [
+        "compactHistoryKeepsPackedBoundsAndRejectsOverflowWidthsOrChangedPrefixes()"
+      ]
+    },
+    {
+      "annotation_line": 941,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationPreparesExactUnsignedRowAndChargesOnlyOnce",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationPreparesExactUnsignedRowAndChargesOnlyOnce()"
+      ]
+    },
+    {
+      "annotation_line": 946,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry()"
+      ]
+    },
+    {
+      "annotation_line": 951,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationClosedPurposeAndNakedInputsRefuseBeforeSql",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationClosedPurposeAndNakedInputsRefuseBeforeSql()"
+      ]
+    },
+    {
+      "annotation_line": 956,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift()"
+      ]
+    },
+    {
+      "annotation_line": 965,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds()"
+      ]
+    },
+    {
+      "annotation_line": 970,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 1251,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "directEpochMaintenanceCloseDeadlinePreservesActualCleanupAndVetoesAcceptance",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "directEpochMaintenanceCloseDeadlinePreservesActualCleanupAndVetoesAcceptance()"
+      ]
+    },
+    {
+      "annotation_line": 1263,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture()"
+      ]
+    },
+    {
+      "annotation_line": 979,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload()"
+      ]
+    },
+    {
+      "annotation_line": 986,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign()"
+      ]
+    },
+    {
+      "annotation_line": 991,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnreturnedDurableSignArmsNeverResign",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnreturnedDurableSignArmsNeverResign()"
+      ]
+    },
+    {
+      "annotation_line": 998,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign()"
+      ]
+    },
+    {
+      "annotation_line": 1006,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSignedOriginalBudgetCancellationAndFileCleanupStayClosed",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSignedOriginalBudgetCancellationAndFileCleanupStayClosed()"
+      ]
+    },
+    {
+      "annotation_line": 1014,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSignedPathRejectsKeyScopeFullDAndCanonicalPredecessorDrift",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSignedPathRejectsKeyScopeFullDAndCanonicalPredecessorDrift()"
+      ]
+    },
+    {
+      "annotation_line": 1021,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces()"
+      ]
+    },
+    {
+      "annotation_line": 1028,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows()"
+      ]
+    },
+    {
+      "annotation_line": 50,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "realAdminProofEditsTwoOwnersTypeOnlyClosedAndOrphanNoticeRepliesWithoutRepayingContent",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "realAdminProofEditsTwoOwnersTypeOnlyClosedAndOrphanNoticeRepliesWithoutRepayingContent()"
+      ]
+    },
+    {
+      "annotation_line": 118,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "completedReplayBypassesProofQuotaOldEtagAndErasedTargetButNeverCurrentAdminOrExactKeyBinding",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "completedReplayBypassesProofQuotaOldEtagAndErasedTargetButNeverCurrentAdminOrExactKeyBinding()"
+      ]
+    },
+    {
+      "annotation_line": 166,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "receiptedBusinessRejectionsConsumeOneProofAndOnlyNormalReceiptWhileMalformedRequestsRetainNothing",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "receiptedBusinessRejectionsConsumeOneProofAndOnlyNormalReceiptWhileMalformedRequestsRetainNothing()"
+      ]
+    },
+    {
+      "annotation_line": 218,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "realProofScopeUserExpiryReuseAndCurrentAdminGenerationCannotBeReplacedByTokenRole",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "realProofScopeUserExpiryReuseAndCurrentAdminGenerationCannotBeReplacedByTokenRole()"
+      ]
+    },
+    {
+      "annotation_line": 289,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "realGrantAndJwtExpiryAfterTheirOriginalLocksRollbackWithoutUsingPreLockTime",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "realGrantAndJwtExpiryAfterTheirOriginalLocksRollbackWithoutUsingPreLockTime()"
+      ]
+    },
+    {
+      "annotation_line": 357,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "originalSqlFaultsCapacityAndMaintenanceRefusalsRollbackProofReceiptAuditAndContent",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "originalSqlFaultsCapacityAndMaintenanceRefusalsRollbackProofReceiptAuditAndContent()"
+      ]
+    },
+    {
+      "annotation_line": 423,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "originalClaimsLinearizeDistinctAndSameKeysBeforeProofReuseAndDeletionPendingWinsAfterPreflight",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "originalClaimsLinearizeDistinctAndSameKeysBeforeProofReuseAndDeletionPendingWinsAfterPreflight()"
+      ]
+    },
+    {
+      "annotation_line": 539,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "unknownCommitFailedCommittedTailAndPartialDeliveryNeverGuessConsumptionOrAppendButExactRetryRecovers",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminContentIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "2952a3edd9cf33d958f17e33ba8b228d104c88b808ddb607bbf621ea38c1bf86",
+      "xml_names": [
+        "unknownCommitFailedCommittedTailAndPartialDeliveryNeverGuessConsumptionOrAppendButExactRetryRecovers()"
+      ]
+    },
+    {
+      "annotation_line": 63,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "strictShapesHeadersNormalizationAndExactRawCapNeverBorrowUnboundedRequestWork",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminContentHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5cda974482d19a4f23dc4ac9809b6489d6438ffac0e6e4e251f5699ea579dc05",
+      "xml_names": [
+        "strictShapesHeadersNormalizationAndExactRawCapNeverBorrowUnboundedRequestWork()"
+      ]
+    },
+    {
+      "annotation_line": 174,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "closedLosslessRepliesAndRejectionsShareExactlyEightPermitsAndDestroyTheOwnedResponseBuffer",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminContentHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5cda974482d19a4f23dc4ac9809b6489d6438ffac0e6e4e251f5699ea579dc05",
+      "xml_names": [
+        "closedLosslessRepliesAndRejectionsShareExactlyEightPermitsAndDestroyTheOwnedResponseBuffer()"
+      ]
+    },
+    {
+      "annotation_line": 242,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "defaultRouteStaysClosedAndEveryPartialSenderFailureIsSanitizedOnceWithoutAppendingOrInventingConsumption",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminContentHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5cda974482d19a4f23dc4ac9809b6489d6438ffac0e6e4e251f5699ea579dc05",
+      "xml_names": [
+        "defaultRouteStaysClosedAndEveryPartialSenderFailureIsSanitizedOnceWithoutAppendingOrInventingConsumption()"
+      ]
+    },
+    {
+      "annotation_line": 32,
+      "class": "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "lowerableHourlyAdminScopeDedupAndRotationUseTheSameFiniteOwnerMutationStoresWithoutRefunds",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminContentAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5d56970f4e8c5a3524bd7be174e66a310e314e47af927f1085a2558148aa3502",
+      "xml_names": [
+        "lowerableHourlyAdminScopeDedupAndRotationUseTheSameFiniteOwnerMutationStoresWithoutRefunds()"
+      ]
+    },
+    {
+      "annotation_line": 258,
+      "class": "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "defaultDisabledAndOriginalOneUseHandoffRejectForgeryDifferentOperationThreadPhaseTupleAndDeadlineRenewal",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminContentAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5d56970f4e8c5a3524bd7be174e66a310e314e47af927f1085a2558148aa3502",
+      "xml_names": [
+        "defaultDisabledAndOriginalOneUseHandoffRejectForgeryDifferentOperationThreadPhaseTupleAndDeadlineRenewal()"
+      ]
+    },
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualCloseCorrectAndReopenReplaceOrClearTheCompleteTupleWhilePreservingTwoOwnersAndReplyContent",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "actualCloseCorrectAndReopenReplaceOrClearTheCompleteTupleWhilePreservingTwoOwnersAndReplyContent()"
+      ]
+    },
+    {
+      "annotation_line": 118,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "statusClosureAndContentKeepSeparateReceiptBindingsWhileHistoricalReplaySurvivesSealedErasureAndSharedQuota",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "statusClosureAndContentKeepSeparateReceiptBindingsWhileHistoricalReplaySurvivesSealedErasureAndSharedQuota()"
+      ]
+    },
+    {
+      "annotation_line": 212,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "contentAndModerationRaceOnOneVersionAndCrossOperationClaimCannotConsumeTheLosingProof",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "contentAndModerationRaceOnOneVersionAndCrossOperationClaimCannotConsumeTheLosingProof()"
+      ]
+    },
+    {
+      "annotation_line": 324,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "bothRoutesAuthenticateBeforeNormalizationAndRecheckCurrentAdminAfterTheOriginalComplaintGrant",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "bothRoutesAuthenticateBeforeNormalizationAndRecheckCurrentAdminAfterTheOriginalComplaintGrant()"
+      ]
+    },
+    {
+      "annotation_line": 386,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "grantExpiryAfterGrantLockAndJwtExpiryAfterModerationLockRestoreTheOriginalClosureTuple",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "grantExpiryAfterGrantLockAndJwtExpiryAfterModerationLockRestoreTheOriginalClosureTuple()"
+      ]
+    },
+    {
+      "annotation_line": 439,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "bothRoutesKeepReadCommittedMaintenanceCapacityAndSourceOnlyGatesBeforeOriginalPhysicalRelease",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "bothRoutesKeepReadCommittedMaintenanceCapacityAndSourceOnlyGatesBeforeOriginalPhysicalRelease()"
+      ]
+    },
+    {
+      "annotation_line": 499,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "closureCreationCorrectionAndClearingRollbackWithAuditAndProofWhileFailedCommittedTailRequiresExactRetry",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintAdminStatusIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4aebcea99cd7c4287b77e9b49a099d8b8ed946d9c44c2fd45e4a9a5eddcecb64",
+      "xml_names": [
+        "closureCreationCorrectionAndClearingRollbackWithAuditAndProofWhileFailedCommittedTailRequiresExactRetry()"
+      ]
+    },
+    {
+      "annotation_line": 291,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "statusAndClosureAcceptOnlyTheirExactSingleFieldAndStrongCanonicalTargetPrecondition",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminContentHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5cda974482d19a4f23dc4ac9809b6489d6438ffac0e6e4e251f5699ea579dc05",
+      "xml_names": [
+        "statusAndClosureAcceptOnlyTheirExactSingleFieldAndStrongCanonicalTargetPrecondition()"
+      ]
+    },
+    {
+      "annotation_line": 355,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "moderationNormalizationFramingAndExactRawCapRemainBoundedWithoutInventingAuthenticatedAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminContentHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5cda974482d19a4f23dc4ac9809b6489d6438ffac0e6e4e251f5699ea579dc05",
+      "xml_names": [
+        "moderationNormalizationFramingAndExactRawCapRemainBoundedWithoutInventingAuthenticatedAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 428,
+      "class": "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "moderationAcksAndProblemsKeepLosslessLongHistoricalConsumptionAndOriginalSharedEightThroughDelivery",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/api/ComplaintAdminContentHttpTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5cda974482d19a4f23dc4ac9809b6489d6438ffac0e6e4e251f5699ea579dc05",
+      "xml_names": [
+        "moderationAcksAndProblemsKeepLosslessLongHistoricalConsumptionAndOriginalSharedEightThroughDelivery()"
+      ]
+    },
+    {
+      "annotation_line": 112,
+      "class": "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "statusAndClosureShareOneLowerableHourButNotContentQuotaWhileAllThreeUseTheOriginalFiniteStores",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminContentAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5d56970f4e8c5a3524bd7be174e66a310e314e47af927f1085a2558148aa3502",
+      "xml_names": [
+        "statusAndClosureShareOneLowerableHourButNotContentQuotaWhileAllThreeUseTheOriginalFiniteStores()"
+      ]
+    },
+    {
+      "annotation_line": 180,
+      "class": "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "moderationHandoffIsDefaultDisabledAndBoundToItsOriginalIngressThreadPhaseOperationTupleAndDeadline",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintAdminContentAdmissionTest.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "5d56970f4e8c5a3524bd7be174e66a310e314e47af927f1085a2558148aa3502",
+      "xml_names": [
+        "moderationHandoffIsDefaultDisabledAndBoundToItsOriginalIngressThreadPhaseOperationTupleAndDeadline()"
+      ]
+    },
+    {
+      "annotation_line": 1035,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload()"
+      ]
+    },
+    {
+      "annotation_line": 1042,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput()"
+      ]
+    },
+    {
+      "annotation_line": 1047,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared()"
+      ]
+    },
+    {
+      "annotation_line": 1052,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationConflictingRawCopiesNeverCompleteOrReput",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationConflictingRawCopiesNeverCompleteOrReput()"
+      ]
+    },
+    {
+      "annotation_line": 1059,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup()"
+      ]
+    },
+    {
+      "annotation_line": 1066,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair()"
+      ]
+    },
+    {
+      "annotation_line": 1074,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCompletionBudgetCancellationAndFileCleanupStayClosed",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCompletionBudgetCancellationAndFileCleanupStayClosed()"
+      ]
+    },
+    {
+      "annotation_line": 1082,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion()"
+      ]
+    },
+    {
+      "annotation_line": 1087,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationDeliveryRefusesLiveLeaseUnarmedRecoveryFullDGlobalDAndSignedRowDrift",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationDeliveryRefusesLiveLeaseUnarmedRecoveryFullDGlobalDAndSignedRowDrift()"
+      ]
+    },
+    {
+      "annotation_line": 1094,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion()"
+      ]
+    },
+    {
+      "annotation_line": 1101,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple()"
+      ]
+    },
+    {
+      "annotation_line": 769,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies()"
+      ]
+    },
+    {
+      "annotation_line": 622,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT()"
+      ]
+    },
+    {
+      "annotation_line": 678,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease()"
+      ]
+    },
+    {
+      "annotation_line": 1108,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectsAtomicPaidEffectAndRetainsClosedGates",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectsAtomicPaidEffectAndRetainsClosedGates()"
+      ]
+    },
+    {
+      "annotation_line": 1113,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionHonorsCapacityAndColdReplayDoesNotChargeAgain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionHonorsCapacityAndColdReplayDoesNotChargeAgain()"
+      ]
+    },
+    {
+      "annotation_line": 1120,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes()"
+      ]
+    },
+    {
+      "annotation_line": 1133,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot()"
+      ]
+    },
+    {
+      "annotation_line": 1144,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRollbackAndKnownCommitKeepOriginalOutcomeCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRollbackAndKnownCommitKeepOriginalOutcomeCustody()"
+      ]
+    },
+    {
+      "annotation_line": 1171,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionColdReplayRejectsPartialEffectsAndContradictoryCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionColdReplayRejectsPartialEffectsAndContradictoryCustody()"
+      ]
+    },
+    {
+      "annotation_line": 1188,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures()"
+      ]
+    },
+    {
+      "annotation_line": 1160,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionLostCommitResponseRetainsUnknownAndColdReplaysReadOnly",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionLostCommitResponseRetainsUnknownAndColdReplaysReadOnly()"
+      ]
+    },
+    {
+      "annotation_line": 50,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real enrollment and session HTTP token reaches actual scoped owner history without direct token issuance",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ca376ca06178c89a95e5f2c21b82f8e795f07d8dd6dc1726acade88c651415c7",
+      "xml_names": [
+        "real enrollment and session HTTP token reaches actual scoped owner history without direct token issuance()"
+      ]
+    },
+    {
+      "annotation_line": 79,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real body-secret refusals preserve never-claimed recovery and never turn stale TEST scopes into LIVE",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ca376ca06178c89a95e5f2c21b82f8e795f07d8dd6dc1726acade88c651415c7",
+      "xml_names": [
+        "real body-secret refusals preserve never-claimed recovery and never turn stale TEST scopes into LIVE()"
+      ]
+    },
+    {
+      "annotation_line": 99,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "credential change after real preflight is rechecked by admitted refresh before any token response",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ca376ca06178c89a95e5f2c21b82f8e795f07d8dd6dc1726acade88c651415c7",
+      "xml_names": [
+        "credential change after real preflight is rechecked by admitted refresh before any token response()"
+      ]
+    },
+    {
+      "annotation_line": 131,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "rollback unknown commit and failed completion tail expose no token and preserve actual database outcome",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ca376ca06178c89a95e5f2c21b82f8e795f07d8dd6dc1726acade88c651415c7",
+      "xml_names": [
+        "rollback unknown commit and failed completion tail expose no token and preserve actual database outcome()"
+      ]
+    },
+    {
+      "annotation_line": 175,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "lost HTTP enrollment send retains one durable identity and exact retry returns a usable session",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ca376ca06178c89a95e5f2c21b82f8e795f07d8dd6dc1726acade88c651415c7",
+      "xml_names": [
+        "lost HTTP enrollment send retains one durable identity and exact retry returns a usable session()"
+      ]
+    },
+    {
+      "annotation_line": 54,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real ordered chain keeps c1 session identity and rechecks changed rows without a second semantic charge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationMeHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ae2053618f9c28258f6647b5f419b9c8f60dab5c18ee05f12c5470b5fafd7a56",
+      "xml_names": [
+        "real ordered chain keeps c1 session identity and rechecks changed rows without a second semantic charge()"
+      ]
+    },
+    {
+      "annotation_line": 113,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actual c1 HTTP session token yields exact me projection after release without writes or creation capacity",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationMeHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ae2053618f9c28258f6647b5f419b9c8f60dab5c18ee05f12c5470b5fafd7a56",
+      "xml_names": [
+        "actual c1 HTTP session token yields exact me projection after release without writes or creation capacity()"
+      ]
+    },
+    {
+      "annotation_line": 140,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "invalid missing wrong family and actual foreign scope tokens refuse before unavailable current row SQL",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationMeHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ae2053618f9c28258f6647b5f419b9c8f60dab5c18ee05f12c5470b5fafd7a56",
+      "xml_names": [
+        "invalid missing wrong family and actual foreign scope tokens refuse before unavailable current row SQL()"
+      ]
+    },
+    {
+      "annotation_line": 163,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "current credential reservation and run state are rechecked after the authenticated preflight releases",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationMeHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ae2053618f9c28258f6647b5f419b9c8f60dab5c18ee05f12c5470b5fafd7a56",
+      "xml_names": [
+        "current credential reservation and run state are rechecked after the authenticated preflight releases()"
+      ]
+    },
+    {
+      "annotation_line": 191,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "only private owner caller and live ingress can consume the authenticated me handoff once",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintInstallationMeHttpIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "ae2053618f9c28258f6647b5f419b9c8f60dab5c18ee05f12c5470b5fafd7a56",
+      "xml_names": [
+        "only private owner caller and live ingress can consume the authenticated me handoff once()"
+      ]
+    },
+    {
+      "annotation_line": 66,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "optional ordered chain uses an HTTP issued token for exact owned detail and same scope notice after release",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "optional ordered chain uses an HTTP issued token for exact owned detail and same scope notice after release()"
+      ]
+    },
+    {
+      "annotation_line": 157,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "missing other owner wrong scope legacy and pending resource details have indistinguishable404",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "missing other owner wrong scope legacy and pending resource details have indistinguishable404()"
+      ]
+    },
+    {
+      "annotation_line": 194,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "credential installation reservation and run authority are rechecked after real preflight commits and releases",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "credential installation reservation and run authority are rechecked after real preflight commits and releases()"
+      ]
+    },
+    {
+      "annotation_line": 219,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "exact target rechecks owner reservation and current content rather than caching or paging from preflight",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "exact target rechecks owner reservation and current content rather than caching or paging from preflight()"
+      ]
+    },
+    {
+      "annotation_line": 261,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "only the exact private detail owner caller context and one use can consume the handoff",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "only the exact private detail owner caller context and one use can consume the handoff()"
+      ]
+    },
+    {
+      "annotation_line": 282,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "concrete detail operation requires exact read only phase resource completion commit and physical release",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "concrete detail operation requires exact read only phase resource completion commit and physical release()"
+      ]
+    },
+    {
+      "annotation_line": 330,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real detail rollback and committed completion tail failure cannot release a success representation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerDetailIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1c160431a10fefad69cec637a08fd5b3a7961e23197d23652c28c45822e37d86",
+      "xml_names": [
+        "real detail rollback and committed completion tail failure cannot release a success representation()"
+      ]
+    },
+    {
+      "annotation_line": 50,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real returned enrollment and session HTTP token creates one counted report then matching status and owner history",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "real returned enrollment and session HTTP token creates one counted report then matching status and owner history()"
+      ]
+    },
+    {
+      "annotation_line": 123,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "receipt first replay is byte identical after content edit removal and unavailable new work admission",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "receipt first replay is byte identical after content edit removal and unavailable new work admission()"
+      ]
+    },
+    {
+      "annotation_line": 147,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "uniform resource UUID collision ignores all scopes and states but cannot outrun locked current authentication",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "uniform resource UUID collision ignores all scopes and states but cannot outrun locked current authentication()"
+      ]
+    },
+    {
+      "annotation_line": 190,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "one hundred includes pending reports and replies and serializes concurrent ninety nine to one hundred",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "one hundred includes pending reports and replies and serializes concurrent ninety nine to one hundred()"
+      ]
+    },
+    {
+      "annotation_line": 226,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "duplicate first use waits only at the receipt claim then replays one mutation and one logical quota charge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "duplicate first use waits only at the receipt claim then replays one mutation and one logical quota charge()"
+      ]
+    },
+    {
+      "annotation_line": 258,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "hard cap and unrelated lock waits are unreceipted unavailable work never durable business rejection or claim conflict",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "hard cap and unrelated lock waits are unreceipted unavailable work never durable business rejection or claim conflict()"
+      ]
+    },
+    {
+      "annotation_line": 303,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "receipt lookup is by actor key before scope operation target fingerprint comparison and never reexecutes expired keys",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "receipt lookup is by actor key before scope operation target fingerprint comparison and never reexecutes expired keys()"
+      ]
+    },
+    {
+      "annotation_line": 362,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "committed authorized deletion key mismatch is visible before create admission without exposing its result",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "committed authorized deletion key mismatch is visible before create admission without exposing its result()"
+      ]
+    },
+    {
+      "annotation_line": 391,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "run configuration state and authenticated platform changes after preflight roll back before collision",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "run configuration state and authenticated platform changes after preflight roll back before collision()"
+      ]
+    },
+    {
+      "annotation_line": 428,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "changed body candidate and consumed handoff cannot substitute for the exact admitted transaction",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "changed body candidate and consumed handoff cannot substitute for the exact admitted transaction()"
+      ]
+    },
+    {
+      "annotation_line": 450,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "database token time is sampled again after actual owner and credential lock acquisition",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "database token time is sampled again after actual owner and credential lock acquisition()"
+      ]
+    },
+    {
+      "annotation_line": 480,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "real failures after claim counter resource content audit and completion roll back without abandoned receipts or refunding admission",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "real failures after claim counter resource content audit and completion roll back without abandoned receipts or refunding admission()"
+      ]
+    },
+    {
+      "annotation_line": 521,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "result needs actual commit and physical release and unknown commit or failing committed tail never publishes success",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "result needs actual commit and physical release and unknown commit or failing committed tail never publishes success()"
+      ]
+    },
+    {
+      "annotation_line": 588,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "lost acknowledgement resolves through the same committed receipt without another charge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "lost acknowledgement resolves through the same committed receipt without another charge()"
+      ]
+    },
+    {
+      "annotation_line": 609,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "populated V14 to V15 preserves all other objects and permits only the new create rejection matrix cell",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerCreateIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "1fdc25a7330476b0be2781ac777f11274f9f19174e5f7429c8fa1d4cb2a2d7cd",
+      "xml_names": [
+        "populated V14 to V15 preserves all other objects and permits only the new create rejection matrix cell()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "only the optional TEST chain dispatches reply with the actual session token and sends after release",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "only the optional TEST chain dispatches reply with the actual session token and sends after release()"
+      ]
+    },
+    {
+      "annotation_line": 137,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "ordinary and notice thread replies snapshot the locked parent transitively and survive ancestor erasure unchanged",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "ordinary and notice thread replies snapshot the locked parent transitively and survive ancestor erasure unchanged()"
+      ]
+    },
+    {
+      "annotation_line": 204,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "hidden missing and erased parents share durable404 while eligible pending parents reject409 without reserving a child",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "hidden missing and erased parents share durable404 while eligible pending parents reject409 without reserving a child()"
+      ]
+    },
+    {
+      "annotation_line": 242,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "reply resource collision is one generic receipted result across every scope and reservation state",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "reply resource collision is one generic receipted result across every scope and reservation state()"
+      ]
+    },
+    {
+      "annotation_line": 263,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "replay and status survive erasure while operation or ordered target mismatch never discloses a receipt",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "replay and status survive erasure while operation or ordered target mismatch never discloses a receipt()"
+      ]
+    },
+    {
+      "annotation_line": 296,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "mixed create and reply race from ninety nine includes pending content and cannot exceed one hundred",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "mixed create and reply race from ninety nine includes pending content and cannot exceed one hundred()"
+      ]
+    },
+    {
+      "annotation_line": 325,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "actual HTTP create and reply share ten hourly attempts while exact completed replay bypasses the exhausted mutation window",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "actual HTTP create and reply share ten hourly attempts while exact completed replay bypasses the exhausted mutation window()"
+      ]
+    },
+    {
+      "annotation_line": 349,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "current run reservation credential and platform changes after preflight roll reply back before parent lookup",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "current run reservation credential and platform changes after preflight roll reply back before parent lookup()"
+      ]
+    },
+    {
+      "annotation_line": 382,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "reply reserves resources in PostgreSQL UUID order and discards only its provisional child on terminal pending rejection",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "reply reserves resources in PostgreSQL UUID order and discards only its provisional child on terminal pending rejection()"
+      ]
+    },
+    {
+      "annotation_line": 407,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "after acquiring the actual parent lock expired token facts cannot authorize a reply or retain its resource",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "after acquiring the actual parent lock expired token facts cannot authorize a reply or retain its resource()"
+      ]
+    },
+    {
+      "annotation_line": 440,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "concurrent first reply use has one claim mutation and logical quota charge with bounded in progress waiting",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "concurrent first reply use has one claim mutation and logical quota charge with bounded in progress waiting()"
+      ]
+    },
+    {
+      "annotation_line": 480,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "changed parent candidate cannot consume the admitted original reply even before the unique claim",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "changed parent candidate cannot consume the admitted original reply even before the unique claim()"
+      ]
+    },
+    {
+      "annotation_line": 501,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "faults at reply resource parent content audit completion and rejection cleanup leave no abandoned ordinary claim",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "faults at reply resource parent content audit completion and rejection cleanup leave no abandoned ordinary claim()"
+      ]
+    },
+    {
+      "annotation_line": 536,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "reply result requires original commit and physical release and unknown commit or failed tail cannot publish success",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "reply result requires original commit and physical release and unknown commit or failed tail cannot publish success()"
+      ]
+    },
+    {
+      "annotation_line": 599,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "populated predecessor migration permits only the reply resource rejection cell without rewriting data or other objects",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerReplyIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "4b2f493c9229fa3a6405fbd076f581e11198f29a5f41b96268ac8b38402bf1e7",
+      "xml_names": [
+        "populated predecessor migration permits only the reply resource rejection cell without rewriting data or other objects()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "only explicit paired TEST edit and status dispatch accepts the real session token and sends after physical release",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "only explicit paired TEST edit and status dispatch accepts the real session token and sends after physical release()"
+      ]
+    },
+    {
+      "annotation_line": 138,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "produced reports ordinary replies and orphan notice replies preserve immutable and CLOSED state while growing and shrinking prepaid envelopes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "produced reports ordinary replies and orphan notice replies preserve immutable and CLOSED state while growing and shrinking prepaid envelopes()"
+      ]
+    },
+    {
+      "annotation_line": 210,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "terminal edit rejections retain only normal receipt while malformed precondition and current auth failures retain nothing",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "terminal edit rejections retain only normal receipt while malformed precondition and current auth failures retain nothing()"
+      ]
+    },
+    {
+      "annotation_line": 286,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "historical edit replay and status survive later edit erasure and exhausted or unavailable mutation admission without tuple leakage",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "historical edit replay and status survive later edit erasure and exhausted or unavailable mutation admission without tuple leakage()"
+      ]
+    },
+    {
+      "annotation_line": 345,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "run reservation credential and platform changes after released preflight roll edit back before target discovery",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "run reservation credential and platform changes after released preflight roll edit back before target discovery()"
+      ]
+    },
+    {
+      "annotation_line": 379,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "two requests preflight the same version before either claim and the later locked edit receives stale412 exactly once",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "two requests preflight the same version before either claim and the later locked edit receives stale412 exactly once()"
+      ]
+    },
+    {
+      "annotation_line": 424,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "same key actual claim contention is the only in progress retry and its uncommitted outcome is invisible to status",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "same key actual claim contention is the only in progress retry and its uncommitted outcome is invisible to status()"
+      ]
+    },
+    {
+      "annotation_line": 486,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "expired facts after the actual content lock cannot mutate content or retain a claim",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "expired facts after the actual content lock cannot mutate content or retain a claim()"
+      ]
+    },
+    {
+      "annotation_line": 520,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "fake substituted and reused edit capabilities fail before claim and a content lock timeout is not idempotency in progress",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "fake substituted and reused edit capabilities fail before claim and a content lock timeout is not idempotency in progress()"
+      ]
+    },
+    {
+      "annotation_line": 558,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "faults after claim counters content audit and completion roll every edit effect back but not logical admission",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "faults after claim counters content audit and completion roll every edit effect back but not logical admission()"
+      ]
+    },
+    {
+      "annotation_line": 639,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "retained edit output requires proven commit and release and neither ambiguous commit nor failed committed tail publishes success",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ComplaintOwnerEditIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "47b912a6007f8cb78ffc6f38838bb9b6531a2d1375c3c223879694562bbe9b2f",
+      "xml_names": [
+        "retained edit output requires proven commit and release and neither ambiguous commit nor failed committed tail publishes success()"
+      ]
+    },
+    {
+      "annotation_line": 1201,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening()"
+      ]
+    },
+    {
+      "annotation_line": 1206,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationLifetimeEndsWithOriginalRuntimeRoot",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationLifetimeEndsWithOriginalRuntimeRoot()"
+      ]
+    },
+    {
+      "annotation_line": 1211,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect()"
+      ]
+    },
+    {
+      "annotation_line": 1218,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry()"
+      ]
+    },
+    {
+      "annotation_line": 1225,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationTargetCommitAndReleaseFailuresAreSticky",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationTargetCommitAndReleaseFailuresAreSticky()"
+      ]
+    },
+    {
+      "annotation_line": 1232,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation()"
+      ]
+    },
+    {
+      "annotation_line": 1239,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration()"
+      ]
+    },
+    {
+      "annotation_line": 1244,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationFailedOriginalProjectNeverIssuesCompletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "d6a822b6f8ba561353f95117e8782cca75964382",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationFailedOriginalProjectNeverIssuesCompletion()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintAuditIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+    "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT"
+  ],
+  "expected_pg_methods": 153,
+  "expected_total": 217,
+  "expected_unit_methods": 64,
+  "selection_basis": {
+    "affected_synthetic_installation_fixture_methods": 58,
+    "new_registration_methods": 8,
+    "preserved_prior_methods": 151,
+    "rationale": "First execution of pending151 plus real registration8 and six affected fixture classes; no successful runtime replay credit."
+  },
+  "source_head": "fa1fe3d8228500f59072cf19b6656c89a6ccbe46",
+  "source_status": "SOURCE_ONLY_REVIEWED_NOT_ACCEPTED",
+  "static_sources": {},
+  "status": "SOURCE_BOUND_DISPATCH_UNBOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT": 8,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT": 20,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT": 7,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT": 5,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT": 5,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT": 9,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT": 15,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT": 7,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT": 11,
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT": 15,
+    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintAuditIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test": 4,
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 47,
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest": 6,
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest": 15,
+    "me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationHistoryBoundTest": 1,
+    "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT": 3,
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest": 13,
+    "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest": 4,
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest": 13,
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest": 8
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.every admitted phase has an explicit maintenance lock classification",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.settings M and fresh gate dispatch cap at seventy five without restarting the hundred millisecond prefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.earlier original work deadline clips settings and native dispatch without a new phase allowance",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.fractional last millisecond exact expiry and overrun cannot become zero unlimited timeouts",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.named writer holds shared M on its original holder restores limits and releases only after its real commit",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.exclusive M refuses the real writer try before DML while the SQL observation keeps its existing E only prefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.settings and guarded dispatch consume the same prefix and late settings never execute the try",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.late real true M or returned gate cleanup stays in the original prefix until its own rollback releases the lock",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.losing the selected holder between settings and try cannot repair borrow or commit after refusal",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.freshPostMaintenanceGateSeesCommittedTestPreparedWithoutAControlPointer",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.durableTestDenialsAndNoTestCompatibilityUseConsistentGlobalAndAcceptedRows",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.actualRepeatableReadBeforeMaintenanceIsRefusedAndTheOriginalTransactionResets",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintMaintenanceFencePrefixIT.originalGateChildCloseExpiryAtAdmissionOrReturnKeepsOriginalCleanup",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.actual normal JWT and two installations produce51 tied search rows cursor and exact details without writes",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.scope LIVE pending owner and pending resource are hidden while transitive children survive erased content",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.actual qualified normal decoder rejects family signature issuer audience type and raw generation violations",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.bounded malformed signed-token envelopes reject before invoking the actual decoder",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.DB role enabled and credential generation remain authoritative over diagnostic ADMIN and USER claims",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.released authentication cannot cache role enabled or generation for either data query including empty matches",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.data query reads current target and reservation snapshot after released preflight rather than cached content",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.cursor validation precedes SQL but a signed matching cursor is never current ADMIN authority",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.only the original adapter thread ingress and one use can consume real ADMIN authentication",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.original five second handoff age is not renewed before data phase admission",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.actual authentication precedes lowerable combined read quota and Disabled stops before decoder or SQL",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.concrete operations require exact phase resource and retained operation not arbitrary caller completion",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.all three ordinary observations require actual commit cleanup and original release before successful results",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.real SQL rollback and committed completion tail failure never publish retained Admin success",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.new Admin phases request and actually use READ COMMITTED under a real REPEATABLE READ role default",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.ordinary Admin reads acquire neither maintenance nor epoch fence and cannot issue DML or audit",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.unchanged sourceOnly admission refuses all three Admin paths before a resource acquisition",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.bounded invalid stored row closes shared responses without a partial page or detail",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.eight real stale-credential401 deliveries keep acquired shared slots while ninth avoids decoder and SQL",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminReadIT.actual new SQL has bounded scoped prepared results and plans for custom generic and automatic sessions",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.search and detail emit only closed Admin fields and exact integer versions beyond double precision",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.method path duplicate framing encoded scope and closed input failures precede the domain producer",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.direct search stream stops at32769 bytes while bodyless detail reads at most one byte",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.finite header count character and total budgets reject before reading input",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.real ingress admission is charged before request buffering including parse failures",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.ninth shared owner or Admin response permit fails before buffering and producer invocation",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.eight blocked401403404429 problems retain original ingress and acquired shared slots through delivery",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.complete maximal escaped response retains the shared permit through connection free delivery then erases bytes",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.fifty maximum legal rows respect item and aggregate limits and no extra top level notices",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.escaped overflow closes the one shared response owner before any success prefix or ETag",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.all problems are fixed allowlisted envelopes with one401 challenge and no sensitive inputs",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.partial buffered success or problem delivery is never appended retried or retained",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.problem committed guard and sender faults are sanitized once and preserve interruption",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.redispatch asynchronous and interrupted callers never reach the producer",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminReadHttpTest.unchanged production disabled filter denies both Admin routes before any body or bearer work",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.omittedAndExplicitDefaultsProduceDetachedNormalizedQueries",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.everyAllowedEnumAndAllExplicitFiltersArePreservedWithoutBroadening",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.requiredScopeIsCanonicalNonzeroRfcVariantV4AndNeverCoerced",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.closedFieldTypesNullabilityAndEnumSpellingAreNeverCoerced",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.unknownAndRawOrEscapedDuplicateKeysAreRejectedForEveryField",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.rootNestedTrailingAndNonstandardJsonFormsFailClosed",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.exactThirtyTwoKiBBoundPrecedesDecodingAndAllowsLargeTrimmedWhitespace",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.malformedUtf8AndEscapedUnpairedSurrogatesNeverBecomeReplacementCharacters",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.limitsRequireLexicalJsonIntegersOneThroughFifty",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.searchTextUsesExistingUnicodeCrLfControlBeforeTrimAndCodePointRules",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.strictUtcDatesPreserveFiniteMicrosecondsAndNormalizeFractionAliases",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.invalidCalendarLeapSecondOffsetAndRoundedDateFormsAreRejected",
+    "me.manga.kira.backend.complaint.parsing.ComplaintAdminSearchParserTest.cursorEnvelopeRequiresCanonicalBoundedBase64ButDoesNotAuthenticatePayload",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.independentFramingBindsNormalizedSelectionAndNonV4NoticePosition",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.omittedExplicitAndNormalizedDefaultsMatchAndCursorIsExcluded",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.actorScopeAndEverySelectionFilterBindTheCursor",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.fixedRouteDirectionActorKindAndDomainsCannotBeSubstituted",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.envelopeBoundsSignatureSizesAndNoncanonicalBase64AliasesAreRefused",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.authenticatedMalformedPayloadLengthsTruncationAndTrailingBytesAreSanitized",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.positionsAcceptFiniteMicrosecondsAndAnyResourceUuidButNeverNormalizeInvalidNanos",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.expiryIsExclusiveAndMaximumFutureSkewIsSixtySeconds",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.retainedVerifierRotationAcceptsOldKeysOnlyUntilTheOriginalExpiry",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.configurationRejectsWeakUnknownOversizedDuplicateAndEffectivelyReusedKeys",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.configurationAcceptsExactRingKeyIdKeySizeAndForbiddenListBounds",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.defensiveKeyCopiesAndRedactedViewsSurviveCallerMutation",
+    "me.manga.kira.backend.security.ComplaintAdminCursorCodecTest.encodingAndDecodingRefuseRetainedSpringPersistenceBeforeCursorWork",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.search and detail share exact60 per ADMIN scope minute without borrowing the owner read bucket",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.approved policy is lowerable only and omitted policy remains Disabled",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.only live original thread registry named operation and one use admit the opaque identity",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.five second lifetime cannot renew through charge or consume and a spent charge is not refunded",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.rotation cannot reset a charged Admin quota and overlap uses the same bounded store",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.Admin and owner rows share finite cardinality and event budgets with no live eviction or new actor map",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.minute expiry backlog is bounded and cannot evict live Admin quotas to admit extra actors",
+    "me.manga.kira.backend.security.ComplaintAdminReadAdmissionTest.Admin semantic start charge and consume all refuse retained Spring resources before mutating quota",
+    "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT.G1 actual PREPARED insert prepays complete lifecycle heap and all five indexes",
+    "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT.G1 genuine signature persists and rereads exactly while repeat and sparse reuse never charge again",
+    "me.manga.kira.backend.complaint.catalog.JdbcCatalogSnapshotIT.G1 final exact dual readback completes and projects once with closed control and zero free capacity",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder",
+    "me.manga.kira.backend.common.infrastructure.persistence.OrdinaryComplaintAuditIT.one selected PID and transaction commit fixture receipt real grant counters Admin protected fixture and shared audit",
+    "me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationHistoryBoundTest.compactHistoryKeepsPackedBoundsAndRejectsOverflowWidthsOrChangedPrefixes",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationPreparesExactUnsignedRowAndChargesOnlyOnce",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationClosedPurposeAndNakedInputsRefuseBeforeSql",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.directEpochMaintenanceCloseDeadlinePreservesActualCleanupAndVetoesAcceptance",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnreturnedDurableSignArmsNeverResign",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSignedOriginalBudgetCancellationAndFileCleanupStayClosed",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSignedPathRejectsKeyScopeFullDAndCanonicalPredecessorDrift",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.realAdminProofEditsTwoOwnersTypeOnlyClosedAndOrphanNoticeRepliesWithoutRepayingContent",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.completedReplayBypassesProofQuotaOldEtagAndErasedTargetButNeverCurrentAdminOrExactKeyBinding",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.receiptedBusinessRejectionsConsumeOneProofAndOnlyNormalReceiptWhileMalformedRequestsRetainNothing",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.realProofScopeUserExpiryReuseAndCurrentAdminGenerationCannotBeReplacedByTokenRole",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.realGrantAndJwtExpiryAfterTheirOriginalLocksRollbackWithoutUsingPreLockTime",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.originalSqlFaultsCapacityAndMaintenanceRefusalsRollbackProofReceiptAuditAndContent",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.originalClaimsLinearizeDistinctAndSameKeysBeforeProofReuseAndDeletionPendingWinsAfterPreflight",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminContentIT.unknownCommitFailedCommittedTailAndPartialDeliveryNeverGuessConsumptionOrAppendButExactRetryRecovers",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest.strictShapesHeadersNormalizationAndExactRawCapNeverBorrowUnboundedRequestWork",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest.closedLosslessRepliesAndRejectionsShareExactlyEightPermitsAndDestroyTheOwnedResponseBuffer",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest.defaultRouteStaysClosedAndEveryPartialSenderFailureIsSanitizedOnceWithoutAppendingOrInventingConsumption",
+    "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest.lowerableHourlyAdminScopeDedupAndRotationUseTheSameFiniteOwnerMutationStoresWithoutRefunds",
+    "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest.defaultDisabledAndOriginalOneUseHandoffRejectForgeryDifferentOperationThreadPhaseTupleAndDeadlineRenewal",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.actualCloseCorrectAndReopenReplaceOrClearTheCompleteTupleWhilePreservingTwoOwnersAndReplyContent",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.statusClosureAndContentKeepSeparateReceiptBindingsWhileHistoricalReplaySurvivesSealedErasureAndSharedQuota",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.contentAndModerationRaceOnOneVersionAndCrossOperationClaimCannotConsumeTheLosingProof",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.bothRoutesAuthenticateBeforeNormalizationAndRecheckCurrentAdminAfterTheOriginalComplaintGrant",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.grantExpiryAfterGrantLockAndJwtExpiryAfterModerationLockRestoreTheOriginalClosureTuple",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.bothRoutesKeepReadCommittedMaintenanceCapacityAndSourceOnlyGatesBeforeOriginalPhysicalRelease",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintAdminStatusIT.closureCreationCorrectionAndClearingRollbackWithAuditAndProofWhileFailedCommittedTailRequiresExactRetry",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest.statusAndClosureAcceptOnlyTheirExactSingleFieldAndStrongCanonicalTargetPrecondition",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest.moderationNormalizationFramingAndExactRawCapRemainBoundedWithoutInventingAuthenticatedAuthority",
+    "me.manga.kira.backend.complaint.api.ComplaintAdminContentHttpTest.moderationAcksAndProblemsKeepLosslessLongHistoricalConsumptionAndOriginalSharedEightThroughDelivery",
+    "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest.statusAndClosureShareOneLowerableHourButNotContentQuotaWhileAllThreeUseTheOriginalFiniteStores",
+    "me.manga.kira.backend.security.ComplaintAdminContentAdmissionTest.moderationHandoffIsDefaultDisabledAndBoundToItsOriginalIngressThreadPhaseOperationTupleAndDeadline",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationConflictingRawCopiesNeverCompleteOrReput",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCompletionBudgetCancellationAndFileCleanupStayClosed",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationDeliveryRefusesLiveLeaseUnarmedRecoveryFullDGlobalDAndSignedRowDrift",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectsAtomicPaidEffectAndRetainsClosedGates",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionHonorsCapacityAndColdReplayDoesNotChargeAgain",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRollbackAndKnownCommitKeepOriginalOutcomeCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionColdReplayRejectsPartialEffectsAndContradictoryCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionLostCommitResponseRetainsUnknownAndColdReplaysReadOnly",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT.real enrollment and session HTTP token reaches actual scoped owner history without direct token issuance",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT.real body-secret refusals preserve never-claimed recovery and never turn stale TEST scopes into LIVE",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT.credential change after real preflight is rechecked by admitted refresh before any token response",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT.rollback unknown commit and failed completion tail expose no token and preserve actual database outcome",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationHttpIT.lost HTTP enrollment send retains one durable identity and exact retry returns a usable session",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT.real ordered chain keeps c1 session identity and rechecks changed rows without a second semantic charge",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT.actual c1 HTTP session token yields exact me projection after release without writes or creation capacity",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT.invalid missing wrong family and actual foreign scope tokens refuse before unavailable current row SQL",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT.current credential reservation and run state are rechecked after the authenticated preflight releases",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintInstallationMeHttpIT.only private owner caller and live ingress can consume the authenticated me handoff once",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.optional ordered chain uses an HTTP issued token for exact owned detail and same scope notice after release",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.missing other owner wrong scope legacy and pending resource details have indistinguishable404",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.credential installation reservation and run authority are rechecked after real preflight commits and releases",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.exact target rechecks owner reservation and current content rather than caching or paging from preflight",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.only the exact private detail owner caller context and one use can consume the handoff",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.concrete detail operation requires exact read only phase resource completion commit and physical release",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerDetailIT.real detail rollback and committed completion tail failure cannot release a success representation",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.real returned enrollment and session HTTP token creates one counted report then matching status and owner history",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.receipt first replay is byte identical after content edit removal and unavailable new work admission",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.uniform resource UUID collision ignores all scopes and states but cannot outrun locked current authentication",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.one hundred includes pending reports and replies and serializes concurrent ninety nine to one hundred",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.duplicate first use waits only at the receipt claim then replays one mutation and one logical quota charge",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.hard cap and unrelated lock waits are unreceipted unavailable work never durable business rejection or claim conflict",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.receipt lookup is by actor key before scope operation target fingerprint comparison and never reexecutes expired keys",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.committed authorized deletion key mismatch is visible before create admission without exposing its result",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.run configuration state and authenticated platform changes after preflight roll back before collision",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.changed body candidate and consumed handoff cannot substitute for the exact admitted transaction",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.database token time is sampled again after actual owner and credential lock acquisition",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.real failures after claim counter resource content audit and completion roll back without abandoned receipts or refunding admission",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.result needs actual commit and physical release and unknown commit or failing committed tail never publishes success",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.lost acknowledgement resolves through the same committed receipt without another charge",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerCreateIT.populated V14 to V15 preserves all other objects and permits only the new create rejection matrix cell",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.only the optional TEST chain dispatches reply with the actual session token and sends after release",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.ordinary and notice thread replies snapshot the locked parent transitively and survive ancestor erasure unchanged",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.hidden missing and erased parents share durable404 while eligible pending parents reject409 without reserving a child",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.reply resource collision is one generic receipted result across every scope and reservation state",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.replay and status survive erasure while operation or ordered target mismatch never discloses a receipt",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.mixed create and reply race from ninety nine includes pending content and cannot exceed one hundred",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.actual HTTP create and reply share ten hourly attempts while exact completed replay bypasses the exhausted mutation window",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.current run reservation credential and platform changes after preflight roll reply back before parent lookup",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.reply reserves resources in PostgreSQL UUID order and discards only its provisional child on terminal pending rejection",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.after acquiring the actual parent lock expired token facts cannot authorize a reply or retain its resource",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.concurrent first reply use has one claim mutation and logical quota charge with bounded in progress waiting",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.changed parent candidate cannot consume the admitted original reply even before the unique claim",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.faults at reply resource parent content audit completion and rejection cleanup leave no abandoned ordinary claim",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.reply result requires original commit and physical release and unknown commit or failed tail cannot publish success",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerReplyIT.populated predecessor migration permits only the reply resource rejection cell without rewriting data or other objects",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.only explicit paired TEST edit and status dispatch accepts the real session token and sends after physical release",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.produced reports ordinary replies and orphan notice replies preserve immutable and CLOSED state while growing and shrinking prepaid envelopes",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.terminal edit rejections retain only normal receipt while malformed precondition and current auth failures retain nothing",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.historical edit replay and status survive later edit erasure and exhausted or unavailable mutation admission without tuple leakage",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.run reservation credential and platform changes after released preflight roll edit back before target discovery",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.two requests preflight the same version before either claim and the later locked edit receives stale412 exactly once",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.same key actual claim contention is the only in progress retry and its uncommitted outcome is invisible to status",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.expired facts after the actual content lock cannot mutate content or retain a claim",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.fake substituted and reused edit capabilities fail before claim and a content lock timeout is not idempotency in progress",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.faults after claim counters content audit and completion roll every edit effect back but not logical admission",
+    "me.manga.kira.backend.common.infrastructure.persistence.ComplaintOwnerEditIT.retained edit output requires proven commit and release and neither ambiguous commit nor failed committed tail publishes success",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationLifetimeEndsWithOriginalRuntimeRoot",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationTargetCommitAndReleaseFailuresAreSticky",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationFailedOriginalProjectNeverIssuesCompletion"
+  ]
+}
