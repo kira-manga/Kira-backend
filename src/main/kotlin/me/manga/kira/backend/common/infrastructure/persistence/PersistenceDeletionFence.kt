@@ -15,7 +15,7 @@ internal class PersistenceDeletionFence(private val phase: PersistencePhaseConte
     @Suppress("TooGenericExceptionCaught")
     fun acquire(connection: Connection, work: PersistenceTimeBudget) {
         try {
-            phase.requireDeletionFence(this, connection)
+            val exclusiveTestSeal = phase.requireDeletionFence(this, connection)
             if (stage !== FenceStage.NEW) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             active = PersistenceDeletionFenceBudget(work, clock) // Before preparing or applying any fence-specific settings.
             stage = FenceStage.INSTALLING
@@ -23,7 +23,7 @@ internal class PersistenceDeletionFence(private val phase: PersistencePhaseConte
             stage = FenceStage.SETTINGS_RETURNED
             requireRemaining()
             stage = FenceStage.TRYING
-            observedLock = connection.prepareStatement(if (phase.path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL) TRY_TEST_SEAL_EXCLUSIVE_FENCE else TRY_SHARED_FENCE).use { statement ->
+            observedLock = connection.prepareStatement(if (exclusiveTestSeal) TRY_TEST_SEAL_EXCLUSIVE_FENCE else TRY_SHARED_FENCE).use { statement ->
                 statement.executeQuery().use { result ->
                     if (!result.next()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
                     val locked = result.getBoolean(1)

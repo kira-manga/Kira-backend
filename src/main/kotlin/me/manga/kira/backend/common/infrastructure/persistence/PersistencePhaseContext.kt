@@ -1016,7 +1016,10 @@ constructor(
 
     internal fun connectionKind(method: Method, arguments: Array<out Any?>?): PersistenceJdbcGuardCallKind = jdbcCapabilities.classify(method, arguments)
 
-    internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection) = selectedHolder.requireFence(fence, selected)
+    internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection): Boolean {
+        selectedHolder.requireFence(fence, selected)
+        return path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL
+    }
 
     internal fun requireComplaintMaintenanceFence(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection) =
         selectedHolder.requireMaintenanceFence(fence, selected)

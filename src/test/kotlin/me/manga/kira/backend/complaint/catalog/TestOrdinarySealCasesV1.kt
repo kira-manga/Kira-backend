@@ -5,11 +5,13 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
@@ -17,6 +19,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.security.TestTerminalCodecKindV1
 import me.manga.kira.backend.security.TestTerminalCryptoReferenceV1
+import me.manga.kira.backend.security.TestTerminalJsonV1
 import me.manga.kira.backend.security.terminalCanonical
 import me.manga.kira.backend.security.terminalFrame
 import me.manga.kira.backend.security.terminalHash
@@ -24,6 +27,7 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
@@ -33,6 +37,9 @@ import java.util.HexFormat
 import java.util.UUID
 
 internal enum class TestOrdinarySealHistoryCutV1 { PENDING, ORPHAN_RECEIPT, FOREIGN_WRITER, UNSUPPORTED_KIND, SECOND_PASS_XMIN }
+internal enum class TestOrdinarySealInstallationCutV1 {
+    MISSING_CREDENTIAL, PENDING_PAIR, SAME_TARGET_RECOVERY, RESERVATION_XMIN, CREDENTIAL_XMIN, OMITTED_RESERVATION, BEHIND_CURSOR, FENCE, DEADLINE,
+}
 
 /** Actual registered producer/SQL/SDK path; raw HTTP authority is explicitly synthetic and pre-D. */
 internal object TestOrdinarySealCasesV1 {
@@ -42,7 +49,10 @@ internal object TestOrdinarySealCasesV1 {
         val unused = unused(f)
         val inputs = linkedMapOf<TestOrdinarySealStepV1, Map<String, List<String>>>()
         var atomicWrites = 0
-        f.probe.before = { call -> inputs.getOrPut(call.step, f::image) }
+        f.probe.before = { call ->
+            inputs.getOrPut(call.step, f::image)
+            assertThrows<TestOrdinarySealExceptionV1> { checkNotNull(f.probe.original).localInstallationObservation() }
+        }
         f.probe.after = { call ->
             if (call.sql.startsWith("UPDATE ") || call.sql.startsWith("INSERT ") || call.sql == TestOrdinarySealSqlV1.capture) {
                 assertEquals(inputs.getValue(call.step), f.image(), "No phase write is visible on an independent connection before actual commit.")
@@ -50,6 +60,7 @@ internal object TestOrdinarySealCasesV1 {
             }
         }
         val original = f.begin()
+        assertThrows<TestOrdinarySealExceptionV1> { original.localInstallationObservation() }
         assertEquals(TestRunOrdinarySealResultV1.CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED, original.seal())
         f.probe.before = {}; f.probe.after = {}
         f.assertReleased(original)
@@ -61,6 +72,8 @@ internal object TestOrdinarySealCasesV1 {
         assertVerifiedLocalOnly(f, cutoff = 1, expectedCount = 0)
         assertEquals(before.filterKeys { it !in changed }, f.image().filterKeys { it !in changed })
         assertKmsContextMatchesWire(f)
+        assertInstallationObservation(f, original, emptyList())
+        val firstObservation = original.localInstallationObservation()
 
         val sidecar = f.sidecarImage()
         val after = f.image()
@@ -79,6 +92,9 @@ internal object TestOrdinarySealCasesV1 {
         assertEquals(firstVerified, f.control()["seal_verified_at"])
         assertEquals(after.filterKeys { it != "complaint_journal_control" }, f.image().filterKeys { it != "complaint_journal_control" })
         assertOnlyOneSidecarSpend(f, counters, unused)
+        assertInstallationObservation(f, replay, emptyList())
+        assertSame(firstObservation, original.localInstallationObservation(), "Released historical metadata does not renew the old fence on replay.")
+        assertEquals(firstObservation.installationReads().first().installationsSha256, replay.localInstallationObservation().installationReads().first().installationsSha256)
     }
 
     fun completeHistory(tls: VersionBoundPersistenceConnectedFixture, syntheticExpiredReceipt: Boolean) = withOrdinarySealRun(tls, histories = 2) { f, history ->
@@ -90,11 +106,94 @@ internal object TestOrdinarySealCasesV1 {
         assertEquals(TestRunOrdinarySealResultV1.CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED, original.seal())
         f.assertReleased(original)
         assertVerifiedLocalOnly(f, cutoff = 11, expectedCount = 2)
+        assertInstallationObservation(f, original, listOf(h.actor.id)) // Two histories, one genuinely enrolled ACTIVE installation.
         assertEquals(expected, f.canonical().getValue("eventManifestSha256").jsonPrimitive.content)
         assertEquals(before.filterKeys { it !in changed }, f.image().filterKeys { it !in changed }, "No receipt, APPLIED, recovery remainder, installation, notice or history rewrite.")
         if (syntheticExpiredReceipt) assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM complaint_idempotency_receipts " +
             "WHERE data_scope_id = ? AND operation = 'OWNER_DELETE' AND expires_at < clock_timestamp()", Long::class.java, f.scope))
     }
+
+    /** Actual same-transaction faults after the ordinary-history checks; no query result, enrollment or authority substitution. */
+    fun invalidInstallationSource(tls: VersionBoundPersistenceConnectedFixture, cut: TestOrdinarySealInstallationCutV1) =
+        withOrdinarySealRun(tls, histories = 1) { f, history ->
+            val actor = checkNotNull(history).actor.id
+            val counters = f.p.counters()
+            val reserve = unused(f)
+            var beforeVerify: Map<String, List<String>>? = null
+            var pages = 0
+            var injected = false
+            val jdbc = JdbcTemplate(f.runtime.pools.catalogCoordinator.dataSource)
+            f.probe.before = { call ->
+                if (call.step === TestOrdinarySealStepV1.VERIFY && beforeVerify == null) beforeVerify = f.image()
+                if (call.sql == TestInstallationSourceSqlV1.page) {
+                    assertEquals(TestOrdinarySealStepV1.VERIFY, call.step)
+                    pages++
+                    val selectedPage = if (cut in setOf(TestOrdinarySealInstallationCutV1.MISSING_CREDENTIAL, TestOrdinarySealInstallationCutV1.PENDING_PAIR)) 1 else 3
+                    if (pages == selectedPage && cut !in setOf(TestOrdinarySealInstallationCutV1.BEHIND_CURSOR, TestOrdinarySealInstallationCutV1.DEADLINE)) {
+                        when (cut) {
+                            TestOrdinarySealInstallationCutV1.MISSING_CREDENTIAL -> assertEquals(1, jdbc.update("DELETE FROM app_installations WHERE id = ?", actor))
+                            TestOrdinarySealInstallationCutV1.PENDING_PAIR -> {
+                                assertEquals(1, jdbc.update("UPDATE app_installations SET state = 'DELETION_PENDING' WHERE id = ?", actor))
+                                assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'DELETION_PENDING' WHERE id = ?", actor))
+                            }
+                            TestOrdinarySealInstallationCutV1.SAME_TARGET_RECOVERY -> {
+                                assertEquals(1, jdbc.update("DELETE FROM app_installations WHERE id = ?", actor))
+                                assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET state = 'RECOVERY_RESERVED' WHERE id = ?", actor))
+                            }
+                            TestOrdinarySealInstallationCutV1.RESERVATION_XMIN -> assertEquals(1, jdbc.update("UPDATE complaint_installation_ids SET created_at = created_at WHERE id = ?", actor))
+                            TestOrdinarySealInstallationCutV1.CREDENTIAL_XMIN -> assertEquals(1, jdbc.update("UPDATE app_installations SET last_authenticated_at = last_authenticated_at WHERE id = ?", actor))
+                            TestOrdinarySealInstallationCutV1.OMITTED_RESERVATION -> {
+                                assertEquals(1, jdbc.update("DELETE FROM app_installations WHERE id = ?", actor))
+                                assertEquals(1, jdbc.update("DELETE FROM complaint_installation_ids WHERE id = ?", actor))
+                            }
+                            TestOrdinarySealInstallationCutV1.FENCE -> assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET lease_token = lease_token + 1 WHERE data_scope_id = ?", f.scope))
+                            else -> error("Unexpected installation cut.")
+                        }
+                        injected = true
+                    }
+                }
+            }
+            f.probe.after = { call ->
+                if (call.sql == TestInstallationSourceSqlV1.page && pages == 1) when (cut) {
+                    TestOrdinarySealInstallationCutV1.BEHIND_CURSOR -> {
+                        val lower = UUID.fromString("00000000-0000-4000-8000-000000000000")
+                        assertTrue(lower.toString() < actor.toString())
+                        // A corrupt, uncounted reservation, not a retirement event. First page already returned; next cursor misses it.
+                        assertEquals(1, jdbc.update("INSERT INTO complaint_installation_ids (id, data_scope_id, test_only, state, created_at, terminal_at) " +
+                            "VALUES (?, ?, true, 'RETIRED', clock_timestamp(), clock_timestamp())", lower, f.scope))
+                        injected = true
+                    }
+                    TestOrdinarySealInstallationCutV1.DEADLINE -> {
+                        f.http.offsetNanos += (f.registration.process.consumers.journalConfiguration.declaration().limits.deadlines.epochSealMillis.toLong() + 1) * 1_000_000
+                        injected = true
+                    }
+                    else -> Unit
+                }
+            }
+            val original = f.begin()
+            assertThrows<TestOrdinarySealExceptionV1> { original.seal() }
+            f.probe.before = {}; f.probe.after = {}
+            f.assertNativeCloseBoundary(); f.http.assertDisposed(); f.probe.assertNoLostAssertions()
+            assertTrue(injected, "The real source SQL must reach the selected fault, not fail during setup/history.")
+            val expectedPages = when (cut) {
+                TestOrdinarySealInstallationCutV1.MISSING_CREDENTIAL, TestOrdinarySealInstallationCutV1.PENDING_PAIR, TestOrdinarySealInstallationCutV1.DEADLINE -> 1
+                TestOrdinarySealInstallationCutV1.OMITTED_RESERVATION, TestOrdinarySealInstallationCutV1.BEHIND_CURSOR -> 3
+                else -> 4
+            }
+            assertEquals(expectedPages, pages)
+            val verify = f.probe.calls.filter { it.step === TestOrdinarySealStepV1.VERIFY }.map { it.phase }.distinct().single()
+            assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, verify.databaseOutcome())
+            assertEquals(checkNotNull(beforeVerify), f.image(), "Both source faults and VERIFY proof writes roll back; earlier paid phases remain.")
+            assertEquals("SEAL_PREPARED", f.control()["seal_state"])
+            assertNull(f.control()["seal_verification_bytes"])
+            assertOnlyOneSidecarSpend(f, counters, reserve)
+            assertEquals(listOf("STS_SOURCE", "STS_ASSUME", "STS_TARGET", "GENERATE", "LIST", "PUT", "LIST", "GET", "DECRYPT"), f.http.order)
+            val calls = f.probe.calls.size
+            assertThrows<TestOrdinarySealExceptionV1> { original.localInstallationObservation() }
+            assertThrows<TestOrdinarySealExceptionV1> { original.seal() }
+            assertEquals(calls, f.probe.calls.size)
+            assertEquals(checkNotNull(beforeVerify), f.image())
+        }
 
     fun invalidHistory(tls: VersionBoundPersistenceConnectedFixture, cut: TestOrdinarySealHistoryCutV1) =
         withOrdinarySealRun(tls, histories = 1, drain = cut !== TestOrdinarySealHistoryCutV1.PENDING) { f, history ->
@@ -191,6 +290,51 @@ internal object TestOrdinarySealCasesV1 {
         assertEquals(expectedManifest(f, cutoff), json.getValue("eventManifestSha256").jsonPrimitive.content)
         assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaint_deletion_journal_applied WHERE data_scope_id = ? AND event_kind = 'EPOCH_SEAL'", Long::class.java, f.scope))
         assertEquals(0L, f.observer.queryForObject("SELECT count(*) FROM complaint_journal_publications WHERE data_scope_id = ? AND event_kind = 'EPOCH_SEAL'", Long::class.java, f.scope))
+    }
+
+    internal fun assertInstallationObservation(f: TestOrdinarySealObservationV1, original: TestRunOrdinarySealV1, expectedIds: List<UUID>) {
+        val progress = original.localInstallationObservation()
+        assertSame(progress, original.localInstallationObservation())
+        assertEquals(original.runContext, progress.context())
+        assertTrue(progress.completedCuts().isEmpty())
+        val reads = progress.installationReads()
+        assertEquals(2, reads.size)
+        val first = reads.first(); val second = reads.last()
+        assertEquals(first.copy(startedAtEpochSecond = second.startedAtEpochSecond, completedAtEpochSecond = second.completedAtEpochSecond), second)
+        assertTrue(second.startedAtEpochSecond >= first.completedAtEpochSecond)
+        assertTrue(second.completedAtEpochSecond <= f.p.databaseTime().epochSecond)
+        val run = f.observer.queryForMap("SELECT * FROM complaint_test_runs WHERE data_scope_id = ?", f.scope)
+        val control = f.control()
+        assertEquals(control["database_identity"].toString(), first.databaseIdentity)
+        assertEquals(control["restore_identity"].toString(), first.restoreIdentity)
+        assertEquals((control["desired_generation"] as Number).toLong(), first.desiredGeneration)
+        assertEquals((control["lease_token"] as Number).toLong(), first.fencingToken)
+        assertEquals((run["enrolled_count"] as Number).toLong(), first.sourceHighWater.enrolledCount)
+        assertEquals((run["activation_catalog_generation"] as Number).toLong(), progress.activationCatalogGeneration)
+        assertEquals(HexFormat.of().formatHex(run["activation_catalog_hash"] as ByteArray), progress.activationCatalogSha256)
+        assertEquals(HexFormat.of().formatHex(run["configuration_hash"] as ByteArray), progress.configurationSha256)
+        val rows = f.observer.query("SELECT i.id, i.state, c.state AS credential_state FROM complaint_installation_ids i " +
+            "LEFT JOIN app_installations c ON c.id = i.id WHERE i.data_scope_id = ? ORDER BY i.id", { row, _ ->
+            assertEquals("ACTIVE", row.getString("state")); assertEquals("ACTIVE", row.getString("credential_state"))
+            row.getObject("id", UUID::class.java)
+        }, f.scope)
+        assertEquals(expectedIds, rows)
+        assertEquals(rows.size.toLong(), first.installationCount)
+        assertEquals(first.installationCount, first.retiredCount)
+        assertEquals(0L, first.deletedCount)
+        assertEquals(rows.lastOrNull()?.toString().orEmpty(), first.sourceHighWater.greatestReservationId)
+        val prefix = listOf("kira-test-installations-v1", f.scope.toString(), progress.activationCatalogGeneration.toString(),
+            progress.activationCatalogSha256, progress.configurationSha256, progress.terminalEncodingSha256, rows.size.toString(), rows.size.toString(), "0")
+        val frames = listOf(terminalFrame(prefix)) + rows.map { terminalFrame(listOf(it.toString(), "RETIRED")) }
+        assertEquals(terminalHash(*frames.toTypedArray()), first.installationsSha256)
+        assertEquals(frames.sumOf { it.size.toLong() }, first.installationsFramedBytes)
+        val pages = f.probe.calls.filter { it.sql == TestInstallationSourceSqlV1.page }
+        assertEquals(if (rows.isEmpty()) 2 else 4, pages.size, "Both reads restart and reach an empty keyset page, even after a short page.")
+        assertTrue(pages.all { it.step === TestOrdinarySealStepV1.VERIFY })
+        assertEquals(1, pages.map { it.phase }.distinct().size)
+        val json = TestTerminalJsonV1(f.registration.process.consumers.journalConfiguration)
+        val bytes = json.encodeProgress(progress)
+        try { assertEquals(reads, json.progress(bytes).installationReads()) } finally { bytes.fill(0) }
     }
 
     internal fun unused(f: TestOrdinarySealObservationV1): ComplaintCapacityVector = f.observer.query("SELECT unused_reserve FROM complaint_test_runs WHERE data_scope_id = ?", { row, _ ->

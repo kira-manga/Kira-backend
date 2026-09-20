@@ -25,7 +25,7 @@ class AdminStepUpController(private val stepUp: AdminStepUpService, private val 
         @AuthenticationPrincipal admin: AuthenticatedUser,
         httpRequest: HttpServletRequest,
     ): ResponseEntity<AdminStepUpResponse> {
-        val issued = stepUp.issue(admin.id, request.password, clientIpResolver.resolve(httpRequest))
+        val issued = stepUp.issue(admin.id, request.password, clientIpResolver.resolve(httpRequest), request.scope)
         return ResponseEntity
             .ok()
             .cacheControl(CacheControl.noStore())
@@ -33,12 +33,15 @@ class AdminStepUpController(private val stepUp: AdminStepUpService, private val 
                 AdminStepUpResponse(
                     token = issued.token,
                     expiresAt = issued.expiresAt,
-                    scope = AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE,
+                    scope = issued.scope,
                 ),
             )
     }
 }
 
-data class AdminStepUpRequest(@field:NotBlank @field:Size(max = 256) val password: String = "")
+data class AdminStepUpRequest(
+    @field:NotBlank @field:Size(max = 256) val password: String = "",
+    @field:Size(max = 64) val scope: String = AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE,
+)
 
 data class AdminStepUpResponse(val token: String, val expiresAt: Instant, val scope: String)

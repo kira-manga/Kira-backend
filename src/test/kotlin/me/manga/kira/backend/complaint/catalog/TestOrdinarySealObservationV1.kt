@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObservation
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
@@ -207,7 +208,7 @@ internal class TestOrdinarySealProbeJdbcV1(private val p: ProjectionActivationOb
     private fun <T> observed(sql: String, args: Array<out Any?>, action: () -> T): T = try {
         val phase = checkNotNull(PersistencePhaseOwnership.current())
         val owner = checkNotNull(original)
-        assertEquals(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL, phase.path)
+        assertEquals(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL, ownedCutField(phase, "path"))
         assertEquals(sql.count { it == '?' }, args.size)
         val connection = (TransactionSynchronizationManager.getResource(dataSource!!) as ConnectionHolder).connection
         assertEquals(setOf(dataSource), TransactionSynchronizationManager.getResourceMap().keys)

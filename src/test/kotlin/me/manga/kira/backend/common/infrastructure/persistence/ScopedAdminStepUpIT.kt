@@ -1,5 +1,10 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import java.sql.Connection
+import java.time.Duration
+import java.util.UUID
+import me.manga.kira.backend.common.exception.BadRequestException
+import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.common.exception.UnauthorizedException
 import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.UserChange
@@ -8,12 +13,21 @@ import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUp
 import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.issuancePhase
 import me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpTestSupport.issueWithThrottle
 import me.manga.kira.backend.config.KiraSecurityProperties
+import me.manga.kira.backend.security.AdminStepUpGrantRepository
+import me.manga.kira.backend.security.AdminStepUpService
 import me.manga.kira.backend.security.AuthLoginAttempt
 import me.manga.kira.backend.security.AuthThrottle
 import me.manga.kira.backend.security.AuthThrottleService
+import me.manga.kira.backend.security.AuthenticatedUser
+import me.manga.kira.backend.security.ClientIpResolver
+import me.manga.kira.backend.security.IssuedScopedAdminStepUp
 import me.manga.kira.backend.security.ScopedAdminStepUpScope
 import me.manga.kira.backend.security.StepUpGrantIssuance
+import me.manga.kira.backend.sourceconfig.api.AdminStepUpController
+import me.manga.kira.backend.sourceconfig.api.AdminStepUpRequest
+import me.manga.kira.backend.sourceconfig.api.AdminStepUpResponse
 import me.manga.kira.backend.support.MutableClock
+import me.manga.kira.backend.user.domain.Role
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -26,14 +40,14 @@ import org.junit.jupiter.api.TestInstance
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
+import org.mockito.Mockito.mock
+import org.springframework.http.ResponseEntity
 import org.springframework.jdbc.datasource.ConnectionHolder
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.transaction.TransactionDefinition
 import org.springframework.transaction.support.DefaultTransactionDefinition
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
-import java.sql.Connection
-import java.time.Duration
-import java.util.UUID
 
 /** New issuer/accounting composition only; retained cleanup and native suites are not replayed by this declaration. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -689,6 +703,78 @@ class ScopedAdminStepUpIT {
         } finally {
             Thread.interrupted() // Test-only flag cleanup after outcome assertions, before the existing fixture's teardown.
         }
+    }
+
+    @Test
+    fun scopedHttpSelectionStoresActualScopeAndChargesOnlyComplaintGrants() {
+        for (scope in ScopedAdminStepUpScope.entries) {
+            withFixture { f ->
+                if (scope === ScopedAdminStepUpScope.COMPLAINT) f.counters.seed(0, closed = false)
+                val before = f.counters.snapshot()
+                val request = if (scope === ScopedAdminStepUpScope.SOURCE) {
+                    AdminStepUpRequest(ScopedStepUpFixture.PASSWORD) // Existing password-only callers keep SOURCE.
+                } else {
+                    AdminStepUpRequest(ScopedStepUpFixture.PASSWORD, scope.storedName)
+                }
+
+                val response = issueHttp(f, request)
+                val proof = checkNotNull(response.body)
+
+                assertEquals(200, response.statusCode.value())
+                assertEquals("no-store", response.headers.cacheControl)
+                assertEquals(scope.storedName, proof.scope)
+                f.assertStoredProof(IssuedScopedAdminStepUp(proof.token, proof.expiresAt, scope), f.ordinary.cutoff.plusSeconds(37))
+                if (scope === ScopedAdminStepUpScope.COMPLAINT) f.assertGrantDelta(before, 1) else assertEquals(before, f.counters.snapshot())
+                assertEquals(1, f.jdbc.insertAttempts)
+            }
+        }
+    }
+
+    @Test
+    fun unsupportedHttpScopeDoesNotReachPasswordOrPersistenceWork() = withFixture { f ->
+        val before = f.counters.snapshot()
+        for (scope in listOf("", "SOURCE_CONFIG_WRITE", "complaint-moderation-mutation ")) {
+            val failure = assertThrows<BadRequestException> {
+                issueHttp(f, AdminStepUpRequest(ScopedStepUpFixture.PASSWORD, scope))
+            }
+            assertEquals("INVALID_STEP_UP_SCOPE", failure.code)
+        }
+        assertTrue(f.dependencies.calls.isEmpty() && f.cleanups.isEmpty() && f.jdbc.snapshots.isEmpty())
+        assertEquals(0, f.jdbc.insertAttempts)
+        assertEquals(0, f.clock.samples.get())
+        assertEquals(before, f.counters.snapshot())
+        assertTrue(f.ordinary.grantIds().isEmpty())
+        requireConnectionFree()
+    }
+
+    @Test
+    fun sourceOnlyHttpComplaintRequestRefusesWithoutMintingASubstituteSourceGrant() = withFixture(poolSize = 1) { f ->
+        val before = f.counters.snapshot()
+        val failure = assertThrows<ServiceUnavailableException> {
+            issueHttp(f, AdminStepUpRequest(ScopedStepUpFixture.PASSWORD, AdminStepUpService.COMPLAINT_MODERATION_MUTATION_SCOPE))
+        }
+        assertEquals("ADMIN_STEP_UP_UNAVAILABLE", failure.code)
+        assertNull(failure.cause)
+        assertTrue(failure.suppressed.isEmpty())
+        assertTrue(f.dependencies.calls.isEmpty() && f.cleanups.isEmpty() && f.jdbc.snapshots.isEmpty())
+        assertEquals(0, f.jdbc.insertAttempts)
+        assertTrue(f.ordinary.grantIds().isEmpty())
+        assertEquals(before, f.counters.snapshot())
+        requireConnectionFree()
+
+        val source = checkNotNull(issueHttp(f, AdminStepUpRequest(ScopedStepUpFixture.PASSWORD, AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE)).body)
+        assertEquals(AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE, source.scope)
+        f.assertStoredProof(IssuedScopedAdminStepUp(source.token, source.expiresAt, ScopedAdminStepUpScope.SOURCE), f.ordinary.cutoff.plusSeconds(37))
+        assertEquals(before, f.counters.snapshot())
+    }
+
+    // Direct controller + real scoped issuer/PG phases; unchanged Spring authentication/JSON routing
+    // are not simulated or claimed here. No new HTTP server or borrowed authority is introduced.
+    private fun issueHttp(f: ScopedStepUpFixture, request: AdminStepUpRequest): ResponseEntity<AdminStepUpResponse> {
+        val service = AdminStepUpService(f.issuer, mock(AdminStepUpGrantRepository::class.java), f.clock)
+        val controller = AdminStepUpController(service, ClientIpResolver(KiraSecurityProperties()))
+        val admin = AuthenticatedUser(f.ordinary.userId, "admin@example.invalid", Role.ADMIN, f.ordinary.cutoff)
+        return controller.issue(request, admin, MockHttpServletRequest().apply { remoteAddr = "192.0.2.29" })
     }
 
     private fun withFixture(poolSize: Int = 2, test: (ScopedStepUpFixture) -> Unit) {

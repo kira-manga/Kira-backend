@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseC
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
@@ -51,9 +52,11 @@ internal object TestOrdinarySealFailureCasesV1 {
                     assertEquals(2, jdbc.update("INSERT INTO kira_test_seal_commit_cut VALUES (1), (1)"))
                 } else TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
                     override fun beforeCommit(readOnly: Boolean) {
+                        assertThrows<TestOrdinarySealExceptionV1> { checkNotNull(f.probe.original).localInstallationObservation() }
                         if (cut === TestRegistrationCompletionCut.BEFORE_COMMIT) error("Synthetic TEST seal beforeCommit refusal.")
                     }
                     override fun afterCommit() {
+                        assertThrows<TestOrdinarySealExceptionV1> { checkNotNull(f.probe.original).localInstallationObservation() }
                         if (cut === TestRegistrationCompletionCut.UNRESOLVED_RELEASE) {
                             TransactionSynchronizationManager.bindResource(resource, sentinel)
                             bound = true
@@ -66,6 +69,7 @@ internal object TestOrdinarySealFailureCasesV1 {
         val original = f.begin()
         try {
             assertThrows<TestOrdinarySealExceptionV1> { original.seal() }
+            assertThrows<TestOrdinarySealExceptionV1> { original.localInstallationObservation() }
             if (cut === TestRegistrationCompletionCut.UNRESOLVED_RELEASE) {
                 assertTrue(bound)
                 assertSame(selected, PersistencePhaseOwnership.current())
@@ -92,6 +96,9 @@ internal object TestOrdinarySealFailureCasesV1 {
             else -> PersistenceDatabaseOutcome.COMMITTED
         }
         assertEquals(outcome, checkNotNull(selected).databaseOutcome())
+        assertThrows<TestOrdinarySealExceptionV1> { original.localInstallationObservation() }
+        assertEquals(if (step === TestOrdinarySealStepV1.VERIFY) 2 else 0, f.probe.calls.count { it.sql == TestInstallationSourceSqlV1.page },
+            "Two completed SQL observations cannot escape UNKNOWN/lost acknowledgment or unresolved original release.")
         assertFalse(f.probe.calls.any { it.step.ordinal > step.ordinal })
         if (step === TestOrdinarySealStepV1.PREPARE) assertTrue(f.http.order.isEmpty(), "PREPARE must positively commit and release before even STS.")
         if (step !== TestOrdinarySealStepV1.VERIFY) assertTrue(f.http.requests.isEmpty(), "No LIST/PUT/GET after failed, unknown or unreleased FREEZE.")
@@ -118,6 +125,7 @@ internal object TestOrdinarySealFailureCasesV1 {
             }
             assertEquals(1, f.http.requests.count { it.kind == "PUT" })
             TestOrdinarySealCasesV1.assertVerifiedLocalOnly(f, 1, 0)
+            TestOrdinarySealCasesV1.assertInstallationObservation(f, retry, emptyList())
         }
     }
 
@@ -203,6 +211,8 @@ internal object TestOrdinarySealFailureCasesV1 {
         val original = f.begin()
         if (cut === TestOrdinarySealLifetimeCutV1.CANCELLATION) assertThrows<CancellationException> { original.seal() }
         else assertThrows<TestOrdinarySealExceptionV1> { original.seal() }
+        if (cut === TestOrdinarySealLifetimeCutV1.CANCELLATION) assertThrows<CancellationException> { original.localInstallationObservation() }
+        else assertThrows<TestOrdinarySealExceptionV1> { original.localInstallationObservation() }
         f.http.onNativeClose = {}
         assertTrue(observed)
         f.assertNativeCloseBoundary(); f.http.assertDisposed(); f.probe.assertNoLostAssertions()

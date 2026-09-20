@@ -47,6 +47,7 @@ import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealFailureCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHistoryCutV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealInstallationCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealProviderCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealLifetimeCutV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
@@ -1290,6 +1291,19 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun testRunOrdinarySealCompleteLocalHistoryIncludesFulfilledAndExpiredReceipts() {
         for (expired in listOf(false, true)) withFixture(testActivation = true) { TestOrdinarySealCasesV1.completeHistory(it, expired) }
+    }
+
+    @Test
+    fun testRunOrdinarySealInstallationSourceRejectsPairsMembershipAndSameTargetChanges() {
+        TestOrdinarySealInstallationCutV1.entries.filter { it !in setOf(TestOrdinarySealInstallationCutV1.FENCE, TestOrdinarySealInstallationCutV1.DEADLINE) }
+            .forEach { cut -> withFixture(testActivation = true) { TestOrdinarySealCasesV1.invalidInstallationSource(it, cut) } }
+    }
+
+    @Test
+    fun testRunOrdinarySealInstallationSourceKeepsOriginalFenceAndDeadline() {
+        for (cut in listOf(TestOrdinarySealInstallationCutV1.FENCE, TestOrdinarySealInstallationCutV1.DEADLINE)) {
+            withFixture(testActivation = true) { TestOrdinarySealCasesV1.invalidInstallationSource(it, cut) }
+        }
     }
 
     @Test

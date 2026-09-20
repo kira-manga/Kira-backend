@@ -3,7 +3,7 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import java.time.Instant
 
-/** Internal only: neither the live HTTP request nor its source-only default changes. */
+/** Internal grant identity. The HTTP allowlist defaults to SOURCE; complaint admission stays separately closed. */
 internal enum class ScopedAdminStepUpScope(val storedName: String) {
     SOURCE("source-admin-mutation"),
     COMPLAINT("complaint-moderation-mutation"),

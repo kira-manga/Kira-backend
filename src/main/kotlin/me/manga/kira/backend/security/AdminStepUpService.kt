@@ -1,6 +1,7 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.exception.BadRequestException
 import me.manga.kira.backend.common.exception.ServiceUnavailableException
 import me.manga.kira.backend.common.exception.UnauthorizedException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
@@ -13,7 +14,8 @@ import java.time.Instant
 import java.util.UUID
 
 /**
- * Password step-up for high-impact source catalog mutations.
+ * Password step-up with separate source-catalog and complaint-moderation grants.
+ * Complaint issuance remains subject to the existing closed admission/authority boundary.
  *
  * The opaque proof is generated from 256 random bits, returned once, and stored only as a SHA-256
  * hash. Proofs are scoped, short-lived, and atomically one-time-use.
@@ -27,10 +29,19 @@ class AdminStepUpService internal constructor(
     // Deliberately no enclosing transaction: the existing named phases release every holder,
     // lease and permit before password/throttle calls, then lock and recheck fresh Admin state.
     @Suppress("SwallowedException") // The public problem must not expose a persistence failure graph.
-    fun issue(userId: UUID, rawPassword: String, clientIp: String): IssuedAdminStepUp {
+    fun issue(
+        userId: UUID,
+        rawPassword: String,
+        clientIp: String,
+        scope: String = SOURCE_ADMIN_MUTATION_SCOPE,
+    ): IssuedAdminStepUp {
         try {
-            val issued = issuer.issueSource(userId, rawPassword, clientIp)
-            return IssuedAdminStepUp(issued.token, issued.expiresAt)
+            val issued = when (scope) {
+                SOURCE_ADMIN_MUTATION_SCOPE -> issuer.issueSource(userId, rawPassword, clientIp)
+                COMPLAINT_MODERATION_MUTATION_SCOPE -> issuer.issueComplaint(userId, rawPassword, clientIp)
+                else -> throw BadRequestException("Unsupported password verification scope.", code = "INVALID_STEP_UP_SCOPE")
+            }
+            return IssuedAdminStepUp(issued.token, issued.expiresAt, issued.scope.storedName)
         } catch (_: PersistencePhaseException) {
             // No proof, automatic retry or guessed rollback after an unresolved/unknown phase.
             throw ServiceUnavailableException("Password verification is temporarily unavailable.", code = "ADMIN_STEP_UP_UNAVAILABLE")
@@ -65,11 +76,16 @@ class AdminStepUpService internal constructor(
 
     companion object {
         const val SOURCE_ADMIN_MUTATION_SCOPE = "source-admin-mutation"
+        const val COMPLAINT_MODERATION_MUTATION_SCOPE = "complaint-moderation-mutation"
         const val HEADER = "X-Kira-Admin-Step-Up"
         private const val MAX_TOKEN_CHARS = 128
     }
 }
 
-class IssuedAdminStepUp(val token: String, val expiresAt: Instant) {
+class IssuedAdminStepUp(
+    val token: String,
+    val expiresAt: Instant,
+    val scope: String = AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE,
+) {
     override fun toString(): String = "IssuedAdminStepUp(redacted)"
 }

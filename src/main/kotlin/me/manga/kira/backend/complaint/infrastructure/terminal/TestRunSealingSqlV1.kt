@@ -28,7 +28,8 @@ internal object TestRunSealingSqlV1 {
                 OR (r.state = 'SEALED' AND isfinite(r.sealed_at) AND r.sealed_at >= r.created_at
                     AND r.sealed_at >= '1970-01-01T00:00:00Z'::timestamptz AND r.sealed_at < '10000-01-01T00:00:00Z'::timestamptz))
             AND $noTerminal) IS TRUE AS valid,
-            r.state, CASE WHEN isfinite(r.sealed_at) THEN r.sealed_at END AS sealed_at,
+            r.state, r.installation_limit, r.enrolled_count,
+            CASE WHEN isfinite(r.sealed_at) THEN r.sealed_at END AS sealed_at,
             CASE WHEN complaint_vector_valid(r.original_reserve) THEN r.original_reserve END AS original_reserve,
             CASE WHEN complaint_vector_valid(r.unused_reserve) THEN r.unused_reserve END AS unused_reserve
         FROM complaint_test_runs r CROSS JOIN expected e WHERE r.data_scope_id = e.scope
@@ -69,7 +70,8 @@ internal object TestRunSealingSqlV1 {
     val readScopeControl = """
         $expectedControl
         SELECT (c.test_only AND c.implementation_schema = e.implementation_schema AND c.desired_generation = e.desired_generation
-            AND c.desired_configuration_hash = e.configuration_hash AND $controlIdentity) IS TRUE AS valid
+            AND c.desired_configuration_hash = e.configuration_hash AND $controlIdentity) IS TRUE AS valid,
+            c.database_identity, c.restore_identity, c.desired_generation, c.lease_token
         FROM complaint_journal_control c CROSS JOIN expected e WHERE c.data_scope_id = e.scope
     """.trimIndent()
     val lockScopeControl = "$readScopeControl FOR UPDATE OF c"

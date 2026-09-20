@@ -18,6 +18,7 @@ import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteRows
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
@@ -48,10 +49,16 @@ internal class TestOrdinarySealOperationV1 private constructor(
     private var counters: JdbcComplaintCapacityStore.LockedTestOrdinarySeal? = null
     private lateinit var run: Run
     private var spend = false
+    private var installationObservation: TestTerminalProgressV1? = null
 
     internal fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     internal fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE
     internal fun requireReleased() { phase.testOrdinarySeal.requireCommitted(this); requireConnectionFree() }
+    internal fun releasedInstallationObservation(): TestTerminalProgressV1 {
+        requireOrdinarySeal(step === TestOrdinarySealStepV1.VERIFY && stage === Stage.COMPLETE)
+        requireReleased()
+        return installationObservation ?: throw TestOrdinarySealExceptionV1()
+    }
 
     private fun execute() {
         retained(Stage.NEW)
@@ -74,7 +81,8 @@ internal class TestOrdinarySealOperationV1 private constructor(
         stage = Stage.RUN
         run = jdbc.query(TestRunSealingSqlV1.lockRun, { value, _ ->
             requireOrdinarySeal(TestOrdinarySealRowsV1.boolean(value, "valid") && value.getString("state") == "SEALED")
-            Run(checkNotNull(value.getTimestamp("sealed_at")).toInstant(), vector(value, "original_reserve"), vector(value, "unused_reserve"))
+            Run(checkNotNull(value.getTimestamp("sealed_at")).toInstant(), vector(value, "original_reserve"), vector(value, "unused_reserve"),
+                value.getLong("installation_limit"), value.getLong("enrolled_count"))
         }, *original.registration.sealingRunArguments()).single()
         retained(Stage.RUN)
         stage = Stage.AUDIT
@@ -103,7 +111,10 @@ internal class TestOrdinarySealOperationV1 private constructor(
             TestOrdinarySealStepV1.CAPTURE -> Unit
             TestOrdinarySealStepV1.PREPARE -> prepare()
             TestOrdinarySealStepV1.FREEZE -> freeze()
-            TestOrdinarySealStepV1.VERIFY -> verify()
+            TestOrdinarySealStepV1.VERIFY -> {
+                verify()
+                installationObservation = readInstallationSource()
+            }
         }
         stage = Stage.TRANSFER
         checkNotNull(counters).settle(this)
@@ -222,6 +233,49 @@ internal class TestOrdinarySealOperationV1 private constructor(
         return builder.finish()
     }
 
+    /** Two entire reservation-led reads under the already-held SEALED run lock, not a state-filtered credential inventory. */
+    private fun readInstallationSource(): TestTerminalProgressV1 {
+        stage = Stage.INSTALLATIONS
+        val binding = installationBinding()
+        val source = TestInstallationSourceV1(original.routing.journalConfiguration, original.runContext, binding, run.installationLimit, run.enrolledCount)
+        repeat(2) { pass ->
+            val observed = if (pass == 0) binding else installationBinding()
+            source.beginPass(observed, now().epochSecond)
+            requireCompleteCredentials()
+            var after: UUID? = null
+            while (true) {
+                retained(Stage.INSTALLATIONS)
+                val page = jdbc.query(TestInstallationSourceSqlV1.page, { value, _ -> TestInstallationSourceV1.Row.read(value) }, original.scope, after, after)
+                retained(Stage.INSTALLATIONS)
+                if (page.isEmpty()) break
+                page.forEach { value ->
+                    retained(Stage.INSTALLATIONS)
+                    source.entry(value)
+                    after = UUID.fromString(value.id)
+                }
+            }
+            requireCompleteCredentials()
+            source.endPass(installationBinding(), now().epochSecond)
+            retained(Stage.INSTALLATIONS)
+        }
+        return source.finish().also { retained(Stage.INSTALLATIONS) }
+    }
+
+    private fun installationBinding(): TestInstallationSourceV1.Binding {
+        retained(Stage.INSTALLATIONS)
+        return jdbc.query(TestRunSealingSqlV1.readScopeControl, { value, _ ->
+            requireOrdinarySeal(TestOrdinarySealRowsV1.boolean(value, "valid") && value.getLong("lease_token") == original.leaseToken)
+            TestInstallationSourceV1.Binding(checkNotNull(value.getObject("database_identity", UUID::class.java)).toString(),
+                checkNotNull(value.getObject("restore_identity", UUID::class.java)).toString(), value.getLong("desired_generation"), value.getLong("lease_token"))
+        }, *original.registration.sealingControlArguments()).single().also { retained(Stage.INSTALLATIONS) }
+    }
+
+    private fun requireCompleteCredentials() {
+        retained(Stage.INSTALLATIONS)
+        requireOrdinarySeal(jdbc.query(TestInstallationSourceSqlV1.credentialsComplete, { value, _ -> TestOrdinarySealRowsV1.boolean(value, "valid") }, original.scope).single())
+        retained(Stage.INSTALLATIONS)
+    }
+
     private fun addEntry(builder: TestOrdinarySealManifestV1.Builder, id: String, key: String) {
         retained(Stage.MANIFEST)
         val receipt = jdbc.query(TestOrdinarySealSqlV1.receipt, { value, _ ->
@@ -300,8 +354,9 @@ internal class TestOrdinarySealOperationV1 private constructor(
         phase.testOrdinarySeal.requireRetained(this, selected)
         requireOrdinarySeal(stage === expected && step === original.step && selected === jdbc)
     }
-    private class Run(val sealedAt: Instant, val reserve: ComplaintCapacityVector, val unused: ComplaintCapacityVector)
-    private enum class Stage { NEW, CONTROLS, COUNTERS_REQUESTED, COUNTERS_LOCKING, RUN, AUDIT, SIDECAR, MANIFEST, TRANSFER, COMPLETE }
+    private class Run(val sealedAt: Instant, val reserve: ComplaintCapacityVector, val unused: ComplaintCapacityVector,
+        val installationLimit: Long, val enrolledCount: Long)
+    private enum class Stage { NEW, CONTROLS, COUNTERS_REQUESTED, COUNTERS_LOCKING, RUN, AUDIT, SIDECAR, MANIFEST, INSTALLATIONS, TRANSFER, COMPLETE }
     companion object {
         internal fun execute(jdbc: JdbcTemplate, original: TestRunOrdinarySealV1): TestOrdinarySealOperationV1 {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)

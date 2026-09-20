@@ -55,7 +55,8 @@ paid audit remain separate prerequisites.
    conditionally PUTs only when absent, then repeats LIST once, including after
    lost PUT acknowledgment. Exact-version GET verifies raw/SDK facts, frozen bytes,
    digest/checksum, metadata, COMPLIANCE, retention and KMS/AEAD. All native clients
-   must actually close and release J before **VERIFY** persists the V14 proof.
+   must actually close and release J before **VERIFY** persists the V14 proof and
+   performs the local installation-source observations below in that same phase.
 
 Rollback, UNKNOWN commit, lost afterCommit acknowledgment, unresolved physical or
 Spring release, deadline, cancellation, closed registration and lost database
@@ -103,6 +104,45 @@ remaining-attempt, UTC uncertainty and accepted-late-arrival margins before PUT.
 Leap-day handling is calendar arithmetic. Adoption uses the object's immutable
 LastModified, not a retry timestamp. Policy and clock bounds are still declarations.
 
+## Local installation-source observations, not disposition application
+
+After the existing history/proof checks, the same VERIFY operation reads **every
+reservation in the run twice**, in UUID keyset pages of 16, restarting each pass
+and continuing through an empty page. Reservations lead the query; credentials
+are left-joined by ID, not used to filter membership. Orphan/wrong-scope credentials,
+invalid pairs and pending deletion refuse. Both reservation and credential xmin,
+raw state/pair metadata and full membership must agree even when target dispositions
+are equal. The actual locked enrollment count must match both complete reads;
+the greatest UUID is only an end key, never a temporal watermark/restart cursor.
+
+DELETED targets DELETED; ACTIVE, RETIRED and no-credential RECOVERY_RESERVED target
+RETIRED in the pure fold. The current first ordinary-seal history gate still refuses
+a **preexisting RECOVERY_RESERVED** row before VERIFY: synthetic pure specimens do
+not establish a deployed recovery-acceptance path. No reservation or credential is
+updated by this observation. Actual terminal application/credential erasure still
+requires accepted terminal evidence and PURGING; ordinary retirement instead needs
+its own verified event.
+
+The existing installation-root fold and canonical entry-list hashes produce
+deterministic plaintext groups of at most 500. A page and one chunk are the largest
+retained entry collections. Two local LP32BE UTF-8 SHA-256 folds compare raw source
+metadata (`kira-local-test-installation-source-v1`) and plaintext grouping
+(`kira-local-test-installation-groups-v1`); these **ephemeral local choices do not
+define a future persisted/wire protocol**. Both reads bind run/activation/full-D,
+actual database/restore identity, desired generation and the original fence. Actual
+registered limits/J byte and retained-version ceilings, the original attempt
+deadline and the unchanged two-second SQL phase cap bound all work.
+
+`localInstallationObservation()` returns an existing `TestTerminalProgressV1`
+with no denial cuts and exactly two installation reads, only after positive VERIFY
+commit, original-holder release and successful completion of the original call.
+Unknown commit, lost acknowledgment, deadline/fence/lifetime failure or unresolved
+release returns no observation. The existing JSON codec checks canonical bounds.
+This is historical local metadata, **not a reusable barrier or terminal authority**;
+later preparation must reacquire ownership and revalidate. Nothing is persisted to
+the run blob: strict `noTerminal`, all NULL terminal fields, audit/spend/refund,
+provider calls and the four existing phases are unchanged.
+
 ## Deliberate non-goals and qualification inventory
 
 The run remains SEALED; all final-ordinary/terminal-seal/manifest/denial/purge fields
@@ -119,6 +159,12 @@ PROJECT/registration/sealing and raw public SDK HTTP fixtures. Nonempty history
 inherits explicitly **synthetic earlier open/checkpoint/seal comparisons**; the
 expired-receipt variant separately backdates coherent historical comparison times
 and recomputes the proof digest. Neither is evidence of real historical acceptance.
+Installation-source assertions reuse these empty/enrolled runs and completion
+faults; same-transaction corruptions cover omitted/behind-cursor reservations,
+same-target state changes, pair/pending and both xmin changes, plus source-time
+fence/deadline loss. The failed VERIFY rolls them back. Cheap pure specimens cover
+500/501 grouping, mixed/no-credential targets, scope/binding/order/count and actual
+J bounds without enlarging enrollment fixtures or changing signed capacity.
 Cleanup disables only the V21 immutable trigger inside an owner TEST teardown
 transaction to remove owned sidecars; it is never production settlement.
 

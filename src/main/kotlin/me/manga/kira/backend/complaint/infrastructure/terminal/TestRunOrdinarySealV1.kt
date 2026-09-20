@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEpochSealV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProfileV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
@@ -71,6 +72,7 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
     private var content: TestTerminalContentV1? = null
     private var custody: TestOrdinarySealCustodyV1? = null
     private var proof: TestOrdinarySealProofV1? = null
+    private var installationObservation: TestTerminalProgressV1? = null
     private val rows = ArrayList<TestTerminalDurableRowV1>()
 
     init {
@@ -114,9 +116,11 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
             custody.close() // Actual native close is a prerequisite to the final database proof write.
             checkNotNull(proof).requireOriginal(this)
             step = TestOrdinarySealStepV1.VERIFY
-            coordinator.testOrdinarySeal.execute(this).requireReleased()
+            val verified = coordinator.testOrdinarySeal.execute(this)
+            verified.requireReleased()
             requireRunning()
             requireConnectionFree()
+            installationObservation = verified.releasedInstallationObservation()
             complete = true
         } catch (problem: Throwable) {
             observeFailure(problem)
@@ -129,6 +133,14 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
         throwIfSignalled()
         requireOrdinarySeal(complete)
         return TestRunOrdinarySealResultV1.CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED
+    }
+
+    /** Released historical local observations only. Not a reusable barrier, terminal intent, denial or purge authority. */
+    fun localInstallationObservation(): TestTerminalProgressV1 {
+        requireOrdinarySeal(caller === Thread.currentThread() && started && finished && !cleanupUncertain && phase == null && !phaseEntered)
+        throwIfSignalled()
+        requireConnectionFree()
+        return installationObservation ?: throw TestOrdinarySealExceptionV1()
     }
 
     private fun bindCanonical() {

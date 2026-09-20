@@ -4,7 +4,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ScopedAdminSte
 import org.springframework.security.crypto.password.PasswordEncoder
 import java.util.UUID
 
-/** Split issuer behind the existing three-argument source endpoint; complaint admission remains separately closed. */
+/** Split issuer behind the existing scoped endpoint; complaint admission remains separately closed. */
 internal class ScopedAdminStepUpIssuer(
     private val phases: ScopedAdminStepUpPhaseExecutor,
     private val passwords: PasswordEncoder,
