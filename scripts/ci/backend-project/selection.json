@@ -1,0 +1,170 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 1120,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes()"
+      ]
+    },
+    {
+      "annotation_line": 1133,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot()"
+      ]
+    },
+    {
+      "annotation_line": 1188,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures()"
+      ]
+    },
+    {
+      "annotation_line": 1201,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening()"
+      ]
+    },
+    {
+      "annotation_line": 1206,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationLifetimeEndsWithOriginalRuntimeRoot",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationLifetimeEndsWithOriginalRuntimeRoot()"
+      ]
+    },
+    {
+      "annotation_line": 1211,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect()"
+      ]
+    },
+    {
+      "annotation_line": 1218,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry()"
+      ]
+    },
+    {
+      "annotation_line": 1225,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationTargetCommitAndReleaseFailuresAreSticky",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationTargetCommitAndReleaseFailuresAreSticky()"
+      ]
+    },
+    {
+      "annotation_line": 1232,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation()"
+      ]
+    },
+    {
+      "annotation_line": 1239,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration()"
+      ]
+    },
+    {
+      "annotation_line": 1244,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationFailedOriginalProjectNeverIssuesCompletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testRegistrationFailedOriginalProjectNeverIssuesCompletion()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT"
+  ],
+  "expected_pg_methods": 11,
+  "expected_total": 11,
+  "expected_unit_methods": 0,
+  "selection_basis": {
+    "accepted_focused53_run": "35485068674",
+    "diagnostic_run": "35483646987",
+    "prior_failed_run": "35478489429",
+    "remaining43_plan_sha256": "64384408915822709bb6165758b29573481b6daba25a74be46255a76c6540893",
+    "scope": "Remaining43 batch C: 11 ConnectedIT PostgreSQL methods, one XML invocation each; disjoint from other remaining43 batches and accepted focused53. Excludes run09 delivery PASS and run07 prior PASS observations; run07 is not an accepted cohort."
+  },
+  "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+  "source_status": "SOURCE_ONLY_REVIEWED_NOT_ACCEPTED",
+  "static_sources": {},
+  "status": "SOURCE_BOUND_DISPATCH_BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 11
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationLifetimeEndsWithOriginalRuntimeRoot",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationTargetCommitAndReleaseFailuresAreSticky",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationFailedOriginalProjectNeverIssuesCompletion"
+  ]
+}

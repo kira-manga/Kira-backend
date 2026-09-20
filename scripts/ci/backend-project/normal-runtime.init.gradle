@@ -1,0 +1,163 @@
+// Fresh public-source verification runtime; no source, GAV or Test.classpath substitution.
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import java.util.jar.Manifest
+import java.util.zip.ZipFile
+import org.gradle.api.GradleException
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedArtifactResult
+import org.gradle.api.tasks.testing.Test
+import org.gradle.maven.MavenModule
+import org.gradle.maven.MavenPomArtifact
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+
+def control = new File(System.getenv('KIRA_PUBLIC_CONTROL')).canonicalFile
+def run = new File(System.getenv('KIRA_PUBLIC_RUN')).canonicalFile
+def binding = new JsonSlurper().parse(new File(control, 'binding.json'))
+def selection = new JsonSlurper().parse(new File(control, 'selection.json'))
+def inventory = new JsonSlurper().parse(new File(run, 'source-inventory.json')).files
+def require = { boolean ok, String reason -> if (!ok) throw new GradleException(reason) }
+require(binding.status == 'BOUND' && (binding.source.sha ==~ /[0-9a-f]{40}/), 'INERT: source/dispatch unbound')
+def output = new File(run, 'backend-build').canonicalFile
+def runtime = new File(System.getenv('KIRA_PUBLIC_RUNTIME')).canonicalFile
+def runtimeManifest = new JsonSlurper().parse(new File(runtime, 'runtime-manifest.json'))
+require(runtimeManifest.status == 'NEW_UNQUALIFIED_VERIFICATION_RUNTIME' && !runtimeManifest.qualified, 'Fresh nonshipping runtime only')
+gradle.beforeProject { p -> p.layout.buildDirectory.set(output) }
+def receipts = new File(output, 'public-source-verification')
+def digest = { File f -> MessageDigest.getInstance('SHA-256').digest(f.bytes).encodeHex().toString() }
+def emit = { String name, value ->
+    receipts.mkdirs()
+    new File(receipts, name + '.json').text = JsonOutput.prettyPrint(JsonOutput.toJson(value)) + '\n'
+}
+def jarPin = runtimeManifest.driverJar.sha256
+def pomPin = runtimeManifest.driverPom.sha256
+def checkerPin = '857658c8bdcbff794949a8d9922f88d63ee3751c203c7cd7d21ea97f9e745288'
+
+gradle.projectsEvaluated {
+    def p = gradle.rootProject
+    require(p.name == 'kira-backend' && p.allprojects.size() == 1, 'Backend root only')
+    require(p.layout.buildDirectory.get().asFile.canonicalFile == output, 'Run-owned output only')
+    require(!gradle.startParameter.writeDependencyLocks && gradle.startParameter.lockedDependenciesToUpdate.empty,
+        'No lock writing or update')
+    require(gradle.startParameter.excludedTaskNames == (['jacocoTestReport'] as Set), 'Only coverage report excluded')
+    require(p.findProperty('kiraUseMavenLocal') == 'false' &&
+        p.findProperty('kiraOwnedPgVerificationRepository') == new File(runtime, 'maven').path &&
+        p.repositories.findByName('KiraOwnedPgVerification')?.url == new File(runtime, 'maven').toURI(),
+        'Use the normal build-script owned-PG verification repository, not mavenLocal')
+
+    def sources = [:]
+    ['main', 'test'].each { section ->
+        def expected = inventory.keySet().findAll { it.startsWith("src/${section}/") }.collect { new File(p.projectDir, it).canonicalFile } as Set
+        def set = p.extensions.getByName('sourceSets').getByName(section)
+        require((set.allSource.files.collect { it.canonicalFile } as Set) == expected, 'No source/resource exclusions: ' + section)
+        def task = p.tasks.named(section == 'main' ? 'compileKotlin' : 'compileTestKotlin').get()
+        require((task.sources.files.findAll { it.name.endsWith('.kt') }.collect { it.canonicalFile } as Set) ==
+            (expected.findAll { it.name.endsWith('.kt') } as Set), 'No Kotlin task source substitution')
+        sources[section] = expected.collect { p.projectDir.toPath().relativize(it.toPath()).toString() }.sort()
+    }
+    emit('source-sets', sources)
+
+    def normal = [:]
+    File driver = null
+    File checker = null
+    ['productionRuntimeClasspath', 'runtimeClasspath', 'testRuntimeClasspath'].each { name ->
+        def configuration = p.configurations.getByName(name)
+        def artifacts = configuration.incoming.artifacts.artifacts
+        def matching = { group, module -> artifacts.findAll {
+            def id = it.id.componentIdentifier
+            id instanceof ModuleComponentIdentifier && id.group == group && id.module == module
+        } }
+        def owned = matching('me.manga.kira.internal', 'postgresql-owned-cut')
+        def checks = matching('org.checkerframework', 'checker-qual')
+        require(matching('org.postgresql', 'postgresql').empty && owned.size() == 1 && checks.size() == 1,
+            'Exactly one owned driver/Checker, zero stock PG: ' + name)
+        require(owned[0].id.componentIdentifier.version == '42.7.12-kira.1' && digest(owned[0].file) == jarPin &&
+            checks[0].id.componentIdentifier.version == '3.55.1' && digest(checks[0].file) == checkerPin, 'Changed normal runtime bytes')
+        def query = p.dependencies.createArtifactResolutionQuery().forComponents(owned[0].id.componentIdentifier)
+            .withArtifacts(MavenModule, MavenPomArtifact).execute()
+        require(query.components.size() == 1 && query.resolvedComponents.size() == 1, 'One normal owned POM')
+        def poms = query.resolvedComponents.first().getArtifacts(MavenPomArtifact)
+        require(poms.size() == 1 && poms.first() instanceof ResolvedArtifactResult && digest(poms.first().file) == pomPin,
+            'Normal resolved POM differs from fresh source-built nonshipping runtime')
+        normal[name] = [artifacts: artifacts.collect {
+            [component: it.id.componentIdentifier.displayName, path: it.file.canonicalPath, sha256: digest(it.file)]
+        }, pom: [path: poms.first().file.canonicalPath, sha256: digest(poms.first().file)], stock_count: 0]
+        driver = owned[0].file.canonicalFile
+        checker = checks[0].file.canonicalFile
+    }
+    emit('normal-classpaths', normal)
+    def test = p.tasks.named('test').get()
+    test.maxParallelForks = 1
+    test.maxHeapSize = '512m'
+    test.forkEvery = 0
+    test.filter.setIncludePatterns(selection.test_selectors as String[])
+    test.filter.failOnNoMatchingTests = true
+    test.systemProperty('junit.jupiter.execution.parallel.enabled', 'false')
+    test.systemProperty('user.home', new File(run, 'test-home').path)
+    test.systemProperty('java.io.tmpdir', new File(run, 'tmp').path)
+    test.extensions.getByType(JacocoTaskExtension).enabled = false
+    test.outputs.upToDateWhen { false }
+    test.testLogging {
+        events 'started', 'passed', 'skipped', 'failed'
+        showStandardStreams = true
+        exceptionFormat 'full'
+    }
+    test.doFirst {
+        def actual = test.classpath.files.collect { it.canonicalFile }
+        require(actual == p.extensions.getByName('sourceSets').test.runtimeClasspath.files.collect { it.canonicalFile },
+            'No Test.classpath overlay')
+        require(test.enabled && (test.filter.commandLineIncludePatterns as Set) == (selection.test_selectors as Set) &&
+            test.filter.excludePatterns.empty && test.excludes.empty && test.includes.empty &&
+            test.javaLauncher.get().metadata.languageVersion.asInt() == 21 &&
+            !test.environment.containsKey('KIRA_PG_LIFECYCLE_LOCAL_RUN'), 'Exact ordinary test selection / default Testcontainers only')
+        def forbidden = ['-javaagent:', '-agentlib:', '-agentpath:', '-Xbootclasspath', '--patch-module', '--module-path',
+            '--upgrade-module-path', '-Djava.system.class.loader', '-Djdk.util.jar.', '-XX:SharedArchiveFile=']
+        require(!test.allJvmArgs.any { arg -> forbidden.any { arg.startsWith(it) } }, 'No loader/agent substitution')
+        def providers = []
+        actual.each { File file ->
+            def supplied = [pg: 0, checker: 0, service: 0]
+            def inspect = { String name ->
+                def base = name.replaceFirst('^META-INF/versions/[0-9]+/', '')
+                if (base.endsWith('.class') && base.startsWith('org/postgresql/')) supplied.pg++
+                if (base.endsWith('.class') && base.startsWith('org/checkerframework/')) supplied.checker++
+            }
+            if (file.isFile() && file.name.endsWith('.jar')) new ZipFile(file).withCloseable { zip ->
+                zip.entries().each { entry -> inspect(entry.name) }
+                def service = zip.getEntry('META-INF/services/java.sql.Driver')
+                if (service) zip.getInputStream(service).withCloseable { input ->
+                    supplied.service = input.getText('UTF-8').readLines().count { it.split('#', 2)[0].trim().startsWith('org.postgresql.') }
+                }
+                def manifest = zip.getEntry('META-INF/MANIFEST.MF')
+                if (manifest) zip.getInputStream(manifest).withCloseable {
+                    require(!new Manifest(it).mainAttributes.getValue('Class-Path')?.trim(), 'No implicit manifest classpath')
+                }
+            } else {
+                require(file.toPath().startsWith(output.toPath()), 'Only normal generated output directories')
+                if (file.exists()) file.eachFileRecurse(groovy.io.FileType.FILES) { inspect(file.toPath().relativize(it.toPath()).toString()) }
+            }
+            require((supplied.pg == 0 && supplied.service == 0 || file == driver) && (supplied.checker == 0 || file == checker),
+                'No shadow or duplicate PG/Checker supplier')
+            providers.add([path: file.path, sha256: file.isFile() ? digest(file) : null, supplied: supplied])
+        }
+        require(providers.count { it.supplied.pg > 0 } == 1 && providers.count { it.supplied.checker > 0 } == 1 &&
+            providers.sum { it.supplied.service } == 1, 'Exactly one normal PG provider')
+        emit('effective-test-classpath', [mutated: false, entries: providers, selectors: selection.test_selectors,
+            heap: test.maxHeapSize, forks: test.maxParallelForks, forkEvery: test.forkEvery, jvmArgs: test.allJvmArgs])
+    }
+    gradle.taskGraph.whenReady { graph ->
+        def allowed = [':checkKotlinGradlePluginConfigurationErrors', ':compileKotlin', ':compileJava', ':processResources',
+            ':classes', ':jar', ':compileTestKotlin', ':compileTestJava', ':processTestResources', ':testClasses', ':test'] as Set
+        def paths = graph.allTasks.collect { it.path }
+        require(allowed.containsAll(paths) && paths.containsAll([':compileKotlin', ':compileTestKotlin', ':test']) &&
+            graph.allTasks.findAll { it instanceof Test }.collect { it.path } == [':test'], 'One normal bounded compilation/test graph only')
+        emit('task-graph', paths)
+    }
+    gradle.buildFinished {
+        emit('task-outcomes', ['compileKotlin', 'compileTestKotlin', 'test'].collectEntries { name ->
+            def state = p.tasks.named(name).get().state
+            [(name): [executed: state.executed, skipped: state.skipped, upToDate: state.upToDate,
+                noSource: state.noSource, didWork: state.didWork, failure: state.failure?.class?.name]]
+        })
+    }
+}
