@@ -1,0 +1,556 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 127,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "optional ordinary seal owner changes only its cold D inventory and cannot borrow another retained owner",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/VersionBoundTestNamespaceProcessV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "1a647ecc0a6a69b9ce70a6b2a7beb535b4e6b6b916efc61213e7431e5ffc07b8",
+      "xml_names": [
+        "optional ordinary seal owner changes only its cold D inventory and cannot borrow another retained owner()"
+      ]
+    },
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.security.TestTerminalRoutingV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedOrdinaryConsumerMatchesExistingSealCandidatesButCannotDeriveTerminalEvents",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/TestTerminalRoutingV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "0cde3ab99b19c6bc7d5dfa3127824eaa5ad1963558b8786a74765f2a96d38213",
+      "xml_names": [
+        "retainedOrdinaryConsumerMatchesExistingSealCandidatesButCannotDeriveTerminalEvents()"
+      ]
+    },
+    {
+      "annotation_line": 24,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "emptyAndSortedRowsMatchIndependentLp32ManifestAndComparison",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestOrdinarySealManifestV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "18c08861c72931341dfe54a6459010ce0c492ff2b820e31103ada79c0c15a16b",
+      "xml_names": [
+        "emptyAndSortedRowsMatchIndependentLp32ManifestAndComparison()"
+      ]
+    },
+    {
+      "annotation_line": 35,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "changedSecondPassOrMvccImageCannotBeAcceptedOrRepaired",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestOrdinarySealManifestV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "18c08861c72931341dfe54a6459010ce0c492ff2b820e31103ada79c0c15a16b",
+      "xml_names": [
+        "changedSecondPassOrMvccImageCannotBeAcceptedOrRepaired()"
+      ]
+    },
+    {
+      "annotation_line": 57,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "duplicateOrReversedKeysPoisonTheBuilderAndCutoffMustBePositive",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestOrdinarySealManifestV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "18c08861c72931341dfe54a6459010ce0c492ff2b820e31103ada79c0c15a16b",
+      "xml_names": [
+        "duplicateOrReversedKeysPoisonTheBuilderAndCutoffMustBePositive()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "positiveRowAndByteCapsIncludeTheManifestPrefixWithoutAllowingRetry",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestOrdinarySealManifestV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "18c08861c72931341dfe54a6459010ce0c492ff2b820e31103ada79c0c15a16b",
+      "xml_names": [
+        "positiveRowAndByteCapsIncludeTheManifestPrefixWithoutAllowingRetry()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "newRetentionKeepsCalendarYearsAndConservativeAttemptUtcAndLateArrivalMargins",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/VersionBoundTestOrdinarySealV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "abdbacad9a2a6a83e4422a31cf48042a32fd885fedcd2aade305c2cd0faa8ae4",
+      "xml_names": [
+        "newRetentionKeepsCalendarYearsAndConservativeAttemptUtcAndLateArrivalMargins()"
+      ]
+    },
+    {
+      "annotation_line": 44,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "verificationRequiresBothIndependentFloorsAndCannotDowngradeRequestedRetention",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/VersionBoundTestOrdinarySealV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "abdbacad9a2a6a83e4422a31cf48042a32fd885fedcd2aade305c2cd0faa8ae4",
+      "xml_names": [
+        "verificationRequiresBothIndependentFloorsAndCannotDowngradeRequestedRetention()"
+      ]
+    },
+    {
+      "annotation_line": 1286,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealEmptyRunAtomicPhasesAndImmutableReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealEmptyRunAtomicPhasesAndImmutableReplay()"
+      ]
+    },
+    {
+      "annotation_line": 1291,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealCompleteLocalHistoryIncludesFulfilledAndExpiredReceipts",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealCompleteLocalHistoryIncludesFulfilledAndExpiredReceipts()"
+      ]
+    },
+    {
+      "annotation_line": 1309,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealRefusesPendingOrphanForeignUnsupportedAndSecondPassChange",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealRefusesPendingOrphanForeignUnsupportedAndSecondPassChange()"
+      ]
+    },
+    {
+      "annotation_line": 1314,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealRequiresColdInputAndCannotRecreateVerifiedVersion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealRequiresColdInputAndCannotRecreateVerifiedVersion()"
+      ]
+    },
+    {
+      "annotation_line": 1320,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealPrepareAndFreezeRequireCommittedOriginalRelease",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealPrepareAndFreezeRequireCommittedOriginalRelease()"
+      ]
+    },
+    {
+      "annotation_line": 1329,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealVerifyCompletionCannotReencryptOrDoubleCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealVerifyCompletionCannotReencryptOrDoubleCharge()"
+      ]
+    },
+    {
+      "annotation_line": 1336,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealLostPutAcknowledgmentUsesOneExactRepeat",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealLostPutAcknowledgmentUsesOneExactRepeat()"
+      ]
+    },
+    {
+      "annotation_line": 1341,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealRejectsWrongRoleVersionWireMetadataAndRetention",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealRejectsWrongRoleVersionWireMetadataAndRetention()"
+      ]
+    },
+    {
+      "annotation_line": 1346,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealLifetimeSignalsAndDatabaseFenceVetoVerify",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealLifetimeSignalsAndDatabaseFenceVetoVerify()"
+      ]
+    },
+    {
+      "annotation_line": 1351,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealFailedNativeCloseRetainsSharedLane",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealFailedNativeCloseRetainsSharedLane()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "complete TEST D matches both independent raw golden byte profiles using actual acquired owners and unopened pools",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/VersionBoundTestNamespaceProcessV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "1a647ecc0a6a69b9ce70a6b2a7beb535b4e6b6b916efc61213e7431e5ffc07b8",
+      "xml_names": [
+        "complete TEST D matches both independent raw golden byte profiles using actual acquired owners and unopened pools()"
+      ]
+    },
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.security.TestTerminalRoutingV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedRoutingKeysMatchIndependentTestFamilyHmacAndObjectKeys",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/TestTerminalRoutingV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "0cde3ab99b19c6bc7d5dfa3127824eaa5ad1963558b8786a74765f2a96d38213",
+      "xml_names": [
+        "retainedRoutingKeysMatchIndependentTestFamilyHmacAndObjectKeys()"
+      ]
+    },
+    {
+      "annotation_line": 32,
+      "class": "me.manga.kira.backend.security.TestTerminalCodecV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "threeFamiliesMatchIndependentAeadContextAndWireGoldens",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/TestTerminalCodecV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3ed19901a64a14c110548066314f5b7f1208745eba282d14c37cd3801e999deb",
+      "xml_names": [
+        "threeFamiliesMatchIndependentAeadContextAndWireGoldens()"
+      ]
+    },
+    {
+      "annotation_line": 92,
+      "class": "me.manga.kira.backend.security.TestTerminalCodecV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "frozenCanonicalAndRetainedRoutingReopenWithoutRepairOrRekey",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/TestTerminalCodecV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3ed19901a64a14c110548066314f5b7f1208745eba282d14c37cd3801e999deb",
+      "xml_names": [
+        "frozenCanonicalAndRetainedRoutingReopenWithoutRepairOrRekey()"
+      ]
+    },
+    {
+      "annotation_line": 276,
+      "class": "me.manga.kira.backend.security.TestTerminalCodecV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "originalKindAndEnclosingBudgetsCannotBeRenewedOrBorrowedByAnotherOwner",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/TestTerminalCodecV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3ed19901a64a14c110548066314f5b7f1208745eba282d14c37cd3801e999deb",
+      "xml_names": [
+        "originalKindAndEnclosingBudgetsCannotBeRenewedOrBorrowedByAnotherOwner()"
+      ]
+    },
+    {
+      "annotation_line": 136,
+      "class": "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "the entire generated policy confines exact object list prefix actions and KMS key without invented context fields",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsEpochSealStsAdapterTest.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "d9543756a1e05bf20f943447bdad2c4754a74860c35c97558b208bfeb4ec23f5",
+      "xml_names": [
+        "the entire generated policy confines exact object list prefix actions and KMS key without invented context fields()"
+      ]
+    },
+    {
+      "annotation_line": 36,
+      "class": "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "real regional SDK signs source identity assume role and target identity with returned credentials",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsEpochSealStsAdapterTest.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "d9543756a1e05bf20f943447bdad2c4754a74860c35c97558b208bfeb4ec23f5",
+      "xml_names": [
+        "real regional SDK signs source identity assume role and target identity with returned credentials()"
+      ]
+    },
+    {
+      "annotation_line": 387,
+      "class": "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "three individually bounded calls share the original total budget and observed sessions cannot recover a clock rollback",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsEpochSealStsAdapterTest.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "d9543756a1e05bf20f943447bdad2c4754a74860c35c97558b208bfeb4ec23f5",
+      "xml_names": [
+        "three individually bounded calls share the original total budget and observed sessions cannot recover a clock rollback()"
+      ]
+    },
+    {
+      "annotation_line": 1382,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunPreparedOwnerDeletePublishesPrimaryAndReplaysWithoutProvider",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunPreparedOwnerDeletePublishesPrimaryAndReplaysWithoutProvider()"
+      ]
+    },
+    {
+      "annotation_line": 1265,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunSealingBarrierAndPaidAuditReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunSealingBarrierAndPaidAuditReplay()"
+      ]
+    },
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunActivationV3Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "canonicalRunHistoryAccountingAndNoticeBytesBindRetainedTestProcess",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/catalog/OfflineCatalogTestRunActivationV3Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "b2fefbc3518c8ae466c8b6f49b68b9267219b01d1b2739954b7b69cac039bcdb",
+      "xml_names": [
+        "canonicalRunHistoryAccountingAndNoticeBytesBindRetainedTestProcess()"
+      ]
+    },
+    {
+      "annotation_line": 29,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "emptyAndMixedRawSourcesMatchIndependentLocalAndExistingInstallationFrames",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestInstallationSourceV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "f70604704c378bf471f7e32f91fcea4f7f2cf5416f6986dce7e8b17454f69d78",
+      "xml_names": [
+        "emptyAndMixedRawSourcesMatchIndependentLocalAndExistingInstallationFrames()"
+      ]
+    },
+    {
+      "annotation_line": 66,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "fiveHundredAndFiveHundredOneEntriesHaveExactPlaintextGroupingWithoutEnrollmentFixtures",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestInstallationSourceV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "f70604704c378bf471f7e32f91fcea4f7f2cf5416f6986dce7e8b17454f69d78",
+      "xml_names": [
+        "fiveHundredAndFiveHundredOneEntriesHaveExactPlaintextGroupingWithoutEnrollmentFixtures()"
+      ]
+    },
+    {
+      "annotation_line": 80,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "differingRawStatePairMvccMembershipOrPassOrderPermanentlyPoisonsObservation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestInstallationSourceV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "f70604704c378bf471f7e32f91fcea4f7f2cf5416f6986dce7e8b17454f69d78",
+      "xml_names": [
+        "differingRawStatePairMvccMembershipOrPassOrderPermanentlyPoisonsObservation()"
+      ]
+    },
+    {
+      "annotation_line": 113,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "pendingOrInvalidPairsScopeBindingsAndObservationTimesCannotSupplyTargets",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestInstallationSourceV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "f70604704c378bf471f7e32f91fcea4f7f2cf5416f6986dce7e8b17454f69d78",
+      "xml_names": [
+        "pendingOrInvalidPairsScopeBindingsAndObservationTimesCannotSupplyTargets()"
+      ]
+    },
+    {
+      "annotation_line": 140,
+      "class": "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualJByteCeilingsEnrollmentLimitAndTerminalObjectHeadroomAreEnforced",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/terminal/TestInstallationSourceV1Test.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "f70604704c378bf471f7e32f91fcea4f7f2cf5416f6986dce7e8b17454f69d78",
+      "xml_names": [
+        "actualJByteCeilingsEnrollmentLimitAndTerminalObjectHeadroomAreEnforced()"
+      ]
+    },
+    {
+      "annotation_line": 1296,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealInstallationSourceRejectsPairsMembershipAndSameTargetChanges",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealInstallationSourceRejectsPairsMembershipAndSameTargetChanges()"
+      ]
+    },
+    {
+      "annotation_line": 1302,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOrdinarySealInstallationSourceKeepsOriginalFenceAndDeadline",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "3636746feffa98218e85387b93dc5318982581337a70fbc774b4f16b3a8ce89c",
+      "xml_names": [
+        "testRunOrdinarySealInstallationSourceKeepsOriginalFenceAndDeadline()"
+      ]
+    },
+    {
+      "annotation_line": 708,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "scopedHttpSelectionStoresActualScopeAndChargesOnlyComplaintGrants",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "e53a531879dce033e6267139a280e510554d5dea5f9e18e9ead21a2805197317",
+      "xml_names": [
+        "scopedHttpSelectionStoresActualScopeAndChargesOnlyComplaintGrants()"
+      ]
+    },
+    {
+      "annotation_line": 733,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "unsupportedHttpScopeDoesNotReachPasswordOrPersistenceWork",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "e53a531879dce033e6267139a280e510554d5dea5f9e18e9ead21a2805197317",
+      "xml_names": [
+        "unsupportedHttpScopeDoesNotReachPasswordOrPersistenceWork()"
+      ]
+    },
+    {
+      "annotation_line": 750,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "sourceOnlyHttpComplaintRequestRefusesWithoutMintingASubstituteSourceGrant",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/ScopedAdminStepUpIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "e53a531879dce033e6267139a280e510554d5dea5f9e18e9ead21a2805197317",
+      "xml_names": [
+        "sourceOnlyHttpComplaintRequestRefusesWithoutMintingASubstituteSourceGrant()"
+      ]
+    },
+    {
+      "annotation_line": 159,
+      "class": "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "password step-up stores only a hash and proof is one-time",
+      "path": "src/test/kotlin/me/manga/kira/backend/sourceconfig/admin/AdminStepUpIT.kt",
+      "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+      "source_sha256": "39a64fcd7c6f9e635144d9d364ccf5a2f9174fe2275b0d8b857ce20fd5d2f3dd",
+      "xml_names": [
+        "password step-up stores only a hash and proof is one-time()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT",
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT"
+  ],
+  "expected_pg_methods": 18,
+  "expected_total": 40,
+  "expected_unit_methods": 22,
+  "selection_basis": {
+    "reviewed_source": "a5c71ec04b17059f865ff42939cddca8f0714781",
+    "scope": "29 previously unexecuted ordinary-seal methods +7 installation-source methods +3 scoped controller/PG +1 existing MockMvc source compatibility; five widened methods deduplicated"
+  },
+  "source_head": "a5c71ec04b17059f865ff42939cddca8f0714781",
+  "source_status": "SOURCE_ONLY_REVIEWED_NOT_ACCEPTED",
+  "static_sources": {},
+  "status": "SOURCE_BOUND_DISPATCH_WITHHELD",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT": 3,
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 14,
+    "me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunActivationV3Test": 1,
+    "me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test": 5,
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test": 4,
+    "me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1Test": 2,
+    "me.manga.kira.backend.security.TestTerminalCodecV1Test": 3,
+    "me.manga.kira.backend.security.TestTerminalRoutingV1Test": 2,
+    "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest": 3,
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1Test.optional ordinary seal owner changes only its cold D inventory and cannot borrow another retained owner",
+    "me.manga.kira.backend.security.TestTerminalRoutingV1Test.retainedOrdinaryConsumerMatchesExistingSealCandidatesButCannotDeriveTerminalEvents",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test.emptyAndSortedRowsMatchIndependentLp32ManifestAndComparison",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test.changedSecondPassOrMvccImageCannotBeAcceptedOrRepaired",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test.duplicateOrReversedKeysPoisonTheBuilderAndCutoffMustBePositive",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealManifestV1Test.positiveRowAndByteCapsIncludeTheManifestPrefixWithoutAllowingRetry",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1Test.newRetentionKeepsCalendarYearsAndConservativeAttemptUtcAndLateArrivalMargins",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1Test.verificationRequiresBothIndependentFloorsAndCannotDowngradeRequestedRetention",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealEmptyRunAtomicPhasesAndImmutableReplay",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealCompleteLocalHistoryIncludesFulfilledAndExpiredReceipts",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealRefusesPendingOrphanForeignUnsupportedAndSecondPassChange",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealRequiresColdInputAndCannotRecreateVerifiedVersion",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealPrepareAndFreezeRequireCommittedOriginalRelease",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealVerifyCompletionCannotReencryptOrDoubleCharge",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealLostPutAcknowledgmentUsesOneExactRepeat",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealRejectsWrongRoleVersionWireMetadataAndRetention",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealLifetimeSignalsAndDatabaseFenceVetoVerify",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealFailedNativeCloseRetainsSharedLane",
+    "me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1Test.complete TEST D matches both independent raw golden byte profiles using actual acquired owners and unopened pools",
+    "me.manga.kira.backend.security.TestTerminalRoutingV1Test.retainedRoutingKeysMatchIndependentTestFamilyHmacAndObjectKeys",
+    "me.manga.kira.backend.security.TestTerminalCodecV1Test.threeFamiliesMatchIndependentAeadContextAndWireGoldens",
+    "me.manga.kira.backend.security.TestTerminalCodecV1Test.frozenCanonicalAndRetainedRoutingReopenWithoutRepairOrRekey",
+    "me.manga.kira.backend.security.TestTerminalCodecV1Test.originalKindAndEnclosingBudgetsCannotBeRenewedOrBorrowedByAnotherOwner",
+    "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest.the entire generated policy confines exact object list prefix actions and KMS key without invented context fields",
+    "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest.real regional SDK signs source identity assume role and target identity with returned credentials",
+    "me.manga.kira.backend.security.aws.AwsEpochSealStsAdapterTest.three individually bounded calls share the original total budget and observed sessions cannot recover a clock rollback",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunPreparedOwnerDeletePublishesPrimaryAndReplaysWithoutProvider",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunSealingBarrierAndPaidAuditReplay",
+    "me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunActivationV3Test.canonicalRunHistoryAccountingAndNoticeBytesBindRetainedTestProcess",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test.emptyAndMixedRawSourcesMatchIndependentLocalAndExistingInstallationFrames",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test.fiveHundredAndFiveHundredOneEntriesHaveExactPlaintextGroupingWithoutEnrollmentFixtures",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test.differingRawStatePairMvccMembershipOrPassOrderPermanentlyPoisonsObservation",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test.pendingOrInvalidPairsScopeBindingsAndObservationTimesCannotSupplyTargets",
+    "me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationSourceV1Test.actualJByteCeilingsEnrollmentLimitAndTerminalObjectHeadroomAreEnforced",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealInstallationSourceRejectsPairsMembershipAndSameTargetChanges",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOrdinarySealInstallationSourceKeepsOriginalFenceAndDeadline",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.scopedHttpSelectionStoresActualScopeAndChargesOnlyComplaintGrants",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.unsupportedHttpScopeDoesNotReachPasswordOrPersistenceWork",
+    "me.manga.kira.backend.common.infrastructure.persistence.ScopedAdminStepUpIT.sourceOnlyHttpComplaintRequestRefusesWithoutMintingASubstituteSourceGrant",
+    "me.manga.kira.backend.sourceconfig.admin.AdminStepUpIT.password step-up stores only a hash and proof is one-time"
+  ]
+}
