@@ -116,8 +116,9 @@ internal object CatalogTestRunActivationSignedRecoveryCases {
         var sentinelBound = false
         f.beforeSign = { unsignedRow = f.rows.preparedRow() }
         if (cut == TestActivationSignedSqlCut.RETURNED_BEFORE_SQL_ARM) clock.onSample = {
-            // Observe an actual completed returned leaf only outside SQL; never fabricate a returned Sign DTO.
-            if (!injected && PersistencePhaseOwnership.current() == null && f.complete(CatalogTestRunActivationReleaseLeafV1.SIGN_RETURNED) &&
+            // Arm entry follows the returned leaf's actual seal/force/close/reread, not merely visible sidecar bytes.
+            if (!injected && PersistencePhaseOwnership.current() == null && poolTestField<Boolean>(original, "signatureSqlArmIssued") &&
+                f.complete(CatalogTestRunActivationReleaseLeafV1.SIGN_RETURNED) &&
                 !f.exists(CatalogTestRunActivationReleaseLeafV1.SIGNATURE_SQL_ARMED)) {
                 injected = true
                 throw IOException("Synthetic cut after durable returned signature and before SQL arm.")

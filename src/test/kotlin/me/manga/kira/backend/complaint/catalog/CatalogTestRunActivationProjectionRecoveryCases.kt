@@ -16,6 +16,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredInstallationTestClock
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReleaseLeafV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunProjectedV1
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -93,7 +94,8 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
                             injected = true
                             assertEquals(10L, p.effectCount(p.holder(failing)))
                             assertEquals(before, p.image())
-                            throw IOException("Synthetic PROJECT failure before native commit.")
+                            // Match Spring's beforeCommit rollback contract; a checked IOException skips its rollback catch.
+                            throw IllegalStateException("Synthetic PROJECT failure before native commit.")
                         }
                     })
                     TestActivationProjectionSqlCut.DEFERRED_COMMIT_ROLLBACK_UNKNOWN -> {
@@ -321,6 +323,13 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
             clock.assertNoLostAssertions()
             p.f.assertNoLostAssertions()
             val committed = cut in setOf(TestActivationProjectionLifetimeCut.ROOT_CLOSE, TestActivationProjectionLifetimeCut.PHASE_RELEASE)
+            if (cut == TestActivationProjectionLifetimeCut.SECOND_RAW_DEADLINE) {
+                val preparedOnly = p.f.http.read.replies.last()
+                assertEquals(0, preparedOnly.calls)
+                assertEquals(0, preparedOnly.reads)
+                assertEquals(0, preparedOnly.closes)
+                assertEquals(1, preparedOnly.aborts)
+            }
             if (committed) p.assertProjected() else assertEquals(before, p.image())
             if (cut == TestActivationProjectionLifetimeCut.ROOT_CLOSE) assertTrue(checkNotNull(fileClosed).invoke())
             if (cut == TestActivationProjectionLifetimeCut.BEGIN_DEADLINE) {
@@ -350,8 +359,18 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
             val failedImage = p.image()
             p.fresh(previous = failing) { fresh ->
                 val retry = p.begin(fresh)
-                p.assertProjected(p.project(retry))
-                p.assertReleased(retry, fresh)
+                if (cut == TestActivationProjectionLifetimeCut.ROOT_CLOSE) {
+                    // A new runtime graph is not a new JVM: the original uncertain root claim remains authoritative.
+                    val refused = assertThrows<CatalogTestRunActivationExceptionV1> { p.project(retry) }
+                    assertEquals(CatalogTestRunActivationFailureV1.STATE_REFUSED, refused.code)
+                    p.assertCleanFailure(retry, fresh)
+                    assertTrue(p.f.signed.probe(fresh).calls.isEmpty())
+                    assertEquals(reads, p.f.http.read.createdClients)
+                    p.assertProjected() // The original acknowledged SQL effect was not undone or reissued.
+                } else {
+                    p.assertProjected(p.project(retry))
+                    p.assertReleased(retry, fresh)
+                }
                 if (committed) {
                     assertEquals(failedImage, p.image())
                     p.assertNoProjectDml(p.f.signed.probe(fresh))

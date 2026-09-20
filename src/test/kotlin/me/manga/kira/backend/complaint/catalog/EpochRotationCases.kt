@@ -223,11 +223,13 @@ internal class EpochRotationCases(private val f: EpochRotationTestFixture) {
                     0L,
                     observer.queryForObject(
                         "SELECT count(*) FROM pg_locks l JOIN pg_class c ON c.oid = l.relation WHERE l.pid = ? " +
-                            "AND c.relname IN ('complaint_journal_control','complaint_catalog_mutations','complaint_capacity_counters')",
+                            "AND c.relname IN ('complaint_journal_control','complaint_catalog_mutations','complaint_capacity_counters') " +
+                            "AND NOT (l.locktype = 'relation' AND l.mode = 'AccessShareLock' " +
+                            "AND c.relname IN ('complaint_journal_control','complaint_catalog_mutations'))",
                         Long::class.java,
                         waiting.first.pid,
                     ),
-                    "No control/catalog/counter lock may be held while the fresh session waits for the exclusive fence.",
+                    "Only M-gate AccessShare relation reads on control/catalog may precede E; no row-lock-capable or counter lock.",
                 )
                 if (renewWhileWaiting) {
                     assertTrue(

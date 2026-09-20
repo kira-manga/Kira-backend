@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotat
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.INSERT_SIGNER_ROTATION_PREPARED
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_COORDINATOR_LEASE_CONTROL
 import me.manga.kira.backend.complaint.infrastructure.catalog.LOCK_GENESIS_FINALIZATION
@@ -375,13 +376,15 @@ internal class CatalogSignerRotationProbeJdbc(
                 statement.executeQuery(
                     "SELECT pg_backend_pid(), txid_current(), session_user, current_user, " +
                         "(SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()), " +
-                        "EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ShareLock' AND granted)",
+                        "EXISTS (SELECT 1 FROM pg_locks WHERE pid = pg_backend_pid() AND locktype = 'advisory' AND mode = 'ShareLock' AND granted " +
+                        "AND classid::bigint = ((hashtextextended('complaint-journal-epoch', 0) >> 32) & 4294967295) " +
+                        "AND objid::bigint = (hashtextextended('complaint-journal-epoch', 0) & 4294967295) AND objsubid = 1)",
                 ).use { row ->
                     assertTrue(row.next())
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(3))
                     assertEquals(PgLifecycleDatabaseSettings.CANDIDATE, row.getString(4))
                     assertTrue(row.getBoolean(5) && !row.wasNull())
-                    // Snapshot is read-only and leases stay row-only; original G1 and rotation data phases take the shared epoch fence.
+                    // Observe E exactly: the distinct shared maintenance fence M cannot satisfy an epoch-fence assertion.
                     val sharedFence = expectedSharedFence(path)
                     assertEquals(sharedFence, row.getBoolean(6))
                     val found = row.getInt(1) to row.getLong(2)
@@ -392,6 +395,10 @@ internal class CatalogSignerRotationProbeJdbc(
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
         val step = when {
+            path.testRunSealing && sql == DELIVERY_AUTHENTICATE -> "test-run-sealing-authenticate"
+
+            path.testRunSealing && sealingStep(sql) != null -> checkNotNull(sealingStep(sql))
+
             path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION && sql == DELIVERY_AUTHENTICATE -> "test-registration-authenticate"
 
             observeTestActivationQueries && sql == DELIVERY_AUTHENTICATE -> "test-activation-authenticate"
@@ -433,9 +440,11 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+        PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
         -> false
 
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+        PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
         PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
@@ -474,6 +483,17 @@ internal class CatalogSignerRotationProbeJdbc(
                 assertFalse(row.next())
             }
         }
+    }
+
+    private fun sealingStep(sql: String): String? = when (sql) {
+        TestRunSealingSqlV1.lockRun -> "test-run-sealing-run-lock"
+        TestRunSealingSqlV1.sealRun -> "test-run-seal"
+        TestRunSealingSqlV1.lockGlobalControl -> "test-run-sealed-global-lock"
+        TestRunSealingSqlV1.lockScopeControl -> "test-run-sealed-control-lock"
+        TestRunSealingSqlV1.lockAudit -> "test-run-sealed-audit-lock"
+        TestRunSealingSqlV1.spendRun -> "test-run-sealed-reserve"
+        TestRunSealingSqlV1.insertAudit -> "test-run-sealed-audit"
+        else -> null
     }
 
     @Suppress("CyclomaticComplexMethod") // Exact SQL-observation labels, not additional application branches.

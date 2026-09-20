@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisSigna
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationEnvelopeV3
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationProtocol
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReleaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReleaseLeafV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunSignedPreparedV1
@@ -287,6 +288,21 @@ internal class SignedActivationObservation(
         assertion.get()?.let { throw it }
     }
 
+    /** Bounded observations only; do not expose roots, inode keys or the discarded provider/SQL failure. */
+    fun setupCustodyObservation(original: CatalogTestRunActivationV1): String = runCatching {
+        val custody = ownedCutField(original, "custody")
+        val (claim, count) = rootClaimObservation()
+        "custody_retained=${custody != null} release_retained=${ownedCutField(original, "release") != null} " +
+            "root_claimed=${claim != null} root_claimed_by_setup=${claim != null && claim === custody} active_root_claims=$count"
+    }.getOrDefault("custody_observation_available=false")
+
+    private fun rootClaimObservation(): Pair<Any?, Int> {
+        val key = Files.readAttributes(root, "unix:fileKey", NOFOLLOW_LINKS).getValue("fileKey")
+        val claims = CatalogTestRunActivationReleaseCustodyV1::class.java.getDeclaredField("claims")
+            .apply { check(trySetAccessible()) }.get(null) as Map<*, *>
+        return synchronized(claims) { claims[key] to claims.size }
+    }
+
     override fun close() {
         probes.values.forEach { it.beforeSql = {}; it.afterSql = {} }
         val threadsStopped = runCatching {
@@ -319,7 +335,17 @@ internal class SignedActivationObservation(
         }
         val removed = runCatching {
             ready.getOrThrow()
-            Files.walk(parent).use { entries -> entries.sorted(Comparator.reverseOrder()).forEach(Files::delete) }
+            val claim = rootClaimObservation().first
+            Files.walk(parent).use { entries ->
+                entries.sorted(Comparator.reverseOrder()).filter { claim == null || (it != root && it != parent) }.forEach(Files::delete)
+            }
+            if (claim != null) {
+                // Keep only the empty claimed directory and its parent until normal JVM exit. Deleting
+                // this inode now would let another fixture alias the original sticky (device,inode) claim.
+                assertTrue(rootClaimObservation().first === claim, "Fixture cleanup must not clear or replace an original claim.")
+                parent.toFile().deleteOnExit() // Reverse registration order deletes root before parent.
+                root.toFile().deleteOnExit()
+            }
         }
         rethrowSignerRotationFixtureFailures(listOf(threadsStopped) + stopped + disposed + listOf(ready, removed))
     }

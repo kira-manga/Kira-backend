@@ -45,7 +45,7 @@ internal fun withCompletionActivationRows(
         throw AssertionError(
             "COMPLETION_SIGNED_SETUP_FAILURE code=${failure.code.name} last_observed_phase=${last?.path?.name ?: "NONE"} " +
                 "last_observed_outcome=${phase?.databaseOutcome?.name ?: "NONE"} last_observed_cleanup_proven=${phase?.cleanupProven} " +
-                "sign_client_started=${signed.signing.createdClients > 0}",
+                "sign_client_started=${signed.signing.createdClients > 0} ${signed.setupCustodyObservation(original)}",
         )
     }
     signed.assertSigned(prepared)
@@ -68,6 +68,7 @@ internal class CompletionActivationObservation(val signed: SignedActivationObser
     private val originalControl = invariantControl()
     private val originalFrozen = frozenTuple()
     private val originalHistory = rows.history().take(rows.evidence.prefix.size)
+    private val readReplyStarts = mutableMapOf<CatalogTestRunActivationV1, Int>()
 
     init {
         assertNull(http.primaryVersion)
@@ -90,7 +91,9 @@ internal class CompletionActivationObservation(val signed: SignedActivationObser
         selected: VersionBoundPersistenceConnectedFixture,
         putFactory: () -> SdkHttpClient = ::openPut,
         process: VersionBoundTestNamespaceProcessV1 = if (selected === signed.tls) rows.evidence.process else rows.evidence.processOn(selected.pools),
-    ): CatalogTestRunActivationV1 = signed.beginDelivery(selected, putFactory, http::readClient, process)
+    ): CatalogTestRunActivationV1 = signed.beginDelivery(selected, putFactory, http::readClient, process).also {
+        readReplyStarts[it] = http.read.replies.size
+    }
 
     fun deliver(original: CatalogTestRunActivationV1, bytes: ByteArray = rows.intent): CatalogTestRunCompletedPendingV1 =
         original.deliverAndComplete(signed.root, bytes, CatalogGenesisPublishHttpFixture.PUT_CREDENTIALS,
@@ -187,7 +190,19 @@ internal class CompletionActivationObservation(val signed: SignedActivationObser
         signed.assertReleased(original, selected)
         assertEquals(http.put.createdClients, http.put.closedClients)
         assertEquals(http.read.createdClients, http.read.closedClients)
-        assertTrue(http.read.replies.all { it.calls == 1 && it.closes > 0 })
+        // Historical failed attempts may have returned a native request but never dispatched it.
+        // Such a request still requires its original abort; there was no response body to close.
+        http.read.replies.forEach { reply ->
+            assertTrue(reply.calls in 0..1, "No raw request may be retried.")
+            assertEquals(1, reply.aborts, "Every returned raw request must be aborted exactly once.")
+            if (reply.calls == 0) {
+                assertEquals(0, reply.reads)
+                assertEquals(0, reply.closes)
+            } else assertTrue(reply.closes > 0, "Every dispatched raw reply body must be closed.")
+        }
+        val successfulReplies = http.read.replies.drop(checkNotNull(readReplyStarts[original]))
+        assertTrue(successfulReplies.isNotEmpty())
+        assertTrue(successfulReplies.all { it.calls == 1 && it.closes > 0 }, "The successful owner still requires dispatched, closed replies.")
         assertNoLostAssertions()
     }
 

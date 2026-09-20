@@ -37,6 +37,7 @@ import org.springframework.jdbc.core.ResultSetExtractor
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.io.InterruptedIOException
+import java.sql.Timestamp
 import java.time.Clock
 import java.time.Instant
 import java.util.HexFormat
@@ -60,16 +61,49 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     internal fun requireUsable() {
         try {
             requireConnectionFree()
-            requireRegistration(!closed.get())
-            process.requireRegistrationTarget()
-            requireRegistration(process.pools.ordinary.businessReady() && process.pools.catalogCoordinator.dataSource.businessReady())
-            requireRegistration(activation.scope == process.consumers.journalConfiguration.scope.id &&
-                activation.configurationHash == HexFormat.of().formatHex(process.configurationHashBytes()))
-            requireRegistration(!closed.get())
+            requireLifetime()
         } catch (failure: RuntimeException) {
             if (failure is CancellationException) throw failure
             throw ComplaintTestNamespaceRegistrationExceptionV1()
         }
+    }
+
+    /** Local lifetime checks also used inside the original sealing holder; never requires another checkout. */
+    private fun requireLifetime() {
+        requireRegistration(!closed.get())
+        process.requireRegistrationTarget()
+        requireRegistration(process.pools.ordinary.businessReady() && process.pools.catalogCoordinator.dataSource.businessReady())
+        requireRegistration(activation.scope == process.consumers.journalConfiguration.scope.id &&
+            activation.configurationHash == HexFormat.of().formatHex(process.configurationHashBytes()))
+        requireRegistration(!closed.get())
+    }
+
+    internal fun requireSealingOwner(ownership: PersistencePhaseOwnership) {
+        requireLifetime()
+        val coordinator = process.pools.catalogCoordinator
+        requireRegistration(ownership === coordinator.ownership && ownership.manager === coordinator.manager && ownership.dataSource === coordinator.dataSource)
+    }
+
+    internal fun requireSealingGate(gate: PersistenceComplaintMaintenanceGateV1) {
+        requireLifetime()
+        requireRegistration(gate.matchesProjected(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
+    }
+
+    /** Detached, fixed SQL arguments only. The privately issued registration, not these values, admits sealing. */
+    internal fun sealingRunArguments(): Array<Any?> = copySealingArguments(activation.runArguments)
+    internal fun sealingControlArguments(): Array<Any?> = copySealingArguments(activation.controlArguments)
+    internal fun sealingAuditArguments(sealedAt: Instant): Array<Any?> {
+        requireLifetime()
+        return arrayOf(activation.scope, activation.generation, Timestamp.from(sealedAt))
+    }
+
+    private fun copySealingArguments(values: Array<Any?>): Array<Any?> {
+        requireLifetime()
+        return values.map { value -> when (value) {
+            is ByteArray -> value.copyOf()
+            is Timestamp -> Timestamp.from(value.toInstant())
+            else -> value
+        } }.toTypedArray()
     }
 
     internal fun requireInstallationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
@@ -91,27 +125,39 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     override fun close() { closed.set(true) }
     override fun toString(): String = "ComplaintTestNamespaceRegistrationV1(first-same-process,closed-gates,redacted)"
 
-    /** Compact identity only; do not keep the closed projector, frozen input, provider or phase graph alive. */
-    private class Activation(
-        val token: UUID,
-        val scope: UUID,
-        val generation: Long,
-        val envelopeSha256: String,
-        val projectedAt: Instant,
-        val configurationHash: String,
-    )
+    /** Bounded detached identity only; no closed projector, provider/phase graph or global-accounting snapshot. */
+    private class Activation(completed: CatalogTestRunFirstProjectionV1.State) {
+        val token = completed.frozen.token
+        val scope = completed.frozen.scope
+        val generation = completed.frozen.generation
+        val configurationHash = completed.frozen.manifest().activationRecord.run.configurationSha256
+        val unsigned = completed.frozen.unsignedBytes()
+        val unsignedHash = completed.frozen.unsignedHash()
+        val runArguments: Array<Any?>
+        val controlArguments: Array<Any?>
+
+        init {
+            val projectedAt = checkNotNull(checkNotNull(completed.snapshot.completedTail).projectedAt)
+            val run = completed.frozen.manifest().activationRecord.run
+            val envelopeHash = HexFormat.of().parseHex(completed.signed.envelopeSha256)
+            runArguments = arrayOf(
+                scope, HexFormat.of().parseHex(configurationHash), run.installationLimit, generation, envelopeHash,
+                Timestamp.from(projectedAt), completed.frozen.reserve.toLongArray().joinToString(",", "{", "}"),
+            )
+            controlArguments = arrayOf(
+                scope, run.desiredGeneration, run.implementationSchema, HexFormat.of().parseHex(configurationHash),
+                completed.frozen.databaseIdentity, completed.frozen.restoreIdentity, completed.frozen.eventWriter,
+                completed.frozen.catalogWriter, HexFormat.of().parseHex(completed.frozen.currentTrustHash), generation, envelopeHash,
+            )
+        }
+    }
 
     private class InstallationResources(val ownership: PersistencePhaseOwnership, val jdbc: JdbcTemplate)
 
     companion object {
         internal fun issuedBy(original: ComplaintTestNamespaceRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {
             val completed = original.consumeRegistration()
-            val frozen = completed.frozen
-            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(
-                frozen.token, frozen.scope, frozen.generation, completed.signed.envelopeSha256,
-                checkNotNull(checkNotNull(completed.snapshot.completedTail).projectedAt),
-                frozen.manifest().activationRecord.run.configurationSha256,
-            ))
+            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(completed))
         }
     }
 }

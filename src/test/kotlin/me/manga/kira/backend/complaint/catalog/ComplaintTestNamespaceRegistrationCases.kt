@@ -253,7 +253,8 @@ internal object ComplaintTestNamespaceRegistrationCases {
                     assertEquals(2, jdbc.update("INSERT INTO kira_registration_commit_cut VALUES (1), (1)"))
                 } else TransactionSynchronizationManager.registerSynchronization(object : TransactionSynchronization {
                     override fun beforeCommit(readOnly: Boolean) {
-                        if (cut === TestRegistrationCompletionCut.BEFORE_COMMIT) throw IOException("Synthetic original registration beforeCommit failure.")
+                        // Spring rolls back a beforeCommit RuntimeException/Error, not a Kotlin-thrown checked IOException.
+                        if (cut === TestRegistrationCompletionCut.BEFORE_COMMIT) throw IllegalStateException("Synthetic original registration beforeCommit failure.")
                     }
                     override fun afterCommit() {
                         if (cut === TestRegistrationCompletionCut.UNRESOLVED_RELEASE) {
@@ -381,6 +382,35 @@ internal object ComplaintTestNamespaceRegistrationCases {
             assertThrows<CatalogTestRunActivationExceptionV1> { CatalogTestRunFirstProjectionV1.issuedBy(original, target) }
             assertFalse(poolTestField<Boolean>(original, "completionContinuationIssued"))
             assertTrue(targetProbe.calls.isEmpty())
+            p.assertReadOnlyProviders()
+        } }
+    }
+
+    /** Same actual PROJECT/raw-copy registration fixture; the sealing cases do not mint another registration issuer. */
+    internal fun withRegisteredRun(tls: VersionBoundPersistenceConnectedFixture,
+        action: (ProjectionActivationObservation, VersionBoundPersistenceConnectedFixture, ComplaintTestNamespaceRegistrationV1, CatalogSignerRotationProbeJdbc) -> Unit,
+    ) = withPendingProjectionRows(tls) { p ->
+        p.fresh { projector -> withRuntimeRoot(p, projector) { runtime, target, probe ->
+            val original = p.begin(projector)
+            val completion = original.projectForRegistration(target, p.f.signed.root, p.f.rows.intent, credentials, credentials)
+            p.assertReleased(original, projector)
+            val attempt = beginRegistration(p, completion)
+            attempt.register(credentials, credentials).use { registration ->
+                assertReleased(p, runtime, probe, attempt, phases = 2)
+                probe.resetObservations()
+                val executor = runtime.pools.catalogCoordinator.testRunSealing
+                executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }.set(executor, probe)
+                probe.beforeSql = {
+                    val path = probe.calls.last().path
+                    assertTrue(path.testRunSealing)
+                    assertTrue(p.advisory(p.holder(runtime), "complaint-maintenance-v1", "ShareLock"))
+                    assertEquals(path === PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
+                        p.advisory(p.holder(runtime), "complaint-journal-epoch", "ShareLock"),
+                        "The run-only barrier releases before its successor may acquire E.")
+                }
+                action(p, runtime, registration, probe)
+                probe.assertNoLostAssertions()
+            }
             p.assertReadOnlyProviders()
         } }
     }

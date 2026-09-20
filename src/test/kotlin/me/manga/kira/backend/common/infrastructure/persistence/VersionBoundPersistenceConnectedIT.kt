@@ -43,6 +43,7 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationDriftCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
+import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceClock
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceGateCut
@@ -1245,6 +1246,27 @@ class VersionBoundPersistenceConnectedIT {
     fun testRegistrationFailedOriginalProjectNeverIssuesCompletion() {
         TestRegistrationProjectCut.entries.forEach { cut ->
             withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.failedOriginalProjectCannotHandoffCompletion(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRunSealingBarrierAndPaidAuditReplay() = withFixture(testActivation = true) {
+        TestRunSealingCases.barrierPaidAuditAndReplay(it)
+    }
+
+    @Test
+    fun testRunSealingRollbackAndUnknownDoNotChargeAudit() {
+        for (cut in listOf(TestRegistrationCompletionCut.BEFORE_COMMIT, TestRegistrationCompletionCut.DEFERRED_COMMIT_UNKNOWN)) {
+            withFixture(testActivation = true) { TestRunSealingCases.completionFailure(it, cut, auditPhase = true) }
+        }
+    }
+
+    @Test
+    fun testRunSealingLostOriginalReleaseCanResume() {
+        for (cut in listOf(TestRegistrationCompletionCut.AFTER_COMMIT, TestRegistrationCompletionCut.UNRESOLVED_RELEASE)) {
+            for (auditPhase in listOf(false, true)) {
+                withFixture(testActivation = true) { TestRunSealingCases.completionFailure(it, cut, auditPhase) }
+            }
         }
     }
 

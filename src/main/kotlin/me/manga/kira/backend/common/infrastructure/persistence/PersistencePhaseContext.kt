@@ -13,6 +13,8 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseO
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRegistrationOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
@@ -153,6 +155,8 @@ constructor(
     private val testRunActivationWork: PersistenceTimeBudget? = null,
     private val testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
     private val testRegistrationWork: PersistenceTimeBudget? = null,
+    private val testRunSealer: TestRunSealingV1? = null,
+    private val testRunSealingWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -228,6 +232,7 @@ constructor(
     internal val catalogSignerRotationActivation: PersistenceCatalogSignerRotationActivationV1 = CatalogSignerRotationActivationBoundary()
     internal val catalogTestRunActivation: PersistenceCatalogTestRunActivationV1 = CatalogTestRunActivationBoundary()
     internal val testNamespaceRegistration: PersistenceTestNamespaceRegistrationV1 = TestNamespaceRegistrationBoundary()
+    internal val testRunSealing: PersistenceTestRunSealingV1 = TestRunSealingBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -386,7 +391,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork
+                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -394,7 +399,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork
+            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -606,6 +611,10 @@ constructor(
 
         PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION -> testNamespaceRegistration.completed()
 
+        PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
+        PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
+        -> testRunSealing.completed()
+
         PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
 
         PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
@@ -810,6 +819,7 @@ constructor(
         signerRotationActivation?.observeFailure(problem)
         testRunActivation?.observeFailure(problem)
         testRegistration?.observeFailure(problem)
+        testRunSealer?.observeFailure(problem)
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
@@ -885,6 +895,12 @@ constructor(
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
+    internal fun testRunSealingCleanupProven(original: TestRunSealingV1): Boolean =
+        caller.isCurrent() && testRunSealer === original && path.testRunSealing &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
     internal fun initialTestActivationPrepare(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection): Boolean {
         selectedHolder.requireMaintenanceFence(fence, selected)
         if (path !== PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE) return false
@@ -900,6 +916,7 @@ constructor(
     ) {
         selectedHolder.requireMaintenanceFence(fence, selected)
         when {
+            testRunSealer != null -> testRunSealer.requireMaintenanceGate(ownership, path, gate)
             testRegistration != null -> testRegistration.requireMaintenanceGate(ownership, path, gate)
             testRunActivation != null -> testRunActivation.requireMaintenanceGate(ownership, path, gate)
             else -> gate.requireUnownedOpen()
@@ -1044,6 +1061,7 @@ constructor(
                 signerRotationActivation?.observeFailure(problem)
                 testRunActivation?.observeFailure(problem)
                 testRegistration?.observeFailure(problem)
+                testRunSealer?.observeFailure(problem)
                 // Discard raw restoration details, but retain unresolved custody instead of claiming settlement/refund.
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
@@ -1120,7 +1138,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1160,13 +1178,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null || testRunActivation != null || testRegistration != null
+        signerRotationActivation != null || testRunActivation != null || testRegistration != null || testRunSealer != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testRunSealer?.budget ?: testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1248,6 +1266,7 @@ constructor(
                 signerRotationActivation?.observeFailure(problem)
                 testRunActivation?.observeFailure(problem)
                 testRegistration?.observeFailure(problem)
+                testRunSealer?.observeFailure(problem)
                 // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
                 ownership.retainCallerForRecovery(this@PersistencePhaseContext)
                 false
@@ -1338,6 +1357,7 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT, // The run-only seal must commit/release BEFORE E or any control/counter lock.
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
@@ -1800,6 +1820,51 @@ constructor(
 
             else -> false
         }
+    }
+
+    /** Two fixed normal-root operations; an original failed release is never a successful barrier/audit receipt. */
+    private inner class TestRunSealingBoundary : PersistenceTestRunSealingV1 {
+        private var selected = false
+        private var retained: TestRunSealingOperationV1? = null
+
+        override fun requireOperation(original: TestRunSealingV1, jdbc: JdbcTemplate) {
+            if (!path.testRunSealing || original !== testRunSealer || original.path !== path) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, path)
+            if (selected || (path === PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT && !selectedHolder.fenceReady())) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            original.requirePersistence(ownership, jdbc)
+            selected = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: TestRunSealingOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!selected || retained != null || operation.original !== testRunSealer || operation.path !== path || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: TestRunSealingOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.original !== testRunSealer || operation.path !== path ||
+                (path === PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT && !selectedHolder.fenceReady())) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: TestRunSealingOperationV1) {
+            if (retained !== operation || !completed() || !testRunSealingCleanupProven(operation.original)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.original === testRunSealer && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     /** Exact runtime-root read/lock-only owner. No unowned closed-gate entry or supplied success can satisfy this boundary. */

@@ -118,10 +118,13 @@ internal object CatalogTestRunActivationCompletionRecoveryCases {
             var sentinelBound = false
             clock.onSample = {
                 if (!injected && PersistencePhaseOwnership.current() == null) {
+                    // Only post-return stages prove custody finished sealing/forcing/closing its sidecar.
                     val atCut = when (cut) {
-                        TestActivationCompleteSqlCut.DUAL_BEFORE_COMPLETE_ARM -> f.signed.complete(CatalogTestRunActivationReleaseLeafV1.PUBLICATION_DUAL_COPY) &&
+                        TestActivationCompleteSqlCut.DUAL_BEFORE_COMPLETE_ARM -> poolTestField<Boolean>(original, "completeArmIssued") &&
+                            f.signed.complete(CatalogTestRunActivationReleaseLeafV1.PUBLICATION_DUAL_COPY) &&
                             !f.signed.exists(CatalogTestRunActivationReleaseLeafV1.COMPLETE_ARMED)
-                        TestActivationCompleteSqlCut.BEFORE_PENDING_RELOAD -> f.signed.complete(CatalogTestRunActivationReleaseLeafV1.COMPLETE_OUTCOME) &&
+                        TestActivationCompleteSqlCut.BEFORE_PENDING_RELOAD -> poolTestField<Enum<*>>(original, "stage").name == "PENDING_RELOAD" &&
+                            f.signed.complete(CatalogTestRunActivationReleaseLeafV1.COMPLETE_OUTCOME) &&
                             !f.signed.exists(CatalogTestRunActivationReleaseLeafV1.PENDING_RELOAD_OUTCOME)
                         else -> false
                     }
@@ -290,6 +293,13 @@ internal object CatalogTestRunActivationCompletionRecoveryCases {
                 assertTrue(f.signed.complete(CatalogTestRunActivationReleaseLeafV1.COMPLETE_ARMED))
                 assertFalse(f.signed.exists(CatalogTestRunActivationReleaseLeafV1.COMPLETE_OUTCOME))
             }
+            if (cut == TestActivationCompleteLifecycleCut.READBACK_BUDGET) {
+                val undispatched = f.http.read.replies.last()
+                assertEquals(0, undispatched.calls)
+                assertEquals(0, undispatched.reads)
+                assertEquals(0, undispatched.closes)
+                assertEquals(1, undispatched.aborts)
+            }
             val calls = f.signed.probe(publishing).calls.size
             val puts = f.http.put.createdClients
             val reads = f.http.read.createdClients
@@ -306,6 +316,15 @@ internal object CatalogTestRunActivationCompletionRecoveryCases {
                     assertThrows<CatalogTestRunActivationExceptionV1> { f.recover(recovered) }
                     f.assertCleanFailure(recovered, fresh)
                     f.assertPrepared()
+                } else if (cut == TestActivationCompleteLifecycleCut.FILE_CLOSE) {
+                    // A new graph in this JVM cannot erase the original root's unproven FileLock close claim.
+                    assertEquals(CatalogTestRunActivationFailureV1.STATE_REFUSED,
+                        assertThrows<CatalogTestRunActivationExceptionV1> { f.recover(recovered) }.code)
+                    f.assertCleanFailure(recovered, fresh)
+                    f.assertPending()
+                    assertTrue(f.signed.probe(fresh).calls.isEmpty())
+                    assertEquals(reads, f.http.read.createdClients)
+                    f.assertSticky(original, publishing)
                 } else {
                     f.assertPending(f.recover(recovered))
                     f.assertReleased(recovered, fresh)
