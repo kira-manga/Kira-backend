@@ -259,7 +259,10 @@ private class DirectMaintenanceObservation(
     fun sampleCleanupAdmission() {
         if (!admission || advanced || delegate.get() != null || (resultSet == false && !resultReturned) ||
             ownedCutField(session, "maintenanceStage").toString() != "READING_GATE") return
-        if (!Thread.currentThread().stackTrace.any { it.className == PersistenceEpochRotationSession::class.java.name && it.methodName == "maintenanceCleanupBudget" }) return
+        // The normal kira-backend JVM build mangles this internal member with its module name.
+        if (!Thread.currentThread().stackTrace.any {
+            it.className == PersistenceEpochRotationSession::class.java.name && it.methodName == "maintenanceCleanupBudget\$kira_backend"
+        }) return
         observe {
             assertNull(selected)
             assertNull((ownedCutField(session, "problem") as AtomicReference<*>).get())
