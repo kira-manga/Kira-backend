@@ -20,6 +20,7 @@ import org.springframework.boot.web.servlet.FilterRegistrationBean
 import org.springframework.mock.web.MockServletContext
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.setup.DefaultMockMvcBuilder
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.context.support.AnnotationConfigWebApplicationContext
 import org.springframework.web.servlet.config.annotation.EnableWebMvc
@@ -61,7 +62,7 @@ internal class ComplaintBootstrapSpringTestFixture(composition: ComplaintTestBoo
             val registrations = context.getBeansOfType(FilterRegistrationBean::class.java).values.map { it.order to it.filter }
             val security = SecurityProperties.DEFAULT_FILTER_ORDER to context.getBean("springSecurityFilterChain", Filter::class.java)
             val filters = (registrations + security).sortedBy { it.first }.map { it.second }
-            mvc = MockMvcBuilders.webAppContextSetup(context).addFilters(*filters.toTypedArray()).build()
+            mvc = MockMvcBuilders.webAppContextSetup(context).addFilters<DefaultMockMvcBuilder>(*filters.toTypedArray()).build()
         } catch (failure: Throwable) {
             context.close()
             throw failure
