@@ -4,14 +4,17 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDataba
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture
 import me.manga.kira.backend.complaint.journal.TestOwnerDeleteJournalPublisherFixture
@@ -23,6 +26,7 @@ import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 
 internal enum class TestPreparedDeleteRefusalCut { MISSING_RECEIPT, SEALED_EPOCH, AUTHORIZED_AFTER_SEAL }
 internal enum class TestPreparedDeleteProviderCut { READBACK_FAILURE, LATE_NATIVE_CLOSE, CLOSED_REGISTRATION }
@@ -62,7 +66,7 @@ internal object TestRunPreparedOwnerDeleteCases {
                 sawReleasedVerify = true
             }
         }
-        try { assertSame(ComplaintOwnerDeleteReceipt.Applied, original.complete()) }
+        try { assertSame(ComplaintOwnerDeleteReceipt.Applied, completeObserved(f, original)) }
         finally { f.jdbc.before = {}; f.jdbc.after = {}; f.provider.beforePrepare = f::assertDatabaseReleased }
         assertTrue(sawProvider && sawAtomicVerify && sawReleasedVerify)
         f.assertSuccessfulPhases(original, published = true)
@@ -81,7 +85,7 @@ internal object TestRunPreparedOwnerDeleteCases {
         assertThrows<TestRunPreparedOwnerDeleteExceptionV1> { original.complete() }
         f.jdbc.reset()
         val replay = f.beginPrepared()
-        assertSame(ComplaintOwnerDeleteReceipt.Applied, replay.complete())
+        assertSame(ComplaintOwnerDeleteReceipt.Applied, completeObserved(f, replay, replay = true))
         f.assertSuccessfulPhases(replay)
         assertEquals(after, f.image(), "An exact APPLIED replay is zero-delta and does not publish again.")
         assertEquals(providers, f.providerImage())
@@ -243,6 +247,27 @@ internal object TestRunPreparedOwnerDeleteCases {
             assertEquals(1, f.provider.requests.count { it.kind == "PUT" })
             assertEquals(before.filterKeys { it !in changed }, f.image().filterKeys { it !in changed })
             assertThrows<TestRunPreparedOwnerDeleteExceptionV1> { original.complete() }
+        }
+
+    /** Failure-only witness for this case; fixed enum/scalar observations, never authority or raw failure data. */
+    private fun completeObserved(f: TestRunVerifiedOwnerDeleteFixture, original: TestRunPreparedOwnerDeleteV1, replay: Boolean = false): ComplaintOwnerDeleteReceipt =
+        try { original.complete() } catch (problem: Throwable) {
+            try {
+                val phase = (ownedCutField(original, "phase") as? PersistencePhaseContext) ?: f.jdbc.observations.keys.lastOrNull()
+                val code = phase?.let { (ownedCutField(it, "failure") as AtomicReference<*>).get() as? PersistencePhaseFailureCode }
+                println("TEST_PREPARED_OWNER_DELETE_FAILURE attempt=${if (replay) "REPLAY" else "INITIAL"}" +
+                    " stage=${(ownedCutField(original, "stage") as Enum<*>).name}" +
+                    " phase=${phase?.let { TestRunVerifiedOwnerDeleteFixture.path(it).name } ?: "NONE"}" +
+                    " phase_code=${code?.name ?: "NONE"} outcome=${phase?.databaseOutcome()?.name ?: "NONE"}" +
+                    " cleanup=${phase?.testRunOwnerDeleteCleanupProven(original) ?: false}" +
+                    " phases=${f.jdbc.observations.size} sql_calls=${f.jdbc.calls.size}" +
+                    " list=${f.provider.requests.count { it.kind == "LIST" }} put=${f.provider.requests.count { it.kind == "PUT" }}" +
+                    " get=${f.provider.requests.count { it.kind == "GET" }} kms=${f.provider.kms.requests.size}" +
+                    " s3_opened=${f.provider.s3ClientsCreated} s3_closed=${f.provider.s3ClientsClosed}")
+            } catch (_: Throwable) {
+                // A best-effort observation cannot replace the original failure, Error or cancellation.
+            }
+            throw problem
         }
 
     private val changed = setOf("complaint_resource_ids", "complaints", "complaint_idempotency_receipts", "complaint_journal_publications",

@@ -109,7 +109,7 @@ internal object TestRunVerifiedOwnerDeleteCases {
                     "UPDATE complaint_journal_control SET desired_configuration_hash = ? WHERE data_scope_id = ?", ByteArray(32) { 23 }, f.scope.id))
                 TestVerifiedDeleteRefusalCut.PROOF_BYTES -> assertEquals(1, f.observer.update(
                     "UPDATE complaint_journal_publications SET verification_bytes = verification_bytes || decode('20', 'hex'), " +
-                        "verification_hash = digest(verification_bytes || decode('20', 'hex'), 'sha256') WHERE event_id = ?", f.eventId))
+                        "verification_hash = sha256(verification_bytes || decode('20', 'hex')) WHERE event_id = ?", f.eventId))
                 TestVerifiedDeleteRefusalCut.WRITER -> assertEquals(1, f.observer.update(
                     "UPDATE complaint_journal_publications SET writer_generation = ? WHERE event_id = ?", UUID.randomUUID(), f.eventId))
                 TestVerifiedDeleteRefusalCut.MISSING_SEALED_AUDIT -> assertEquals(1, f.observer.update(
