@@ -259,7 +259,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     internal fun requirePaidProgress(actual: TestTerminalProgressV1?) {
         requireRunning(); val expected = checkNotNull(paidProgress)
         requireDrain(actual != null && actual.context() == expected.context() && actual.completedCuts() == expected.completedCuts() && actual.installationReads().isEmpty())
-        bindPaidProgress(actual)
+        bindPaidProgress(checkNotNull(actual))
     }
     private fun bindPaidProgress(value: TestTerminalProgressV1) {
         requireDrain(value.context() == runContext && value.installationReads().isEmpty() && value.completedCuts().size == 1)

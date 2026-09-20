@@ -135,7 +135,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
 
     /** Comparison inputs only. Only the registered, committed and released concrete read can emit bootstrap data. */
     internal fun bootstrapExpectedArguments(): Array<Any?> =
-        copySealingArguments(activation.runArguments) + copySealingArguments(activation.controlArguments)
+        arrayOf(*copySealingArguments(activation.runArguments), *copySealingArguments(activation.controlArguments))
 
     /** Same retained deletion permit/manager/template only; no new pool, request identity or gate opener. */
     internal fun requireOwnerDeleteContinuationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
