@@ -30,6 +30,9 @@ import java.util.UUID
 /** Real predecessor and fixed PREPARE owner; synthetic IAM/horizon fixtures are not release acceptance. */
 internal object TestInstallationManifestPrepareCasesV1 {
     fun paidPrepare(tls: VersionBoundPersistenceConnectedFixture) = withInstallationManifestPredecessor(tls) { f, drain, probe ->
+        drain.requireManifestPredecessor()
+        assertTrue(drain.manifestCut().denial.firstInventory.versionCount > 0L, "The successor must read real nonempty applied pages after drain completion.")
+        assertThrows<TestOrdinaryDrainExceptionV1> { drain.requireInventoryKind("OWNER_DELETE") }
         val observed = TestOrdinaryDrainAccountingObservationV1(f)
         val before = observed.state()
         val history = observed.previousHistory()
@@ -64,6 +67,8 @@ internal object TestInstallationManifestPrepareCasesV1 {
         assertEquals(snapshots.keys, committed.keys)
         assertEquals(listOf(TestInstallationManifestStepV1.CAPTURE, TestInstallationManifestStepV1.CHUNK,
             TestInstallationManifestStepV1.PREPARE, TestInstallationManifestStepV1.COMPLETE), probe.calls.map { it.step }.distinct())
+        assertEquals(listOf(TestInstallationManifestStepV1.CAPTURE, TestInstallationManifestStepV1.COMPLETE),
+            probe.calls.filter { it.sql == TestOrdinaryDrainSqlV1.appliedPage }.map { it.step }.distinct())
         assertEquals(8, atomicWrites, "One progress merge, three inserts, three changed counters and one exact unused debit.")
         observed.assertTransfer(before, observed.state(), reserveSpend = MANIFEST_LITERAL)
         assertEquals(before.applied, observed.state().applied)
@@ -125,6 +130,20 @@ internal object TestInstallationManifestPrepareCasesV1 {
         assertThrows<TestOrdinaryDrainExceptionV1> { TestRunInstallationManifestV1.begin(drain) }
         assertThrows<TestOrdinaryDrainExceptionV1> { drain.prepareInstallationManifest() }
         assertEquals(before, observed.image()); assertEquals(calls, f.probe.calls.size); assertEquals(requests, f.provider.requests.size)
+        assertTrue(f.sealHttp.order.isEmpty())
+        // Actually finish a failed drain invocation. A terminal boolean/cleanup alone must not
+        // authorize the successor reader, even though a successful completed drain above can.
+        f.probe.before = { throw TestOrdinaryDrainExceptionV1() }
+        try {
+            assertThrows<TestOrdinaryDrainExceptionV1> { drain.drain(f.approval(drain), f.rawEvidence, f.primaryCredentials, f.readCredentials) }
+        } finally { f.probe.before = {} }
+        f.probe.assertReleased(requireCommitted = false)
+        val failedCalls = f.probe.calls.size
+        assertTrue(failedCalls > calls)
+        assertThrows<TestOrdinaryDrainExceptionV1> { drain.requireManifestPredecessor() }
+        assertThrows<TestOrdinaryDrainExceptionV1> { TestRunInstallationManifestV1.begin(drain) }
+        assertThrows<TestOrdinaryDrainExceptionV1> { drain.prepareInstallationManifest() }
+        assertEquals(failedCalls, f.probe.calls.size); assertEquals(before, observed.image()); assertEquals(requests, f.provider.requests.size)
         assertTrue(f.sealHttp.order.isEmpty())
         f.assertReleased()
     }

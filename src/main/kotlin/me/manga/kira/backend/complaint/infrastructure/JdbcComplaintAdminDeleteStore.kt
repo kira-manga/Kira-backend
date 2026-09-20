@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteRejected
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.domain.rejectAdminDelete
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -34,24 +35,34 @@ import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
-/** TEST single Admin delete. Lower real phases only; registered/current-runtime request authority is not issued. */
+/** TEST single Admin delete plus a typed existing-primary reload; no registered request issuer. */
 internal class JdbcComplaintAdminDeleteStore(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
     private val audit: AuditService,
     internal val graph: TestOwnerDeleteLocalGraphV1,
-    private val codec: TestOwnerDeleteJournalCodecV1,
+    private val codec: TestOwnerDeleteJournalCodecV1?,
 ) {
     private val issuer = Any()
-    init { graph.requireDeletion(jdbc); check(graph.recoveryRegistration == null && graph.routing.journalConfiguration.adminDelete) }
+    init {
+        graph.requireDeletion(jdbc)
+        check(graph.routing.journalConfiguration.adminDelete)
+        check(graph.recoveryRegistration == null || graph.routing.journalConfiguration.registeredAdminDelete)
+    }
     fun authorize(identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate, proof: String?): ComplaintAdminDeleteAuthorizationOperation =
         capture(identity, candidate, proof, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE)
     fun reload(identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate): ComplaintAdminDeleteAuthorizationOperation =
         capture(identity, candidate, null, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD)
     private fun capture(identity: ComplaintAdminReadIdentity, candidate: ComplaintAdminDeleteCandidate, proof: String?, path: PersistencePhasePath): ComplaintAdminDeleteAuthorizationOperation {
         check(graph.recoveryRegistration == null)
-        return ComplaintAdminDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, codec, issuer, identity, candidate, proof, path)
+        return ComplaintAdminDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, proof, path)
     }
+
+    internal fun reloadRegistered(original: TestRunAdminDeleteContinuationV1): ComplaintAdminDeleteRegisteredReloadOperation =
+        ComplaintAdminDeleteRegisteredReloadOperation.capture(this, jdbc, capacity, graph, original)
+
+    internal fun releasedRegistered(operation: ComplaintAdminDeleteRegisteredReloadOperation): CommittedTestAdminDeleteWork =
+        ComplaintAdminDeleteAuthorizationOperation.releasedRegistered(operation, this, issuer, graph.routing)
 
     fun preparedEvent(work: CommittedTestAdminDeleteWork.Prepared): TestOwnerDeleteJournalEventV1 = ownedEvent(work)
     fun recordedEvent(work: CommittedTestAdminDeleteWork.RecordedVerified): TestOwnerDeleteJournalEventV1 = ownedEvent(work)
@@ -390,6 +401,12 @@ internal class ComplaintAdminDeleteAuthorizationOperation private constructor(
         override fun verificationHash(): ByteArray = hash.copyOf()
     }
     companion object {
+        internal fun releasedRegistered(operation: ComplaintAdminDeleteRegisteredReloadOperation, store: JdbcComplaintAdminDeleteStore,
+            issuer: Any, routing: TestOwnerDeleteJournalRoutingV1): CommittedTestAdminDeleteWork {
+            val (event, row) = operation.released(store)
+            check(event.belongsTo(routing) && routing.journalConfiguration.registeredAdminDelete)
+            return if (row.state == "PREPARED") ReleasedPrepared(issuer, routing, event) else ReleasedVerified(issuer, routing, event, row)
+        }
         fun requireTuple(event: TestOwnerDeleteJournalEventV1, tuple: ComplaintAdminDeleteTuple) {
             check(event.adminTuple.scope == tuple.scope && event.adminTuple.actorId == tuple.actor && event.adminTuple.operationKey == tuple.key)
             check(event.adminTuple.fingerprintBytes().contentEquals(tuple.fingerprintBytes()) && event.complaintIds() == listOf(tuple.targetId))

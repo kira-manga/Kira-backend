@@ -23,6 +23,7 @@ import me.manga.kira.backend.security.aws.AwsEpochSealStsAdapter
 import me.manga.kira.backend.security.aws.AwsEpochSealStsBinding
 import me.manga.kira.backend.security.aws.AwsEpochSealStsLimits
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
+import me.manga.kira.backend.security.aws.AwsTestInstallationManifestStsV1
 import me.manga.kira.backend.security.aws.journalKmsUrlConnectionClient
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
@@ -186,6 +187,14 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
         custody.requireAcquisition(this)
         requireRetained(routing, lanes)
         return AwsTestOrdinarySealStsV1.coldBudgeted(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
+    }
+
+    /** Same pre-full-D retained native material, but a distinct manifest original and exact-key policy. */
+    internal fun construct(custody: TestInstallationManifestCustodyV1): AwsTestInstallationManifestStsV1 {
+        requireConnectionFree()
+        custody.requireAcquisition(this)
+        requireRetained(routing, lanes)
+        return AwsTestInstallationManifestStsV1.coldBudgeted(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
     }
 
     @Synchronized internal fun sampleUtc(): Instant {

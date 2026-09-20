@@ -94,6 +94,7 @@ internal fun withPreparedActivationRows(
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     ownerDeleteAll: Boolean = false,
     ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
+    registeredAdminDelete: Boolean = false,
     action: (PreparedActivationRows) -> Unit,
 ) {
     val source = ordinaryCleanupReader(tls.database)
@@ -104,7 +105,7 @@ internal fun withPreparedActivationRows(
             "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}; " +
             "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO ${PgLifecycleDatabaseSettings.CANDIDATE}",
     )
-    withActivationEvidence(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain) { evidence ->
+    withActivationEvidence(tls, prefix, selectedSigner, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete) { evidence ->
         SyntheticComplaintCounters(observer, Instant.ofEpochSecond(CatalogReadbackFixture.EVALUATED_AT)).use { counters ->
             PreparedActivationRows(evidence, observer, counters).use { rows ->
                 rows.seed()

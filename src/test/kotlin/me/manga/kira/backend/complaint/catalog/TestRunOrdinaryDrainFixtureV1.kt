@@ -33,9 +33,12 @@ internal fun withOrdinaryDrainRun(
     prepared: Boolean = false,
     inputs: TestOrdinaryDrainFixtureInputsV1 = TestOrdinaryDrainFixtureInputsV1(),
     expireClosedSetupPredecessors: Boolean = false,
+    manifestPublication: Boolean = false,
+    additionalRawEnrolled: Int = 0,
     action: (TestRunOrdinaryDrainFixtureV1) -> Unit,
 ) {
-    TestOrdinarySealHttpFixtureV1().use { sealHttp ->
+    require(additionalRawEnrolled == 0 || manifestPublication && additionalRawEnrolled == 500)
+    TestOrdinarySealHttpFixtureV1(manifestPublication = manifestPublication).use { sealHttp ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(
             tls, ordinarySealHttp = sealHttp, ordinaryDrain = inputs,
             expireClosedSetupPredecessors = expireClosedSetupPredecessors,
@@ -47,7 +50,7 @@ internal fun withOrdinaryDrainRun(
             ComplaintTestNamespaceRegistrationCases.withOrdinaryAudit(runtime) { ordinary, audit ->
                 TestRunVerifiedOwnerDeleteFixture(p, runtime, registration, ordinary, audit,
                     expectSubsequentProviderReads = true).use { history ->
-                    history.authorEarlierHistory(verified = !prepared)
+                    history.authorEarlierHistory(verified = !prepared, additionalRawEnrolled = additionalRawEnrolled)
                     assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, TestRunSealingV1.begin(registration).seal())
                     TestRunOrdinaryDrainFixtureV1(history, sealHttp, inputs).use { f ->
                         if (prepared) {

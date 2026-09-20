@@ -24,6 +24,7 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         requireConnectionFree()
         require(CanonicalJson.CANON_VERSION == "kcj-1" && owner.pools.epochRotation == null) { INVALID_TEST_PROCESS_CONFIGURATION }
         val journal = owner.consumers.journalConfiguration
+        require(!journal.registeredAdminDelete || owner.ordinaryDenial != null && owner.ordinarySeal != null) { INVALID_TEST_PROCESS_CONFIGURATION }
         owner.publicationLanes.requireTestJournal(journal)
         owner.catalogActivation.requireRetained(owner.pools, owner.catalogReadback, journal)
         val descriptors = poolDescriptors(owner)
@@ -33,7 +34,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", if (journal.ownerDeleteAll) "PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+            put("profile", if (journal.registeredAdminDelete) "PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (journal.ownerDeleteAll) "PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else "PRE_CUTOVER_TEST_OWNER_DELETE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER")
             put("identity", identity(owner))
             put("capacityPolicy", commitment(capacity, capacityBytes))
@@ -75,7 +77,7 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         val bytes = owner.canonicalBytes()
         val parsed = document(bytes, "kira-complaint-journal-configuration")
         require(
-            parsed.getValue("profile").jsonPrimitive.content == (if (owner.ownerDeleteAll) "REGISTERED_TEST_OWNER_ERASURE" else "REGISTERED_TEST_OWNER_DELETE") &&
+            (!owner.adminDelete || owner.registeredAdminDelete) && parsed.getValue("profile").jsonPrimitive.content == owner.profile &&
                 parsed.getValue("dataScopeKind").jsonPrimitive.content == "TEST" &&
                 parsed.getValue("dataScopeId").jsonPrimitive.content == owner.scope.id.toString(),
         ) { INVALID_TEST_PROCESS_CONFIGURATION }
@@ -175,7 +177,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             "mutationMembers",
             buildJsonObject {
                 put("operations", strings(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE") +
-                    if (owner.journalConfiguration.ownerDeleteAll) listOf("OWNER_DELETE_ALL") else emptyList()))
+                    (if (owner.journalConfiguration.ownerDeleteAll) listOf("OWNER_DELETE_ALL") else emptyList()) +
+                    (if (owner.journalConfiguration.registeredAdminDelete) listOf("ADMIN_DELETE") else emptyList())))
                 put("memberLimit", owner.ownerCreatePolicy.memberLimit)
                 put("pruneBatch", owner.ownerCreatePolicy.pruneBatch)
                 put("retentionNanos", ComplaintAdmissionPolicy.PREVIOUS_RETENTION_NANOS)
@@ -211,6 +214,13 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         put("ownerDeleteAllEnabled", owner.journalConfiguration.ownerDeleteAll)
         put("ownerDeleteAllActorPerDay", 5)
         put("ownerDeleteAllIpPerHour", 20)
+        // Absent for old profiles: do not rewrite any previously committed D preimage.
+        if (owner.journalConfiguration.registeredAdminDelete) {
+            val admin = owner.adminDeletePolicy as? me.manga.kira.backend.security.ComplaintAdminDeleteAdmissionPolicy.Bounded
+                ?: error(INVALID_TEST_PROCESS_CONFIGURATION)
+            put("adminDeleteEnabled", true)
+            put("adminDeleteActorPerHour", admin.perHour)
+        }
     }
 
     private fun strings(values: List<String>): JsonArray = JsonArray(values.map(::JsonPrimitive))

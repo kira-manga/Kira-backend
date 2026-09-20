@@ -5,6 +5,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.actualPool
@@ -17,6 +19,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenia
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
 import me.manga.kira.backend.security.fullTestJournal
+import me.manga.kira.backend.security.ComplaintAdminDeleteAdmissionPolicy
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -120,6 +123,44 @@ internal class ComplaintTestOrdinaryDenialIntakeV1Test {
             assertEquals(checkNotNull(inputs.ordinaryDenial).inventory(), checkNotNull(target.ordinaryDenial).inventory())
             assertArrayEquals(journal.canonicalBytes(), target.consumers.journalConfiguration.canonicalBytes())
             target.requireRegistrationTarget() // Cold owner comparison only; no registration/activation was performed.
+        }
+    }
+
+    @Test
+    fun `explicit registered Admin erasure recipe binds J quota and D and cannot use legacy seal without denial`() {
+        val journal = TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(fullTestJournal().declaration())
+        val initial = TestDeploymentInputFixture.document(journal)
+        val document = initial.copy(profile = ComplaintTestDeploymentInputsV1.ADMIN_ERASURE_DRAIN_PROFILE,
+            ordinaryDenial = TestOrdinaryDenialInputFixtureV1.input(journal).copy(environment = initial.retention.environment))
+        val parsed = ComplaintTestDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(document))
+        assertTrue(parsed.journal.registeredAdminDelete && parsed.journal.ownerDeleteAll)
+        assertArrayEquals(journal.canonicalBytes(), parsed.journal.canonicalBytes())
+        listOf(document.copy(ordinaryDenial = null),
+            document.copy(profile = ComplaintTestDeploymentInputsV1.PROFILE),
+            document.copy(profile = ComplaintTestDeploymentInputsV1.OWNER_ERASURE_PROFILE),
+            document.copy(profile = ComplaintTestDeploymentInputsV1.DRAIN_PROFILE),
+            document.copy(profile = ComplaintTestDeploymentInputsV1.OWNER_ERASURE_DRAIN_PROFILE),
+            document.copy(journal = fullTestJournal(ownerDeleteAll = true).document()),
+            document.copy(journal = TestOwnerDeleteJournalConfigurationV1.lowerAdminErasure(journal.declaration()).document())).forEach {
+            refused(TestDeploymentInputFixture.bytes(it))
+        }
+        withAssembled(document) { assembly ->
+            val target = assembly.target
+            assertTrue(target.consumers.journalConfiguration.registeredAdminDelete)
+            assertNotNull(target.ordinarySeal); assertNotNull(target.ordinaryDenial)
+            val policy = target.consumers.adminDeletePolicy as ComplaintAdminDeleteAdmissionPolicy.Bounded
+            assertEquals(60, policy.perHour)
+            val encoded = encoded(target)
+            assertEquals("PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER", encoded.getValue("profile").jsonPrimitive.content)
+            val admission = encoded.getValue("consumers").jsonObject.getValue("admission").jsonObject
+            assertEquals(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE", "OWNER_DELETE_ALL", "ADMIN_DELETE"),
+                admission.getValue("mutationMembers").jsonObject.getValue("operations").jsonArray.map { it.jsonPrimitive.content })
+            assertEquals("true", admission.getValue("quotas").jsonObject.getValue("adminDeleteEnabled").jsonPrimitive.content)
+            assertEquals("60", admission.getValue("quotas").jsonObject.getValue("adminDeleteActorPerHour").jsonPrimitive.content)
+            assertArrayEquals(journal.canonicalBytes(), target.consumers.journalConfiguration.canonicalBytes())
+            assertThrows<IllegalArgumentException> { retained(target, ordinaryDenial = null) }
+            assertThrows<IllegalArgumentException> { retained(target, ordinarySeal = null) }
+            target.requireRegistrationTarget() // Cold owner comparison only, not ACTIVE request/HTTP acceptance.
         }
     }
 

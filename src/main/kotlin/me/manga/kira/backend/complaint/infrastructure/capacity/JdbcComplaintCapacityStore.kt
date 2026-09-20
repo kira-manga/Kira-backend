@@ -30,6 +30,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseE
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchStatusReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityBalance
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityConfiguration
@@ -48,6 +49,7 @@ import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationActiv
 import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerRotationCapacityV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminContentOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminStatusMutation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminBatchStatusMutation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllOperation
@@ -63,6 +65,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDelet
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestPublicationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
@@ -99,6 +102,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForTestRunSealedAudit(operation: TestRunSealingOperationV1): LockedTestRunSealedAudit = LockedTestRunSealedAudit.lock(this, operation)
     internal fun lockForTestInstallationManifest(operation: TestInstallationManifestOperationV1): LockedTestInstallationManifest = LockedTestInstallationManifest.lock(this, operation)
+    internal fun lockForTestInstallationManifestPublication(operation: TestInstallationManifestPublicationOperationV1): LockedTestInstallationManifestPublication = LockedTestInstallationManifestPublication.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
     internal fun lockForTestOrdinaryDrain(operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain = LockedTestOrdinaryDrain.lock(this, operation)
 
@@ -135,6 +139,8 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForAdminStatus(operation: ComplaintAdminStatusMutation): LockedAdminStatus = LockedAdminStatus.lock(this, operation)
 
+    internal fun lockForAdminBatchStatus(operation: ComplaintAdminBatchStatusMutation): LockedAdminBatchStatus = LockedAdminBatchStatus.lock(this, operation)
+
     internal fun lockForAdminDelete(operation: ComplaintAdminDeleteAuthorizationOperation): LockedAdminDelete = LockedAdminDelete.lock(this, operation)
     internal fun lockForAdminDeleteApply(operation: ComplaintAdminDeleteApplyOperation): LockedAdminDeleteApply = LockedAdminDeleteApply.lock(this, operation)
 
@@ -146,6 +152,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForOwnerDelete(operation: ComplaintOwnerDeleteAuthorizationOperation): LockedOwnerDelete = LockedOwnerDelete.lock(this, operation)
     /** Only an original registered reload reads these counters; it receives no spending/settlement owner. */
     internal fun lockForRegisteredOwnerDeleteReload(operation: ComplaintOwnerDeleteRegisteredReloadOperation) {
+        operation.beginCounterLock(jdbc)
+        operation.requireCapacityPolicy(readLockedLedger(), jdbc)
+    }
+    /** Existing Admin primary only: no charge, allocation or authorization can be issued here. */
+    internal fun lockForRegisteredAdminDeleteReload(operation: me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteRegisteredReloadOperation) {
         operation.beginCounterLock(jdbc)
         operation.requireCapacityPolicy(readLockedLedger(), jdbc)
     }
@@ -1436,6 +1447,91 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
+    /** One concrete batch pays one receipt and N audits. Every counted insertion remains identity-bound and one-use. */
+    internal class LockedAdminBatchStatus private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: ComplaintAdminBatchStatusMutation,
+        private val after: ComplaintCapacityLedger,
+    ) {
+        private var charged = false
+        private var receiptOnly = false
+        private val targetCount = operation.targetCount
+        private val audits = ArrayList<ChargedComplaintAudit>(targetCount)
+
+        internal fun belongsTo(candidate: ComplaintAdminBatchStatusMutation): Boolean = operation === candidate
+        internal fun chargedFor(candidate: ComplaintAdminBatchStatusMutation): Boolean = belongsTo(candidate) && charged
+
+        internal fun completedFor(candidate: ComplaintAdminBatchStatusMutation, receipt: ComplaintAdminBatchStatusReceipt?): Boolean =
+            chargedFor(candidate) && when (receipt) {
+                is ComplaintAdminBatchStatusReceipt.Applied -> !receiptOnly && receipt.items.size == targetCount &&
+                    audits.size == targetCount && audits.all { it.completedFor(candidate) }
+                is ComplaintAdminBatchStatusReceipt.Rejected -> receiptOnly && audits.isEmpty()
+                null -> false
+            }
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun keepReceiptOnly(candidate: ComplaintAdminBatchStatusMutation) {
+            try {
+                check(candidate === operation && charged && !receiptOnly && audits.isEmpty())
+                val retained = after.refundActual(checkNotNull(store.expectedPolicyDigest), ComplaintCapacityCharges.AUDIT.scaled(targetCount.toLong()))
+                persist(after.balance, retained.balance, rejection = true)
+                receiptOnly = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun prepaidAudit(candidate: ComplaintAdminBatchStatusMutation): ChargedComplaintAudit {
+            try {
+                check(candidate === operation && charged && !receiptOnly && audits.size < targetCount && audits.all { it.completedFor(operation) })
+                val result = ChargedComplaintAudit.prepaidAdminBatchStatus(this, operation)
+                audits.add(result)
+                return result
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        private fun persist(old: ComplaintCapacityBalance, next: ComplaintCapacityBalance, rejection: Boolean) {
+            for (counter in ADMIN_BATCH_STATUS_COUNTERS) {
+                operation.requireCapacityWrite(this, store.jdbc, rejection)
+                if (old.free[counter] == next.free[counter] && old.actual[counter] == next.actual[counter]) continue
+                check(
+                    store.jdbc.update(
+                        REFUND_COUNTER,
+                        next.free[counter],
+                        next.actual[counter],
+                        counter.storedName,
+                        old.free[counter],
+                        old.actual[counter],
+                    ) == 1,
+                )
+            }
+            operation.requireCapacityWrite(this, store.jdbc, rejection)
+        }
+
+        override fun toString(): String = "LockedAdminBatchStatus(redacted)"
+
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: ComplaintAdminBatchStatusMutation): LockedAdminBatchStatus {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val before = store.readLockedLedger()
+                    val after = before.chargeCreation(checkNotNull(store.expectedPolicyDigest), ComplaintCapacityCharges.adminBatchStatus(operation.targetCount))
+                    val allocation = LockedAdminBatchStatus(store, operation, after)
+                    operation.retainCapacity(allocation, store.jdbc, before)
+                    allocation.persist(before.balance, after.balance, rejection = false)
+                    allocation.charged = true
+                    return allocation
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
     /** A real new pair, its daily admission and scope-only audit share this one-use locked allocation. */
     internal class LockedInstallationEnrollment private constructor(
         private val store: JdbcComplaintCapacityStore,
@@ -1752,6 +1848,36 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
+    /** Read-only original-owned paid closure. This type deliberately has no settlement/update method. */
+    internal class LockedTestInstallationManifestPublication private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestInstallationManifestPublicationOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+        internal fun completedFor(candidate: TestInstallationManifestPublicationOperationV1): Boolean = operation === candidate && completed
+        internal fun checkPaid(candidate: TestInstallationManifestPublicationOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterCheck(this, store.jdbc)
+                issued = true
+                operation.requirePaidLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest))
+                operation.requireCounterCheck(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        override fun toString(): String = "LockedTestInstallationManifestPublication(read-only-paid-closure,redacted)"
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestInstallationManifestPublicationOperationV1): LockedTestInstallationManifestPublication {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestInstallationManifestPublication(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) { operation.failed(problem) }
+            }
+        }
+    }
+
     internal class LockedTestOrdinaryDrain private constructor(
         private val store: JdbcComplaintCapacityStore,
         private val operation: TestOrdinaryDrainOperationV1,
@@ -1945,6 +2071,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun belongsTo(candidate: ComplaintAdminContentOperation): Boolean = source is Source.AdminContent && source.operation === candidate
 
         internal fun belongsTo(candidate: ComplaintAdminStatusMutation): Boolean = source is Source.AdminStatus && source.operation === candidate
+        internal fun belongsTo(candidate: ComplaintAdminBatchStatusMutation): Boolean = source is Source.AdminBatchStatus && source.operation === candidate
 
         internal fun chargedFor(candidate: ComplaintGrantConsumption): Boolean = belongsTo(candidate) && charged
 
@@ -1957,6 +2084,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun chargedFor(candidate: ComplaintAdminContentOperation): Boolean = belongsTo(candidate) && charged
 
         internal fun chargedFor(candidate: ComplaintAdminStatusMutation): Boolean = belongsTo(candidate) && charged
+        internal fun chargedFor(candidate: ComplaintAdminBatchStatusMutation): Boolean = belongsTo(candidate) && charged
 
         internal fun completedFor(candidate: ComplaintGrantConsumption): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
 
@@ -1969,6 +2097,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun completedFor(candidate: ComplaintAdminContentOperation): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
 
         internal fun completedFor(candidate: ComplaintAdminStatusMutation): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
+        internal fun completedFor(candidate: ComplaintAdminBatchStatusMutation): Boolean = chargedFor(candidate) && insertion?.completedFor(this) == true
 
         internal fun beginInsert(candidate: ComplaintAuditInsertion, entry: CountedComplaintAuditEntry): ComplaintAuditSelectedHolder {
             val holder = source.holder(this)
@@ -1978,6 +2107,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             if (source is Source.OwnerEdit) source.operation.requireAuditEntry(entry)
             if (source is Source.AdminContent) source.operation.requireAuditEntry(entry)
             if (source is Source.AdminStatus) source.operation.requireAuditEntry(entry)
+            if (source is Source.AdminBatchStatus) source.operation.requireAuditEntry(entry)
             insertion = candidate // Spent before either insert; a failed insert can never reuse its allocation.
             return holder
         }
@@ -2067,6 +2197,18 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                     ComplaintAuditSelectedHolder.Ordinary(operation.auditEntityManager(charged))
                 override fun failed(problem: Throwable): Nothing = operation.failed(problem)
             }
+
+            /** The concrete batch row audit was prepaid before all domain locks. Generic charge entry stays forbidden. */
+            class AdminBatchStatus(val operation: ComplaintAdminBatchStatusMutation) : Source {
+                override fun beginCharge(jdbc: JdbcTemplate): Nothing = failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+                override fun retainCharge(charged: ChargedComplaintAudit, jdbc: JdbcTemplate): Nothing =
+                    failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+                override fun requireCharge(charged: ChargedComplaintAudit, jdbc: JdbcTemplate): Nothing =
+                    failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+                override fun holder(charged: ChargedComplaintAudit): ComplaintAuditSelectedHolder =
+                    ComplaintAuditSelectedHolder.Ordinary(operation.auditEntityManager(charged))
+                override fun failed(problem: Throwable): Nothing = operation.failed(problem)
+            }
         }
 
         companion object {
@@ -2126,6 +2268,17 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 return charged
             }
 
+            internal fun prepaidAdminBatchStatus(
+                allocation: LockedAdminBatchStatus,
+                operation: ComplaintAdminBatchStatusMutation,
+            ): ChargedComplaintAudit {
+                check(allocation.chargedFor(operation))
+                val charged = ChargedComplaintAudit(Source.AdminBatchStatus(operation), operation.prepaidAuditMutation(allocation))
+                charged.charged = true
+                operation.retainPrepaidAudit(allocation, charged)
+                return charged
+            }
+
             @Suppress("TooGenericExceptionCaught")
             private fun charge(store: JdbcComplaintCapacityStore, source: Source, mutation: ComplaintAuditMutation): ChargedComplaintAudit {
                 try {
@@ -2167,6 +2320,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         val OWNER_EDIT_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.OWNER_EDIT[it] > 0 }
         val ADMIN_EDIT_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.ADMIN_EDIT[it] > 0 }
         val ADMIN_STATUS_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.ADMIN_STATUS[it] > 0 }
+        val ADMIN_BATCH_STATUS_COUNTERS = ComplaintCapacityEncoding.lockOrder().filter { ComplaintCapacityCharges.adminBatchStatus(1)[it] > 0 }
         val ENROLLMENT_COUNTERS = listOf(
             ComplaintCapacityCounter.APP_INSTALLATIONS,
             ComplaintCapacityCounter.AUDIT_ROWS,

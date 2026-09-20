@@ -8,7 +8,9 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminContentRequestContex
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusRequestContext
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchStatusRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusTuple
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchStatusTuple
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -35,6 +37,7 @@ internal class ComplaintIngressContext :
     ComplaintAdminDeleteRequestContext,
     ComplaintAdminReadRequestContext,
     ComplaintAdminStatusRequestContext,
+    ComplaintAdminBatchStatusRequestContext,
     ComplaintOwnerDetailRequestContext,
     ComplaintOwnerHistoryRequestContext,
     ComplaintOwnerOperationContext,
@@ -68,6 +71,7 @@ internal class ComplaintIngressAdmission(
     private val adminContentPolicy: ComplaintAdminContentAdmissionPolicy = ComplaintAdminContentAdmissionPolicy.Disabled,
     private val adminStatusPolicy: ComplaintAdminStatusAdmissionPolicy = ComplaintAdminStatusAdmissionPolicy.Disabled,
     private val adminDeletePolicy: ComplaintAdminDeleteAdmissionPolicy = ComplaintAdminDeleteAdmissionPolicy.Disabled,
+    private val adminBatchStatusPolicy: ComplaintAdminBatchStatusAdmissionPolicy = ComplaintAdminBatchStatusAdmissionPolicy.Disabled,
 ) {
     private val lock = Any()
     private val keys = ComplaintAdmissionKeyRing(configuration)
@@ -121,6 +125,10 @@ internal class ComplaintIngressAdmission(
 
     private val adminStatuses = (adminStatusPolicy as? ComplaintAdminStatusAdmissionPolicy.Bounded)?.let {
         ComplaintAdminStatusAdmissionStore(it, checkNotNull(mutationMembers))
+    }
+
+    private val adminBatchStatuses = (adminBatchStatusPolicy as? ComplaintAdminBatchStatusAdmissionPolicy.Bounded)?.let {
+        ComplaintAdminBatchStatusAdmissionStore(it, checkNotNull(mutationMembers))
     }
 
     private var reservations = 0
@@ -385,6 +393,38 @@ internal class ComplaintIngressAdmission(
             )
             state.admission = handoff.identity
             state.adminStatusIdentity = handoff.identity
+            state.admittedAt = now
+            state.consumed = true
+            handoff
+        }
+    }
+
+    internal fun startAdminBatchStatus(context: ComplaintIngressContext) {
+        requireConnectionFree()
+        locked { startAttempt(context, SemanticOperation.ADMIN_BATCH_STATUS) }
+    }
+
+    /** Only the concrete atomic batch adapter calls after its authenticated receipt read has physically released. */
+    internal fun admitAdminBatchStatus(context: ComplaintIngressContext, tuple: ComplaintAdminBatchStatusTuple): ComplaintAdmittedAdminBatchStatus {
+        requireConnectionFree()
+        if (clock !== SystemComplaintAdmissionNanoClock) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        return locked {
+            val state = state(context)
+            if (state.operation !== SemanticOperation.ADMIN_BATCH_STATUS || state.admission != null) {
+                refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            }
+            val limits = adminBatchStatusPolicy as? ComplaintAdminBatchStatusAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
+            val handoff = AdmittedAdminBatchStatus(this, context, tuple, limits)
+            val now = time()
+            val activeKeys = keys.keys()
+            checkNotNull(adminBatchStatuses).admit(
+                ComplaintAdmissionPseudonyms.adminBatchStatusMember(activeKeys, tuple),
+                ComplaintAdmissionPseudonyms.adminBatchStatusActor(activeKeys, tuple.actor, tuple.scope),
+                semantics,
+                now,
+            )
+            state.admission = handoff.identity
+            state.adminBatchStatusIdentity = handoff.identity
             state.admittedAt = now
             state.consumed = true
             handoff
@@ -724,6 +764,17 @@ internal class ComplaintIngressAdmission(
         requireLifetime(state, advanceTime(System.nanoTime()))
     }
 
+    private fun requireAdminBatchStatusState(handoff: AdmittedAdminBatchStatus) {
+        val state = state(handoff.context)
+        if (handoff.owner !== this || state.operation !== SemanticOperation.ADMIN_BATCH_STATUS || !state.consumed) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        if (state.adminBatchStatusIdentity !== handoff.identity || state.admission !== handoff.identity) {
+            refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+        }
+        requireLifetime(state, advanceTime(System.nanoTime()))
+    }
+
     private fun requireEditState(handoff: AdmittedEdit) {
         val state = state(handoff.context)
         if (handoff.owner !== this || state.operation !== SemanticOperation.OWNER_EDIT || !state.consumed) {
@@ -754,6 +805,7 @@ internal class ComplaintIngressAdmission(
         val adminContent = adminContentPolicy as? ComplaintAdminContentAdmissionPolicy.Bounded
         val adminDelete = adminDeletePolicy as? ComplaintAdminDeleteAdmissionPolicy.Bounded
         val adminStatus = adminStatusPolicy as? ComplaintAdminStatusAdmissionPolicy.Bounded
+        val adminBatchStatus = adminBatchStatusPolicy as? ComplaintAdminBatchStatusAdmissionPolicy.Bounded
         val dimensions = listOfNotNull(
             create?.let { it.memberLimit to it.pruneBatch },
             deletion?.let { it.memberLimit to it.pruneBatch },
@@ -762,6 +814,7 @@ internal class ComplaintIngressAdmission(
             adminContent?.let { it.memberLimit to it.pruneBatch },
             adminDelete?.let { it.memberLimit to it.pruneBatch },
             adminStatus?.let { it.memberLimit to it.pruneBatch },
+            adminBatchStatus?.let { it.memberLimit to it.pruneBatch },
         )
         require(dimensions.distinct().size <= 1) { INVALID_ADMISSION_CONFIGURATION }
         val selected = dimensions.firstOrNull() ?: return null
@@ -864,6 +917,7 @@ internal class ComplaintIngressAdmission(
         var adminContentIdentity: Any? = null
         var adminDeleteIdentity: Any? = null
         var adminStatusIdentity: Any? = null
+        var adminBatchStatusIdentity: Any? = null
         var ownerDeleteIdentity: Any? = null
         var ownerDeleteAllIdentity: Any? = null
     }
@@ -879,6 +933,7 @@ internal class ComplaintIngressAdmission(
         ADMIN_CONTENT,
         ADMIN_DELETE,
         ADMIN_STATUS,
+        ADMIN_BATCH_STATUS,
         OWNER_STATUS,
         OWNER_CREATE,
         OWNER_REPLY,
@@ -961,6 +1016,20 @@ internal class ComplaintIngressAdmission(
     }
 
     private enum class AdminStatusStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
+
+    private class AdmittedAdminBatchStatus(
+        val owner: ComplaintIngressAdmission,
+        val context: ComplaintIngressContext,
+        val tuple: ComplaintAdminBatchStatusTuple,
+        val limits: ComplaintAdminBatchStatusAdmissionPolicy.Bounded,
+    ) : ComplaintAdmittedAdminBatchStatus {
+        val identity = Any()
+        var phaseIdentity: Any? = null
+        var stage = AdminBatchStatusStage.MINTED
+        override fun toString(): String = "ComplaintAdmittedAdminBatchStatus(redacted)"
+    }
+
+    private enum class AdminBatchStatusStage { MINTED, BOUND, CLAIMED, BOUNDS_CHECKED, WRITING }
 
     private class AdmittedEdit(
         val owner: ComplaintIngressAdmission,
@@ -1146,6 +1215,66 @@ internal class ComplaintIngressAdmission(
             selected.owner.locked {
                 selected.owner.requireAdminStatusState(selected)
                 if (selected.stage !== AdminStatusStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+            }
+        }
+
+        internal fun bindAdminBatchStatus(handoff: ComplaintAdmittedAdminBatchStatus, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedAdminBatchStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireAdminBatchStatusState(selected)
+                if (selected.stage !== AdminBatchStatusStage.MINTED || selected.phaseIdentity != null) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.phaseIdentity = phaseIdentity
+                selected.stage = AdminBatchStatusStage.BOUND
+            }
+        }
+
+        internal fun claimAdminBatchStatus(handoff: ComplaintAdmittedAdminBatchStatus, phaseIdentity: Any, tuple: ComplaintAdminBatchStatusTuple) {
+            val selected = handoff as? AdmittedAdminBatchStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireAdminBatchStatusState(selected)
+                if (selected.stage !== AdminBatchStatusStage.BOUND || selected.phaseIdentity !== phaseIdentity || selected.tuple !== tuple) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = AdminBatchStatusStage.CLAIMED
+            }
+        }
+
+        internal fun checkAdminBatchStatusBounds(handoff: ComplaintAdmittedAdminBatchStatus, phaseIdentity: Any, ledger: ComplaintCapacityLedger) {
+            val selected = handoff as? AdmittedAdminBatchStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireAdminBatchStatusState(selected)
+                if (selected.stage !== AdminBatchStatusStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                if (!selected.limits.matchesLocked(ledger)) refuseComplaintAdmission()
+                selected.stage = AdminBatchStatusStage.BOUNDS_CHECKED
+            }
+        }
+
+        /** Intrinsic time and retained scalars only; no backing store/provider call inside the transaction. */
+        internal fun checkAdminBatchStatusWrite(handoff: ComplaintAdmittedAdminBatchStatus, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedAdminBatchStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireAdminBatchStatusState(selected)
+                if (selected.phaseIdentity !== phaseIdentity ||
+                    (selected.stage !== AdminBatchStatusStage.BOUNDS_CHECKED && selected.stage !== AdminBatchStatusStage.WRITING)
+                ) {
+                    refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+                }
+                selected.stage = AdminBatchStatusStage.WRITING
+            }
+        }
+
+        /** Grant consumption follows the exact new receipt claim, before any counter/domain lock. */
+        internal fun checkAdminBatchStatusClaim(handoff: ComplaintAdmittedAdminBatchStatus, phaseIdentity: Any) {
+            val selected = handoff as? AdmittedAdminBatchStatus ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            selected.owner.locked {
+                selected.owner.requireAdminBatchStatusState(selected)
+                if (selected.stage !== AdminBatchStatusStage.CLAIMED || selected.phaseIdentity !== phaseIdentity) {
                     refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
                 }
             }

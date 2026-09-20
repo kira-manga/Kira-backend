@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.security.MessageDigest
@@ -25,10 +26,14 @@ internal class JdbcComplaintAdminDeleteVerificationStore(
 ) {
     private val issuer = Any()
     private val codec = TestOwnerDeleteVerificationCodecV1.forAdmin(graph.routing)
-    init { authorization.requireBinding(graph, jdbc); check(graph.recoveryRegistration == null && graph.routing.journalConfiguration.adminDelete) }
+    init { authorization.requireBinding(graph, jdbc); check(graph.routing.journalConfiguration.adminDelete) }
     fun capture(readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
         requireConnectionFree()
         check(graph.recoveryRegistration == null) // Generic capture never grants a closed registered continuation.
+        return captureReadback(readback)
+    }
+    internal fun captureRegistered(original: TestRunAdminDeleteContinuationV1, readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
+        original.requirePublishedReadback(authorization, graph, readback)
         return captureReadback(readback)
     }
     private fun captureReadback(readback: TestOwnerDeleteJournalReadbackV1): TestAdminDeleteVerificationInputV1 {
@@ -106,6 +111,7 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
         requireConnectionFree()
         return released ?: ReleasedTestAdminDeleteVerification(observed.issuer, observed.event, checkNotNull(recorded), checkNotNull(bytes), checkNotNull(hash)).also { released = it }
     }
+    internal fun requireRegisteredContinuation(original: TestRunAdminDeleteContinuationV1) = original.requireVerificationInput(observed)
     private fun execute() {
         retained()
         val event = observed.event
@@ -116,6 +122,7 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
         var publication = jdbc.query(AdminDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication.adminDelete(row) }, receipt.publication).single()
         publication.requireAdminEvent(event)
         check(publication.writer == graph.writer && publication.createdAt == receipt.authorizedAt)
+        phase.requireTestRunAdminDeleteVerificationRun(graph, jdbc, publication.createdAt)
         if (publication.state == "PREPARED") {
             check(receipt.state == "AUTHORIZED_DELETE")
             phase.adminDelete.checkWrite(this, jdbc)
@@ -146,6 +153,7 @@ internal class ComplaintAdminDeleteVerificationOperation private constructor(
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 phase.adminDelete.requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY)
+                phase.requireTestRunAdminDeleteVerify(graph, jdbc, input)
                 val selected = input as? CapturedTestAdminDeleteVerification ?: error("Original provider readback capture required")
                 check(selected.issuer === issuer && selected.event.belongsTo(graph.routing))
                 return ComplaintAdminDeleteVerificationOperation(phase, jdbc, graph, codec, selected).also { phase.adminDelete.retain(it, jdbc); it.execute() }

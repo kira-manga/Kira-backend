@@ -211,7 +211,7 @@ internal class TestOrdinaryInventoryReaderV1 private constructor(
             {
                 val facts = cheapChecks(key, version, listed, fetched)
                 requireNativeRead()
-                val decoded = codec.open(declaration.journalLocation.bucket, key, fetched.bytes, attempt)
+                val decoded = codec.openRegisteredOrdinary(declaration.journalLocation.bucket, key, fetched.bytes, attempt)
                 requireJournalPublication(
                     decoded.event.belongsTo(routing) && decoded.event.route.objectKey == key && decoded.event.route.eventId == facts.eventId &&
                         decoded.wireSha256 == facts.wireSha256,

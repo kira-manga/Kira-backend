@@ -3,6 +3,7 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
 import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusTuple
+import me.manga.kira.backend.complaint.domain.ComplaintAdminBatchStatusTuple
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
@@ -59,6 +60,18 @@ internal object ComplaintAdmissionPseudonyms {
         listOf(
             domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
             ascii(tuple.operation.name), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
+        ),
+    )
+
+    /** One member per atomic STATUS batch; the canonical fingerprint already binds every sorted ID/tag pair. */
+    fun adminBatchStatusActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii(ComplaintAdminBatchStatusTuple.OPERATION)))
+
+    fun adminBatchStatusMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintAdminBatchStatusTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
+            ascii(ComplaintAdminBatchStatusTuple.OPERATION), uuid(tuple.key), tuple.fingerprintBytes(),
         ),
     )
 

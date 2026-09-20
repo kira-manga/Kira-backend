@@ -115,7 +115,7 @@ internal object TestOrdinaryDrainRowsV1 {
             fun observed(original: TestRunOrdinaryDrainV1, read: TestOrdinaryInventoryReadbackV1): Entry {
                 original.requireInventoryEvent(read.event)
                 return Entry(read.event.route.objectKey, requireJournalVersion(read.versionId), read.wireSha256, read.event.semanticSha256,
-                    read.event.route.eventId, read.event.tuple.epoch, read.ciphertextByteCount, "PENDING", read.event.tuple.eventKind.name).also { it.requireBound(original) }
+                    read.event.route.eventId, read.event.comparison.epoch, read.ciphertextByteCount, "PENDING", read.event.comparison.eventKind.name).also { it.requireBound(original) }
             }
             fun read(row: ResultSet, original: TestRunOrdinaryDrainV1): Entry {
                 requireDrain(row.getObject("data_scope_id", UUID::class.java) == original.scope && boolean(row, "test_only") &&

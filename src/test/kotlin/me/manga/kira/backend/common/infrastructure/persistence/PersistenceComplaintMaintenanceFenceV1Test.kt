@@ -64,15 +64,32 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECT,
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
         )
-        val adminWriters = setOf(PersistencePhasePath.COMPLAINT_ADMIN_EDIT, PersistencePhasePath.COMPLAINT_ADMIN_STATUS)
+        val adminWriters = setOf(
+            PersistencePhasePath.COMPLAINT_ADMIN_EDIT,
+            PersistencePhasePath.COMPLAINT_ADMIN_STATUS,
+            PersistencePhasePath.COMPLAINT_ADMIN_BATCH_STATUS,
+        )
+        val adminDeletionWriters = setOf(
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY,
+        )
+        val terminalWriters = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
+            PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
+            PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
+            PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
+        )
         val registration = PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION
         val sealing = setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT)
-        val writers = oldWriters + testWriters + adminWriters + registration + sealing
-        assertEquals(95, PersistencePhasePath.entries.size)
+        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + sealing
+        assertEquals(108, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
-        assertEquals(2, adminWriters.size)
-        assertEquals(56, writers.size)
+        assertEquals(3, adminWriters.size)
+        assertEquals(3, adminDeletionWriters.size)
+        assertEquals(4, terminalWriters.size)
+        assertEquals(64, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -120,12 +137,17 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_ADMIN_STATS,
             PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
             PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT,
+            PersistencePhasePath.COMPLAINT_ADMIN_BATCH_STATUS_PREFLIGHT,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT,
         )
+        val terminalObservations = setOf(PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_VERIFY)
         val snapshot = PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT
         assertEquals(30, oldObservations.size)
-        assertEquals(6, adminObservations.size)
-        assertEquals(37, (oldObservations + adminObservations + snapshot).size)
-        assertEquals(oldObservations + adminObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
+        assertEquals(9, adminObservations.size)
+        assertEquals(1, terminalObservations.size)
+        assertEquals(41, (oldObservations + adminObservations + terminalObservations + snapshot).size)
+        assertEquals(oldObservations + adminObservations + terminalObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
         assertEquals(testWriters + snapshot, PersistencePhasePath.entries.filter { it.catalogTestRunActivation }.toSet())
         assertTrue(snapshot.readOnly)
         assertFalse(testWriters.any { it.readOnly })
@@ -136,6 +158,7 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertFalse(sealing.any { it.readOnly || it.catalogTestRunActivation })
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT.readOnly)
+        assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_BATCH_STATUS_PREFLIGHT.readOnly)
     }
 
     @Test

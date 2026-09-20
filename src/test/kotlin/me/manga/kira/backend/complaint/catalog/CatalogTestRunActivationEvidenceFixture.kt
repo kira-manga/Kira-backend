@@ -98,19 +98,21 @@ internal fun withActivationEvidence(
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     ownerDeleteAll: Boolean = false,
     ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
+    registeredAdminDelete: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
     val registry = rotations.genesis.manifest.initialWriterRegistry
     val original = fullTestJournal().declaration()
-    val journal = TestOwnerDeleteJournalConfigurationV1.of(
-        original.copy(
-            writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
-            limits = ordinaryDrain?.limits(original.limits)
-                ?: original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
-        ),
-        ownerDeleteAll = ownerDeleteAll,
+    val declaration = original.copy(
+        writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
+        limits = ordinaryDrain?.limits(original.limits)
+            ?: original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
     )
+    val journal = if (registeredAdminDelete) {
+        require(ordinarySealHttp != null && ordinaryDrain != null)
+        TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(declaration)
+    } else TestOwnerDeleteJournalConfigurationV1.of(declaration, ownerDeleteAll = ownerDeleteAll)
     JournalPublicationLanesV1(journal).use { lanes ->
         CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
             if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain).use(action)
@@ -163,7 +165,9 @@ internal class CatalogTestRunActivationEvidenceFixture(
             ComplaintCapacityPolicyV1.of(
                 original.hardLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 2_000_000_000),
                 original.creationLimit.with(ComplaintCapacityCounter.STORAGE_BYTES, 1_800_000_000),
-                original.dailyEnrollmentLimit,
+                // The opt-in two-chunk history uses the real lower-core enrollment producer501
+                // times. Select P before full D; do not fake its paid rows or mutate frozen limits.
+                if (ordinarySealHttp?.manifestPublication == true) 1_000 else original.dailyEnrollmentLimit,
             )
         } else original
         fixture.configuration(settings = boundConsumerTestSettings(createGlobal = createGlobal), capacity = capacity)

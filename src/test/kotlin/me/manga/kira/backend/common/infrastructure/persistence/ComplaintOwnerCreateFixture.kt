@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
@@ -61,9 +62,9 @@ internal class ComplaintOwnerCreateFixture(
     val base: OrdinaryComplaintInstallationEnrollmentFixture,
     val run: OrdinaryComplaintTestInstallationFixture,
     private val desired: ComplaintInstallationDesiredSettings.Configured = run.desired,
+    val policy: ComplaintCapacityPolicyV1 = ownerCreateTestCapacityPolicy(),
 ) :
     AutoCloseable {
-    val policy = ownerCreateTestCapacityPolicy()
     val ingress = ownerCreateTestIngress(policy)
     val jwt = historyTestJwt()
     val observer = base.observer
@@ -84,7 +85,7 @@ internal class ComplaintOwnerCreateFixture(
     var afterStep: (OwnerCreateFixtureStep) -> Unit = {}
 
     init {
-        // Existing disposable ledger has these exact vectors; replace only its explicitly synthetic P digest.
+        // Caller-owned disposable ledger must already have the selected vectors; replace only its synthetic P digest.
         assertEquals(22, observer.update("UPDATE complaint_capacity_counters SET configuration_hash = ?", policy.digestBytes()))
         enrollmentResponse = exchange(actor.id, session = false)
         assertEquals(201, enrollmentResponse.status)

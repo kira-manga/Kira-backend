@@ -314,7 +314,7 @@ internal class TestInstallationManifestOperationV1 private constructor(
         var after: Pair<String, String>? = null
         while (true) {
             original.requireRunning()
-            val page = TestOrdinaryDrainPersistenceV1.appliedPage(jdbc, original.drain, after)
+            val page = TestInstallationManifestAppliedPageV1.page(jdbc, this, after)
             if (page.isEmpty()) break
             page.forEach { value ->
                 requireManifest(count < expected.versionCount && after?.let { TestOrdinaryDrainRowsV1.compare(it, value.locator) < 0 } != false)
@@ -324,6 +324,10 @@ internal class TestInstallationManifestOperationV1 private constructor(
             }
         }
         requireManifest(count == expected.versionCount && framed == original.ordinaryCut.framedByteCount && HexFormat.of().formatHex(hash.digest()) == expected.sha256)
+    }
+    internal fun requireAppliedPage(selected: JdbcTemplate) {
+        retained(Stage.BODY, selected)
+        requireManifest(step === TestInstallationManifestStepV1.CAPTURE || step === TestInstallationManifestStepV1.COMPLETE)
     }
     private fun requireControls() {
         original.requireRunning()

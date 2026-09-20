@@ -7,6 +7,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteVerificationOperation
+import me.manga.kira.backend.complaint.infrastructure.AdminDeletePersistenceSql
+import me.manga.kira.backend.complaint.infrastructure.AdminDeleteRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
@@ -99,7 +101,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
         tick(original)
         requireDrain(jdbc.query(TestOrdinaryDrainSqlV1.supported, { row, _ -> TestOrdinaryDrainRowsV1.boolean(row, "valid") },
             original.scope, original.routing.journalConfiguration.ordinaryPrefix + "%",
-            original.routing.journalConfiguration.sealTerminalPrefix + "%", original.writer, original.routing.journalConfiguration.ownerDeleteAll).single())
+            original.routing.journalConfiguration.sealTerminalPrefix + "%", original.writer, original.routing.journalConfiguration.ownerDeleteAll, original.routing.journalConfiguration.registeredAdminDelete).single())
     }
 
     fun requireNoPending(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1) {
@@ -159,19 +161,39 @@ internal object TestOrdinaryDrainPersistenceV1 {
         val event: TestOwnerDeleteJournalEventV1, val recovery: TestOrdinaryDrainRowsV1.Recovery)
     class OwnerPrimary(val receipt: OwnerDeleteRows.Receipt, val receiptAt: Instant, publication: OwnerDeleteRows.Publication,
         appliedAt: Instant, event: TestOwnerDeleteJournalEventV1, recovery: TestOrdinaryDrainRowsV1.Recovery) : Primary(publication, appliedAt, event, recovery)
+    class AdminPrimary(val receipt: AdminDeleteRows.Receipt, val receiptAt: Instant, publication: OwnerDeleteRows.Publication,
+        appliedAt: Instant, event: TestOwnerDeleteJournalEventV1, recovery: TestOrdinaryDrainRowsV1.Recovery) : Primary(publication, appliedAt, event, recovery)
+    private sealed interface SingleReceipt {
+        class Owner(val value: OwnerDeleteRows.Receipt, val at: Instant) : SingleReceipt
+        class Admin(val value: AdminDeleteRows.Receipt, val at: Instant) : SingleReceipt
+    }
     class AllPrimary(val installationId: UUID, val receipt: OwnerDeleteAllApplyRows.Receipt, publication: OwnerDeleteRows.Publication,
         appliedAt: Instant, event: TestOwnerDeleteJournalEventV1, recovery: TestOrdinaryDrainRowsV1.Recovery) : Primary(publication, appliedAt, event, recovery)
 
     /** Conversion calls locked=true BEFORE counter acquisition. Other whole-relation passes are read-only under controls/run. */
     fun primary(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, id: String, locked: Boolean): Primary {
         tick(original)
-        val receiptSql = if (locked) TestOrdinarySealSqlV1.receipt else TestOrdinarySealSqlV1.receipt.removeSuffix(" FOR UPDATE")
+        val receiptSql = if (locked) TestOrdinaryDrainSqlV1.primaryReceiptLocators else TestOrdinaryDrainSqlV1.primaryReceiptLocators.removeSuffix(" FOR UPDATE")
         val publicationSql = if (locked) TestOrdinarySealSqlV1.publication else TestOrdinarySealSqlV1.publication.removeSuffix(" FOR UPDATE")
         val recoverySql = if (locked) OwnerDeletePersistenceSql.LOCK_RECOVERY else OwnerDeletePersistenceSql.LOCK_RECOVERY.removeSuffix(" FOR UPDATE")
-        val receipts = jdbc.query(receiptSql, { row, _ ->
-            requireDrain(row.getString("actor_kind") == "INSTALLATION")
-            OwnerDeleteRows.Receipt(row) to checkNotNull(row.getTimestamp("completed_at")).toInstant()
-        }, id)
+        val locators = jdbc.query(receiptSql, { row, _ -> Triple(checkNotNull(row.getString("actor_kind")),
+            checkNotNull(row.getObject("actor_id", UUID::class.java)), checkNotNull(row.getObject("idempotency_key", UUID::class.java))) }, id)
+        val receipts = locators.map { locator ->
+            when (locator.first) {
+                "INSTALLATION" -> {
+                    val sql = if (locked) OwnerDeletePersistenceSql.LOCK_RECEIPT else OwnerDeletePersistenceSql.LOCK_RECEIPT.removeSuffix(" FOR UPDATE")
+                    jdbc.query(sql, { row, _ -> SingleReceipt.Owner(OwnerDeleteRows.Receipt(row), checkNotNull(row.getTimestamp("completed_at")).toInstant()) },
+                        locator.second, locator.third).single()
+                }
+                "ADMIN" -> {
+                    requireDrain(original.routing.journalConfiguration.registeredAdminDelete)
+                    val sql = if (locked) AdminDeletePersistenceSql.LOCK_RECEIPT else AdminDeletePersistenceSql.LOCK_RECEIPT.removeSuffix(" FOR UPDATE")
+                    jdbc.query(sql, { row, _ -> SingleReceipt.Admin(AdminDeleteRows.Receipt(row), checkNotNull(row.getTimestamp("completed_at")).toInstant()) },
+                        locator.second, locator.third).single()
+                }
+                else -> throw TestOrdinaryDrainExceptionV1()
+            }
+        }
         val allReceiptSql = TestOrdinarySealSqlV1.ownerDeleteAllReceipt(original.routing.journalConfiguration.scope).let {
             if (locked) it else it.removeSuffix(" FOR UPDATE")
         }
@@ -181,18 +203,30 @@ internal object TestOrdinaryDrainPersistenceV1 {
         val publication = jdbc.query(publicationSql, { row, _ ->
             val kind = checkNotNull(row.getString("event_kind"))
             original.requireInventoryKind(kind)
-            (if (kind == "OWNER_DELETE_ALL") OwnerDeleteRows.Publication.ownerDeleteAll(row) else OwnerDeleteRows.Publication(row)) to
+            (when (kind) {
+                "OWNER_DELETE_ALL" -> OwnerDeleteRows.Publication.ownerDeleteAll(row)
+                "ADMIN_DELETE" -> OwnerDeleteRows.Publication.adminDelete(row)
+                "OWNER_DELETE" -> OwnerDeleteRows.Publication(row)
+                else -> throw TestOrdinaryDrainExceptionV1()
+            }) to
                 checkNotNull(row.getTimestamp("applied_at")).toInstant()
         }, id).single()
         val p = publication.first
-        val event = TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey)
-        p.requireEvent(event)
+        val event = if (p.kind === ComplaintJournalDeletionKindV1.ADMIN_DELETE) {
+            requireDrain(original.routing.journalConfiguration.registeredAdminDelete)
+            TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(original.routing, p.bytes, p.routingKey).also(p::requireAdminEvent)
+        } else TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey).also(p::requireEvent)
         val recovery = jdbc.query(recoverySql, { row, _ -> TestOrdinaryDrainRowsV1.Recovery(row, original, id, p.kind.name) }, id).single()
         return when (p.kind) {
             ComplaintJournalDeletionKindV1.OWNER_DELETE -> {
                 requireDrain(allReceipts.isEmpty())
-                val receipt = receipts.single()
-                OwnerPrimary(receipt.first, receipt.second, p, publication.second, event, recovery)
+                val receipt = receipts.single() as? SingleReceipt.Owner ?: throw TestOrdinaryDrainExceptionV1()
+                OwnerPrimary(receipt.value, receipt.at, p, publication.second, event, recovery)
+            }
+            ComplaintJournalDeletionKindV1.ADMIN_DELETE -> {
+                requireDrain(allReceipts.isEmpty())
+                val receipt = receipts.single() as? SingleReceipt.Admin ?: throw TestOrdinaryDrainExceptionV1()
+                AdminPrimary(receipt.value, receipt.at, p, publication.second, event, recovery)
             }
             ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> {
                 requireDrain(receipts.isEmpty())
@@ -206,6 +240,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
     fun requirePrimary(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, run: TestOrdinaryDrainRowsV1.Run, value: Primary,
         converted: Boolean, staged: Boolean, lockDomain: Boolean = false): Long {
         if (value is AllPrimary) return TestOrdinaryDrainAllPersistenceV1.requirePrimary(jdbc, original, run, value, converted, staged, lockDomain)
+        if (value is AdminPrimary) return TestOrdinaryDrainAdminPersistenceV1.requirePrimary(jdbc, original, run, value, converted, staged, lockDomain)
         requireDrain(value is OwnerPrimary)
         val owner = value as OwnerPrimary
         tick(original)
@@ -255,11 +290,11 @@ internal object TestOrdinaryDrainPersistenceV1 {
         return family.size.toLong()
     }
 
-    /** Shared exact-version comparison for ONLY the two explicitly supported owner families. */
+    /** Shared exact-version comparison for the three closed, explicitly configured deletion families. */
     fun requireFamily(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, value: Primary, verifiedAt: Instant, staged: Boolean): List<Applied> {
         val p = value.publication
         val event = value.event
-        val routes = original.routing.derive(event.tuple).candidates()
+        val routes = original.routing.derive(event.comparison).candidates()
         requireDrain(routes.size == 4)
         val family = jdbc.query(TestOrdinaryDrainSqlV1.appliedFamily, { row, _ -> Applied.read(row, original, hasTime = true) },
             routes.joinToString(",", "{", "}") { it.eventId })
@@ -287,7 +322,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
         return family
     }
 
-    private fun requireCompletedAllCompanion(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, run: TestOrdinaryDrainRowsV1.Run, actor: UUID): Boolean {
+    internal fun requireCompletedAllCompanion(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, run: TestOrdinaryDrainRowsV1.Run, actor: UUID): Boolean {
         requireDrain(original.routing.journalConfiguration.ownerDeleteAll)
         // Read-only under the original controls: do not acquire another receipt/publication lock
         // after this conversion has locked counters/domain. No terminal state is accepted alone.

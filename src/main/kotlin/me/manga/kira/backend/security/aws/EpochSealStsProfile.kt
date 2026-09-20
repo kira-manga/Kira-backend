@@ -117,6 +117,14 @@ internal object EpochSealStsPolicy {
         return exactPolicy(declaration.journalLocation.bucket, key, declaration.encryption.keyArn)
     }
 
+    /** Separate fixed manifest grammar; callers cannot select a family or widen the exact-key policy. */
+    fun forInstallationManifest(journal: TestOwnerDeleteJournalConfigurationV1, key: String, epoch: Long): String {
+        val declaration = journal.declaration()
+        val routingId = TestTerminalSyntaxV1.terminalKey(key, declaration.writer.generationId, journal.scope.id.toString(), epoch, "installation-manifest")
+        requireEpochSealSts(routingId in declaration.routing.keys.map { it.keyId }, EpochSealStsFailure.INVALID_INPUT)
+        return exactPolicy(declaration.journalLocation.bucket, key, declaration.encryption.keyArn)
+    }
+
     private fun exactPolicy(bucketName: String, key: String, kms: String): String {
         val bucket = "arn:aws:s3:::$bucketName"
         val objectArn = "$bucket/$key"

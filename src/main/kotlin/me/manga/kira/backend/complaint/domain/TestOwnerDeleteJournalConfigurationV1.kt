@@ -11,12 +11,23 @@ import java.util.HexFormat
 import java.util.UUID
 
 /** Immutable TEST declarations only: no registered run, provider policy proof, projection or current authority. */
-internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private val stored: TestOwnerDeleteJournalDeclarationV1, val ownerDeleteAll: Boolean, val adminDelete: Boolean = false) {
+internal class TestOwnerDeleteJournalConfigurationV1 private constructor(
+    private val stored: TestOwnerDeleteJournalDeclarationV1,
+    val ownerDeleteAll: Boolean,
+    val adminDelete: Boolean = false,
+    val registeredAdminDelete: Boolean = false,
+) {
+    val profile: String = when {
+        registeredAdminDelete -> "REGISTERED_TEST_ADMIN_ERASURE"
+        adminDelete -> "LOWER_TEST_ADMIN_ERASURE"
+        ownerDeleteAll -> "REGISTERED_TEST_OWNER_ERASURE"
+        else -> "REGISTERED_TEST_OWNER_DELETE"
+    }
     val scope: ComplaintDataScope get() = stored.scope
     val ordinaryPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/ordinary/"
     val sealTerminalPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/seal-terminal/"
     private val wireDocument = TestOwnerDeleteJournalDocumentV1(
-        "kira-complaint-journal-configuration", 1, "kcj-1", if (adminDelete) "LOWER_TEST_ADMIN_ERASURE" else if (ownerDeleteAll) "REGISTERED_TEST_OWNER_ERASURE" else "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
+        "kira-complaint-journal-configuration", 1, "kcj-1", profile, "TEST", scope.id.toString(),
         stored.writer, stored.journalLocation, ordinaryPrefix, sealTerminalPrefix, stored.authorities,
         stored.routing.activeKeyId,
         stored.routing.keys.map { TestOwnerDeleteRoutingKeyDocumentV1(it.keyId, it.secret.resourceArn, it.secret.versionId) },
@@ -43,8 +54,7 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private
             require(input.dataScopeKind == "TEST" && OfflineBootstrapGrammar.uuidV4(input.dataScopeId)) { INVALID }
             require(input.routingKeys.size in 1..4) { INVALID }
             val snapshot = input.snapshot()
-            val checked = of(
-                TestOwnerDeleteJournalDeclarationV1(
+            val declaration = TestOwnerDeleteJournalDeclarationV1(
                     ComplaintDataScope.of(UUID.fromString(snapshot.dataScopeId)), snapshot.writer, snapshot.journalLocation, snapshot.authorities,
                     JournalRoutingV1(
                         snapshot.activeRoutingKeyId,
@@ -54,9 +64,15 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private
                         snapshot.routingRetentionSeconds, snapshot.routingMinimumRotationIntervalSeconds,
                     ),
                     snapshot.encryption, snapshot.recovery, snapshot.limits,
-                ),
-                ownerDeleteAll = snapshot.profile == "REGISTERED_TEST_OWNER_ERASURE",
-            )
+                )
+            // No boolean inference from an unknown/lower profile. A new registered J is an explicit
+            // declaration, not an upgrade/relabel of a retained lower or owner activation.
+            val checked = when (snapshot.profile) {
+                "REGISTERED_TEST_OWNER_DELETE" -> of(declaration)
+                "REGISTERED_TEST_OWNER_ERASURE" -> of(declaration, ownerDeleteAll = true)
+                "REGISTERED_TEST_ADMIN_ERASURE" -> registeredAdminErasure(declaration)
+                else -> throw IllegalArgumentException(INVALID)
+            }
             val bytes = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), snapshot).toByteArray(Charsets.UTF_8)
             require(bytes.contentEquals(checked.canonical)) { INVALID }
             return checked
@@ -66,6 +82,10 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private
          * One coherent J is retained by the same lane registry; this is not registration or activation. */
         fun lowerAdminErasure(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 =
             TestOwnerDeleteJournalConfigurationV1(of(input, ownerDeleteAll = true).declaration(), true, true)
+
+        /** Distinct registered TEST declaration; retains no run/request/provider authority. */
+        fun registeredAdminErasure(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 =
+            TestOwnerDeleteJournalConfigurationV1(of(input, ownerDeleteAll = true).declaration(), true, true, true)
 
         fun of(input: TestOwnerDeleteJournalDeclarationV1, ownerDeleteAll: Boolean = false): TestOwnerDeleteJournalConfigurationV1 {
             require(input.scope.testOnly && OfflineBootstrapGrammar.uuidV4(input.scope.id.toString())) { INVALID }

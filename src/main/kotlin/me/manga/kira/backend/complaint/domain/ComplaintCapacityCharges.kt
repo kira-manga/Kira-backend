@@ -54,4 +54,10 @@ object ComplaintCapacityCharges {
 
     // Status and closure share a distinct typed allocation; the prepaid content envelope includes all closure bytes.
     val ADMIN_STATUS: ComplaintCapacityVector = NORMAL_RECEIPT + AUDIT
+
+    /** One normal receipt plus exactly one audit per target, never a deletion/terminal/recovery reservation. */
+    fun adminBatchStatus(targetCount: Int): ComplaintCapacityVector {
+        require(targetCount in 1..50)
+        return NORMAL_RECEIPT + AUDIT.scaled(targetCount.toLong())
+    }
 }

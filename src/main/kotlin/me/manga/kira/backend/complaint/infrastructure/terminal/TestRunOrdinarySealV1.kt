@@ -84,6 +84,9 @@ internal class TestRunOrdinarySealV1 private constructor(
     init {
         requireConnectionFree()
         registration.requireUsable()
+        // This explicit profile has only the independently denied native-drain successor. An
+        // empty SQL relation does not make the legacy local seal a substitute for that cut.
+        requireOrdinarySeal(!routing.journalConfiguration.adminDelete || routing.journalConfiguration.registeredAdminDelete && closedDrain != null)
         acquisition.requireRetained(routing, registration.process.publicationLanes)
         val args = registration.sealingRunArguments()
         runContext = TestTerminalRunContextV1(scope.toString(), args[3] as Long, HexFormat.of().formatHex(args[4] as ByteArray),

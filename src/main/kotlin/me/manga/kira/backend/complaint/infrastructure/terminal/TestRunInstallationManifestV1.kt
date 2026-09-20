@@ -54,6 +54,8 @@ internal class TestRunInstallationManifestV1 private constructor(internal val dr
     private val rows = ArrayList<TestTerminalDurableRowV1>(3)
     private var started = false
     private var finished = false
+    private var completedPreparation = false
+    private var publication: TestRunInstallationManifestPublicationV1? = null
     private var cleanupUncertain = false
     private var phaseEntered = false
     private var phase: PersistencePhaseContext? = null
@@ -100,7 +102,26 @@ internal class TestRunInstallationManifestV1 private constructor(internal val dr
         finally { clearChunk(); finished = true }
         throwIfSignalled()
         requireManifest(complete && !cleanupUncertain && phase == null && !phaseEntered)
+        completedPreparation = true
         return TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK
+    }
+
+    /** Only this actually completed original can admit a fresh publication child. */
+    fun beginPublication(): TestRunInstallationManifestPublicationV1 = TestRunInstallationManifestPublicationV1.begin(this)
+
+    internal fun requirePublicationPredecessor() {
+        throwIfSignalled()
+        requireManifest(caller === Thread.currentThread() && started && finished && completedPreparation && !cleanupUncertain &&
+            phase == null && !phaseEntered && step === TestInstallationManifestStepV1.COMPLETE)
+        drain.requireManifestPredecessor()
+        registration.requireSealingOwner(coordinator.ownership)
+        acquisition.requireRetained(routing, registration.process.publicationLanes)
+    }
+    internal fun retainPublication(candidate: TestRunInstallationManifestPublicationV1) {
+        requireConnectionFree(); requirePublicationPredecessor()
+        requireManifest(candidate.preparation === this)
+        publication?.requireRetiredForRetry(this)
+        publication = candidate
     }
 
     private fun execute(next: TestInstallationManifestStepV1): TestInstallationManifestOperationV1 {

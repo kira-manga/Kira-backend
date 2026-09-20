@@ -70,6 +70,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
     val ownerEditPolicy: ComplaintOwnerEditAdmissionPolicy.Bounded,
     val ownerDeletePolicy: ComplaintOwnerDeleteAdmissionPolicy.Bounded,
     val ownerDeleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy,
+    val adminDeletePolicy: ComplaintAdminDeleteAdmissionPolicy,
     private val admissionKeys: ComplaintAdmissionKeyConfiguration,
     val ownerCursorCodec: ComplaintOwnerCursorCodec,
     val ingressAdmission: ComplaintIngressAdmission,
@@ -102,6 +103,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             requireConnectionFree()
             val user = requireNotNull(jwt.boundUserKeyProvider) { INVALID_BOUND_TEST_CONSUMERS }
             require(keys.journalRouting.journalConfiguration === journal) { INVALID_BOUND_TEST_CONSUMERS }
+            require(!journal.adminDelete || journal.registeredAdminDelete) { INVALID_BOUND_TEST_CONSUMERS }
             val admissions = keys.admissionSecrets()
             val cursors = keys.cursorSecrets()
             val descriptors = jwt.descriptors() + admissions.map { it.descriptor }.sortedBy { it.logicalKeyId } +
@@ -114,6 +116,8 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             val delete = ComplaintOwnerDeleteAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch)
             val deleteAll = if (journal.ownerDeleteAll) ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch, journal.scope)
                 else ComplaintOwnerDeleteAllAdmissionPolicy.Disabled
+            val adminDelete = if (journal.registeredAdminDelete) ComplaintAdminDeleteAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch)
+                else ComplaintAdminDeleteAdmissionPolicy.Disabled
             val resolver = settings.clientIpResolver()
             val copies = ArrayList<ByteArray>(descriptors.size)
             val admissionCopies = ArrayList<ComplaintAdmissionKey>(admissions.size)
@@ -153,9 +157,10 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
                     deleteAllPolicy = deleteAll,
                     editPolicy = edit,
                     ownerDeletePolicy = delete,
+                    adminDeletePolicy = adminDelete,
                 )
                 return VersionBoundTestComplaintConsumerConfigurationV1(
-                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete, deleteAll,
+                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete, deleteAll, adminDelete,
                     fixedKeys, codec, ingress, descriptors,
                 )
             } finally {

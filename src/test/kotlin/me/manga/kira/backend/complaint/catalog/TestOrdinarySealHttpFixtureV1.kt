@@ -49,6 +49,7 @@ internal class TestOrdinarySealHttpFixtureV1(
     val horizon: Instant = Instant.parse("2038-01-01T00:00:00Z"),
     val horizonPolicy: InitialPolicyReferenceV1 = policy("synthetic-test-restore-horizon"),
     val protectedIntake: Boolean = false,
+    val manifestPublication: Boolean = false,
 ) : AutoCloseable {
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
@@ -68,6 +69,9 @@ internal class TestOrdinarySealHttpFixtureV1(
     var hideObject = false
     var lostPutAcknowledgment = false
     var stored: JournalPublisherObject? = null
+    // Opt-in sibling family only. Keep the original strict seal object/version assertions intact.
+    val manifestObjects = linkedMapOf<String, JournalPublisherObject>()
+    var manifestListing: (String, List<JournalPublisherObject>) -> List<JournalPublisherObject> = { _, values -> values }
     var s3Created = 0
         private set
     var s3Closed = 0
@@ -176,32 +180,36 @@ internal class TestOrdinarySealHttpFixtureV1(
         val j = checkNotNull(journal)
         val location = j.declaration().journalLocation
         val key = checkNotNull(expectedKey)
+        val manifest = "/installation-manifest/" in key
+        val existing = if (manifest) manifestObjects[key] else stored
         journalPublisherRawAssertSigned(request, location.region, location.accountId, TARGET)
-        assertTrue(key.startsWith(j.sealTerminalPrefix) && "/epoch-seal/" in key)
+        assertTrue(key.startsWith(j.sealTerminalPrefix) && ("/epoch-seal/" in key || manifestPublication && manifest))
         assertFalse(request.http.encodedPath().contains("/live/"))
         val reply = when (request.kind) {
             "LIST" -> {
                 assertEquals(key, request.http.rawQueryParameters().getValue("prefix").single())
                 assertEquals("2", request.http.rawQueryParameters().getValue("max-keys").single())
+                val visible = if (hideObject) emptyList() else listOfNotNull(existing)
                 OwnerDeleteAllJournalPublisherFixture.xmlReply(journalPublisherRawListDocument(location.bucket, key,
-                    if (hideObject) emptyList() else listOfNotNull(stored)))
+                    if (manifest) manifestListing(key, visible) else visible))
             }
             "GET" -> {
                 assertEquals("/${location.bucket}/$key", request.http.encodedPath())
-                assertEquals(checkNotNull(stored).version, request.http.rawQueryParameters().getValue("versionId").single())
-                journalPublisherRawGetReply(location.region, checkNotNull(stored))
+                assertEquals(checkNotNull(existing).version, request.http.rawQueryParameters().getValue("versionId").single())
+                journalPublisherRawGetReply(location.region, if (manifest) existing.copy(bytes = existing.bytes.copyOf()) else existing)
             }
             else -> {
                 assertEquals("PUT", request.kind)
                 assertEquals("/${location.bucket}/$key", request.http.encodedPath())
                 assertEquals("*", request.header("If-None-Match"))
                 assertEquals("COMPLIANCE", request.header("x-amz-object-lock-mode"))
-                if (stored != null) OwnerDeleteAllJournalPublisherFixture.errorReply(412) else {
-                    val value = JournalPublisherObject(key, VERSION, request.body.copyOf(), now().truncatedTo(ChronoUnit.SECONDS),
+                if (existing != null) OwnerDeleteAllJournalPublisherFixture.errorReply(412) else {
+                    val version = if (manifest) "test-manifest-version-${manifestObjects.size + 1}" else VERSION
+                    val value = JournalPublisherObject(key, version, request.body.copyOf(), now().truncatedTo(ChronoUnit.SECONDS),
                         Instant.parse(request.header("x-amz-object-lock-retain-until-date")),
                         request.http.headers().entries.filter { it.key.startsWith("x-amz-meta-", ignoreCase = true) }
                             .associate { it.key.lowercase().removePrefix("x-amz-meta-") to it.value.single() })
-                    stored = value
+                    if (manifest) manifestObjects[key] = value else stored = value
                     if (lostPutAcknowledgment) OwnerDeleteAllJournalPublisherFixture.errorReply(500) else journalPublisherRawPutReply(value)
                 }
             }
@@ -222,9 +230,11 @@ internal class TestOrdinarySealHttpFixtureV1(
             assertEquals("arn:aws:iam::$ACCOUNT:role/test-epoch-sealer", fields.getValue("RoleArn"))
             assertEquals("900", fields.getValue("DurationSeconds"))
             session = fields.getValue("RoleSessionName")
-            assertTrue(Regex("kira-seal-[0-9a-f-]{36}").matches(session))
+            val manifest = session.startsWith("kira-manifest-")
+            assertTrue(Regex(if (manifestPublication) "kira-(seal|manifest)-[0-9a-f-]{36}" else "kira-seal-[0-9a-f-]{36}").matches(session))
             val policy = ObjectMapper().readTree(fields.getValue("Policy"))
             expectedKey = policy["Statement"][4]["Condition"]["StringEquals"]["s3:prefix"].textValue()
+            assertEquals(manifest, "/installation-manifest/" in checkNotNull(expectedKey))
             val location = checkNotNull(journal).declaration().journalLocation
             val resources = policy["Statement"][3]["Resource"].map { it.textValue() }
             assertEquals(listOf("arn:aws:s3:::${location.bucket}/$expectedKey", checkNotNull(journal).declaration().encryption.keyArn), resources)

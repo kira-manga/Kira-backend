@@ -126,9 +126,16 @@ internal class TestOwnerDeleteJournalCodecV1(
     fun openAdmin(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1): DecodedTestOwnerDeleteJournalEventV1 =
         openFamily(expectedBucket, expectedObjectKey, wireBytes, attempt, admin = true)
 
-    private fun openFamily(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1, admin: Boolean): DecodedTestOwnerDeleteJournalEventV1 =
+    /** Native registered inventory/seal only. Dispatch from the bounded bound header BEFORE KMS;
+     * never trial-decrypt a family or widen the existing owner/lower explicit entry points. */
+    fun openRegisteredOrdinary(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray,
+        attempt: TestOwnerDeleteCodecAttemptV1): DecodedTestOwnerDeleteJournalEventV1 =
+        openFamily(expectedBucket, expectedObjectKey, wireBytes, attempt, admin = null)
+
+    private fun openFamily(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1, admin: Boolean?): DecodedTestOwnerDeleteJournalEventV1 =
         testDeleteCodecBoundary {
-            requireJournalCodec(!admin || routingOwner.journalConfiguration.adminDelete)
+            requireJournalCodec(admin != true || routingOwner.journalConfiguration.adminDelete)
+            requireJournalCodec(admin != null || !routingOwner.journalConfiguration.adminDelete || routingOwner.journalConfiguration.registeredAdminDelete)
             attempt.requireOwner(routingOwner)
             attempt.remainingMillis(1)
             requireJournalCodec(expectedBucket == declaration.journalLocation.bucket)
@@ -138,7 +145,13 @@ internal class TestOwnerDeleteJournalCodecV1(
                 val wire = buffers.own(wireBytes.copyOf())
                 val parts = split(wire, buffers)
                 val header = json.header(parts.header)
-                val nonce = buffers.own(bindHeader(header, expectedBucket, expectedObjectKey, admin))
+                val selectedAdmin = admin ?: when (header.objectKind) {
+                    "OWNER_DELETE" -> false
+                    "OWNER_DELETE_ALL" -> { requireJournalCodec(routingOwner.journalConfiguration.ownerDeleteAll); false }
+                    "ADMIN_DELETE" -> { requireJournalCodec(routingOwner.journalConfiguration.registeredAdminDelete); true }
+                    else -> throw OwnerDeleteAllJournalException(OwnerDeleteAllJournalFailure.INVALID_INPUT)
+                }
+                val nonce = buffers.own(bindHeader(header, expectedBucket, expectedObjectKey, selectedAdmin))
                 val associatedData = buffers.own(aad(header, parts.header.size, parts.wrapped, parts.ciphertext.size))
                 val wrappedForPort = buffers.own(parts.wrapped.copyOf())
                 requireConnectionFree()
@@ -155,7 +168,7 @@ internal class TestOwnerDeleteJournalCodecV1(
                 }
                 attempt.remainingMillis(1)
                 requireJournalCodec(plaintext.size <= limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
-                val bound = if (admin) {
+                val bound = if (selectedAdmin) {
                     val payload = adminJson.payload(plaintext)
                     requireJournalCodec(payload.eventKind == header.objectKind && payload.eventId == header.eventId && payload.publicationEpoch == header.publicationEpoch)
                     bindTestAdminDeletePayload(routingOwner, payload, header.routingKeyId)

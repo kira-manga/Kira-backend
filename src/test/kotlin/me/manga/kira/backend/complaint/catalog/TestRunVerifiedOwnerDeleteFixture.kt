@@ -1,6 +1,29 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.audit.application.AuditService
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedStepUpFixture
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteInput
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeletePrecondition
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteRequest
+import me.manga.kira.backend.complaint.infrastructure.CommittedTestAdminDeleteWork
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteCandidate
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminJwtIdentityDecoder
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteApplyStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteReceiptStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteVerificationStore
+import me.manga.kira.backend.complaint.infrastructure.TestAdminDeleteAuthorizationV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestAdminDeleteJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedAdminDeleteV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminDeletePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminDeleteReadPhaseExecutor
+import me.manga.kira.backend.security.AdminReadTestUserJwt
+import me.manga.kira.backend.security.ScopedAdminStepUpScope
+import me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1
+import me.manga.kira.backend.user.domain.Role
+import me.manga.kira.backend.user.domain.User
 import me.manga.kira.backend.audit.domain.ComplaintInstallationEnrollmentAudit
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedJdbcTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.NeverOwnerDeleteAllDataKeys
@@ -169,6 +192,11 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     private var preparedPublication = false
     private val ownedTargets = mutableListOf(target)
     private val additionalActors = mutableListOf<ScopedInstallationId>()
+    private var historyEnrollment: InstallationEnrollmentResult.Enrolled? = null
+    val adminHistories = mutableListOf<AdminHistory>()
+    class AdminHistory(val actor: UUID, val target: UUID, val key: UUID, val event: TestOwnerDeleteJournalEventV1, val grant: UUID) {
+        val eventId: String get() = event.route.eventId
+    }
     val histories = mutableListOf<History>()
     class History(val target: UUID, val key: UUID, val eventId: String)
 
@@ -194,10 +222,12 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             TestOwnerDeleteJournalPublisherFixture.CREDENTIALS, { provider.beforeOpen(); provider.httpClient() }, provider.kms::httpClient, provider.clock, { provider.nanos })
     }
 
-    fun authorEarlierHistory(verified: Boolean, additionalVerified: Int = 0, recoverMissingInstallation: Boolean = false, applied: Boolean = false) {
+    fun authorEarlierHistory(verified: Boolean, additionalVerified: Int = 0, recoverMissingInstallation: Boolean = false, applied: Boolean = false,
+        additionalRawEnrolled: Int = 0) {
         require(additionalVerified in 0..2)
         require(!recoverMissingInstallation || (verified && additionalVerified == 0))
         require(!applied || (verified && !recoverMissingInstallation))
+        require(additionalRawEnrolled == 0 || additionalRawEnrolled == 500)
         stageSyntheticComparisons()
         val ordinaryCapacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
         val enrollment = ComplaintEnrollmentAdmissionCoordinator(ingress, ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
@@ -207,6 +237,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         val enrolled = ingress.withIngress(request()) { context ->
             assertInstanceOf(InstallationEnrollmentResult.Enrolled::class.java, enrollment.enroll(context, enrollment.admitEnrollment(context, candidate)))
         }
+        historyEnrollment = enrolled
         val jwt = InstallationJwtCodec(process.consumers.jwt.installationKeyRing, Clock.systemUTC())
         val token = jwt.issue(enrolled.installation, enrolled.credentialVersion, enrolled.issuedAt).value
         fun identity() = jwt.verify(token).let { ComplaintOwnerOperationIdentity(it.installation, it.credentialVersion, it.issuedAt, it.expiresAt) }
@@ -274,10 +305,149 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             assertEquals(if (recoverMissingInstallation || applied) "COMPLETED" else "AUTHORIZED_DELETE", receiptState(key))
             histories.add(History(target, key, event.route.eventId))
         }
+        if (additionalRawEnrolled != 0) authorAdditionalRawEnrolled(additionalRawEnrolled)
         assertReleased()
         restoreRegisteredComparisons()
         expectedProviders = providerImage()
     }
+
+    /**
+     * Existing lower-core enroll seam, not HTTP/admitted quota coverage. Each real transaction
+     * owns counters, the ACTIVE run, a fresh permanent ID/credential and counted audit. No raw
+     * INSERT, reservation/payment repair, successful original or clock bypass supplies the source.
+     * Historical open/D comparisons remain the same explicit synthetic fixture as above.
+     */
+    private fun authorAdditionalRawEnrolled(count: Int) {
+        check(additionalActors.isEmpty() && process.consumers.capacityPolicy.dailyEnrollmentLimit >= count + 1L)
+        val capacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
+        val phases = ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
+            JdbcComplaintInstallationEnrollmentStore(ordinary.jdbc, capacity,
+                ComplaintInstallationEnrollmentAudit { scope, paid, at -> audit.recordInstallationEnrollment(scope, paid, at) }, lowerDesired))
+        repeat(count) {
+            val selected = ScopedInstallationId(UUID.randomUUID(), scope).also(additionalActors::add)
+            val candidate = InstallationEnrollmentCredentials.prepare(selected, ComplaintPlatform.ANDROID, ByteArray(32) { it.toByte() })
+            val result = assertInstanceOf(InstallationEnrollmentResult.Enrolled::class.java, phases.enroll(candidate))
+            assertEquals(selected, result.installation)
+            assertEquals(me.manga.kira.backend.complaint.domain.InstallationEnrollmentDisposition.CREATED, result.disposition)
+            assertDatabaseReleased()
+        }
+        assertEquals(count + 1L, observer.queryForObject("SELECT enrolled_count FROM complaint_test_runs WHERE data_scope_id = ?", Long::class.java, scope.id))
+    }
+
+    /**
+     * Real earlier Admin producer, not a registered ACTIVE request issuer. Only predecessor
+     * gate/D comparisons remain synthetic. Enrollment/create, normal user JWT/current ADMIN,
+     * scoped complaint grant, AUTH commit/release and native publish/VERIFY/APPLY are genuine.
+     * The registered continuation later receives actor/key LOCATORS only, never this work/proof.
+     */
+    fun authorEarlierAdminHistory(verified: Boolean = false, applied: Boolean = false, recoverMissingOwner: Boolean = false): AdminHistory {
+        require(!applied || verified)
+        require(!recoverMissingOwner || verified && !applied && histories.isEmpty())
+        check(routing.journalConfiguration.registeredAdminDelete && adminHistories.isEmpty())
+        check(histories.all { publicationState(it.eventId) == "APPLIED" })
+        stageSyntheticComparisons()
+        val ordinaryCapacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
+        val enrolled = historyEnrollment ?: run {
+            val enrollment = ComplaintEnrollmentAdmissionCoordinator(ingress, ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
+                JdbcComplaintInstallationEnrollmentStore(ordinary.jdbc, ordinaryCapacity,
+                    ComplaintInstallationEnrollmentAudit { scope, paid, at -> audit.recordInstallationEnrollment(scope, paid, at) }, lowerDesired)))
+            val candidate = InstallationEnrollmentCredentials.prepare(actor, ComplaintPlatform.ANDROID, ByteArray(32) { it.toByte() })
+            ingress.withIngress(request()) { context ->
+                assertInstanceOf(InstallationEnrollmentResult.Enrolled::class.java, enrollment.enroll(context, enrollment.admitEnrollment(context, candidate)))
+            }.also { historyEnrollment = it }
+        }
+        val selectedTarget = if (histories.isEmpty()) target else UUID.randomUUID().also(ownedTargets::add)
+        val selectedKey = UUID.randomUUID()
+        val ownerJwt = InstallationJwtCodec(process.consumers.jwt.installationKeyRing, Clock.systemUTC())
+        val ownerToken = ownerJwt.issue(enrolled.installation, enrolled.credentialVersion, enrolled.issuedAt).value
+        val report = (ComplaintReportRequest.normalize(checkNotNull(ComplaintReportIdentity.checked(selectedTarget.toString(), UUID.randomUUID().toString(), scope.id.toString())),
+            ComplaintType.TECHNICAL, "Synthetic Admin target", "Synthetic owner content to erase", ComplaintReportMetadataInput(null, "fixture", "", "")) as ComplaintReportRequestResult.Accepted).request
+        val createCandidate = ComplaintOwnerCreateCandidate.prepare(actor, report)
+        val create = ComplaintOwnerCreatePhaseExecutor(ordinary.ownership, JdbcComplaintOwnerCreateStore(ordinary.jdbc, ordinaryCapacity, audit, lowerDesired))
+        ingress.withIngress(request()) { context ->
+            ingress.startOwnerCreate(context)
+            val identity = ownerJwt.verify(ownerToken).let { ComplaintOwnerOperationIdentity(it.installation, it.credentialVersion, it.issuedAt, it.expiresAt) }
+            assertEquals(ComplaintPlatform.ANDROID, create.authenticate(identity).platform)
+            assertNull(create.preflight(identity, createCandidate.tuple).receipt)
+            val created = create.create(identity, createCandidate, ComplaintPlatform.ANDROID, ingress.admitOwnerCreate(context, createCandidate.tuple))
+            assertNull(created.failure)
+            assertEquals(selectedTarget, assertInstanceOf(ComplaintOwnerReceipt.Applied::class.java, created.receipt).id)
+        }
+        val user = checkNotNull(observer.queryForObject(
+            "SELECT id, email, password_hash, role, enabled, created_at, updated_at, credential_version FROM users WHERE id = ?",
+            { row, _ -> User(row.getObject("id", UUID::class.java), row.getString("email"), row.getString("password_hash"),
+                Role.valueOf(row.getString("role")), row.getBoolean("enabled"), row.getTimestamp("created_at").toInstant(),
+                row.getTimestamp("updated_at").toInstant(), row.getLong("credential_version")) }, ordinary.userId))
+        val userJwt = AdminReadTestUserJwt()
+        val token = userJwt.signer.issue(user).value
+        val decoder = ComplaintAdminJwtIdentityDecoder(scope, userJwt.decoder, userJwt.properties.clockSkew)
+        val grant = ScopedStepUpFixture(ordinary, p.f.rows.counters, policy.digestBytes(), phaseClock = Clock.systemUTC())
+            .issue(ScopedAdminStepUpScope.COMPLAINT)
+        val raw = ComplaintAdminDeleteInput(scope, selectedTarget, selectedKey,
+            ComplaintAdminDeletePrecondition.parse(selectedTarget, "\"complaint-$selectedTarget-v1\""))
+        val candidate = ComplaintAdminDeleteCandidate.prepare(ordinary.userId, ComplaintAdminDeleteRequest.normalize(raw))
+        val event = codec.canonicalizeAdmin(TestAdminDeleteJournalTupleV1(11, ordinary.userId, selectedKey,
+            candidate.tuple.fingerprintBytes(), scope, grant.grantId, actor.id), selectedTarget)
+        val provider = TestOwnerDeleteJournalPublisherFixture(routing, event).also { wire = it }
+        provider.wall = p.databaseTime()
+        provider.beforeOpen = { requireConnectionFree(); provider.wall = p.databaseTime() }
+        provider.beforePrepare = ::assertDatabaseReleased
+        val adminStore = JdbcComplaintAdminDeleteStore(jdbc, capacity, audit, lower, codec)
+        val adminReads = ComplaintAdminDeleteReadPhaseExecutor(ordinary.ownership, JdbcComplaintAdminDeleteReceiptStore(ordinary.jdbc, lower))
+        val adminVerification = JdbcComplaintAdminDeleteVerificationStore(jdbc, lower, adminStore)
+        val adminApply = JdbcComplaintAdminDeleteApplyStore(jdbc, capacity, audit, lower, adminStore, adminVerification)
+        val adminPhases = ComplaintAdminDeletePhaseExecutor(ownership, adminStore, adminReads, adminVerification, adminApply)
+        TestAdminDeleteJournalPublisherFactoryV1.withHttpFixture(process.publicationLanes, adminStore, routing,
+            TestOwnerDeleteJournalPublisherFixture.CREDENTIALS, { provider.beforeOpen(); provider.httpClient() }, provider.kms::httpClient,
+            provider.clock, { provider.nanos }).use { publishers ->
+            val work = publishers.reserve().use {
+                ingress.withIngress(request()) { context ->
+                    ingress.startAdminDelete(context)
+                    val identity = decoder.decode(token)
+                    assertNull(adminReads.authenticate(identity).verdict.failure)
+                    val preflight = adminReads.preflight(identity, candidate.tuple)
+                    assertNull(preflight.failure); assertNull(preflight.receipt); assertFalse(preflight.authorized)
+                    val authorized = adminPhases.authorize(identity, candidate, preflight, grant.token, ingress.admitAdminDelete(context, candidate.tuple))
+                    assertInstanceOf(CommittedTestAdminDeleteWork.Prepared::class.java,
+                        assertInstanceOf(TestAdminDeleteAuthorizationV1.Continue::class.java, authorized).work)
+                }
+            }
+            assertEquals(event.canonicalBytes().toList(), work.canonicalBytes().toList())
+            assertEquals(grant.grantId, work.consumedGrantId)
+            if (verified) {
+                val proof = adminPhases.verify(publishers.reserve().use { it.publish(work) })
+                if (applied) assertEquals(grant.grantId,
+                    assertInstanceOf(ComplaintAdminDeleteReceipt.Applied::class.java, adminPhases.apply(work, proof)).consumedGrantId)
+                if (recoverMissingOwner) {
+                    // Synthetic old-snapshot domain loss, not fabricated recovery bookkeeping or
+                    // success. The native reader and lower reducer reconstruct only paid identities.
+                    forgetInstallationSnapshot(selectedTarget)
+                    adminPhases.recover(publishers.readExisting(event.adminTuple, selectedTarget, event.route.routingKeyId))
+                    assertEquals("RECOVERY_RESERVED", observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, actor.id))
+                    assertEquals(0L, observer.queryForObject("SELECT count(*) FROM app_installations WHERE id = ?", Long::class.java, actor.id))
+                }
+            }
+        }
+        val history = AdminHistory(ordinary.userId, selectedTarget, selectedKey, event, grant.grantId).also(adminHistories::add)
+        assertEquals(if (applied || recoverMissingOwner) "APPLIED" else if (verified) "VERIFIED" else "PREPARED", publicationState(history.eventId))
+        assertEquals(if (applied || recoverMissingOwner) "COMPLETED" else "AUTHORIZED_DELETE", adminReceiptState(history))
+        provider.assertClientsClosed()
+        assertDatabaseReleased()
+        restoreRegisteredComparisons()
+        expectedProviders = providerImage()
+        return history
+    }
+
+    fun beginAdmin(history: AdminHistory = adminHistories.single()): TestRunAdminDeleteContinuationV1 {
+        preparedPublication = true
+        return TestRunPreparedAdminDeleteV1.withHttpFixture(registration, ownership, jdbc, audit, history.actor, history.key,
+            TestOwnerDeleteJournalPublisherFixture.CREDENTIALS, { provider.beforeOpen(); provider.httpClient() }, provider.kms::httpClient,
+            provider.clock, { provider.nanos })
+    }
+
+    fun adminReceiptState(history: AdminHistory = adminHistories.single()): String = checkNotNull(observer.queryForObject(
+        "SELECT state FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?",
+        String::class.java, history.actor, history.key))
 
     /**
      * Explicit thirteen-primary specimen only. The caller selects createGlobal=13 BEFORE signing.
@@ -376,9 +546,9 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     fun authorEarlierAllHistory(count: Int, verified: Boolean = false, applied: Boolean = false) {
         require(count in 0..101 && (!applied || verified))
         check(routing.journalConfiguration.ownerDeleteAll)
-        check(histories.all { publicationState(it.eventId) == "APPLIED" })
+        check(histories.all { publicationState(it.eventId) == "APPLIED" } && adminHistories.all { publicationState(it.eventId) == "APPLIED" })
         stageSyntheticComparisons()
-        if (histories.isEmpty()) {
+        if (histories.isEmpty() && adminHistories.isEmpty()) {
             val ordinaryCapacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
             val enrollment = ComplaintEnrollmentAdmissionCoordinator(ingress, ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
                 JdbcComplaintInstallationEnrollmentStore(ordinary.jdbc, ordinaryCapacity,
@@ -673,6 +843,9 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             observer.update("DELETE FROM complaint_idempotency_receipts WHERE actor_kind = 'INSTALLATION' AND actor_id = ?", selected.id)
             observer.update("DELETE FROM installation_deletion_receipts WHERE installation_id = ?", selected.id)
         }
+        adminHistories.forEach { history ->
+            observer.update("DELETE FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?", history.actor, history.key)
+        }
         observer.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", scope.id)
         observer.update("DELETE FROM complaint_deletion_journal_retirements WHERE data_scope_id = ?", scope.id)
         observer.update("DELETE FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", scope.id)
@@ -727,7 +900,8 @@ internal class TestVerifiedDeleteProbeJdbc(private val p: ProjectionActivationOb
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             val path = TestRunVerifiedOwnerDeleteFixture.path(phase)
             assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
-                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY))
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY))
             val connection = (TransactionSynchronizationManager.getResource(runtime.pools.deletion) as ConnectionHolder).connection
             val lease = ownedPoolLease(connection)
             val observed = observations.getOrPut(phase) { StepUpPhaseObservation(phase, lease, connection.createStatement().use { statement ->
@@ -737,7 +911,8 @@ internal class TestVerifiedDeleteProbeJdbc(private val p: ProjectionActivationOb
             assertFalse(lease.completion.quiescent())
             assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
             assertTrue(p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-            assertEquals(path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY), p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
+            assertEquals(path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY), p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
                 "Short VERIFY participates in M but must not acquire E.")
             val call = TestVerifiedDeleteSqlCall(phase, path, sql)
             calls.add(call)

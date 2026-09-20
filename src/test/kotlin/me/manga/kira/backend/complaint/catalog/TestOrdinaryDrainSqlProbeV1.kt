@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDr
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunAdminDeleteContinuationV1
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -71,13 +72,15 @@ internal class TestOrdinaryDrainSqlProbeV1(
         val drain = ownedCutField(phase, "testOrdinaryDrain") as TestRunOrdinaryDrainV1?
         val primary = ownedCutField(phase, "testRunOwnerDelete") as TestRunOwnerDeleteContinuationV1?
         val allPrimary = ownedCutField(phase, "testRunOwnerDeleteAll") as TestRunOwnerDeleteAllContinuationV1?
+        val adminPrimary = ownedCutField(phase, "testRunAdminDelete") as TestRunAdminDeleteContinuationV1?
         val seal = ownedCutField(phase, "testOrdinarySealer") as TestRunOrdinarySealV1?
-        assertEquals(1, listOfNotNull(drain, primary, allPrimary, seal).size, "Exactly one actual original owns this SQL phase.")
+        assertEquals(1, listOfNotNull(drain, primary, allPrimary, adminPrimary, seal).size, "Exactly one actual original owns this SQL phase.")
         val expected = original
         when {
             drain != null -> {
                 assertSame(expected, drain)
-                if (deletion) assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY))
+                if (deletion) assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY))
                 else assertEquals(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN, path)
                 assertEquals(deletion, drain.step === TestOrdinaryDrainStepV1.RECOVERY_APPLY)
             }
@@ -87,6 +90,15 @@ internal class TestOrdinaryDrainSqlProbeV1(
                 assertSame(expected, seal.closedDrain)
                 assertEquals(TestOrdinaryDrainStepV1.SEAL, checkNotNull(expected).step)
                 assertEquals(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL, path)
+            }
+            adminPrimary != null -> {
+                assertTrue(deletion)
+                assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY))
+                assertSame(expected, ownedCutField(adminPrimary, "drainBy"))
+                assertNotNull(expected)
+                assertEquals(TestOrdinaryDrainStepV1.PRIMARIES, checkNotNull(expected).step)
+                assertSame(expected.budget, adminPrimary.budget)
             }
             allPrimary != null -> {
                 assertTrue(deletion)
@@ -122,7 +134,8 @@ internal class TestOrdinaryDrainSqlProbeV1(
         assertTrue(p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
         assertFalse(p.advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
         val exclusiveEpoch = drain != null || seal != null
-        val sharedEpoch = (primary != null || allPrimary != null) && path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY)
+        val sharedEpoch = (primary != null || allPrimary != null || adminPrimary != null) && path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY)
         assertEquals(exclusiveEpoch, p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
         assertEquals(sharedEpoch, p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
             "Primary RELOAD/APPLY use shared E; VERIFY uses no E; drain/recovery/seal use exclusive E.")
@@ -133,16 +146,16 @@ internal class TestOrdinaryDrainSqlProbeV1(
                     assertTrue(values.next()); values.getInt(1) to values.getLong(2)
                 }
             }
-            owners[phase] = Owners(drain, primary, allPrimary, seal)
+            owners[phase] = Owners(drain, primary, allPrimary, adminPrimary, seal)
             StepUpPhaseObservation(phase, lease, identity)
         }
         assertSame(observed.lease, lease)
         assertFalse(lease.completion.quiescent())
         val retained = owners.getValue(phase)
         assertSame(retained.drain, drain); assertSame(retained.primary, primary); assertSame(retained.seal, seal)
-        assertSame(retained.allPrimary, allPrimary)
+        assertSame(retained.allPrimary, allPrimary); assertSame(retained.adminPrimary, adminPrimary)
         val call = TestOrdinaryDrainSqlCallV1(phase, path, expected?.step, seal?.step, primary, seal, sql,
-            args.map { if (it is ByteArray) it.copyOf() else it }, allPrimary)
+            args.map { if (it is ByteArray) it.copyOf() else it }, allPrimary, adminPrimary)
         calls.add(call)
         before(call)
         action().also { after(call) }
@@ -166,6 +179,7 @@ internal class TestOrdinaryDrainSqlProbeV1(
                 owned.drain != null -> phase.testOrdinaryDrainCleanupProven(owned.drain)
                 owned.seal != null -> phase.testOrdinarySealCleanupProven(owned.seal)
                 owned.allPrimary != null -> phase.testRunOwnerDeleteAllCleanupProven(owned.allPrimary)
+                owned.adminPrimary != null -> phase.testRunAdminDeleteCleanupProven(owned.adminPrimary)
                 else -> phase.testRunOwnerDeleteCleanupProven(checkNotNull(owned.primary))
             })
             if (requireCommitted) assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
@@ -176,7 +190,7 @@ internal class TestOrdinaryDrainSqlProbeV1(
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
 
     private class Owners(val drain: TestRunOrdinaryDrainV1?, val primary: TestRunOwnerDeleteContinuationV1?,
-        val allPrimary: TestRunOwnerDeleteAllContinuationV1?, val seal: TestRunOrdinarySealV1?)
+        val allPrimary: TestRunOwnerDeleteAllContinuationV1?, val adminPrimary: TestRunAdminDeleteContinuationV1?, val seal: TestRunOrdinarySealV1?)
 }
 
 internal class TestOrdinaryDrainSqlCallV1(
@@ -189,4 +203,5 @@ internal class TestOrdinaryDrainSqlCallV1(
     val sql: String,
     val arguments: List<Any?>,
     val allPrimaryOriginal: TestRunOwnerDeleteAllContinuationV1? = null,
+    val adminPrimaryOriginal: TestRunAdminDeleteContinuationV1? = null,
 )

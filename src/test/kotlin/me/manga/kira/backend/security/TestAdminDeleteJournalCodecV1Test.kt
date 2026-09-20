@@ -61,6 +61,72 @@ class TestAdminDeleteJournalCodecV1Test {
     }
 
     @Test
+    fun `registered Admin J is an explicit distinct roundtrip and never makes the lower declaration registerable`() {
+        val registered = TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(journal.declaration())
+        assertTrue(registered.adminDelete && registered.ownerDeleteAll && registered.registeredAdminDelete)
+        assertFalse(journal.registeredAdminDelete)
+        assertEquals("REGISTERED_TEST_ADMIN_ERASURE", registered.document().profile)
+        assertEquals(journal.document().protocol, registered.document().protocol)
+        assertEquals(journal.document().copy(profile = registered.profile), registered.document())
+        assertNotEquals(journal.sha256, registered.sha256)
+        assertArrayEquals(registered.canonicalBytes(), TestOwnerDeleteJournalConfigurationV1.fromDocument(registered.document()).canonicalBytes())
+        assertThrows<IllegalArgumentException> { TestOwnerDeleteJournalConfigurationV1.fromDocument(journal.document()) }
+        listOf("REGISTERED_TEST_OWNER_DELETE", "REGISTERED_TEST_OWNER_ERASURE", "REGISTERED_TEST_ADMIN_DELETE", "LIVE").forEach { wrong ->
+            assertThrows<IllegalArgumentException> { TestOwnerDeleteJournalConfigurationV1.fromDocument(registered.document().copy(profile = wrong)) }
+        }
+        // The pre-existing independent owner literals and roundtrip checks above still use their
+        // original constructor; adding this profile does not rewrite either older J document.
+        registered.canonicalBytes().fill(0)
+        assertArrayEquals(registered.canonicalBytes(), TestOwnerDeleteJournalConfigurationV1.fromDocument(registered.document()).canonicalBytes())
+    }
+
+    @Test
+    fun `registered native decoder selects each closed family once before KMS and refuses lower Admin intake`() {
+        val registered = TestOwnerDeleteJournalConfigurationV1.registeredAdminErasure(journal.declaration())
+        val selectedRouting = ownerDeleteTestRouting(registered)
+        val selectedCodec = TestOwnerDeleteJournalCodecV1(selectedRouting, noKeys)
+        val events = listOf(
+            selectedCodec.canonicalize(TestOwnerDeleteJournalTupleV1(17, owner, 1, key, ByteArray(32) { 7 }, registered.scope), listOf(target)),
+            selectedCodec.canonicalize(TestOwnerDeleteJournalTupleV1(17, owner, 1, key, ByteArray(32) { 7 }, registered.scope,
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL), emptyList()),
+            selectedCodec.canonicalizeAdmin(tuple(), target),
+        )
+        events.forEach { event ->
+            val transport = TestOwnerDeleteJournalPublisherFixture(selectedRouting, event)
+            val bytes = transport.envelope()
+            try {
+                AwsTestOwnerDeleteDataKeyAdapterV1.withHttpFixture(registered, TestOwnerDeleteJournalPublisherFixture.CREDENTIALS,
+                    transport.kms::httpClient) { transport.nanos }.use { keys ->
+                    val decoder = TestOwnerDeleteJournalCodecV1(selectedRouting, keys, nanoTime = { transport.nanos })
+                    val before = transport.decrypted()
+                    val opened = decoder.openRegisteredOrdinary(registered.declaration().journalLocation.bucket,
+                        event.route.objectKey, bytes, decoder.startAttempt())
+                    assertEquals(before + 1, transport.decrypted(), "One named decoder and one AEAD, never trial decryption.")
+                    assertArrayEquals(event.canonicalBytes(), opened.event.canonicalBytes())
+                    assertEquals(event.comparison.eventKind, opened.event.comparison.eventKind)
+                }
+            } finally { bytes.fill(0) }
+            transport.assertClientsClosed()
+        }
+        val lower = codec.canonicalizeAdmin(tuple(), target)
+        val transport = TestOwnerDeleteJournalPublisherFixture(routing, lower)
+        val bytes = transport.envelope()
+        try {
+            AwsTestOwnerDeleteDataKeyAdapterV1.withHttpFixture(journal, TestOwnerDeleteJournalPublisherFixture.CREDENTIALS,
+                transport.kms::httpClient) { transport.nanos }.use { keys ->
+                val decoder = TestOwnerDeleteJournalCodecV1(routing, keys, nanoTime = { transport.nanos })
+                val before = transport.decrypted()
+                assertThrows<OwnerDeleteAllJournalException> {
+                    decoder.openRegisteredOrdinary(journal.declaration().journalLocation.bucket, lower.route.objectKey, bytes, decoder.startAttempt())
+                }
+                assertEquals(before, transport.decrypted(), "Lower J cannot become registration/inventory authority.")
+            }
+        } finally { bytes.fill(0) }
+        transport.assertClientsClosed()
+        assertEquals(0, noKeys.calls.get())
+    }
+
+    @Test
     fun `canonical Admin payload separates current actor original grant and resolved owner without credential slot`() {
         val tuple = tuple()
         val event = codec.canonicalizeAdmin(tuple, target)
