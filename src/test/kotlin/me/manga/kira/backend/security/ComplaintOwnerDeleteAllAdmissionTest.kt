@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintDeleteAllFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
 import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
@@ -177,6 +178,23 @@ class ComplaintOwnerDeleteAllAdmissionTest {
             ingress.startOwnerDeleteAll(context)
             admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { ingress.admitOwnerDeleteAll(context, tuple(admissionTestActor(1))) }
         }
+    }
+
+    @Test
+    fun `unchanged LIVE delete-all ingress accepts only LIVE even after TEST family support`() {
+        val ingress = ownerDeleteAllTestIngress()
+        val live = tuple(admissionTestActor(1))
+        val test = tuple(ScopedInstallationId(live.installation.id, ComplaintDataScope.of(UUID.randomUUID())))
+        ingress.withIngress(historyTestRequest()) { context ->
+            ingress.startOwnerDeleteAll(context)
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { ingress.admitOwnerDeleteAll(context, test) }
+        }
+        ingress.withIngress(historyTestRequest()) { context ->
+            ingress.startOwnerDeleteAll(context)
+            val admitted = ingress.admitOwnerDeleteAll(context, live)
+            ComplaintIngressAdmission.requireOwnerDeleteAllEntry(admitted, live)
+        }
+        assertEquals(ComplaintDataScope.LIVE, ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(ownerDeleteAllTestCapacityPolicy(), 32, 8).scope)
     }
 
     @Test

@@ -9,6 +9,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNam
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogCutoffAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochRotationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogGenesisFinalizeAttemptV1
@@ -109,6 +110,15 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestRunOwnerDeleteApply(original: TestRunOwnerDeleteContinuationV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, testRunOwnerDelete = original)
+
+    internal fun enterTestRunOwnerDeleteAllReload(original: TestRunOwnerDeleteAllContinuationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, testRunOwnerDeleteAll = original)
+
+    internal fun enterTestRunOwnerDeleteAllVerify(original: TestRunOwnerDeleteAllContinuationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, testRunOwnerDeleteAll = original)
+
+    internal fun enterTestRunOwnerDeleteAllApply(original: TestRunOwnerDeleteAllContinuationV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY, testRunOwnerDeleteAll = original)
 
     internal fun enterSourceGrantCleanup(): PersistencePhaseContext = enter(PersistencePhasePath.SOURCE_GRANT_CLEANUP)
 
@@ -441,6 +451,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRunSealer: TestRunSealingV1? = null,
         testOrdinarySealer: TestRunOrdinarySealV1? = null,
         testRunOwnerDelete: TestRunOwnerDeleteContinuationV1? = null,
+        testRunOwnerDeleteAll: TestRunOwnerDeleteAllContinuationV1? = null,
     ): PersistencePhaseContext {
         try {
             requireConnectionFree() // Before even a fail-fast permit attempt, including unbound loans.
@@ -468,6 +479,10 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
+        if (testRunOwnerDeleteAll != null && path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
         catalogRefresh?.requireProjectedPersistence(this)
         desiredAttempt?.requirePhaseEntry(this, path)
         firstDesiredAttempt?.requirePhaseEntry(this, path)
@@ -484,6 +499,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRunSealer?.requirePhaseEntry(this, path)
         testOrdinarySealer?.requirePhaseEntry(this, path)
         testRunOwnerDelete?.requirePhaseEntry(this, path)
+        testRunOwnerDeleteAll?.requirePhaseEntry(this, path)
         // Request/discovery admission and checkout consume the same stage; neither may restart it after a wait.
         val rotationWork = rotationAttempt?.budget?.capped(EpochRotationLimits.REQUEST_PHASE_MILLIS)
         val cutoffWork = cutoffAttempt?.budget?.capped(2_000)
@@ -503,6 +519,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testRunSealingWork = testRunSealer?.budget?.capped(2_000)
         val testOrdinarySealWork = testOrdinarySealer?.budget?.capped(2_000)
         val testRunOwnerDeleteWork = testRunOwnerDelete?.budget?.capped(2_000)
+        val testRunOwnerDeleteAllWork = testRunOwnerDeleteAll?.budget?.capped(2_000)
         // Secure randomness stays connection-free, before phase publication, locks or permit acquisition.
         val enrollmentOwnerReference = if (path === PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT) UUID.randomUUID() else null
         val caller = PersistenceOwnedFactoryCaller.capture()
@@ -561,6 +578,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testOrdinarySealWork,
                 testRunOwnerDelete,
                 testRunOwnerDeleteWork,
+                testRunOwnerDeleteAll,
+                testRunOwnerDeleteAllWork,
             )
             phase = prepared
             // Retain before any publication/permit effect, including entry failures that never return a phase to the executor.
@@ -574,6 +593,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunSealer?.retainPhase(prepared)
             testOrdinarySealer?.retainPhase(prepared)
             testRunOwnerDelete?.retainPhase(prepared)
+            testRunOwnerDeleteAll?.retainPhase(prepared)
             check(phases.compareAndSet(slot, null, prepared))
             current.set(prepared) // Retain the exact original-caller recovery path BEFORE any permit is spent.
             if (!path.source) prepared.reserveComplaintClaim()
@@ -591,6 +611,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunSealer?.observeFailure(failure)
             testOrdinarySealer?.observeFailure(failure)
             testRunOwnerDelete?.observeFailure(failure)
+            testRunOwnerDeleteAll?.observeFailure(failure)
             try {
                 phase?.entryPublicationFailed()
             } catch (cleanup: Throwable) {
@@ -604,6 +625,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunSealer?.observeFailure(cleanup)
                 testOrdinarySealer?.observeFailure(cleanup)
                 testRunOwnerDelete?.observeFailure(cleanup)
+                testRunOwnerDeleteAll?.observeFailure(cleanup)
                 throw PersistencePhaseException(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED, cleanupProven = false)
             } finally {
                 phase?.let { catalogSignerRotationAttempt?.observePhaseCleanup(it) }
@@ -616,6 +638,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testRunSealer?.observePhaseCleanup(it) }
                 phase?.let { testOrdinarySealer?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDelete?.observePhaseCleanup(it) }
+                phase?.let { testRunOwnerDeleteAll?.observePhaseCleanup(it) }
             }
             // Only the genuinely unused entry was cleaned here; preserve an already bounded reason.
             throw failure as? PersistencePhaseException ?: PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)

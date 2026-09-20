@@ -9,10 +9,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.security.ComplaintJournalActorKindV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import java.nio.ByteBuffer
@@ -26,8 +26,8 @@ import java.time.temporal.ChronoUnit
  * [observed] accepts evidence, and only the publisher's private same-routing readback can supply it.
  * Stored bytes are parsed without a JSONB round trip, routing HMAC, envelope open or provider call.
  */
-internal class OwnerDeleteAllVerificationCodecV1(private val routing: VersionBoundComplaintJournalRouting) {
-    private val declaration = routing.journalConfiguration.declaration()
+internal class OwnerDeleteAllVerificationCodecV1(private val routing: OwnerDeleteAllJournalBindingV1) {
+    constructor(routing: VersionBoundComplaintJournalRouting) : this(OwnerDeleteAllJournalBindingV1(routing))
     private val factory = JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
         .streamReadConstraints(
@@ -56,11 +56,25 @@ internal class OwnerDeleteAllVerificationCodecV1(private val routing: VersionBou
         // observation or PostgreSQL/driver rounding may replace the genuine publisher observation.
         val verifiedAt = readback.verifiedAt.truncatedTo(ChronoUnit.MICROS)
         val value = OwnerDeleteAllVerificationRecordV1(
-            1, "OWNER_DELETE_ALL", ComplaintDataScope.LIVE.id.toString(), false,
-            routing.journalConfiguration.sha256, event.route.eventId, declaration.writer.generationId,
+            1, "OWNER_DELETE_ALL", routing.scope.id.toString(), routing.scope.testOnly,
+            routing.sha256, event.route.eventId, routing.writer.generationId,
             event.tuple.epoch, event.route.routingKeyId, event.route.objectKey, event.semanticSha256,
             readback.versionId, readback.wireSha256, readback.lastModified.toString(), "COMPLIANCE",
             readback.retainUntil.toString(), verifiedAt.toString(),
+        )
+        requireBound(value, event)
+        return value
+    }
+
+    /** Actual native TEST read-back only, never an operator-supplied record. */
+    internal fun observed(readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationRecordV1 {
+        requireConnectionFree()
+        val event = routing.fromTest(readback.event)
+        val value = OwnerDeleteAllVerificationRecordV1(
+            1, "OWNER_DELETE_ALL", routing.scope.id.toString(), true, routing.sha256, event.route.eventId,
+            routing.writer.generationId, event.tuple.epoch, event.route.routingKeyId, event.route.objectKey, event.semanticSha256,
+            readback.versionId, readback.wireSha256, readback.lastModified.toString(), "COMPLIANCE", readback.retainUntil.toString(),
+            readback.verifiedAt.truncatedTo(ChronoUnit.MICROS).toString(),
         )
         requireBound(value, event)
         return value
@@ -102,11 +116,11 @@ internal class OwnerDeleteAllVerificationCodecV1(private val routing: VersionBou
         validate(value)
         val tuple = event.tuple
         requireVerification(
-            event.belongsTo(routing) && tuple.scope == ComplaintDataScope.LIVE &&
+            event.belongsTo(routing) && tuple.scope == routing.scope &&
                 tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && tuple.actorKind == ComplaintJournalActorKindV1.INSTALLATION,
         )
         requireVerification(
-            value.journalConfigurationSha256 == routing.journalConfiguration.sha256 && value.writerGeneration == declaration.writer.generationId &&
+            value.journalConfigurationSha256 == routing.sha256 && value.writerGeneration == routing.writer.generationId &&
                 value.eventId == event.route.eventId && value.journalEpoch == tuple.epoch && value.routingKeyId == event.route.routingKeyId &&
                 value.objectKey == event.route.objectKey && value.semanticSha256 == event.semanticSha256,
         )
@@ -114,7 +128,7 @@ internal class OwnerDeleteAllVerificationCodecV1(private val routing: VersionBou
 
     private fun validate(value: OwnerDeleteAllVerificationRecordV1) = verificationValue {
         requireVerification(value.schema == 1 && value.eventKind == "OWNER_DELETE_ALL")
-        requireVerification(value.dataScopeId == ComplaintDataScope.LIVE.id.toString() && !value.testOnly && value.objectLockMode == "COMPLIANCE")
+        requireVerification(value.dataScopeId == routing.scope.id.toString() && value.testOnly == routing.scope.testOnly && value.objectLockMode == "COMPLIANCE")
         requireVerification(value.journalEpoch > 0 && OfflineBootstrapGrammar.uuidV4(value.writerGeneration))
         requireVerification(
             listOf(value.journalConfigurationSha256, value.semanticSha256, value.ciphertextSha256).all(OfflineBootstrapGrammar::sha256) &&
@@ -130,7 +144,7 @@ internal class OwnerDeleteAllVerificationCodecV1(private val routing: VersionBou
         val verified = instant(value.verifiedAt, wholeSecond = false)
         requireVerification(
             !created.isAfter(verified) && retained.isAfter(verified) &&
-                retained.epochSecond - created.epochSecond >= declaration.limits.retention.ordinaryRetentionSeconds,
+                retained.epochSecond - created.epochSecond >= routing.limits.retention.ordinaryRetentionSeconds,
         ) // Necessary J-relative checks only; no stronger restore-horizon/current runtime authority.
     }
 

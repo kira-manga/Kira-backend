@@ -353,19 +353,34 @@ internal class JournalCodecAttemptV1(
 }
 
 /** Immutable canonical content bound to the actual routing owner; not authorization or an outbox row. */
-internal class OwnerDeleteAllJournalEventV1(
-    private val owner: VersionBoundComplaintJournalRouting,
+internal class OwnerDeleteAllJournalEventV1 private constructor(
+    private val owner: Any,
     val tuple: ComplaintJournalDeletionTupleV1,
     targets: List<UUID>,
     val route: ComplaintJournalRoutingCandidateV1,
     canonical: ByteArray,
 ) {
+    constructor(owner: VersionBoundComplaintJournalRouting, tuple: ComplaintJournalDeletionTupleV1, targets: List<UUID>,
+        route: ComplaintJournalRoutingCandidateV1, canonical: ByteArray) : this(owner as Any, tuple, targets, route, canonical)
+
+    companion object {
+        internal fun fromTest(owner: TestOwnerDeleteJournalRoutingV1, event: TestOwnerDeleteJournalEventV1): OwnerDeleteAllJournalEventV1 {
+            check(owner.journalConfiguration.ownerDeleteAll && event.belongsTo(owner) && event.tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+            val tuple = event.tuple
+            return OwnerDeleteAllJournalEventV1(owner as Any, ComplaintJournalDeletionTupleV1.testOwnerDeleteAll(tuple.epoch,
+                tuple.actorId, tuple.credentialVersion, tuple.operationKey, tuple.fingerprintBytes(), tuple.scope), event.complaintIds(),
+                ComplaintJournalRoutingCandidateV1(event.route.routingKeyId, event.route.objectKey, event.route.eventId), event.canonicalBytes())
+        }
+    }
+
     private val storedTargets = targets.toList()
     private val storedCanonical = canonical.copyOf()
     val semanticSha256: String = Sha256.hex(storedCanonical)
     internal val byteCount: Int get() = storedCanonical.size
 
     internal fun belongsTo(candidate: VersionBoundComplaintJournalRouting): Boolean = owner === candidate
+    internal fun belongsTo(candidate: TestOwnerDeleteJournalRoutingV1): Boolean = owner === candidate
+    internal fun belongsTo(candidate: OwnerDeleteAllJournalBindingV1): Boolean = candidate.owns(this)
     fun canonicalBytes(): ByteArray = storedCanonical.copyOf()
     fun complaintIds(): List<UUID> = storedTargets.toList()
 

@@ -56,6 +56,8 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealS
 import me.manga.kira.backend.complaint.catalog.TestRunVerifiedOwnerDeleteCases
 import me.manga.kira.backend.complaint.catalog.TestRunPreparedOwnerDeleteCases
 import me.manga.kira.backend.complaint.catalog.TestRunOwnerDeletePageCases
+import me.manga.kira.backend.complaint.catalog.TestRunOwnerDeleteAllCasesV1
+import me.manga.kira.backend.complaint.catalog.TestAllHistoryCutV1
 import me.manga.kira.backend.complaint.catalog.TestPreparedDeleteRefusalCut
 import me.manga.kira.backend.complaint.catalog.TestPreparedDeleteProviderCut
 import me.manga.kira.backend.complaint.catalog.TestVerifiedDeleteRefusalCut
@@ -1435,6 +1437,49 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun testRunOwnerDeletePageSharesOuterBudgetAndCancellation() = withFixture(testActivation = true) {
         TestRunOwnerDeletePageCases.outerCancellationAndBudgetStopThePage(it)
+    }
+
+    @Test
+    fun testRunOwnerDeleteAllPreparedZeroAndHundredApplyAndReplay() {
+        for (count in listOf(0, 100)) withFixture(testActivation = true) { TestRunOwnerDeleteAllCasesV1.preparedAndReplay(it, count) }
+    }
+
+    @Test
+    fun testRunOwnerDeleteAllStoredVerifiedAndAppliedReplayWithoutProviders() {
+        for (applied in listOf(false, true)) withFixture(testActivation = true) { TestRunOwnerDeleteAllCasesV1.verifiedOrAppliedReplay(it, applied) }
+    }
+
+    @Test
+    fun testRunOwnerDeleteAll101RollsBackAuthorizationWithoutProvider() = withFixture(testActivation = true) {
+        TestRunOwnerDeleteAllCasesV1.hundredOneSentinel(it)
+    }
+
+    @Test
+    fun testRunOwnerDeleteAllLateNativeCloseCannotIssueVerify() = withFixture(testActivation = true) {
+        TestRunOwnerDeleteAllCasesV1.lateNativeClose(it)
+    }
+
+    @Test
+    fun testRunOwnerDeleteAllFailedNativeCloseKeepsSharedPrivacyLane() = withFixture(testActivation = true) {
+        TestRunOwnerDeleteAllCasesV1.failedNativeClose(it)
+    }
+
+    @Test
+    fun testRunOwnerDeleteAllOriginalLostCommitCannotAdvanceOrRehabilitate() {
+        for (path in listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY,
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)) {
+            withFixture(testActivation = true) { TestRunOwnerDeleteAllCasesV1.lostCommitAcknowledgment(it, path) }
+        }
+    }
+
+    @Test
+    fun testOrdinarySealConsumesMixedDeleteFamiliesWithoutConvertingRecoveryReserve() = withFixture(testActivation = true) {
+        TestRunOwnerDeleteAllCasesV1.mixedOrdinarySeal(it)
+    }
+
+    @Test
+    fun testOrdinarySealRefusesPendingOrOrphanAllHistoryAndSecondPassXmin() {
+        TestAllHistoryCutV1.entries.forEach { cut -> withFixture(testActivation = true) { TestRunOwnerDeleteAllCasesV1.ordinaryHistoryRefusal(it, cut) } }
     }
 
     @Test

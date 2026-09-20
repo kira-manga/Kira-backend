@@ -15,14 +15,20 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
+import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteRows
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
+import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
@@ -30,6 +36,8 @@ import java.sql.Timestamp
 import java.sql.Types
 import java.time.Instant
 import java.util.UUID
+import java.util.Base64
+import java.util.HexFormat
 
 /** Fixed ordered SQL only. No provider, KMS, codecs with remote ports, caller SQL or work callback. */
 internal class TestOrdinarySealOperationV1 private constructor(
@@ -278,19 +286,48 @@ internal class TestOrdinarySealOperationV1 private constructor(
 
     private fun addEntry(builder: TestOrdinarySealManifestV1.Builder, id: String, key: String) {
         retained(Stage.MANIFEST)
-        val receipt = jdbc.query(TestOrdinarySealSqlV1.receipt, { value, _ ->
+        // Lock both closed receipt families before the publication. Its ACTUAL locked kind selects
+        // the consumer below; neither an optional receipt nor a target-count heuristic selects it.
+        val receipts = jdbc.query(TestOrdinarySealSqlV1.receipt, { value, _ ->
             requireOrdinarySeal(value.getString("actor_kind") == "INSTALLATION")
             Triple(OwnerDeleteRows.Receipt(value), checkNotNull(value.getString("stamp")), checkNotNull(value.getTimestamp("completed_at")).toInstant())
-        }, id).single()
+        }, id)
+        val allReceipts = jdbc.query(TestOrdinarySealSqlV1.ownerDeleteAllReceipt(original.routing.journalConfiguration.scope), { value, _ ->
+            Triple(checkNotNull(value.getObject("installation_id", UUID::class.java)), OwnerDeleteAllApplyRows.receipt(value), checkNotNull(value.getString("stamp")))
+        }, id)
         val publication = jdbc.query(TestOrdinarySealSqlV1.publication, { value, _ ->
-            Triple(OwnerDeleteRows.Publication(value), checkNotNull(value.getString("stamp")), checkNotNull(value.getTimestamp("applied_at")).toInstant())
+            val observed = when (value.getString("event_kind")) {
+                "OWNER_DELETE" -> OwnerDeleteRows.Publication(value)
+                "OWNER_DELETE_ALL" -> {
+                    requireOrdinarySeal(original.routing.journalConfiguration.ownerDeleteAll)
+                    OwnerDeleteRows.Publication.ownerDeleteAll(value)
+                }
+                else -> throw TestOrdinarySealExceptionV1()
+            }
+            Triple(observed, checkNotNull(value.getString("stamp")), checkNotNull(value.getTimestamp("applied_at")).toInstant())
         }, id).single()
         retained(Stage.MANIFEST)
         val p = publication.first
-        val event = TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey)
-        p.requireEvent(event)
         requireOrdinarySeal(p.scope == original.scope && p.writer.toString() == original.writer && p.objectKey == key && p.epoch in 1..cut.cutoff &&
             p.state == "APPLIED" && !p.createdAt.isAfter(run.sealedAt))
+        when (p.kind) {
+            ComplaintJournalDeletionKindV1.OWNER_DELETE -> {
+                requireOrdinarySeal(allReceipts.isEmpty())
+                addOwnerDeleteEntry(builder, id, receipts.single(), publication)
+            }
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> {
+                requireOrdinarySeal(receipts.isEmpty())
+                addOwnerDeleteAllEntry(builder, id, allReceipts.single(), publication)
+            }
+            else -> throw TestOrdinarySealExceptionV1()
+        }
+    }
+
+    private fun addOwnerDeleteEntry(builder: TestOrdinarySealManifestV1.Builder, id: String,
+        receipt: Triple<OwnerDeleteRows.Receipt, String, Instant>, publication: Triple<OwnerDeleteRows.Publication, String, Instant>) {
+        val p = publication.first
+        val event = TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey)
+        p.requireEvent(event)
         val tuple = ComplaintOwnerDeleteTuple(ScopedInstallationId(event.tuple.actorId, event.tuple.scope), event.tuple.operationKey,
             event.complaintIds().single(), event.tuple.fingerprintBytes())
         val r = receipt.first
@@ -321,6 +358,51 @@ internal class TestOrdinarySealOperationV1 private constructor(
         retained(Stage.MANIFEST)
         builder.entry(p.objectKey, checkNotNull(p.objectVersion), java.util.HexFormat.of().formatHex(checkNotNull(p.ciphertextHash)),
             listOf(publication.second, receipt.second, appliedStamp, recoveryStamp).joinToString(":"))
+    }
+
+    private fun addOwnerDeleteAllEntry(builder: TestOrdinarySealManifestV1.Builder, id: String,
+        receipt: Triple<UUID, OwnerDeleteAllApplyRows.Receipt, String>, publication: Triple<OwnerDeleteRows.Publication, String, Instant>) {
+        val p = publication.first
+        val routing = OwnerDeleteAllJournalBindingV1(original.routing)
+        val event = routing.restore(p.bytes, p.routingKey)
+        p.requireEvent(event)
+        val tuple = event.tuple
+        val r = receipt.second
+        requireOrdinarySeal(receipt.first == tuple.actorId && r.key == tuple.operationKey && r.version == tuple.credentialVersion &&
+            r.fingerprint.contentEquals(Base64.getUrlDecoder().decode(tuple.encodedFingerprint())) && r.reference == p.eventId &&
+            r.state == "COMPLETED" && r.authorizedAt == p.createdAt && r.completedAt == publication.third)
+        val external = checkNotNull(r.external)
+        requireOrdinarySeal(external.eventId == p.eventId && external.epoch == p.epoch && external.version == p.objectVersion &&
+            external.hash.contentEquals(p.ciphertextHash))
+        val proof = OwnerDeleteAllVerificationCodecV1(routing).parse(checkNotNull(p.verificationBytes), event)
+        requireOrdinarySeal(proof.objectVersion == p.objectVersion && proof.ciphertextSha256 == HexFormat.of().formatHex(checkNotNull(p.ciphertextHash)) &&
+            Instant.parse(proof.objectCreatedAt) == p.objectCreatedAt && Instant.parse(proof.retainUntil) == p.retainUntil &&
+            Instant.parse(proof.verifiedAt) == p.verifiedAt)
+        val at = now()
+        val verified = Instant.parse(proof.verifiedAt)
+        requireOrdinarySeal(!verified.isAfter(at) && Instant.parse(proof.retainUntil).isAfter(at) && !p.createdAt.isAfter(verified) &&
+            !publication.third.isBefore(verified) && !publication.third.isAfter(at))
+        val appliedStamp = jdbc.query(TestOrdinarySealSqlV1.applied, { value, _ ->
+            val targets = value.getInt("target_count").also { requireOrdinarySeal(!value.wasNull()) }
+            requireOrdinarySeal(value.getString("event_id") == p.eventId && value.getObject("data_scope_id", UUID::class.java) == p.scope &&
+                TestOrdinarySealRowsV1.boolean(value, "test_only") && value.getObject("writer_generation", UUID::class.java) == p.writer &&
+                value.getLong("journal_epoch") == p.epoch && value.getString("event_kind") == "OWNER_DELETE_ALL" && targets == p.targetCount &&
+                value.getString("object_key") == p.objectKey && value.getString("object_version") == p.objectVersion &&
+                value.getBytes("ciphertext_hash").contentEquals(p.ciphertextHash) && value.getTimestamp("applied_at").toInstant() == publication.third)
+            checkNotNull(value.getString("stamp"))
+        }, id).single()
+        val recoveryStamp = jdbc.query(TestOrdinarySealSqlV1.ownerDeleteAllRecovery(original.routing.journalConfiguration.scope), { value, _ ->
+            val recovery = OwnerDeleteAllApplyRows.recovery(value)
+            requireOrdinarySeal(recovery.eventId == p.eventId && recovery.promise == OwnerDeleteAllCapacityCharges.RECOVERY && recovery.state == "PARTIAL" &&
+                recovery.convertedAt != null && !recovery.convertedAt.isAfter(at) && !recovery.convertedAt.isBefore(verified) &&
+                recovery.used[ComplaintCapacityCounter.JOURNAL_APPLIED] == 1L &&
+                (OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.AUDIT).fitsWithin(recovery.used))
+            checkNotNull(value.getString("stamp"))
+        }, id).single()
+        retained(Stage.MANIFEST)
+        // Same ordered triple fold and two-pass row-version comparison; no reserve conversion/refund.
+        builder.entry(p.objectKey, checkNotNull(p.objectVersion), HexFormat.of().formatHex(checkNotNull(p.ciphertextHash)),
+            listOf(publication.second, receipt.third, appliedStamp, recoveryStamp).joinToString(":"))
     }
 
     private fun requireCompleteRelation() {

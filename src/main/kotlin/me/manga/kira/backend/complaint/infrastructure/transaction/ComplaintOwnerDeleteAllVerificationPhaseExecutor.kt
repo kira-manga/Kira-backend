@@ -5,16 +5,21 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllVerificationV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllVerificationStore
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllVerificationInputV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalReadbackV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
 
 /** One short named path on the existing deletion holder, after connection-free genuine readback. */
 internal class ComplaintOwnerDeleteAllVerificationPhaseExecutor(
     private val ownership: PersistencePhaseOwnership,
     private val store: JdbcComplaintOwnerDeleteAllVerificationStore,
 ) {
+    fun verify(readback: OwnerDeleteAllJournalReadbackV1): CommittedOwnerDeleteAllVerificationV1 = execute(store.capture(readback))
+
+    fun verify(readback: TestOwnerDeleteJournalReadbackV1): CommittedOwnerDeleteAllVerificationV1 = execute(store.capture(readback))
+
     @Suppress("TooGenericExceptionCaught")
-    fun verify(readback: OwnerDeleteAllJournalReadbackV1): CommittedOwnerDeleteAllVerificationV1 {
-        val captured = store.capture(readback)
+    private fun execute(captured: OwnerDeleteAllVerificationInputV1): CommittedOwnerDeleteAllVerificationV1 {
         val phase = ownership.enterComplaintOwnerDeleteAllVerify()
         var operation: ComplaintOwnerDeleteAllVerificationOperation? = null
         try {

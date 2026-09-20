@@ -116,7 +116,10 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     }
 
     init {
-        valid(document.schemaVersion == 1 && document.profile == PROFILE && implementationSchema == 1 && desiredGeneration > 0)
+        valid(document.schemaVersion == 1 && implementationSchema == 1 && desiredGeneration > 0)
+        // Select the same closed family at BOTH boundaries, before immutable acquisition. The
+        // old recipe must not silently gain ALL when composed with the wider TEST J reader.
+        valid(document.profile == if (journal.ownerDeleteAll) OWNER_ERASURE_PROFILE else PROFILE)
         valid(database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME &&
             database.runtimeUsername != VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME)
         valid(database.host.length in 1..253 && database.host.split('.').all { DNS_LABEL.matches(it) })
@@ -191,6 +194,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
 
     companion object {
         const val PROFILE = "PRE_CUTOVER_TEST_ORDINARY_SEAL_V1"
+        const val OWNER_ERASURE_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_SEAL_V1"
 
         @Suppress("TooGenericExceptionCaught")
         internal fun fromDecoded(document: ComplaintTestDeploymentDocumentV1): ComplaintTestDeploymentInputsV1 {

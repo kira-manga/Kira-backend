@@ -39,7 +39,7 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
         graph.requireDeletion(jdbc)
         if (graph.recoveryRegistration != null) {
             check(!authorizing)
-            checkNotNull(PersistencePhaseOwnership.current()).requireTestRunOwnerDeleteRun(graph, jdbc)
+            checkNotNull(PersistencePhaseOwnership.current()).requireTestRunDeletionRun(graph, jdbc)
             return
         }
         jdbc.query("SELECT state, configuration_hash, test_only, purging_at, purged_at FROM complaint_test_runs WHERE data_scope_id = ? FOR UPDATE", { row, _ ->
@@ -50,9 +50,9 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
         }, desired.scope.id).single()
     }
 
-    class Locked internal constructor(val epoch: Long, private val sealed: Long) {
+    class Locked internal constructor(val epoch: Long, val sealedEpoch: Long) {
         fun requireContinuation(frozen: Long, prepared: Boolean) {
-            check(frozen in 1..epoch && (!prepared || frozen > sealed))
+            check(frozen in 1..epoch && (!prepared || frozen > sealedEpoch))
         }
     }
 

@@ -1,5 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.capacity
 
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+
 import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAuditEntry
 import me.manga.kira.backend.audit.infrastructure.ComplaintOwnerDeleteAuditInsertion
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
@@ -457,6 +459,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
             operation.requireAuditWrite(this, store.jdbc)
         }
 
+        internal fun auditScope(insertion: ComplaintInstallationDeleteAuthorizationAuditInsertion): ComplaintDataScope {
+            requireAuditInsert(insertion)
+            return operation.auditScope(this, store.jdbc)
+        }
+
         internal fun failed(problem: Throwable): Nothing = operation.failed(problem)
 
         override fun toString(): String = "LockedOwnerDeleteAll(redacted)"
@@ -475,7 +482,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                         // Necessary aggregate bounds only, not a substitute for drained reconciliation.
                         // A scope-only authorization audit may have legitimately expired independently.
                         check((OwnerDeleteAllCapacityCharges.AUTHORIZATION - ComplaintCapacityCharges.AUDIT).fitsWithin(before.balance.actual))
-                        check(OwnerDeleteAllCapacityCharges.RECOVERY.fitsWithin(before.balance.recoveryReserved))
+                        check(operation.requiredReloadRecovery(store.jdbc).fitsWithin(before.balance.recoveryReserved))
                         before
                     }
                     val allocation = LockedOwnerDeleteAll(store, operation, fresh)
@@ -565,6 +572,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun requireAuditInsert(insertion: ComplaintOwnerDeleteAllAuditInsertion) {
             check(audits.lastOrNull() === insertion)
             operation.requireAuditWrite(this, store.jdbc)
+        }
+
+        internal fun auditScope(insertion: ComplaintOwnerDeleteAllAuditInsertion): ComplaintDataScope {
+            requireAuditInsert(insertion)
+            return operation.auditScope(this, store.jdbc)
         }
 
         internal fun failed(problem: Throwable): Nothing = operation.failed(problem)

@@ -1,9 +1,11 @@
 package me.manga.kira.backend.complaint.infrastructure
 
-/** Fixed LIVE statements in the concrete APPLY operation; no caller-supplied relation/scope/lock strategy. */
-internal object OwnerDeleteAllApplySql {
-    private const val LIVE = "data_scope_id = '00000000-0000-0000-0000-000000000000' AND NOT test_only"
-    const val NOW = "SELECT clock_timestamp()"
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+
+/** Fixed LIVE or exact TEST-scope statements in the concrete APPLY operation; no caller-supplied relation/scope/lock strategy. */
+internal class OwnerDeleteAllApplySql private constructor(scope: ComplaintDataScope) {
+    private val LIVE = "data_scope_id = '${scope.id}' AND ${if (scope.testOnly) "test_only" else "NOT test_only"}"
+    val NOW = "SELECT clock_timestamp()"
 
     val LOCK_RECEIPTS = """
         SELECT deletion_key, submitted_credential_version, fingerprint, publication_ref, authorized_at, state,
@@ -73,7 +75,7 @@ internal object OwnerDeleteAllApplySql {
         FROM app_installations WHERE id = ? FOR UPDATE
     """.trimIndent()
 
-    const val OWNER_TARGETS = "SELECT id FROM complaints WHERE owner_id = ? ORDER BY id LIMIT 101"
+    val OWNER_TARGETS = "SELECT id FROM complaints WHERE owner_id = ? ORDER BY id LIMIT 101"
 
     val LOCK_RESOURCE = """
         SELECT id, state, deleted_at, ($LIVE) AS live,
@@ -94,7 +96,7 @@ internal object OwnerDeleteAllApplySql {
     // Called in UUID order, interleaved with LOCK_RESOURCE for missing E. No out-of-order second insertion pass.
     val RECONSTRUCT_RESOURCE = """
         INSERT INTO complaint_resource_ids (id, data_scope_id, test_only, state, created_at, deleted_at)
-        VALUES (?, '00000000-0000-0000-0000-000000000000', false, 'DELETED', ?, ?)
+        VALUES (?, '${scope.id}', ${scope.testOnly}, 'DELETED', ?, ?)
     """.trimIndent()
 
     val DELETE_CONTENT = """
@@ -151,11 +153,40 @@ internal object OwnerDeleteAllApplySql {
         INSERT INTO complaint_deletion_journal_applied
             (object_key, object_version, event_id, ciphertext_hash, writer_generation, journal_epoch, event_kind, target_count,
                 data_scope_id, test_only, applied_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'OWNER_DELETE_ALL', ?, '00000000-0000-0000-0000-000000000000', false, ?)
+        VALUES (?, ?, ?, ?, ?, ?, 'OWNER_DELETE_ALL', ?, '${scope.id}', ${scope.testOnly}, ?)
     """.trimIndent()
 
-    const val NO_OWNED_CONTENT = "SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)"
+    val NO_OWNED_CONTENT = "SELECT NOT EXISTS (SELECT 1 FROM complaints WHERE owner_id = ?)"
     val ALL_TOMBSTONED = """
         SELECT count(*) FROM complaint_resource_ids WHERE id = ANY (?::uuid[]) AND $LIVE AND state = 'DELETED' AND deleted_at IS NOT NULL
     """.trimIndent()
+    companion object {
+        val NOW get() = live.NOW
+        val LOCK_RECEIPTS get() = live.LOCK_RECEIPTS
+        val LOCK_PUBLICATION get() = live.LOCK_PUBLICATION
+        val LOCK_RECOVERY get() = live.LOCK_RECOVERY
+        val LOCK_INSTALLATION get() = live.LOCK_INSTALLATION
+        val LOCK_CREDENTIAL get() = live.LOCK_CREDENTIAL
+        val OWNER_TARGETS get() = live.OWNER_TARGETS
+        val LOCK_RESOURCE get() = live.LOCK_RESOURCE
+        val LOCK_CONTENT get() = live.LOCK_CONTENT
+        val RECONSTRUCT_RESOURCE get() = live.RECONSTRUCT_RESOURCE
+        val DELETE_CONTENT get() = live.DELETE_CONTENT
+        val TOMBSTONE_RESOURCE get() = live.TOMBSTONE_RESOURCE
+        val DELETE_INSTALLATION get() = live.DELETE_INSTALLATION
+        val DELETE_CREDENTIAL get() = live.DELETE_CREDENTIAL
+        val RECORD_PROGRESS get() = live.RECORD_PROGRESS
+        val COMPLETE_RECEIPT get() = live.COMPLETE_RECEIPT
+        val MARK_APPLIED get() = live.MARK_APPLIED
+        val APPLIED get() = live.APPLIED
+        val INSERT_APPLIED get() = live.INSERT_APPLIED
+        val NO_OWNED_CONTENT get() = live.NO_OWNED_CONTENT
+        val ALL_TOMBSTONED get() = live.ALL_TOMBSTONED
+        val live = OwnerDeleteAllApplySql(ComplaintDataScope.LIVE)
+        fun test(scope: ComplaintDataScope): OwnerDeleteAllApplySql {
+            require(scope.testOnly && scope.id.version() == 4 && scope.id.variant() == 2)
+            return OwnerDeleteAllApplySql(scope)
+        }
+    }
+
 }

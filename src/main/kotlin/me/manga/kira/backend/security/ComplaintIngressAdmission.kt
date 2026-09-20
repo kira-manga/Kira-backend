@@ -460,7 +460,7 @@ internal class ComplaintIngressAdmission(
     internal fun admitOwnerDeleteAll(context: ComplaintIngressContext, tuple: InstallationDeletionPreflightTuple): ComplaintAdmittedOwnerDeleteAll {
         requireConnectionFree()
         if (clock !== SystemComplaintAdmissionNanoClock ||
-            tuple.installation.scope.testOnly
+            tuple.installation.scope != ((deleteAllPolicy as? ComplaintOwnerDeleteAllAdmissionPolicy.Bounded)?.scope ?: ComplaintDataScope.LIVE)
         ) {
             refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
         }

@@ -2,6 +2,8 @@ package me.manga.kira.backend.complaint.infrastructure.journal.aws
 
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWork
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFailureV1
@@ -22,15 +24,26 @@ internal class TestOwnerDeleteS3BindingV1 private constructor(
     val attempt: TestOwnerDeleteCodecAttemptV1,
     private val store: JdbcComplaintOwnerDeleteStore?,
     private val work: CommittedTestOwnerDeleteWork.Prepared?,
+    private val allStore: JdbcComplaintOwnerDeleteAllStore? = null,
+    private val allWork: CommittedOwnerDeleteAllWork.Prepared? = null,
 ) {
     fun requirePublicationStart() {
         requireConnectionFree()
         requireJournalPublication(event.belongsTo(routing))
         attempt.requireOwner(routing)
         if (work != null) requireJournalPublication(checkNotNull(store).preparedEvent(work) === event)
+        if (allWork != null) {
+            val original = checkNotNull(allStore).testPreparedEvent(allWork)
+            requireJournalPublication(original.belongsTo(routing) && original.route == event.route && original.canonicalBytes().contentEquals(event.canonicalBytes()))
+        }
     }
-    fun requirePut() { requirePublicationStart(); requireJournalPublication(work != null && store != null) }
+    fun requirePut() { requirePublicationStart(); requireJournalPublication((work != null && store != null) xor (allWork != null && allStore != null)) }
     companion object {
+        internal fun released(store: JdbcComplaintOwnerDeleteAllStore, work: CommittedOwnerDeleteAllWork.Prepared,
+            routing: TestOwnerDeleteJournalRoutingV1, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteS3BindingV1 {
+            requireConnectionFree()
+            return TestOwnerDeleteS3BindingV1(routing, store.testPreparedEvent(work), attempt, null, null, store, work).also { it.requirePut() }
+        }
         fun released(store: JdbcComplaintOwnerDeleteStore, work: CommittedTestOwnerDeleteWork.Prepared, routing: TestOwnerDeleteJournalRoutingV1, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteS3BindingV1 {
             requireConnectionFree()
             return TestOwnerDeleteS3BindingV1(routing, store.preparedEvent(work), attempt, store, work).also { it.requirePut() }

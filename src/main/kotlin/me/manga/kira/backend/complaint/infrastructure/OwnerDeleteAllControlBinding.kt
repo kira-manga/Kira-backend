@@ -17,28 +17,43 @@ import java.util.UUID
  * actual process owner; legacy supplied D/catalog evidence remains diagnostic. Neither equality
  * nor computed D grants restore/runtime authority. Its private snapshot never leaves the phase.
  */
-internal class OwnerDeleteAllControlBinding(
+internal class OwnerDeleteAllControlBinding private constructor(
     private val desired: ComplaintInstallationDesiredSettings.Configured,
-    routing: VersionBoundComplaintJournalRouting,
-    catalog: CatalogCommonHeadEvidence,
-    private val process: OwnerDeleteAllProcessBinding? = null,
+    routing: VersionBoundComplaintJournalRouting?,
+    catalog: CatalogCommonHeadEvidence?,
+    private val process: OwnerDeleteAllProcessBinding?,
+    internal val testGraph: TestOwnerDeleteLocalGraphV1?,
 ) {
-    private val journal = routing.journalConfiguration.declaration()
-    val writer: UUID = UUID.fromString(journal.writer.generationId)
-    private val catalogGeneration = catalog.chain.tail.generation
-    private val catalogHash = digest(catalog.chain.tail.envelopeSha256)
-    private val trustHash = digest(catalog.chain.trust.currentBundleEnvelopeSha256)
-    private val catalogWriter = UUID.fromString(catalog.chain.tail.catalogWriterGenerationId)
+    constructor(desired: ComplaintInstallationDesiredSettings.Configured, routing: VersionBoundComplaintJournalRouting,
+        catalog: CatalogCommonHeadEvidence, process: OwnerDeleteAllProcessBinding? = null) : this(desired, routing, catalog, process, null)
+    constructor(graph: TestOwnerDeleteLocalGraphV1) : this(graph.desiredSettings(), null, null, null, graph) {
+        require(graph.routing.journalConfiguration.ownerDeleteAll)
+    }
+    internal val requiresBoundVerification = process != null
+    val scope = desired.scope
+    private val testControls = testGraph?.let(::TestOwnerDeleteControlBindingV1)
+    private val journalWriter = routing?.journalConfiguration?.declaration()?.writer ?: checkNotNull(testGraph).routing.journalConfiguration.declaration().writer
+    private val deadlines = routing?.journalConfiguration?.declaration()?.limits?.deadlines ?: checkNotNull(testGraph).routing.journalConfiguration.declaration().limits.deadlines
+    val writer: UUID = UUID.fromString(journalWriter.generationId)
+    private val catalogGeneration = catalog?.chain?.tail?.generation ?: 0
+    private val catalogHash = catalog?.chain?.tail?.envelopeSha256?.let(::digest)
+    private val trustHash = catalog?.chain?.trust?.currentBundleEnvelopeSha256?.let(::digest)
+    private val catalogWriter = catalog?.chain?.tail?.catalogWriterGenerationId?.let(UUID::fromString)
 
     init {
-        process?.requireInputs(desired, routing)
-        require(desired.mode === ComplaintInstallationMode.LIVE && desired.scope == ComplaintDataScope.LIVE)
-        require(desired.databaseIdentity.toString() == journal.writer.databaseIdentity && desired.restoreIdentity.toString() == journal.writer.restoreIdentity)
-        require(catalogGeneration in 1..65536 && catalogGeneration >= catalog.chain.trust.minimumHeadGeneration)
-        require(catalogWriter.version() == 4 && catalogWriter.variant() == 2 && catalogWriter.toString() == catalog.chain.tail.catalogWriterGenerationId)
+        if (testGraph == null) {
+            process?.requireInputs(desired, checkNotNull(routing))
+            require(desired.mode === ComplaintInstallationMode.LIVE && scope == ComplaintDataScope.LIVE)
+            require(catalogGeneration in 1..65536 && catalogGeneration >= checkNotNull(catalog).chain.trust.minimumHeadGeneration)
+            require(checkNotNull(catalogWriter).version() == 4 && catalogWriter.variant() == 2)
+        } else require(desired.mode === ComplaintInstallationMode.PRE_CUTOVER_TEST && scope == testGraph.routing.journalConfiguration.scope)
+        require(desired.databaseIdentity.toString() == journalWriter.databaseIdentity && desired.restoreIdentity.toString() == journalWriter.restoreIdentity)
     }
 
+    fun lockRun(jdbc: JdbcTemplate, authorizing: Boolean) { testControls?.lockRun(jdbc, authorizing) }
+
     fun lock(jdbc: JdbcTemplate, authorizingPath: Boolean): Locked {
+        testControls?.let { val held = it.lock(jdbc, authorizingPath); return Locked(held.epoch, held.sealedEpoch) }
         process?.requireDeletion(jdbc)
         val selected = jdbc.query(
             CONTROL_SQL,
@@ -52,7 +67,7 @@ internal class OwnerDeleteAllControlBinding(
         check(!selected.checkpointCompleted.isAfter(now) && !selected.checkpointStarted.isAfter(selected.checkpointCompleted))
         // Necessary local interval only; neither timestamps nor stored seal bytes prove provider retention.
         check(!selected.sealVerified.isAfter(now) && selected.sealRetainUntil.isAfter(now))
-        if (authorizingPath) check(Duration.between(selected.checkpointCompleted, now).toMillis() <= journal.limits.deadlines.checkpointMaxAgeMillis)
+        if (authorizingPath) check(Duration.between(selected.checkpointCompleted, now).toMillis() <= deadlines.checkpointMaxAgeMillis)
         process?.requireDeletion(jdbc)
         return Locked(selected.epoch, selected.sealedEpoch)
     }

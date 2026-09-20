@@ -2,6 +2,7 @@ package me.manga.kira.backend.security
 
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 
 /** Only the ingress owner's private registered instance is recognized; not runtime or journal authority. */
@@ -11,8 +12,10 @@ internal interface ComplaintAdmittedOwnerDeleteAll
 internal sealed interface ComplaintOwnerDeleteAllAdmissionPolicy {
     data object Disabled : ComplaintOwnerDeleteAllAdmissionPolicy
 
-    class Bounded(private val capacityPolicy: ComplaintCapacityPolicyV1, val memberLimit: Int, val pruneBatch: Int) : ComplaintOwnerDeleteAllAdmissionPolicy {
+    class Bounded(private val capacityPolicy: ComplaintCapacityPolicyV1, val memberLimit: Int, val pruneBatch: Int,
+        internal val scope: ComplaintDataScope = ComplaintDataScope.LIVE) : ComplaintOwnerDeleteAllAdmissionPolicy {
         init {
+            require(!scope.testOnly || (scope.id.version() == 4 && scope.id.variant() == 2)) { INVALID_ADMISSION_CONFIGURATION }
             require(memberLimit in 2..131072 && pruneBatch in 1..128) { INVALID_ADMISSION_CONFIGURATION }
             require((OwnerDeleteAllCapacityCharges.AUTHORIZATION + OwnerDeleteAllCapacityCharges.RECOVERY).fitsWithin(capacityPolicy.hardLimit)) {
                 INVALID_ADMISSION_CONFIGURATION

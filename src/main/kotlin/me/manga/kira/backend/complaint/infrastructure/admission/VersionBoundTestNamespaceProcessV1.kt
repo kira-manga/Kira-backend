@@ -113,7 +113,10 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require(writer.databaseIdentity == databaseIdentity.toString() && writer.restoreIdentity == restoreIdentity.toString()) {
             INVALID_TEST_PROCESS_CONFIGURATION
         }
-        require(consumers.ownerDeleteAllPolicy === ComplaintOwnerDeleteAllAdmissionPolicy.Disabled) { INVALID_TEST_PROCESS_CONFIGURATION }
+        val deleteAll = consumers.ownerDeleteAllPolicy
+        require(if (journal.ownerDeleteAll) deleteAll is ComplaintOwnerDeleteAllAdmissionPolicy.Bounded && deleteAll.scope == journal.scope &&
+            deleteAll.memberLimit == consumers.ownerCreatePolicy.memberLimit && deleteAll.pruneBatch == consumers.ownerCreatePolicy.pruneBatch
+            else deleteAll === ComplaintOwnerDeleteAllAdmissionPolicy.Disabled) { INVALID_TEST_PROCESS_CONFIGURATION }
         require(
             consumers.ownerCreatePolicy.memberLimit == consumers.ownerEditPolicy.memberLimit &&
                 consumers.ownerCreatePolicy.memberLimit == consumers.ownerDeletePolicy.memberLimit &&

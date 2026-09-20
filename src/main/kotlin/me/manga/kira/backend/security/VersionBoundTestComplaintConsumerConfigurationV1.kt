@@ -69,6 +69,7 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
     val ownerCreatePolicy: ComplaintOwnerCreateAdmissionPolicy.Bounded,
     val ownerEditPolicy: ComplaintOwnerEditAdmissionPolicy.Bounded,
     val ownerDeletePolicy: ComplaintOwnerDeleteAdmissionPolicy.Bounded,
+    val ownerDeleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy,
     private val admissionKeys: ComplaintAdmissionKeyConfiguration,
     val ownerCursorCodec: ComplaintOwnerCursorCodec,
     val ingressAdmission: ComplaintIngressAdmission,
@@ -76,7 +77,6 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
 ) {
     private val bindings = descriptors.toList()
 
-    val ownerDeleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Disabled
     val admissionCurrentKeyId: String get() = admissionKeys.currentKeyId
     val admissionPreviousKeyId: String? get() = admissionKeys.previousKeyId
     val coordinationMode: String get() = settings.coordinationMode
@@ -112,6 +112,8 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
             val create = settings.ownerCreatePolicy(capacityPolicy)
             val edit = ComplaintOwnerEditAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch)
             val delete = ComplaintOwnerDeleteAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch)
+            val deleteAll = if (journal.ownerDeleteAll) ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(capacityPolicy, create.memberLimit, create.pruneBatch, journal.scope)
+                else ComplaintOwnerDeleteAllAdmissionPolicy.Disabled
             val resolver = settings.clientIpResolver()
             val copies = ArrayList<ByteArray>(descriptors.size)
             val admissionCopies = ArrayList<ComplaintAdmissionKey>(admissions.size)
@@ -148,12 +150,12 @@ internal class VersionBoundTestComplaintConsumerConfigurationV1 private construc
                 val ingress = ComplaintIngressAdmission(
                     resolver, policy, fixedKeys, SystemComplaintAdmissionNanoClock,
                     createPolicy = create,
-                    deleteAllPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Disabled,
+                    deleteAllPolicy = deleteAll,
                     editPolicy = edit,
                     ownerDeletePolicy = delete,
                 )
                 return VersionBoundTestComplaintConsumerConfigurationV1(
-                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete,
+                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, create, edit, delete, deleteAll,
                     fixedKeys, codec, ingress, descriptors,
                 )
             } finally {

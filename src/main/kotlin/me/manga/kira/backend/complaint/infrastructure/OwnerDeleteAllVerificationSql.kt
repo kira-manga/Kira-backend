@@ -1,8 +1,10 @@
 package me.manga.kira.backend.complaint.infrastructure
 
-/** Fixed LIVE-only VERIFY: the API receipt precedes its publication, then one update/commit and stop. */
-internal object OwnerDeleteAllVerificationSql {
-    private const val LIVE = "data_scope_id = '00000000-0000-0000-0000-000000000000' AND NOT test_only"
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+
+/** Fixed LIVE or exact TEST-scope VERIFY: the API receipt precedes its publication, then one update/commit and stop. */
+internal class OwnerDeleteAllVerificationSql private constructor(scope: ComplaintDataScope) {
+    private val LIVE = "data_scope_id = '${scope.id}' AND ${if (scope.testOnly) "test_only" else "NOT test_only"}"
 
     val LOCK_RECEIPTS = """
         SELECT installation_id, deletion_key, submitted_credential_version, fingerprint, publication_ref, authorized_at,
@@ -53,4 +55,15 @@ internal object OwnerDeleteAllVerificationSql {
             AND retain_until IS NULL AND verified_at IS NULL AND verification_bytes IS NULL AND verification_hash IS NULL AND applied_at IS NULL
         RETURNING $COLUMNS
     """.trimIndent()
+    companion object {
+        val LOCK_RECEIPTS get() = live.LOCK_RECEIPTS
+        val LOCK_PUBLICATION get() = live.LOCK_PUBLICATION
+        val RECORD_VERIFIED get() = live.RECORD_VERIFIED
+        val live = OwnerDeleteAllVerificationSql(ComplaintDataScope.LIVE)
+        fun test(scope: ComplaintDataScope): OwnerDeleteAllVerificationSql {
+            require(scope.testOnly && scope.id.version() == 4 && scope.id.variant() == 2)
+            return OwnerDeleteAllVerificationSql(scope)
+        }
+    }
+
 }

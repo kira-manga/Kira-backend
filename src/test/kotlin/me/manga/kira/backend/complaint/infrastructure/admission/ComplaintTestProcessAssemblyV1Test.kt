@@ -1,6 +1,8 @@
 package me.manga.kira.backend.complaint.infrastructure.admission
 
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceJdbcLifecycleOwner
@@ -13,6 +15,8 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.FullTestCatalogInputs
 import me.manga.kira.backend.security.ImmutableSecretVersion
+import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
+import me.manga.kira.backend.security.fullTestJournal
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -76,6 +80,51 @@ internal class ComplaintTestProcessAssemblyV1Test {
             } finally { assembly.close() }
             assertThrows<ComplaintTestDeploymentExceptionV1> { assembly.target }
         }
+    }
+
+    @Test
+    fun `explicit two family intake composes the actual acquired admission J and full D before activation`() {
+        fun assembled(all: Boolean): JsonObject {
+            val d = TestDeploymentInputFixture.document(fullTestJournal(ownerDeleteAll = all))
+            val http = AwsSecretVersionFixture()
+            TestDeploymentInputFixture.secrets(http, d)
+            return TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(d)) { path ->
+                ComplaintTestProcessAssemblyV1.withHttpFixture(http::httpClient,
+                    sts = { error("premature STS") }, kms = { error("premature KMS") }, s3 = { error("premature S3") }).use { assembly ->
+                    assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsSecretVersionFixture.CREDENTIALS)
+                    val target = assembly.target
+                    val consumers = target.consumers
+                    assertEquals(all, consumers.journalConfiguration.ownerDeleteAll)
+                    assertArrayEquals(fullTestJournal(ownerDeleteAll = all).canonicalBytes(), consumers.journalConfiguration.canonicalBytes())
+                    assertSame(consumers.journalConfiguration, consumers.journalRouting.journalConfiguration)
+                    target.publicationLanes.requireTestJournal(consumers.journalConfiguration)
+                    if (all) assertEquals(consumers.journalConfiguration.scope,
+                        (consumers.ownerDeleteAllPolicy as ComplaintOwnerDeleteAllAdmissionPolicy.Bounded).scope)
+                    else assertSame(ComplaintOwnerDeleteAllAdmissionPolicy.Disabled, consumers.ownerDeleteAllPolicy)
+                    assertSame(target.pools, assembly.lifecycleOwner.versionBoundPools)
+                    assertTrue(PgLifecycleTestScope(assembly.lifecycleOwner).actors().none { it.hasEntered() })
+                    assertTrue(listOf(target.pools.ordinary, target.pools.deletion, target.pools.catalogCoordinator.dataSource).none { actualPool(it).isRunning })
+                    assertEquals(ComplaintTestDeploymentInputsV1.fromDecoded(d).allBindings().size, http.requests.size)
+                    assertEquals(http.createdClients, http.closedClients)
+                    target.requireRegistrationTarget() // Cold normal target only; still no registration or activation.
+                    requireConnectionFree()
+                    Json.parseToJsonElement(target.canonicalBytes().decodeToString()).jsonObject
+                }
+            }
+        }
+        val legacy = assembled(false)
+        val family = assembled(true)
+        assertFalse(legacy == family)
+        assertEquals("PRE_CUTOVER_TEST_OWNER_DELETE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER", legacy.getValue("profile").jsonPrimitive.content)
+        assertEquals("PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER", family.getValue("profile").jsonPrimitive.content)
+        assertFalse(legacy.getValue("journalConfiguration") == family.getValue("journalConfiguration"))
+        assertEquals(legacy.getValue("capacityPolicy"), family.getValue("capacityPolicy"))
+        assertEquals(legacy.getValue("persistence"), family.getValue("persistence"))
+        assertEquals(legacy.getValue("publicationLanes"), family.getValue("publicationLanes"))
+        val admission = family.getValue("consumers").jsonObject.getValue("admission").jsonObject
+        assertEquals("true", admission.getValue("quotas").jsonObject.getValue("ownerDeleteAllEnabled").jsonPrimitive.content)
+        assertEquals(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE", "OWNER_DELETE_ALL"),
+            admission.getValue("mutationMembers").jsonObject.getValue("operations").jsonArray.map { it.jsonPrimitive.content })
     }
 
     @Test

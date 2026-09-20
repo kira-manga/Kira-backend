@@ -47,6 +47,7 @@ import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigura
 import me.manga.kira.backend.security.VersionedSecretBinding
 import me.manga.kira.backend.security.boundConsumerTestSettings
 import me.manga.kira.backend.security.historyTestRequest
+import me.manga.kira.backend.security.fullTestJournal
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -121,6 +122,40 @@ class VersionBoundTestNamespaceProcessV1Test {
                 assertEquals(0L, lanes.activeOwners().totalOwners)
             }
             assertEquals(lookups, fixture.base.lookups)
+            assertCold(pools)
+        }
+
+    @Test
+    fun `two-family TEST selection changes J full-D and fixed mutation inventory before any activation`() =
+        ComplaintProcessPoolFixture().use { database ->
+            val pools = database.bind()
+            val reader = VersionBoundCatalogReadbackTestFixture.settings()
+            fun encoded(all: Boolean): Pair<ByteArray, JsonObject> {
+                val fixture = BoundTestComplaintConsumerFixture(fullTestJournal(ownerDeleteAll = all))
+                val consumers = fixture.configuration()
+                return JournalPublicationLanesV1(fixture.journal).use { lanes ->
+                    val activation = FullTestCatalogInputs.activation(pools, fixture.journal, reader)
+                    val root = process(consumers, pools, lanes, reader, activation)
+                    root.requireUnchangedConfiguration()
+                    fixture.journal.canonicalBytes() to document(root)
+                }
+            }
+            val (oldJ, oldD) = encoded(false)
+            val (newJ, newD) = encoded(true)
+            assertEquals(TEST_J_SHA256, Sha256.hex(oldJ))
+            assertNotEquals(Sha256.hex(oldJ), Sha256.hex(newJ))
+            assertNotEquals(oldD, newD)
+            assertEquals("PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER", newD.getValue("profile").jsonPrimitive.content)
+            assertEquals(Sha256.hex(newJ), newD.getValue("journalConfiguration").jsonObject.getValue("sha256").jsonPrimitive.content)
+            val oldAdmission = oldD.getValue("consumers").jsonObject.getValue("admission").jsonObject
+            val newAdmission = newD.getValue("consumers").jsonObject.getValue("admission").jsonObject
+            assertEquals("false", oldAdmission.getValue("quotas").jsonObject.getValue("ownerDeleteAllEnabled").jsonPrimitive.content)
+            assertEquals("true", newAdmission.getValue("quotas").jsonObject.getValue("ownerDeleteAllEnabled").jsonPrimitive.content)
+            assertEquals(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE", "OWNER_DELETE_ALL"),
+                newAdmission.getValue("mutationMembers").jsonObject.getValue("operations").jsonArray.map { it.jsonPrimitive.content })
+            assertEquals(oldD.getValue("capacityPolicy"), newD.getValue("capacityPolicy"))
+            assertEquals(oldD.getValue("persistence"), newD.getValue("persistence"))
+            assertEquals(oldD.getValue("publicationLanes"), newD.getValue("publicationLanes"))
             assertCold(pools)
         }
 

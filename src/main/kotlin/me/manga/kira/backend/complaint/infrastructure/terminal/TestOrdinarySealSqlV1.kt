@@ -1,6 +1,8 @@
 package me.manga.kira.backend.complaint.infrastructure.terminal
 
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 
 /** Fixed first/current-writer TEST only; V19 LIVE intent fields are read-for-NULL and never written. */
 internal object TestOrdinarySealSqlV1 {
@@ -116,6 +118,13 @@ internal object TestOrdinarySealSqlV1 {
     """.trimIndent()
     val recovery = OwnerDeletePersistenceSql.LOCK_RECOVERY.replace("converted_at, complaint_finite_times", "xmin::text AS stamp, converted_at, complaint_finite_times")
 
+    // Same exact bounded comparison readers as APPLY; receipt-before-publication lock order remains fixed.
+    fun ownerDeleteAllReceipt(scope: ComplaintDataScope): String = OwnerDeleteAllApplySql.test(scope).LOCK_RECEIPTS
+        .replace("SELECT deletion_key,", "SELECT installation_id, xmin::text AS stamp, deletion_key,")
+        .replace("WHERE installation_id = ? ORDER BY deletion_key", "WHERE publication_ref = ? ORDER BY installation_id, deletion_key")
+    fun ownerDeleteAllRecovery(scope: ComplaintDataScope): String = OwnerDeleteAllApplySql.test(scope).LOCK_RECOVERY
+        .replace("SELECT event_id,", "SELECT xmin::text AS stamp, event_id,")
+
     /** Orphans/unsupported families are errors, not a smaller expected set. This is LOCAL completeness only. */
     val completeRelation = """
         WITH expected AS MATERIALIZED (SELECT ?::uuid AS scope, ?::text AS prefix, ?::text AS seal_prefix)
@@ -136,7 +145,15 @@ internal object TestOrdinarySealSqlV1 {
                 CROSS JOIN expected e WHERE r.data_scope_id = e.scope AND (p.event_id IS NULL OR p.data_scope_id <> e.scope OR NOT r.test_only))
             AND NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_retirements r CROSS JOIN expected e WHERE r.data_scope_id = e.scope)
             AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_runs r CROSS JOIN expected e WHERE r.data_scope_id = e.scope)
-            AND NOT EXISTS (SELECT 1 FROM installation_deletion_receipts r CROSS JOIN expected e WHERE r.data_scope_id = e.scope)
+            AND NOT EXISTS (SELECT 1 FROM installation_deletion_receipts r
+                LEFT JOIN complaint_journal_publications p ON p.event_id = r.publication_ref CROSS JOIN expected e
+                WHERE (r.data_scope_id = e.scope OR p.data_scope_id = e.scope OR p.object_key LIKE e.prefix OR p.object_key LIKE e.seal_prefix)
+                    AND (r.data_scope_id = e.scope AND r.test_only AND r.state = 'COMPLETED' AND r.outcome = 'APPLIED' AND r.response_status = 204
+                        AND p.data_scope_id = e.scope AND p.test_only AND p.state = 'APPLIED' AND p.event_kind = 'OWNER_DELETE_ALL'
+                        AND p.target_count BETWEEN 0 AND 100 AND r.authorized_at = p.created_at AND r.completed_at = p.applied_at
+                        AND r.expires_at = r.completed_at + interval '192 hours' AND r.external_event_id = p.event_id
+                        AND r.external_epoch = p.journal_epoch AND r.external_object_version = p.object_version
+                        AND r.external_ciphertext_hash = p.ciphertext_hash) IS NOT TRUE)
             AND NOT EXISTS (SELECT 1 FROM complaint_installation_ids r CROSS JOIN expected e WHERE r.data_scope_id = e.scope AND r.state = 'DELETION_PENDING')
             AND NOT EXISTS (SELECT 1 FROM complaint_resource_ids r CROSS JOIN expected e WHERE r.data_scope_id = e.scope AND r.state = 'DELETION_PENDING')) AS valid
     """.trimIndent()

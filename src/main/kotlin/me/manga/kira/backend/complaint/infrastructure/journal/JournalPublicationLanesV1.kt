@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochSealCu
 import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.security.JournalCodecAttemptV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import java.util.concurrent.locks.ReentrantLock
@@ -33,6 +34,7 @@ internal class JournalPublicationLanesV1 private constructor(
 
     private var testJournal: TestOwnerDeleteJournalConfigurationV1? = null
     private val testPrivacy = HashSet<TestOwnerDeleteReservation>()
+    private val testAllPrivacy = HashSet<TestOwnerDeleteAllReservation>()
     private val lock = ReentrantLock()
     private val routine = HashSet<RoutineReservation>()
     private val privacy = HashSet<OwnerDeleteAllReservation>()
@@ -55,7 +57,7 @@ internal class JournalPublicationLanesV1 private constructor(
     internal fun tryTestOwnerDelete(factory: TestOwnerDeleteJournalPublisherFactoryV1): TestOwnerDeleteReservation? {
         if (!lock.tryLock()) return null
         try {
-            if (stopping || factory.isClosed() || routineCount() + privacy.size + testPrivacy.size >= limits.maximumPublicationLanes.toLong()) return null
+            if (stopping || factory.isClosed() || routineCount() + privacy.size + testPrivacy.size + testAllPrivacy.size >= limits.maximumPublicationLanes.toLong()) return null
             factory.requireLane(this)
             requireTestJournal(factory.journalConfiguration())
             return TestOwnerDeleteReservation(factory).also { testPrivacy.add(it) }
@@ -78,11 +80,37 @@ internal class JournalPublicationLanesV1 private constructor(
         closeOwners(owned)
     }
 
+    internal fun tryTestOwnerDeleteAll(factory: TestOwnerDeleteAllJournalPublisherFactoryV1): TestOwnerDeleteAllReservation? {
+        if (!lock.tryLock()) return null
+        try {
+            if (stopping || factory.isClosed() || routineCount() + privacy.size + testPrivacy.size + testAllPrivacy.size >= limits.maximumPublicationLanes.toLong()) return null
+            factory.requireLane(this)
+            requireTestJournal(factory.journalConfiguration())
+            return TestOwnerDeleteAllReservation(factory).also { testAllPrivacy.add(it) }
+        } finally {
+            lock.unlock()
+        }
+    }
+
+    private fun requireRunning(owner: TestOwnerDeleteAllReservation) = lock.withLock {
+        requireJournalPublication(!stopping && !owner.factory.isClosed() && owner in testAllPrivacy)
+    }
+
+    private fun release(owner: TestOwnerDeleteAllReservation): Boolean = lock.withLock {
+        testAllPrivacy.remove(owner)
+        !stopping && !owner.factory.isClosed()
+    }
+
+    internal fun closeFactory(factory: TestOwnerDeleteAllJournalPublisherFactoryV1) {
+        val owned = lock.withLock { testAllPrivacy.filter { it.factory === factory } }
+        closeOwners(owned)
+    }
+
     /** Unstarted accounting-only reservation; the separate private receiptless path below owns actual routine publication. */
     fun tryRoutinePublication(): RoutineReservation? {
         if (!lock.tryLock()) return null
         try {
-            if (stopping || (privacy.isNotEmpty() || testPrivacy.isNotEmpty()) || routineCount() >= limits.routinePublicationLanes) return null
+            if (stopping || (privacy.isNotEmpty() || testPrivacy.isNotEmpty() || testAllPrivacy.isNotEmpty()) || routineCount() >= limits.routinePublicationLanes) return null
             return RoutineReservation().also { routine.add(it) }
         } finally {
             lock.unlock()
@@ -93,7 +121,7 @@ internal class JournalPublicationLanesV1 private constructor(
         if (!lock.tryLock()) return null
         try {
             // Widen BEFORE addition: the validated J permits limits up to Int.MAX_VALUE.
-            if (stopping || factory.isClosed() || routineCount() + privacy.size + testPrivacy.size >= limits.maximumPublicationLanes.toLong()) return null
+            if (stopping || factory.isClosed() || routineCount() + privacy.size + testPrivacy.size + testAllPrivacy.size >= limits.maximumPublicationLanes.toLong()) return null
             factory.requireLane(this)
             factory.requireJournal(checkNotNull(journal))
             return OwnerDeleteAllReservation(factory, routineOwner = false).also { privacy.add(it) }
@@ -105,7 +133,7 @@ internal class JournalPublicationLanesV1 private constructor(
     internal fun tryCutoff(factory: OwnerDeleteAllJournalPublisherFactoryV1): OwnerDeleteAllReservation? {
         if (!lock.tryLock()) return null
         try {
-            if (stopping || factory.isClosed() || (privacy.isNotEmpty() || testPrivacy.isNotEmpty())) return null
+            if (stopping || factory.isClosed() || (privacy.isNotEmpty() || testPrivacy.isNotEmpty() || testAllPrivacy.isNotEmpty())) return null
             if (routineCount() >= limits.routinePublicationLanes) return null
             factory.requireLane(this)
             factory.requireJournal(checkNotNull(journal))
@@ -118,7 +146,7 @@ internal class JournalPublicationLanesV1 private constructor(
     internal fun tryEpochSeal(owner: CatalogEpochSealCustodyV1): Boolean {
         if (!lock.tryLock()) return false
         try {
-            if (stopping || owner.acquisitionStopped() || (privacy.isNotEmpty() || testPrivacy.isNotEmpty())) return false
+            if (stopping || owner.acquisitionStopped() || (privacy.isNotEmpty() || testPrivacy.isNotEmpty() || testAllPrivacy.isNotEmpty())) return false
             if (routineCount() >= limits.routinePublicationLanes) return false
             owner.requireLane(this)
             return seals.add(owner)
@@ -144,7 +172,7 @@ internal class JournalPublicationLanesV1 private constructor(
     internal fun tryTestOrdinarySeal(owner: TestOrdinarySealCustodyV1): Boolean {
         if (!lock.tryLock()) return false
         try {
-            if (stopping || owner.acquisitionStopped() || privacy.isNotEmpty() || testPrivacy.isNotEmpty() || routineCount() >= limits.routinePublicationLanes) return false
+            if (stopping || owner.acquisitionStopped() || privacy.isNotEmpty() || testPrivacy.isNotEmpty() || testAllPrivacy.isNotEmpty() || routineCount() >= limits.routinePublicationLanes) return false
             owner.requireLane(this)
             return testSeals.add(owner)
         } finally { lock.unlock() }
@@ -164,7 +192,7 @@ internal class JournalPublicationLanesV1 private constructor(
     // Call only under the registry lock. Widen before every addition, including held/failed seal owners.
     private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size + testSeals.size
 
-    fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routineCount().toInt(), privacy.size + testPrivacy.size) }
+    fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routineCount().toInt(), privacy.size + testPrivacy.size + testAllPrivacy.size) }
 
     private fun requireRunning(owner: OwnerDeleteAllReservation) = lock.withLock {
         requireJournalPublication(!stopping && !owner.factory.isClosed() && (if (owner.routineOwner) owner in cutoff else owner in privacy))
@@ -188,6 +216,7 @@ internal class JournalPublicationLanesV1 private constructor(
             buildList<AutoCloseable> {
                 addAll(privacy)
                 addAll(testPrivacy)
+                addAll(testAllPrivacy)
                 addAll(cutoff)
                 addAll(seals)
                 addAll(testSeals)
@@ -371,6 +400,7 @@ internal class JournalPublicationLanesV1 private constructor(
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
                 requireConnectionFree()
                 factory.requireRecoveryRead() // A registered continuation publishes only its exact retained primary work.
+                requireJournalPublication(tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE)
                 synchronized(lifecycle) {
                     requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
                     requireRunning(this)
@@ -446,6 +476,101 @@ internal class JournalPublicationLanesV1 private constructor(
         }
 
         override fun toString(): String = "TestOwnerDeleteJournalReservationV1(dormant,owned,redacted,no-runtime-authority)"
+    }
+
+    internal inner class TestOwnerDeleteAllReservation internal constructor(
+        internal val factory: TestOwnerDeleteAllJournalPublisherFactoryV1,
+    ) : AutoCloseable {
+        private val lifecycle = Any()
+        private val construction = TestOwnerDeleteAllJournalPublisherV1.Construction()
+        private var state = PublicationOwnerStateV1.RESERVED
+        private var stopRequested = false
+        private var caller: Thread? = null
+        private var attempt: TestOwnerDeleteCodecAttemptV1? = null
+        private var closeFailure: Throwable? = null
+
+        fun publish(work: CommittedOwnerDeleteAllWork.Prepared): TestOwnerDeleteJournalReadbackV1 =
+            journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+                requireConnectionFree()
+                synchronized(lifecycle) {
+                    requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                    requireRunning(this)
+                    state = PublicationOwnerStateV1.RUNNING
+                    caller = Thread.currentThread()
+                }
+                withJournalPublicationCleanup(
+                    {
+                        factory.requirePrepared(work)
+                        val time = factory.startAttempt().also { synchronized(lifecycle) { attempt = it } }
+                        val publisher = factory.construct(this, construction, time)
+                        requireConstructing(factory, construction, time)
+                        publisher.publish(work, time).also { requireConstructing(factory, construction, time) }
+                    },
+                    ::finishPublication,
+                )
+            }
+
+        internal fun requireConstructing(
+            expected: TestOwnerDeleteAllJournalPublisherFactoryV1,
+            custody: TestOwnerDeleteAllJournalPublisherV1.Construction,
+            time: TestOwnerDeleteCodecAttemptV1,
+        ) = synchronized(lifecycle) {
+            requireJournalPublication(
+                factory === expected && construction === custody && attempt === time &&
+                    state == PublicationOwnerStateV1.RUNNING && !stopRequested && caller === Thread.currentThread(),
+            )
+            requireRunning(this)
+            time.remainingMillis(1)
+        }
+
+        private fun finishPublication() {
+            synchronized(lifecycle) { state = PublicationOwnerStateV1.CLEANING }
+            // Never let an expired clock, interruption or stop request skip actual resource cleanup.
+            val closing = runCatching { journalPublicationClose { construction.close() } }
+            val timing = runCatching { journalPublicationCall { attempt?.remainingMillis(1) } }
+            val stopped = synchronized(lifecycle) {
+                caller = null
+                if (closing.isSuccess) {
+                    state = PublicationOwnerStateV1.CLOSED
+                    val running = release(this)
+                    stopRequested || !running
+                } else {
+                    closeFailure = closing.exceptionOrNull()
+                    state = PublicationOwnerStateV1.RETAINED
+                    stopRequested
+                }
+            }
+            withJournalPublicationCleanup(
+                {
+                    timing.getOrThrow()
+                    requireJournalPublication(!stopped)
+                },
+                { closing.getOrThrow() },
+            )
+        }
+
+        override fun close() = synchronized(lifecycle) {
+            stopRequested = true
+            when (state) {
+                PublicationOwnerStateV1.RESERVED -> {
+                    // Linearized against RUNNING: an idle release permanently forbids later construction.
+                    state = PublicationOwnerStateV1.CLOSED
+                    release(this)
+                }
+
+                PublicationOwnerStateV1.CLOSED -> Unit
+
+                PublicationOwnerStateV1.RETAINED -> throw checkNotNull(closeFailure)
+
+                PublicationOwnerStateV1.RUNNING, PublicationOwnerStateV1.CLEANING -> {
+                    // The original synchronous caller owns cleanup. No cancel/timeout is a native return.
+                    throw JournalPublicationExceptionV1(JournalPublicationFailureV1.CLEANUP_FAILURE)
+                }
+            }
+            Unit
+        }
+
+        override fun toString(): String = "TestOwnerDeleteAllJournalReservationV1(dormant,owned,redacted,no-runtime-authority)"
     }
 
     override fun toString(): String = "JournalPublicationLanesV1(shared-in-process,redacted,no-runtime-authority)"

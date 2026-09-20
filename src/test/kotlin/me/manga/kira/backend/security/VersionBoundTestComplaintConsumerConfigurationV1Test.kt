@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityConfiguration
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintDeleteAllFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
@@ -138,6 +139,33 @@ class VersionBoundTestComplaintConsumerConfigurationV1Test {
         creation(owner, create)
         creation(owner, reply)
         editing(owner, edit)
+        deletion(owner, delete)
+    }
+
+    @Test
+    fun `explicit two-family TEST admission binds the exact scope and shares the same retained mutation members`() {
+        val fixture = BoundTestComplaintConsumerFixture(fullTestJournal(ownerDeleteAll = true))
+        val owner = fixture.configuration(settings = boundConsumerTestSettings(ownerCreateMemberLimit = 4, ownerCreatePruneBatch = 2))
+        val policy = owner.ownerDeleteAllPolicy as ComplaintOwnerDeleteAllAdmissionPolicy.Bounded
+        assertEquals(fixture.journal.scope, policy.scope)
+        assertEquals(4, policy.memberLimit)
+        assertEquals(2, policy.pruneBatch)
+        assertTrue(policy.matchesLocked(ledger(owner.capacityPolicy)))
+        val delete = ComplaintOwnerDeleteTuple(fixture.actor(1), UUID.randomUUID(), UUID.randomUUID(), ByteArray(32) { 43 })
+        val allTuple = deleteAllTuple(fixture.actor(1))
+        deletion(owner, delete) // Two retained HMAC generations per actual operation member.
+        fun admitAll(tuple: InstallationDeletionPreflightTuple) = owner.ingressAdmission.withIngress(historyTestRequest()) { context ->
+            owner.ingressAdmission.startOwnerDeleteAll(context)
+            val admitted = owner.ingressAdmission.admitOwnerDeleteAll(context, tuple)
+            ComplaintIngressAdmission.requireOwnerDeleteAllEntry(admitted, tuple)
+        }
+        admitAll(allTuple)
+        admitAll(allTuple) // Exact duplicate does not spend another pair of members.
+        admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { admitAll(deleteAllTuple(fixture.actor(2))) }
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { admitAll(deleteAllTuple(admissionTestActor(1))) }
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) {
+            admitAll(deleteAllTuple(ScopedInstallationId(fixture.actor(1).id, ComplaintDataScope.of(UUID.randomUUID()))))
+        }
         deletion(owner, delete)
     }
 
@@ -338,6 +366,7 @@ internal class BoundTestComplaintConsumerFixture(val journal: TestOwnerDeleteJou
 }
 
 /** TEST keeps the independent historical registry's writer lineage, not its LIVE scope or role authority. */
-internal fun fullTestJournal(): TestOwnerDeleteJournalConfigurationV1 = TestOwnerDeleteJournalConfigurationV1.of(
+internal fun fullTestJournal(ownerDeleteAll: Boolean = false): TestOwnerDeleteJournalConfigurationV1 = TestOwnerDeleteJournalConfigurationV1.of(
     ownerDeleteTestJournal().declaration().copy(writer = InitialLiveJournalTestFixture.declaration().writer),
+    ownerDeleteAll = ownerDeleteAll,
 )

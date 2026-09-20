@@ -10,6 +10,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDataba
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObservation
@@ -19,10 +20,12 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeletePrecondition
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteRequest
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintPlatform
 import me.manga.kira.backend.complaint.domain.ComplaintReportIdentity
@@ -31,8 +34,15 @@ import me.manga.kira.backend.complaint.domain.ComplaintReportRequest
 import me.manga.kira.backend.complaint.domain.ComplaintReportRequestResult
 import me.manga.kira.backend.complaint.domain.ComplaintType
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentResult
+import me.manga.kira.backend.complaint.domain.InstallationDeletionCandidate
+import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightResult
+import me.manga.kira.backend.complaint.domain.ComplaintDeleteAllFingerprint
+import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWork
+import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllApplyV1
+import me.manga.kira.backend.complaint.infrastructure.VersionBoundTestOwnerDeleteAllConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateCandidate
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteCandidate
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerOperationIdentity
@@ -52,14 +62,18 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteAllV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationEnrollmentPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeletePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDeleteReadPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.complaint.journal.TestOwnerDeleteJournalPublisherFixture
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.security.InstallationEnrollmentCredentials
 import me.manga.kira.backend.security.InstallationJwtCodec
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -68,6 +82,7 @@ import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.RowMapper
 import org.springframework.jdbc.datasource.ConnectionHolder
@@ -77,6 +92,7 @@ import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.security.MessageDigest
 import java.sql.Connection
+import java.sql.Timestamp
 import java.time.Clock
 import java.util.UUID
 
@@ -139,6 +155,11 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     private val verification = JdbcComplaintOwnerDeleteVerificationStore(jdbc, lower, store)
     private val apply = JdbcComplaintOwnerDeleteApplyStore(jdbc, capacity, audit, lower, store, verification)
     private val phases = ComplaintOwnerDeletePhaseExecutor(ownership, store, reads, verification, apply)
+    private val all by lazy { VersionBoundTestOwnerDeleteAllConfigurationV1(lower, ordinary.jdbc, jdbc, ordinary.ownership, ownership, audit, noKeys) }
+    val allKey: UUID = UUID.randomUUID()
+    val allTargets = mutableListOf<UUID>()
+    lateinit var allEventId: String
+        private set
     private var wire: TestOwnerDeleteJournalPublisherFixture? = null
     lateinit var eventId: String
         private set
@@ -165,9 +186,10 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             TestOwnerDeleteJournalPublisherFixture.CREDENTIALS, { provider.beforeOpen(); provider.httpClient() }, provider.kms::httpClient, provider.clock, { provider.nanos })
     }
 
-    fun authorEarlierHistory(verified: Boolean, additionalVerified: Int = 0, recoverMissingInstallation: Boolean = false) {
+    fun authorEarlierHistory(verified: Boolean, additionalVerified: Int = 0, recoverMissingInstallation: Boolean = false, applied: Boolean = false) {
         require(additionalVerified in 0..2)
         require(!recoverMissingInstallation || (verified && additionalVerified == 0))
+        require(!applied || (verified && !recoverMissingInstallation))
         stageSyntheticComparisons()
         val ordinaryCapacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
         val enrollment = ComplaintEnrollmentAdmissionCoordinator(ingress, ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
@@ -216,7 +238,10 @@ internal class TestRunVerifiedOwnerDeleteFixture(
                         assertInstanceOf(CommittedTestOwnerDeleteWork.Prepared::class.java, assertInstanceOf(TestOwnerDeleteAuthorizationV1.Continue::class.java, result).work)
                     }
                 }
-                if (shouldVerify) phases.verify(publishers.reserve().use { it.publish(work) })
+                if (shouldVerify) {
+                    val proof = phases.verify(publishers.reserve().use { it.publish(work) })
+                    if (applied) assertSame(ComplaintOwnerDeleteReceipt.Applied, phases.apply(work, proof))
+                }
                 if (recoverMissingInstallation) {
                     forgetInstallationSnapshot(target)
                     val before = p.counters()
@@ -237,17 +262,186 @@ internal class TestRunVerifiedOwnerDeleteFixture(
                 }
             }
             provider.assertClientsClosed()
-            assertEquals(if (recoverMissingInstallation) "APPLIED" else if (shouldVerify) "VERIFIED" else "PREPARED", publicationState(event.route.eventId))
-            assertEquals(if (recoverMissingInstallation) "COMPLETED" else "AUTHORIZED_DELETE", receiptState(key))
+            assertEquals(if (recoverMissingInstallation || applied) "APPLIED" else if (shouldVerify) "VERIFIED" else "PREPARED", publicationState(event.route.eventId))
+            assertEquals(if (recoverMissingInstallation || applied) "COMPLETED" else "AUTHORIZED_DELETE", receiptState(key))
             histories.add(History(target, key, event.route.eventId))
         }
         assertReleased()
+        restoreRegisteredComparisons()
+        expectedProviders = providerImage()
+    }
+
+    private fun restoreRegisteredComparisons() {
         // Preserve the genuine paid history, but put the REAL registered D back before the new source runs.
         assertEquals(1, observer.update("UPDATE complaint_test_runs SET configuration_hash = ? WHERE data_scope_id = ?", process.configurationHashBytes(), scope.id))
         assertEquals(1, observer.update("UPDATE complaint_journal_control SET desired_configuration_hash = ?, checkpoint_configuration_hash = ? WHERE data_scope_id = ?",
             process.configurationHashBytes(), process.configurationHashBytes(), scope.id))
         assertEquals(2, observer.update("UPDATE complaint_journal_control SET maintenance_closed = true, creation_closed = true WHERE data_scope_id IN (?, ?)", ComplaintDataScope.LIVE.id, scope.id))
+    }
+
+    /** Real PREPARED/VERIFY/APPLY producers. Only existing paid content and predecessor gate
+     * comparisons are synthetic; no deletion work, proof, registration or success row is inserted. */
+    fun authorEarlierAllHistory(count: Int, verified: Boolean = false, applied: Boolean = false) {
+        require(count in 0..101 && (!applied || verified))
+        check(routing.journalConfiguration.ownerDeleteAll)
+        check(histories.all { publicationState(it.eventId) == "APPLIED" })
+        stageSyntheticComparisons()
+        if (histories.isEmpty()) {
+            val ordinaryCapacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
+            val enrollment = ComplaintEnrollmentAdmissionCoordinator(ingress, ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
+                JdbcComplaintInstallationEnrollmentStore(ordinary.jdbc, ordinaryCapacity,
+                    ComplaintInstallationEnrollmentAudit { scope, paid, at -> audit.recordInstallationEnrollment(scope, paid, at) }, lowerDesired)))
+            val candidate = InstallationEnrollmentCredentials.prepare(actor, ComplaintPlatform.ANDROID, ByteArray(32) { it.toByte() })
+            ingress.withIngress(request()) { context ->
+                val result = assertInstanceOf(InstallationEnrollmentResult.Enrolled::class.java,
+                    enrollment.enroll(context, enrollment.admitEnrollment(context, candidate)))
+                assertEquals(1L, result.credentialVersion)
+            }
+        }
+        allTargets.addAll(paidSyntheticAllContent(count))
+        val candidate = InstallationDeletionCandidate(InstallationEnrollmentCredentials.prepareSession(actor, ByteArray(32) { it.toByte() }), 1, allKey)
+        val before = image()
+        val counters = p.counters()
+        fun authorize(): CommittedOwnerDeleteAllWork = ingress.withIngress(request()) { context ->
+            ingress.startOwnerDeleteAll(context)
+            val observed = assertInstanceOf(InstallationDeletionPreflightResult.Active::class.java, all.preflights.preflight(candidate))
+            all.authorization.authorize(candidate, observed, ingress.admitOwnerDeleteAll(context, observed))
+        }
+        if (count == 101) {
+            val failure = assertThrows<PersistencePhaseException> { authorize() }
+            assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, failure.databaseOutcome)
+            assertTrue(failure.cleanupProven)
+            assertEquals(before, image(), "LIMIT101 is refusal/rollback, never a truncated paid PREPARED event.")
+            assertEquals(counters, p.counters())
+        } else {
+            val expected = codec.canonicalize(TestOwnerDeleteJournalTupleV1(11, actor.id, 1, allKey,
+                ComplaintDeleteAllFingerprint.of(candidate).bytes(), scope, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL), allTargets)
+            allEventId = expected.route.eventId
+            wire = TestOwnerDeleteJournalPublisherFixture(routing, expected).also {
+                it.wall = p.databaseTime()
+                it.beforeOpen = { requireConnectionFree(); it.wall = p.databaseTime() }
+                it.beforePrepare = ::assertDatabaseReleased
+            }
+            if (count == 1) {
+                val beforeProviders = providerImage()
+                provider.factory(store, process.publicationLanes).use { singleDelete ->
+                    assertThrows<JournalPublicationExceptionV1> { singleDelete.readExisting(expected.tuple, allTargets.single(), expected.route.routingKeyId) }
+                    singleDelete.reserve().use { lane ->
+                        assertThrows<JournalPublicationExceptionV1> { lane.readExisting(expected.tuple, allTargets.single(), expected.route.routingKeyId) }
+                    }
+                }
+                assertEquals(beforeProviders, providerImage(), "ALL1 cannot enter the per-report read-only recovery path or construct a provider.")
+            }
+            provider.factory(all.authorizationStore, process.publicationLanes).use { publishers ->
+                val work = publishers.reserve().use { assertInstanceOf(CommittedOwnerDeleteAllWork.Prepared::class.java, authorize()) }
+                assertEquals(allTargets, all.authorizationStore.testPreparedEvent(work).complaintIds())
+                assertEquals(expected.canonicalBytes().toList(), work.canonicalBytes().toList())
+                assertAllAuthorizationCounters(counters)
+                if (applied) ingress.withIngress(request()) { context -> all.complete(context, candidate, publishers) }
+                else if (verified) all.verification.verify(publishers.reserve().use { it.publish(work) })
+            }
+            provider.assertClientsClosed()
+            assertEquals(if (applied) "APPLIED" else if (verified) "VERIFIED" else "PREPARED", publicationState(allEventId))
+            assertEquals(if (applied) "COMPLETED" else "AUTHORIZED_DELETE", allReceiptState())
+            assertEquals(1L, observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? " +
+                "AND action = 'COMPLAINT_INSTALLATION_DELETE_AUTHORIZED' AND entity_id = ?", Long::class.java, scope.id, scope.id.toString()))
+        }
+        assertDatabaseReleased()
+        restoreRegisteredComparisons()
         expectedProviders = providerImage()
+    }
+
+    /** Existing version1 paid row shape only. This bypasses create's 10/hour fixture limit, not
+     * admission/authorization: the same AUTH must discover all rows and enforce its101 sentinel. */
+    private fun paidSyntheticAllContent(count: Int): List<UUID> = checkNotNull(observer.dataSource).connection.use { connection ->
+        connection.autoCommit = false
+        try {
+            val selected = JdbcTemplate(SingleConnectionDataSource(connection, true)).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
+            val ids = List(count) { UUID.randomUUID() }.sortedBy(UUID::toString)
+            val charge = (ComplaintCapacityCharges.RESOURCE_ID + ComplaintCapacityCharges.INSTALLATION_CONTENT_V1).scaled(count.toLong())
+            ComplaintCapacityCounter.entries.filter { charge[it] > 0 }.forEach { counter ->
+                assertEquals(1, selected.update("UPDATE complaint_capacity_counters SET free_units = free_units - ?, actual_units = actual_units + ? " +
+                    "WHERE name = ? AND free_units >= ?", charge[counter], charge[counter], counter.storedName, charge[counter]))
+            }
+            ids.forEach { id ->
+                assertEquals(1, selected.update("INSERT INTO complaint_resource_ids(id,data_scope_id,test_only,state,created_at) VALUES (?, ?, true, 'LIVE', clock_timestamp())", id, scope.id))
+                assertEquals(1, selected.update("INSERT INTO complaints(id,data_scope_id,test_only,owner_id,ownership,kind,type,status,subject,body,platform," +
+                    "os_version,manufacturer,device_model,created_at,updated_at,version) VALUES (?, ?, true, ?, 'INSTALLATION','REPORT','CUSTOM','OPEN'," +
+                    "'synthetic subject','retained synthetic content','ANDROID','','','',clock_timestamp(),clock_timestamp(),1)", id, scope.id, actor.id))
+            }
+            connection.commit()
+            ownedTargets.addAll(ids)
+            ids
+        } catch (problem: Throwable) { connection.rollback(); throw problem }
+    }
+
+    fun beginAll(actorId: UUID = actor.id, operationKey: UUID = allKey): TestRunOwnerDeleteAllContinuationV1 {
+        preparedPublication = true
+        return TestRunPreparedOwnerDeleteAllV1.withHttpFixture(registration, ownership, jdbc, audit, actorId, operationKey,
+            TestOwnerDeleteJournalPublisherFixture.CREDENTIALS, { provider.beforeOpen(); provider.httpClient() }, provider.kms::httpClient, provider.clock, { provider.nanos })
+    }
+
+    fun allReceiptState(): String = checkNotNull(observer.queryForObject("SELECT state FROM installation_deletion_receipts WHERE installation_id = ? AND deletion_key = ?",
+        String::class.java, actor.id, allKey))
+
+    fun assertAllSuccessfulPhases(original: TestRunOwnerDeleteAllContinuationV1, published: Boolean) {
+        assertReleased()
+        val expected = listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD) +
+            (if (published) listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY) else emptyList()) + PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY
+        assertEquals(expected, jdbc.observations.keys.map { path(it) })
+        jdbc.observations.keys.forEach {
+            assertEquals(PersistenceDatabaseOutcome.COMMITTED, it.databaseOutcome())
+            assertTrue(it.testRunOwnerDeleteAllCleanupProven(original))
+        }
+        assertEquals(0L, process.publicationLanes.activeOwners().totalOwners)
+        assertTrue(jdbc.calls.none { it.path === PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE })
+    }
+
+    fun assertAllApplied(result: CommittedOwnerDeleteAllApplyV1, before: Map<String, ProjectionCounterObservation>? = null) {
+        assertEquals(204, result.responseStatus)
+        assertEquals(result.completedAt.plusSeconds(192 * 3600L), result.expiresAt)
+        assertEquals("APPLIED", publicationState(allEventId))
+        assertEquals("COMPLETED", allReceiptState())
+        assertEquals(true, observer.queryForObject("SELECT i.state = 'DELETED' AND c.state = 'DELETED' AND c.credential_version = 2 " +
+            "AND i.terminal_at = ? AND c.deleted_at = i.terminal_at AND c.verifier_expires_at = ? AND c.platform IS NULL " +
+            "AND c.owner_reference IS NULL AND c.last_authenticated_at IS NULL AND c.secret_verifier = ? " +
+            "FROM complaint_installation_ids i JOIN app_installations c ON c.id = i.id WHERE i.id = ? AND i.data_scope_id = ? AND i.test_only AND c.test_only",
+            Boolean::class.java, Timestamp.from(result.completedAt), Timestamp.from(result.expiresAt),
+            InstallationEnrollmentCredentials.prepareSession(actor, ByteArray(32) { it.toByte() }).verifierBytes(), actor.id, scope.id))
+        assertEquals(0L, observer.queryForObject("SELECT count(*) FROM complaints WHERE owner_id = ?", Long::class.java, actor.id))
+        allTargets.forEach { assertEquals("DELETED", observer.queryForObject("SELECT state FROM complaint_resource_ids WHERE id = ?", String::class.java, it)) }
+        val used = OwnerDeleteAllCapacityCharges.APPLIED + ComplaintCapacityCharges.AUDIT.scaled(allTargets.size + 1L)
+        assertEquals(true, observer.queryForObject("SELECT state = 'PARTIAL' AND reserved_amounts = ?::bigint[] AND converted_amounts = ?::bigint[] " +
+            "AND converted_at = ? FROM complaint_recovery_capacity_reservations WHERE event_id = ? AND data_scope_id = ? AND test_only",
+            Boolean::class.java, array(OwnerDeleteAllCapacityCharges.RECOVERY.toLongArray()), array(used.toLongArray()), Timestamp.from(result.completedAt), allEventId, scope.id))
+        assertFalse((OwnerDeleteAllCapacityCharges.RECOVERY - used).isZero(), "No future identity/alias promise was converted/refunded.")
+        assertEquals(1L, observer.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_INSTALLATION_DELETED' " +
+            "AND entity_id = ?", Long::class.java, scope.id, scope.id.toString()))
+        before?.let {
+            val after = p.counters()
+            val refund = ComplaintCapacityCharges.INSTALLATION_CONTENT_V1.scaled(allTargets.size.toLong())
+            ComplaintCapacityCounter.entries.forEach { counter ->
+                val old = before.getValue(counter.storedName); val now = after.getValue(counter.storedName)
+                assertEquals(old.free + refund[counter], now.free, counter.storedName)
+                assertEquals(old.actual + used[counter] - refund[counter], now.actual, counter.storedName)
+                assertEquals(old.recovery - used[counter], now.recovery, counter.storedName)
+                assertEquals(old.reserved, now.reserved, "Ordinary ALL never spends terminal TEST reserve.")
+                assertEquals(old.hard, now.free + now.actual + now.recovery + now.reserved)
+            }
+        }
+    }
+
+    private fun assertAllAuthorizationCounters(before: Map<String, ProjectionCounterObservation>) {
+        val after = p.counters()
+        ComplaintCapacityCounter.entries.forEach { counter ->
+            val old = before.getValue(counter.storedName); val now = after.getValue(counter.storedName)
+            val actual = OwnerDeleteAllCapacityCharges.AUTHORIZATION[counter]
+            val reserve = OwnerDeleteAllCapacityCharges.RECOVERY[counter]
+            assertEquals(old.free - actual - reserve, now.free, counter.storedName)
+            assertEquals(old.actual + actual, now.actual, counter.storedName)
+            assertEquals(old.recovery + reserve, now.recovery, counter.storedName)
+            assertEquals(old.reserved, now.reserved, "AUTH pays its own recovery reserve, not the terminal promise.")
+        }
     }
 
     /** Synthetic old-snapshot domain loss only; the retained primary receipt/publication/reserve confer no new authority. */
@@ -277,7 +471,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         expectedProviders?.let {
             assertEquals(it.first(), providerImage().first(), "Continuation cannot renew registration or obtain another catalog observation.")
             if (!preparedPublication) assertEquals(it, providerImage(), "VERIFIED continuation/refusal cannot open a provider.")
-            checkNotNull(wire).assertClientsClosed()
+            wire?.assertClientsClosed()
         }
     }
 
@@ -348,6 +542,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     fun image(): Map<String, List<String>> = checkNotNull(observer.dataSource).connection.use { connection ->
         p.image(connection).toMutableMap().also { result ->
             for (table in listOf("complaint_installation_ids", "app_installations", "complaint_idempotency_receipts", "complaint_journal_publications",
+                "installation_deletion_receipts",
                 "complaint_recovery_capacity_reservations", "complaint_deletion_journal_applied", "complaint_deletion_journal_retirements")) {
                 result[table] = strings(connection, "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = '${scope.id}' ORDER BY to_jsonb(t)::text")
             }
@@ -357,8 +552,8 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         }
     }
 
-    fun providerImage(): List<Int> = listOf(p.f.http.read.requests.size, checkNotNull(wire).requests.size, checkNotNull(wire).kms.requests.size,
-        checkNotNull(wire).s3ClientsCreated, checkNotNull(wire).s3ClientsClosed)
+    fun providerImage(): List<Int> = listOf(p.f.http.read.requests.size, wire?.requests?.size ?: 0, wire?.kms?.requests?.size ?: 0,
+        wire?.s3ClientsCreated ?: 0, wire?.s3ClientsClosed ?: 0)
 
     private fun stageSyntheticComparisons() {
         val bytes = "synthetic-historical-checkpoint-and-seal-NOT-external-evidence".toByteArray()
@@ -382,6 +577,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         assertReleased()
         // This fixture owns only its added actor/report/history; outer PROJECT fixture owns notices/run/control/counter teardown.
         observer.update("DELETE FROM complaint_idempotency_receipts WHERE actor_kind = 'INSTALLATION' AND actor_id = ?", actor.id)
+        observer.update("DELETE FROM installation_deletion_receipts WHERE installation_id = ?", actor.id)
         observer.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", scope.id)
         observer.update("DELETE FROM complaint_deletion_journal_retirements WHERE data_scope_id = ?", scope.id)
         observer.update("DELETE FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", scope.id)
@@ -433,7 +629,8 @@ internal class TestVerifiedDeleteProbeJdbc(private val p: ProjectionActivationOb
         try {
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             val path = TestRunVerifiedOwnerDeleteFixture.path(phase)
-            assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY))
+            assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY))
             val connection = (TransactionSynchronizationManager.getResource(runtime.pools.deletion) as ConnectionHolder).connection
             val lease = ownedPoolLease(connection)
             val observed = observations.getOrPut(phase) { StepUpPhaseObservation(phase, lease, connection.createStatement().use { statement ->
@@ -443,7 +640,7 @@ internal class TestVerifiedDeleteProbeJdbc(private val p: ProjectionActivationOb
             assertFalse(lease.completion.quiescent())
             assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
             assertTrue(p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-            assertEquals(path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
+            assertEquals(path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY), p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
                 "Short VERIFY participates in M but must not acquire E.")
             val call = TestVerifiedDeleteSqlCall(phase, path, sql)
             calls.add(call)

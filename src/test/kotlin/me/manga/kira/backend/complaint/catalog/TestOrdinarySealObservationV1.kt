@@ -115,6 +115,7 @@ internal class TestOrdinarySealObservationV1(
                 }
             }
             for (table in listOf("complaint_installation_ids", "app_installations", "complaint_idempotency_receipts", "complaint_journal_publications",
+                "installation_deletion_receipts",
                 "complaint_recovery_capacity_reservations", "complaint_deletion_journal_applied", "complaint_deletion_journal_retirements", "complaint_test_terminal_intents")) {
                 connection.prepareStatement("SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text").use { statement ->
                     statement.setObject(1, scope)

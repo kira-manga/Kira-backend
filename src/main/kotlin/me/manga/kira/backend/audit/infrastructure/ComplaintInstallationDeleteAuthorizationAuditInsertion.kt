@@ -30,9 +30,12 @@ internal class ComplaintInstallationDeleteAuthorizationAuditInsertion private co
             try {
                 val insertion = ComplaintInstallationDeleteAuthorizationAuditInsertion(charged)
                 val connection = charged.beginAuditInsert(insertion, entry)
+                val scope = charged.auditScope(insertion)
                 connection.prepareStatement(INSERT).use { statement ->
-                    statement.setString(1, entry.detailJson)
-                    statement.setTimestamp(2, Timestamp.from(entry.createdAt))
+                    statement.setString(1, scope.id.toString())
+                    statement.setString(2, entry.detailJson)
+                    statement.setTimestamp(3, Timestamp.from(entry.createdAt))
+                    statement.setObject(4, scope.id)
                     statement.executeQuery().use { rows ->
                         check(rows.next() && rows.getLong(1) > 0 && !rows.wasNull() && !rows.next())
                     }
@@ -46,7 +49,6 @@ internal class ComplaintInstallationDeleteAuthorizationAuditInsertion private co
 
         private const val INSERT = "INSERT INTO audit_log " +
             "(actor_user_id, action, entity_type, entity_id, detail, created_at, complaint_data_scope_id, complaint_actor_kind) " +
-            "VALUES (NULL, 'COMPLAINT_INSTALLATION_DELETE_AUTHORIZED', 'complaint_scope', '00000000-0000-0000-0000-000000000000', " +
-            "?::jsonb, ?, '00000000-0000-0000-0000-000000000000', 'INSTALLATION') RETURNING id"
+            "VALUES (NULL, 'COMPLAINT_INSTALLATION_DELETE_AUTHORIZED', 'complaint_scope', ?, ?::jsonb, ?, ?, 'INSTALLATION') RETURNING id"
     }
 }

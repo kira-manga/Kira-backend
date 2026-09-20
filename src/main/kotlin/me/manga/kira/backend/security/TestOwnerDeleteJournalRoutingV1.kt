@@ -22,7 +22,7 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
 
     /** All retained keys participate in local collision accounting; only the declared active candidate is selected. */
     fun derive(tuple: TestOwnerDeleteJournalTupleV1): TestOwnerDeleteJournalRoutesV1 {
-        require(tuple.scope == journalConfiguration.scope) { INVALID_CONFIGURATION }
+        require(tuple.scope == journalConfiguration.scope && (tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE || journalConfiguration.ownerDeleteAll)) { INVALID_CONFIGURATION }
         val candidates = keys.map { key ->
             val opaqueKey = deriveMac(key, ROUTING_DOMAIN, tuple)
             val eventId = deriveMac(key, EVENT_ID_DOMAIN, tuple)
@@ -170,13 +170,14 @@ internal class TestOwnerDeleteJournalTupleV1(
     val operationKey: UUID,
     fingerprint: ByteArray,
     val scope: ComplaintDataScope,
+    val eventKind: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
 ) {
     private val storedFingerprint = fingerprint.copyOf()
-    val eventKind: ComplaintJournalDeletionKindV1 get() = ComplaintJournalDeletionKindV1.OWNER_DELETE
     val actorKind: ComplaintJournalActorKindV1 get() = ComplaintJournalActorKindV1.INSTALLATION
 
     init {
         require(epoch > 0 && credentialVersion > 0 && scope.testOnly && storedFingerprint.size == 32)
+        require(eventKind in setOf(ComplaintJournalDeletionKindV1.OWNER_DELETE, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL))
         ComplaintIdentifiers.installationId(actorId.toString())
         ComplaintIdentifiers.idempotencyKey(operationKey.toString())
     }

@@ -27,6 +27,7 @@ internal class ComplaintOwnerDeleteAllAuditInsertion private constructor(private
             try {
                 val insertion = ComplaintOwnerDeleteAllAuditInsertion(charged)
                 val connection = charged.beginAuditInsert(insertion, entry)
+                val scope = charged.auditScope(insertion)
                 connection.prepareStatement(INSERT).use { statement ->
                     when (val outcome = entry.outcome) {
                         is OwnerDeleteAllAuditOutcome.Removed -> {
@@ -38,11 +39,12 @@ internal class ComplaintOwnerDeleteAllAuditInsertion private constructor(private
                         is OwnerDeleteAllAuditOutcome.InstallationCompleted -> {
                             statement.setString(1, "COMPLAINT_INSTALLATION_DELETED")
                             statement.setString(2, "complaint_scope")
-                            statement.setString(3, "00000000-0000-0000-0000-000000000000")
+                            statement.setString(3, scope.id.toString())
                         }
                     }
                     statement.setString(4, entry.detailJson)
                     statement.setTimestamp(5, Timestamp.from(entry.createdAt))
+                    statement.setObject(6, scope.id)
                     statement.executeQuery().use { row -> check(row.next() && row.getLong(1) > 0 && !row.wasNull() && !row.next()) }
                 }
                 charged.requireAuditInsert(insertion)
@@ -54,6 +56,6 @@ internal class ComplaintOwnerDeleteAllAuditInsertion private constructor(private
 
         private const val INSERT = "INSERT INTO audit_log " +
             "(actor_user_id, action, entity_type, entity_id, detail, created_at, complaint_data_scope_id, complaint_actor_kind) " +
-            "VALUES (NULL, ?, ?, ?, ?::jsonb, ?, '00000000-0000-0000-0000-000000000000', 'INSTALLATION') RETURNING id"
+            "VALUES (NULL, ?, ?, ?, ?::jsonb, ?, ?, 'INSTALLATION') RETURNING id"
     }
 }

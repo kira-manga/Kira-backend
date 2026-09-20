@@ -107,6 +107,91 @@ class TestOwnerDeleteJournalCodecV1Test {
     }
 
     @Test
+    fun `two-family TEST profile is explicit and round trips while old J and literal DELETE bytes retain their meaning`() {
+        val old = ownerDeleteTestJournal()
+        val selected = ownerDeleteTestJournal(ownerDeleteAll = true)
+        assertFalse(old.ownerDeleteAll)
+        assertTrue(selected.ownerDeleteAll)
+        assertEquals("REGISTERED_TEST_OWNER_ERASURE", selected.document().profile)
+        assertEquals("KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL/INSTALLATION/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
+            selected.document().protocol)
+        assertNotEquals(old.sha256, selected.sha256)
+        assertArrayEquals(old.canonicalBytes(), TestOwnerDeleteJournalConfigurationV1.of(old.declaration()).canonicalBytes())
+        for (journal in listOf(old, selected)) {
+            assertArrayEquals(journal.canonicalBytes(), TestOwnerDeleteJournalConfigurationV1.fromDocument(journal.document()).canonicalBytes())
+        }
+        for (bad in listOf(
+            selected.document().copy(profile = old.document().profile),
+            old.document().copy(profile = selected.document().profile),
+            selected.document().copy(protocol = old.document().protocol),
+            selected.document().copy(profile = "REGISTERED_TEST_ANY_DELETE"),
+        )) assertThrows<IllegalArgumentException> { TestOwnerDeleteJournalConfigurationV1.fromDocument(bad) }
+        // The new J/full-D selection does not silently change the old event family or KJEV wire format.
+        val vector = vectors.first()
+        val env = env(vector, selected)
+        val event = env.codec.canonicalize(tuple(vector), listOf(target))
+        assertArrayEquals(vector.getValue("payload").jsonObject.text("canonical_utf8").toByteArray(), event.canonicalBytes())
+        assertArrayEquals(independentEnvelope(independentHeader(vector, old), event.canonicalBytes()),
+            env.codec.seal(event, env.codec.startAttempt()).wireBytes())
+        val all = allTuple(tuple(vector))
+        assertThrows<IllegalArgumentException> { ownerDeleteTestRouting(old).derive(all) }
+        rejected { env(journal = old).codec.canonicalize(all, listOf(target)) }
+    }
+
+    @Test
+    fun `explicit TEST ALL encodes authenticates and restores zero one and hundred targets but not101 or foreign owners`() {
+        for (count in listOf(0, 1, 100)) {
+            val selected = ownerDeleteTestJournal(ownerDeleteAll = true)
+            val env = env(journal = selected)
+            val all = allTuple(tuple(vectors.first()))
+            val targets = List(count) { UUID.randomUUID() }.sortedBy(UUID::toString)
+            val event = env.codec.canonicalize(all, targets)
+            assertEquals("OWNER_DELETE_ALL", Json.parseToJsonElement(event.canonicalBytes().decodeToString()).jsonObject.text("eventKind"))
+            assertEquals(targets, event.complaintIds())
+            assertNotEquals(env.routing.derive(tuple(vectors.first())).active, event.route)
+            val encoded = env.codec.seal(event, env.codec.startAttempt())
+            val decoded = env.codec.open(env.bucket, event.route.objectKey, encoded.wireBytes(), env.codec.startAttempt())
+            assertArrayEquals(event.canonicalBytes(), decoded.event.canonicalBytes())
+            assertArrayEquals(event.canonicalBytes(), TestOwnerDeleteJournalCodecV1.restoreCanonical(env.routing,
+                event.canonicalBytes(), event.route.routingKeyId).canonicalBytes())
+            val foreign = env(journal = selected)
+            rejected { foreign.codec.seal(event, foreign.codec.startAttempt()) }
+            rejected { env.codec.seal(event, foreign.codec.startAttempt()) }
+            val old = env(journal = ownerDeleteTestJournal())
+            rejected { old.codec.open(env.bucket, event.route.objectKey, encoded.wireBytes(), old.codec.startAttempt()) }
+            assertEquals(0, old.keys.unwrapCalls, "Old profile refuses ALL before any key operation.")
+            val scope = ComplaintDataScope.of(UUID.randomUUID())
+            val elsewhere = env(journal = ownerDeleteTestJournal(scope = scope, ownerDeleteAll = true))
+            rejected { TestOwnerDeleteJournalCodecV1.restoreCanonical(elsewhere.routing, event.canonicalBytes(), event.route.routingKeyId) }
+            assertEquals(0, foreign.keys.generateCalls)
+        }
+        val env = env(journal = ownerDeleteTestJournal(ownerDeleteAll = true))
+        rejected { env.codec.canonicalize(allTuple(tuple(vectors.first())), List(101) { UUID.randomUUID() }.sortedBy(UUID::toString)) }
+        rejected { env.codec.canonicalize(allTuple(tuple(vectors.first())), listOf(target, target)) }
+        assertEquals(0, env.keys.generateCalls)
+    }
+
+    @Test
+    fun `authenticated header and payload must select the same family even when ALL has one target`() {
+        val vector = vectors.first()
+        val env = env(journal = ownerDeleteTestJournal(ownerDeleteAll = true))
+        for (tuple in listOf(tuple(vector), allTuple(tuple(vector)))) {
+            val event = env.codec.canonicalize(tuple, listOf(target))
+            val opposite = if (tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE) "OWNER_DELETE_ALL" else "OWNER_DELETE"
+            val header = JsonObject(independentHeader(vector, env.routing.journalConfiguration) + mapOf(
+                "objectKind" to JsonPrimitive(opposite), "objectKey" to JsonPrimitive(event.route.objectKey),
+                "eventId" to JsonPrimitive(event.route.eventId),
+            ))
+            val before = env.keys.unwrapCalls
+            rejected { env.codec.open(env.bucket, event.route.objectKey, independentEnvelope(header, event.canonicalBytes()), env.codec.startAttempt()) }
+            assertEquals(before + 1, env.keys.unwrapCalls, "Actual valid GCM tag cannot authorize a mixed-family event.")
+        }
+    }
+
+    private fun allTuple(tuple: TestOwnerDeleteJournalTupleV1) = TestOwnerDeleteJournalTupleV1(tuple.epoch, tuple.actorId,
+        tuple.credentialVersion, tuple.operationKey, tuple.fingerprintBytes(), tuple.scope, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
+
+    @Test
     fun `routing separates actor credential operation fingerprint epoch and other TEST scope and snapshots digest`() {
         val env = env()
         val ordinary = tuple(vectors.first())
@@ -475,6 +560,7 @@ internal fun ownerDeleteTestJournal(
     scope: ComplaintDataScope = ComplaintDataScope.of(UUID.fromString("b2222222-2222-4222-8222-222222222222")),
     vectorIds: List<String>? = null,
     decoder: JournalDecoderLimitsV1? = null,
+    ownerDeleteAll: Boolean = false,
 ): TestOwnerDeleteJournalConfigurationV1 {
     val base = InitialLiveJournalTestFixture.declaration()
     val inputs = ownerDeleteLiteralResource("inputs.json").getValue("journal_routes").jsonArray.map { it.jsonObject }
@@ -503,6 +589,7 @@ internal fun ownerDeleteTestJournal(
             ),
             if (decoder == null) base.limits else base.limits.copy(decoder = decoder),
         ),
+        ownerDeleteAll = ownerDeleteAll,
     )
 }
 

@@ -5,6 +5,7 @@ import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWo
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalS3UrlConnectionClient
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1
@@ -39,6 +40,7 @@ internal class TestOwnerDeleteJournalPublisherFactoryV1 private constructor(
     fun readExisting(tuple: TestOwnerDeleteJournalTupleV1, targetId: UUID, routingKeyId: String): TestOwnerDeleteJournalReadbackV1 {
         requireConnectionFree()
         requireRecoveryRead()
+        requireJournalPublication(tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE)
         return reserve().use { it.readExisting(tuple, targetId, routingKeyId) }
     }
     internal fun requireBinding(selected: JdbcComplaintOwnerDeleteStore) { requireJournalPublication(store === selected && !closed.get()); store.graph.requireUnchanged(); original?.requirePublisher(this, store) }

@@ -57,6 +57,47 @@ internal class ComplaintTestDeploymentInputsV1Test {
     }
 
     @Test
+    fun `two family intake requires an explicit matching recipe and J without changing the document grammar`() {
+        val legacy = TestDeploymentInputFixture.document()
+        val family = TestDeploymentInputFixture.document(fullTestJournal(ownerDeleteAll = true))
+        assertEquals(ComplaintTestDeploymentInputsV1.PROFILE, legacy.profile)
+        assertEquals(ComplaintTestDeploymentInputsV1.OWNER_ERASURE_PROFILE, family.profile)
+        val oldInput = ComplaintTestDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(legacy))
+        val newInput = ComplaintTestDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(family))
+        assertFalse(oldInput.journal.ownerDeleteAll)
+        assertTrue(newInput.journal.ownerDeleteAll)
+        assertArrayEquals(fullTestJournal().canonicalBytes(), oldInput.journal.canonicalBytes())
+        assertArrayEquals(fullTestJournal(ownerDeleteAll = true).canonicalBytes(), newInput.journal.canonicalBytes())
+        assertEquals(oldInput.allBindings().map { listOf(it.family.name, it.purpose.name, it.logicalKeyId, it.version.resourceArn, it.version.versionId) },
+            newInput.allBindings().map { listOf(it.family.name, it.purpose.name, it.logicalKeyId, it.version.resourceArn, it.version.versionId) })
+        assertEquals(oldInput.dataScopeId, newInput.dataScopeId)
+        assertFalse(oldInput.journal.sha256 == newInput.journal.sha256)
+        val invalid = listOf(
+            legacy.copy(journal = family.journal), family.copy(journal = legacy.journal),
+            family.copy(journal = family.journal.copy(protocol = legacy.journal.protocol)),
+            family.copy(journal = family.journal.copy(profile = legacy.journal.profile)),
+            family.copy(profile = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_SEAL_V2"),
+        )
+        val http = AwsSecretVersionFixture()
+        invalid.forEach { document ->
+            val bytes = TestDeploymentInputFixture.bytes(document)
+            refused(bytes)
+            TestDeploymentInputFixture.withManifest(bytes) { path ->
+                ComplaintTestProcessAssemblyV1.withHttpFixture(http::httpClient).use { assembly ->
+                    val failure = assertThrows<ComplaintTestDeploymentExceptionV1> {
+                        assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsSecretVersionFixture.CREDENTIALS)
+                    }
+                    assertEquals(ComplaintTestDeploymentFailureV1.INPUT_REFUSED, failure.code)
+                    assertThrows<ComplaintTestDeploymentExceptionV1> { assembly.target }
+                }
+            }
+        }
+        assertEquals(0, http.createdClients)
+        assertTrue(http.requests.isEmpty())
+        assertThrows<ComplaintDesiredInstallationExceptionV1> { ComplaintDesiredDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(family)) }
+    }
+
+    @Test
     fun `missing nullable fields duplicate fields malformed UTF8 floats trailing input unknown state and raw secrets are refused`() {
         val raw = TestDeploymentInputFixture.bytes(TestDeploymentInputFixture.document()).decodeToString()
         val invalid = listOf(
@@ -155,7 +196,8 @@ internal object TestDeploymentInputFixture {
             DesiredLiveTimeBoundInputV1("test-utc-uncertainty", TestOrdinarySealHttpFixtureV1.policy("test-utc-policy"), 1000),
         )
         return ComplaintTestDeploymentDocumentV1(
-            1, ComplaintTestDeploymentInputsV1.PROFILE, 1, 7, journal.scope.id.toString(), d.writer.databaseIdentity, d.writer.restoreIdentity,
+            1, if (journal.ownerDeleteAll) ComplaintTestDeploymentInputsV1.OWNER_ERASURE_PROFILE else ComplaintTestDeploymentInputsV1.PROFILE,
+            1, 7, journal.scope.id.toString(), d.writer.databaseIdentity, d.writer.restoreIdentity,
             TestDatabaseInputV1(database.host, database.port, database.name, database.runtimeUsername, database.runtimePassword,
                 database.ordinaryCapacity, database.publicTrustPemBase64, database.protectedTrustParent),
             live.jwt, live.capacity, live.admission, journal.document(), checkNotNull(live.catalog),

@@ -18,7 +18,7 @@ internal enum class ComplaintJournalDeletionKindV1(val actorKind: ComplaintJourn
  * Bounded routing inputs, not an authenticated actor, database-assigned epoch or normalized-request proof.
  * No event payload, target snapshot, policy operation-key producer or publication authority is represented.
  */
-internal class ComplaintJournalDeletionTupleV1(
+internal class ComplaintJournalDeletionTupleV1 private constructor(
     val epoch: Long,
     val eventKind: ComplaintJournalDeletionKindV1,
     val actorKind: ComplaintJournalActorKindV1,
@@ -27,11 +27,16 @@ internal class ComplaintJournalDeletionTupleV1(
     val operationKey: UUID,
     fingerprint: ByteArray,
     val scope: ComplaintDataScope,
+    testOwnerDeleteAll: Boolean,
 ) {
+    constructor(epoch: Long, eventKind: ComplaintJournalDeletionKindV1, actorKind: ComplaintJournalActorKindV1,
+        actorId: UUID, credentialVersion: Long?, operationKey: UUID, fingerprint: ByteArray, scope: ComplaintDataScope) :
+        this(epoch, eventKind, actorKind, actorId, credentialVersion, operationKey, fingerprint, scope, false)
     private val storedFingerprint: ByteArray
 
     init {
-        require(epoch > 0 && scope == ComplaintDataScope.LIVE && actorKind == eventKind.actorKind) { INVALID_TUPLE }
+        require(epoch > 0 && (if (testOwnerDeleteAll) scope.testOnly && scope.id.version() == 4 && scope.id.variant() == 2 &&
+            eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL else scope == ComplaintDataScope.LIVE) && actorKind == eventKind.actorKind) { INVALID_TUPLE }
         require(operationKey.version() == 4 && operationKey.variant() == 2 && fingerprint.size == 32) { INVALID_TUPLE }
         when (actorKind) {
             ComplaintJournalActorKindV1.INSTALLATION -> require(
@@ -47,7 +52,11 @@ internal class ComplaintJournalDeletionTupleV1(
 
     override fun toString(): String = "ComplaintJournalDeletionTupleV1(redacted,no-authority)"
 
-    private companion object {
-        const val INVALID_TUPLE = "Invalid complaint journal deletion tuple"
+    companion object {
+        internal fun testOwnerDeleteAll(epoch: Long, actorId: UUID, credentialVersion: Long, operationKey: UUID,
+            fingerprint: ByteArray, scope: ComplaintDataScope) = ComplaintJournalDeletionTupleV1(epoch,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL, ComplaintJournalActorKindV1.INSTALLATION,
+            actorId, credentialVersion, operationKey, fingerprint, scope, true)
+        private const val INVALID_TUPLE = "Invalid complaint journal deletion tuple"
     }
 }

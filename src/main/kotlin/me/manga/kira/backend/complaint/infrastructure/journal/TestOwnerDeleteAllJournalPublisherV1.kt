@@ -1,27 +1,24 @@
 package me.manga.kira.backend.complaint.infrastructure.journal
 
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWork
-import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalPutObservationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.TestOwnerDeleteS3BindingV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.TestOwnerDeleteS3CandidateV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.TestOwnerDeleteS3ClientV1
-import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
-import me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1
 import me.manga.kira.backend.security.aws.AwsTestOwnerDeleteDataKeyAdapterV1
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** One owned TEST attempt; no dormant source here issues registration/current-use or backup authority. */
-internal class TestOwnerDeleteJournalPublisherV1 private constructor(
-    private val store: JdbcComplaintOwnerDeleteStore,
+internal class TestOwnerDeleteAllJournalPublisherV1 private constructor(
+    private val store: JdbcComplaintOwnerDeleteAllStore,
     private val routing: TestOwnerDeleteJournalRoutingV1,
     private val codec: TestOwnerDeleteJournalCodecV1,
     private val keys: AwsTestOwnerDeleteDataKeyAdapterV1,
@@ -31,7 +28,7 @@ internal class TestOwnerDeleteJournalPublisherV1 private constructor(
     private val used = AtomicBoolean()
     private val closed = AtomicBoolean()
     private val readback = TestOwnerDeleteVersionReadbackV1(routing, codec, s3, retention)
-    internal fun publish(work: CommittedTestOwnerDeleteWork.Prepared, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteJournalReadbackV1 =
+    internal fun publish(work: CommittedOwnerDeleteAllWork.Prepared, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteJournalReadbackV1 =
         journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
             requireConnectionFree()
             requireJournalPublication(!closed.get() && used.compareAndSet(false, true))
@@ -52,16 +49,6 @@ internal class TestOwnerDeleteJournalPublisherV1 private constructor(
                 }
             }, candidate::close)
         }
-    internal fun readExisting(tuple: TestOwnerDeleteJournalTupleV1, targetId: UUID, routingKeyId: String, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteJournalReadbackV1 =
-        journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
-            requireConnectionFree()
-            requireJournalPublication(tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE)
-            requireJournalPublication(!closed.get() && used.compareAndSet(false, true))
-            val expected = codec.canonicalize(tuple, listOf(targetId), routingKeyId)
-            val binding = TestOwnerDeleteS3BindingV1.readOnly(expected, routing, attempt)
-            val listed = s3.listExact(binding) ?: throw JournalPublicationExceptionV1(JournalPublicationFailureV1.UNRESOLVED)
-            readback.verify(binding, listed, null) // Only real exact GET + AEAD/KMS can produce this recovery observation.
-        }
     @Synchronized override fun close() {
         closed.set(true)
         withJournalPublicationCleanup({ journalPublicationClose { s3.close() } }) { journalPublicationClose { keys.close() } }
@@ -71,12 +58,12 @@ internal class TestOwnerDeleteJournalPublisherV1 private constructor(
         private val s3 = TestOwnerDeleteS3ClientV1.Construction()
         private var opened = false
         private var closed = false
-        private var owner: TestOwnerDeleteJournalPublisherV1? = null
+        private var owner: TestOwnerDeleteAllJournalPublisherV1? = null
         private var failure: Throwable? = null
-        internal fun open(factory: TestOwnerDeleteJournalPublisherFactoryV1, lane: JournalPublicationLanesV1.TestOwnerDeleteReservation,
-            store: JdbcComplaintOwnerDeleteStore, routing: TestOwnerDeleteJournalRoutingV1, credentials: AwsSessionCredentials,
+        internal fun open(factory: TestOwnerDeleteAllJournalPublisherFactoryV1, lane: JournalPublicationLanesV1.TestOwnerDeleteAllReservation,
+            store: JdbcComplaintOwnerDeleteAllStore, routing: TestOwnerDeleteJournalRoutingV1, credentials: AwsSessionCredentials,
             s3Http: (remainingMillis: () -> Int) -> SdkHttpClient, kmsHttp: (remainingMillis: () -> Int) -> SdkHttpClient,
-            clock: Clock, nanoTime: () -> Long, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteJournalPublisherV1 =
+            clock: Clock, nanoTime: () -> Long, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteAllJournalPublisherV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
                 requireConnectionFree()
                 lane.requireConstructing(factory, this, attempt)
@@ -87,7 +74,7 @@ internal class TestOwnerDeleteJournalPublisherV1 private constructor(
                     lane.requireConstructing(factory, this, attempt)
                     val client = s3.open(routing, credentials, s3Http, nanoTime, attempt)
                     lane.requireConstructing(factory, this, attempt)
-                    TestOwnerDeleteJournalPublisherV1(store, routing, TestOwnerDeleteJournalCodecV1(routing, dataKeys, nanoTime = nanoTime), dataKeys, client,
+                    TestOwnerDeleteAllJournalPublisherV1(store, routing, TestOwnerDeleteJournalCodecV1(routing, dataKeys, nanoTime = nanoTime), dataKeys, client,
                         TestOwnerDeleteRetentionV1(routing, clock)).also { owner = it }
                 }
                 if (result.isFailure) withJournalPublicationCleanup({ result.getOrThrow() }, ::close) else result.getOrThrow()

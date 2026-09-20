@@ -68,6 +68,7 @@ internal fun withActivationEvidence(
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
     testActivation: Boolean = false,
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
+    ownerDeleteAll: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -78,6 +79,7 @@ internal fun withActivationEvidence(
             writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
             limits = original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
         ),
+        ownerDeleteAll = ownerDeleteAll,
     )
     ComplaintProcessPoolFixture(testActivation = testActivation).use { database ->
         val pools = database.bind()
@@ -94,6 +96,7 @@ internal fun withActivationEvidence(
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
     createGlobal: Int = 2,
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
+    ownerDeleteAll: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -104,6 +107,7 @@ internal fun withActivationEvidence(
             writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
             limits = original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
         ),
+        ownerDeleteAll = ownerDeleteAll,
     )
     JournalPublicationLanesV1(journal).use { lanes ->
         CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,

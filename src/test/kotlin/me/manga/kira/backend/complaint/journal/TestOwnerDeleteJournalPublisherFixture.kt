@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.JsonNode
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.catalog.S3CatalogReply
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalPublisherFactoryV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteAllJournalPublisherFactoryV1
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture.Companion.errorReply
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture.Companion.hash
 import me.manga.kira.backend.complaint.journal.OwnerDeleteAllJournalPublisherFixture.Companion.xmlReply
@@ -84,6 +86,11 @@ internal class TestOwnerDeleteJournalPublisherFixture(
 
     fun factory(store: JdbcComplaintOwnerDeleteStore, lanes: JournalPublicationLanesV1): TestOwnerDeleteJournalPublisherFactoryV1 =
         TestOwnerDeleteJournalPublisherFactoryV1.withHttpFixture(
+            lanes, store, routing, CREDENTIALS, { beforeOpen(); httpClient() }, kms::httpClient, clock, { nanos },
+        )
+
+    fun factory(store: JdbcComplaintOwnerDeleteAllStore, lanes: JournalPublicationLanesV1): TestOwnerDeleteAllJournalPublisherFactoryV1 =
+        TestOwnerDeleteAllJournalPublisherFactoryV1.withHttpFixture(
             lanes, store, routing, CREDENTIALS, { beforeOpen(); httpClient() }, kms::httpClient, clock, { nanos },
         )
 
@@ -223,7 +230,7 @@ internal class TestOwnerDeleteJournalPublisherFixture(
         assertEquals(
             AwsJournalKmsFixture.testOwnerDeleteFields(
                 journal, selected.route.objectKey, selected.route.eventId, selected.tuple.epoch, selected.route.routingKeyId, fields.last(),
-            ),
+            ).toMutableList().also { it[5] = selected.tuple.eventKind.name },
             fields,
         )
         assertEquals(AwsJournalKmsFixture.url(AwsJournalKmsFixture.frame(fields)), encoded)

@@ -33,7 +33,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", "PRE_CUTOVER_TEST_OWNER_DELETE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER")
+            put("profile", if (journal.ownerDeleteAll) "PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else "PRE_CUTOVER_TEST_OWNER_DELETE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER")
             put("identity", identity(owner))
             put("capacityPolicy", commitment(capacity, capacityBytes))
             put("journalConfiguration", journalCommitment(journal))
@@ -71,7 +72,7 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         val bytes = owner.canonicalBytes()
         val parsed = document(bytes, "kira-complaint-journal-configuration")
         require(
-            parsed.getValue("profile").jsonPrimitive.content == "REGISTERED_TEST_OWNER_DELETE" &&
+            parsed.getValue("profile").jsonPrimitive.content == (if (owner.ownerDeleteAll) "REGISTERED_TEST_OWNER_ERASURE" else "REGISTERED_TEST_OWNER_DELETE") &&
                 parsed.getValue("dataScopeKind").jsonPrimitive.content == "TEST" &&
                 parsed.getValue("dataScopeId").jsonPrimitive.content == owner.scope.id.toString(),
         ) { INVALID_TEST_PROCESS_CONFIGURATION }
@@ -170,7 +171,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         put(
             "mutationMembers",
             buildJsonObject {
-                put("operations", strings(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE")))
+                put("operations", strings(listOf("OWNER_CREATE", "OWNER_REPLY", "OWNER_EDIT", "OWNER_DELETE") +
+                    if (owner.journalConfiguration.ownerDeleteAll) listOf("OWNER_DELETE_ALL") else emptyList()))
                 put("memberLimit", owner.ownerCreatePolicy.memberLimit)
                 put("pruneBatch", owner.ownerCreatePolicy.pruneBatch)
                 put("retentionNanos", ComplaintAdmissionPolicy.PREVIOUS_RETENTION_NANOS)
@@ -203,7 +205,7 @@ internal object ComplaintEffectiveTestConfigurationV1 {
         put("ownerEditEnabled", true)
         put("ownerDeleteEnabled", true)
         put("ownerEditDeleteActorPerHour", 60)
-        put("ownerDeleteAllEnabled", false)
+        put("ownerDeleteAllEnabled", owner.journalConfiguration.ownerDeleteAll)
         put("ownerDeleteAllActorPerDay", 5)
         put("ownerDeleteAllIpPerHour", 20)
     }

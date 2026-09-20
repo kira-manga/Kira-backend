@@ -8,6 +8,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllJournalReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationRecordV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
+import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
 import org.springframework.jdbc.core.JdbcTemplate
@@ -24,11 +27,19 @@ import java.util.UUID
  * preflight, canonical-event custody, raw record or caller's success flag. No APPLY/route/runtime
  * authority or new accounting is supplied. Existing authorization/reload semantics are unchanged.
  */
-internal class JdbcComplaintOwnerDeleteAllVerificationStore(
+internal class JdbcComplaintOwnerDeleteAllVerificationStore private constructor(
     private val jdbc: JdbcTemplate,
-    private val routing: VersionBoundComplaintJournalRouting,
+    internal val routing: OwnerDeleteAllJournalBindingV1,
     private val authorization: JdbcComplaintOwnerDeleteAllStore,
 ) {
+    constructor(jdbc: JdbcTemplate, routing: VersionBoundComplaintJournalRouting, authorization: JdbcComplaintOwnerDeleteAllStore) :
+        this(jdbc, authorization.routing, authorization) { this.routing.requireLive(routing) }
+    constructor(jdbc: JdbcTemplate, graph: TestOwnerDeleteLocalGraphV1, authorization: JdbcComplaintOwnerDeleteAllStore) :
+        this(jdbc, authorization.routing, authorization) {
+        routing.requireTest(graph.routing)
+        check(authorization.testGraph === graph)
+        graph.requireDeletion(jdbc)
+    }
     private val issuer = Any()
     private val codec = OwnerDeleteAllVerificationCodecV1(routing)
 
@@ -38,6 +49,20 @@ internal class JdbcComplaintOwnerDeleteAllVerificationStore(
         val record = codec.observed(readback)
         val bytes = codec.canonicalBytes(record)
         return CapturedOwnerDeleteAllVerification(issuer, routing, readback.event, record, bytes)
+    }
+
+    fun capture(readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
+        requireConnectionFree()
+        check(authorization.testGraph.recoveryRegistration == null)
+        return capturedTest(readback)
+    }
+    internal fun captureRegistered(original: TestRunOwnerDeleteAllContinuationV1, readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
+        original.requirePublishedReadback(authorization, authorization.testGraph, readback)
+        return capturedTest(readback)
+    }
+    private fun capturedTest(readback: TestOwnerDeleteJournalReadbackV1): OwnerDeleteAllVerificationInputV1 {
+        val record = codec.observed(readback)
+        return CapturedOwnerDeleteAllVerification(issuer, routing, routing.fromTest(readback.event), record, codec.canonicalBytes(record))
     }
 
     fun verify(input: OwnerDeleteAllVerificationInputV1): ComplaintOwnerDeleteAllVerificationOperation =
@@ -91,7 +116,7 @@ internal sealed interface CommittedOwnerDeleteAllVerificationV1 {
 
 private class CapturedOwnerDeleteAllVerification(
     private val issuer: Any,
-    private val routing: VersionBoundComplaintJournalRouting,
+    private val routing: OwnerDeleteAllJournalBindingV1,
     val event: OwnerDeleteAllJournalEventV1,
     val record: OwnerDeleteAllVerificationRecordV1,
     bytes: ByteArray,
@@ -108,7 +133,7 @@ private class CapturedOwnerDeleteAllVerification(
     val verifiedAt: Instant = Instant.parse(record.verifiedAt)
     val targetCount = event.complaintIds().size
 
-    fun requireOwned(selectedIssuer: Any, selectedRouting: VersionBoundComplaintJournalRouting) {
+    fun requireOwned(selectedIssuer: Any, selectedRouting: OwnerDeleteAllJournalBindingV1) {
         check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(selectedRouting))
     }
 
@@ -122,9 +147,10 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
     private val codec: OwnerDeleteAllVerificationCodecV1,
     private val observed: CapturedOwnerDeleteAllVerification,
     private val issuer: Any,
-    private val routing: VersionBoundComplaintJournalRouting,
+    private val routing: OwnerDeleteAllJournalBindingV1,
     private val authorization: JdbcComplaintOwnerDeleteAllStore,
 ) {
+    private val sql = if (routing.scope.testOnly) OwnerDeleteAllVerificationSql.test(routing.scope) else OwnerDeleteAllVerificationSql.live
     private var stage = Stage.RETAINED
     private var proof: StoredVerification? = null
     private var released: CommittedOwnerDeleteAllVerificationV1? = null
@@ -141,13 +167,15 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
             }.also { released = it }
         }
 
+    internal fun requireRegisteredContinuation(original: TestRunOwnerDeleteAllContinuationV1) = original.requireVerificationInput(observed)
+
     private fun execute() {
         requireRetained()
         check(stage === Stage.RETAINED)
         authorization.lockBoundVerification(jdbc)
         requireRetained()
         stage = Stage.RECEIPT
-        val receipts = jdbc.query(OwnerDeleteAllVerificationSql.LOCK_RECEIPTS, { row, _ -> receipt(row) }, observed.event.tuple.actorId)
+        val receipts = jdbc.query(sql.LOCK_RECEIPTS, { row, _ -> receipt(row) }, observed.event.tuple.actorId)
         requireRetained()
         check(receipts.size == 1) // LIMIT 2 is a multiple-receipt sentinel, never arbitrary first-key adoption.
         val receipt = receipts.single()
@@ -155,10 +183,13 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         check(receipt.installation == tuple.actorId && receipt.key == tuple.operationKey && receipt.version == tuple.credentialVersion)
         check(MessageDigest.isEqual(receipt.fingerprint, observed.fingerprint) && receipt.reference == observed.record.eventId)
         stage = Stage.PUBLICATION
-        val publication = jdbc.query(OwnerDeleteAllVerificationSql.LOCK_PUBLICATION, { row, _ -> publication(row) }, receipt.reference).single()
+        val publication = jdbc.query(sql.LOCK_PUBLICATION, { row, _ -> publication(row) }, receipt.reference).single()
         requireRetained()
         requireEvent(publication)
         check(receipt.authorizedAt == publication.createdAt)
+        authorization.controls.testGraph?.let { graph ->
+            phase.requireTestRunOwnerDeleteAllVerificationRun(graph, jdbc, publication.createdAt)
+        }
         proof = if (publication.prepared) recordVerified() else replay(publication)
         requireRetained()
         stage = Stage.COMPLETE
@@ -169,7 +200,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         stage = Stage.WRITING
         requireRetained()
         val updated = jdbc.query(
-            OwnerDeleteAllVerificationSql.RECORD_VERIFIED,
+            sql.RECORD_VERIFIED,
             { row, _ -> publication(row) },
             observed.record.objectVersion, observed.ciphertextHash, Timestamp.from(observed.objectCreatedAt),
             Timestamp.from(observed.retainUntil), Timestamp.from(observed.verifiedAt), observed.verificationBytes,
@@ -271,7 +302,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
         @Suppress("TooGenericExceptionCaught")
         fun capture(
             jdbc: JdbcTemplate,
-            routing: VersionBoundComplaintJournalRouting,
+            routing: OwnerDeleteAllJournalBindingV1,
             codec: OwnerDeleteAllVerificationCodecV1,
             issuer: Any,
             input: OwnerDeleteAllVerificationInputV1,
@@ -283,6 +314,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
                 phase.ownerDeleteAllVerification.requireOperation(jdbc)
                 val observed = input as? CapturedOwnerDeleteAllVerification ?: error("Private publisher readback capture required")
                 observed.requireOwned(issuer, routing)
+                authorization.controls.testGraph?.let { phase.requireTestRunOwnerDeleteAllVerify(it, jdbc, input) }
                 operation = ComplaintOwnerDeleteAllVerificationOperation(phase, jdbc, codec, observed, issuer, routing, authorization)
                 phase.ownerDeleteAllVerification.retain(operation, jdbc)
                 operation.execute()
@@ -337,7 +369,7 @@ internal class ComplaintOwnerDeleteAllVerificationOperation private constructor(
 /** Issued only after the genuine VERIFY release or strict committed-reload validation in this file. */
 private class ReleasedOwnerDeleteAllVerification(
     private val issuer: Any,
-    private val routing: VersionBoundComplaintJournalRouting,
+    private val routing: OwnerDeleteAllJournalBindingV1,
     private val event: OwnerDeleteAllJournalEventV1,
     record: OwnerDeleteAllVerificationRecordV1,
     bytes: ByteArray,
@@ -354,7 +386,7 @@ private class ReleasedOwnerDeleteAllVerification(
     override fun verificationBytes(): ByteArray = bytes.copyOf()
     override fun verificationHash(): ByteArray = hash.copyOf()
 
-    fun requireOwned(selectedIssuer: Any, selectedRouting: VersionBoundComplaintJournalRouting): OwnerDeleteAllJournalEventV1 {
+    fun requireOwned(selectedIssuer: Any, selectedRouting: OwnerDeleteAllJournalBindingV1): OwnerDeleteAllJournalEventV1 {
         check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(selectedRouting))
         return event
     }

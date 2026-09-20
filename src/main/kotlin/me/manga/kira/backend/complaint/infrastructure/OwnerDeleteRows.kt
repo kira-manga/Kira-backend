@@ -7,6 +7,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteRejection
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import java.security.MessageDigest
 import java.sql.ResultSet
 import java.time.Instant
@@ -50,11 +52,13 @@ internal object OwnerDeleteRows {
         }
     }
 
-    class Publication(row: ResultSet) {
+    class Publication private constructor(row: ResultSet, val kind: ComplaintJournalDeletionKindV1) {
+        constructor(row: ResultSet) : this(row, ComplaintJournalDeletionKindV1.OWNER_DELETE)
         val eventId: String = checkNotNull(row.getString("event_id"))
         val scope: UUID = checkNotNull(row.getObject("data_scope_id", UUID::class.java))
         val writer: UUID = checkNotNull(row.getObject("writer_generation", UUID::class.java))
         val epoch: Long = positive(row, "journal_epoch")
+        val targetCount: Int = row.getInt("target_count").also { check(!row.wasNull()) }
         val routingKey: String = checkNotNull(row.getString("routing_key_id"))
         val objectKey: String = checkNotNull(row.getString("object_key"))
         val bytes: ByteArray = checkNotNull(row.getBytes("event_bytes"))
@@ -69,14 +73,26 @@ internal object OwnerDeleteRows {
         val verificationBytes: ByteArray? = row.getBytes("verification_bytes")
         val verificationHash: ByteArray? = row.getBytes("verification_hash")
         init {
-            check(bool(row, "test_only") && bool(row, "valid_shape") && row.getString("event_kind") == "OWNER_DELETE")
-            check(row.getInt("target_count") == 1 && row.getString("canonicalizer") == "kcj-1")
+            check(bool(row, "test_only") && bool(row, "valid_shape") && row.getString("event_kind") == kind.name)
+            check(if (kind === ComplaintJournalDeletionKindV1.OWNER_DELETE) targetCount == 1 else targetCount in 0..100)
+            check(row.getString("canonicalizer") == "kcj-1")
             check(state in setOf("PREPARED", "VERIFIED", "APPLIED"))
         }
         fun requireEvent(event: TestOwnerDeleteJournalEventV1) {
+            check(kind === ComplaintJournalDeletionKindV1.OWNER_DELETE && event.tuple.eventKind === kind)
             check(eventId == event.route.eventId && scope == event.tuple.scope.id && epoch == event.tuple.epoch)
             check(routingKey == event.route.routingKeyId && objectKey == event.route.objectKey)
             check(bytes.contentEquals(event.canonicalBytes()) && semantic.contentEquals(HexFormat.of().parseHex(event.semanticSha256)))
+        }
+        fun requireEvent(event: OwnerDeleteAllJournalEventV1) {
+            check(kind === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL && event.tuple.eventKind === kind && event.tuple.scope.testOnly)
+            check(eventId == event.route.eventId && scope == event.tuple.scope.id && epoch == event.tuple.epoch && targetCount == event.complaintIds().size)
+            check(routingKey == event.route.routingKeyId && objectKey == event.route.objectKey)
+            check(bytes.contentEquals(event.canonicalBytes()) && semantic.contentEquals(HexFormat.of().parseHex(event.semanticSha256)))
+        }
+        companion object {
+            /** Comparison reader only. The ordinary per-report constructor and requireEvent remain one-family. */
+            fun ownerDeleteAll(row: ResultSet): Publication = Publication(row, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
         }
     }
 

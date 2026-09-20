@@ -11,17 +11,18 @@ import java.util.HexFormat
 import java.util.UUID
 
 /** Immutable TEST declarations only: no registered run, provider policy proof, projection or current authority. */
-internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private val stored: TestOwnerDeleteJournalDeclarationV1) {
+internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private val stored: TestOwnerDeleteJournalDeclarationV1, val ownerDeleteAll: Boolean) {
     val scope: ComplaintDataScope get() = stored.scope
     val ordinaryPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/ordinary/"
     val sealTerminalPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/seal-terminal/"
     private val wireDocument = TestOwnerDeleteJournalDocumentV1(
-        "kira-complaint-journal-configuration", 1, "kcj-1", "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
+        "kira-complaint-journal-configuration", 1, "kcj-1", if (ownerDeleteAll) "REGISTERED_TEST_OWNER_ERASURE" else "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
         stored.writer, stored.journalLocation, ordinaryPrefix, sealTerminalPrefix, stored.authorities,
         stored.routing.activeKeyId,
         stored.routing.keys.map { TestOwnerDeleteRoutingKeyDocumentV1(it.keyId, it.secret.resourceArn, it.secret.versionId) },
         stored.routing.retentionSeconds, stored.routing.minimumRotationIntervalSeconds, stored.encryption, stored.recovery, stored.limits,
-        "KJEV-1/OWNER_DELETE/INSTALLATION/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
+        (if (ownerDeleteAll) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL" else "KJEV-1/OWNER_DELETE") +
+            "/INSTALLATION/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
     )
     private val canonical = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), wireDocument).toByteArray(Charsets.UTF_8)
     val sha256: String = Sha256.hex(canonical)
@@ -53,13 +54,14 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private
                     ),
                     snapshot.encryption, snapshot.recovery, snapshot.limits,
                 ),
+                ownerDeleteAll = snapshot.profile == "REGISTERED_TEST_OWNER_ERASURE",
             )
             val bytes = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), snapshot).toByteArray(Charsets.UTF_8)
             require(bytes.contentEquals(checked.canonical)) { INVALID }
             return checked
         }
 
-        fun of(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 {
+        fun of(input: TestOwnerDeleteJournalDeclarationV1, ownerDeleteAll: Boolean = false): TestOwnerDeleteJournalConfigurationV1 {
             require(input.scope.testOnly && OfflineBootstrapGrammar.uuidV4(input.scope.id.toString())) { INVALID }
             require(input.routing.keys.size in 1..4) { INVALID }
             val value = input.copy(routing = input.routing.copy(keys = input.routing.keys.sortedBy { it.keyId }))
@@ -70,7 +72,7 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private
             require(value.routing.retentionSeconds >= value.limits.retention.ordinaryRetentionSeconds) { INVALID }
             val interval = value.routing.retentionSeconds / 3 + if (value.routing.retentionSeconds % 3 == 0L) 0 else 1
             require(value.routing.minimumRotationIntervalSeconds >= interval) { INVALID }
-            return TestOwnerDeleteJournalConfigurationV1(value)
+            return TestOwnerDeleteJournalConfigurationV1(value, ownerDeleteAll)
         }
 
         private fun validateLocation(value: TestOwnerDeleteJournalDeclarationV1) {

@@ -4,8 +4,9 @@ import kotlinx.serialization.Serializable
 import me.manga.kira.backend.complaint.domain.JournalDecoderLimitsV1
 
 /** The ordinary family remains closed; the shared parser cannot select its serializer or field set for a caller. */
-internal class TestOwnerDeleteJournalJsonV1(private val limits: JournalDecoderLimitsV1) {
+internal class TestOwnerDeleteJournalJsonV1(private val limits: JournalDecoderLimitsV1, ownerDeleteAll: Boolean = false) {
     private val parser = ClosedJournalJsonV1(limits)
+    private val maximumTargets = if (ownerDeleteAll) 100 else 1
 
     fun header(bytes: ByteArray): TestOwnerDeleteJournalHeaderV1 = parser.parse(
         bytes,
@@ -21,7 +22,7 @@ internal class TestOwnerDeleteJournalJsonV1(private val limits: JournalDecoderLi
         limits.maximumPlaintextBytes,
         PAYLOAD_FIELDS,
         PAYLOAD_NUMBERS,
-        mapOf("ownerInstallationIds" to 1, "complaintIds" to 1),
+        mapOf("ownerInstallationIds" to 1, "complaintIds" to maximumTargets),
         TestOwnerDeleteJournalPayloadV1.serializer(),
     )
 

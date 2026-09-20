@@ -1,8 +1,10 @@
 package me.manga.kira.backend.complaint.infrastructure
 
-/** Fixed LIVE statements only. No caller-supplied relation, scope, lock expression or state transition. */
-internal object OwnerDeleteAllPersistenceSql {
-    private const val LIVE = "data_scope_id = '00000000-0000-0000-0000-000000000000' AND NOT test_only"
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+
+/** Fixed LIVE or exact TEST-scope statements only. No caller-supplied relation, scope, lock expression or state transition. */
+internal class OwnerDeleteAllPersistenceSql private constructor(scope: ComplaintDataScope) {
+    private val LIVE = "data_scope_id = '${scope.id}' AND ${if (scope.testOnly) "test_only" else "NOT test_only"}"
 
     val LOCK_RECEIPTS = """
         SELECT deletion_key, submitted_credential_version, fingerprint, state, publication_ref,
@@ -16,13 +18,13 @@ internal object OwnerDeleteAllPersistenceSql {
     val INSERT_RECEIPT = """
         INSERT INTO installation_deletion_receipts
             (installation_id, deletion_key, submitted_credential_version, fingerprint, data_scope_id, test_only, state, created_at)
-        VALUES (?, ?, ?, ?, '00000000-0000-0000-0000-000000000000', false, 'IN_PROGRESS', clock_timestamp())
+        VALUES (?, ?, ?, ?, '${scope.id}', ${scope.testOnly}, 'IN_PROGRESS', clock_timestamp())
     """.trimIndent()
 
     val INSERT_RECOVERY = """
         INSERT INTO complaint_recovery_capacity_reservations
             (event_id, data_scope_id, test_only, publication_ref, state, accounting_version, reserved_amounts, created_at)
-        VALUES (?, '00000000-0000-0000-0000-000000000000', false, ?, 'RESERVED', 1, ?::bigint[], clock_timestamp())
+        VALUES (?, '${scope.id}', ${scope.testOnly}, ?, 'RESERVED', 1, ?::bigint[], clock_timestamp())
     """.trimIndent()
 
     val LOCK_RECOVERY = """
@@ -67,7 +69,7 @@ internal object OwnerDeleteAllPersistenceSql {
         INSERT INTO complaint_journal_publications
             (event_id, data_scope_id, test_only, writer_generation, journal_epoch, event_kind, target_count,
                 routing_key_id, object_key, canonicalizer, event_bytes, semantic_hash, state, created_at)
-        VALUES (?, '00000000-0000-0000-0000-000000000000', false, ?, ?, 'OWNER_DELETE_ALL', ?, ?, ?, 'kcj-1', ?, ?, 'PREPARED', clock_timestamp())
+        VALUES (?, '${scope.id}', ${scope.testOnly}, ?, ?, 'OWNER_DELETE_ALL', ?, ?, ?, 'kcj-1', ?, ?, 'PREPARED', clock_timestamp())
         RETURNING created_at
     """.trimIndent()
 
@@ -80,7 +82,7 @@ internal object OwnerDeleteAllPersistenceSql {
 
     val LOCK_PUBLICATION = """
         SELECT event_id, writer_generation, journal_epoch, event_kind, target_count, routing_key_id, object_key,
-            canonicalizer, event_bytes, semantic_hash, state, object_version, ciphertext_hash,
+            canonicalizer, event_bytes, semantic_hash, state, created_at, applied_at, object_version, ciphertext_hash,
             object_created_at, retain_until, verified_at,
             CASE WHEN octet_length(verification_bytes) BETWEEN 1 AND 65536 THEN verification_bytes END AS verification_bytes,
             CASE WHEN octet_length(verification_hash) = 32 THEN verification_hash END AS verification_hash,
@@ -97,4 +99,33 @@ internal object OwnerDeleteAllPersistenceSql {
                 )) AS valid
         FROM complaint_journal_publications WHERE event_id = ? FOR UPDATE
     """.trimIndent()
+    // Registered recovery alone can reload a completed primary for exact read-only APPLY replay.
+    val LOCK_REGISTERED_PUBLICATION = LOCK_PUBLICATION
+        .replace("applied_at IS NULL AND (", "((state = 'APPLIED' AND applied_at IS NOT NULL) OR (state <> 'APPLIED' AND applied_at IS NULL)) AND (")
+        .replace("(state = 'VERIFIED' AND", "(state IN ('VERIFIED', 'APPLIED') AND")
+
+    companion object {
+        val LOCK_RECEIPTS get() = live.LOCK_RECEIPTS
+        val INSERT_RECEIPT get() = live.INSERT_RECEIPT
+        val INSERT_RECOVERY get() = live.INSERT_RECOVERY
+        val LOCK_RECOVERY get() = live.LOCK_RECOVERY
+        val LOCK_INSTALLATION_ID get() = live.LOCK_INSTALLATION_ID
+        val LOCK_CREDENTIAL get() = live.LOCK_CREDENTIAL
+        val NO_PENDING get() = live.NO_PENDING
+        val OWNER_TARGETS get() = live.OWNER_TARGETS
+        val LOCK_RESOURCES get() = live.LOCK_RESOURCES
+        val LOCK_CONTENT get() = live.LOCK_CONTENT
+        val PEND_ID get() = live.PEND_ID
+        val PEND_CREDENTIAL get() = live.PEND_CREDENTIAL
+        val INSERT_PUBLICATION get() = live.INSERT_PUBLICATION
+        val AUTHORIZE_RECEIPT get() = live.AUTHORIZE_RECEIPT
+        val LOCK_PUBLICATION get() = live.LOCK_PUBLICATION
+        val LOCK_REGISTERED_PUBLICATION get() = live.LOCK_REGISTERED_PUBLICATION
+        val live = OwnerDeleteAllPersistenceSql(ComplaintDataScope.LIVE)
+        fun test(scope: ComplaintDataScope): OwnerDeleteAllPersistenceSql {
+            require(scope.testOnly && scope.id.version() == 4 && scope.id.variant() == 2)
+            return OwnerDeleteAllPersistenceSql(scope)
+        }
+    }
+
 }
