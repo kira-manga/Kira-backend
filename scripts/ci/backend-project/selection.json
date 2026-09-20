@@ -1,0 +1,40 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 1333,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOwnerDeletePageCompletesMixedPrimariesWithoutReleasingReserve",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "20eb569d71f438a296c289cd8f1e4c81aa9f4066",
+      "source_sha256": "38553846e6af46851e5552e10fb1ee4dbc37332b5194b2cf36f4096878922c13",
+      "xml_names": [
+        "testRunOwnerDeletePageCompletesMixedPrimariesWithoutReleasingReserve()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT"
+  ],
+  "expected_pg_methods": 1,
+  "expected_total": 1,
+  "expected_unit_methods": 0,
+  "selection_basis": {
+    "prior_runs": [
+      35498189229
+    ],
+    "reviewed_source": "20eb569d71f438a296c289cd8f1e4c81aa9f4066",
+    "scope": "Only failed mixed3-history page method after TEST pre-D createGlobal2to3 correction. Five page6 passes unchanged; no repeated original17 or three new page passes."
+  },
+  "source_head": "20eb569d71f438a296c289cd8f1e4c81aa9f4066",
+  "source_status": "SOURCE_ONLY_REVIEWED_NOT_ACCEPTED",
+  "static_sources": {},
+  "status": "SOURCE_BOUND_DISPATCH_BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOwnerDeletePageCompletesMixedPrimariesWithoutReleasingReserve"
+  ]
+}
