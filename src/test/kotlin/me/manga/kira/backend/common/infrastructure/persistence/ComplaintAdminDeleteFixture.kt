@@ -57,6 +57,7 @@ import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.sql.ResultSet
 import java.sql.Timestamp
 import java.time.Clock
 import java.time.ZoneOffset
@@ -197,7 +198,18 @@ internal class ComplaintAdminDeleteFixture(
             assertEquals(old.test, current.test, "No borrowing from terminal TEST reserve")
         }
     }
-    fun scalar(sql: String, vararg args: Any): String? = observer.queryForObject(sql, String::class.java, *args)
+    // Observation also runs inside real phase hooks; never enlist another Spring resource.
+    fun <T> observeOne(sql: String, vararg args: Any, read: (ResultSet) -> T): T =
+        checkNotNull(observer.dataSource).connection.use { connection ->
+            connection.prepareStatement(sql).use { statement ->
+                args.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+                statement.executeQuery().use { rows ->
+                    assertTrue(rows.next(), "Expected one observer row")
+                    read(rows).also { assertFalse(rows.next(), "Expected only one observer row") }
+                }
+            }
+        }
+    fun scalar(sql: String, vararg args: Any): String? = observeOne(sql, *args) { it.getString(1) }
     fun state(): Map<String, List<String>> = TABLES.associateWith(::rows) + mapOf(
         "audit" to observer.queryForList("SELECT to_jsonb(a)::text FROM audit_log a WHERE complaint_data_scope_id = ? ORDER BY id", String::class.java, scope.id),
         "grants" to observer.queryForList("SELECT to_jsonb(g)::text FROM admin_step_up_grants g WHERE user_id = ? ORDER BY id", String::class.java, base.ordinary.userId),

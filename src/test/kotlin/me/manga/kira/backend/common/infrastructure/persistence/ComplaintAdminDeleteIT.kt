@@ -240,7 +240,7 @@ class ComplaintAdminDeleteIT {
         "SELECT state FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?", f.base.ordinary.userId, attempt.key)
     private fun publicationState(f: ComplaintAdminDeleteFixture) = f.scalar("SELECT state FROM complaint_journal_publications WHERE data_scope_id = ?", f.scope.id)
     private fun used(f: ComplaintAdminDeleteFixture, id: UUID) = f.observer.queryForObject("SELECT used_at IS NOT NULL FROM admin_step_up_grants WHERE id = ?", Boolean::class.java, id) == true
-    private fun present(f: ComplaintAdminDeleteFixture, id: UUID) = f.observer.queryForObject("SELECT EXISTS (SELECT 1 FROM complaints WHERE id = ?)", Boolean::class.java, id) == true
+    private fun present(f: ComplaintAdminDeleteFixture, id: UUID) = f.observeOne("SELECT EXISTS (SELECT 1 FROM complaints WHERE id = ?)", id) { it.getBoolean(1) }
     private fun content(f: ComplaintAdminDeleteFixture, id: UUID) = f.scalar("SELECT to_jsonb(c)::text FROM complaints c WHERE id = ?", id)
     private fun semanticEvents(f: ComplaintAdminDeleteFixture): Int = lifecycleField(checkNotNull(lifecycleField(f.ingress, "semantics")), "events") as Int
     private fun applied(response: MockHttpServletResponse, grantId: UUID) {
