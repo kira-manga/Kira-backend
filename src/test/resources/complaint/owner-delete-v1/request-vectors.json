@@ -1,0 +1,282 @@
+{
+  "schema": 1,
+  "derivation": "independent artifact LP/u32/SHA-256; product not executed",
+  "vectors": [
+    {
+      "id": "ordinary",
+      "resource_version_decimal": "42",
+      "canonical_precondition": "\"complaint-e5555555-5555-4555-8555-555555555555-v42\"",
+      "canonical_precondition_utf8_bytes": 52,
+      "frame": {
+        "raw_file": "raw/request-ordinary.bin",
+        "byte_count": 235,
+        "sha256": "3e065f48addf6a79cafb2bf0d9d9a12c742366b57d2276e24ca3b017ebc4e06b",
+        "hex": "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000644454c455445000000172f6170692f76312f636f6d706c61696e74732f7b69647d0000000c4f574e45525f44454c4554450000002462323232323232322d323232322d343232322d383232322d323232323232323232323232000000010000002465353535353535352d353535352d343535352d383535352d3535353535353535353535350000003422636f6d706c61696e742d65353535353535352d353535352d343535352d383535352d3535353535353535353535352d76343222",
+        "fields": [
+          {
+            "name": "domain",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 0,
+            "utf8_offset": 4,
+            "utf8_bytes": 34,
+            "bytes": 38,
+            "value": "kira-complaint-request-fingerprint"
+          },
+          {
+            "name": "version",
+            "kind": "u32be",
+            "offset": 38,
+            "bytes": 4,
+            "value": 1
+          },
+          {
+            "name": "method",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 42,
+            "utf8_offset": 46,
+            "utf8_bytes": 6,
+            "bytes": 10,
+            "value": "DELETE"
+          },
+          {
+            "name": "route_template",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 52,
+            "utf8_offset": 56,
+            "utf8_bytes": 23,
+            "bytes": 27,
+            "value": "/api/v1/complaints/{id}"
+          },
+          {
+            "name": "operation",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 79,
+            "utf8_offset": 83,
+            "utf8_bytes": 12,
+            "bytes": 16,
+            "value": "OWNER_DELETE"
+          },
+          {
+            "name": "data_scope_id",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 95,
+            "utf8_offset": 99,
+            "utf8_bytes": 36,
+            "bytes": 40,
+            "value": "b2222222-2222-4222-8222-222222222222"
+          },
+          {
+            "name": "target_count",
+            "kind": "u32be",
+            "offset": 135,
+            "bytes": 4,
+            "value": 1
+          },
+          {
+            "name": "target_id",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 139,
+            "utf8_offset": 143,
+            "utf8_bytes": 36,
+            "bytes": 40,
+            "value": "e5555555-5555-4555-8555-555555555555"
+          },
+          {
+            "name": "precondition",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 179,
+            "utf8_offset": 183,
+            "utf8_bytes": 52,
+            "bytes": 56,
+            "value": "\"complaint-e5555555-5555-4555-8555-555555555555-v42\""
+          }
+        ]
+      },
+      "fingerprint_base64url": "PgZfSK3fannK-yvw2dmhLHQjZrV9InbiTKOwF-vE4Gs"
+    },
+    {
+      "id": "minimum",
+      "resource_version_decimal": "1",
+      "canonical_precondition": "\"complaint-e5555555-5555-4555-8555-555555555555-v1\"",
+      "canonical_precondition_utf8_bytes": 51,
+      "frame": {
+        "raw_file": "raw/request-minimum.bin",
+        "byte_count": 234,
+        "sha256": "16488f15f06ce6cf99952ea5c50b6eba631bf9592effcf6e7d75917eb65c0c34",
+        "hex": "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000644454c455445000000172f6170692f76312f636f6d706c61696e74732f7b69647d0000000c4f574e45525f44454c4554450000002462323232323232322d323232322d343232322d383232322d323232323232323232323232000000010000002465353535353535352d353535352d343535352d383535352d3535353535353535353535350000003322636f6d706c61696e742d65353535353535352d353535352d343535352d383535352d3535353535353535353535352d763122",
+        "fields": [
+          {
+            "name": "domain",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 0,
+            "utf8_offset": 4,
+            "utf8_bytes": 34,
+            "bytes": 38,
+            "value": "kira-complaint-request-fingerprint"
+          },
+          {
+            "name": "version",
+            "kind": "u32be",
+            "offset": 38,
+            "bytes": 4,
+            "value": 1
+          },
+          {
+            "name": "method",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 42,
+            "utf8_offset": 46,
+            "utf8_bytes": 6,
+            "bytes": 10,
+            "value": "DELETE"
+          },
+          {
+            "name": "route_template",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 52,
+            "utf8_offset": 56,
+            "utf8_bytes": 23,
+            "bytes": 27,
+            "value": "/api/v1/complaints/{id}"
+          },
+          {
+            "name": "operation",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 79,
+            "utf8_offset": 83,
+            "utf8_bytes": 12,
+            "bytes": 16,
+            "value": "OWNER_DELETE"
+          },
+          {
+            "name": "data_scope_id",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 95,
+            "utf8_offset": 99,
+            "utf8_bytes": 36,
+            "bytes": 40,
+            "value": "b2222222-2222-4222-8222-222222222222"
+          },
+          {
+            "name": "target_count",
+            "kind": "u32be",
+            "offset": 135,
+            "bytes": 4,
+            "value": 1
+          },
+          {
+            "name": "target_id",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 139,
+            "utf8_offset": 143,
+            "utf8_bytes": 36,
+            "bytes": 40,
+            "value": "e5555555-5555-4555-8555-555555555555"
+          },
+          {
+            "name": "precondition",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 179,
+            "utf8_offset": 183,
+            "utf8_bytes": 51,
+            "bytes": 55,
+            "value": "\"complaint-e5555555-5555-4555-8555-555555555555-v1\""
+          }
+        ]
+      },
+      "fingerprint_base64url": "FkiPFfBs5s-ZlS6lxQtuumMb-Vku_89ufXWRfrZcDDQ"
+    },
+    {
+      "id": "maximum",
+      "resource_version_decimal": "9223372036854775807",
+      "canonical_precondition": "\"complaint-e5555555-5555-4555-8555-555555555555-v9223372036854775807\"",
+      "canonical_precondition_utf8_bytes": 69,
+      "frame": {
+        "raw_file": "raw/request-maximum.bin",
+        "byte_count": 252,
+        "sha256": "223a26bb8fa31e95c50548c4e6cc198edeb4916f7418f205465c24b4655bcd13",
+        "hex": "000000226b6972612d636f6d706c61696e742d726571756573742d66696e6765727072696e74000000010000000644454c455445000000172f6170692f76312f636f6d706c61696e74732f7b69647d0000000c4f574e45525f44454c4554450000002462323232323232322d323232322d343232322d383232322d323232323232323232323232000000010000002465353535353535352d353535352d343535352d383535352d3535353535353535353535350000004522636f6d706c61696e742d65353535353535352d353535352d343535352d383535352d3535353535353535353535352d763932323333373230333638353437373538303722",
+        "fields": [
+          {
+            "name": "domain",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 0,
+            "utf8_offset": 4,
+            "utf8_bytes": 34,
+            "bytes": 38,
+            "value": "kira-complaint-request-fingerprint"
+          },
+          {
+            "name": "version",
+            "kind": "u32be",
+            "offset": 38,
+            "bytes": 4,
+            "value": 1
+          },
+          {
+            "name": "method",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 42,
+            "utf8_offset": 46,
+            "utf8_bytes": 6,
+            "bytes": 10,
+            "value": "DELETE"
+          },
+          {
+            "name": "route_template",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 52,
+            "utf8_offset": 56,
+            "utf8_bytes": 23,
+            "bytes": 27,
+            "value": "/api/v1/complaints/{id}"
+          },
+          {
+            "name": "operation",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 79,
+            "utf8_offset": 83,
+            "utf8_bytes": 12,
+            "bytes": 16,
+            "value": "OWNER_DELETE"
+          },
+          {
+            "name": "data_scope_id",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 95,
+            "utf8_offset": 99,
+            "utf8_bytes": 36,
+            "bytes": 40,
+            "value": "b2222222-2222-4222-8222-222222222222"
+          },
+          {
+            "name": "target_count",
+            "kind": "u32be",
+            "offset": 135,
+            "bytes": 4,
+            "value": 1
+          },
+          {
+            "name": "target_id",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 139,
+            "utf8_offset": 143,
+            "utf8_bytes": 36,
+            "bytes": 40,
+            "value": "e5555555-5555-4555-8555-555555555555"
+          },
+          {
+            "name": "precondition",
+            "kind": "lp32be_utf8",
+            "length_word_offset": 179,
+            "utf8_offset": 183,
+            "utf8_bytes": 69,
+            "bytes": 73,
+            "value": "\"complaint-e5555555-5555-4555-8555-555555555555-v9223372036854775807\""
+          }
+        ]
+      },
+      "fingerprint_base64url": "Ijomu4-jHpXFBUjE5swZjt60kW90GPIFRlwktGVbzRM"
+    }
+  ]
+}

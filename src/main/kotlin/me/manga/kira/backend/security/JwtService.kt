@@ -28,6 +28,10 @@ import java.time.Instant
  */
 @Service
 class JwtService(keyProvider: JwtKeyProvider, private val properties: KiraSecurityProperties, private val clock: Clock) {
+    init {
+        keyProvider.requireMatchingConfiguration(properties)
+    }
+
     // The signing JWK carries the kid, so a JwsHeader specifying that kid selects it deterministically.
     private val encoder: NimbusJwtEncoder =
         NimbusJwtEncoder(

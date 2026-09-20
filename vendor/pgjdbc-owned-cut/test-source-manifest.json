@@ -1,0 +1,114 @@
+{
+  "schema": 2,
+  "candidate": "app29-owned-driver-packaging-20260915-02",
+  "date_utc": "2026-09-15",
+  "status": "RECIPE CONSOLIDATION ONLY / NO NEW TEST RUN / NOT PRODUCTION QUALIFIED",
+  "upstream_commit": "77df98e4e66c12936ded3478a0954f6f580bad99",
+  "source_tree_relative_to_vendor": "../../../.kira-validation/pgjdbc-owned-cut/upstream",
+  "source_file_count": 4,
+  "recipe_series": {
+    "path": "series",
+    "sha256": "1393575be71f675b24ef0c9856631cd6bd86ddae9c75991363defb9c1a833f69",
+    "bytes": 224
+  },
+  "test_source_patches": [
+    {
+      "path": "0003-native-owned-cut-regressions.patch",
+      "sha256": "5192043565325ea9cc5830e292f8798749432aa7c4aeb76ebbac9db66dad7ea3",
+      "bytes": 75780,
+      "scope": "test"
+    },
+    {
+      "path": "0005-native-retention-getter-corrections.patch",
+      "sha256": "148c46711689a27c5e1a2a9cb42c081d823eb93347d610806b81475695f98f05",
+      "bytes": 69947,
+      "scope": "reviewed production/test corrections"
+    }
+  ],
+  "control_abi": {
+    "path": "ABI.md",
+    "sha256": "ffbd51a0593348d28e65a83e56056b8226442838aef61973eb360e8d3bfecfaf",
+    "bytes": 12717
+  },
+  "files": [
+    {
+      "path": "pgjdbc/src/test/java/org/postgresql/core/v3/KiraOwnedParameterBridgeTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "79d25dbee07e20d785d8d54be2a0bf6a79f5b66e87fba82427304eb36d59fe55",
+        "bytes": 6337
+      },
+      "module": ":postgresql",
+      "fqcn_selector": "org.postgresql.core.v3.KiraOwnedParameterBridgeTest"
+    },
+    {
+      "path": "pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutBatchTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "bb30acf058ae10f88e8f20bb753a202a288e31c33a6df619f31269a41064491e",
+        "bytes": 18053
+      },
+      "module": ":postgresql",
+      "fqcn_selector": "org.postgresql.jdbc.KiraOwnedJdbcCutBatchTest"
+    },
+    {
+      "path": "pgjdbc/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutRowsAndCloseTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "3e3b00b1275151e1d44536c6496fbec1dbcbd3a9c6ffa5ddb6c2c89c4607e168",
+        "bytes": 38435
+      },
+      "module": ":postgresql",
+      "fqcn_selector": "org.postgresql.jdbc.KiraOwnedJdbcCutRowsAndCloseTest"
+    },
+    {
+      "path": "pgjdbc-mockito-test/src/test/java/org/postgresql/jdbc/KiraOwnedJdbcCutFaultTest.java",
+      "change": "added",
+      "before": null,
+      "after": {
+        "sha256": "d8f8ba511272279f05c785beac89238836cb96f1bb374bcff17a73bbabb0242b",
+        "bytes": 52877
+      },
+      "module": ":pgjdbc-mockito-test",
+      "fqcn_selector": "org.postgresql.jdbc.KiraOwnedJdbcCutFaultTest"
+    }
+  ],
+  "frameworks": [
+    "existing JUnit Jupiter 5.14.3",
+    "existing Mockito 5.23.0 / Byte Buddy 1.18.8 agent in pgjdbc-mockito-test",
+    "existing TestUtil / DB properties"
+  ],
+  "source_reference": {
+    "path_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-build-05/sources-after.json",
+    "sha256": "e3ae4b1579c4e46a7571f7d0c80fd15f9ff946d4056e0089c204a70cbac0d57e",
+    "bytes": 132266
+  },
+  "reused_focused_evidence": {
+    "result_relative_to_vendor": "../../../review/working/app-29-driver-cut-native-build-05/primary-result-collection.json",
+    "sha256": "61e733c0236d1f01ed7676bd63cd8fc5acccae90bc2987d6fd764ed03412070c",
+    "bytes": 10878,
+    "status": "FOCUSED3_PASS_NEW_CANDIDATE_UNQUALIFIED",
+    "selected_methods": [
+      "KiraOwnedJdbcCutFaultTest.isolationGetterExecuteFailureClosesItsStatementAndPreservesTheException",
+      "KiraOwnedJdbcCutFaultTest.isolationGetterRepeatedSuccessClosesBothResourcesWithoutBeginningATransaction",
+      "KiraOwnedJdbcCutFaultTest.isolationGetterReadFailureClosesBothResourcesAndPreservesTheException"
+    ],
+    "not_claimed": [
+      "new execution",
+      "whole native suite",
+      "Core47 retry",
+      "old73/10 replay",
+      "W03/App29 acceptance",
+      "production publication"
+    ]
+  },
+  "validation": {
+    "source_postimages_match_native05": true,
+    "new_test_execution": "NOT RUN",
+    "packaging_build": "NOT RUN",
+    "acceptance": "NOT PRODUCTION QUALIFIED"
+  }
+}

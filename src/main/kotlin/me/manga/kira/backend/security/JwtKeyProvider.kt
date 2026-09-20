@@ -1,7 +1,9 @@
 package me.manga.kira.backend.security
 
 import me.manga.kira.backend.config.KiraSecurityProperties
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.stereotype.Component
+import java.time.Duration
 import java.util.Base64
 import javax.crypto.SecretKey
 import javax.crypto.spec.SecretKeySpec
@@ -15,11 +17,41 @@ import javax.crypto.spec.SecretKeySpec
  *
  * The single [SecretKey] instance is shared by both the [JwtService] encoder and the resource-server
  * decoder so issuing and verifying always use the same material.
+ * The explicit dormant [fromAcquired] factory does not change the Spring/env constructor selection.
  */
 @Component
-class JwtKeyProvider(properties: KiraSecurityProperties) {
+class JwtKeyProvider private constructor(val secretKey: SecretKey, private val versionBound: VersionBoundInputs?) {
 
-    val secretKey: SecretKey = deriveKey(properties.jwtSecret)
+    @Autowired
+    constructor(properties: KiraSecurityProperties) : this(deriveKey(properties.jwtSecret), null)
+
+    /** The legacy path is unchanged. An acquired owner cannot be paired with different effective JWT settings. */
+    internal fun requireMatchingConfiguration(properties: KiraSecurityProperties) {
+        require(versionBound == null || versionBound.matches(properties)) { INVALID_VERSION_BOUND_CONFIGURATION }
+    }
+
+    internal fun immutableVersionBinding(): VersionedSecretBinding = requireVersionBound().binding
+
+    /** Immutable settings of this actual acquired signer/verifier owner, never another supplied properties bag. */
+    internal val versionBoundIssuer: String get() = requireVersionBound().issuer
+    internal val versionBoundAudience: String get() = requireVersionBound().audience
+    internal val versionBoundAccessTokenTtl: Duration get() = requireVersionBound().ttl
+    internal val versionBoundClockSkew: Duration get() = requireVersionBound().skew
+
+    /** The actual signer/verifier owns exactly one key. No caller supplies another retained-key list or key ID. */
+    internal fun installationUserFamily(): InstallationJwtForbiddenFamily {
+        val inputs = requireVersionBound()
+        val bytes = secretKey.encoded
+        return try {
+            InstallationJwtForbiddenFamily(inputs.issuer, inputs.audience, listOf(InstallationJwtKeyMaterial(JwtService.KEY_ID, bytes)))
+        } finally {
+            bytes.fill(0)
+        }
+    }
+
+    private fun requireVersionBound(): VersionBoundInputs = requireNotNull(versionBound) { INVALID_VERSION_BOUND_CONFIGURATION }
+
+    override fun toString(): String = "JwtKeyProvider(redacted)"
 
     companion object {
         /** HS256 requires a key of at least 256 bits. */
@@ -27,6 +59,24 @@ class JwtKeyProvider(properties: KiraSecurityProperties) {
 
         /** JCA algorithm name for the HMAC-SHA256 key backing HS256. */
         const val MAC_ALGORITHM = "HmacSHA256"
+
+        /**
+         * One copied acquisition, not a lookup or bean. This bound profile uses the existing 32–128-byte
+         * installation-separation range; the legacy environment constructor keeps its >=32-byte rule.
+         * The existing fixed wire kid is also the logical ID. No independent property secret is accepted.
+         */
+        internal fun fromAcquired(secret: AcquiredVersionedSecret, properties: KiraSecurityProperties): JwtKeyProvider {
+            val binding = secret.descriptor
+            require(
+                binding.family == SecretMaterialFamily.USER_ADMIN_JWT && binding.purpose == SecretMaterialPurpose.HMAC_SHA256 &&
+                    binding.logicalKeyId == JwtService.KEY_ID && properties.jwtSecret == null,
+            ) { INVALID_VERSION_BOUND_CONFIGURATION }
+            val inputs = VersionBoundInputs(binding, properties)
+            return secret.useMaterial { material ->
+                require(material.size in MIN_KEY_BYTES..128) { INVALID_VERSION_BOUND_CONFIGURATION }
+                JwtKeyProvider(SecretKeySpec(material, MAC_ALGORITHM), inputs)
+            }
+        }
 
         private fun deriveKey(configured: String?): SecretKey {
             val secret =
@@ -48,5 +98,23 @@ class JwtKeyProvider(properties: KiraSecurityProperties) {
             }
             return SecretKeySpec(decoded, MAC_ALGORITHM)
         }
+
+        private const val INVALID_VERSION_BOUND_CONFIGURATION = "Invalid version-bound user JWT configuration"
+    }
+
+    /** Only the four immutable scalars actually consumed by JwtService / SecurityConfig.jwtDecoder. */
+    private class VersionBoundInputs(val binding: VersionedSecretBinding, properties: KiraSecurityProperties) {
+        val issuer = properties.issuer
+        val audience = properties.audience
+        val ttl = properties.accessTokenTtl
+        val skew = properties.clockSkew
+
+        init {
+            // @NotBlank is Spring binding validation, not a guard on this explicit non-Spring path.
+            require(issuer.isNotBlank() && audience.isNotBlank()) { INVALID_VERSION_BOUND_CONFIGURATION }
+        }
+
+        fun matches(properties: KiraSecurityProperties): Boolean = issuer == properties.issuer && audience == properties.audience &&
+            ttl == properties.accessTokenTtl && skew == properties.clockSkew && properties.jwtSecret == null
     }
 }

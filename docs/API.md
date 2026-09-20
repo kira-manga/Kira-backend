@@ -562,3 +562,16 @@ acknowledges termination of an already authorized worker/remote call. Database o
 is outside these budgets. Terminal outcomes cannot be replaced, and canceled pre-start work cannot
 later claim provider entry. GET/list combine request and outcome data from one read-only snapshot
 as of the first SELECT; a later independent read may observe a newer terminal outcome.
+
+## Complaint step-up scope (prepared, not activated)
+
+`POST /api/v1/admin/step-up` accepts `password` and optional `scope`: omitted or
+`source-admin-mutation` preserves the source flow; `complaint-moderation-mutation`
+selects only the existing counted complaint issuer. Other scopes return400 without
+password verification or issuance. Success reports the actual issued grant scope.
+
+This contract does not activate complaint issuance: the current `sourceOnly`
+persistence composition refuses complaint phases before SQL and the public service
+returns `ADMIN_STEP_UP_UNAVAILABLE` (503), never a substitute source proof. Existing
+complaint route denial, authenticated authority/capacity requirements and mutation
+activation gates remain unchanged. No new endpoint or deployment is introduced.

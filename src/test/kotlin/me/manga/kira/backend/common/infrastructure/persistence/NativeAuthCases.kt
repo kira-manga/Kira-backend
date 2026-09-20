@@ -1,0 +1,101 @@
+package me.manga.kira.backend.common.infrastructure.persistence
+
+internal class NativeAuthCase(val label: String, val raw: String?, val effective: Set<String>?, val validGrammar: Boolean = true) {
+    override fun toString(): String = label
+}
+
+internal object NativeAuthCases {
+    val grammar = listOf(
+        NativeAuthCase("absent", null, null),
+        NativeAuthCase("empty", "", null, false),
+        NativeAuthCase("space", " ", null, false),
+        NativeAuthCase("controls-only", "\u0000\t\r\n\u001f", null, false),
+        NativeAuthCase("one-comma", ",", null),
+        NativeAuthCase("three-commas", ",,,", null),
+        NativeAuthCase("space-before-comma", " ,", null, false),
+        NativeAuthCase("space-after-comma", ", ", null, false),
+        NativeAuthCase("ascii-trim", "\u0000\tpassword\r\n\u001f", setOf("password")),
+        NativeAuthCase("trailing-commas-before-trim", "password,,,", setOf("password")),
+        NativeAuthCase("space-before-trailing-comma", "password ,", setOf("password")),
+        NativeAuthCase("space-after-trailing-comma", "password, ", null, false),
+        NativeAuthCase("empty-interior", "password,,md5", null, false),
+        NativeAuthCase("empty-leading", ",password", null, false),
+        NativeAuthCase("positive-pair", " md5,\tpassword ", setOf("password", "md5")),
+        NativeAuthCase("negative-safe", " !none , !gss , !sspi,,", NATIVE_SAFE_METHODS.toSet()),
+        NativeAuthCase("negative-single", "!none", NATIVE_AUTH_METHODS.toSet() - "none"),
+        NativeAuthCase("all-negated", "!none,!password,!md5,!gss,!sspi,!scram-sha-256", null),
+        NativeAuthCase("duplicate-positive", "password,password", null, false),
+        NativeAuthCase("duplicate-trimmed", "md5, md5 ", null, false),
+        NativeAuthCase("duplicate-negative", "!gss,!gss", null, false),
+        NativeAuthCase("positive-then-negative", "password,!gss", null, false),
+        NativeAuthCase("negative-then-positive", "!none,password", null, false),
+        NativeAuthCase("no-second-trim", "! none", null, false),
+        NativeAuthCase("double-negation", "!!none", null, false),
+        NativeAuthCase("sign-only", "!", null, false),
+        NativeAuthCase("unknown-positive", "synthetic-auth", null, false),
+        NativeAuthCase("unknown-negative", "!synthetic-auth", null, false),
+        NativeAuthCase("uppercase", "PASSWORD", null, false),
+        NativeAuthCase("mixed-case", "Scram-Sha-256", null, false),
+        NativeAuthCase("underscore", "scram_sha_256", null, false),
+        NativeAuthCase("nbsp-before", "\u00a0password", null, false),
+        NativeAuthCase("nbsp-after", "password\u00a0", null, false),
+        NativeAuthCase("em-space-before", "\u2003password", null, false),
+        NativeAuthCase("em-space-after", "password\u2003", null, false),
+        NativeAuthCase("interior-control", "pass\u0000word", null, false),
+        NativeAuthCase("del-not-trimmed", "password\u007f", null, false),
+        NativeAuthCase("unicode-negation", "\uff01none", null, false),
+        NativeAuthCase("negative-space-after-comma", "!gss, ", null, false),
+        NativeAuthCase("negative-whitespace-token", "!\tnone", null, false),
+    )
+}
+
+internal class NativeIntegerCase(val label: String, val raw: String, val value: Int?) {
+    override fun toString(): String = label
+}
+
+internal object NativeIntegerCases {
+    val exact = listOf(
+        NativeIntegerCase("zero", "0", 0),
+        NativeIntegerCase("one", "1", 1),
+        NativeIntegerCase("two", "2", 2),
+        NativeIntegerCase("three", "3", 3),
+        NativeIntegerCase("ceiling", "100000", 100_000),
+        NativeIntegerCase("one-over", "100001", 100_001),
+        NativeIntegerCase("negative", "-1", -1),
+        NativeIntegerCase("max-int", "2147483647", Int.MAX_VALUE),
+        NativeIntegerCase("min-int", "-2147483648", Int.MIN_VALUE),
+        NativeIntegerCase("max-plus-one", "2147483648", null),
+        NativeIntegerCase("min-minus-one", "-2147483649", null),
+        NativeIntegerCase("ascii-plus", "+1", 1),
+        NativeIntegerCase("negative-zero", "-0", 0),
+        NativeIntegerCase("positive-zero", "+0", 0),
+        NativeIntegerCase("leading-zero", "0001", 1),
+        NativeIntegerCase("long-leading-zero", "0".repeat(64) + "1", 1),
+        NativeIntegerCase("empty", "", null),
+        NativeIntegerCase("space", " ", null),
+        NativeIntegerCase("leading-space", " 1", null),
+        NativeIntegerCase("trailing-space", "1 ", null),
+        NativeIntegerCase("tab", "\t1", null),
+        NativeIntegerCase("newline", "1\n", null),
+        NativeIntegerCase("nul", "\u00001", null),
+        NativeIntegerCase("nbsp", "\u00a01", null),
+        NativeIntegerCase("em-space", "1\u2003", null),
+        NativeIntegerCase("arabic-one", "\u0661", 1),
+        NativeIntegerCase("fullwidth-one", "\uff11", 1),
+        NativeIntegerCase("mixed-digits", "1\u0660\uff10", 100),
+        NativeIntegerCase("signed-arabic", "+\u0662", 2),
+        NativeIntegerCase("signed-fullwidth-negative", "-\uff11", -1),
+        NativeIntegerCase("superscript-one", "\u00b9", null),
+        NativeIntegerCase("supplementary-digit", "\ud835\udfd9", null),
+        NativeIntegerCase("unicode-plus", "\uff0b1", null),
+        NativeIntegerCase("unicode-minus", "\u22121", null),
+        NativeIntegerCase("sign-only", "+", null),
+        NativeIntegerCase("double-sign", "--1", null),
+        NativeIntegerCase("exponent", "1e2", null),
+        NativeIntegerCase("fraction", "1.0", null),
+        NativeIntegerCase("hex", "0x1", null),
+        NativeIntegerCase("underscore", "1_0", null),
+        NativeIntegerCase("comma", "1,0", null),
+        NativeIntegerCase("huge-positive", "9".repeat(64), null),
+    )
+}

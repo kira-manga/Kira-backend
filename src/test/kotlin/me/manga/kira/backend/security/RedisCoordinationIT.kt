@@ -234,7 +234,7 @@ class RedisCoordinationIT {
             loginFailureThreshold = if (path == AuthWavePath.SPRAY) 5 else 2,
             loginIpFailureThreshold = if (path == AuthWavePath.SPRAY) 2 else 100,
         )
-        assertAuthAdmissionWave(services(config), path)
+        assertAuthAdmissionWave(services(config), path, javaClass)
     }
 
     private fun services(config: KiraSecurityProperties.Throttle): List<RedisAuthThrottleService> {

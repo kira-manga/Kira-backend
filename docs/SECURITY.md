@@ -20,6 +20,13 @@ rules, and the `application*.yml` profiles. Authoritative spec: [`PLAN.md`](PLAN
   clearly marked insecure (`application-dev.yml`). **Rotation:** issue a new key, bump `kid`, and (when
   needed) run a bounded dual-accept window before retiring the old key.
 
+The explicit dormant `JwtKeyProvider.fromAcquired` factory can instead bind one
+immutable acquired user key to the actual existing signer/decoder and installation
+family-separation path. It is not a bean or environment-loader switch; the shipping
+constructor and single-key wire contract remain unchanged. Its narrower material
+profile and ownership limits are documented in
+[`IMMUTABLE_SECRET_VERSION_INPUT_V1.md`](IMMUTABLE_SECRET_VERSION_INPUT_V1.md#actual-single-key-user-jwt-owner).
+
 ### DB-backed per-request check (disable and password-reset revocation)
 
 The enabled/credential-version/role check lives **inside the authentication pipeline**, not in a controller argument

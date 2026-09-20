@@ -1,3 +1,7 @@
+import java.io.File
+import java.net.URI
+import org.springframework.boot.gradle.tasks.bundling.BootJar
+
 plugins {
     alias(libs.plugins.kotlin.jvm)
     alias(libs.plugins.kotlin.spring)
@@ -28,7 +32,6 @@ extra["jackson-bom.version"] = libs.versions.jackson.get()
 extra["commons-lang3.version"] = libs.versions.commonsLang3.get()
 extra["log4j2.version"] = libs.versions.log4j2.get()
 extra["netty.version"] = "4.1.136.Final"
-extra["postgresql.version"] = "42.7.12"
 
 java {
     toolchain {
@@ -36,9 +39,62 @@ java {
     }
 }
 
+// Explicit, unqualified verification lane only; never a default repository or Maven-local fallback.
+val ownedPgVerificationRepository = providers.gradleProperty("kiraOwnedPgVerificationRepository")
+    .orNull?.takeIf { it.isNotBlank() }
+
 repositories {
     if (providers.gradleProperty("kiraUseMavenLocal").orNull == "true") {
-        mavenLocal()
+        mavenLocal {
+            // A local test JAR is not the production owned-driver publication.
+            content { excludeModule("me.manga.kira.internal", "postgresql-owned-cut") }
+        }
+    }
+    val ownedPgRepositoryUrl = providers.environmentVariable("KIRA_OWNED_PG_REPOSITORY_URL")
+        .orNull?.takeIf { it.isNotBlank() }
+    require(ownedPgRepositoryUrl == null || ownedPgVerificationRepository == null) {
+        "Select either the private published repository or explicit unqualified verification staging, not both"
+    }
+    val ownedPgRepositoryUri = if (ownedPgVerificationRepository != null) {
+        val staging = File(ownedPgVerificationRepository)
+        require(staging.isAbsolute && staging.isDirectory) {
+            "kiraOwnedPgVerificationRepository must name an existing absolute run-owned Maven staging directory"
+        }
+        staging.toURI()
+    } else {
+        ownedPgRepositoryUrl?.let { configuredUrl ->
+            runCatching { URI(configuredUrl) }.getOrElse {
+                error("KIRA_OWNED_PG_REPOSITORY_URL must be a valid HTTPS Maven repository URL")
+            }.also { repositoryUri ->
+                require(
+                    repositoryUri.scheme == "https" && repositoryUri.host != null && repositoryUri.userInfo == null &&
+                        repositoryUri.query == null && repositoryUri.fragment == null,
+                ) {
+                    "KIRA_OWNED_PG_REPOSITORY_URL must be HTTPS without embedded credentials, query or fragment"
+                }
+            }
+        }
+    }
+    if (ownedPgRepositoryUri != null) {
+        exclusiveContent {
+            forRepository {
+                maven(ownedPgRepositoryUri) {
+                    name = if (ownedPgVerificationRepository == null) "KiraOwnedPg" else "KiraOwnedPgVerification"
+                    if (ownedPgVerificationRepository == null) {
+                        credentials {
+                            username = providers.environmentVariable("KIRA_PACKAGES_USER").orNull
+                            password = providers.environmentVariable("KIRA_PACKAGES_READ_TOKEN").orNull
+                        }
+                    }
+                    metadataSources {
+                        mavenPom()
+                        ignoreGradleMetadataRedirection()
+                    }
+                    mavenContent { releasesOnly() }
+                }
+            }
+            filter { includeModule("me.manga.kira.internal", "postgresql-owned-cut") }
+        }
     }
     maven("https://maven.pkg.github.com/kira-manga/kira-source-engine") {
         name = "KiraSourceEngine"
@@ -52,7 +108,14 @@ repositories {
         }
         content { includeGroup("me.manga.kira.source") }
     }
-    mavenCentral()
+    mavenCentral {
+        content { excludeModule("me.manga.kira.internal", "postgresql-owned-cut") }
+    }
+}
+
+configurations.configureEach {
+    // Both drivers expose org.postgresql.Driver. Never ship stock classes beside the owned cut.
+    exclude(group = "org.postgresql", module = "postgresql")
 }
 
 dependencies {
@@ -76,11 +139,44 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation("me.manga.kira.source:source-engine:0.1.0")
 
+    // --- Dormant complaint catalog readback; explicit owned URLConnection transport only ---
+    implementation(libs.aws.sdk.s3) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
+    // Exact-version SecretBinary reads use the same explicitly owned synchronous transport.
+    implementation(libs.aws.sdk.secretsmanager) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
+    // Dormant J-bound data-key operations; same explicit owned synchronous transport.
+    implementation(libs.aws.sdk.kms) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
+    // Fixed dormant sealer STS protocol; no default credentials or authority/activation wiring.
+    implementation(libs.aws.sdk.sts) {
+        exclude(group = "software.amazon.awssdk", module = "apache-client")
+        exclude(group = "software.amazon.awssdk", module = "apache5-client")
+        exclude(group = "software.amazon.awssdk", module = "netty-nio-client")
+    }
+    implementation(libs.aws.sdk.url.connection.client)
+
     // --- API docs ---
     implementation(libs.springdoc.openapi.starter.webmvc.ui)
 
     // --- Runtime ---
-    runtimeOnly("org.postgresql:postgresql")
+    // Normal runtime dependency, also inherited by tests/bootJar; never a Test.classpath overlay.
+    // Registry/publication and resolved-lock verification remain explicit release prerequisites.
+    runtimeOnly(libs.postgresql.owned.cut) {
+        version { strictly(libs.versions.postgresqlOwnedCut.get()) }
+    }
+    runtimeOnly(libs.checker.qual) {
+        version { strictly(libs.versions.checkerQual.get()) }
+    }
 
     // --- Test ---
     testImplementation("org.springframework.boot:spring-boot-starter-test")
@@ -179,4 +275,22 @@ tasks.withType<AbstractArchiveTask>().configureEach {
 
 tasks.jar {
     enabled = false
+}
+
+if (ownedPgVerificationRepository != null) {
+    tasks.named<BootJar>("bootJar") {
+        onlyIf("unqualified verification bootJar needs an explicit nonshipping gate") {
+            check(providers.gradleProperty("kiraOwnedPgAllowNonShippingBootJar").orNull == "true") {
+                "Verification bootJar requires -PkiraOwnedPgAllowNonShippingBootJar=true; output must not be distributed"
+            }
+            true
+        }
+        archiveClassifier.set("unqualified-owned-driver-verification")
+        manifest.attributes["Kira-Owned-Driver-Provenance"] = "UNQUALIFIED-RUN-OWNED-MAVEN"
+    }
+    tasks.matching { it.name == "bootBuildImage" || it.name.startsWith("publish") }.configureEach {
+        doFirst {
+            error("Unqualified owned-driver verification staging is not authorized for distribution")
+        }
+    }
 }

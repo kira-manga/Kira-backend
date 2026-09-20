@@ -5,10 +5,24 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import me.manga.kira.backend.audit.domain.AuditAction
 import me.manga.kira.backend.audit.domain.AuditRepository
+import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
+import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
+import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
+import me.manga.kira.backend.audit.domain.CountedComplaintAuditRepository
+import me.manga.kira.backend.audit.domain.CountedInstallationDeleteAuthorizationAuditEntry
+import me.manga.kira.backend.audit.domain.CountedInstallationEnrollmentAuditEntry
+import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAuditEntry
+import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAuditRepository
+import me.manga.kira.backend.audit.domain.OwnerDeleteAuditOutcome
+import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAllAuditEntry
 import me.manga.kira.backend.audit.domain.NewAuditEntry
+import me.manga.kira.backend.audit.domain.OwnerDeleteAllAuditOutcome
+import me.manga.kira.backend.audit.domain.scalarDetails
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.security.CurrentUser
 import org.springframework.stereotype.Service
 import java.time.Clock
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -40,6 +54,9 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
         detail: Map<String, Any?> = emptyMap(),
         actorUserId: UUID? = currentActor(),
     ) {
+        require(!action.wire.startsWith("COMPLAINT_")) {
+            "Complaint audit writes are not available through the ordinary route."
+        }
         audit.record(
             NewAuditEntry(
                 actorUserId = actorUserId,
@@ -50,6 +67,60 @@ class AuditService(private val audit: AuditRepository, private val currentUser: 
                 createdAt = at,
             ),
         )
+    }
+
+    /** Dormant, I/O-free preparation with explicit time; it cannot write or allocate audit capacity. */
+    internal fun prepareComplaintMutation(mutation: ComplaintAuditMutation, at: Instant): PreparedComplaintAudit {
+        val detailJson = encode(mutation.scalarDetails())
+        requireComplaintAuditPayloadSize(detailJson)
+        return PreparedMutationAudit(mutation, detailJson, at)
+    }
+
+    /** Existing-phase write only. The adapter must consume a real allocation for this exact mutation. */
+    internal fun recordComplaintMutation(mutation: ComplaintAuditMutation, allocation: ComplaintAuditAllocation, at: Instant) {
+        val prepared = prepareComplaintMutation(mutation, at)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordComplaint(CountedComplaintAuditEntry(mutation, prepared.detailJson, prepared.createdAt), allocation)
+    }
+
+    /** Scope-only enrollment event; its existing-phase allocation must prove both real paired INSERTs. */
+    internal fun recordInstallationEnrollment(scope: ComplaintDataScope, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(mapOf("version" to 1))
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordInstallationEnrollment(CountedInstallationEnrollmentAuditEntry(scope, detailJson, at), allocation)
+    }
+
+    /** Scope-only fixed authorization event. Actual receipt/pending writes and prepaid custody are checked by the shared adapter. */
+    internal fun recordInstallationDeleteAuthorization(submittedVersion: Long, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(mapOf("version" to submittedVersion))
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordInstallationDeleteAuthorization(CountedInstallationDeleteAuthorizationAuditEntry(submittedVersion, detailJson, at), allocation)
+    }
+
+    /** Actual removed resources only, then one aggregate installation completion; allocation binds the locked outcome. */
+    internal fun recordOwnerDeleteAll(outcome: OwnerDeleteAllAuditOutcome, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(outcome.scalarDetails())
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedComplaintAuditRepository)
+        counted.recordOwnerDeleteAll(CountedOwnerDeleteAllAuditEntry(outcome, detailJson, at), allocation)
+    }
+
+    internal fun recordOwnerDelete(outcome: OwnerDeleteAuditOutcome, allocation: ComplaintAuditAllocation, at: Instant) {
+        val detailJson = encode(outcome.scalarDetails())
+        requireComplaintAuditPayloadSize(detailJson)
+        val counted = checkNotNull(audit as? CountedOwnerDeleteAuditRepository)
+        counted.recordOwnerDelete(CountedOwnerDeleteAuditEntry(outcome, detailJson, at), allocation)
+    }
+
+    private class PreparedMutationAudit(mutation: ComplaintAuditMutation, override val detailJson: String, override val createdAt: Instant) :
+        PreparedComplaintAudit {
+        override val action = mutation.action
+        override val subject = mutation.subject
+        override val actor = mutation.actor
+
+        override fun toString(): String = "PreparedComplaintAudit(action=${action.wire}, redacted)"
     }
 
     private fun currentActor(): UUID? = currentUser.getOrNull()?.id

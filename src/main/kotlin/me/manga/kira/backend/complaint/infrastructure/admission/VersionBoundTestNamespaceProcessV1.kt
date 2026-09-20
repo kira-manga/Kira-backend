@@ -1,0 +1,158 @@
+package me.manga.kira.backend.complaint.infrastructure.admission
+
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePoolDescriptor
+import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
+import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundTestActivationConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
+import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
+import java.security.MessageDigest
+import java.util.UUID
+
+/**
+ * Complete cold PRE_CUTOVER_TEST/memory/one-declared-instance inventory and full D, separate from LIVE.
+ * Exact acquired consumers, P/TEST J, completed pools, shared lanes, reader and activation policy are
+ * mandatory. This is not registered/projected TEST state, a process binding or a current capability.
+ * Matching control/run observations still require provenance; this owner does not promote them.
+ */
+internal class VersionBoundTestNamespaceProcessV1 private constructor(
+    val consumers: VersionBoundTestComplaintConsumerConfigurationV1,
+    val pools: VersionBoundPersistencePools,
+    internal val implementationSchema: Int,
+    internal val desiredGeneration: Long,
+    internal val databaseIdentity: UUID,
+    internal val restoreIdentity: UUID,
+    val publicationLanes: JournalPublicationLanesV1,
+    val catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+    val catalogActivation: VersionBoundTestActivationConfigurationV1,
+    val ordinarySeal: VersionBoundTestOrdinarySealV1?,
+) {
+    private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
+    private val canonical: ByteArray
+    private val hash: ByteArray
+
+    init {
+        requireOwners()
+        // Same existing registry only; local N/R accounting registration is not TEST activation.
+        publicationLanes.retainTestJournal(consumers.journalConfiguration)
+        retainedPools = pools.descriptors()
+        canonical = ComplaintEffectiveTestConfigurationV1.encode(this)
+        hash = MessageDigest.getInstance("SHA-256").digest(canonical)
+        requireUnchangedConfiguration()
+    }
+
+    /** Defensive historical configuration bytes/hash, not assertions about current control or TEST state. */
+    fun canonicalBytes(): ByteArray = canonical.copyOf()
+
+    fun configurationHashBytes(): ByteArray = hash.copyOf()
+
+    /** Only the complete root derives this diagnostic full-D value. It carries no current-use authority. */
+    fun desiredSettings(): ComplaintInstallationDesiredSettings.Configured {
+        requireUnchangedConfiguration()
+        return ComplaintInstallationDesiredSettings.Configured(
+            ComplaintInstallationMode.PRE_CUTOVER_TEST,
+            implementationSchema,
+            desiredGeneration,
+            consumers.journalConfiguration.scope,
+            databaseIdentity,
+            restoreIdentity,
+            hash,
+        )
+    }
+
+    /**
+     * Local owner/descriptor checks only; safe inside an owned phase outside its lifecycle monitor.
+     * No JSON, crypto, provider, checkout, callbacks or connection-free precondition here. The actual
+     * pool descriptor path compares mutable Hikari/lower-source settings before returning its pins.
+     */
+    fun requireUnchangedConfiguration() {
+        requireOwners()
+        publicationLanes.requireTestJournal(consumers.journalConfiguration)
+        val current = pools.descriptors()
+        require(current.size == retainedPools.size && current.indices.all { current[it] === retainedPools[it] }) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+    }
+
+    /** Normal retained runtime root only. Never changes a named root's permanent seals or launch policy. */
+    internal fun requireRegistrationTarget() {
+        requireUnchangedConfiguration()
+        require(!pools.shutdownRequested()) { INVALID_TEST_PROCESS_CONFIGURATION }
+        val coordinator = pools.catalogCoordinator
+        require(!coordinator.catalogTestRunActivation && !coordinator.catalogSignerRotationActivation &&
+            !coordinator.catalogSignerRotationRecovery && !coordinator.catalogSignerRotationDelivery &&
+            !coordinator.catalogSignerRotationAuthoring && !coordinator.catalogGenesisAuthoring &&
+            !coordinator.catalogGenesisFinalization && !coordinator.desiredInstallationOperator) { INVALID_TEST_PROCESS_CONFIGURATION }
+        pools.ordinary.requireOrdinaryPhaseResource()
+        pools.deletion.requireDeletionPhaseResource()
+        val names = pools.descriptors().flatMap { it.openings() }.map { it.publicDriverProperties()["user"] }
+        require(names.none { it == me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME ||
+            it == me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME }) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+    }
+
+    private fun requireOwners() {
+        require(implementationSchema == 1 && desiredGeneration > 0 && isV4(databaseIdentity) && isV4(restoreIdentity)) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+        require(pools.epochRotation == null && consumers.coordinationMode == "memory" && consumers.declaredInstances == 1) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+        require(consumers.jwt.boundUserKeyProvider != null && consumers.journalRouting.journalConfiguration === consumers.journalConfiguration) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+        val journal = consumers.journalConfiguration
+        val writer = journal.declaration().writer
+        require(journal.scope.testOnly && isV4(journal.scope.id)) { INVALID_TEST_PROCESS_CONFIGURATION }
+        require(writer.databaseIdentity == databaseIdentity.toString() && writer.restoreIdentity == restoreIdentity.toString()) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+        require(consumers.ownerDeleteAllPolicy === ComplaintOwnerDeleteAllAdmissionPolicy.Disabled) { INVALID_TEST_PROCESS_CONFIGURATION }
+        require(
+            consumers.ownerCreatePolicy.memberLimit == consumers.ownerEditPolicy.memberLimit &&
+                consumers.ownerCreatePolicy.memberLimit == consumers.ownerDeletePolicy.memberLimit &&
+                consumers.ownerCreatePolicy.pruneBatch == consumers.ownerEditPolicy.pruneBatch &&
+                consumers.ownerCreatePolicy.pruneBatch == consumers.ownerDeletePolicy.pruneBatch,
+        ) { INVALID_TEST_PROCESS_CONFIGURATION }
+        catalogActivation.requireRetained(pools, catalogReadback, journal)
+        ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
+        ordinarySeal?.requireCatalogReferences(catalogActivation.putAuthority, catalogActivation.signAuthority)
+        require(ordinarySeal == null || ordinarySeal.retention.environment == catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+    }
+
+    override fun toString(): String = "VersionBoundTestNamespaceProcessV1(PRE_CUTOVER_TEST,memory,redacted,no-authority)"
+
+    companion object {
+        /** No supplied D/preimage, LIVE conversion or current-state input. Optional seal intake is cold and fixture-only. */
+        fun fromRetained(
+            consumers: VersionBoundTestComplaintConsumerConfigurationV1,
+            pools: VersionBoundPersistencePools,
+            implementationSchema: Int,
+            desiredGeneration: Long,
+            databaseIdentity: UUID,
+            restoreIdentity: UUID,
+            publicationLanes: JournalPublicationLanesV1,
+            catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
+            catalogActivation: VersionBoundTestActivationConfigurationV1,
+            ordinarySeal: VersionBoundTestOrdinarySealV1? = null,
+        ): VersionBoundTestNamespaceProcessV1 {
+            requireConnectionFree()
+            return VersionBoundTestNamespaceProcessV1(
+                consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal,
+            )
+        }
+
+        private fun isV4(value: UUID): Boolean = value.version() == 4 && value.variant() == 2
+    }
+}
+
+internal const val INVALID_TEST_PROCESS_CONFIGURATION = "Invalid version-bound TEST namespace process configuration"

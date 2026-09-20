@@ -53,9 +53,9 @@ class FlywayIncrementalOrderIT {
 
             flyway(database, MigrationVersion.LATEST).migrate()
             assertEquals(
-                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2"),
+                (1..13).map(Int::toString) + listOf("13.1", "13.2") + (14..21).map(Int::toString),
                 historyVersions(database),
-                "V4 through V13.2 apply on top, in order",
+                "V4 through V21, including V13.1 and V13.2, apply on top in order",
             )
         }
     }
@@ -68,9 +68,9 @@ class FlywayIncrementalOrderIT {
 
             flyway(database, MigrationVersion.LATEST).migrate()
             assertEquals(
-                listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2"),
+                (1..13).map(Int::toString) + listOf("13.1", "13.2") + (14..21).map(Int::toString),
                 historyVersions(database),
-                "V5 through V13.2 apply on top, in order",
+                "V5 through V21, including V13.1 and V13.2, apply on top in order",
             )
         }
     }

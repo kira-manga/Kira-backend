@@ -3,7 +3,11 @@ package me.manga.kira.backend.security
 import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.exception.TooManyRequestsException
 import me.manga.kira.backend.common.exception.UnauthorizedException
-import me.manga.kira.backend.config.KiraAdminStudioProperties
+import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseFixture
+import me.manga.kira.backend.common.infrastructure.persistence.ScopedStepUpFixture
+import me.manga.kira.backend.common.infrastructure.persistence.SyntheticComplaintCounters
+import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.common.infrastructure.persistence.withOrdinarySourceGrantCleanup
 import me.manga.kira.backend.config.KiraAuthProperties
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.sourceconfig.api.AdminStepUpController
@@ -18,15 +22,15 @@ import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.UserRepository
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.`when`
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.security.crypto.password.PasswordEncoder
 import java.time.Instant
-import java.util.UUID
 
-/** Security boundary tests, no DB/listener. Matched numeric vectors also exercise the real Admin BFF handlers. */
+/** Numeric boundary tests plus real scoped-PG password composition, without an HTTP listener. Numeric vectors also match the Admin BFF contract. */
 class TrustedIngressIdentityTest {
     private val properties = KiraSecurityProperties(trustForwardedHeaders = true, trustedProxies = listOf(HOST, ADMIN))
     private val resolver = ClientIpResolver(properties)
@@ -115,14 +119,20 @@ class TrustedIngressIdentityTest {
     }
 
     @Test
-    fun `real login and step-up controllers share the resolved aggregate bucket without blocking a distinct client`() {
-        val endpoints = PasswordEndpoints(properties.copy(throttle = KiraSecurityProperties.Throttle(loginIpFailureThreshold = 2)))
+    fun `real login and step-up controllers share the resolved aggregate bucket without blocking a distinct client`() = withStepUpFixture { fixture ->
+        val endpoints = PasswordEndpoints(properties.copy(throttle = KiraSecurityProperties.Throttle(loginIpFailureThreshold = 2)), fixture)
         assertThrows(UnauthorizedException::class.java) { endpoints.login("first@example.invalid", request("192.0.2.1")) }
         assertThrows(UnauthorizedException::class.java) { endpoints.stepUp(request("::ffff:c000:201")) }
         assertThrows(TooManyRequestsException::class.java) { endpoints.login("other@example.invalid", request("192.0.2.1")) }
         assertThrows(TooManyRequestsException::class.java) { endpoints.stepUp(request("192.0.2.1")) }
         assertThrows(UnauthorizedException::class.java) { endpoints.login("other@example.invalid", request("2001:db8::2")) }
         assertThrows(UnauthorizedException::class.java) { endpoints.stepUp(request("2001:db8::3")) }
+        assertEquals(3, fixture.jdbc.snapshots.size)
+        assertTrue(fixture.jdbc.snapshots.all { it.lease.completion.quiescent() })
+        assertTrue(fixture.cleanups.isEmpty() && fixture.ordinary.grantIds().isEmpty())
+        assertEquals(0, fixture.jdbc.insertAttempts)
+        assertEquals(0, fixture.ordinary.admission.activeOwners())
+        requireConnectionFree()
     }
 
     @Test
@@ -139,7 +149,18 @@ class TrustedIngressIdentityTest {
         if (xff != null) addHeader("X-Forwarded-For", xff)
     }
 
-    private class PasswordEndpoints(properties: KiraSecurityProperties) {
+    private fun withStepUpFixture(test: (ScopedStepUpFixture) -> Unit) {
+        PgLifecycleDatabaseFixture(TrustedIngressIdentityTest::class.java).use { database ->
+            database.start()
+            withOrdinarySourceGrantCleanup(database, maximumPoolSize = 2) { ordinary ->
+                SyntheticComplaintCounters(ordinary.foreignTemplate(), ordinary.cutoff).use { counters ->
+                    test(ScopedStepUpFixture(ordinary, counters))
+                }
+            }
+        }
+    }
+
+    private class PasswordEndpoints(properties: KiraSecurityProperties, private val fixture: ScopedStepUpFixture? = null) {
         private val clock = MutableClock()
         private val throttle = AuthThrottleService(properties, clock)
         private val users = mock(UserRepository::class.java)
@@ -157,17 +178,16 @@ class TrustedIngressIdentityTest {
             ),
             resolver,
         )
-        private val step = AdminStepUpController(
-            AdminStepUpService(
-                users,
-                mock(PasswordEncoder::class.java),
-                mock(AdminStepUpGrantRepository::class.java),
-                throttle,
-                KiraAdminStudioProperties(),
-                clock,
-            ),
-            resolver,
-        )
+        private val step = fixture?.let {
+            AdminStepUpController(
+                AdminStepUpService(
+                    ScopedAdminStepUpIssuer(it.phases, mock(PasswordEncoder::class.java), throttle),
+                    mock(AdminStepUpGrantRepository::class.java),
+                    clock,
+                ),
+                resolver,
+            )
+        }
 
         fun login(email: String, request: MockHttpServletRequest) {
             `when`(userService.normalizeEmail(email)).thenReturn(email)
@@ -175,8 +195,8 @@ class TrustedIngressIdentityTest {
         }
 
         fun stepUp(request: MockHttpServletRequest) {
-            val admin = AuthenticatedUser(UUID.fromString("11111111-1111-4111-8111-111111111111"), "admin@example.invalid", Role.ADMIN, Instant.EPOCH)
-            step.issue(AdminStepUpRequest("Synthetic-wrong-password"), admin, request)
+            val admin = AuthenticatedUser(requireNotNull(fixture).ordinary.userId, "admin@example.invalid", Role.ADMIN, Instant.EPOCH)
+            requireNotNull(step).issue(AdminStepUpRequest("Synthetic-wrong-password"), admin, request)
         }
     }
 

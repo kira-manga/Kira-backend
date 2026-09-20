@@ -1,0 +1,126 @@
+package me.manga.kira.backend.security
+
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
+import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
+import java.time.Clock
+
+/**
+ * Cold actual admission/cursor owners from one acquired graph. No lookup, bean, D or activation.
+ * Fixed admission binding forbids rotation AND retirement behind these retained descriptors. Rebuilding
+ * this in-memory owner loses counters and is not a safe rotation or rollout procedure.
+ */
+internal class VersionBoundComplaintConsumerConfiguration private constructor(
+    val jwt: VersionBoundInstallationJwtConfiguration,
+    val capacityPolicy: ComplaintCapacityPolicyV1,
+    val journalConfiguration: ComplaintJournalConfigurationV1,
+    val journalRouting: VersionBoundComplaintJournalRouting,
+    private val settings: VersionBoundComplaintConsumerSettings,
+    val admissionPolicy: ComplaintAdmissionPolicy,
+    val ownerCreatePolicy: ComplaintOwnerCreateAdmissionPolicy.Bounded,
+    val ownerDeleteAllPolicy: ComplaintOwnerDeleteAllAdmissionPolicy.Bounded,
+    private val admissionKeys: ComplaintAdmissionKeyConfiguration,
+    val ownerCursorCodec: ComplaintOwnerCursorCodec,
+    val ingressAdmission: ComplaintIngressAdmission,
+    descriptors: List<VersionedSecretBinding>,
+) {
+    private val bindings = descriptors.toList()
+
+    val admissionCurrentKeyId: String get() = admissionKeys.currentKeyId
+    val admissionPreviousKeyId: String? get() = admissionKeys.previousKeyId
+    val coordinationMode: String get() = settings.coordinationMode
+    val declaredInstances: Int get() = settings.declaredInstances
+    val trustForwardedHeaders: Boolean get() = settings.trustForwardedHeaders
+    val enrollmentPolicy: ComplaintEnrollmentAdmissionPolicy.Bounded
+        get() = admissionPolicy.enrollment as ComplaintEnrollmentAdmissionPolicy.Bounded
+
+    fun trustedProxies(): List<String> = settings.trustedProxies()
+
+    /** Actual USER, INSTALLATION, ADMISSION, CURSOR and JOURNAL bindings, each family sorted by logical ID. */
+    fun descriptors(): List<VersionedSecretBinding> = bindings.toList()
+
+    override fun toString(): String = "VersionBoundComplaintConsumerConfiguration(redacted,no-authority)"
+
+    companion object {
+        fun fromAcquired(
+            jwt: VersionBoundInstallationJwtConfiguration,
+            capacityPolicy: ComplaintCapacityPolicyV1,
+            journal: ComplaintJournalConfigurationV1,
+            keys: VersionBoundComplaintConsumerInputs,
+            settings: VersionBoundComplaintConsumerSettings,
+        ): VersionBoundComplaintConsumerConfiguration {
+            val user = requireNotNull(jwt.boundUserKeyProvider) { INVALID_BOUND_COMPLAINT_CONSUMERS }
+            // The routing owner already enforces J's exact active/retained IDs and immutable versions.
+            // Requiring that same J instance precludes an equivalent-looking but unrelated declaration.
+            require(keys.journalRouting.journalConfiguration === journal) { INVALID_BOUND_COMPLAINT_CONSUMERS }
+            val admissions = keys.admissionSecrets()
+            val cursors = keys.cursorSecrets()
+            val descriptors = jwt.descriptors() + admissions.map { it.descriptor }.sortedBy { it.logicalKeyId } +
+                cursors.map { it.descriptor } + keys.journalRouting.descriptors()
+            require(descriptors.map { it.version }.distinct().size == descriptors.size) { INVALID_BOUND_COMPLAINT_CONSUMERS }
+
+            val policy = settings.admissionPolicy(capacityPolicy)
+            val createPolicy = settings.ownerCreatePolicy(capacityPolicy)
+            val deleteAllPolicy = ComplaintOwnerDeleteAllAdmissionPolicy.Bounded(capacityPolicy, createPolicy.memberLimit, createPolicy.pruneBatch)
+            val resolver = settings.clientIpResolver()
+            val copies = ArrayList<ByteArray>(descriptors.size)
+            val admissionCopies = ArrayList<ComplaintAdmissionKey>(admissions.size)
+            try {
+                val jwtMaterials = jwt.descriptors().map { binding ->
+                    val key = if (binding.family == SecretMaterialFamily.USER_ADMIN_JWT) {
+                        user.secretKey
+                    } else {
+                        requireNotNull(jwt.installationKeyRing.key(binding.logicalKeyId)) { INVALID_BOUND_COMPLAINT_CONSUMERS }
+                    }
+                    KeyMaterial(binding, key.encoded.also { copies.add(it) })
+                }
+                val admissionMaterials = admissions.map { copyMaterial(it, copies) }
+                val cursorMaterials = cursors.map { copyMaterial(it, copies) }
+                val journalFamily = keys.journalRouting.admissionForbiddenFamily()
+                (jwtMaterials + admissionMaterials + cursorMaterials).forEach { requireJournalSeparation(it, journalFamily) }
+                admissionMaterials.forEach { admissionCopies.add(ComplaintAdmissionKey(it.binding.logicalKeyId, it.bytes)) }
+                val fixedKeys = ComplaintAdmissionKeyConfiguration.fixed(
+                    admissionCopies.first(),
+                    admissionCopies.getOrNull(1),
+                    listOf(
+                        jwtFamily("user-admin-jwt", SecretMaterialFamily.USER_ADMIN_JWT, jwtMaterials),
+                        jwtFamily("installation-jwt", SecretMaterialFamily.INSTALLATION_JWT, jwtMaterials),
+                        ComplaintAdmissionForbiddenFamily("owner-cursor", cursorMaterials.map { it.bytes }),
+                        journalFamily,
+                    ),
+                )
+                val codec = ComplaintOwnerCursorCodec(
+                    keys.cursorActiveKeyId,
+                    cursorMaterials.associate { it.binding.logicalKeyId to it.bytes },
+                    (jwtMaterials + admissionMaterials).map { it.bytes },
+                    Clock.systemUTC(),
+                )
+                val ingress = ComplaintIngressAdmission(resolver, policy, fixedKeys, SystemComplaintAdmissionNanoClock, createPolicy, deleteAllPolicy)
+                return VersionBoundComplaintConsumerConfiguration(
+                    jwt, capacityPolicy, journal, keys.journalRouting, settings, policy, createPolicy, deleteAllPolicy, fixedKeys, codec, ingress, descriptors,
+                )
+            } finally {
+                admissionCopies.forEach { it.destroy() }
+                copies.forEach { it.fill(0) }
+            }
+        }
+
+        private fun copyMaterial(acquired: AcquiredVersionedSecret, copies: MutableList<ByteArray>): KeyMaterial = acquired.useMaterial { material ->
+            require(material.size in 32..128) { INVALID_BOUND_COMPLAINT_CONSUMERS }
+            KeyMaterial(acquired.descriptor, material.copyOf().also { copies.add(it) })
+        }
+
+        private fun requireJournalSeparation(material: KeyMaterial, journalFamily: ComplaintAdmissionForbiddenFamily) {
+            val candidate = ComplaintAdmissionKey(material.binding.logicalKeyId, material.bytes)
+            try {
+                require(!journalFamily.forbids(candidate)) { INVALID_BOUND_COMPLAINT_CONSUMERS }
+            } finally {
+                candidate.destroy()
+            }
+        }
+
+        private fun jwtFamily(name: String, family: SecretMaterialFamily, materials: List<KeyMaterial>): ComplaintAdmissionForbiddenFamily =
+            ComplaintAdmissionForbiddenFamily(name, materials.filter { it.binding.family == family }.map { it.bytes })
+    }
+
+    private class KeyMaterial(val binding: VersionedSecretBinding, val bytes: ByteArray)
+}

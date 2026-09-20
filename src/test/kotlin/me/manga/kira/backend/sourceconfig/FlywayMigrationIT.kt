@@ -12,14 +12,14 @@ import java.sql.SQLException
  * PLAN §11 test 20 — `FlywayMigrationIT`, now in its FINAL form. The context boots against a clean
  * container (which implicitly validates every migration applies), and `flyway_schema_history` must
  * contain **exactly** V1 users through V13 source changesets, V13.1 credential versions and
- * V13.2 initial-catalog classification,
+ * V13.2 initial-catalog classification, then V14..V21 complaint migrations (23 total),
  * in version order, with `outOfOrder=false` (the migration history is complete as of Phase 9 — PLAN
  * §5/§15.9). A lower version can never appear after a higher one has been applied.
  */
 class FlywayMigrationIT : AbstractIntegrationTest() {
 
     @Test
-    fun `flyway history is exactly V1 through V13 then V13_1 and V13_2 in version order`() {
+    fun `flyway history is exactly V1 through V21 including V13_1 and V13_2 in version order`() {
         val versions =
             jdbcTemplate.queryForList(
                 "SELECT version FROM flyway_schema_history " +
@@ -27,7 +27,7 @@ class FlywayMigrationIT : AbstractIntegrationTest() {
                     "ORDER BY installed_rank",
                 String::class.java,
             )
-        assertEquals(listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "13.1", "13.2"), versions)
+        assertEquals((1..13).map(Int::toString) + listOf("13.1", "13.2") + (14..21).map(Int::toString), versions)
     }
 
     @Test

@@ -39,6 +39,8 @@ data class AuditEntry(
     val entityId: String,
     val detailJson: String,
     val createdAt: Instant,
+    val complaintDataScopeId: UUID? = null,
+    val complaintActorKind: ComplaintAuditActorKind? = null,
 )
 
 data class AuditPage(val items: List<AuditEntry>, val total: Long)
