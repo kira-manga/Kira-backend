@@ -272,6 +272,7 @@ class AuthAttemptCallerTest {
         assertEquals("AUTH_THROTTLE_UNAVAILABLE", error.code)
         assertEquals(429, error.status.value())
         assertEquals(5L, error.retryAfterSeconds)
+        assertTrue(error.suppressed.isEmpty(), "Expected throttle refusal must not hide managed-resource cleanup failures.")
     }
 
     private fun unavailable() = TooManyRequestsException("Authentication is temporarily unavailable.", "AUTH_THROTTLE_UNAVAILABLE", 5)

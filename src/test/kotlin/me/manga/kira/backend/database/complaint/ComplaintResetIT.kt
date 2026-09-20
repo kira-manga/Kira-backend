@@ -3,7 +3,10 @@ package me.manga.kira.backend.database.complaint
 import me.manga.kira.backend.support.AbstractIntegrationTest
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
+import org.springframework.test.annotation.DirtiesContext
 
+// Retire this Spring pool before standalone owned-root fixtures observe the shared pgjdbc Timer.
+@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 class ComplaintResetIT : AbstractIntegrationTest() {
     @Test
     fun `shared Spring reset handles populated scoped foreign keys and restores closed seeds repeatedly`() {
