@@ -4,12 +4,14 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationBootstrap
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationCurrentStateAssessment
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.infrastructure.admission.InstallationCurrentStateReadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.JdbcInstallationCurrentStateReader
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 
-/** Dormant diagnostic read only. Matching is PROVENANCE_REQUIRED, never a scope response, session or admission grant. */
+/** Diagnostic equality stays untrusted. The separate bootstrap path requires the actual retained TEST registration. */
 internal class ComplaintInstallationCurrentStatePhaseExecutor(
     private val ownership: PersistencePhaseOwnership,
     private val reader: JdbcInstallationCurrentStateReader,
@@ -33,5 +35,24 @@ internal class ComplaintInstallationCurrentStatePhaseExecutor(
         return operation.assessment // Exact retained read + known commit + actual release, never equality of a supplied enum.
     }
 
-    override fun toString(): String = "ComplaintInstallationCurrentStatePhaseExecutor(read-only,no-authority)"
+    @Suppress("TooGenericExceptionCaught")
+    fun bootstrap(registration: ComplaintTestNamespaceRegistrationV1): ComplaintInstallationBootstrap {
+        requireConnectionFree()
+        reader.requireBootstrapResources(ownership, registration)
+        val phase = ownership.enterComplaintInstallationCurrentState()
+        var captured: InstallationCurrentStateReadOperation? = null
+        try {
+            phase.begin()
+            captured = reader.readBootstrap(ownership, registration)
+            phase.commit()
+        } catch (problem: Throwable) {
+            phase.recordFailure(problem)
+        } finally {
+            phase.finish()
+        }
+        val operation = captured ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+        return operation.bootstrap(registration)
+    }
+
+    override fun toString(): String = "ComplaintInstallationCurrentStatePhaseExecutor(read-only,registered-TEST-bootstrap)"
 }

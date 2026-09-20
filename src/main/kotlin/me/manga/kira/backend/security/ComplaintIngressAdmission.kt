@@ -177,6 +177,8 @@ internal class ComplaintIngressAdmission(
 
     internal fun startAdminDetail(context: ComplaintIngressContext) = startAdminRead(context, SemanticOperation.ADMIN_DETAIL)
 
+    internal fun startAdminStats(context: ComplaintIngressContext) = startAdminRead(context, SemanticOperation.ADMIN_STATS)
+
     private fun startAdminRead(context: ComplaintIngressContext, operation: SemanticOperation) {
         requireConnectionFree()
         locked {
@@ -190,7 +192,8 @@ internal class ComplaintIngressAdmission(
         requireConnectionFree()
         locked {
             val state = state(context)
-            if (state.operation !== SemanticOperation.ADMIN_SEARCH && state.operation !== SemanticOperation.ADMIN_DETAIL ||
+            if ((state.operation !== SemanticOperation.ADMIN_SEARCH && state.operation !== SemanticOperation.ADMIN_DETAIL &&
+                state.operation !== SemanticOperation.ADMIN_STATS) ||
                 state.admission != null || !scope.testOnly
             ) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             val limits = adminReadPolicy as? ComplaintAdminReadAdmissionPolicy.Bounded ?: refuseComplaintAdmission()
@@ -209,7 +212,9 @@ internal class ComplaintIngressAdmission(
         requireConnectionFree()
         locked {
             val state = unconsumedAdmission(context, identity)
-            if (state.operation !== SemanticOperation.ADMIN_SEARCH && state.operation !== SemanticOperation.ADMIN_DETAIL) {
+            if (state.operation !== SemanticOperation.ADMIN_SEARCH && state.operation !== SemanticOperation.ADMIN_DETAIL &&
+                state.operation !== SemanticOperation.ADMIN_STATS
+            ) {
                 refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             }
             state.consumed = true
@@ -816,6 +821,7 @@ internal class ComplaintIngressAdmission(
         OWNER_HISTORY,
         ADMIN_SEARCH,
         ADMIN_DETAIL,
+        ADMIN_STATS,
         ADMIN_CONTENT,
         ADMIN_STATUS,
         OWNER_STATUS,

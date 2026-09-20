@@ -9,6 +9,7 @@ internal interface PersistenceComplaintAdminRead {
     fun requireAuthentication(jdbc: JdbcTemplate)
     fun requireSearch(jdbc: JdbcTemplate)
     fun requireDetail(jdbc: JdbcTemplate)
+    fun requireStats(jdbc: JdbcTemplate)
     fun retain(operation: ComplaintAdminReadOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: ComplaintAdminReadOperation, jdbc: JdbcTemplate)
     fun connection(operation: ComplaintAdminReadOperation, jdbc: JdbcTemplate): Connection

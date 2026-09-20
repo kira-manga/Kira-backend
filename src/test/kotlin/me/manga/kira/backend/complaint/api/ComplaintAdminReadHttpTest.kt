@@ -19,6 +19,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminReadQuery
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRejected
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadResult
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStats
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatsQuery
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintKind
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryContent
@@ -26,10 +28,12 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryNotice
 import me.manga.kira.backend.complaint.domain.ComplaintPlatform
 import me.manga.kira.backend.complaint.domain.ComplaintStatus
 import me.manga.kira.backend.complaint.domain.ComplaintType
+import me.manga.kira.backend.complaint.domain.adminStatsTestValue
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.adminReadDetailRequest
 import me.manga.kira.backend.security.adminReadSearchRequest
+import me.manga.kira.backend.security.adminReadStatsRequest
 import me.manga.kira.backend.security.adminReadTestIngress
 import me.manga.kira.backend.security.admissionTestPolicy
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -52,6 +56,81 @@ class ComplaintAdminReadHttpTest {
     private val mapper = ObjectMapper()
     private val scope = ComplaintDataScope.of(UUID.randomUUID())
     private val now = Instant.parse("2026-09-19T01:00:00.123456Z")
+
+    @Test
+    fun statsEmitOnlyClosedLosslessCountsAndDistinctNullableVersionKeys() {
+        for (total in listOf(9_007_199_254_740_993L, Long.MAX_VALUE)) {
+            val versions = listOf(ComplaintAdminStats.VersionBucket(null, total - 3)) +
+                listOf("", "null", "unreported").map { ComplaintAdminStats.VersionBucket(it, 1) }
+            val fixture = Fixture(adminStatsTestValue(scope, total, notices = 1, versions = versions))
+            val response = fixture.request(adminReadStatsRequest(scope))
+            assertEquals(200, response.status)
+            assertHeaders(response, "application/json", 2 * 1024 * 1024)
+            assertNull(response.getHeader("ETag"))
+            assertEquals(scope, (fixture.selectedQuery as ComplaintAdminStatsQuery).scope)
+            val json = mapper.readTree(response.contentAsByteArray)
+            assertEquals(setOf("dataScopeId", "total", "byStatus", "byType", "byOwnership", "appVersions"), json.fieldNames().asSequence().toSet())
+            assertEquals(scope.id.toString(), json["dataScopeId"].textValue())
+            assertTrue(json["total"].isIntegralNumber)
+            assertEquals(total, json["total"].longValue())
+            assertTrue(response.contentAsString.contains("\"total\":$total"))
+            for ((field, key) in listOf("byStatus" to "status", "byType" to "type", "byOwnership" to "ownership")) {
+                json[field].forEach { bucket ->
+                    assertEquals(setOf(key, "count"), bucket.fieldNames().asSequence().toSet())
+                    assertTrue(bucket["count"].isIntegralNumber)
+                }
+            }
+            assertEquals(setOf("buckets", "otherCount"), json["appVersions"].fieldNames().asSequence().toSet())
+            val buckets = json["appVersions"]["buckets"]
+            buckets.forEach { assertEquals(setOf("appVersion", "count"), it.fieldNames().asSequence().toSet()) }
+            assertTrue(buckets[0]["appVersion"].isNull)
+            assertEquals(listOf("", "null", "unreported"), buckets.drop(1).map { it["appVersion"].textValue() })
+            assertEquals(total - 3, buckets[0]["count"].longValue())
+            assertEquals(0L, json["appVersions"]["otherCount"].longValue())
+        }
+        val maximumStrings = List(50) { it.toString().padStart(2, '0') + "\"\\\uD800\uDC00".repeat(20) + "\uD800\uDC00".repeat(2) }
+        val maximum = Fixture(adminStatsTestValue(
+            scope, Long.MAX_VALUE, versions = maximumStrings.map { ComplaintAdminStats.VersionBucket(it, 1) }, otherCount = Long.MAX_VALUE - 50,
+        ))
+        val response = maximum.request(adminReadStatsRequest(scope))
+        assertEquals(200, response.status)
+        assertHeaders(response, "application/json", 2 * 1024 * 1024)
+        val appVersions = mapper.readTree(response.contentAsByteArray)["appVersions"]
+        assertEquals(maximumStrings, appVersions["buckets"].map { it["appVersion"].textValue() })
+        assertTrue(appVersions["otherCount"].isIntegralNumber)
+        assertEquals(Long.MAX_VALUE - 50, appVersions["otherCount"].longValue())
+        assertTrue(maximumStrings.all { it.codePointCount(0, it.length) == 64 })
+    }
+
+    @Test
+    fun statsAcceptOnlyTheFixedBodylessScopeQueryBeforeCallingTheProducer() {
+        val requests = listOf(
+            adminReadStatsRequest(scope).apply { method = "POST" } to 404,
+            adminReadStatsRequest(scope).apply { requestURI += "/" } to 404,
+            adminReadStatsRequest(scope).apply { queryString = null } to 400,
+            adminReadStatsRequest(ComplaintDataScope.LIVE) to 400,
+            adminReadStatsRequest(scope).apply { queryString += "&text=needle" } to 400,
+            adminReadStatsRequest(scope).apply { queryString += "&dataScopeId=${scope.id}" } to 400,
+            adminReadStatsRequest(scope).apply { queryString = "dataScopeId=%61${scope.id.toString().drop(1)}" } to 400,
+            adminReadStatsRequest(scope).apply { addHeader("If-Match", "*") } to 400,
+            adminReadStatsRequest(scope, token = null) to 401,
+        )
+        for ((request, status) in requests) {
+            val fixture = Fixture(adminStatsTestValue(scope))
+            val response = fixture.request(request)
+            assertEquals(status, response.status)
+            assertHeaders(response, "application/problem+json", 512)
+            assertTrue(fixture.calls.isEmpty())
+            assertNull(response.getHeader("ETag"))
+        }
+        for ((length, reads) in listOf("0" to 1, "1" to 0)) {
+            val request = CountingRequest(false, ByteArray(40_000), length).apply { requestURI = "/api/v1/admin/complaints/stats" }
+            val fixture = Fixture(adminStatsTestValue(scope))
+            assertEquals(400, fixture.request(request).status)
+            assertEquals(reads, request.readBytes)
+            assertTrue(fixture.calls.isEmpty())
+        }
+    }
 
     @Test
     fun `search and detail emit only closed Admin fields and exact integer versions beyond double precision`() {
@@ -208,6 +287,9 @@ class ComplaintAdminReadHttpTest {
             val request = CountingRequest(true, ByteArray(40_000), null)
             assertEquals(503, fixture.request(request).status)
             assertEquals(0, request.readBytes)
+            val stats = CountingRequest(false, ByteArray(40_000), null).apply { requestURI = "/api/v1/admin/complaints/stats" }
+            assertEquals(503, fixture.request(stats).status)
+            assertEquals(0, stats.readBytes)
             assertTrue(fixture.calls.isEmpty())
         } finally {
             held.forEach { it.close() }
@@ -434,8 +516,12 @@ class ComplaintAdminReadHttpTest {
     }
 
     @Test
-    fun `unchanged production disabled filter denies both Admin routes before any body or bearer work`() {
-        for ((method, path) in listOf("POST" to "/api/v1/admin/complaints/search", "GET" to "/api/v1/admin/complaints/${UUID.randomUUID()}")) {
+    fun `unchanged production disabled filter denies all three Admin read routes before any body or bearer work`() {
+        val routes = listOf(
+            "POST" to "/api/v1/admin/complaints/search", "GET" to "/api/v1/admin/complaints/${UUID.randomUUID()}",
+            "GET" to "/api/v1/admin/complaints/stats",
+        )
+        for ((method, path) in routes) {
             val request = object : MockHttpServletRequest(method, path) {
                 override fun getInputStream(): ServletInputStream = error("Disabled Admin route read a body")
                 override fun getHeader(name: String): String? = error("Disabled Admin route read a bearer or request header")
@@ -480,6 +566,8 @@ class ComplaintAdminReadHttpTest {
     ) {
         val responses = ComplaintAdminReadResponses(owner)
         val calls = mutableListOf<String>()
+        var selectedQuery: ComplaintAdminReadQuery? = null
+            private set
         var failure: RuntimeException? = null
         private val original = object : ComplaintAdminReadAuthentication {}
         private var originalContext: ComplaintAdminReadRequestContext? = null
@@ -487,6 +575,7 @@ class ComplaintAdminReadHttpTest {
             override fun authenticate(context: ComplaintAdminReadRequestContext, bearer: String, query: ComplaintAdminReadQuery): ComplaintAdminReadAuthentication {
                 requireConnectionFree()
                 calls.add("authenticate")
+                selectedQuery = query
                 assertEquals("synthetic-token", bearer)
                 originalContext = context
                 return original

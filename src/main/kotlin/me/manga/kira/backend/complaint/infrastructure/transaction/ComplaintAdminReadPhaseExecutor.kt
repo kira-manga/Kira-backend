@@ -60,5 +60,21 @@ internal class ComplaintAdminReadPhaseExecutor(private val ownership: Persistenc
         return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
     }
 
+    @Suppress("TooGenericExceptionCaught")
+    fun stats(identity: ComplaintAdminReadIdentity): ComplaintAdminReadRows {
+        val phase = ownership.enterComplaintAdminStats()
+        var operation: ComplaintAdminReadOperation? = null
+        try {
+            phase.begin()
+            operation = store.stats(identity)
+            phase.commit()
+        } catch (failure: Throwable) {
+            phase.recordFailure(failure)
+        } finally {
+            phase.finish()
+        }
+        return (operation ?: throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)).result
+    }
+
     override fun toString(): String = "ComplaintAdminReadPhaseExecutor(TEST-only,observations)"
 }

@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminReadQuery
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadResult
 import me.manga.kira.backend.complaint.domain.ComplaintAdminSearchQuery
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatsQuery
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.rejectAdminRead
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintAdminReadPhaseExecutor
@@ -43,6 +44,7 @@ internal class ComplaintAdminReadAdapter(
         when (query) {
             is ComplaintAdminSearchQuery -> admission.startAdminSearch(ingress)
             is ComplaintAdminDetailQuery -> admission.startAdminDetail(ingress)
+            is ComplaintAdminStatsQuery -> admission.startAdminStats(ingress)
         }
         val identity = identities.decode(bearer)
         // This proves only a signed token identity/filter binding, never the current DB ADMIN role.
@@ -75,6 +77,7 @@ internal class ComplaintAdminReadAdapter(
             when (val query = selected.query) {
                 is ComplaintAdminSearchQuery -> phases.search(selected.identity, query, selected.position)
                 is ComplaintAdminDetailQuery -> phases.detail(selected.identity, query.id)
+                is ComplaintAdminStatsQuery -> phases.stats(selected.identity)
             }
         } catch (failure: PersistencePhaseException) {
             rejectAdminRead(ComplaintAdminReadFailure.UNAVAILABLE)
@@ -82,6 +85,7 @@ internal class ComplaintAdminReadAdapter(
         requireAllowed(rows)
         return when (val query = selected.query) {
             is ComplaintAdminDetailQuery -> ComplaintAdminReadResult.Detail(rows.items.singleOrNull() ?: rejectAdminRead(ComplaintAdminReadFailure.NOT_FOUND))
+            is ComplaintAdminStatsQuery -> rows.stats ?: rejectAdminRead(ComplaintAdminReadFailure.INTERNAL)
             is ComplaintAdminSearchQuery -> {
                 val items = rows.items.take(query.limit)
                 val next = if (rows.items.size > query.limit) {

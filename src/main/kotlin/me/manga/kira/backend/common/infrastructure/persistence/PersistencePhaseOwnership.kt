@@ -197,6 +197,8 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterComplaintAdminDetail(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
 
+    internal fun enterComplaintAdminStats(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_STATS)
+
     internal fun enterComplaintAdminEditPreflight(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT)
 
     internal fun enterComplaintAdminEdit(): PersistencePhaseContext = enter(PersistencePhasePath.COMPLAINT_ADMIN_EDIT)
@@ -826,6 +828,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
                 PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
                 PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
+                PersistencePhasePath.COMPLAINT_ADMIN_STATS,
                 PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT,
                 PersistencePhasePath.COMPLAINT_ADMIN_EDIT,
@@ -1173,6 +1176,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_ADMIN_READ_AUTHENTICATION,
     COMPLAINT_ADMIN_SEARCH,
     COMPLAINT_ADMIN_DETAIL,
+    COMPLAINT_ADMIN_STATS,
     COMPLAINT_ADMIN_EDIT_PREFLIGHT,
     COMPLAINT_ADMIN_STATUS_PREFLIGHT,
     COMPLAINT_ADMIN_EDIT,
@@ -1333,6 +1337,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_ADMIN_READ_AUTHENTICATION,
             COMPLAINT_ADMIN_SEARCH,
             COMPLAINT_ADMIN_DETAIL,
+            COMPLAINT_ADMIN_STATS,
             COMPLAINT_ADMIN_EDIT_PREFLIGHT,
             COMPLAINT_ADMIN_STATUS_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
@@ -1371,6 +1376,7 @@ internal enum class PersistencePhasePath {
             COMPLAINT_ADMIN_READ_AUTHENTICATION,
             COMPLAINT_ADMIN_SEARCH,
             COMPLAINT_ADMIN_DETAIL,
+            COMPLAINT_ADMIN_STATS,
             COMPLAINT_ADMIN_EDIT_PREFLIGHT,
             COMPLAINT_ADMIN_STATUS_PREFLIGHT,
             COMPLAINT_OWNER_OPERATION_AUTHENTICATION,

@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminItem
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadFailure
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadPosition
 import me.manga.kira.backend.complaint.domain.ComplaintAdminSearchQuery
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStats
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintKind
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerHistoryContent
@@ -53,6 +54,11 @@ internal class JdbcComplaintAdminReadStore(private val jdbc: JdbcTemplate, priva
         return ComplaintAdminReadOperation.detail(jdbc, identity, id)
     }
 
+    fun stats(identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation {
+        require(identity.scope == testScope) { "Admin read scope refused." }
+        return ComplaintAdminReadOperation.stats(jdbc, identity)
+    }
+
     override fun toString(): String = "JdbcComplaintAdminReadStore(TEST-only,no-mode-authority)"
 }
 
@@ -80,7 +86,12 @@ internal enum class ComplaintAdminReadVerdict(val failure: ComplaintAdminReadFai
     NOT_FOUND(ComplaintAdminReadFailure.NOT_FOUND),
 }
 
-internal class ComplaintAdminReadRows(val verdict: ComplaintAdminReadVerdict, val items: List<ComplaintAdminItem>, val contractValid: Boolean = true) {
+internal class ComplaintAdminReadRows(
+    val verdict: ComplaintAdminReadVerdict,
+    val items: List<ComplaintAdminItem>,
+    val contractValid: Boolean = true,
+    val stats: ComplaintAdminStats? = null,
+) {
     override fun toString(): String = "ComplaintAdminReadRows(redacted)"
 }
 
@@ -111,6 +122,7 @@ internal class ComplaintAdminReadOperation private constructor(
             PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> if (currentAdminOnly) CONTENT_AUTH_SQL else AUTH_SQL
             PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> searchSql(checkNotNull(query), position)
             PersistencePhasePath.COMPLAINT_ADMIN_DETAIL -> DETAIL_SQL
+            PersistencePhasePath.COMPLAINT_ADMIN_STATS -> STATS_SQL
             else -> error("Admin read phase refused.")
         }
         captured = phase.adminRead.connection(this, jdbc).prepareStatement(sql).use { statement ->
@@ -118,7 +130,11 @@ internal class ComplaintAdminReadOperation private constructor(
             if (query != null) bindSearch(statement, query, position)
             if (id != null) statement.setObject(6, id)
             statement.executeQuery().use { rows ->
-                if (path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION) authentication(rows) else checkedRows(rows, query?.limit?.plus(1) ?: 1)
+                when (path) {
+                    PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> authentication(rows)
+                    PersistencePhasePath.COMPLAINT_ADMIN_STATS -> ComplaintAdminStatsRowMapper.read(rows, identity.scope)
+                    else -> checkedRows(rows, query?.limit?.plus(1) ?: 1)
+                }
             }
         }
         phase.adminRead.requireRetained(this, jdbc)
@@ -198,6 +214,9 @@ internal class ComplaintAdminReadOperation private constructor(
         fun detail(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity, id: UUID): ComplaintAdminReadOperation =
             capture(jdbc, identity, null, null, id, PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
 
+        fun stats(jdbc: JdbcTemplate, identity: ComplaintAdminReadIdentity): ComplaintAdminReadOperation =
+            capture(jdbc, identity, null, null, null, PersistencePhasePath.COMPLAINT_ADMIN_STATS)
+
         @Suppress("TooGenericExceptionCaught", "LongParameterList")
         private fun capture(
             jdbc: JdbcTemplate,
@@ -215,6 +234,7 @@ internal class ComplaintAdminReadOperation private constructor(
                     PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION -> phase.adminRead.requireAuthentication(jdbc)
                     PersistencePhasePath.COMPLAINT_ADMIN_SEARCH -> phase.adminRead.requireSearch(jdbc)
                     PersistencePhasePath.COMPLAINT_ADMIN_DETAIL -> phase.adminRead.requireDetail(jdbc)
+                    PersistencePhasePath.COMPLAINT_ADMIN_STATS -> phase.adminRead.requireStats(jdbc)
                     else -> error("Admin read phase refused.")
                 }
                 val operation = ComplaintAdminReadOperation(phase, jdbc, path, currentAdminOnly)
@@ -277,7 +297,7 @@ internal class ComplaintAdminReadOperation private constructor(
         internal val AUTH_SQL = "$PRINCIPAL_SQL SELECT verdict FROM principal"
 
         // The scope is still fixed by the concrete store. Only this identity observation omits run state;
-        // old search/detail authentication and their data snapshots keep the original ACTIVE-run checks.
+        // search/detail/stats authentication and their data snapshots keep the original ACTIVE-run checks.
         private val CONTENT_AUTH_SQL = """
             WITH supplied AS (
                 SELECT ?::uuid AS user_id, ?::uuid AS data_scope_id, ?::text AS credential_version,
@@ -316,8 +336,9 @@ internal class ComplaintAdminReadOperation private constructor(
             CASE WHEN octet_length(c.closure_reason) <= 2000 THEN c.closure_reason END AS closure_reason
         """.trimIndent()
 
-        private val SELECT_SQL = """
-            SELECT $COLUMNS FROM principal p
+        // Share only the original visibility relation; the stats projection never transfers content or owner IDs.
+        private val VISIBLE_FROM_SQL = """
+            FROM principal p
             JOIN complaints c ON c.data_scope_id = p.data_scope_id
             JOIN complaint_resource_ids r ON r.id = c.id AND r.data_scope_id = c.data_scope_id
             LEFT JOIN app_installations a ON a.id = c.owner_id AND a.data_scope_id = c.data_scope_id
@@ -326,6 +347,8 @@ internal class ComplaintAdminReadOperation private constructor(
                 AND (c.ownership = 'SYSTEM' OR (c.ownership = 'INSTALLATION'
                     AND a.state = 'ACTIVE' AND i.state = 'ACTIVE' AND a.test_only AND i.test_only))
         """.trimIndent()
+
+        private val SELECT_SQL = "SELECT $COLUMNS $VISIBLE_FROM_SQL"
 
         private const val ORDER_SQL = "ORDER BY c.updated_at DESC, c.id DESC"
         private const val RESULT_SQL = "SELECT p.verdict, v.* FROM principal p LEFT JOIN visible v ON true ORDER BY v.updated_at DESC, v.id DESC"
@@ -347,5 +370,46 @@ internal class ComplaintAdminReadOperation private constructor(
         }
 
         internal val DETAIL_SQL = "$PRINCIPAL_SQL, visible AS ($SELECT_SQL AND c.id = ?::uuid LIMIT 1) $RESULT_SQL"
+
+        private const val STATS_STATUSES = "'OPEN','IN_PROGRESS','RESOLVED','CLOSED','PLANNED','PINNED','NOT_PLANNED'"
+        private const val STATS_TYPES = "'TECHNICAL','LANGUAGES','SITES_ADD','SITE_ERROR','FEATURES','CUSTOM'"
+
+        /** One gated RC statement; at most 68 tagged rows, not a claim that the aggregate scan is bounded. */
+        internal val STATS_SQL = """
+            $PRINCIPAL_SQL, visible AS MATERIALIZED (
+                SELECT c.status, c.type, c.ownership,
+                    CASE WHEN complaint_text_valid(c.app_version, 0, 64, 256) THEN c.app_version END COLLATE "C" AS app_version,
+                    (c.status IN ($STATS_STATUSES)
+                        AND ((c.ownership = 'SYSTEM' AND c.kind = 'NOTICE' AND c.status = 'PINNED'
+                            AND c.type IS NULL AND c.app_version IS NULL)
+                            OR (c.ownership = 'INSTALLATION' AND c.kind IN ('REPORT','REPLY') AND c.type IN ($STATS_TYPES)))
+                        AND (c.app_version IS NULL OR complaint_text_valid(c.app_version, 0, 64, 256))) IS TRUE AS contract_valid
+                $VISIBLE_FROM_SQL
+            ), totals AS MATERIALIZED (
+                SELECT count(*) AS total, coalesce(bool_and(contract_valid), true) AS contract_valid FROM visible
+            ), version_counts AS (
+                SELECT app_version COLLATE "C" AS bucket_key, count(*) AS bucket_count
+                FROM visible GROUP BY app_version COLLATE "C"
+            ), top_versions AS MATERIALIZED (
+                SELECT bucket_key, bucket_count FROM version_counts
+                ORDER BY bucket_count DESC, bucket_key COLLATE "C" ASC NULLS FIRST LIMIT 50
+            ), aggregates AS (
+                SELECT 'TOTAL'::text AS family, NULL::text AS bucket_key, total AS bucket_count FROM totals
+                UNION ALL
+                SELECT 'STATUS', status, count(*) FROM visible WHERE status IN ($STATS_STATUSES) GROUP BY status
+                UNION ALL
+                SELECT 'TYPE', type, count(*) FROM visible WHERE type IS NULL OR type IN ($STATS_TYPES) GROUP BY type
+                UNION ALL
+                SELECT 'OWNERSHIP', ownership, count(*) FROM visible WHERE ownership IN ('INSTALLATION','SYSTEM') GROUP BY ownership
+                UNION ALL
+                SELECT 'APP_VERSION', bucket_key, bucket_count FROM top_versions
+                UNION ALL
+                SELECT 'OTHER', NULL::text, (t.total - coalesce((SELECT sum(bucket_count) FROM top_versions), 0))::bigint FROM totals t
+            )
+            SELECT p.verdict, t.contract_valid, a.family, a.bucket_key, a.bucket_count
+            FROM principal p LEFT JOIN totals t ON p.verdict = 'ALLOWED'
+            LEFT JOIN aggregates a ON p.verdict = 'ALLOWED'
+            ORDER BY a.family COLLATE "C", a.bucket_count DESC, a.bucket_key COLLATE "C" ASC NULLS FIRST
+        """.trimIndent()
     }
 }

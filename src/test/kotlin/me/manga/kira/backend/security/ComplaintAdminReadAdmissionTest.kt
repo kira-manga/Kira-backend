@@ -18,12 +18,13 @@ class ComplaintAdminReadAdmissionTest {
     private val scope = ComplaintDataScope.of(UUID.randomUUID())
 
     @Test
-    fun `search and detail share exact60 per ADMIN scope minute without borrowing the owner read bucket`() {
+    fun `search detail and stats share exact60 per ADMIN scope minute without borrowing the owner read bucket`() {
         val clock = MutableAdmissionTestClock()
         val guard = adminReadTestIngress(clock)
-        repeat(60) { charge(guard, detail = it % 2 == 0) }
+        repeat(60) { if (it % 3 == 2) chargeStats(guard) else charge(guard, detail = it % 3 == 1) }
         val denied = admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { charge(guard, ip = "192.0.2.2") }
         assertEquals(60L, denied.retryAfterSeconds)
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { chargeStats(guard) }
         charge(guard, selectedScope = ComplaintDataScope.of(UUID.randomUUID()))
         charge(guard, selectedActor = UUID.randomUUID())
         repeat(120) {
@@ -50,11 +51,12 @@ class ComplaintAdminReadAdmissionTest {
         disabled.withIngress(adminReadSearchRequest(scope)) { context ->
             admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { disabled.startAdminSearch(context) }
             admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { disabled.startAdminDetail(context) }
+            admissionTestRefused(ComplaintAdmissionFailure.UNAVAILABLE) { disabled.startAdminStats(context) }
         }
         val lower = adminReadTestIngress(clock, adminPolicy = ComplaintAdminReadAdmissionPolicy.Bounded(2))
         charge(lower)
         charge(lower, detail = true)
-        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { charge(lower) }
+        admissionTestRefused(ComplaintAdmissionFailure.RATE_LIMITED) { chargeStats(lower) }
     }
 
     @Test
@@ -69,6 +71,7 @@ class ComplaintAdminReadAdmissionTest {
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.startAdminSearch(ComplaintIngressContext()) }
             guard.startAdminSearch(context)
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.startAdminDetail(context) }
+            admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.startAdminStats(context) }
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.chargeAdminRead(context, actor, ComplaintDataScope.LIVE, Any()) }
             val identity = Any()
             guard.chargeAdminRead(context, actor, scope, identity)
@@ -82,6 +85,7 @@ class ComplaintAdminReadAdmissionTest {
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.consumeAdminRead(context, identity) }
         }
         admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.startAdminDetail(checkNotNull(escaped)) }
+        admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.startAdminStats(checkNotNull(escaped)) }
         guard.withIngress(adminReadSearchRequest(scope)) { context ->
             guard.startOwnerHistory(context)
             admissionTestRefused(ComplaintAdmissionFailure.INVALID_CONTEXT) { guard.chargeAdminRead(context, actor, scope, Any()) }
@@ -100,7 +104,7 @@ class ComplaintAdminReadAdmissionTest {
             guard.consumeAdminRead(context, identity)
         }
         guard.withIngress(adminReadSearchRequest(scope)) { context ->
-            guard.startAdminDetail(context)
+            guard.startAdminStats(context)
             val identity = Any()
             guard.chargeAdminRead(context, actor, scope, identity)
             clock.value += 5_000_000_000L
@@ -168,11 +172,11 @@ class ComplaintAdminReadAdmissionTest {
             val resource = Any()
             TransactionSynchronizationManager.bindResource(resource, Any())
             try {
-                assertThrows<PersistencePhaseException> { guard.startAdminSearch(context) }
+                assertThrows<PersistencePhaseException> { guard.startAdminStats(context) }
             } finally {
                 TransactionSynchronizationManager.unbindResource(resource)
             }
-            guard.startAdminSearch(context)
+            guard.startAdminStats(context)
             val identity = Any()
             TransactionSynchronizationManager.bindResource(resource, Any())
             try {
@@ -204,6 +208,15 @@ class ComplaintAdminReadAdmissionTest {
             if (detail) guard.startAdminDetail(context) else guard.startAdminSearch(context)
             val identity = Any()
             guard.chargeAdminRead(context, selectedActor, selectedScope, identity)
+            guard.consumeAdminRead(context, identity)
+        }
+    }
+
+    private fun chargeStats(guard: ComplaintIngressAdmission) {
+        guard.withIngress(adminReadStatsRequest(scope)) { context ->
+            guard.startAdminStats(context)
+            val identity = Any()
+            guard.chargeAdminRead(context, actor, scope, identity)
             guard.consumeAdminRead(context, identity)
         }
     }

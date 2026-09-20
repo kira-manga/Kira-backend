@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationBootstrap
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationControlObservation
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationCurrentStateAssessment
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationCurrentStatePolicy
@@ -13,15 +14,22 @@ import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettin
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRunObservation
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRunState
 import org.springframework.jdbc.core.JdbcTemplate
+import java.sql.Connection
 import java.sql.ResultSet
 import java.util.UUID
 
-/** One fixed bounded V14 read. No locks, updates, callbacks, installation lookup or authority producer. */
+/** Fixed bounded reads, with no locks, updates or callbacks. Diagnostic equality alone remains incapable of bootstrap. */
 internal class JdbcInstallationCurrentStateReader(private val jdbc: JdbcTemplate) {
     fun read(desired: ComplaintInstallationDesiredSettings.Configured, requestedScope: ComplaintDataScope): InstallationCurrentStateReadOperation =
         InstallationCurrentStateReadOperation.capture(jdbc, desired, requestedScope)
 
-    override fun toString(): String = "JdbcInstallationCurrentStateReader(read-only,no-authority)"
+    fun requireBootstrapResources(ownership: PersistencePhaseOwnership, registration: ComplaintTestNamespaceRegistrationV1) =
+        registration.requireInstallationResources(ownership, jdbc)
+
+    fun readBootstrap(ownership: PersistencePhaseOwnership, registration: ComplaintTestNamespaceRegistrationV1): InstallationCurrentStateReadOperation =
+        InstallationCurrentStateReadOperation.captureBootstrap(jdbc, ownership, registration)
+
+    override fun toString(): String = "JdbcInstallationCurrentStateReader(read-only,registration-required-for-bootstrap)"
 }
 
 /** The shared enum is never completion evidence: only this concrete retained operation can release its private result. */
@@ -30,9 +38,13 @@ internal class InstallationCurrentStateReadOperation private constructor(
     private val jdbc: JdbcTemplate,
     private val desired: ComplaintInstallationDesiredSettings.Configured,
     private val requestedScope: ComplaintDataScope,
+    private val bootstrapOwner: PersistencePhaseOwnership? = null,
+    private val registration: ComplaintTestNamespaceRegistrationV1? = null,
 ) {
     private var stage = Stage.RETAINED
     private var captured: ComplaintInstallationCurrentStateAssessment? = null
+    private var bootstrapCurrent = false
+    private var bootstrapReleased = false
 
     internal fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
 
@@ -45,12 +57,31 @@ internal class InstallationCurrentStateReadOperation private constructor(
             return checkNotNull(captured)
         }
 
+    /** Only this actual registered read, after known commit AND physical release, can return its selected TEST scope. */
+    fun bootstrap(selected: ComplaintTestNamespaceRegistrationV1): ComplaintInstallationBootstrap {
+        phase.installationCurrentState.requireCommitted(this)
+        requireConnectionFree()
+        check(selected === registration && bootstrapCurrent && !bootstrapReleased)
+        bootstrapReleased = true // No retained successful read can become a reusable cached scope authority.
+        selected.requireInstallationResources(checkNotNull(bootstrapOwner), jdbc)
+        check(desired.scope.testOnly && desired.scope == selected.process.desiredSettings().scope)
+        return ComplaintInstallationBootstrap(desired.scope)
+    }
+
     @Suppress("TooGenericExceptionCaught")
     private fun read() {
         try {
             requireAt(Stage.RETAINED)
             stage = Stage.READING
             val connection = phase.installationCurrentState.connection(this, jdbc)
+            if (registration != null) {
+                readBootstrap(connection, registration)
+                requireAt(Stage.READING)
+                registration.requireInstallationPhaseResources(checkNotNull(bootstrapOwner), jdbc)
+                bootstrapCurrent = true
+                stage = Stage.COMPLETE
+                return
+            }
             val observed = connection.prepareStatement(CURRENT_STATE_SQL).use { statement ->
                 statement.setObject(1, desired.scope.id)
                 statement.setObject(2, requestedScope.id)
@@ -70,6 +101,19 @@ internal class InstallationCurrentStateReadOperation private constructor(
             phase.recordFailure(problem)
             PersistencePhaseOwnership.current()?.takeIf { it !== phase }?.recordFailure(problem)
             throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+    }
+
+    private fun readBootstrap(connection: Connection, selected: ComplaintTestNamespaceRegistrationV1) {
+        val owner = checkNotNull(bootstrapOwner)
+        phase.installationCurrentState.requireOwner(owner)
+        selected.requireInstallationPhaseResources(owner, jdbc)
+        val expected = selected.bootstrapExpectedArguments()
+        connection.prepareStatement(BOOTSTRAP_STATE_SQL).use { statement ->
+            expected.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row ->
+                check(row.next() && requiredBoolean(row, "bootstrap_current") && !row.next())
+            }
         }
     }
 
@@ -110,7 +154,7 @@ internal class InstallationCurrentStateReadOperation private constructor(
 
     private fun requiredBoolean(row: ResultSet, column: String): Boolean = row.getBoolean(column).also { check(!row.wasNull()) }
 
-    override fun toString(): String = "InstallationCurrentStateReadOperation(sealed-diagnostic,no-authority)"
+    override fun toString(): String = "InstallationCurrentStateReadOperation(sealed-read,registered-bootstrap-only)"
 
     private enum class Stage { RETAINED, READING, COMPLETE, FAILED }
 
@@ -133,6 +177,70 @@ internal class InstallationCurrentStateReadOperation private constructor(
                 throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
             }
         }
+
+        @Suppress("TooGenericExceptionCaught")
+        internal fun captureBootstrap(
+            jdbc: JdbcTemplate,
+            ownership: PersistencePhaseOwnership,
+            registration: ComplaintTestNamespaceRegistrationV1,
+        ): InstallationCurrentStateReadOperation {
+            val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
+            try {
+                phase.installationCurrentState.requireOwner(ownership)
+                registration.requireInstallationPhaseResources(ownership, jdbc)
+                phase.installationCurrentState.requireOperation(jdbc)
+                val desired = registration.process.desiredSettings()
+                check(desired.scope.testOnly)
+                val operation = InstallationCurrentStateReadOperation(phase, jdbc, desired, desired.scope, ownership, registration)
+                phase.installationCurrentState.retain(operation, jdbc)
+                operation.read()
+                return operation
+            } catch (problem: Throwable) {
+                phase.recordFailure(problem)
+                throw phase.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+        }
+
+        // Three exact PK rows in one snapshot. The global current catalog/restore identities must still
+        // agree with this registration too; old TEST control rows alone cannot establish current routing.
+        // These SQL comparisons are not provenance. The privately issued registration and this exact
+        // phase's retained operation/commit/cleanup seal remain mandatory. Maintenance flags are not gates.
+        private val BOOTSTRAP_STATE_SQL = """
+            WITH expected_run AS MATERIALIZED (
+                SELECT ?::uuid AS scope, ?::bytea AS configuration_hash, ?::bigint AS installation_limit,
+                    ?::bigint AS generation, ?::bytea AS activation_hash, ?::timestamptz AS created_at, ?::bigint[] AS original_reserve
+            ), expected_control AS MATERIALIZED (
+                SELECT ?::uuid AS scope, ?::bigint AS desired_generation, ?::integer AS implementation_schema,
+                    ?::bytea AS configuration_hash, ?::uuid AS database_identity, ?::uuid AS restore_identity,
+                    ?::uuid AS event_writer, ?::uuid AS catalog_writer, ?::bytea AS trust_hash, ?::bigint AS generation, ?::bytea AS activation_hash
+            )
+            SELECT (
+                e.scope = d.scope AND r.test_only AND r.state = 'ACTIVE' AND r.sealed_at IS NULL
+                AND r.purging_at IS NULL AND r.purged_at IS NULL AND r.accounting_version = 1
+                AND r.configuration_hash = e.configuration_hash AND r.installation_limit = e.installation_limit
+                AND r.installation_limit > 0 AND r.enrolled_count BETWEEN 0 AND r.installation_limit
+                AND r.activation_catalog_generation = e.generation AND r.activation_catalog_hash = e.activation_hash
+                AND r.created_at = e.created_at AND isfinite(r.created_at) AND r.original_reserve = e.original_reserve
+                AND complaint_vector_valid(r.original_reserve) AND complaint_vector_lte(r.unused_reserve, r.original_reserve)
+                AND c.test_only AND c.implementation_schema = d.implementation_schema AND c.desired_generation = d.desired_generation
+                AND c.desired_configuration_hash = d.configuration_hash AND c.database_identity = d.database_identity
+                AND c.restore_identity = d.restore_identity AND c.event_writer_generation = d.event_writer
+                AND c.catalog_writer_generation = d.catalog_writer AND c.trust_bundle_hash = d.trust_hash
+                AND c.accepted_catalog_generation = d.generation AND c.accepted_catalog_hash = d.activation_hash
+                AND c.pending_projection_token IS NULL AND c.publication_epoch > 0 AND isfinite(c.updated_at)
+                AND NOT g.test_only AND g.implementation_schema = 1 AND g.desired_generation > 0
+                AND g.database_identity = d.database_identity AND g.restore_identity = d.restore_identity
+                AND g.event_writer_generation = d.event_writer AND g.catalog_writer_generation = d.catalog_writer
+                AND g.trust_bundle_hash = d.trust_hash AND g.accepted_catalog_generation = d.generation
+                AND g.accepted_catalog_hash = d.activation_hash AND g.pending_projection_token IS NULL
+                AND g.publication_epoch > 0 AND isfinite(g.updated_at)
+            ) IS TRUE AS bootstrap_current
+            FROM expected_run e CROSS JOIN expected_control d
+            LEFT JOIN complaint_test_runs r ON r.data_scope_id = e.scope
+            LEFT JOIN complaint_journal_control c ON c.data_scope_id = d.scope
+            LEFT JOIN complaint_journal_control g ON g.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
+            LIMIT 2
+        """.trimIndent()
 
         // One statement observes both exact rows in one PostgreSQL snapshot. No row/advisory locks or capability/freshness claim.
         private val CURRENT_STATE_SQL = """

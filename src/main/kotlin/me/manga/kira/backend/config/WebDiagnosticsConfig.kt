@@ -1,6 +1,7 @@
 package me.manga.kira.backend.config
 
 import com.fasterxml.jackson.databind.ObjectMapper
+import jakarta.servlet.Filter
 import me.manga.kira.backend.common.web.DisabledComplaintRoutesFilter
 import me.manga.kira.backend.common.web.RequestBodySizeLimitFilter
 import me.manga.kira.backend.common.web.RequestDiagnosticsFilter
@@ -31,17 +32,18 @@ class WebDiagnosticsConfig {
         addUrlPatterns("/*")
     }
 
-    @Bean
-    fun disabledComplaintRoutesFilter(): FilterRegistrationBean<DisabledComplaintRoutesFilter> = FilterRegistrationBean(DisabledComplaintRoutesFilter()).apply {
-        // Closed complaint composition: no body buffering, user JWT or user DB work on these routes.
-        order = Ordered.HIGHEST_PRECEDENCE + 1
-        addUrlPatterns("/*")
-    }
+    @Bean("disabledComplaintRoutesFilter")
+    internal fun disabledComplaintRoutesFilter(bootstrap: ComplaintTestBootstrapHttpCompositionV1? = null): FilterRegistrationBean<Filter> =
+        FilterRegistrationBean<Filter>(bootstrap?.ingressFilter ?: DisabledComplaintRoutesFilter()).apply {
+            // Only a real selected TEST bootstrap may replace its literal route's denial. All other complaints stay closed.
+            order = Ordered.HIGHEST_PRECEDENCE + 1
+            addUrlPatterns("/*")
+        }
 
     @Bean
     fun requestBodySizeLimitFilter(objectMapper: ObjectMapper): FilterRegistrationBean<RequestBodySizeLimitFilter> =
         FilterRegistrationBean(RequestBodySizeLimitFilter(objectMapper)).apply {
-            // Diagnostics and the closed complaint boundary precede body buffering; security/MVC stay downstream.
+            // Diagnostics and the closed/registered-bootstrap ingress boundary precede buffering; security/MVC stay downstream.
             order = Ordered.HIGHEST_PRECEDENCE + 2
             addUrlPatterns("/*")
         }

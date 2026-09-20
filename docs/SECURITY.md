@@ -4,6 +4,17 @@ Derived from the `security/` package, `SecurityConfig`, the `config/Kira*Propert
 rules, and the `application*.yml` profiles. Authoritative spec: [`PLAN.md`](PLAN.md) §6 (+ §8 rule 32,
 §10). Endpoint-by-endpoint auth levels are in [`API.md`](API.md).
 
+## Complaint TEST bootstrap boundary (source candidate, not activated)
+
+The optional [registered TEST bootstrap composition](COMPLAINT_TEST_BOOTSTRAP_V1.md) accepts only
+the existing privately issued same-process registration plus its original ordinary owner/template.
+It surrounds the exact bodyless GET with original ingress before buffering and uses a separate
+`@Order(1)` installation chain. Public bootstrap deliberately ignores bearer credentials and never
+invokes the user converter. Its actual read must commit and physically release before the selected
+nonzero scope can be returned; diagnostic equality, an ACTIVE/hash match and cold settings are not
+authority. Default absent composition remains404 before input/auth/DB. No other complaint route,
+LIVE producer, restore-quarantine release, or deployment activation is opened by this candidate.
+
 ## Authentication (JWT)
 
 - **Scheme:** HS256 (symmetric) via Nimbus (`spring-security-oauth2-jose`). One shared in-process key —

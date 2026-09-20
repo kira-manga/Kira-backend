@@ -563,6 +563,22 @@ is outside these budgets. Terminal outcomes cannot be replaced, and canceled pre
 later claim provider entry. GET/list combine request and outcome data from one read-only snapshot
 as of the first SELECT; a later independent read may observe a newer terminal outcome.
 
+## Complaint TEST installation bootstrap (source candidate, not activated)
+
+The explicit registered TEST-only composition can connect
+`GET /api/v1/installations/bootstrap` to exactly
+`{"dataScopeId":"<registered canonical TEST UUID>","contractVersion":1}`. It is public and ignores
+supplied bearer credentials; no query/body is accepted. The existing trusted-IP120/hour admission
+precedes the actual committed/released current-state read. Responses are identity, bounded16KiB,
+with `X-Kira-Complaint-Contract: 1` and `Cache-Control: no-store, no-transform`, without credentials,
+ETag or redirects. Wrong path/verb404, malformed request400, unsupported encoding415, quota429 with
+`Retry-After`, unavailable/stale/closed authority503.
+
+No ordinary application bean activates this composition: default complaint404 remains before
+buffering/authentication/DB, and bootstrap does not enable any other complaint route. Maintenance
+or ordinary journal degradation alone is not a bootstrap denial. LIVE/restore-release authority is
+not implemented by this TEST milestone. See [construction and verification limits](COMPLAINT_TEST_BOOTSTRAP_V1.md).
+
 ## Complaint step-up scope (prepared, not activated)
 
 `POST /api/v1/admin/step-up` accepts `password` and optional `scope`: omitted or

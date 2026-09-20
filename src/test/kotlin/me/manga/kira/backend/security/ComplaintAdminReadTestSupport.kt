@@ -62,3 +62,11 @@ internal fun adminReadDetailRequest(scope: ComplaintDataScope, id: UUID, token: 
         token?.let { addHeader("Authorization", "Bearer $it") }
         addHeader("X-Kira-Complaint-Contract", "1")
     }
+
+internal fun adminReadStatsRequest(scope: ComplaintDataScope, token: String? = "synthetic-token"): MockHttpServletRequest =
+    MockHttpServletRequest("GET", "/api/v1/admin/complaints/stats").apply {
+        remoteAddr = "192.0.2.1"
+        queryString = "dataScopeId=${scope.id}"
+        token?.let { addHeader("Authorization", "Bearer $it") }
+        addHeader("X-Kira-Complaint-Contract", "1")
+    }

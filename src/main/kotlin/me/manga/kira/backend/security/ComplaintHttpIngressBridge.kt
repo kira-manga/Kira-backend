@@ -107,12 +107,16 @@ internal class ComplaintHttpIngressBridge(private val ingress: ComplaintIngressA
         } catch (failure: RuntimeException) {
             requireNotInterrupted()
             closed.set(true)
-            fail(request, response, ComplaintSecurityFailure.INTERNAL)
+            fail(request, response, unexpectedFailure(request))
         } catch (failure: OutOfMemoryError) {
             closed.set(true)
-            fail(request, response, ComplaintSecurityFailure.INTERNAL)
+            fail(request, response, unexpectedFailure(request))
         }
     }
+
+    /** Bootstrap never translates unavailable local resources into a credential error or a plausible scope. */
+    private fun unexpectedFailure(request: HttpServletRequest): ComplaintSecurityFailure =
+        if (request.requestURI == request.contextPath + ComplaintInstallationRoutes.BOOTSTRAP) ComplaintSecurityFailure.UNAVAILABLE else ComplaintSecurityFailure.INTERNAL
 
     private fun fail(request: HttpServletRequest, response: DeliveryResponse, failure: ComplaintSecurityFailure, retry: Long? = null) {
         requireNotInterrupted()

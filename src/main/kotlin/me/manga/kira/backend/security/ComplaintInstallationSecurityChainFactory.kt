@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDeleteHttpHandler
@@ -36,24 +37,34 @@ import org.springframework.web.util.pattern.PathPatternParser
  * @Order(1), ahead of the existing qualified user/admin @Order(2) chain. Its outer ingress bridge
  * MUST surround the body guard too, not merely be inserted ahead of bearer authentication.
  */
-internal class ComplaintInstallationSecurityChainFactory(
+internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val bridge: ComplaintHttpIngressBridge,
-    private val authentication: ComplaintInstallationBearerAuthenticator,
-    private val installations: ComplaintInstallationHttpHandler,
-    private val me: ComplaintInstallationMeHttpHandler,
-    private val history: ComplaintOwnerHistoryHttpHandler,
-    private val create: ComplaintOwnerCreateHttpHandler,
-    private val deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
-    private val detail: ComplaintOwnerDetailHttpHandler? = null,
-    private val reply: ComplaintOwnerCreateHttpHandler? = null,
-    private val edit: ComplaintOwnerEditHttpHandler? = null,
-    private val delete: ComplaintOwnerDeleteHttpHandler? = null,
+    private val core: Core?,
+    private val bootstrap: ComplaintInstallationBootstrapHttpHandler?,
 ) {
+    /** Existing explicit core construction is unchanged; bootstrap is an optional concrete producer, not a ready flag. */
+    constructor(
+        bridge: ComplaintHttpIngressBridge,
+        authentication: ComplaintInstallationBearerAuthenticator,
+        installations: ComplaintInstallationHttpHandler,
+        me: ComplaintInstallationMeHttpHandler,
+        history: ComplaintOwnerHistoryHttpHandler,
+        create: ComplaintOwnerCreateHttpHandler,
+        deleteAll: ComplaintOwnerDeleteAllHttpHandler? = null,
+        detail: ComplaintOwnerDetailHttpHandler? = null,
+        reply: ComplaintOwnerCreateHttpHandler? = null,
+        edit: ComplaintOwnerEditHttpHandler? = null,
+        delete: ComplaintOwnerDeleteHttpHandler? = null,
+        bootstrap: ComplaintInstallationBootstrapHttpHandler? = null,
+    ) : this(bridge, Core(authentication, installations, me, history, create, deleteAll, detail, reply, edit, delete), bootstrap)
+
     init {
-        require(create.hasDeleteStatus() == (delete != null)) { "Complaint delete/status composition refused." }
-        if (delete != null) require(create.usesDeleteStatus(delete)) { "Complaint delete/status composition refused." }
-        require(create.hasEditStatus() == (edit != null)) { "Complaint edit/status composition refused." }
-        if (edit != null) require(create.usesEditStatus(edit)) { "Complaint edit/status composition refused." }
+        core?.let {
+            require(it.create.hasDeleteStatus() == (it.delete != null)) { "Complaint delete/status composition refused." }
+            if (it.delete != null) require(it.create.usesDeleteStatus(it.delete)) { "Complaint delete/status composition refused." }
+            require(it.create.hasEditStatus() == (it.edit != null)) { "Complaint edit/status composition refused." }
+            if (it.edit != null) require(it.create.usesEditStatus(it.edit)) { "Complaint edit/status composition refused." }
+        }
     }
 
     private val entryPoint = AuthenticationEntryPoint { request, response, _ ->
@@ -84,7 +95,10 @@ internal class ComplaintInstallationSecurityChainFactory(
         http.oauth2ResourceServer { resource ->
             resource.bearerTokenResolver(ComplaintInstallationBearerResolver)
             resource.authenticationManagerResolver { request ->
-                AuthenticationManager { candidate -> authentication.authenticate(bridge.authenticationContext(request), candidate) }
+                AuthenticationManager { candidate ->
+                    val authentication = core?.authentication ?: throw InvalidBearerTokenException("Installation credential refused.")
+                    authentication.authenticate(bridge.authenticationContext(request), candidate)
+                }
             }
             resource.authenticationEntryPoint(entryPoint)
             resource.accessDeniedHandler(denied)
@@ -106,33 +120,35 @@ internal class ComplaintInstallationSecurityChainFactory(
         if (!implemented(request)) {
             ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.NOT_FOUND)
         } else if (ComplaintInstallationRoutes.requiresBearer(request) &&
-            !authentication.belongsTo(context, SecurityContextHolder.getContext().authentication)
+            core?.authentication?.belongsTo(context, SecurityContextHolder.getContext().authentication) != true
         ) {
             ComplaintSecurityResponses.problem(request, response, ComplaintSecurityFailure.UNAUTHORIZED)
         } else {
             when (ComplaintInstallationRoutes.path(request)) {
-                ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION -> installations.handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.BOOTSTRAP -> checkNotNull(bootstrap).handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.ME -> me.handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.ENROLLMENT, ComplaintInstallationRoutes.SESSION -> checkNotNull(core).installations.handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.STATUS -> create.handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.ME -> checkNotNull(core).me.handleWithinIngress(request, response, context)
 
-                ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(deleteAll).handleWithinIngress(request, response, context)
+                ComplaintInstallationRoutes.STATUS -> checkNotNull(core).create.handleWithinIngress(request, response, context)
+
+                ComplaintInstallationRoutes.DELETE_ALL -> checkNotNull(core?.deleteAll).handleWithinIngress(request, response, context)
 
                 ComplaintInstallationRoutes.HISTORY -> if (request.method == "GET") {
-                    history.handleWithinIngress(request, response, context)
+                    checkNotNull(core).history.handleWithinIngress(request, response, context)
                 } else {
-                    create.handleWithinIngress(request, response, context)
+                    checkNotNull(core).create.handleWithinIngress(request, response, context)
                 }
 
                 else -> if (ComplaintInstallationRoutes.isReply(request)) {
-                    checkNotNull(reply).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.reply).handleWithinIngress(request, response, context)
                 } else if (ComplaintInstallationRoutes.isContent(request)) {
-                    checkNotNull(edit).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.edit).handleWithinIngress(request, response, context)
                 } else if (request.method == "DELETE") {
-                    checkNotNull(delete).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.delete).handleWithinIngress(request, response, context)
                 } else {
-                    checkNotNull(detail).handleWithinIngress(request, response, context)
+                    checkNotNull(core?.detail).handleWithinIngress(request, response, context)
                 }
             }
         }
@@ -141,12 +157,13 @@ internal class ComplaintInstallationSecurityChainFactory(
     override fun toString(): String = "ComplaintInstallationSecurityChainFactory(dormant,explicit-TEST-only)"
 
     /** Concrete optional composition only; no public readiness flag can open this route. */
-    private fun implemented(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.implemented(request) ||
-        (deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
-        (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
-        (edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
-        (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
-        (delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
+    private fun implemented(request: HttpServletRequest): Boolean = (core != null && ComplaintInstallationRoutes.implemented(request)) ||
+        (bootstrap != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.BOOTSTRAP) ||
+        (core?.deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
+        (core?.reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
+        (core?.edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
+        (core?.detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
+        (core?.delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
 
     private inner class ClosedUnimplementedRoutes : OncePerRequestFilter() {
         override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
@@ -156,18 +173,39 @@ internal class ComplaintInstallationSecurityChainFactory(
             }
             // Detail's fixed bodyless validation precedes even the converter's current-row SQL.
             if (request.method == "GET" && ComplaintInstallationRoutes.isDetail(request) &&
-                !checkNotNull(detail).validateWithinIngress(request, response, bridge.authenticationContext(request))
+                !checkNotNull(core?.detail).validateWithinIngress(request, response, bridge.authenticationContext(request))
             ) {
                 return
             }
             filterChain.doFilter(request, response)
         }
     }
+
+    /** Fixed existing tuple, not an extensible route registry or authority carrier. */
+    private class Core(
+        val authentication: ComplaintInstallationBearerAuthenticator,
+        val installations: ComplaintInstallationHttpHandler,
+        val me: ComplaintInstallationMeHttpHandler,
+        val history: ComplaintOwnerHistoryHttpHandler,
+        val create: ComplaintOwnerCreateHttpHandler,
+        val deleteAll: ComplaintOwnerDeleteAllHttpHandler?,
+        val detail: ComplaintOwnerDetailHttpHandler?,
+        val reply: ComplaintOwnerCreateHttpHandler?,
+        val edit: ComplaintOwnerEditHttpHandler?,
+        val delete: ComplaintOwnerDeleteHttpHandler?,
+    )
+
+    companion object {
+        /** Does not fabricate core handlers or enable any non-bootstrap route. Registration belongs to its concrete assembly. */
+        fun bootstrapOnly(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap)
+    }
 }
 
 /** Path ownership is independent of the verb; unsupported methods cannot fall through to user authentication. */
 internal object ComplaintInstallationRoutes : RequestMatcher {
     const val ENROLLMENT = "/api/v1/installations"
+    const val BOOTSTRAP = "/api/v1/installations/bootstrap"
     const val SESSION = "/api/v1/installations/session"
     const val DELETE_ALL = "/api/v1/installations/delete-all"
     const val ME = "/api/v1/installations/me"
@@ -176,7 +214,7 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
     private val detailPath = Regex("$HISTORY/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     private val replyPath = Regex("${detailPath.pattern}/replies")
     private val contentPath = Regex("${detailPath.pattern}/content")
-    private val publicPaths = setOf(ENROLLMENT, SESSION, "/api/v1/installations/bootstrap", DELETE_ALL)
+    private val publicPaths = setOf(ENROLLMENT, SESSION, BOOTSTRAP, DELETE_ALL)
     private val patterns = (
         publicPaths + setOf(ME, HISTORY, STATUS, "$HISTORY/{id}", "$HISTORY/{id}/replies", "$HISTORY/{id}/content")
         ).flatMap { listOf(it, "$it/") }.map(PathPatternParser()::parse)
@@ -203,7 +241,7 @@ internal object ComplaintInstallationRoutes : RequestMatcher {
         ENROLLMENT, SESSION, STATUS -> request.method == "POST"
         ME -> request.method == "GET"
         HISTORY -> request.method == "GET" || request.method == "POST"
-        else -> false // Including bootstrap: no readiness/activation producer exists yet.
+        else -> false // Optional producers, including bootstrap, require their concrete factory composition.
     }
 }
 

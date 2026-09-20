@@ -15,6 +15,7 @@ import me.manga.kira.backend.security.AdminReadTestUserJwt
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.adminReadDetailRequest
 import me.manga.kira.backend.security.adminReadSearchRequest
+import me.manga.kira.backend.security.adminReadStatsRequest
 import me.manga.kira.backend.security.adminReadTestCursors
 import me.manga.kira.backend.security.adminReadTestIngress
 import me.manga.kira.backend.user.domain.Role
@@ -76,6 +77,8 @@ internal class ComplaintAdminReadFixture(
         request(adminReadSearchRequest(scope, bearer, body))
 
     fun detail(id: UUID, bearer: String? = token): MockHttpServletResponse = request(adminReadDetailRequest(scope, id, bearer))
+
+    fun stats(bearer: String? = token): MockHttpServletResponse = request(adminReadStatsRequest(scope, bearer))
 
     fun request(request: MockHttpServletRequest): MockHttpServletResponse = MockHttpServletResponse().also {
         handler.handleRequest(request, it)

@@ -123,6 +123,20 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         }
     }
 
+    /** The already-retained ordinary pair only; safe inside its read phase, and never a binding/checkout path. */
+    internal fun requireInstallationPhaseResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
+        requireLifetime()
+        val retained = installation.get()
+        requireRegistration(retained != null && retained.ownership === ownership && retained.jdbc === jdbc)
+        ownership.requireBoundComplaintOrdinary(process.pools)
+        requireRegistration(jdbc.dataSource === process.pools.ordinary && ownership.dataSource === jdbc.dataSource)
+        requireLifetime()
+    }
+
+    /** Comparison inputs only. Only the registered, committed and released concrete read can emit bootstrap data. */
+    internal fun bootstrapExpectedArguments(): Array<Any?> =
+        copySealingArguments(activation.runArguments) + copySealingArguments(activation.controlArguments)
+
     /** Same retained deletion permit/manager/template only; no new pool, request identity or gate opener. */
     internal fun requireOwnerDeleteContinuationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
         requireLifetime()

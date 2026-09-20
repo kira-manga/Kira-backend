@@ -1522,6 +1522,41 @@ class VersionBoundPersistenceConnectedIT {
         }
     }
 
+    @Test
+    fun testRegisteredBootstrapActualSpringMountAndClosedMaintenance() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.mountedMaintenanceIsolation(it)
+    }
+
+    @Test
+    fun testRegisteredBootstrapRejectsStaleActivationRestoreAndScope() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.driftNeverSelectsFallback(it)
+    }
+
+    @Test
+    fun testRegisteredBootstrapSealedPurgingPurgedNeverRebindEnrollment() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.terminalScopeIsNeverRebound(it)
+    }
+
+    @Test
+    fun testRegisteredBootstrapRequiresOriginalOwnerCommittedReadAndRelease() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.originalResourcesAndRelease(it)
+    }
+
+    @Test
+    fun testRegisteredBootstrapCompletionFailureAndFinalRevocationCannotRelease() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.completionFailuresCannotRelease(it)
+    }
+
+    @Test
+    fun testRegisteredBootstrapNativeUnknownCommitAndUnresolvedReleaseRefuse() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.unknownCommitAndUnresolvedRelease(it)
+    }
+
+    @Test
+    fun testRegisteredBootstrapUnavailableOwnerIsNotQuotaOrReadiness() = withFixture(testActivation = true) {
+        ComplaintInstallationBootstrapCases.unavailableAdmissionIsNotQuotaOrReadiness(it)
+    }
+
     private fun withFixture(
         client: ConnectedTlsClient = ConnectedTlsClient.MATCHED,
         profile: PersistencePoolLaunchProfile = PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY,

@@ -281,6 +281,7 @@ constructor(
                 testRunActivation != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testOrdinaryDrain != null || path.complaintMaintenanceWriter
         val adminReadCommitted = path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION ||
             path === PersistencePhasePath.COMPLAINT_ADMIN_SEARCH || path === PersistencePhasePath.COMPLAINT_ADMIN_DETAIL ||
+                path === PersistencePhasePath.COMPLAINT_ADMIN_STATS ||
                 path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT ||
                 path === PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT
         val definition = DefaultTransactionDefinition(TransactionDefinition.PROPAGATION_REQUIRED).apply {
@@ -676,6 +677,7 @@ constructor(
         PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
         PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
         PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
+        PersistencePhasePath.COMPLAINT_ADMIN_STATS,
         -> adminRead.completed()
 
         PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
@@ -3237,7 +3239,7 @@ constructor(
         override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true
     }
 
-    /** Three observation paths; only their original concrete operation can expose a physically released result. */
+    /** Exact observation paths; only their original concrete operation can expose a physically released result. */
     private inner class AdminReadBoundary : PersistenceComplaintAdminRead {
         private var issued = false
         private var retained: ComplaintAdminReadOperation? = null
@@ -3245,6 +3247,7 @@ constructor(
         override fun requireAuthentication(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION)
         override fun requireSearch(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_SEARCH)
         override fun requireDetail(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
+        override fun requireStats(jdbc: JdbcTemplate) = requireOperation(jdbc, PersistencePhasePath.COMPLAINT_ADMIN_STATS)
 
         private fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
             requireStepUpResource(jdbc, expected)
@@ -3323,6 +3326,10 @@ constructor(
     private inner class InstallationCurrentStateBoundary : PersistenceInstallationCurrentState {
         private var issued = false
         private var retained: InstallationCurrentStateReadOperation? = null
+
+        override fun requireOwner(selected: PersistencePhaseOwnership) {
+            if (ownership !== selected) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
 
         override fun requireOperation(jdbc: JdbcTemplate) {
             requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_INSTALLATION_CURRENT_STATE)
@@ -3799,6 +3806,7 @@ private const val LOCAL_LIMITS = "SELECT set_config('transaction_timeout', ?, tr
 
 /** Only this phase's private boundary is used; implementing a view cannot manufacture a retained read. */
 internal interface PersistenceInstallationCurrentState {
+    fun requireOwner(selected: PersistencePhaseOwnership)
     fun requireOperation(jdbc: JdbcTemplate)
     fun retain(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: InstallationCurrentStateReadOperation, jdbc: JdbcTemplate)

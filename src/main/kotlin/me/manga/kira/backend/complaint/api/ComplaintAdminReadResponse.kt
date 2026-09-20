@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonFactory
 import com.fasterxml.jackson.core.JsonGenerator
 import me.manga.kira.backend.complaint.domain.ComplaintAdminItem
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadResult
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStats
 import java.io.IOException
 
 /** Closed Admin fields, sharing the original aggregate-eight response owner with co-composed owner reads. */
@@ -17,12 +18,17 @@ internal class ComplaintAdminReadResponses(private val owner: ComplaintOwnerHist
     @Suppress("TooGenericExceptionCaught", "SwallowedException", "ThrowsCount")
     fun encode(permit: ComplaintOwnerHistoryResponses.Permit, result: ComplaintAdminReadResult): ComplaintHistoryEncodedBody {
         owner.requirePermit(permit)
-        val maximum = if (result is ComplaintAdminReadResult.Page) PAGE_MAX_BYTES else ITEM_MAX_BYTES
+        // Stats reuses the existing 2MiB cap; do not narrow valid Unicode strings to force an item-sized encoding.
+        val maximum = when (result) {
+            is ComplaintAdminReadResult.Detail -> ITEM_MAX_BYTES
+            is ComplaintAdminReadResult.Page, is ComplaintAdminStats -> PAGE_MAX_BYTES
+        }
         val buffer = ComplaintHistoryEncodedBody(maximum)
         try {
             factory.createGenerator(buffer).use { json ->
                 when (result) {
                     is ComplaintAdminReadResult.Detail -> item(json, result.item)
+                    is ComplaintAdminStats -> stats(json, result)
                     is ComplaintAdminReadResult.Page -> {
                         json.writeStartObject()
                         json.writeArrayFieldStart("items")
@@ -58,6 +64,48 @@ internal class ComplaintAdminReadResponses(private val owner: ComplaintOwnerHist
             is ComplaintAdminItem.Content -> content(json, item)
             is ComplaintAdminItem.Notice -> notice(json, item)
         }
+    }
+
+    private fun stats(json: JsonGenerator, stats: ComplaintAdminStats) {
+        json.writeStartObject()
+        json.writeStringField("dataScopeId", stats.scope.id.toString())
+        json.writeNumberField("total", stats.total)
+        json.writeArrayFieldStart("byStatus")
+        stats.byStatus.forEach { bucket ->
+            json.writeStartObject()
+            json.writeStringField("status", bucket.status.name)
+            json.writeNumberField("count", bucket.count)
+            json.writeEndObject()
+        }
+        json.writeEndArray()
+        json.writeArrayFieldStart("byType")
+        stats.byType.forEach { bucket ->
+            json.writeStartObject()
+            nullable(json, "type", bucket.type?.name)
+            json.writeNumberField("count", bucket.count)
+            json.writeEndObject()
+        }
+        json.writeEndArray()
+        json.writeArrayFieldStart("byOwnership")
+        stats.byOwnership.forEach { bucket ->
+            json.writeStartObject()
+            json.writeStringField("ownership", bucket.ownership.name)
+            json.writeNumberField("count", bucket.count)
+            json.writeEndObject()
+        }
+        json.writeEndArray()
+        json.writeObjectFieldStart("appVersions")
+        json.writeArrayFieldStart("buckets")
+        stats.appVersions.buckets.forEach { bucket ->
+            json.writeStartObject()
+            nullable(json, "appVersion", bucket.appVersion)
+            json.writeNumberField("count", bucket.count)
+            json.writeEndObject()
+        }
+        json.writeEndArray()
+        json.writeNumberField("otherCount", stats.appVersions.otherCount)
+        json.writeEndObject()
+        json.writeEndObject()
     }
 
     private fun notice(json: JsonGenerator, item: ComplaintAdminItem.Notice) {

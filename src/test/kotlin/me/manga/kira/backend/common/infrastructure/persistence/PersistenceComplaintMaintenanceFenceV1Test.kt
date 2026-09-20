@@ -117,13 +117,14 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION,
             PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
             PersistencePhasePath.COMPLAINT_ADMIN_DETAIL,
+            PersistencePhasePath.COMPLAINT_ADMIN_STATS,
             PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT,
             PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT,
         )
         val snapshot = PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT
         assertEquals(30, oldObservations.size)
-        assertEquals(5, adminObservations.size)
-        assertEquals(36, (oldObservations + adminObservations + snapshot).size)
+        assertEquals(6, adminObservations.size)
+        assertEquals(37, (oldObservations + adminObservations + snapshot).size)
         assertEquals(oldObservations + adminObservations + snapshot, PersistencePhasePath.entries.filter { !it.source && !it.complaintMaintenanceWriter }.toSet())
         assertEquals(testWriters + snapshot, PersistencePhasePath.entries.filter { it.catalogTestRunActivation }.toSet())
         assertTrue(snapshot.readOnly)

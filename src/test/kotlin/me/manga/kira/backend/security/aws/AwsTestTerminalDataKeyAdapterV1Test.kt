@@ -68,16 +68,22 @@ class AwsTestTerminalDataKeyAdapterV1Test {
                     val generated = owner.generate(requested)
                     val key = generated.plaintextKey
                     val wrapped = generated.wrappedKey
-                    generated.use {
+                    try {
                         assertArrayEquals(TestTerminalCryptoReferenceV1.key(), key)
                         assertArrayEquals(TestTerminalCryptoReferenceV1.wrapped(), wrapped)
+                    } finally {
+                        generated.close()
                     }
                     terminalCodecZero(key)
                     terminalCodecZero(wrapped)
                     val input = TestTerminalCryptoReferenceV1.wrapped()
                     val plaintext = owner.unwrap(requested, input)
                     val unwrapped = plaintext.plaintextKey
-                    plaintext.use { assertArrayEquals(TestTerminalCryptoReferenceV1.key(), unwrapped) }
+                    try {
+                        assertArrayEquals(TestTerminalCryptoReferenceV1.key(), unwrapped)
+                    } finally {
+                        plaintext.close()
+                    }
                     terminalCodecZero(unwrapped)
                     assertArrayEquals(TestTerminalCryptoReferenceV1.wrapped(), input, "Unwrap cannot consume the caller's input.")
                     assertEquals(offset + 2, http.requests.size)

@@ -11,6 +11,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminItem
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadFailure
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRejected
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadResult
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatsQuery
+import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintIdentifiers
 import me.manga.kira.backend.complaint.domain.ComplaintValidationException
 import me.manga.kira.backend.complaint.domain.rejectAdminRead
@@ -72,10 +74,15 @@ internal class ComplaintAdminReadHttpHandler(
         if (Thread.currentThread().isInterrupted) throw InterruptedIOException(DELIVERY_FAILURE)
         ingress.requireLiveContext(context)
         val search = request.method == "POST" && request.requestURI == request.contextPath + SEARCH_PATH
-        val id = if (search) null else detailId(request)
+        val stats = request.method == "GET" && request.requestURI == request.contextPath + STATS_PATH
+        val id = if (search || stats) null else detailId(request)
         if (search && request.queryString != null) rejectAdminRead(ComplaintAdminReadFailure.INVALID_REQUEST)
         val headers = headers(request, search)
-        val detail = id?.let { detailQuery(request, it) }
+        val bodyless = when {
+            stats -> ComplaintAdminStatsQuery(queryScope(request))
+            id != null -> ComplaintAdminDetailQuery(queryScope(request), id)
+            else -> null
+        }
         val permit = responses.acquire() ?: rejectAdminRead(ComplaintAdminReadFailure.UNAVAILABLE)
         response.retainPermit(permit)
         val query = if (search) {
@@ -89,7 +96,7 @@ internal class ComplaintAdminReadHttpHandler(
             }
         } else {
             if (request.inputStream.read() != -1) rejectAdminRead(ComplaintAdminReadFailure.INVALID_REQUEST)
-            checkNotNull(detail)
+            checkNotNull(bodyless)
         }
         val result = service.read(context, headers.bearer ?: rejectAdminRead(ComplaintAdminReadFailure.UNAUTHORIZED), query)
         val encoded = responses.encode(permit, result)
@@ -117,11 +124,11 @@ internal class ComplaintAdminReadHttpHandler(
     }
 
     @Suppress("SwallowedException")
-    private fun detailQuery(request: HttpServletRequest, id: UUID): ComplaintAdminDetailQuery {
+    private fun queryScope(request: HttpServletRequest): ComplaintDataScope {
         val raw = request.queryString ?: rejectAdminRead(ComplaintAdminReadFailure.INVALID_REQUEST)
         if (raw.length != 48 || !raw.startsWith("dataScopeId=")) rejectAdminRead(ComplaintAdminReadFailure.INVALID_REQUEST)
         return try {
-            ComplaintAdminDetailQuery(ComplaintIdentifiers.dataScope(raw.substring(12)), id)
+            ComplaintIdentifiers.dataScope(raw.substring(12))
         } catch (failure: ComplaintValidationException) {
             rejectAdminRead(ComplaintAdminReadFailure.INVALID_REQUEST)
         }
@@ -254,6 +261,7 @@ internal class ComplaintAdminReadHttpHandler(
 
     private companion object {
         const val SEARCH_PATH = "/api/v1/admin/complaints/search"
+        const val STATS_PATH = "/api/v1/admin/complaints/stats"
         const val DETAIL_PREFIX = "/api/v1/admin/complaints/"
         const val SEARCH_MAX_BYTES = 32 * 1024
         const val DELIVERY_FAILURE = "Complaint response delivery failed."

@@ -17,6 +17,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRejected
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintAdminReadResult
 import me.manga.kira.backend.complaint.domain.ComplaintAdminSearchQuery
+import me.manga.kira.backend.complaint.domain.ComplaintAdminStatsQuery
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminReadOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminReadVerdict
@@ -62,6 +63,18 @@ class ComplaintAdminReadIT {
     fun closeDatabase() {
         if (database.isInitialized()) database.value.close()
     }
+
+    @Test
+    fun statsScopeWideCountsUseTheSameVisibleRelationAsAdminRead() = withFixture(::verifyComplaintAdminStatsPopulation)
+
+    @Test
+    fun statsTopFiftyUsesUtf8TiesAndExactRemainderWithNullRankedNormally() = withFixture(::verifyComplaintAdminStatsRanking)
+
+    @Test
+    fun statsUseTheCurrentDataSnapshotAfterReleasedAuthentication() = withFixture(::verifyComplaintAdminStatsSnapshot)
+
+    @Test
+    fun statsInvalidStoredVersionFailsClosedBeforePublishingPartialCounts() = withFixture(::verifyComplaintAdminStatsInvalidRow)
 
     @Test
     fun `actual normal JWT and two installations produce51 tied search rows cursor and exact details without writes`() = withFixture { f ->
@@ -233,7 +246,7 @@ class ComplaintAdminReadIT {
     }
 
     @Test
-    fun `released authentication cannot cache role enabled or generation for either data query including empty matches`() = withFixture { f ->
+    fun `released authentication cannot cache role enabled or generation for any data query including empty matches`() = withFixture { f ->
         val id = f.rows.content()
         val changes = listOf(
             Triple("role = 'USER'", "role = 'ADMIN'", ComplaintAdminReadFailure.FORBIDDEN),
@@ -241,7 +254,8 @@ class ComplaintAdminReadIT {
             Triple("credential_version = 1", "credential_version = 0", ComplaintAdminReadFailure.UNAUTHORIZED),
         )
         for ((change, restore, failure) in changes) {
-            for (query in listOf(ComplaintAdminSearchQuery(f.scope, text = "no-such-term"), ComplaintAdminDetailQuery(f.scope, id))) {
+            val queries = listOf(ComplaintAdminSearchQuery(f.scope, text = "no-such-term"), ComplaintAdminDetailQuery(f.scope, id), ComplaintAdminStatsQuery(f.scope))
+            for (query in queries) {
                 f.ingress.withIngress(adminReadSearchRequest(f.scope, f.token)) { context ->
                     val authenticated = f.reader.authenticate(context, f.token, query)
                     f.rows.assertReleased()
@@ -347,19 +361,21 @@ class ComplaintAdminReadIT {
     @Test
     fun `actual authentication precedes lowerable combined read quota and Disabled stops before decoder or SQL`() = withFixture { f ->
         val id = f.rows.content()
-        val lower = ComplaintAdminReadFixture(f.rows, adminReadTestIngress(adminPolicy = ComplaintAdminReadAdmissionPolicy.Bounded(2)))
+        val lower = ComplaintAdminReadFixture(f.rows, adminReadTestIngress(adminPolicy = ComplaintAdminReadAdmissionPolicy.Bounded(3)))
         assertEquals(1, f.observer.update("UPDATE users SET role = 'USER' WHERE id = ?", f.ordinary.userId))
         lower.assertProblem(lower.search(), 403, "FORBIDDEN")
         assertEquals(0, readEvents(lower))
         assertEquals(1, f.observer.update("UPDATE users SET role = 'ADMIN' WHERE id = ?", f.ordinary.userId))
         assertEquals(200, lower.search().status)
         assertEquals(200, lower.detail(id).status)
+        assertEquals(200, lower.stats().status)
         val limited = lower.search()
         lower.assertProblem(limited, 429, "RATE_LIMITED")
         assertTrue(checkNotNull(limited.getHeader("Retry-After")).toLong() in 1..60)
-        assertEquals(2, readEvents(lower))
+        assertEquals(3, readEvents(lower))
         val disabled = ComplaintAdminReadFixture(f.rows, adminReadTestIngress(adminPolicy = ComplaintAdminReadAdmissionPolicy.Disabled))
         disabled.assertProblem(disabled.search(), 503, "SERVICE_UNAVAILABLE")
+        disabled.assertProblem(disabled.stats(), 503, "SERVICE_UNAVAILABLE")
         assertEquals(0, disabled.decoderCalls)
         assertEquals(0, readEvents(disabled))
         assertEquals(0L, f.ordinary.ownedPool.lifecycle.activeAcquisitions())
@@ -369,6 +385,7 @@ class ComplaintAdminReadIT {
     fun `concrete operations require exact phase resource and retained operation not arbitrary caller completion`() = withFixture { f ->
         val id = f.rows.content()
         assertEquals(PersistencePhaseFailureCode.ENTRY_REFUSED, assertThrows<PersistencePhaseException> { f.store.detail(f.identity(), id) }.code)
+        assertEquals(PersistencePhaseFailureCode.ENTRY_REFUSED, assertThrows<PersistencePhaseException> { f.store.stats(f.identity()) }.code)
         f.withPhase(enter = f.ordinary.ownership::enterComplaintOwnerHistoryPage) { phase ->
             assertThrows<PersistencePhaseException> { f.store.search(f.identity(), ComplaintAdminSearchQuery(f.scope), null) }
             assertThrows<PersistencePhaseException> { phase.commit() }
@@ -394,11 +411,15 @@ class ComplaintAdminReadIT {
             assertThrows<PersistencePhaseException> { f.store.detail(f.identity(), id) }
             assertThrows<PersistencePhaseException> { phase.commit() }
         }
+        f.withPhase { phase ->
+            assertThrows<PersistencePhaseException> { f.store.stats(f.identity()) }
+            assertThrows<PersistencePhaseException> { phase.commit() }
+        }
         assertThrows<IllegalArgumentException> { JdbcComplaintAdminReadStore(f.ordinary.jdbc, ComplaintDataScope.LIVE) }
     }
 
     @Test
-    fun `all three ordinary observations require actual commit cleanup and original release before successful results`() = withFixture { f ->
+    fun `all four ordinary observations require actual commit cleanup and original release before successful results`() = withFixture { f ->
         val id = f.rows.content()
         val before = f.rows.state()
         for ((enter, read) in phases(f, id)) {
@@ -501,6 +522,7 @@ class ComplaintAdminReadIT {
                 }
                 assertEquals(200, f.search().status)
                 assertEquals(200, f.detail(id).status)
+                assertEquals(200, f.stats().status)
                 for ((enter, read) in phases(f, id)) {
                     val operation = f.withPhase(enter) { phase ->
                         val pid = f.ordinary.jdbc.queryForObject("SELECT pg_backend_pid()", Int::class.java)!!
@@ -527,18 +549,24 @@ class ComplaintAdminReadIT {
     }
 
     @Test
-    fun `unchanged sourceOnly admission refuses all three Admin paths before a resource acquisition`() = withFixture { f ->
+    fun `unchanged sourceOnly admission refuses all four Admin paths before a resource acquisition`() = withFixture { f ->
         val admission = OrdinaryPersistenceAdmission.sourceOnly(2)
         val manager = GuardedJpaTransactionManager(f.ordinary.entityManagerFactory, f.ordinary.pool)
         val sourceOnly = PersistencePhaseOwnership(admission, manager)
-        for (enter in listOf(sourceOnly::enterComplaintAdminReadAuthentication, sourceOnly::enterComplaintAdminSearch, sourceOnly::enterComplaintAdminDetail)) {
+        for (enter in listOf(
+            sourceOnly::enterComplaintAdminReadAuthentication, sourceOnly::enterComplaintAdminSearch,
+            sourceOnly::enterComplaintAdminDetail, sourceOnly::enterComplaintAdminStats,
+        )) {
             val failure = assertThrows<PersistencePhaseException> { enter() }
             assertEquals(PersistenceDatabaseOutcome.NONE, failure.databaseOutcome)
             assertTrue(failure.cleanupProven)
             assertEquals(0, admission.activeOwners())
         }
         f.rows.assertReleased()
-        val paths = setOf(PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION, PersistencePhasePath.COMPLAINT_ADMIN_SEARCH, PersistencePhasePath.COMPLAINT_ADMIN_DETAIL)
+        val paths = setOf(
+            PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION, PersistencePhasePath.COMPLAINT_ADMIN_SEARCH,
+            PersistencePhasePath.COMPLAINT_ADMIN_DETAIL, PersistencePhasePath.COMPLAINT_ADMIN_STATS,
+        )
         assertTrue(paths.all { it.readOnly && !it.source && !it.complaintMaintenanceWriter })
     }
 
@@ -615,6 +643,7 @@ class ComplaintAdminReadIT {
         f.ordinary.ownership::enterComplaintAdminReadAuthentication to { f.store.authenticate(f.identity()) },
         f.ordinary.ownership::enterComplaintAdminSearch to { f.store.search(f.identity(), ComplaintAdminSearchQuery(f.scope), null) },
         f.ordinary.ownership::enterComplaintAdminDetail to { f.store.detail(f.identity(), id) },
+        f.ordinary.ownership::enterComplaintAdminStats to { f.store.stats(f.identity()) },
     )
 
     private fun refused(failure: ComplaintAdminReadFailure, work: () -> Any): ComplaintAdminReadRejected =
