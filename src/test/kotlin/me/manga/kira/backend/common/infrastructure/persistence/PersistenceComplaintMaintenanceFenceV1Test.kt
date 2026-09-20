@@ -65,12 +65,13 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PROJECTED_RELOAD,
         )
         val adminWriters = setOf(PersistencePhasePath.COMPLAINT_ADMIN_EDIT, PersistencePhasePath.COMPLAINT_ADMIN_STATUS)
-        val writers = oldWriters + testWriters + adminWriters
-        assertEquals(92, PersistencePhasePath.entries.size)
+        val registration = PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION
+        val writers = oldWriters + testWriters + adminWriters + registration
+        assertEquals(93, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(2, adminWriters.size)
-        assertEquals(53, writers.size)
+        assertEquals(54, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -127,6 +128,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertTrue(snapshot.readOnly)
         assertFalse(testWriters.any { it.readOnly })
         assertFalse(adminWriters.any { it.readOnly })
+        assertFalse(registration.readOnly) // PostgreSQL SELECT FOR UPDATE requires a writable transaction, not DML permission.
+        assertFalse(registration.catalogTestRunActivation) // Separate normal-root ownership, never a named-projector route.
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_STATUS_PREFLIGHT.readOnly)
     }

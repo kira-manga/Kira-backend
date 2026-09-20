@@ -77,6 +77,24 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         }
     }
 
+    /** Normal retained runtime root only. Never changes a named root's permanent seals or launch policy. */
+    internal fun requireRegistrationTarget() {
+        requireUnchangedConfiguration()
+        require(!pools.shutdownRequested()) { INVALID_TEST_PROCESS_CONFIGURATION }
+        val coordinator = pools.catalogCoordinator
+        require(!coordinator.catalogTestRunActivation && !coordinator.catalogSignerRotationActivation &&
+            !coordinator.catalogSignerRotationRecovery && !coordinator.catalogSignerRotationDelivery &&
+            !coordinator.catalogSignerRotationAuthoring && !coordinator.catalogGenesisAuthoring &&
+            !coordinator.catalogGenesisFinalization && !coordinator.desiredInstallationOperator) { INVALID_TEST_PROCESS_CONFIGURATION }
+        pools.ordinary.requireOrdinaryPhaseResource()
+        pools.deletion.requireDeletionPhaseResource()
+        val names = pools.descriptors().flatMap { it.openings() }.map { it.publicDriverProperties()["user"] }
+        require(names.none { it == me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME ||
+            it == me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME }) {
+            INVALID_TEST_PROCESS_CONFIGURATION
+        }
+    }
+
     private fun requireOwners() {
         require(implementationSchema == 1 && desiredGeneration > 0 && isV4(databaseIdentity) && isV4(restoreIdentity)) {
             INVALID_TEST_PROCESS_CONFIGURATION

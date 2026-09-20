@@ -9,7 +9,6 @@ import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
-import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExchangeAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerHistoryStore
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerHistoryPhaseExecutor
@@ -216,7 +215,7 @@ class ComplaintInstallationHttpIT {
         private val jwt = historyTestJwt()
         private val mapper = ObjectMapper()
         private val resources = mutableListOf<UUID>()
-        private val exchange = ComplaintInstallationExchangeAdapter(run.desired, base.ordinary.ownership, base.jdbc, base.capacity, base.audit, ingress, jwt)
+        private val exchange = SyntheticInstallationExchangeFixture(run.desired, base.ordinary.ownership, base.jdbc, base.capacity, base.audit, ingress, jwt)
         val handler = ComplaintInstallationHttpHandler(ComplaintInstallationService(exchange), ingress)
         private val historyHandler = ComplaintOwnerHistoryHttpHandler(
             ComplaintOwnerHistoryService(

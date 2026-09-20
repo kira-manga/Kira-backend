@@ -20,7 +20,6 @@ import me.manga.kira.backend.complaint.domain.ComplaintReportRequest
 import me.manga.kira.backend.complaint.domain.ComplaintReportRequestResult
 import me.manga.kira.backend.complaint.domain.ComplaintType
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
-import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExchangeAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateCandidate
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadAdapter
@@ -181,7 +180,7 @@ internal class ComplaintOwnerCreateFixture(
 
     fun exchange(id: UUID, session: Boolean): MockHttpServletResponse {
         base.ids.addIfAbsent(id)
-        val exchange = ComplaintInstallationExchangeAdapter(
+        val exchange = SyntheticInstallationExchangeFixture(
             desired,
             base.ordinary.ownership,
             base.jdbc,

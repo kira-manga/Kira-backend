@@ -392,6 +392,8 @@ internal class CatalogSignerRotationProbeJdbc(
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
         val step = when {
+            path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION && sql == DELIVERY_AUTHENTICATE -> "test-registration-authenticate"
+
             observeTestActivationQueries && sql == DELIVERY_AUTHENTICATE -> "test-activation-authenticate"
 
             observeTestActivationQueries && testActivationStep(sql) != null -> checkNotNull(testActivationStep(sql))
@@ -434,6 +436,7 @@ internal class CatalogSignerRotationProbeJdbc(
         -> false
 
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
+        PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,

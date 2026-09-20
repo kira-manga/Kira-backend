@@ -124,6 +124,8 @@ internal class CatalogTestRunActivationV1 private constructor(
     private var allowedSignedResult = false
     private var allowedCompletedResult = false
     private var allowedProjectedResult = false
+    private var registrationTarget: VersionBoundTestNamespaceProcessV1? = null
+    private var completionContinuationIssued = false
     private var lastWall: Instant? = null
     private var selectedKind: CatalogTestRunActivationKindV1? = null
     private var inputConstructionClaimed = false
@@ -195,10 +197,41 @@ internal class CatalogTestRunActivationV1 private constructor(
         unsignedCanonicalBytes: ByteArray,
         primaryReadCredentials: AwsSessionCredentials,
         replicaReadCredentials: AwsSessionCredentials,
-    ): CatalogTestRunProjectedV1 = runProjection(releaseRoot, unsignedCanonicalBytes, primaryReadCredentials, replicaReadCredentials)
+    ): CatalogTestRunProjectedV1 {
+        runProjection(releaseRoot, unsignedCanonicalBytes, primaryReadCredentials, replicaReadCredentials)
+        return CatalogTestRunProjectedV1.issuedBy(this)
+    }
+
+    /** Only a freshly dispatched first PROJECT can hand completion to one separate runtime target. */
+    fun projectForRegistration(
+        target: VersionBoundTestNamespaceProcessV1,
+        releaseRoot: Path,
+        unsignedCanonicalBytes: ByteArray,
+        primaryReadCredentials: AwsSessionCredentials,
+        replicaReadCredentials: AwsSessionCredentials,
+    ): CatalogTestRunFirstProjectionV1 {
+        requireConnectionFree()
+        requireRunning()
+        requireTestActivation(!entered && stage === Stage.NEW && registrationTarget == null)
+        target.requireRegistrationTarget()
+        registrationTarget = target
+        runProjection(releaseRoot, unsignedCanonicalBytes, primaryReadCredentials, replicaReadCredentials)
+        return CatalogTestRunFirstProjectionV1.issuedBy(this, target)
+    }
+
+    internal fun firstProjectionState(target: VersionBoundTestNamespaceProcessV1): CatalogTestRunFirstProjectionV1.State {
+        val (input, value, _) = projectedReceiptInput()
+        requireTestActivation(registrationTarget === target && !completionContinuationIssued &&
+            originalSnapshot?.completedTail?.projectedAt == null && projectOperation != null && projectionDispatchIssued &&
+            projectionGrant?.spent == true && projectOperation?.input?.original === this)
+        checkNotNull(projectOperation).requireReleased()
+        target.requireRegistrationTarget()
+        completionContinuationIssued = true
+        return CatalogTestRunFirstProjectionV1.State(input, value, checkNotNull(expectedSnapshot))
+    }
 
     @Suppress("TooGenericExceptionCaught", "LongMethod")
-    private fun runProjection(root: Path, bytes: ByteArray, primary: AwsSessionCredentials, replica: AwsSessionCredentials): CatalogTestRunProjectedV1 {
+    private fun runProjection(root: Path, bytes: ByteArray, primary: AwsSessionCredentials, replica: AwsSessionCredentials) {
         requireTestActivation(caller === Thread.currentThread(), CatalogTestRunActivationFailureV1.PROCESS_REFUSED)
         var success = false
         var failure: Throwable? = null
@@ -223,6 +256,7 @@ internal class CatalogTestRunActivationV1 private constructor(
             expectedSnapshot = originalSnapshot
             checkNotNull(deliveryRelease).requireSnapshot(checkNotNull(originalSnapshot))
             requireTestActivation(originalSnapshot?.completedTail != null, CatalogTestRunActivationFailureV1.STATE_REFUSED)
+            if (registrationTarget != null) requireTestActivation(originalSnapshot?.completedTail?.projectedAt == null, CatalogTestRunActivationFailureV1.STATE_REFUSED)
             observeDelivery(primary, replica)
             requireTestActivation(deliveryReadback?.state === CatalogTestRunActivationDeliveryReadbackV1.State.DUAL_COPY)
             stage = Stage.ACQUIRE
@@ -273,7 +307,6 @@ internal class CatalogTestRunActivationV1 private constructor(
         failure?.let { throw boundedTestActivationFailure(it) }
         requireTestActivation(success)
         allowedProjectedResult = true
-        return CatalogTestRunProjectedV1.issuedBy(this)
     }
 
     private fun retainProjectionGrant() {

@@ -13,6 +13,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationFinalizationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunActivationPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSnapshotPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCoordinatorLeasePersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDesiredInstallPhaseExecutor
@@ -56,6 +57,8 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var signerRotationActivationExecutor: ComplaintCatalogSignerRotationActivationPhaseExecutorV1? = null
 
     private var testRunActivationExecutor: ComplaintCatalogTestRunActivationPhaseExecutorV1? = null
+    private var testRegistrationExecutor: ComplaintTestNamespaceRegistrationPhaseExecutorV1? = null
+    internal val testNamespaceRegistration: ComplaintTestNamespaceRegistrationPhaseExecutorV1 get() = checkNotNull(testRegistrationExecutor)
     internal val testRunActivation: ComplaintCatalogTestRunActivationPhaseExecutorV1 get() = checkNotNull(testRunActivationExecutor)
 
     internal val ownership: PersistencePhaseOwnership get() = checkNotNull(phaseOwner)
@@ -115,6 +118,7 @@ internal class CatalogCoordinatorPersistence private constructor(
             return // Exact G1 refresh -> ACQUIRE -> initial overlap author; never a projected/epoch/cutoff executor.
         }
         if (catalogGenesisAuthoring || catalogGenesisFinalization) return // Only the named attempt may select its three fixed phases.
+        testRegistrationExecutor = ComplaintTestNamespaceRegistrationPhaseExecutorV1(this)
         projectedHeadExecutor = ComplaintCatalogProjectedHeadPhaseExecutor(this, jdbc)
         leaseExecutor = ComplaintCoordinatorLeasePersistencePhaseExecutor(this, jdbc)
         rotationExecutor = CatalogEpochRotationV1(this, jdbc)

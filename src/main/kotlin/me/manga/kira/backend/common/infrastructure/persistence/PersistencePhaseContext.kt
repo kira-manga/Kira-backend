@@ -11,6 +11,8 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteReadOperation
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRegistrationOperationV1
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
@@ -149,6 +151,8 @@ constructor(
     private val signerRotationActivationWork: PersistenceTimeBudget? = null,
     private val testRunActivation: CatalogTestRunActivationV1? = null,
     private val testRunActivationWork: PersistenceTimeBudget? = null,
+    private val testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
+    private val testRegistrationWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -223,6 +227,7 @@ constructor(
     internal val catalogSignerRotationFinalization: PersistenceCatalogSignerRotationFinalizationV1 = CatalogSignerRotationFinalizationBoundary()
     internal val catalogSignerRotationActivation: PersistenceCatalogSignerRotationActivationV1 = CatalogSignerRotationActivationBoundary()
     internal val catalogTestRunActivation: PersistenceCatalogTestRunActivationV1 = CatalogTestRunActivationBoundary()
+    internal val testNamespaceRegistration: PersistenceTestNamespaceRegistrationV1 = TestNamespaceRegistrationBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
     private var complaintBatch: ComplaintGrantCleanupBatch? = null
@@ -381,7 +386,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork ?: testRunActivationWork
+                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -389,7 +394,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork ?: testRunActivationWork
+            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -599,6 +604,8 @@ constructor(
 
         PersistencePhasePath.COMPLAINT_TEST_RESERVE_SPEND -> testReserveSpend.completed()
 
+        PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION -> testNamespaceRegistration.completed()
+
         PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
 
         PersistencePhasePath.COMPLAINT_INSTALLATION_SESSION_PREFLIGHT,
@@ -802,6 +809,7 @@ constructor(
         signerRotationDelivery?.observeFailure(problem)
         signerRotationActivation?.observeFailure(problem)
         testRunActivation?.observeFailure(problem)
+        testRegistration?.observeFailure(problem)
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
@@ -871,6 +879,12 @@ constructor(
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
+    internal fun testRegistrationCleanupProven(original: ComplaintTestNamespaceRegistrationAttemptV1): Boolean =
+        caller.isCurrent() && testRegistration === original && path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
     internal fun initialTestActivationPrepare(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection): Boolean {
         selectedHolder.requireMaintenanceFence(fence, selected)
         if (path !== PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE) return false
@@ -885,7 +899,11 @@ constructor(
         gate: PersistenceComplaintMaintenanceGateV1,
     ) {
         selectedHolder.requireMaintenanceFence(fence, selected)
-        if (testRunActivation == null) gate.requireUnownedOpen() else testRunActivation.requireMaintenanceGate(ownership, path, gate)
+        when {
+            testRegistration != null -> testRegistration.requireMaintenanceGate(ownership, path, gate)
+            testRunActivation != null -> testRunActivation.requireMaintenanceGate(ownership, path, gate)
+            else -> gate.requireUnownedOpen()
+        }
     }
 
     /** Lower/upper dispatch uses this budget; no business worker or copied Spring context exists. */
@@ -1025,6 +1043,7 @@ constructor(
                 signerRotationDelivery?.observeFailure(problem)
                 signerRotationActivation?.observeFailure(problem)
                 testRunActivation?.observeFailure(problem)
+                testRegistration?.observeFailure(problem)
                 // Discard raw restoration details, but retain unresolved custody instead of claiming settlement/refund.
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
@@ -1101,7 +1120,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1141,13 +1160,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null || testRunActivation != null
+        signerRotationActivation != null || testRunActivation != null || testRegistration != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1228,6 +1247,7 @@ constructor(
                 signerRotationDelivery?.observeFailure(problem)
                 signerRotationActivation?.observeFailure(problem)
                 testRunActivation?.observeFailure(problem)
+                testRegistration?.observeFailure(problem)
                 // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
                 ownership.retainCallerForRecovery(this@PersistencePhaseContext)
                 false
@@ -1317,6 +1337,7 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_COMPLETE,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PROJECT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
+            PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
             PersistencePhasePath.COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
             PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
@@ -1779,6 +1800,45 @@ constructor(
 
             else -> false
         }
+    }
+
+    /** Exact runtime-root read/lock-only owner. No unowned closed-gate entry or supplied success can satisfy this boundary. */
+    private inner class TestNamespaceRegistrationBoundary : PersistenceTestNamespaceRegistrationV1 {
+        private var selected = false
+        private var retained: TestNamespaceRegistrationOperationV1? = null
+
+        override fun requireOperation(original: ComplaintTestNamespaceRegistrationAttemptV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION)
+            if (selected || original !== testRegistration || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            original.requirePersistence(ownership, jdbc)
+            selected = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: TestNamespaceRegistrationOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION)
+            if (!selected || retained != null || operation.original !== testRegistration || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: TestNamespaceRegistrationOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION)
+            if (retained !== operation || operation.original !== testRegistration || !selectedHolder.fenceReady()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            operation.original.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: TestNamespaceRegistrationOperationV1) {
+            if (retained !== operation || !completed() || !testRegistrationCleanupProven(operation.original)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.original === testRegistration && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     private inner class CatalogTestRunActivationBoundary : PersistenceCatalogTestRunActivationV1 {

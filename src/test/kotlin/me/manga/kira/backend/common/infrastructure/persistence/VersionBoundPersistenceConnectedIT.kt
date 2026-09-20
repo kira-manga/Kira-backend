@@ -36,8 +36,13 @@ import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationProjectio
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationProjectionRecoveryCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRecoveryCases
+import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRegistrationCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
+import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
+import me.manga.kira.backend.complaint.catalog.TestRegistrationDriftCut
+import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
+import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceClock
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceGateCut
@@ -1190,6 +1195,56 @@ class VersionBoundPersistenceConnectedIT {
         )) {
             val clock = DesiredInstallationTestClock()
             withFixture(testActivation = true) { CatalogTestRunActivationProjectionRecoveryCases.originalLifetime(it, clock, cut) }
+        }
+    }
+
+    @Test
+    fun testRegistrationFirstFreshUsesOwnRootAndAdapterWithoutReopening() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceRegistrationCases.firstFreshBindingIsConsumedByInstallation(it, shutdownRoot = false)
+    }
+
+    @Test
+    fun testRegistrationLifetimeEndsWithOriginalRuntimeRoot() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceRegistrationCases.firstFreshBindingIsConsumedByInstallation(it, shutdownRoot = true)
+    }
+
+    @Test
+    fun testRegistrationRequiresOwnDualCopyAndUntouchedFreshEffect() {
+        TestRegistrationDriftCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.rawCopiesAndUsedEffectCannotRegister(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRegistrationProviderSignalsAndCleanupCannotIssueOrRetry() {
+        TestRegistrationProviderCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.providerFailureCannotIssueOrRetry(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRegistrationTargetCommitAndReleaseFailuresAreSticky() {
+        TestRegistrationCompletionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.targetCompletionAndOriginalReleaseAreRequired(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation() {
+        for (closed in listOf(false, true)) {
+            withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.changedTargetNamedRootAndClosedContinuationRefuse(it, closed) }
+        }
+    }
+
+    @Test
+    fun testRegistrationHistoricalProjectAndColdReplayCannotBecomeRegistration() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceRegistrationCases.historicalProjectAndColdReplayCannotRegister(it)
+    }
+
+    @Test
+    fun testRegistrationFailedOriginalProjectNeverIssuesCompletion() {
+        TestRegistrationProjectCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.failedOriginalProjectCannotHandoffCompletion(it, cut) }
         }
     }
 

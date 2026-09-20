@@ -7,7 +7,6 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationMeHttpHandler
 import me.manga.kira.backend.complaint.api.installationMeTestRequest
 import me.manga.kira.backend.complaint.application.ComplaintInstallationMeService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
-import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExchangeAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationMeReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerHistoryStore
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerHistoryPhaseExecutor
@@ -29,7 +28,7 @@ internal class ComplaintInstallationMeFixture(val base: OrdinaryComplaintInstall
     val reader = newReader()
     val handler = ComplaintInstallationMeHttpHandler(ComplaintInstallationMeService(reader), ingress)
     private val mapper = ObjectMapper()
-    private val exchange = ComplaintInstallationExchangeAdapter(run.desired, base.ordinary.ownership, base.jdbc, base.capacity, base.audit, ingress, jwt)
+    private val exchange = SyntheticInstallationExchangeFixture(run.desired, base.ordinary.ownership, base.jdbc, base.capacity, base.audit, ingress, jwt)
     private val sessions = ComplaintInstallationHttpHandler(ComplaintInstallationService(exchange), ingress)
     val location = enrollViaHttp()
     val token = issueViaHttp()
@@ -76,7 +75,7 @@ internal class ComplaintInstallationMeFixture(val base: OrdinaryComplaintInstall
         sessions.handleRequest(sessionInput(enrollment = false), response)
         assertEquals(200, response.status)
         assertReleased()
-        val token = json(response)["accessToken"].asText() // The actual c1 HTTP producer, never a direct jwt.issue call.
+        val token = json(response)["accessToken"].asText() // The historical synthetic lower HTTP recipe; not genuine registration.
         val verified = jwt.verify(token)
         assertEquals(id, verified.installation.id)
         assertEquals(run.scope, verified.installation.scope)

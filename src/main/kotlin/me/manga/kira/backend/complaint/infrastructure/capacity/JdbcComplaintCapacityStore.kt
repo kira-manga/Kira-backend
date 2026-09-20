@@ -4,6 +4,7 @@ import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAuditEntry
 import me.manga.kira.backend.audit.infrastructure.ComplaintOwnerDeleteAuditInsertion
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAuthorizationOperation
+import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRegistrationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteApplyOperation
 import jakarta.persistence.EntityManager
 import me.manga.kira.backend.audit.domain.ComplaintAuditAllocation
@@ -100,6 +101,14 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForCatalogTestRunActivation(operation: CatalogTestRunActivationOperationV1): LockedCatalogTestRunActivation =
         LockedCatalogTestRunActivation.lock(this, operation)
+
+    /** Fixed registration read only. No settlement/update capability is returned. */
+    internal fun lockForTestNamespaceRegistration(operation: TestNamespaceRegistrationOperationV1): CatalogTestRunActivationProjectionCountersV1 {
+        operation.beginCounterLock(jdbc)
+        val result = projectionCounters(readLockedCounters())
+        operation.requireCounterRead(jdbc)
+        return result
+    }
 
     internal fun lockForOwnerCreate(operation: ComplaintOwnerCreateOperation): LockedOwnerCreate = LockedOwnerCreate.lock(this, operation)
 

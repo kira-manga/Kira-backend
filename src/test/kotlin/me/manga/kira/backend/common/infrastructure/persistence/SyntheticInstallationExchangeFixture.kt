@@ -1,11 +1,11 @@
-package me.manga.kira.backend.complaint.infrastructure
+package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.audit.domain.ComplaintInstallationEnrollmentAudit
-import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
-import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationEnrollmentResponse
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationExchange
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationHttpFailure
+import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationRequestContext
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationSessionResponse
 import me.manga.kira.backend.complaint.domain.InstallationEnrollmentCandidate
@@ -16,35 +16,38 @@ import me.manga.kira.backend.complaint.domain.InstallationSessionRejection
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.SessionRefreshResult
 import me.manga.kira.backend.complaint.domain.rejectInstallationHttp
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintInstallationSessionStore
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintEnrollmentAdmissionCoordinator
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSessionAdmissionCoordinator
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSessionAdmissionResult
-import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
-import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintInstallationEnrollmentStore
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationEnrollmentPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationSessionPhaseExecutor
+import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.InstallationJwtCodec
 import org.springframework.jdbc.core.JdbcTemplate
-import java.time.Clock
 import java.time.Instant
 
-/** Dormant registered TEST exchange. Only the actual non-operator process binding selects its consumers and full D. */
+/**
+ * Historical synthetic lower HTTP recipe, retained for the existing parser/admission/transaction
+ * fixtures. NOT the registered production adapter, an activation fixture or a registration issuer.
+ * These rows deliberately do not possess schema3 provenance; genuine registration has separate cases.
+ */
 @Suppress("LongParameterList")
-internal class ComplaintInstallationExchangeAdapter(
-    private val registration: ComplaintTestNamespaceRegistrationV1,
-    private val ownership: PersistencePhaseOwnership,
-    private val jdbc: JdbcTemplate,
+internal class SyntheticInstallationExchangeFixture(
+    desired: ComplaintInstallationDesiredSettings.Configured,
+    ownership: PersistencePhaseOwnership,
+    jdbc: JdbcTemplate,
+    capacity: JdbcComplaintCapacityStore,
     audit: ComplaintInstallationEnrollmentAudit,
+    ingress: ComplaintIngressAdmission,
+    private val jwt: InstallationJwtCodec,
 ) : ComplaintInstallationExchange {
-    init { registration.requireInstallationResources(ownership, jdbc) }
-
-    private val desired = registration.process.desiredSettings()
-    private val ingress = registration.process.consumers.ingressAdmission
-    private val capacity = JdbcComplaintCapacityStore(jdbc, registration.process.consumers.capacityPolicy.digestBytes())
-    private val jwt = InstallationJwtCodec(registration.process.consumers.jwt.installationKeyRing, Clock.systemUTC())
+    init {
+        require(desired.mode == ComplaintInstallationMode.PRE_CUTOVER_TEST && desired.scope.testOnly) { "Dormant installation HTTP requires TEST scope." }
+    }
 
     private val testScope = desired.scope
     private val enrollment = ComplaintEnrollmentAdmissionCoordinator(
@@ -92,7 +95,7 @@ internal class ComplaintInstallationExchangeAdapter(
     }
 
     private fun requestContext(context: ComplaintInstallationRequestContext): ComplaintIngressContext {
-        requireRegistered()
+        requireConnectionFree()
         return context as? ComplaintIngressContext ?: rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE)
     }
 
@@ -103,20 +106,14 @@ internal class ComplaintInstallationExchangeAdapter(
         databaseTime: Instant,
     ): ComplaintInstallationSessionResponse {
         // Reached only through the concrete admitted executors after commit AND actual release.
-        requireRegistered()
+        requireConnectionFree()
         check(installation == expected && installation.scope == testScope)
         val issued = jwt.issue(installation, version, databaseTime)
-        requireRegistered() // Close/shutdown during signing cannot return a token.
         check(issued.expiresInSeconds == ComplaintInstallationSessionResponse.EXPIRES_IN_SECONDS)
         return ComplaintInstallationSessionResponse(installation, version, issued.value, issued.issuedAt)
     }
 
-    private fun requireRegistered() {
-        try { registration.requireInstallationResources(ownership, jdbc) }
-        catch (_: ComplaintTestNamespaceRegistrationExceptionV1) { rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE) }
-    }
-
-    override fun toString(): String = "ComplaintInstallationExchangeAdapter(registered-TEST,dormant,no-reopen-authority)"
+    override fun toString(): String = "SyntheticInstallationExchangeFixture(TEST-only,no-mode-authority)"
 
     private fun enrollmentFailure(reason: InstallationEnrollmentRejection): ComplaintInstallationHttpFailure = when (reason) {
         InstallationEnrollmentRejection.INSTALLATION_CREDENTIAL_REJECTED -> ComplaintInstallationHttpFailure.INSTALLATION_CREDENTIAL_REJECTED
