@@ -112,7 +112,8 @@ class AuthAttemptCallerTest {
 
                     override fun checkRegistrationAllowed(clientIp: String) = Unit
                 }
-                assertThrows<TooManyRequestsException> { call(throttle, stepUp) }
+                val error = assertThrows<TooManyRequestsException> { call(throttle, stepUp) }
+                assertTrue(error.suppressed.isEmpty(), "Expected throttle refusal must not hide managed-resource cleanup failures.")
             }
         }
         verifyNoInteractions(tokens, grants, audit)
@@ -127,7 +128,8 @@ class AuthAttemptCallerTest {
                     if (unknown) throttle.clearAll() else clock.advance(Duration.ofSeconds(1))
                     true
                 }.`when`(encoder).matches(PASSWORD, user.passwordHash)
-                assertThrows<TooManyRequestsException> { call(throttle, stepUp) }
+                val error = assertThrows<TooManyRequestsException> { call(throttle, stepUp) }
+                assertTrue(error.suppressed.isEmpty(), "Expected throttle refusal must not hide managed-resource cleanup failures.")
                 if (unknown) assertEquals(0, throttle.size())
             }
         }
