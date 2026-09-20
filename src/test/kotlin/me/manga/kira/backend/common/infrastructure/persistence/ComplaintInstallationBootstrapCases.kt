@@ -54,7 +54,7 @@ import java.util.UUID
 
 /** Real first PROJECT + target primary/replica readback + ordinary phase. No seeded/usable registration issuer. */
 internal object ComplaintInstallationBootstrapCases {
-    fun mountedMaintenanceIsolation(tls: VersionBoundPersistenceConnectedFixture) = withFixture(tls) { f ->
+    fun mountedMaintenanceIsolation(tls: VersionBoundPersistenceConnectedFixture) = withFixture(tls, expireClosedSetupPredecessors = false) { f ->
         val before = f.image()
         val providerReads = f.p.f.http.read.requests.size
         assertEquals(true, f.observer.queryForMap("SELECT maintenance_closed FROM complaint_journal_control WHERE data_scope_id = ?", f.scope.id)["maintenance_closed"])
@@ -344,8 +344,10 @@ internal object ComplaintInstallationBootstrapCases {
         assertEquals(before, f.image())
     }
 
-    private fun withFixture(tls: VersionBoundPersistenceConnectedFixture, action: (Fixture) -> Unit) =
-        ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls) { p, runtime, registration, _ ->
+    // Downstream cases use explicit synthetic expiry of actually closed setup predecessors only.
+    // The mounted positive above keeps natural expiry; the shared helper default and runtime clocks stay unchanged.
+    private fun withFixture(tls: VersionBoundPersistenceConnectedFixture, expireClosedSetupPredecessors: Boolean = true, action: (Fixture) -> Unit) =
+        ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, expireClosedSetupPredecessors = expireClosedSetupPredecessors) { p, runtime, registration, _ ->
             ComplaintTestNamespaceRegistrationCases.withOrdinaryAudit(runtime) { ordinary, audit ->
                 Fixture(p, runtime, registration, ordinary, audit).let { f ->
                     try { action(f) } finally { f.assertReleased() }

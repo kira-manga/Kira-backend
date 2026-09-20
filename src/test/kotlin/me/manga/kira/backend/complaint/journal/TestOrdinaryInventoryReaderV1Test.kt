@@ -550,7 +550,7 @@ class TestOrdinaryInventoryReaderV1ConnectedIT {
         action: (TestRunOrdinaryDrainFixtureV1) -> Unit,
     ) = VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use { tls ->
         tls.bind()
-        withOrdinaryDrainRun(tls, inputs = inputs, action = action)
+        withOrdinaryDrainRun(tls, inputs = inputs, expireClosedSetupPredecessors = true, action = action)
     }
 
     private fun retainedVersions(f: TestRunOrdinaryDrainFixtureV1, versions: List<String>): List<JournalPublisherObject> {

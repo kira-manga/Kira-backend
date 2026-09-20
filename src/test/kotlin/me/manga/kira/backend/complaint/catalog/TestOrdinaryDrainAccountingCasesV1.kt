@@ -147,7 +147,7 @@ internal object TestOrdinaryDrainAccountingCasesV1 {
         }
     }
 
-    fun preparedPrimaryPrecedesCapture(tls: VersionBoundPersistenceConnectedFixture) = withOrdinaryDrainRun(tls, prepared = true) { f ->
+    fun preparedPrimaryPrecedesCapture(tls: VersionBoundPersistenceConnectedFixture) = withOrdinaryDrainRun(tls, prepared = true, expireClosedSetupPredecessors = true) { f ->
         assertEquals("PREPARED", f.history.publicationState())
         val observed = TestOrdinaryDrainAccountingObservationV1(f)
         val before = observed.state()
@@ -177,7 +177,7 @@ internal object TestOrdinaryDrainAccountingCasesV1 {
         }
     }
 
-    fun paidReplayHasNoSecondTransfer(tls: VersionBoundPersistenceConnectedFixture, hideStoredSeal: Boolean) = withOrdinaryDrainRun(tls) { f ->
+    fun paidReplayHasNoSecondTransfer(tls: VersionBoundPersistenceConnectedFixture, hideStoredSeal: Boolean) = withOrdinaryDrainRun(tls, expireClosedSetupPredecessors = true) { f ->
         val values = addRetainedAliases(f)
         val observed = TestOrdinaryDrainAccountingObservationV1(f)
         TestOrdinaryInventoryHttpFixtureV1(f.provider).use { native ->

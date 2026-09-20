@@ -35,7 +35,7 @@ internal enum class TestOrdinaryDrainCommitStepV1 { WITNESS, CONVERT, RECYCLE, S
 internal object TestOrdinaryDrainFailureCasesV1 {
     fun deniedAuthority(tls: VersionBoundPersistenceConnectedFixture, cut: TestOrdinaryDrainAuthorityCutV1) {
         val inputs = TestOrdinaryDrainFixtureInputsV1()
-        withOrdinaryDrainRun(tls, inputs = inputs) { f ->
+        withOrdinaryDrainRun(tls, inputs = inputs, expireClosedSetupPredecessors = true) { f ->
             val observed = TestOrdinaryDrainAccountingObservationV1(f)
             val before = observed.state()
             val history = observed.previousHistory()

@@ -395,7 +395,6 @@ internal object ComplaintTestNamespaceRegistrationCases {
         ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
         action: (ProjectionActivationObservation, VersionBoundPersistenceConnectedFixture, ComplaintTestNamespaceRegistrationV1, CatalogSignerRotationProbeJdbc) -> Unit,
     ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain) { f ->
-        check(!expireClosedSetupPredecessors || ordinarySealHttp != null)
         fun expireClosedSetupPredecessor(previous: VersionBoundPersistenceConnectedFixture) {
             if (!expireClosedSetupPredecessors) return
             requireConnectionFree()
@@ -405,7 +404,7 @@ internal object ComplaintTestNamespaceRegistrationCases {
                     "FROM complaint_journal_control WHERE data_scope_id = ?", scope,
             )
             previous.close() // Actual root, actor and database-session cleanup must succeed before fixture-only mutation.
-            // Only these two ordinary-seal setup handoffs are synthetic expiry, never a release or natural-expiry proof.
+            // Only these two explicitly opted-in setup handoffs are synthetic expiry, never a release or natural-expiry proof.
             assertEquals(1, f.rows.observer.update(
                 "UPDATE complaint_journal_control SET lease_expires_at = clock_timestamp() - interval '1 second' " +
                     "WHERE data_scope_id = ? AND lease_owner = ? AND lease_token = ? AND lease_expires_at = ? " +
