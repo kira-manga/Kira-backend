@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
@@ -99,6 +100,9 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestNamespaceRegistration(original: ComplaintTestNamespaceRegistrationAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION, testRegistration = original)
+
+    internal fun enterTestInitialAdmission(original: ComplaintTestInitialAdmissionV1): PersistencePhaseContext =
+        enter(original.path, testInitialAdmission = original)
 
     internal fun enterTestNamespaceRecoveryRegistration(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION, testRecoveryRegistration = original)
@@ -503,6 +507,7 @@ internal class PersistencePhaseOwnership private constructor(
         signerRotationActivation: CatalogSignerRotationActivationV1? = null,
         testRunActivation: CatalogTestRunActivationV1? = null,
         testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
+        testInitialAdmission: ComplaintTestInitialAdmissionV1? = null,
         testRecoveryRegistration: ComplaintTestNamespaceRecoveryRegistrationAttemptV1? = null,
         testRunSealer: TestRunSealingV1? = null,
         testOrdinarySealer: TestRunOrdinarySealV1? = null,
@@ -527,6 +532,9 @@ internal class PersistencePhaseOwnership private constructor(
         requireSignerRotationActivationEntry(path, signerRotationActivation)
         requireTestRunActivationEntry(path, testRunActivation)
         if ((path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION) != (testRegistration != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (path.testInitialAdmission != (testInitialAdmission != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION) != (testRecoveryRegistration != null)) {
@@ -577,6 +585,7 @@ internal class PersistencePhaseOwnership private constructor(
         signerRotationActivation?.requirePhaseEntry(this, path)
         testRunActivation?.requirePhaseEntry(this, path)
         testRegistration?.requirePhaseEntry(this, path)
+        testInitialAdmission?.requirePhaseEntry(this, path)
         testRecoveryRegistration?.requirePhaseEntry(this, path)
         testRunSealer?.requirePhaseEntry(this, path)
         testOrdinarySealer?.requirePhaseEntry(this, path)
@@ -602,6 +611,7 @@ internal class PersistencePhaseOwnership private constructor(
         val signerRotationActivationWork = signerRotationActivation?.budget?.capped(2_000)
         val testRunActivationWork = testRunActivation?.budget?.capped(2_000)
         val testRegistrationWork = testRegistration?.budget?.capped(2_000)
+        val testInitialAdmissionWork = testInitialAdmission?.budget?.capped(2_000)
         val testRecoveryRegistrationWork = testRecoveryRegistration?.budget?.capped(2_000)
         val testRunSealingWork = testRunSealer?.budget?.capped(2_000)
         val testOrdinarySealWork = testOrdinarySealer?.budget?.capped(2_000)
@@ -663,6 +673,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunActivationWork,
                 testRegistration,
                 testRegistrationWork,
+                testInitialAdmission,
+                testInitialAdmissionWork,
                 testRecoveryRegistration,
                 testRecoveryRegistrationWork,
                 testRunSealer,
@@ -691,6 +703,7 @@ internal class PersistencePhaseOwnership private constructor(
             signerRotationActivation?.retainPhase(prepared)
             testRunActivation?.retainPhase(prepared)
             testRegistration?.retainPhase(prepared)
+            testInitialAdmission?.retainPhase(prepared)
             testRecoveryRegistration?.retainPhase(prepared)
             testRunSealer?.retainPhase(prepared)
             testOrdinarySealer?.retainPhase(prepared)
@@ -714,6 +727,7 @@ internal class PersistencePhaseOwnership private constructor(
             signerRotationActivation?.observeFailure(failure)
             testRunActivation?.observeFailure(failure)
             testRegistration?.observeFailure(failure)
+            testInitialAdmission?.observeFailure(failure)
             testRecoveryRegistration?.observeFailure(failure)
             testRunSealer?.observeFailure(failure)
             testOrdinarySealer?.observeFailure(failure)
@@ -733,6 +747,7 @@ internal class PersistencePhaseOwnership private constructor(
                 signerRotationActivation?.observeFailure(cleanup)
                 testRunActivation?.observeFailure(cleanup)
                 testRegistration?.observeFailure(cleanup)
+                testInitialAdmission?.observeFailure(cleanup)
                 testRecoveryRegistration?.observeFailure(cleanup)
                 testRunSealer?.observeFailure(cleanup)
                 testOrdinarySealer?.observeFailure(cleanup)
@@ -751,6 +766,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { signerRotationActivation?.observePhaseCleanup(it) }
                 phase?.let { testRunActivation?.observePhaseCleanup(it) }
                 phase?.let { testRegistration?.observePhaseCleanup(it) }
+                phase?.let { testInitialAdmission?.observePhaseCleanup(it) }
                 phase?.let { testRecoveryRegistration?.observePhaseCleanup(it) }
                 phase?.let { testRunSealer?.observePhaseCleanup(it) }
                 phase?.let { testOrdinarySealer?.observePhaseCleanup(it) }
@@ -968,6 +984,8 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
                 PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
                 PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+                PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
+                PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
                 PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
@@ -1156,6 +1174,8 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+            PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
+            PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
@@ -1325,6 +1345,8 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_SNAPSHOT,
     COMPLAINT_CATALOG_PROJECTED_HEAD,
     COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+    COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
+    COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
     COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
     COMPLAINT_TEST_RUN_SEAL,
     COMPLAINT_TEST_RUN_SEALED_AUDIT,
@@ -1376,6 +1398,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_GENESIS_PUBLISH_RECHECK,
     ;
 
+    internal val testInitialAdmission: Boolean
+        get() = this === COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE || this === COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE
+
     internal val testRunSealing: Boolean
         get() = this === COMPLAINT_TEST_RUN_SEAL || this === COMPLAINT_TEST_RUN_SEALED_AUDIT
 
@@ -1394,6 +1419,8 @@ internal enum class PersistencePhasePath {
     internal val complaintMaintenanceWriter: Boolean
         get() = when (this) {
             COMPLAINT_TEST_NAMESPACE_REGISTRATION, // SELECT FOR UPDATE needs M/RC; only its typed owner admits the closed TEST gate.
+            COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
+            COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE, // Separate M-exclusive phase, never a shared-lock upgrade.
             COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION, // SELECT FOR UPDATE needs M/RC; only its typed owner admits the closed TEST gate.
             COMPLAINT_TEST_RUN_SEAL,
             COMPLAINT_TEST_RUN_SEALED_AUDIT,

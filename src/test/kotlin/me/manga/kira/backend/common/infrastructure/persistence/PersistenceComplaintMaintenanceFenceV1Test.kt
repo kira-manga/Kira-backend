@@ -84,16 +84,21 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
         )
+        val initialAdmission = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
+            PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
+        )
         val sealing = setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT)
-        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + sealing
-        assertEquals(109, PersistencePhasePath.entries.size)
+        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing
+        assertEquals(111, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
         assertEquals(3, adminDeletionWriters.size)
         assertEquals(4, terminalWriters.size)
         assertEquals(2, registration.size)
-        assertEquals(65, writers.size)
+        assertEquals(2, initialAdmission.size)
+        assertEquals(67, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -158,6 +163,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertFalse(adminWriters.any { it.readOnly })
         assertFalse(registration.any { it.readOnly }) // PostgreSQL SELECT FOR UPDATE requires a writable transaction, not DML permission.
         assertFalse(registration.any { it.catalogTestRunActivation }) // Separate normal-root ownership, never a named-projector route.
+        assertEquals(initialAdmission, PersistencePhasePath.entries.filter { it.testInitialAdmission }.toSet())
+        assertFalse(initialAdmission.any { it.readOnly || it.catalogTestRunActivation || it.testRunSealing })
         assertEquals(sealing, PersistencePhasePath.entries.filter { it.testRunSealing }.toSet())
         assertFalse(sealing.any { it.readOnly || it.catalogTestRunActivation })
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)

@@ -60,6 +60,15 @@ internal class CatalogTestRunActivationReadbackV3 private constructor(
             expected: CatalogTestRunActivationCanonicalV3,
         ): CatalogTestRunActivationReadbackV3 = verifyCaptured(provider, initialBundleBytes, currentBundleBytes, policy, expectedHead, expected, null)
 
+        internal fun verifyInitialAdmission(
+            provider: CatalogReadbackPort, initialBundleBytes: ByteArray, currentBundleBytes: ByteArray,
+            policy: CatalogReadbackPolicy, expectedHead: CatalogLocalHead, expected: CatalogTestRunActivationCanonicalV3,
+            history: CatalogTestRunActivationHistoryV1,
+        ): CatalogTestRunActivationReadbackV3 {
+            history.requireExpected(expectedHead.generation, prepared = true, signed = true, completed = true)
+            return verifyCaptured(provider, initialBundleBytes, currentBundleBytes, policy, expectedHead, expected, history)
+        }
+
         internal fun verifyRecovery(
             provider: CatalogReadbackPort, initialBundleBytes: ByteArray, currentBundleBytes: ByteArray,
             policy: CatalogReadbackPolicy, expectedHead: CatalogLocalHead, expected: CatalogTestRunActivationCanonicalV3,

@@ -27,6 +27,7 @@ import me.manga.kira.backend.complaint.domain.InstallationIdentityState
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationTestBinding
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationTestComparison
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationTestRunRows
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.security.MessageDigest
 import java.sql.ResultSet
@@ -57,6 +58,9 @@ internal class JdbcComplaintInstallationEnrollmentStore private constructor(
         audit: ComplaintInstallationEnrollmentAudit,
         desired: ComplaintInstallationDesiredSettings.Configured,
     ) : this(jdbc, capacity, audit, ComplaintInstallationTestBinding(desired))
+
+    constructor(jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore, audit: ComplaintInstallationEnrollmentAudit,
+        registration: ComplaintTestNamespaceRegistrationV1) : this(jdbc, capacity, audit, ComplaintInstallationTestBinding(registration))
 
     override fun enroll(candidate: InstallationEnrollmentCandidate): InstallationEnrollmentResult = (
         testBinding?.let { ComplaintInstallationEnrollmentOperation.prepareTest(jdbc, candidate, it) }
@@ -118,6 +122,7 @@ internal class ComplaintInstallationEnrollmentOperation private constructor(
                 identity == null -> create(locked, audit)
                 else -> replay()
             }
+            if (outcome is InstallationEnrollmentResult.Enrolled) testBinding?.requireCurrent(jdbc)
             result = outcome
             stage = Stage.COMPLETE
             return outcome
@@ -139,7 +144,7 @@ internal class ComplaintInstallationEnrollmentOperation private constructor(
         }
         requireAt(Stage.RUN_LOCKING, jdbc)
         return when (binding.compare(scope, observed)) {
-            ComplaintInstallationTestComparison.MATCHING_COMPARISON -> null
+            ComplaintInstallationTestComparison.MATCHING_COMPARISON -> { binding.requireCurrent(jdbc); null }
             ComplaintInstallationTestComparison.SCOPE_MISMATCH -> InstallationEnrollmentRejection.INSTALLATION_SCOPE_MISMATCH
             ComplaintInstallationTestComparison.SCOPE_RETIRED -> InstallationEnrollmentRejection.INSTALLATION_SCOPE_RETIRED
         }
@@ -384,9 +389,14 @@ internal class ComplaintInstallationEnrollmentOperation private constructor(
     private fun requireAt(expected: Stage, selected: JdbcTemplate) {
         phase.installationEnrollment.requireRetained(this, selected)
         if (selected !== jdbc || stage !== expected) failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+        testBinding?.registration?.let { phase.installationEnrollment.requireRegistered(this, jdbc, it) }
     }
 
-    private fun checkAdmittedWrite() = phase.installationEnrollment.checkAdmittedWrite(this, jdbc)
+    private fun checkAdmittedWrite() {
+        testBinding?.registration?.let { phase.installationEnrollment.requireRegistered(this, jdbc, it) }
+        testBinding?.requireCurrent(jdbc)
+        phase.installationEnrollment.checkAdmittedWrite(this, jdbc)
+    }
 
     private fun readIdentity(row: ResultSet): LockedIdentity {
         val scope = requireStoredIdentity(row)

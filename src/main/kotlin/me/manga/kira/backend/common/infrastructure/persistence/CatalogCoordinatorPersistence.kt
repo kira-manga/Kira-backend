@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunActivationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRegistrationPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInitialAdmissionPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunSealingPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestOrdinarySealPhaseExecutorV1
@@ -63,6 +64,8 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var signerRotationActivationExecutor: ComplaintCatalogSignerRotationActivationPhaseExecutorV1? = null
 
     private var testRunActivationExecutor: ComplaintCatalogTestRunActivationPhaseExecutorV1? = null
+    private var testInitialAdmissionExecutor: ComplaintTestInitialAdmissionPhaseExecutorV1? = null
+    internal val testInitialAdmission: ComplaintTestInitialAdmissionPhaseExecutorV1 get() = checkNotNull(testInitialAdmissionExecutor)
     private var testRegistrationExecutor: ComplaintTestNamespaceRegistrationPhaseExecutorV1? = null
     private var testInstallationManifestPublicationExecutor: ComplaintTestInstallationManifestPublicationPhaseExecutorV1? = null
     internal val testInstallationManifestPublication: ComplaintTestInstallationManifestPublicationPhaseExecutorV1 get() = checkNotNull(testInstallationManifestPublicationExecutor)
@@ -137,6 +140,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         }
         if (catalogGenesisAuthoring || catalogGenesisFinalization) return // Only the named attempt may select its three fixed phases.
         testRegistrationExecutor = ComplaintTestNamespaceRegistrationPhaseExecutorV1(this)
+        testInitialAdmissionExecutor = ComplaintTestInitialAdmissionPhaseExecutorV1(this)
         testRecoveryRegistrationExecutor = ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1(this)
         testRunSealingExecutor = ComplaintTestRunSealingPhaseExecutorV1(this)
         testOrdinarySealExecutor = ComplaintTestOrdinarySealPhaseExecutorV1(this)

@@ -49,11 +49,11 @@ internal class ComplaintInstallationExchangeAdapter(
     private val testScope = desired.scope
     private val enrollment = ComplaintEnrollmentAdmissionCoordinator(
         ingress,
-        ComplaintInstallationEnrollmentPhaseExecutor(ownership, JdbcComplaintInstallationEnrollmentStore(jdbc, capacity, audit, desired)),
+        ComplaintInstallationEnrollmentPhaseExecutor(ownership, JdbcComplaintInstallationEnrollmentStore(jdbc, capacity, audit, registration)),
     )
     private val sessions = ComplaintSessionAdmissionCoordinator(
         ingress,
-        ComplaintInstallationSessionPhaseExecutor(ownership, JdbcComplaintInstallationSessionStore(jdbc, desired)),
+        ComplaintInstallationSessionPhaseExecutor(ownership, JdbcComplaintInstallationSessionStore(jdbc, registration)),
     )
 
     @Suppress("SwallowedException")
@@ -112,7 +112,10 @@ internal class ComplaintInstallationExchangeAdapter(
     }
 
     private fun requireRegistered() {
-        try { registration.requireInstallationResources(ownership, jdbc) }
+        try {
+            registration.requireInstallationResources(ownership, jdbc)
+            registration.requireReleasedIdentityAdmission()
+        }
         catch (_: ComplaintTestNamespaceRegistrationExceptionV1) { rejectInstallationHttp(ComplaintInstallationHttpFailure.UNAVAILABLE) }
     }
 

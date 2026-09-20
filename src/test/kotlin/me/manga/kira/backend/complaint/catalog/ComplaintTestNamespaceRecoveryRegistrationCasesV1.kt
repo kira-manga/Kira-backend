@@ -12,6 +12,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExchangeAdapter
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentDocumentV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
@@ -115,6 +116,8 @@ internal object ComplaintTestNamespaceRecoveryRegistrationCasesV1 {
                     assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { ComplaintTestNamespaceRegistrationV1.issuedByRecovery(attempt) }
                     assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { registration.bootstrapExpectedArguments() }
                     assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { TestRunSealingV1.begin(registration) }
+                    assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { ComplaintTestInitialAdmissionV1.begin(registration, cold.assembly) }
+                    assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> { registration.requireReleasedIdentityAdmission() }
                     assertEquals(sql, cold.probe.calls.size); assertEquals(requests, cold.raw.requests.size)
 
                     withColdDrain(f, cold, registration) { drain, coordinator, deletion ->

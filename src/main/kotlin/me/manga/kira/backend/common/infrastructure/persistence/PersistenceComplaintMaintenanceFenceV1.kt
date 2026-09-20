@@ -25,7 +25,8 @@ internal class PersistenceComplaintMaintenanceFenceV1(private val phase: Persist
             stage = FenceStage.SETTINGS_RETURNED
             requireRemaining()
             stage = FenceStage.TRYING
-            val lock = if (phase.initialTestActivationPrepare(this, connection)) TRY_EXCLUSIVE_LOCK else TRY_SHARED_LOCK
+            val lock = if (phase.initialTestActivationPrepare(this, connection) || phase.initialTestAdmissionRelease(this, connection))
+                TRY_EXCLUSIVE_LOCK else TRY_SHARED_LOCK
             observedLock = connection.prepareStatement(lock).use { statement ->
                 statement.executeQuery().use { result ->
                     if (!result.next()) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)

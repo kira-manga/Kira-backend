@@ -12,12 +12,14 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * One TEST PROJECT cut, at the same endpoint for freeze/COMPLETE/PROJECT/replay. Opaque TCP bytes
+ * One original TEST catalog transaction cut (PROJECT or initial admission), at the same endpoint
+ * for freeze/COMPLETE/PROJECT/registration and the selected transaction. Opaque TCP bytes
  * go to the real PostgreSQL server: no TLS termination, credential capture, protocol replies or
  * plaintext parsing. One nonblocking actor, <=8 lifetime-total connections (not concurrent), two
  * 16-KiB buffers per connection, <=16 MiB/direction, <=45s/connection and <=180s total. This case
- * has four sequential TEST-only catalog roots (one physical slot each), with a possible min-idle
- * replacement after the one cut. Unexpected extra churn fails the bound; it never grows the relay.
+ * has at most four catalog roots (one physical slot each); initial admission additionally starts
+ * its two-slot ordinary target, with a possible min-idle replacement after the one cut. Unexpected
+ * extra churn fails the unchanged bound; it never grows the relay.
  * The cut never releases retained bytes.
  */
 internal class PgLifecycleTlsCommitForwarder(private val database: PgLifecycleDatabaseFixture) : AutoCloseable {

@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.domain.InstallationSessionResult
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.SessionPreflightResult
 import me.manga.kira.backend.complaint.domain.SessionRefreshResult
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.security.MessageDigest
 import java.sql.ResultSet
@@ -35,6 +36,7 @@ internal class JdbcComplaintInstallationSessionStore private constructor(
     constructor(jdbc: JdbcTemplate) : this(jdbc, null)
 
     constructor(jdbc: JdbcTemplate, desired: ComplaintInstallationDesiredSettings.Configured) : this(jdbc, ComplaintInstallationTestBinding(desired))
+    constructor(jdbc: JdbcTemplate, registration: ComplaintTestNamespaceRegistrationV1) : this(jdbc, ComplaintInstallationTestBinding(registration))
 
     private val issuer = Any()
 
@@ -84,6 +86,7 @@ internal class ComplaintInstallationSessionOperation private constructor(
             }
             requireAt(Stage.READING_SNAPSHOT)
             val rejection = snapshot.scopeRejection ?: checkNotNull(snapshot.pair).rejection(candidate, null, testBinding != null)
+            if (rejection == null) testBinding?.requireCurrent(jdbc)
             val completed = if (rejection != null) {
                 SessionPreflightResult.Rejected(rejection)
             } else {
@@ -144,7 +147,7 @@ internal class ComplaintInstallationSessionOperation private constructor(
             null
         }
         requireAt(Stage.LOCKING_RUN)
-        return scopeRejection(observed)
+        return scopeRejection(observed).also { if (it == null) testBinding.requireCurrent(jdbc) }
     }
 
     private fun scopeRejection(observed: ComplaintInstallationRunObservation?): InstallationSessionRejection? =
@@ -163,6 +166,7 @@ internal class ComplaintInstallationSessionOperation private constructor(
         }).single()
         requireAt(Stage.SAMPLING_TIME)
         val nextVersion = Math.addExact(credential.rowVersion, 1L)
+        testBinding?.requireCurrent(jdbc)
         phase.installationSession.checkAdmittedRefreshWrite(this, jdbc, candidate.installation, credential.credentialVersion)
         stage = Stage.REFRESHING
         check(
@@ -179,12 +183,14 @@ internal class ComplaintInstallationSessionOperation private constructor(
             ) == 1,
         )
         requireAt(Stage.REFRESHING)
+        testBinding?.requireCurrent(jdbc)
         return SessionRefreshResult.Refreshed(candidate.installation, credential.credentialVersion, issuedAt)
     }
 
     private fun requireAt(expected: Stage) {
         phase.installationSession.requireRetained(this, jdbc)
         if (stage !== expected) failed(PersistencePhaseException(PersistencePhaseFailureCode.WORK_FAILED))
+        testBinding?.registration?.let { phase.installationSession.requireRegistered(this, jdbc, it) }
     }
 
     private fun failed(problem: Throwable): Nothing {

@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoCl
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackException
@@ -112,6 +113,24 @@ internal class CatalogReadbackRefreshCustodyV1 {
     }
 
     internal fun releaseTestRegistrationAfterCleanup(original: ComplaintTestNamespaceRegistrationAttemptV1) {
+        requireConnectionFree()
+        original.requireCustody(this)
+        original.requireActualCleanup()
+        requireCatalogReadback(active.compareAndSet(original, null), CatalogReadbackFailure.CLOSE_FAILURE)
+    }
+
+    internal fun reserveTestInitialAdmission(original: ComplaintTestInitialAdmissionV1) {
+        requireConnectionFree()
+        original.requireCustody(this)
+        requireCatalogReadback(active.compareAndSet(null, original), CatalogReadbackFailure.LIMIT_EXCEEDED)
+    }
+
+    internal fun requireTestInitialAdmission(original: ComplaintTestInitialAdmissionV1) {
+        original.requireCustody(this)
+        requireCatalogReadback(active.get() === original, CatalogReadbackFailure.INVALID_POLICY)
+    }
+
+    internal fun releaseTestInitialAdmissionAfterCleanup(original: ComplaintTestInitialAdmissionV1) {
         requireConnectionFree()
         original.requireCustody(this)
         original.requireActualCleanup()

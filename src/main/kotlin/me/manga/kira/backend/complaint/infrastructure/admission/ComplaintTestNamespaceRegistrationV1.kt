@@ -59,6 +59,8 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     private val closed = AtomicBoolean()
     private val installation = AtomicReference<InstallationResources?>()
     private val ownerDeleteContinuation = AtomicReference<InstallationResources?>()
+    private val initialAdmissionClaimed = AtomicBoolean()
+    private val identityAdmission = AtomicReference<InitialIdentityAdmission?>()
 
     internal fun requireUsable() {
         try {
@@ -115,6 +117,51 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         requireRegistration(recoveryAssembly == null)
     }
 
+    /** One initial claim only. Bad/failed attempts spend it; a later maintenance interval is not a retry. */
+    internal fun claimInitialAdmission(original: ComplaintTestInitialAdmissionV1): TestInitialAdmissionFactsV1 {
+        requireConnectionFree()
+        requireRegistration(initialAdmissionClaimed.compareAndSet(false, true))
+        requireInitialAdmissionTarget(original.assembly)
+        requireRegistration(original.registration === this)
+        return checkNotNull(activation.initial)
+    }
+
+    internal fun requireInitialAdmissionTarget(assembly: ComplaintTestProcessAssemblyV1) {
+        try {
+            requireInitialMutationAdmission()
+            requireRegistration(assembly.target === process && activation.initial != null)
+        } catch (failure: RuntimeException) {
+            if (failure is CancellationException) throw failure
+            throw ComplaintTestNamespaceRegistrationExceptionV1()
+        }
+    }
+
+    /** Sole latch writer: known final COMMIT and actual original phase/provider/custody cleanup first. */
+    internal fun publishInitialAdmission(original: ComplaintTestInitialAdmissionV1) {
+        requireConnectionFree()
+        requireInitialAdmissionTarget(original.assembly)
+        val current = original.consumeAdmission(this)
+        requireRegistration(identityAdmission.compareAndSet(null, InitialIdentityAdmission(original.assembly, current)))
+        requireLifetime()
+    }
+
+    internal fun requireReleasedIdentityAdmission() {
+        val released = identityAdmission.get()
+        requireRegistration(released != null)
+        requireInitialAdmissionTarget(checkNotNull(released).assembly)
+    }
+
+    /** Same registered pair inside its original holder, never a checkout or a bootstrap promotion. */
+    internal fun requireIdentityAdmissionPhaseResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
+        requireInstallationPhaseResources(ownership, jdbc)
+        requireReleasedIdentityAdmission()
+    }
+
+    internal fun identityAdmissionArguments(): Array<Any?> {
+        requireReleasedIdentityAdmission()
+        return arrayOf(*bootstrapExpectedArguments(), *checkNotNull(identityAdmission.get()).controls.globalIdentityArguments())
+    }
+
     internal fun requireInstallationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
         try {
             requireUsable()
@@ -165,9 +212,9 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     }
 
     override fun close() { closed.set(true) }
-    override fun toString(): String = "ComplaintTestNamespaceRegistrationV1(private-issued,closed-gates,redacted)"
+    override fun toString(): String = "ComplaintTestNamespaceRegistrationV1(private-issued,no-content-capability,redacted)"
 
-    /** Bounded detached identity only; no closed projector, provider/phase graph or global-accounting snapshot. */
+    /** Detached comparison facts only; no closed projector or provider/phase graph is retained. */
     private class Activation {
         val token: UUID
         val scope: UUID
@@ -177,8 +224,10 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         val unsignedHash: ByteArray
         val runArguments: Array<Any?>
         val controlArguments: Array<Any?>
+        val initial: TestInitialAdmissionFactsV1?
 
         constructor(completed: CatalogTestRunFirstProjectionV1.State) {
+            initial = TestInitialAdmissionFactsV1(completed)
             token = completed.frozen.token
             scope = completed.frozen.scope
             generation = completed.frozen.generation
@@ -200,6 +249,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         }
 
         constructor(recovered: TestNamespaceRecoveryRegistrationBindingV1) {
+            initial = null
             token = recovered.tail.token
             scope = recovered.scope
             generation = recovered.tail.generation
@@ -212,6 +262,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     }
 
     private class InstallationResources(val ownership: PersistencePhaseOwnership, val jdbc: JdbcTemplate)
+    private class InitialIdentityAdmission(val assembly: ComplaintTestProcessAssemblyV1, val controls: TestInitialAdmissionControlsV1)
 
     companion object {
         internal fun issuedByRecovery(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {

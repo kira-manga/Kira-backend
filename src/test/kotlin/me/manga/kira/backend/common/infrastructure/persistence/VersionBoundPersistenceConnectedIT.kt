@@ -37,6 +37,12 @@ import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationProjectio
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedCases
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRecoveryCases
 import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRegistrationCases
+import me.manga.kira.backend.complaint.catalog.ComplaintTestInitialAdmissionCases
+import me.manga.kira.backend.complaint.catalog.InitialAdmissionDriftCut
+import me.manga.kira.backend.complaint.catalog.InitialAdmissionLifetimeCut
+import me.manga.kira.backend.complaint.catalog.InitialAdmissionLockCut
+import me.manga.kira.backend.complaint.catalog.InitialAdmissionProviderCut
+import me.manga.kira.backend.complaint.catalog.InitialIdentityDriftCut
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseBoundaryCases
 import me.manga.kira.backend.complaint.catalog.CoordinatorLeaseCases
 import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
@@ -99,6 +105,7 @@ import me.manga.kira.backend.complaint.catalog.TestActivationSignedRaceCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedSqlCut
 import me.manga.kira.backend.complaint.catalog.TestActivationSignedUnreturnedCut
 import me.manga.kira.backend.complaint.catalog.assertTestActivationProjectLostCommitResponse
+import me.manga.kira.backend.complaint.catalog.assertInitialAdmissionLostCommitResponse
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisFreeze
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisPublish
 import me.manga.kira.backend.complaint.catalog.withCatalogGenesisTargetFinalize
@@ -1263,6 +1270,69 @@ class VersionBoundPersistenceConnectedIT {
     fun testRegistrationFailedOriginalProjectNeverIssuesCompletion() {
         TestRegistrationProjectCut.entries.forEach { cut ->
             withFixture(testActivation = true) { ComplaintTestNamespaceRegistrationCases.failedOriginalProjectCannotHandoffCompletion(it, cut) }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionProtectedRootReleasesOnlyIdentityAndPreservesAccounting() = withFixture(testActivation = true) {
+        ComplaintTestInitialAdmissionCases.protectedRootReleasesOnlyIdentity(it)
+    }
+
+    @Test
+    fun testInitialAdmissionPreconstructedExchangeWaitsForActualCleanup() = withFixture(testActivation = true) {
+        ComplaintTestInitialAdmissionCases.preconstructedExchangeWaitsForActualCleanup(it)
+    }
+
+    @Test
+    fun testInitialAdmissionCommitAndCleanupFailuresNeverOpenLocalAdmission() {
+        TestRegistrationCompletionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.completionFailureCannotOpenLocalAdmission(it, cut) }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionLostCommitReplyCannotAdmitPreconstructedExchange() {
+        PgLifecycleTlsCommitForwarder(database.value).use { forwarder ->
+            forwarder.start()
+            VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, endpointPort = forwarder.port).use { tls ->
+                tls.bind()
+                assertInitialAdmissionLostCommitResponse(tls, forwarder)
+            }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionRawIdentityAndPhysicalEffectDriftRefuse() {
+        InitialAdmissionDriftCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.rawIdentityAndPhysicalEffectDriftRefuse(it, cut) }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionProviderDeadlineAndSignalsAreSticky() {
+        InitialAdmissionProviderCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.providerDeadlineAndSignalsAreSticky(it, cut) }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionMContentionAndLockOrderAreEnforced() {
+        InitialAdmissionLockCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.fencesRefuseWithoutLockUpgrade(it, cut) }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionWrongRootSpentClosedAndTerminalRefuse() {
+        InitialAdmissionLifetimeCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.wrongRootSpentClosedAndTerminalRefuse(it, cut) }
+        }
+    }
+
+    @Test
+    fun testInitialAdmissionEveryRealIdentityPhaseRechecksCurrentRows() {
+        InitialIdentityDriftCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.everyRealIdentityPhaseRechecksCurrentRows(it, cut) }
         }
     }
 

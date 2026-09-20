@@ -299,6 +299,12 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
         fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean, signed: Boolean = false, completed: Boolean = false): CatalogTestRunActivationHistoryV1 =
             readBounded(rows, input.generation, input.maximumGenerations, retainRaw, signed, completed)
 
+        /** Comparison-only initial release read; full raw prefix bindings, never a new PROJECT input. */
+        internal fun readInitialAdmission(rows: ResultSet, generation: Long, maximumGenerations: Int): CatalogTestRunActivationHistoryV1 =
+            readBounded(rows, generation, maximumGenerations, retainRaw = true, signed = true, completed = true).also {
+                it.requireExpected(generation, prepared = true, signed = true, completed = true)
+            }
+
         /** Closed recovery comparison only; no FrozenV1/first-projection authority is manufactured. */
         internal fun readRecoveryRegistration(rows: ResultSet, generation: Long, maximumGenerations: Int): CatalogTestRunActivationHistoryV1 {
             check(generation in 2L..maximumGenerations.toLong())

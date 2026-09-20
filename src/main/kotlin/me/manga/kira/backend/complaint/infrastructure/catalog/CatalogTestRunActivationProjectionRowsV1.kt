@@ -30,6 +30,12 @@ internal class CatalogTestRunActivationProjectionRowsV1(
         counters.requireSame(other.counters)
     }
 
+    /** Initial registration retains these bounded comparisons, not FrozenV1's closed projector graph. */
+    internal fun requireInitialAdmission(observed: CatalogTestRunActivationProjectionCountersV1, at: Instant, fingerprint: ByteArray) {
+        check(projectedAt == at && effect != null && effect.contentEquals(fingerprint) && projectedCapacityHash == observed.semanticHash)
+        counters.requireSame(observed)
+    }
+
     fun requireProjectionTransition(before: CatalogTestRunActivationProjectionRowsV1, frozen: CatalogTestRunActivationFrozenV1) {
         check(projectedAt != null && effect != null && before.projectedAt == null && before.effect == null)
         counters.requireProjectionTransition(before.counters, frozen)

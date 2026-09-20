@@ -10,6 +10,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.infrastructure.admission.TestInitialAdmissionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.ACQUIRE_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
@@ -401,6 +402,10 @@ internal class CatalogSignerRotationProbeJdbc(
 
             path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION && sql == DELIVERY_AUTHENTICATE -> "test-registration-authenticate"
 
+            path.testInitialAdmission && sql == DELIVERY_AUTHENTICATE -> "test-initial-admission-authenticate"
+            path.testInitialAdmission && sql == TestInitialAdmissionSqlV1.controls -> "test-initial-admission-controls"
+            path.testInitialAdmission && sql == TestInitialAdmissionSqlV1.release -> "test-initial-admission-release"
+
             observeTestActivationQueries && sql == DELIVERY_AUTHENTICATE -> "test-activation-authenticate"
 
             observeTestActivationQueries && testActivationStep(sql) != null -> checkNotNull(testActivationStep(sql))
@@ -448,6 +453,8 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
         PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
         PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+        PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
+        PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_RELEASE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
