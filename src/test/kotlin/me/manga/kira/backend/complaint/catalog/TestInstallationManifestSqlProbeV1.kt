@@ -8,6 +8,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObserv
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -33,6 +34,9 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     private val owners = linkedMapOf<PersistencePhaseContext, TestRunInstallationManifestV1>()
     private val assertion = AtomicReference<AssertionError?>()
+    private var lastSite = "NOT_ENTERED"
+    private var lastSqlHash = "NOT_ENTERED"
+    private var lastReturned = false
     private val executor = f.registration.process.pools.catalogCoordinator.testInstallationManifest
     private val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
     private val previous = field.get(executor)
@@ -75,9 +79,20 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
         assertFalse(lease.completion.quiescent())
         val call = Call(phase, owner.step, sql, args.map { if (it is ByteArray) it.copyOf() else it })
         calls.add(call)
+        lastSqlHash = Sha256.hex(sql.toByteArray(Charsets.UTF_8))
+        lastSite = Throwable().stackTrace.filter { it.className.startsWith("me.manga.kira.backend.complaint.infrastructure.terminal.") }
+            .take(6).joinToString(";") { "${it.fileName}:${it.methodName}:${it.lineNumber}" }
+        lastReturned = false
         before(call)
-        action().also { after(call) }
+        action().also { lastReturned = true; after(call) }
     } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
+
+    /** Unexpected TEST failure only: fixed source locations/hash, never SQL, arguments, rows or throwable prose. */
+    fun reportUnexpectedFailure() {
+        System.err.println("MANIFEST_PREPARE_UNEXPECTED step=${original?.step} calls=${calls.size} " +
+            "returned=$lastReturned sqlSha256=$lastSqlHash site=$lastSite " +
+            "outcomes=${observations.keys.toList().takeLast(8).map { it.databaseOutcome().name }}")
+    }
 
     fun assertReleased(requireCommitted: Boolean = true) {
         requireConnectionFree()
@@ -91,7 +106,10 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
         }
         assertion.get()?.let { throw it }
     }
-    fun reset() { assertReleased(requireCommitted = false); calls.clear(); observations.clear(); owners.clear() }
+    fun reset() {
+        assertReleased(requireCommitted = false); calls.clear(); observations.clear(); owners.clear()
+        lastSite = "NOT_ENTERED"; lastSqlHash = "NOT_ENTERED"; lastReturned = false
+    }
     override fun close() {
         before = {}; after = {}
         try { assertReleased(requireCommitted = false) }

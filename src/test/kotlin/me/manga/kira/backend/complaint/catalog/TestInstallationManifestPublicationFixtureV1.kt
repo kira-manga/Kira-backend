@@ -40,7 +40,8 @@ internal fun withManifestPublicationRun(tls: VersionBoundPersistenceConnectedFix
             val original = TestRunInstallationManifestV1.begin(drain)
             TestInstallationManifestSqlProbeV1(f).use { probe ->
                 probe.original = original
-                assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, original.prepare())
+                try { assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, original.prepare()) }
+                catch (problem: Throwable) { runCatching { probe.reportUnexpectedFailure() }; throw problem }
             }
             val ordinary = f.history.providerImage()
             val inventoryCalls = native.requests.size

@@ -169,7 +169,10 @@ internal fun withInstallationManifestPredecessor(tls: VersionBoundPersistenceCon
             val generated = f.provider.generated(); val decrypted = f.provider.decrypted()
             val nativeCalls = native.requests.size
             val sealCalls = f.sealHttp.requests.size; val sealOrder = f.sealHttp.order.toList()
-            TestInstallationManifestSqlProbeV1(f).use { probe -> action(f, drain, probe) }
+            TestInstallationManifestSqlProbeV1(f).use { probe ->
+                try { action(f, drain, probe) }
+                catch (problem: Throwable) { runCatching { probe.reportUnexpectedFailure() }; throw problem }
+            }
             f.assertReleased()
             assertEquals(ordinaryCalls, f.provider.requests.size); assertEquals(nativeCalls, native.requests.size)
             assertEquals(generated, f.provider.generated()); assertEquals(decrypted, f.provider.decrypted())
