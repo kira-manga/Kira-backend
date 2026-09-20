@@ -40,7 +40,7 @@ internal object TestRunVerifiedOwnerDeleteCases {
                 val prior = f.jdbc.observations.keys.first()
                 assertEquals(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, TestRunVerifiedOwnerDeleteFixture.path(prior))
                 assertEquals(PersistenceDatabaseOutcome.COMMITTED, prior.databaseOutcome())
-                assertTrue(prior.testVerifiedOwnerDeleteCleanupProven(original))
+                assertTrue(prior.testRunOwnerDeleteCleanupProven(original))
                 assertTrue(f.jdbc.observations.getValue(prior).lease.completion.quiescent())
                 assertEquals(before, f.image(), "A freshly committed/released reload is read-only, not another authorization.")
                 releasedReload = true

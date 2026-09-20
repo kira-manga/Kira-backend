@@ -39,7 +39,7 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
         graph.requireDeletion(jdbc)
         if (graph.recoveryRegistration != null) {
             check(!authorizing)
-            checkNotNull(PersistencePhaseOwnership.current()).requireTestVerifiedOwnerDeleteRun(graph, jdbc)
+            checkNotNull(PersistencePhaseOwnership.current()).requireTestRunOwnerDeleteRun(graph, jdbc)
             return
         }
         jdbc.query("SELECT state, configuration_hash, test_only, purging_at, purged_at FROM complaint_test_runs WHERE data_scope_id = ? FOR UPDATE", { row, _ ->

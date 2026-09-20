@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJournalReadbackV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.security.MessageDigest
@@ -18,7 +19,7 @@ import java.sql.Timestamp
 import java.time.Instant
 import java.util.HexFormat
 
-/** Short VERIFY: exactly receipt then publication. No fence/domain/counter/audit/APPLY activity. */
+/** Short VERIFY: receipt then publication. Registered observations add no E/control/run/domain/counter/audit lock. */
 internal class JdbcComplaintOwnerDeleteVerificationStore(
     private val jdbc: JdbcTemplate,
     private val graph: TestOwnerDeleteLocalGraphV1,
@@ -29,7 +30,14 @@ internal class JdbcComplaintOwnerDeleteVerificationStore(
     init { authorization.requireBinding(graph, jdbc) }
     fun capture(readback: TestOwnerDeleteJournalReadbackV1): TestOwnerDeleteVerificationInputV1 {
         requireConnectionFree()
-        check(graph.recoveryRegistration == null) // Registered continuation consumes stored VERIFIED only; it cannot initiate VERIFY.
+        check(graph.recoveryRegistration == null) // Generic capture never grants a closed registered continuation.
+        return captureReadback(readback)
+    }
+    internal fun captureRegistered(original: TestRunOwnerDeleteContinuationV1, readback: TestOwnerDeleteJournalReadbackV1): TestOwnerDeleteVerificationInputV1 {
+        original.requirePublishedReadback(authorization, graph, readback)
+        return captureReadback(readback)
+    }
+    private fun captureReadback(readback: TestOwnerDeleteJournalReadbackV1): TestOwnerDeleteVerificationInputV1 {
         graph.requireUnchanged()
         val record = codec.observed(readback)
         return CapturedTestDeleteVerification(issuer, readback.event, record, codec.canonicalBytes(record))
@@ -104,6 +112,7 @@ internal class ComplaintOwnerDeleteVerificationOperation private constructor(
         requireConnectionFree()
         return released ?: ReleasedTestDeleteVerification(observed.issuer, observed.event, checkNotNull(recorded), checkNotNull(bytes), checkNotNull(hash)).also { released = it }
     }
+    internal fun requireRegisteredContinuation(original: TestRunOwnerDeleteContinuationV1) = original.requireVerificationInput(observed)
     private fun execute() {
         retained()
         val event = observed.event
@@ -114,6 +123,7 @@ internal class ComplaintOwnerDeleteVerificationOperation private constructor(
         var publication = jdbc.query(OwnerDeletePersistenceSql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteRows.Publication(row) }, receipt.publication).single()
         publication.requireEvent(event)
         check(publication.writer == graph.writer && publication.createdAt == receipt.authorizedAt)
+        phase.requireTestRunOwnerDeleteVerificationRun(graph, jdbc, publication.createdAt)
         if (publication.state == "PREPARED") {
             check(receipt.state == "AUTHORIZED_DELETE")
             phase.ownerDelete.checkWrite(this, jdbc)
@@ -144,6 +154,7 @@ internal class ComplaintOwnerDeleteVerificationOperation private constructor(
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 phase.ownerDelete.requireOperation(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY)
+                phase.requireTestRunOwnerDeleteVerify(graph, jdbc, input)
                 val selected = input as? CapturedTestDeleteVerification ?: error("Original provider readback capture required")
                 check(selected.issuer === issuer && selected.event.belongsTo(graph.routing))
                 return ComplaintOwnerDeleteVerificationOperation(phase, jdbc, graph, codec, selected).also { phase.ownerDelete.retain(it, jdbc); it.execute() }

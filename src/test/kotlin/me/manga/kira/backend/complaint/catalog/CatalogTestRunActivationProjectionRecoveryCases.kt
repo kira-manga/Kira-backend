@@ -35,6 +35,7 @@ import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.UUID
 import java.util.concurrent.CancellationException
+import java.util.concurrent.atomic.AtomicReference
 
 internal enum class TestActivationProjectionSqlCut(val step: String? = null, val auditOrdinal: Int? = null) {
     BEFORE_PROJECT_ARM,
@@ -72,7 +73,10 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
             var injected = false
             var phase: PersistencePhaseContext? = null
             var afterCommit = false
-            clock.onSample = {
+            val projectCaller = Thread.currentThread()
+            clock.onSample = sample@{
+                // The scanner samples this clock too; only the original caller may inspect/inject this cut.
+                if (Thread.currentThread() !== projectCaller) return@sample
                 if (cut == TestActivationProjectionSqlCut.BEFORE_PROJECT_ARM && !injected && PersistencePhaseOwnership.current() == null &&
                     p.releasedProjectionReloadCount(probe) == 2 &&
                     !p.f.signed.exists(CatalogTestRunActivationReleaseLeafV1.PROJECT_ARMED)) {
@@ -114,13 +118,32 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
                     else -> Unit
                 }
             } }
-            try {
+            val failure = try {
                 assertThrows<CatalogTestRunActivationExceptionV1> { p.project(original) }
             } finally {
                 clock.onSample = {}
                 probe.afterSql = {}
             }
-            assertTrue(injected, cut.name)
+            if (!injected) {
+                val last = probe.calls.lastOrNull()
+                val observed = last?.phase?.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+                val retained = ownedCutField(original, "originalPhase") as? PersistencePhaseContext
+                val retainedFailure = retained?.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+                fun storedCode(phase: PersistencePhaseContext?): String = phase?.let {
+                    poolTestField<AtomicReference<PersistencePhaseFailureCode?>>(it, "failure").get()?.name
+                } ?: "NONE"
+                // These are last-observed/retained facts, not an invented failing stage or discarded raw cause.
+                throw AssertionError(
+                    "PROJECT_SQL_CUT_NOT_REACHED cut=${cut.name} code=${failure.code.name} " +
+                        "last_observed_phase=${last?.path?.name ?: "NONE"} last_observed_code=${storedCode(last?.phase)} " +
+                        "last_observed_outcome=${observed?.databaseOutcome?.name ?: "NONE"} last_observed_cleanup_proven=${observed?.cleanupProven} " +
+                        "retained_phase=${retained?.let { poolTestField<Enum<*>>(it, "path").name } ?: "NONE"} " +
+                        "retained_code=${storedCode(retained)} retained_outcome=${retainedFailure?.databaseOutcome?.name ?: "NONE"} " +
+                        "retained_cleanup_proven=${retainedFailure?.cleanupProven} released_reload_count=${p.releasedProjectionReloadCount(probe)} " +
+                        p.f.signed.setupCustodyObservation(original),
+                    failure,
+                )
+            }
             assertFalse(poolTestField<Boolean>(original, "allowedProjectedResult"))
             clock.assertNoLostAssertions()
             p.f.assertNoLostAssertions()
@@ -346,6 +369,7 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
                 assertTrue(checkNotNull(phase).failureException(PersistencePhaseFailureCode.WORK_FAILED).cleanupProven)
                 assertTrue(poolTestField<Boolean>(original, "sqlCleanupUnproven"))
                 assertFalse(p.f.signed.exists(CatalogTestRunActivationReleaseLeafV1.PROJECT_OUTCOME))
+                p.f.signed.closeUnissuedCustodyAfterSqlReconciliation(original, failing, checkNotNull(phase))
             }
             val calls = probe.calls.size
             val reads = p.f.http.read.createdClients

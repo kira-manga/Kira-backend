@@ -191,6 +191,7 @@ internal object CatalogTestRunActivationSignedRecoveryCases {
             assertTrue(checkNotNull(phase).failureException(PersistencePhaseFailureCode.WORK_FAILED).cleanupProven)
             assertTrue(poolTestField<Boolean>(original, "sqlCleanupUnproven"))
             assertSticky(original, tls)
+            f.closeUnissuedCustodyAfterSqlReconciliation(original, tls, checkNotNull(phase))
         }
         f.rows.assertPrepareCharge(before)
         val originalPhase = ownedCutField(original, "originalPhase")

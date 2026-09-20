@@ -4,7 +4,7 @@ import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAuditEntry
 import me.manga.kira.backend.audit.infrastructure.ComplaintOwnerDeleteAuditInsertion
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAuthorizationOperation
-import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteVerifiedReloadOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteRegisteredReloadOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRegistrationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteApplyOperation
 import jakarta.persistence.EntityManager
@@ -129,7 +129,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForOwnerDelete(operation: ComplaintOwnerDeleteAuthorizationOperation): LockedOwnerDelete = LockedOwnerDelete.lock(this, operation)
     /** Only an original registered reload reads these counters; it receives no spending/settlement owner. */
-    internal fun lockForVerifiedOwnerDeleteReload(operation: ComplaintOwnerDeleteVerifiedReloadOperation) {
+    internal fun lockForRegisteredOwnerDeleteReload(operation: ComplaintOwnerDeleteRegisteredReloadOperation) {
         operation.beginCounterLock(jdbc)
         operation.requireCapacityPolicy(readLockedLedger(), jdbc)
     }

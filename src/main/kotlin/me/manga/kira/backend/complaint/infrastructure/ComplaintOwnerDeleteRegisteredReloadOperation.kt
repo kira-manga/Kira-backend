@@ -12,19 +12,19 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
-import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.time.Instant
 
-/** Existing exact primary only. No current bearer, new claim, missing-row reconstruction or provider. */
-internal class ComplaintOwnerDeleteVerifiedReloadOperation private constructor(
+/** One exact primary reload for both closed entries. The original entry alone admits PREPARED. */
+internal class ComplaintOwnerDeleteRegisteredReloadOperation private constructor(
     private val phase: PersistencePhaseContext,
     private val store: JdbcComplaintOwnerDeleteStore,
     private val jdbc: JdbcTemplate,
     private val graph: TestOwnerDeleteLocalGraphV1,
-    internal val original: TestRunVerifiedOwnerDeleteV1,
+    internal val original: TestRunOwnerDeleteContinuationV1,
 ) : ComplaintOwnerDeletePhaseOperation {
     private var stage = Stage.RETAINED
     private var event: TestOwnerDeleteJournalEventV1? = null
@@ -57,16 +57,18 @@ internal class ComplaintOwnerDeleteVerifiedReloadOperation private constructor(
         stage = Stage.PUBLICATION
         val row = jdbc.query(OwnerDeletePersistenceSql.LOCK_PUBLICATION, { result, _ -> OwnerDeleteRows.Publication(result) },
             checkNotNull(receipt.publication)).single()
-        check(row.state in setOf("VERIFIED", "APPLIED")) // Never turn PREPARED into proof or start publication.
+        val prepared = row.state == "PREPARED"
+        if (prepared) original.requirePreparedReload() else check(row.state in setOf("VERIFIED", "APPLIED"))
         val canonical = TestOwnerDeleteJournalCodecV1.restoreCanonical(graph.routing, row.bytes, row.routingKey)
         row.requireEvent(canonical)
         val tuple = ComplaintOwnerDeleteTuple(ScopedInstallationId(canonical.tuple.actorId, canonical.tuple.scope),
             canonical.tuple.operationKey, canonical.complaintIds().single(), canonical.tuple.fingerprintBytes())
         check(receipt.matches(tuple) && row.writer == graph.writer && row.createdAt == receipt.authorizedAt)
-        control.requireContinuation(row.epoch, prepared = false)
-        val proof = TestOwnerDeleteVerificationCodecV1(graph.routing).parse(checkNotNull(row.verificationBytes), canonical)
-        ComplaintOwnerDeleteVerificationOperation.requireColumns(proof, row)
-        if (row.state == "VERIFIED") check(receipt.state == "AUTHORIZED_DELETE") else {
+        control.requireContinuation(row.epoch, prepared)
+        val proof = if (prepared) null else TestOwnerDeleteVerificationCodecV1(graph.routing).parse(checkNotNull(row.verificationBytes), canonical).also {
+            ComplaintOwnerDeleteVerificationOperation.requireColumns(it, row)
+        }
+        if (row.state != "APPLIED") check(receipt.state == "AUTHORIZED_DELETE") else {
             check(receipt.state == "COMPLETED" && receipt.completed() === ComplaintOwnerDeleteReceipt.Applied)
             check(receipt.externalEvent == row.eventId && receipt.externalEpoch == row.epoch &&
                 receipt.externalVersion == row.objectVersion && receipt.externalHash.contentEquals(row.ciphertextHash))
@@ -78,13 +80,14 @@ internal class ComplaintOwnerDeleteVerifiedReloadOperation private constructor(
             OwnerDeleteRows.Recovery(result, canonical.tuple.scope, row.eventId)
         }, row.eventId).single()
         stage = Stage.COUNTERS_READY
-        capacity.lockForVerifiedOwnerDeleteReload(this)
+        capacity.lockForRegisteredOwnerDeleteReload(this)
         check(stage === Stage.COUNTERS)
         stage = Stage.RUN
         controls.lockRun(jdbc, authorizing = false)
         original.requireEarlierAuthorization(row.createdAt)
         val now = checkNotNull(jdbc.queryForObject("SELECT clock_timestamp()", { result, _ -> result.getTimestamp(1).toInstant() }))
-        check(!row.createdAt.isAfter(now) && !Instant.parse(proof.verifiedAt).isAfter(now) && Instant.parse(proof.retainUntil).isAfter(now))
+        check(!row.createdAt.isAfter(now))
+        proof?.let { check(!Instant.parse(it.verifiedAt).isAfter(now) && Instant.parse(it.retainUntil).isAfter(now)) }
         retained()
         stage = Stage.COMPLETE
     }
@@ -104,21 +107,21 @@ internal class ComplaintOwnerDeleteVerifiedReloadOperation private constructor(
 
     private fun retained() {
         phase.ownerDelete.requireRetained(this, jdbc)
-        phase.requireTestVerifiedOwnerDeleteReload(original, graph, jdbc)
+        phase.requireTestRunOwnerDeleteReload(original, graph, jdbc)
         graph.requireDeletion(jdbc)
     }
 
-    override fun toString(): String = "ComplaintOwnerDeleteVerifiedReloadOperation(original-released-primary-only,redacted)"
+    override fun toString(): String = "ComplaintOwnerDeleteRegisteredReloadOperation(original-released-primary-only,redacted)"
     private enum class Stage { RETAINED, RECEIPT, PUBLICATION, RESERVATION, COUNTERS_READY, COUNTERS, RUN, COMPLETE }
 
     companion object {
         internal fun capture(store: JdbcComplaintOwnerDeleteStore, jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore,
-            graph: TestOwnerDeleteLocalGraphV1, original: TestRunVerifiedOwnerDeleteV1): ComplaintOwnerDeleteVerifiedReloadOperation {
+            graph: TestOwnerDeleteLocalGraphV1, original: TestRunOwnerDeleteContinuationV1): ComplaintOwnerDeleteRegisteredReloadOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 phase.ownerDelete.requireOperation(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD)
-                phase.requireTestVerifiedOwnerDeleteReload(original, graph, jdbc)
-                return ComplaintOwnerDeleteVerifiedReloadOperation(phase, store, jdbc, graph, original).also {
+                phase.requireTestRunOwnerDeleteReload(original, graph, jdbc)
+                return ComplaintOwnerDeleteRegisteredReloadOperation(phase, store, jdbc, graph, original).also {
                     phase.ownerDelete.retain(it, jdbc)
                     it.execute(capacity)
                 }

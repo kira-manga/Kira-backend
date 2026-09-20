@@ -22,7 +22,7 @@ import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
-import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -36,7 +36,7 @@ import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
-/** Dormant request producer plus fixed registered VERIFIED reload; no request-authorizing runtime issuer or bean. */
+/** Dormant request producer plus fixed registered primary reload; no request-authorizing runtime issuer or bean. */
 internal class JdbcComplaintOwnerDeleteStore(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
@@ -55,11 +55,11 @@ internal class JdbcComplaintOwnerDeleteStore(
         return ComplaintOwnerDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, platform, path)
     }
 
-    internal fun reloadVerified(original: TestRunVerifiedOwnerDeleteV1): ComplaintOwnerDeleteVerifiedReloadOperation =
-        ComplaintOwnerDeleteVerifiedReloadOperation.capture(this, jdbc, capacity, graph, original)
+    internal fun reloadRegistered(original: TestRunOwnerDeleteContinuationV1): ComplaintOwnerDeleteRegisteredReloadOperation =
+        ComplaintOwnerDeleteRegisteredReloadOperation.capture(this, jdbc, capacity, graph, original)
 
-    internal fun releasedVerified(operation: ComplaintOwnerDeleteVerifiedReloadOperation): CommittedTestOwnerDeleteWork.RecordedVerified =
-        ComplaintOwnerDeleteAuthorizationOperation.releasedVerified(operation, this, issuer, graph.routing)
+    internal fun releasedRegistered(operation: ComplaintOwnerDeleteRegisteredReloadOperation): CommittedTestOwnerDeleteWork =
+        ComplaintOwnerDeleteAuthorizationOperation.releasedRegistered(operation, this, issuer, graph.routing)
 
     fun preparedEvent(work: CommittedTestOwnerDeleteWork.Prepared): TestOwnerDeleteJournalEventV1 = ownedEvent(work)
     fun recordedEvent(work: CommittedTestOwnerDeleteWork.RecordedVerified): TestOwnerDeleteJournalEventV1 = ownedEvent(work)
@@ -353,11 +353,11 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         override fun verificationHash(): ByteArray = hash.copyOf()
     }
     companion object {
-        internal fun releasedVerified(operation: ComplaintOwnerDeleteVerifiedReloadOperation, store: JdbcComplaintOwnerDeleteStore,
-            issuer: Any, routing: TestOwnerDeleteJournalRoutingV1): CommittedTestOwnerDeleteWork.RecordedVerified {
+        internal fun releasedRegistered(operation: ComplaintOwnerDeleteRegisteredReloadOperation, store: JdbcComplaintOwnerDeleteStore,
+            issuer: Any, routing: TestOwnerDeleteJournalRoutingV1): CommittedTestOwnerDeleteWork {
             val (event, row) = operation.released(store)
             check(event.belongsTo(routing))
-            return ReleasedVerified(issuer, routing, event, row)
+            return if (row.state == "PREPARED") ReleasedPrepared(issuer, routing, event) else ReleasedVerified(issuer, routing, event, row)
         }
         fun requireTuple(event: TestOwnerDeleteJournalEventV1, tuple: ComplaintOwnerDeleteTuple) {
             check(event.tuple.scope == tuple.installation.scope && event.tuple.actorId == tuple.installation.id && event.tuple.operationKey == tuple.key)

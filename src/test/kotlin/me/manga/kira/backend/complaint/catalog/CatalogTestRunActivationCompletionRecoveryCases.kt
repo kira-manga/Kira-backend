@@ -195,6 +195,7 @@ internal object CatalogTestRunActivationCompletionRecoveryCases {
                 assertTrue(checkNotNull(phase).failureException(PersistencePhaseFailureCode.WORK_FAILED).cleanupProven)
                 assertTrue(poolTestField<Boolean>(original, "sqlCleanupUnproven"))
                 f.assertSticky(original, publishing)
+                f.signed.closeUnissuedCustodyAfterSqlReconciliation(original, publishing, checkNotNull(phase))
             }
             f.singlePrimaryPut()
             val oldSlot = SignedActivationObservation.active(publishing.pools.catalogCoordinator)

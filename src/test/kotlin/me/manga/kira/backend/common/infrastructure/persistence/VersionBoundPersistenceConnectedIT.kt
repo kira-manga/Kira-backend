@@ -45,6 +45,9 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
 import me.manga.kira.backend.complaint.catalog.TestRunVerifiedOwnerDeleteCases
+import me.manga.kira.backend.complaint.catalog.TestRunPreparedOwnerDeleteCases
+import me.manga.kira.backend.complaint.catalog.TestPreparedDeleteRefusalCut
+import me.manga.kira.backend.complaint.catalog.TestPreparedDeleteProviderCut
 import me.manga.kira.backend.complaint.catalog.TestVerifiedDeleteRefusalCut
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceClock
@@ -1295,6 +1298,34 @@ class VersionBoundPersistenceConnectedIT {
     fun testRunVerifiedOwnerDeleteApplyFailureAndLostAcknowledgmentReplay() {
         TestRegistrationCompletionCut.entries.forEach { cut ->
             withFixture(testActivation = true) { TestRunVerifiedOwnerDeleteCases.originalCompletionFailure(it, cut, applyPhase = true) }
+        }
+    }
+
+    @Test
+    fun testRunPreparedOwnerDeletePublishesPrimaryAndReplaysWithoutProvider() = withFixture(testActivation = true) {
+        TestRunPreparedOwnerDeleteCases.primaryAndReplay(it)
+    }
+
+    @Test
+    fun testRunPreparedOwnerDeleteRefusesUnownedOrSealedIntentBeforeDispatch() {
+        TestPreparedDeleteRefusalCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestRunPreparedOwnerDeleteCases.refusesBeforeDispatch(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRunPreparedOwnerDeleteProviderFailureOrLateCloseCannotVerify() {
+        TestPreparedDeleteProviderCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestRunPreparedOwnerDeleteCases.providerBoundary(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRunPreparedOwnerDeleteRequiresOriginalReloadAndVerifyCommitRelease() {
+        for (verifyPhase in listOf(false, true)) {
+            TestRegistrationCompletionCut.entries.forEach { cut ->
+                withFixture(testActivation = true) { TestRunPreparedOwnerDeleteCases.completionBoundary(it, cut, verifyPhase) }
+            }
         }
     }
 

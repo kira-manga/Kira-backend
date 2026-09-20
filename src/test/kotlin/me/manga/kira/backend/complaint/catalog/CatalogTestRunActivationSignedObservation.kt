@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.CatalogCoordinatorPersistence
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
@@ -15,10 +16,12 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisSigna
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationEnvelopeV3
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationProtocol
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReleaseCustodyV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReleaseLeafV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunSignedPreparedV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.LinuxTestRunActivationReleaseFilesV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunActivationPhaseExecutorV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
@@ -26,7 +29,9 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.assertThrows
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import software.amazon.awssdk.http.SdkHttpClient
 import software.amazon.awssdk.http.SdkHttpMethod
@@ -263,6 +268,57 @@ internal class SignedActivationObservation(
         assertEquals(signing.createdClients, signing.returnedClientCloses)
         rows.assertHttpReleased()
         assertNoLostAssertions()
+    }
+
+    /**
+     * A synthetic Spring sentinel prevented even issuing file close. After the caller removes that
+     * exact sentinel and the same SQL phase physically retires, finish ONLY this retained file owner.
+     * This is not a retry of an uncertain native close or a repaired activation cleanup receipt.
+     */
+    fun closeUnissuedCustodyAfterSqlReconciliation(
+        original: CatalogTestRunActivationV1,
+        selected: VersionBoundPersistenceConnectedFixture,
+        phase: PersistencePhaseContext,
+    ) {
+        releasedSql()
+        assertTrue(originals.any { it === original })
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+        assertTrue(phase.failureException(PersistencePhaseFailureCode.WORK_FAILED).cleanupProven)
+        assertFalse(phase.quarantined())
+        val budget = original.budget
+        val closeFailure = poolTestField<CatalogTestRunActivationExceptionV1>(original, "closeFailure")
+        fun assertOriginalStillFailed() {
+            assertSame(budget, original.budget)
+            assertSame(phase, ownedCutField(original, "originalPhase"))
+            assertSame(original, active(selected.pools.catalogCoordinator))
+            assertSame(closeFailure, ownedCutField(original, "closeFailure"))
+            assertSame(closeFailure, assertThrows<CatalogTestRunActivationExceptionV1> { original.close() })
+            for (field in listOf("closed", "failed", "sqlCleanupUnproven")) assertTrue(poolTestField<Boolean>(original, field), field)
+            for (field in listOf("outcomeUncertain", "released", "cleanupProven", "allowedResult", "allowedSignedResult", "allowedCompletedResult", "allowedProjectedResult")) {
+                assertFalse(poolTestField<Boolean>(original, field), field)
+            }
+        }
+        assertOriginalStillFailed()
+        val custody = poolTestField<CatalogTestRunActivationReleaseCustodyV1>(original, "custody")
+        val files = poolTestField<LinuxTestRunActivationReleaseFilesV1>(custody, "files")
+        val held = poolTestField<List<Any>>(files, "resources").toList()
+        val lock = held.mapNotNull { ownedCutField(it, "value") as? FileLock }.single()
+        assertSame(Thread.currentThread(), ownedCutField(custody, "caller"))
+        assertSame(budget, ownedCutField(custody, "originalBudget"))
+        assertFalse(poolTestField<Boolean>(custody, "closeIssued"))
+        assertTrue(held.all { !poolTestField<Boolean>(it, "closeIssued") })
+        assertTrue(lock.isValid)
+        assertSame(custody, rootClaimObservation().first)
+        val before = leaves()
+        custody.close() // Original caller, handles and budget; no reflection write or replacement owner.
+        assertTrue(poolTestField<Boolean>(custody, "closeIssued"))
+        assertTrue(held.all { poolTestField<Boolean>(it, "closeIssued") })
+        assertTrue(files.cleanupComplete())
+        assertFalse(lock.isValid)
+        assertNull(rootClaimObservation().first)
+        assertEquals(before, leaves(), "Actual file disposal never fills an old outcome or changes custody bytes.")
+        assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+        assertOriginalStillFailed()
     }
 
     /** Actual original FileLock.close first; its lost cleanup receipt remains sticky and is never repaired. */

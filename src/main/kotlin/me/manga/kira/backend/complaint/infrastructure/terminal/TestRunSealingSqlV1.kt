@@ -17,7 +17,7 @@ internal object TestRunSealingSqlV1 {
         AND r.terminal_ciphertext_hash IS NULL AND r.terminal_catalog_generation IS NULL AND r.terminal_catalog_hash IS NULL
     """.trimIndent()
 
-    val lockRun = """
+    val readRun = """
         $expectedRun
         SELECT (r.test_only AND r.configuration_hash = e.configuration_hash AND r.accounting_version = 1
             AND r.installation_limit = e.installation_limit AND r.installation_limit > 0 AND r.enrolled_count BETWEEN 0 AND r.installation_limit
@@ -31,8 +31,9 @@ internal object TestRunSealingSqlV1 {
             r.state, CASE WHEN isfinite(r.sealed_at) THEN r.sealed_at END AS sealed_at,
             CASE WHEN complaint_vector_valid(r.original_reserve) THEN r.original_reserve END AS original_reserve,
             CASE WHEN complaint_vector_valid(r.unused_reserve) THEN r.unused_reserve END AS unused_reserve
-        FROM complaint_test_runs r CROSS JOIN expected e WHERE r.data_scope_id = e.scope FOR UPDATE OF r
+        FROM complaint_test_runs r CROSS JOIN expected e WHERE r.data_scope_id = e.scope
     """.trimIndent()
+    val lockRun = "$readRun FOR UPDATE OF r"
 
     // This transaction holds ONLY the run row (plus mandatory M participation), never E/control/counters/catalog.
     val sealRun = """
@@ -58,18 +59,20 @@ internal object TestRunSealingSqlV1 {
         AND c.trust_bundle_hash = e.trust_hash AND c.accepted_catalog_generation = e.generation AND c.accepted_catalog_hash = e.activation_hash
         AND isfinite(c.updated_at)
     """.trimIndent()
-    val lockGlobalControl = """
+    val readGlobalControl = """
         $expectedControl
         SELECT (NOT c.test_only AND c.implementation_schema = 1 AND c.desired_generation > 0 AND $controlIdentity) IS TRUE AS valid
         FROM complaint_journal_control c CROSS JOIN expected e
-        WHERE c.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid FOR UPDATE OF c
+        WHERE c.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
     """.trimIndent()
-    val lockScopeControl = """
+    val lockGlobalControl = "$readGlobalControl FOR UPDATE OF c"
+    val readScopeControl = """
         $expectedControl
         SELECT (c.test_only AND c.implementation_schema = e.implementation_schema AND c.desired_generation = e.desired_generation
             AND c.desired_configuration_hash = e.configuration_hash AND $controlIdentity) IS TRUE AS valid
-        FROM complaint_journal_control c CROSS JOIN expected e WHERE c.data_scope_id = e.scope FOR UPDATE OF c
+        FROM complaint_journal_control c CROSS JOIN expected e WHERE c.data_scope_id = e.scope
     """.trimIndent()
+    val lockScopeControl = "$readScopeControl FOR UPDATE OF c"
 
     private val expectedAudit = """
         WITH expected AS MATERIALIZED (SELECT ?::uuid AS scope, ?::bigint AS generation, ?::timestamptz AS sealed_at)

@@ -12,7 +12,7 @@ import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import org.springframework.jdbc.core.JdbcTemplate
 
-/** No request-authorizing issuer exists. The registered VERIFIED-only continuation does not issue this type. */
+/** No request-authorizing issuer exists. Neither registered continuation issues this type. */
 internal class TestOwnerDeleteProcessBindingV1 private constructor(val lower: TestOwnerDeleteLocalGraphV1)
 
 /**

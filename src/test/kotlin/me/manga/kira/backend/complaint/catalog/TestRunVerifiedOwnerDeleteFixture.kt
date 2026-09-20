@@ -8,10 +8,12 @@ import me.manga.kira.backend.common.infrastructure.persistence.OrdinarySourceGra
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObservation
+import me.manga.kira.backend.common.infrastructure.persistence.SystemPersistenceNanoClock
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
@@ -47,6 +49,8 @@ import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapa
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintInstallationEnrollmentStore
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPreparedOwnerDeleteV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintInstallationEnrollmentPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
@@ -77,10 +81,11 @@ import java.util.UUID
 
 /** Reuses real signed PROJECT, independent raw registration, ordinary/deletion owners and SDK reply fixtures. */
 internal fun withVerifiedOwnerDeleteRun(tls: VersionBoundPersistenceConnectedFixture, verified: Boolean = true,
+    clock: PersistenceNanoClock = SystemPersistenceNanoClock,
     action: (TestRunVerifiedOwnerDeleteFixture) -> Unit) = ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls) { p, runtime, registration, _ ->
     assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.deletion.prepareDeletion())
     ComplaintTestNamespaceRegistrationCases.withOrdinaryAudit(runtime) { ordinary, audit ->
-        TestRunVerifiedOwnerDeleteFixture(p, runtime, registration, ordinary, audit).use { f ->
+        TestRunVerifiedOwnerDeleteFixture(p, runtime, registration, ordinary, audit, clock).use { f ->
             f.authorEarlierHistory(verified)
             assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, TestRunSealingV1.begin(registration).seal())
             f.jdbc.enabled = true
@@ -101,6 +106,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     val registration: ComplaintTestNamespaceRegistrationV1,
     private val ordinary: OrdinarySourceGrantCleanupFixture,
     val audit: AuditService,
+    clock: PersistenceNanoClock = SystemPersistenceNanoClock,
 ) : AutoCloseable {
     val process = registration.process
     val observer = p.f.rows.observer
@@ -109,7 +115,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     val target: UUID = UUID.randomUUID()
     val key: UUID = UUID.randomUUID()
     val admission = DeletionPersistenceAdmission()
-    val ownership = PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion))
+    val ownership = PersistencePhaseOwnership.deletion(admission, GuardedJdbcTransactionManager(runtime.pools.deletion), clock)
     val jdbc = TestVerifiedDeleteProbeJdbc(p, runtime)
     private val controls = listOf(ComplaintDataScope.LIVE.id, scope.id).associateWith { id ->
         checkNotNull(observer.queryForObject("SELECT to_jsonb(c)::text FROM complaint_journal_control c WHERE data_scope_id = ?", String::class.java, id))
@@ -132,9 +138,18 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     lateinit var eventId: String
         private set
     private var expectedProviders: List<Int>? = null
+    private var preparedPublication = false
 
     fun begin(actorId: UUID = actor.id, operationKey: UUID = key): TestRunVerifiedOwnerDeleteV1 =
         TestRunVerifiedOwnerDeleteV1.begin(registration, ownership, jdbc, audit, actorId, operationKey)
+
+    val provider: TestOwnerDeleteJournalPublisherFixture get() = checkNotNull(wire)
+
+    fun beginPrepared(actorId: UUID = actor.id, operationKey: UUID = key): TestRunPreparedOwnerDeleteV1 {
+        preparedPublication = true
+        return TestRunPreparedOwnerDeleteV1.withHttpFixture(registration, ownership, jdbc, audit, actorId, operationKey,
+            TestOwnerDeleteJournalPublisherFixture.CREDENTIALS, { provider.beforeOpen(); provider.httpClient() }, provider.kms::httpClient, provider.clock, { provider.nanos })
+    }
 
     fun authorEarlierHistory(verified: Boolean) {
         stageSyntheticComparisons()
@@ -169,7 +184,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         val provider = TestOwnerDeleteJournalPublisherFixture(routing, event).also { wire = it }
         provider.wall = p.databaseTime()
         provider.beforeOpen = { requireConnectionFree(); provider.wall = p.databaseTime() }
-        provider.beforePrepare = ::assertReleased
+        provider.beforePrepare = ::assertDatabaseReleased
         provider.factory(store, process.publicationLanes).use { publishers ->
             val work = publishers.reserve().use {
                 ingress.withIngress(request()) { context ->
@@ -197,28 +212,36 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     }
 
     fun assertReleased() {
+        assertDatabaseReleased()
+        expectedProviders?.let {
+            assertEquals(it.first(), providerImage().first(), "Continuation cannot renew registration or obtain another catalog observation.")
+            if (!preparedPublication) assertEquals(it, providerImage(), "VERIFIED continuation/refusal cannot open a provider.")
+            checkNotNull(wire).assertClientsClosed()
+        }
+    }
+
+    fun assertDatabaseReleased() {
         requireConnectionFree()
         assertNull(PersistencePhaseOwnership.current())
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
         assertEquals(0, admission.activeOwners().totalOwners)
         assertTrue(jdbc.observations.values.all { it.lease.completion.quiescent() })
         assertEquals(0, noKeys.calls.get())
-        expectedProviders?.let {
-            assertEquals(it, providerImage(), "Continuation/refusal cannot open a provider or renew registration.")
-            checkNotNull(wire).assertClientsClosed()
-        }
         jdbc.assertNoLostAssertions()
     }
 
-    fun assertSuccessfulPhases(original: TestRunVerifiedOwnerDeleteV1) {
+    fun assertSuccessfulPhases(original: TestRunOwnerDeleteContinuationV1, published: Boolean = false) {
         assertReleased()
-        assertEquals(listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY), jdbc.observations.keys.map { path(it) })
+        val expected = if (published) listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY)
+            else listOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY)
+        assertEquals(expected, jdbc.observations.keys.map { path(it) })
         jdbc.observations.keys.forEach {
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, it.databaseOutcome())
-            assertTrue(it.testVerifiedOwnerDeleteCleanupProven(original))
+            assertTrue(it.testRunOwnerDeleteCleanupProven(original))
         }
-        assertEquals(checkNotNull(expectedProviders), providerImage(), "No fresh authorization/provider/registration activity.")
+        if (!preparedPublication) assertEquals(checkNotNull(expectedProviders), providerImage(), "No fresh authorization/provider/registration activity.")
         checkNotNull(wire).assertClientsClosed()
+        assertEquals(0L, process.publicationLanes.activeOwners().totalOwners)
     }
 
     fun assertApplied(before: Map<String, ProjectionCounterObservation>) {
@@ -265,7 +288,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         }
     }
 
-    private fun providerImage(): List<Int> = listOf(p.f.http.read.requests.size, checkNotNull(wire).requests.size, checkNotNull(wire).kms.requests.size,
+    fun providerImage(): List<Int> = listOf(p.f.http.read.requests.size, checkNotNull(wire).requests.size, checkNotNull(wire).kms.requests.size,
         checkNotNull(wire).s3ClientsCreated, checkNotNull(wire).s3ClientsClosed)
 
     private fun stageSyntheticComparisons() {
@@ -339,7 +362,7 @@ internal class TestVerifiedDeleteProbeJdbc(private val p: ProjectionActivationOb
         try {
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             val path = TestRunVerifiedOwnerDeleteFixture.path(phase)
-            assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY))
+            assertTrue(path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY))
             val connection = (TransactionSynchronizationManager.getResource(runtime.pools.deletion) as ConnectionHolder).connection
             val lease = ownedPoolLease(connection)
             val observed = observations.getOrPut(phase) { StepUpPhaseObservation(phase, lease, connection.createStatement().use { statement ->
@@ -349,7 +372,8 @@ internal class TestVerifiedDeleteProbeJdbc(private val p: ProjectionActivationOb
             assertFalse(lease.completion.quiescent())
             assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
             assertTrue(p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-            assertTrue(p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
+            assertEquals(path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY, p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
+                "Short VERIFY participates in M but must not acquire E.")
             val call = TestVerifiedDeleteSqlCall(phase, path, sql)
             calls.add(call)
             before(call)

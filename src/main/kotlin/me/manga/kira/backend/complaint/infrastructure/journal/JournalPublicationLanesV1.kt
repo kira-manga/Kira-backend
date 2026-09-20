@@ -346,6 +346,7 @@ internal class JournalPublicationLanesV1 private constructor(
         internal fun readExisting(tuple: me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1, targetId: java.util.UUID, routingKeyId: String): TestOwnerDeleteJournalReadbackV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
                 requireConnectionFree()
+                factory.requireRecoveryRead() // A registered continuation publishes only its exact retained primary work.
                 synchronized(lifecycle) {
                     requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
                     requireRunning(this)
