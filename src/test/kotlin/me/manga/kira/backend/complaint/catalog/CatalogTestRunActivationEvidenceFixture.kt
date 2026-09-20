@@ -39,6 +39,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalo
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
+import me.manga.kira.backend.security.boundConsumerTestSettings
 import me.manga.kira.backend.security.fullTestJournal
 import java.security.MessageDigest
 import java.security.Signature
@@ -79,6 +80,7 @@ internal fun withActivationEvidence(
     tls: VersionBoundPersistenceConnectedFixture,
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
+    createGlobal: Int = 2,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -91,7 +93,7 @@ internal fun withActivationEvidence(
         ),
     )
     JournalPublicationLanesV1(journal).use { lanes ->
-        action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes))
+        action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal))
     }
 }
 
@@ -107,6 +109,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     val journal: TestOwnerDeleteJournalConfigurationV1,
     val pools: VersionBoundPersistencePools,
     private val lanes: JournalPublicationLanesV1,
+    createGlobal: Int = 2,
 ) {
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
@@ -137,7 +140,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 original.dailyEnrollmentLimit,
             )
         } else original
-        fixture.configuration(capacity = capacity)
+        fixture.configuration(settings = boundConsumerTestSettings(createGlobal = createGlobal), capacity = capacity)
     }
     private val activation = FullTestCatalogInputs.activation(
         pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),

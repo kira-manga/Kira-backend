@@ -321,8 +321,9 @@ internal object CatalogTestRunActivationProjectionCases {
 internal fun withPendingProjectionRows(
     tls: VersionBoundPersistenceConnectedFixture,
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
+    createGlobal: Int = 2,
     action: (ProjectionActivationObservation) -> Unit,
-) = withCompletionActivationRows(tls, prefix) { f ->
+) = withCompletionActivationRows(tls, prefix, createGlobal = createGlobal) { f ->
     f.rows.retainProjectionRows()
     f.http.replicateOnPut = true
     f.signed.withFreshOwner { publishing ->

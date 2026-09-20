@@ -83,7 +83,10 @@ import java.util.UUID
 internal fun withVerifiedOwnerDeleteRun(tls: VersionBoundPersistenceConnectedFixture, verified: Boolean = true,
     clock: PersistenceNanoClock = SystemPersistenceNanoClock,
     additionalVerified: Int = 0,
-    action: (TestRunVerifiedOwnerDeleteFixture) -> Unit) = ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls) { p, runtime, registration, _ ->
+    action: (TestRunVerifiedOwnerDeleteFixture) -> Unit) = ComplaintTestNamespaceRegistrationCases.withRegisteredRun(
+    // Select the TEST ceiling before consumers/full D/signing; one/two-history fixtures retain two.
+    tls, createGlobal = maxOf(2, additionalVerified + 1),
+) { p, runtime, registration, _ ->
     assertEquals(PersistenceLifecycleObservation.READY, runtime.pools.deletion.prepareDeletion())
     ComplaintTestNamespaceRegistrationCases.withOrdinaryAudit(runtime) { ordinary, audit ->
         TestRunVerifiedOwnerDeleteFixture(p, runtime, registration, ordinary, audit, clock).use { f ->

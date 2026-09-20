@@ -56,8 +56,9 @@ internal fun withSignedActivationRows(
     tls: VersionBoundPersistenceConnectedFixture,
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
     selectedSigner: String = if (prefix == ActivationEvidencePrefix.GENESIS) "catalog-old" else "catalog-new",
+    createGlobal: Int = 2,
     action: (SignedActivationObservation) -> Unit,
-) = withPreparedActivationRows(tls, prefix, selectedSigner) { rows ->
+) = withPreparedActivationRows(tls, prefix, selectedSigner, createGlobal = createGlobal) { rows ->
     SignedActivationObservation(tls, rows).use { observed ->
         observed.probe(tls) // The real template is installed before any owner/input exists.
         tls.startCatalogTestRunActivation()

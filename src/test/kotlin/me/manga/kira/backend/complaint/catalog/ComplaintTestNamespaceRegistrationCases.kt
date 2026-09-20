@@ -388,8 +388,9 @@ internal object ComplaintTestNamespaceRegistrationCases {
 
     /** Same actual PROJECT/raw-copy registration fixture; the sealing cases do not mint another registration issuer. */
     internal fun withRegisteredRun(tls: VersionBoundPersistenceConnectedFixture,
+        createGlobal: Int = 2,
         action: (ProjectionActivationObservation, VersionBoundPersistenceConnectedFixture, ComplaintTestNamespaceRegistrationV1, CatalogSignerRotationProbeJdbc) -> Unit,
-    ) = withPendingProjectionRows(tls) { p ->
+    ) = withPendingProjectionRows(tls, createGlobal = createGlobal) { p ->
         p.fresh { projector -> withRuntimeRoot(p, projector) { runtime, target, probe ->
             val original = p.begin(projector)
             val completion = original.projectForRegistration(target, p.f.signed.root, p.f.rows.intent, credentials, credentials)

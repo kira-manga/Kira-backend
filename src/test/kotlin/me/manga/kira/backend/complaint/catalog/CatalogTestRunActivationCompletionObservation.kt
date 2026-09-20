@@ -32,8 +32,9 @@ import java.util.HexFormat
 internal fun withCompletionActivationRows(
     tls: VersionBoundPersistenceConnectedFixture,
     prefix: ActivationEvidencePrefix = ActivationEvidencePrefix.INVENTORY_ROTATED,
+    createGlobal: Int = 2,
     action: (CompletionActivationObservation) -> Unit,
-) = withSignedActivationRows(tls, prefix) { signed ->
+) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal) { signed ->
     val before = signed.rows.counters.snapshot()
     val original = signed.begin()
     val prepared = try {
