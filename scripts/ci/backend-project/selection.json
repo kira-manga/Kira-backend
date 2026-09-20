@@ -1,0 +1,192 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 50,
+      "class": "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "ordinaryTestKmsGeneratesAndUnwrapsOnlyTheJournalSelectedDeletionFamilies",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsTestTerminalDataKeyAdapterV1Test.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "34afa30a4a3e45495acee6c41aeb2fe33f125f212afa44240ab589b1c38343d9",
+      "xml_names": [
+        "ordinaryTestKmsGeneratesAndUnwrapsOnlyTheJournalSelectedDeletionFamilies()"
+      ]
+    },
+    {
+      "annotation_line": 95,
+      "class": "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "ordinaryTestKmsRejectsDisabledAllForeignScopeAndNonOrdinaryFamiliesBeforeDispatch",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsTestTerminalDataKeyAdapterV1Test.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "34afa30a4a3e45495acee6c41aeb2fe33f125f212afa44240ab589b1c38343d9",
+      "xml_names": [
+        "ordinaryTestKmsRejectsDisabledAllForeignScopeAndNonOrdinaryFamiliesBeforeDispatch()"
+      ]
+    },
+    {
+      "annotation_line": 47,
+      "class": "me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapterTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "real SDK generates and decrypts J bound keys with signed exact context and stable cleared leases",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsJournalDataKeyAdapterTest.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "3f8bd9a25e5d6b6258c59f9229a6239e75477dc2f43f38aa842cda1dcad9e731",
+      "xml_names": [
+        "real SDK generates and decrypts J bound keys with signed exact context and stable cleared leases()"
+      ]
+    },
+    {
+      "annotation_line": 124,
+      "class": "me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapterTest",
+      "expected_invocations_from_annotation": 1,
+      "method": "untrusted requests cannot widen J context identity wrapped limits or the shared timeout",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsJournalDataKeyAdapterTest.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "3f8bd9a25e5d6b6258c59f9229a6239e75477dc2f43f38aa842cda1dcad9e731",
+      "xml_names": [
+        "untrusted requests cannot widen J context identity wrapped limits or the shared timeout()"
+      ]
+    },
+    {
+      "annotation_line": 180,
+      "class": "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "closedTerminalProfilesRejectCrossFamilyIdentityAndEnforceTheActual6144ByteProviderCap",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/aws/AwsTestTerminalDataKeyAdapterV1Test.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "34afa30a4a3e45495acee6c41aeb2fe33f125f212afa44240ab589b1c38343d9",
+      "xml_names": [
+        "closedTerminalProfilesRejectCrossFamilyIdentityAndEnforceTheActual6144ByteProviderCap()"
+      ]
+    },
+    {
+      "annotation_line": 60,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "empty and hundred-target authorization commits one immutable paid snapshot and releases work only after actual cleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnerDeleteAllAuthorizationIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "6ac71f084e2ac8ce652231784f5de571fc47764bca9b1d4f1994596f37bca8a7",
+      "xml_names": [
+        "empty and hundred-target authorization commits one immutable paid snapshot and releases work only after actual cleanup()"
+      ]
+    },
+    {
+      "annotation_line": 120,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "every receipt reserve domain publication and audit write boundary rolls back the complete new obligation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnerDeleteAllAuthorizationIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "6ac71f084e2ac8ce652231784f5de571fc47764bca9b1d4f1994596f37bca8a7",
+      "xml_names": [
+        "every receipt reserve domain publication and audit write boundary rolls back the complete new obligation()"
+      ]
+    },
+    {
+      "annotation_line": 44,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllVerificationIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "empty and hundred-target genuine readbacks persist exact17 and release only after known commit and original cleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnerDeleteAllVerificationIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "59ff41acd6de8397dcb73bc0f2a676b1128c6408000c1a5799ecc2d4c592752a",
+      "xml_names": [
+        "empty and hundred-target genuine readbacks persist exact17 and release only after known commit and original cleanup()"
+      ]
+    },
+    {
+      "annotation_line": 36,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "fresh empty and strict restarted hundred paid targets complete only after commit cleanup and replay without writes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnerDeleteAllApplyIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "33a7d5133c3c0b42d9683e4038b2e7cf1056078cee485148953e9af1f51854bc",
+      "xml_names": [
+        "fresh empty and strict restarted hundred paid targets complete only after commit cleanup and replay without writes()"
+      ]
+    },
+    {
+      "annotation_line": 80,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "deletion wins for disjoint E100 C100 later versions paid reports replies missing IDs and preserved foreign replies",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnerDeleteAllApplyIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "33a7d5133c3c0b42d9683e4038b2e7cf1056078cee485148953e9af1f51854bc",
+      "xml_names": [
+        "deletion wins for disjoint E100 C100 later versions paid reports replies missing IDs and preserved foreign replies()"
+      ]
+    },
+    {
+      "annotation_line": 195,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllBoundReplayIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuine old retained routing event survives current J reload publication apply and read-only bound replay without rekeying",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/OwnerDeleteAllBoundReplayIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "d9fec402096398533915bfef18e6734b110e330cce4d6111de66f58daea330eb",
+      "xml_names": [
+        "genuine old retained routing event survives current J reload publication apply and read-only bound replay without rekeying()"
+      ]
+    },
+    {
+      "annotation_line": 1442,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunOwnerDeleteAllPreparedZeroAndHundredApplyAndReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+      "source_sha256": "ccd067a4269beaec6e19a0478b9627c8aa1e2a9fd38d4ebd8a2e7c888d2edcc4",
+      "xml_names": [
+        "testRunOwnerDeleteAllPreparedZeroAndHundredApplyAndReplay()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllVerificationIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllBoundReplayIT",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT"
+  ],
+  "expected_pg_invocations": 7,
+  "expected_pg_methods": 7,
+  "expected_selected_methods": 12,
+  "expected_total": 12,
+  "expected_unit_methods": 5,
+  "selection_basis": {
+    "review": "a72332b53991bb1f9363ada17c4c2d74417d9835eb755a5b199bb9e17a509dc4",
+    "scope": "Batch new2SDK+3existingSDK controls+6failedlegacy+1representative0/100connected; no blind32 replay. Genuine lease wait120s minimum inside representative unchanged. All omitted original scopes remain unaccepted for later composed checks."
+  },
+  "source_head": "f150eda5c4956d793e66be891744f0e41eb77077",
+  "source_status": "SOURCE_REVIEWED_CHECKPOINT_NOT_VERIFIED",
+  "static_sources": {},
+  "status": "BOUND_NOT_DISPATCHED_NOT_RUN",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllBoundReplayIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllVerificationIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 1,
+    "me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapterTest": 2,
+    "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test": 3
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test.ordinaryTestKmsGeneratesAndUnwrapsOnlyTheJournalSelectedDeletionFamilies",
+    "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test.ordinaryTestKmsRejectsDisabledAllForeignScopeAndNonOrdinaryFamiliesBeforeDispatch",
+    "me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapterTest.real SDK generates and decrypts J bound keys with signed exact context and stable cleared leases",
+    "me.manga.kira.backend.security.aws.AwsJournalDataKeyAdapterTest.untrusted requests cannot widen J context identity wrapped limits or the shared timeout",
+    "me.manga.kira.backend.security.aws.AwsTestTerminalDataKeyAdapterV1Test.closedTerminalProfilesRejectCrossFamilyIdentityAndEnforceTheActual6144ByteProviderCap",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT.empty and hundred-target authorization commits one immutable paid snapshot and releases work only after actual cleanup",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllAuthorizationIT.every receipt reserve domain publication and audit write boundary rolls back the complete new obligation",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllVerificationIT.empty and hundred-target genuine readbacks persist exact17 and release only after known commit and original cleanup",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT.fresh empty and strict restarted hundred paid targets complete only after commit cleanup and replay without writes",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllApplyIT.deletion wins for disjoint E100 C100 later versions paid reports replies missing IDs and preserved foreign replies",
+    "me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteAllBoundReplayIT.genuine old retained routing event survives current J reload publication apply and read-only bound replay without rekeying",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunOwnerDeleteAllPreparedZeroAndHundredApplyAndReplay"
+  ]
+}
