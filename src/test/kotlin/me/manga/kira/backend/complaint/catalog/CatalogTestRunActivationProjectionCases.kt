@@ -269,7 +269,9 @@ internal object CatalogTestRunActivationProjectionCases {
     }
 
     private fun concurrentRoot(p: ProjectionActivationObservation, fresh: VersionBoundPersistenceConnectedFixture) {
-        VersionBoundPersistenceConnectedFixture(fresh.database, testActivation = true).use { peer ->
+        val peer = VersionBoundPersistenceConnectedFixture(fresh.database, testActivation = true)
+        // Stop both roots before either shared Timer wait; use preserves an original failure if cleanup also fails.
+        AutoCloseable { fresh.closeWith(peer) }.use {
             peer.bind()
             val peerProbe = p.f.signed.probe(peer)
             peer.startCatalogTestRunActivation()
