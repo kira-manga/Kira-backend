@@ -1,0 +1,149 @@
+name: Backend PROJECT source verification
+
+on:
+  push:
+    branches: [remediation/backend-project-linux-20260920-07]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-project-source-verification
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.repository == 'kira-manga/Kira-backend' &&
+      github.event.repository.private == false &&
+      github.event.created == true && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    env:
+      CONTROL: ${{ github.workspace }}/carrier/scripts/ci/backend-project
+      KIRA_PUBLIC_SOURCE: ${{ github.workspace }}/backend
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Exact carrier controls, no credentials retained
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.sha }}
+          path: carrier
+          persist-credentials: false
+          fetch-depth: 2
+          sparse-checkout: scripts/ci/backend-project
+          sparse-checkout-cone-mode: false
+          show-progress: false
+
+      - name: Exact reviewed backend source, not main or a release
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: fa1fe3d8228500f59072cf19b6656c89a6ccbe46
+          path: backend
+          persist-credentials: false
+          fetch-depth: 1
+          show-progress: false
+
+      - name: Admission and fresh owned directories
+        id: owned
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          cd "$CONTROL"
+          sha256sum --check --strict SHA256SUMS
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, tempfile
+          b=json.loads(pathlib.Path('binding.json').read_text())
+          assert b['status']=='BOUND' and b['primary_dispatch_authority']=='ADMITTED_BY_PRIMARY'
+          assert os.environ['RUNNER_ENVIRONMENT']=='github-hosted'
+          assert os.environ['GITHUB_REF']=='refs/heads/remediation/backend-project-linux-20260920-07'
+          assert subprocess.check_output(['git','rev-parse','HEAD^@'],text=True).strip()==b['source']['sha']
+          java=pathlib.Path(os.environ['JAVA_HOME_21_X64'])
+          assert 'JAVA_VERSION="21.' in (java/'release').read_text()
+          with open(os.environ['GITHUB_ENV'],'a') as env:
+              env.write('JAVA_HOME='+str(java)+'\nKIRA_PUBLIC_CONTROL='+str(pathlib.Path.cwd())+'\n')
+          with open(os.environ['GITHUB_PATH'],'a') as path: path.write(str(java/'bin')+'\n')
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:
+              for key,prefix in [('runtime','.kira-public-runtime-'),('run','.kira-public-backend-'),
+                                 ('runtime_evidence','kira-public-runtime-evidence-'),('evidence','kira-public-backend-evidence-')]:
+                  p=pathlib.Path(tempfile.mkdtemp(prefix=prefix,dir=os.environ['RUNNER_TEMP']))
+                  out.write(f'{key}={p}\n{key}_dev={p.stat().st_dev}\n{key}_ino={p.stat().st_ino}\n')
+          PY
+
+      - name: Build only pinned public verification dependencies, cleaning each stage
+        timeout-minutes: 47
+        env:
+          KIRA_PUBLIC_RUNTIME: ${{ steps.owned.outputs.runtime }}
+          KIRA_PUBLIC_RUNTIME_EVIDENCE: ${{ steps.owned.outputs.runtime_evidence }}
+        run: python3 -B "$CONTROL/reconstruct-runtime.py"
+
+      - name: One ordinary backend compilation and exact217 methods
+        timeout-minutes: 18
+        env:
+          KIRA_PUBLIC_RUNTIME: ${{ steps.owned.outputs.runtime }}
+          KIRA_PUBLIC_RUN: ${{ steps.owned.outputs.run }}
+          KIRA_PUBLIC_EVIDENCE: ${{ steps.owned.outputs.evidence }}
+        run: python3 -B "$CONTROL/run-source-verification.py"
+
+      - name: Dispose verified-quiescent temporary runtime, never unknown workers
+        if: always() && steps.owned.outputs.run != ''
+        env:
+          OWN_RUNTIME: ${{ steps.owned.outputs.runtime }}
+          RUNTIME_DEV: ${{ steps.owned.outputs.runtime_dev }}
+          RUNTIME_INO: ${{ steps.owned.outputs.runtime_ino }}
+          OWN_RUN: ${{ steps.owned.outputs.run }}
+          RUN_DEV: ${{ steps.owned.outputs.run_dev }}
+          RUN_INO: ${{ steps.owned.outputs.run_ino }}
+          RUNTIME_EVIDENCE: ${{ steps.owned.outputs.runtime_evidence }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, shutil
+          assert shutil.rmtree.avoids_symlink_attacks
+          run=pathlib.Path(os.environ['OWN_RUN'])
+          if run.exists():
+              assert not (run/'run-started.marker').exists(), 'Backend controller did not prove quiescence'
+              assert not run.is_symlink() and (run.stat().st_dev,run.stat().st_ino)==(int(os.environ['RUN_DEV']),int(os.environ['RUN_INO']))
+              shutil.rmtree(run)
+          runtime=pathlib.Path(os.environ['OWN_RUNTIME'])
+          receipt=pathlib.Path(os.environ['RUNTIME_EVIDENCE'])/'runtime-cleanup.json'
+          assert receipt.is_file(), 'Runtime quiescence receipt missing'
+          row=json.loads(receipt.read_text())
+          expected={'device': int(os.environ['RUNTIME_DEV']), 'inode': int(os.environ['RUNTIME_INO']), 'uid': os.geteuid()}
+          assert row['state']=='ENDED' and row['safeToRemove'] is True and row['rootIdentity']==expected, 'Runtime quiescence unproved'
+          assert json.loads((runtime/'runtime-cleanup.json').read_text())==row, 'Runtime cleanup states disagree'
+          assert not runtime.is_symlink() and (runtime.stat().st_dev,runtime.stat().st_ino)==(int(os.environ['RUNTIME_DEV']),int(os.environ['RUNTIME_INO']))
+          shutil.rmtree(runtime)
+          PY
+
+      - name: Retain public result metadata and logs only, never runtime binaries
+        if: always() && steps.owned.outputs.evidence != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: backend-project-source-${{ github.sha }}
+          retention-days: 3
+          if-no-files-found: warn
+          path: |
+            ${{ steps.owned.outputs.evidence }}/**/*.json
+            ${{ steps.owned.outputs.evidence }}/**/*.xml
+            ${{ steps.owned.outputs.evidence }}/**/*.log
+            ${{ steps.owned.outputs.runtime_evidence }}/**/*.json
+            ${{ steps.owned.outputs.runtime_evidence }}/**/*.log
+
+      - name: Delete temporary evidence after upload attempt
+        if: always() && steps.owned.outputs.evidence != ''
+        env:
+          EVIDENCE: ${{ steps.owned.outputs.evidence }}
+          EVIDENCE_DEV: ${{ steps.owned.outputs.evidence_dev }}
+          EVIDENCE_INO: ${{ steps.owned.outputs.evidence_ino }}
+          RUNTIME_EVIDENCE: ${{ steps.owned.outputs.runtime_evidence }}
+          RUNTIME_EVIDENCE_DEV: ${{ steps.owned.outputs.runtime_evidence_dev }}
+          RUNTIME_EVIDENCE_INO: ${{ steps.owned.outputs.runtime_evidence_ino }}
+        run: |
+          python3 - <<'PY'
+          import os,pathlib,shutil
+          for key in ['EVIDENCE','RUNTIME_EVIDENCE']:
+              p=pathlib.Path(os.environ[key])
+              assert not p.is_symlink() and (p.stat().st_dev,p.stat().st_ino)==(int(os.environ[key+'_DEV']),int(os.environ[key+'_INO']))
+              shutil.rmtree(p)
+          PY
