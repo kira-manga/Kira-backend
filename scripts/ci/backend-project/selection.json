@@ -1,0 +1,365 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 350,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder()"
+      ]
+    },
+    {
+      "annotation_line": 941,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationPreparesExactUnsignedRowAndChargesOnlyOnce",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationPreparesExactUnsignedRowAndChargesOnlyOnce()"
+      ]
+    },
+    {
+      "annotation_line": 946,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry()"
+      ]
+    },
+    {
+      "annotation_line": 951,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationClosedPurposeAndNakedInputsRefuseBeforeSql",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationClosedPurposeAndNakedInputsRefuseBeforeSql()"
+      ]
+    },
+    {
+      "annotation_line": 956,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift()"
+      ]
+    },
+    {
+      "annotation_line": 965,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds()"
+      ]
+    },
+    {
+      "annotation_line": 970,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 1263,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture()"
+      ]
+    },
+    {
+      "annotation_line": 979,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload()"
+      ]
+    },
+    {
+      "annotation_line": 986,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign()"
+      ]
+    },
+    {
+      "annotation_line": 991,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnreturnedDurableSignArmsNeverResign",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnreturnedDurableSignArmsNeverResign()"
+      ]
+    },
+    {
+      "annotation_line": 998,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign()"
+      ]
+    },
+    {
+      "annotation_line": 1021,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces()"
+      ]
+    },
+    {
+      "annotation_line": 1028,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows()"
+      ]
+    },
+    {
+      "annotation_line": 1035,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload()"
+      ]
+    },
+    {
+      "annotation_line": 1042,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput()"
+      ]
+    },
+    {
+      "annotation_line": 1047,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared()"
+      ]
+    },
+    {
+      "annotation_line": 1059,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup()"
+      ]
+    },
+    {
+      "annotation_line": 1066,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair()"
+      ]
+    },
+    {
+      "annotation_line": 1074,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationCompletionBudgetCancellationAndFileCleanupStayClosed",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationCompletionBudgetCancellationAndFileCleanupStayClosed()"
+      ]
+    },
+    {
+      "annotation_line": 1082,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion()"
+      ]
+    },
+    {
+      "annotation_line": 1094,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion()"
+      ]
+    },
+    {
+      "annotation_line": 1101,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple()"
+      ]
+    },
+    {
+      "annotation_line": 769,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies()"
+      ]
+    },
+    {
+      "annotation_line": 622,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT()"
+      ]
+    },
+    {
+      "annotation_line": 678,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+      "source_sha256": "0f17c8ee7af67befd735af0b6326067061e5a72951ea5d522e86837dc4b24a8d",
+      "xml_names": [
+        "fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT"
+  ],
+  "expected_pg_methods": 26,
+  "expected_total": 26,
+  "expected_unit_methods": 0,
+  "selection_basis": {
+    "accepted_focused53_run": "35485068674",
+    "diagnostic_run": "35483646987",
+    "prior_failed_run": "35478489429",
+    "remaining43_plan_sha256": "64384408915822709bb6165758b29573481b6daba25a74be46255a76c6540893",
+    "scope": "Remaining43 batch A: 26 ConnectedIT PostgreSQL methods, one XML invocation each; disjoint from other remaining43 batches and accepted focused53. Excludes run09 delivery PASS and run07 prior PASS observations; run07 is not an accepted cohort."
+  },
+  "source_head": "95ba69bdca84e043270a857be73bddaec1b69cd0",
+  "source_status": "SOURCE_ONLY_REVIEWED_NOT_ACCEPTED",
+  "static_sources": {},
+  "status": "SOURCE_BOUND_DISPATCH_BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 26
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.owned epoch rotation releases its committed request before a fresh same root capture waits for an independent shared holder",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationPreparesExactUnsignedRowAndChargesOnlyOnce",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationFreshNamedOwnerReloadsExactPreparedAfterRealLeaseExpiry",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationClosedPurposeAndNakedInputsRefuseBeforeSql",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationRefusesRawHistoryControlPolicyAndFutureReserveDrift",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSharedMaintenanceContentionRefusesBeforeEpochAndFreshAttemptSucceeds",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCommitCancellationAndHttpCloseFailuresRetainOriginalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.directEpochMaintenanceFreshGateAndActualIsolationPrecedeEpochCapture",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSignedPreparedUsesCurrentStableSignerAndColdExactReload",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnsignedDiagnosticAndColdRowsCannotGrantSign",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnreturnedDurableSignArmsNeverResign",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSavedReturnedBytesRecoverActualSqlGapsWithoutResign",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationSignedPathRetainsSameAllocationAndPostSignBindingRaces",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationColdSignedRecoveryRejectsPartialCustodyAndChangedRows",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCompletesWithOneConditionalPrimaryPutAndColdExactPendingReload",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationLostPutAcknowledgementAndReplicaLagRecoverWithoutReput",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationAcknowledgedReplicaLagAndStrictPendingReloadDoNotAdoptPrepared",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnreturnedPutArmsNeverRepublishOrRepairOriginalCleanup",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCompletionSqlGapsRecoverWithoutOldOutcomeRepair",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationCompletionBudgetCancellationAndFileCleanupStayClosed",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationUnsignedDiagnosticCannotGrantDeliveryOrCompletion",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationPostPutGlobalLeaseAndScopeRacesRefuseCompletion",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationPendingReloadRejectsChangedExactHeadTokenAndCompletionTuple",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.catalog publisher genuine freeze first D and current locked recheck precede one primary PUT and immutable dual copies",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.fixed overlap2 lost ACK and lag recover read only before same owner COMPLETE and separate PROJECT",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.fixed activation3 produces new key only from projected overlap2 and refuses its live historical lease"
+  ]
+}
