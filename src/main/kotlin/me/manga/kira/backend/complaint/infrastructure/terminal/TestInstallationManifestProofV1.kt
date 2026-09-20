@@ -32,7 +32,11 @@ internal class TestInstallationManifestProofV1 private constructor(
 ) {
     internal fun requireOriginal(original: TestRunInstallationManifestPublicationV1) { custody.requireReleasedProof(original, this) }
 
-    /** Stored comparison bytes, not a capability. Exact replay preserves its first observed timestamp. */
+    /**
+     * Stored comparison bytes, not a capability or request transcript. requestedRetainUntil is the
+     * immutable metadata minimum, not a later PUT's possibly stronger lock; retainUntil is observed.
+     * Exact VERIFIED replay preserves these first proof bytes and their original timestamp.
+     */
     internal fun canonicalBytes(row: TestTerminalDurableRowV1, at: Instant = verifiedAt): ByteArray {
         requireManifest(at.nano % 1000 == 0 && !at.isBefore(lastModified) && !at.isAfter(verifiedAt) && retainUntil.isAfter(at))
         return CanonicalJson.canonicalize(buildJsonObject {
@@ -57,20 +61,24 @@ internal class TestInstallationManifestProofV1 private constructor(
             val frozen = binding.frozen
             var listed = s3.listExact(binding)
             custody.requireListedVersion(listed?.versionId)
-            var acknowledgment: JournalPutObservationV1.Acknowledged? = null
+            var acknowledgment: Pair<JournalPutObservationV1.Acknowledged, Instant>? = null
             if (listed == null) {
-                val outcome = s3.putIfAbsent(binding, TestInstallationManifestS3CandidateV1.frozen(binding))
-                acknowledgment = outcome as? JournalPutObservationV1.Acknowledged
+                // Only after the empty exact LIST: one captured lock, unchanged frozen bytes/metadata.
+                val candidate = TestInstallationManifestS3CandidateV1.frozen(binding)
+                val outcome = s3.putIfAbsent(binding, candidate)
+                if (outcome is JournalPutObservationV1.Acknowledged) acknowledgment = outcome to candidate.retainUntil
                 // One complete repeat, never retry PUT or enlarge an original budget on an uncertain acknowledgment.
                 listed = s3.listExact(binding)
             }
             val exact = checkNotNull(listed)
             custody.requireListedVersion(exact.versionId)
-            acknowledgment?.let { requireManifest(it.versionId == exact.versionId && it.wireSha256 == frozen.wireSha256) }
+            acknowledgment?.let { (put, _) -> requireManifest(put.versionId == exact.versionId && put.wireSha256 == frozen.wireSha256) }
             val fetched = s3.getVersion(binding, exact.versionId)
             return withJournalPublicationCleanup({
                 val facts = cheapChecks(frozen, exact, fetched)
                 custody.acquisition.verifyRetention(facts.first, facts.second, checkNotNull(frozen.retainUntil))
+                // Existing/unknown/412/409 cannot assert our proposed lock was installed. A real ACK must.
+                acknowledgment?.let { (_, lock) -> requireManifest(!facts.second.isBefore(lock)) }
                 custody.requirePublication()
                 val decoded = custody.codec.open(custody.routing.journalConfiguration.declaration().journalLocation.bucket,
                     frozen.binding.objectKey, custody.content(), fetched.bytes, custody.attempt, keys)

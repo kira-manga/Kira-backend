@@ -143,17 +143,21 @@ internal object TestOrdinaryDrainRowsV1 {
     }
 
     /** Strict terminal reader deliberately separate from the unchanged RESERVED/PARTIAL lower reader. */
-    class Recovery(row: ResultSet, original: TestRunOrdinaryDrainV1, eventId: String, kind: String) {
+    class Recovery(row: ResultSet, facts: TestOrdinaryDrainPersistenceV1.FamilyFacts, eventId: String, kind: String) {
+        constructor(row: ResultSet, original: TestRunOrdinaryDrainV1, eventId: String, kind: String) :
+            this(row, TestOrdinaryDrainPersistenceV1.FamilyFacts(original.routing, original.cutoff), eventId, kind) {
+            original.requireInventoryKind(kind)
+        }
         val state = checkNotNull(row.getString("state"))
         val promise = vector(row, "reserved_amounts")
         val used = vector(row, "converted_amounts")
         val lastAppliedAt = checkNotNull(row.getTimestamp("converted_at")).toInstant()
         val remaining get() = promise - used
         init {
-            original.requireInventoryKind(kind)
+            facts.requireKind(kind)
             val all = kind == "OWNER_DELETE_ALL"
             requireDrain(row.getString("event_id") == eventId && row.getString("publication_ref") == eventId &&
-                row.getObject("data_scope_id", UUID::class.java) == original.scope && boolean(row, "test_only") && boolean(row, "finite") &&
+                row.getObject("data_scope_id", UUID::class.java) == facts.scope && boolean(row, "test_only") && boolean(row, "finite") &&
                 row.getInt("accounting_version") == 1 && state in setOf("PARTIAL", "CONVERTED") &&
                 promise == (if (all) OwnerDeleteAllCapacityCharges.RECOVERY else OwnerDeleteCapacityCharges.RECOVERY) &&
                 used.fitsWithin(promise) && !used.isZero())

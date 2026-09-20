@@ -109,6 +109,26 @@ independent last-pre-run restore horizon plus31days or ten years from the first
 provider creation. A future trusted retention producer must supply that coverage,
 including publication-attempt timing margin and actual LastModified verification.
 
+For the later manifest publication source slice (qualification remains separate),
+the frozen date **M** remains the immutable metadata minimum. After an empty exact LIST, actual
+publication custody captures one conditional-PUT lock **L** as the maximum of M
+and the current attempt's creation/retention bound. L may be stronger than M;
+canonical/wire bytes, hashes, key, metadata, M and first timestamps never change.
+An acknowledged PUT must read back the same acknowledged version with actual
+COMPLIANCE retention **A>=L**. An existing object or unknown/412/409 outcome cannot
+prove L was installed: actual readback must instead cover M, ten UTC calendar
+years from real provider LastModified **C**, and the restore horizon plus31days,
+alongside all unchanged exact-object, authentication and current-retention checks.
+
+The manifest proof's `requestedRetainUntil` is exactly M: the requested minimum
+committed in metadata, **not the last PUT header or a request transcript**.
+`retainUntil` is observed A. Exact VERIFIED replay keeps the original proof bytes
+and verifiedAt, not a newly proposed lock or observation time. The existing M>now,
+M>C, denial-evidence, ordinary-seal and current-authority expiry guards still
+apply. This permits a timed retry with valid predecessor/current authority, not
+indefinite retry, first publication after M expires, or cold adoption. It changes
+no V21 schema or immutable-row rule and supplies no execution/acceptance evidence.
+
 `TestTerminalDurableBindingV1` keeps immutable checked strings/instants and the
 existing declaration-only `TestTerminalRunContextV1`; publicationRef is derived
 from kind. `TestTerminalDurableRowV1.canonical(binding,bytes)` and

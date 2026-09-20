@@ -37,7 +37,8 @@ internal object TestInstallationManifestAppliedPageV1 {
     private fun read(row: ResultSet, drain: TestRunOrdinaryDrainV1): TestOrdinaryDrainPersistenceV1.Applied {
         drain.requireManifestPredecessor()
         val kind = checkNotNull(row.getString("event_kind"))
-        requireManifest(kind == "OWNER_DELETE" || kind == "OWNER_DELETE_ALL" && drain.routing.journalConfiguration.ownerDeleteAll)
+        requireManifest(kind == "OWNER_DELETE" || kind == "OWNER_DELETE_ALL" && drain.routing.journalConfiguration.ownerDeleteAll ||
+            kind == "ADMIN_DELETE" && drain.routing.journalConfiguration.registeredAdminDelete)
         val targets = row.getInt("target_count").also { requireManifest(!row.wasNull()) }
         requireManifest(row.getObject("data_scope_id", UUID::class.java) == drain.scope && TestOrdinaryDrainRowsV1.boolean(row, "test_only") &&
             row.getObject("writer_generation", UUID::class.java).toString() == drain.writer &&

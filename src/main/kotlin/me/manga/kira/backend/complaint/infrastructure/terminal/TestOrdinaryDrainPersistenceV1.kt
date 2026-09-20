@@ -15,10 +15,11 @@ import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournalVersion
-import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
+import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.security.MessageDigest
@@ -33,6 +34,28 @@ import java.util.UUID
  * conversion enters only through the coordinator's receipt/publication/recovery-before-counters path.
  */
 internal object TestOrdinaryDrainPersistenceV1 {
+    /** Comparison inputs only: no original, JDBC, budget, phase or permission is carried here. */
+    class FamilyFacts(val routing: TestOwnerDeleteJournalRoutingV1, val cutoff: Long) {
+        val scope = routing.journalConfiguration.scope.id
+        val writer = routing.journalConfiguration.declaration().writer.generationId
+
+        fun requireKind(kind: String) {
+            requireDrain(cutoff > 0 && (kind == "OWNER_DELETE" ||
+                kind == "OWNER_DELETE_ALL" && routing.journalConfiguration.ownerDeleteAll ||
+                kind == "ADMIN_DELETE" && routing.journalConfiguration.registeredAdminDelete))
+        }
+
+        fun requireEvent(event: TestOwnerDeleteJournalEventV1) {
+            requireKind(event.comparison.eventKind.name)
+            requireDrain(event.belongsTo(routing) && event.comparison.scope == routing.journalConfiguration.scope &&
+                event.comparison.epoch in 1..cutoff && when (event.comparison.eventKind) {
+                    ComplaintJournalDeletionKindV1.OWNER_DELETE, ComplaintJournalDeletionKindV1.ADMIN_DELETE -> event.complaintIds().size == 1
+                    ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> event.complaintIds().size in 0..100
+                    else -> false
+                })
+        }
+    }
+
     fun requireControls(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1) {
         lockControlIdentities(jdbc, original)
         original.requireCapturedControl(readControl(jdbc, original))
@@ -174,6 +197,17 @@ internal object TestOrdinaryDrainPersistenceV1 {
     /** Conversion calls locked=true BEFORE counter acquisition. Other whole-relation passes are read-only under controls/run. */
     fun primary(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, id: String, locked: Boolean): Primary {
         tick(original)
+        original.requireInventoryKind("OWNER_DELETE") // Common family; retains the private running-only drain guard.
+        return primaryFacts(jdbc, FamilyFacts(original.routing, original.cutoff), id, locked).also {
+            original.requireInventoryEvent(it.event)
+            tick(original)
+        }
+    }
+
+    /** Read-only facts for a typed manifest child; this does not issue a drain/recovery original. */
+    fun closedPrimary(jdbc: JdbcTemplate, facts: FamilyFacts, id: String): Primary = primaryFacts(jdbc, facts, id, locked = false)
+
+    private fun primaryFacts(jdbc: JdbcTemplate, facts: FamilyFacts, id: String, locked: Boolean): Primary {
         val receiptSql = if (locked) TestOrdinaryDrainSqlV1.primaryReceiptLocators else TestOrdinaryDrainSqlV1.primaryReceiptLocators.removeSuffix(" FOR UPDATE")
         val publicationSql = if (locked) TestOrdinarySealSqlV1.publication else TestOrdinarySealSqlV1.publication.removeSuffix(" FOR UPDATE")
         val recoverySql = if (locked) OwnerDeletePersistenceSql.LOCK_RECOVERY else OwnerDeletePersistenceSql.LOCK_RECOVERY.removeSuffix(" FOR UPDATE")
@@ -187,7 +221,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
                         locator.second, locator.third).single()
                 }
                 "ADMIN" -> {
-                    requireDrain(original.routing.journalConfiguration.registeredAdminDelete)
+                    requireDrain(facts.routing.journalConfiguration.registeredAdminDelete)
                     val sql = if (locked) AdminDeletePersistenceSql.LOCK_RECEIPT else AdminDeletePersistenceSql.LOCK_RECEIPT.removeSuffix(" FOR UPDATE")
                     jdbc.query(sql, { row, _ -> SingleReceipt.Admin(AdminDeleteRows.Receipt(row), checkNotNull(row.getTimestamp("completed_at")).toInstant()) },
                         locator.second, locator.third).single()
@@ -195,7 +229,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
                 else -> throw TestOrdinaryDrainExceptionV1()
             }
         }
-        val allReceiptSql = TestOrdinarySealSqlV1.ownerDeleteAllReceipt(original.routing.journalConfiguration.scope).let {
+        val allReceiptSql = TestOrdinarySealSqlV1.ownerDeleteAllReceipt(facts.routing.journalConfiguration.scope).let {
             if (locked) it else it.removeSuffix(" FOR UPDATE")
         }
         val allReceipts = jdbc.query(allReceiptSql, { row, _ ->
@@ -203,7 +237,7 @@ internal object TestOrdinaryDrainPersistenceV1 {
         }, id)
         val publication = jdbc.query(publicationSql, { row, _ ->
             val kind = checkNotNull(row.getString("event_kind"))
-            original.requireInventoryKind(kind)
+            facts.requireKind(kind)
             (when (kind) {
                 "OWNER_DELETE_ALL" -> OwnerDeleteRows.Publication.ownerDeleteAll(row)
                 "ADMIN_DELETE" -> OwnerDeleteRows.Publication.adminDelete(row)
@@ -215,20 +249,21 @@ internal object TestOrdinaryDrainPersistenceV1 {
         val p = publication.first
         val event = when (p.kind) {
             ComplaintJournalDeletionKindV1.ADMIN_DELETE -> {
-                requireDrain(original.routing.journalConfiguration.registeredAdminDelete)
-                TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(original.routing, p.bytes, p.routingKey).also(p::requireAdminEvent)
+                requireDrain(facts.routing.journalConfiguration.registeredAdminDelete)
+                TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(facts.routing, p.bytes, p.routingKey).also(p::requireAdminEvent)
             }
             ComplaintJournalDeletionKindV1.OWNER_DELETE ->
-                TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey).also(p::requireEvent)
+                TestOwnerDeleteJournalCodecV1.restoreCanonical(facts.routing, p.bytes, p.routingKey).also(p::requireEvent)
             ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> {
-                requireDrain(original.routing.journalConfiguration.ownerDeleteAll)
-                TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey).also {
-                    p.requireEvent(OwnerDeleteAllJournalBindingV1(original.routing).fromTest(it))
+                requireDrain(facts.routing.journalConfiguration.ownerDeleteAll)
+                TestOwnerDeleteJournalCodecV1.restoreCanonical(facts.routing, p.bytes, p.routingKey).also {
+                    p.requireEvent(OwnerDeleteAllJournalBindingV1(facts.routing).fromTest(it))
                 }
             }
             else -> throw TestOrdinaryDrainExceptionV1()
         }
-        val recovery = jdbc.query(recoverySql, { row, _ -> TestOrdinaryDrainRowsV1.Recovery(row, original, id, p.kind.name) }, id).single()
+        facts.requireEvent(event)
+        val recovery = jdbc.query(recoverySql, { row, _ -> TestOrdinaryDrainRowsV1.Recovery(row, facts, id, p.kind.name) }, id).single()
         return when (p.kind) {
             ComplaintJournalDeletionKindV1.OWNER_DELETE -> {
                 requireDrain(allReceipts.isEmpty())
@@ -251,43 +286,55 @@ internal object TestOrdinaryDrainPersistenceV1 {
 
     fun requirePrimary(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, run: TestOrdinaryDrainRowsV1.Run, value: Primary,
         converted: Boolean, staged: Boolean, lockDomain: Boolean = false): Long {
-        if (value is AllPrimary) return TestOrdinaryDrainAllPersistenceV1.requirePrimary(jdbc, original, run, value, converted, staged, lockDomain)
-        if (value is AdminPrimary) return TestOrdinaryDrainAdminPersistenceV1.requirePrimary(jdbc, original, run, value, converted, staged, lockDomain)
+        tick(original)
+        original.requireInventoryEvent(value.event)
+        // Preserve staged-entry locks BEFORE domain locks. The proof parser below must equal
+        // this exact publication verified_at; moving comparisons never relaxes the time bound.
+        val family = requireFamily(jdbc, original, value, checkNotNull(value.publication.verifiedAt), staged)
+        requirePrimaryFacts(jdbc, FamilyFacts(original.routing, original.cutoff), run, value, family, converted, lockDomain)
+        original.requireInventoryEvent(value.event)
+        tick(original)
+        return family.size.toLong()
+    }
+
+    /** Shared comparisons only. The caller owns the phase and obtains family through readFamilyFacts. */
+    fun requirePrimaryFacts(jdbc: JdbcTemplate, facts: FamilyFacts, run: TestOrdinaryDrainRowsV1.Run, value: Primary,
+        family: List<Applied>, converted: Boolean, lockDomain: Boolean) {
+        if (value is AllPrimary) return TestOrdinaryDrainAllPersistenceV1.requirePrimaryFacts(jdbc, facts, run, value, family, converted, lockDomain)
+        if (value is AdminPrimary) return TestOrdinaryDrainAdminPersistenceV1.requirePrimaryFacts(jdbc, facts, run, value, family, converted, lockDomain)
         requireDrain(value is OwnerPrimary)
         val owner = value as OwnerPrimary
-        tick(original)
         val p = value.publication
         val event = value.event
-        original.requireInventoryEvent(event)
+        facts.requireEvent(event)
         val tuple = ComplaintOwnerDeleteTuple(ScopedInstallationId(event.tuple.actorId, event.tuple.scope), event.tuple.operationKey,
             event.complaintIds().single(), event.tuple.fingerprintBytes())
         val r = owner.receipt
         val recovery = value.recovery
         val at = now(jdbc)
         requireDrain(run.progress != null || recovery.state == "PARTIAL")
-        requireDrain(p.state == "APPLIED" && p.scope == original.scope && p.writer.toString() == original.writer && !p.createdAt.isAfter(run.sealedAt) &&
+        requireDrain(p.state == "APPLIED" && p.scope == facts.scope && p.writer.toString() == facts.writer && !p.createdAt.isAfter(run.sealedAt) &&
             r.valid && r.matches(tuple) && r.state == "COMPLETED" && r.completed() === ComplaintOwnerDeleteReceipt.Applied &&
             r.authorizedAt == p.createdAt && r.publication == p.eventId && r.externalEvent == p.eventId && r.externalEpoch == p.epoch &&
             r.externalVersion == p.objectVersion && r.externalHash.contentEquals(p.ciphertextHash))
-        val proof = TestOwnerDeleteVerificationCodecV1(original.routing).parse(checkNotNull(p.verificationBytes), event)
+        val proof = TestOwnerDeleteVerificationCodecV1(facts.routing).parse(checkNotNull(p.verificationBytes), event)
         ComplaintOwnerDeleteVerificationOperation.requireColumns(proof, p)
         val verifiedAt = Instant.parse(proof.verifiedAt)
         requireDrain(!verifiedAt.isAfter(value.appliedAt) && !value.appliedAt.isAfter(owner.receiptAt) && !owner.receiptAt.isAfter(at) &&
             Instant.parse(proof.retainUntil).isAfter(at) && !recovery.lastAppliedAt.isBefore(verifiedAt) && !recovery.lastAppliedAt.isAfter(at) &&
             (!converted || recovery.state == "CONVERTED"))
-        val family = requireFamily(jdbc, original, value, verifiedAt, staged)
         val ownerSql = TestOrdinaryDrainSqlV1.ownerIdentity + if (lockDomain) " FOR UPDATE" else ""
         val resourceSql = TestOrdinaryDrainSqlV1.resourceIdentity + if (lockDomain) " FOR UPDATE" else ""
         jdbc.query(ownerSql, { row, _ ->
-            requireIdentity(row, original)
+            requireIdentity(row, facts)
             val state = row.getString("state")
             requireDrain(state in setOf("ACTIVE", "RECOVERY_RESERVED") || state == "DELETED" &&
-                requireCompletedAllCompanion(jdbc, original, run, event.tuple.actorId))
+                requireCompletedAllCompanionFacts(jdbc, facts, run, event.tuple.actorId))
             if (recovery.used[ComplaintCapacityCounter.INSTALLATION_IDS] != 0L) requireDrain(state in setOf("RECOVERY_RESERVED", "DELETED") &&
                 row.getTimestamp("created_at").toInstant() in p.createdAt..recovery.lastAppliedAt)
         }, event.tuple.actorId).single()
         jdbc.query(resourceSql, { row, _ ->
-            requireIdentity(row, original)
+            requireIdentity(row, facts)
             requireDrain(row.getString("state") == "DELETED" && row.getTimestamp("deleted_at").toInstant() <= recovery.lastAppliedAt)
             if (recovery.used[ComplaintCapacityCounter.RESOURCE_IDS] != 0L) requireDrain(row.getTimestamp("created_at").toInstant() in p.createdAt..recovery.lastAppliedAt)
         }, tuple.targetId).single()
@@ -295,20 +342,33 @@ internal object TestOrdinaryDrainPersistenceV1 {
         val audits = jdbc.query(TestOrdinaryDrainSqlV1.targetAudits, { row, _ ->
             requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "valid") && row.getTimestamp("created_at").toInstant() in verifiedAt..recovery.lastAppliedAt)
             row.getString("action")
-        }, original.scope, tuple.targetId.toString())
+        }, facts.scope, tuple.targetId.toString())
         requireDrain(audits.size <= 5 && audits.count { it == "COMPLAINT_DELETED" } <= 1 &&
             audits.count { it == "COMPLAINT_RECOVERY_APPLIED" } <= family.size && recovery.used[ComplaintCapacityCounter.AUDIT_ROWS] == audits.size.toLong())
-        tick(original)
-        return family.size.toLong()
     }
 
     /** Shared exact-version comparison for the three closed, explicitly configured deletion families. */
     fun requireFamily(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, value: Primary, verifiedAt: Instant, staged: Boolean): List<Applied> {
+        original.requireInventoryEvent(value.event)
+        val family = readFamilyFacts(jdbc, FamilyFacts(original.routing, original.cutoff), value, verifiedAt)
+        if (staged) family.forEach { applied ->
+            val copies = jdbc.query(TestOrdinaryDrainSqlV1.exactEntries, { row, _ -> row.getInt("pass") to TestOrdinaryDrainRowsV1.Entry.read(row, original) },
+                original.scanId, original.scope, applied.key, applied.version)
+            requireDrain(copies.map { it.first } == listOf(1, 2))
+            copies.forEach { applied.requireEntry(it.second); requireDrain(it.second.replay == "APPLIED") }
+            copies[0].second.requireSame(copies[1].second)
+        }
+        original.requireInventoryEvent(value.event)
+        return family
+    }
+
+    fun readFamilyFacts(jdbc: JdbcTemplate, facts: FamilyFacts, value: Primary, verifiedAt: Instant): List<Applied> {
         val p = value.publication
         val event = value.event
-        val routes = original.routing.derive(event.comparison).candidates()
+        facts.requireEvent(event)
+        val routes = facts.routing.derive(event.comparison).candidates()
         requireDrain(routes.size == 4)
-        val family = jdbc.query(TestOrdinaryDrainSqlV1.appliedFamily, { row, _ -> Applied.read(row, original, hasTime = true) },
+        val family = jdbc.query(TestOrdinaryDrainSqlV1.appliedFamily, { row, _ -> Applied.readFacts(row, facts, hasTime = true) },
             routes.joinToString(",", "{", "}") { it.eventId })
         requireDrain(family.size in 1..4 && family.map { it.locator }.distinct().size == family.size &&
             value.recovery.used[ComplaintCapacityCounter.JOURNAL_APPLIED] == family.size.toLong())
@@ -322,27 +382,26 @@ internal object TestOrdinaryDrainPersistenceV1 {
                 requireDrain(applied.ciphertext == HexFormat.of().formatHex(p.ciphertextHash))
                 if (applied.version == p.objectVersion) primarySeen = true
             }
-            if (staged) {
-                val copies = jdbc.query(TestOrdinaryDrainSqlV1.exactEntries, { row, _ -> row.getInt("pass") to TestOrdinaryDrainRowsV1.Entry.read(row, original) },
-                    original.scanId, original.scope, applied.key, applied.version)
-                requireDrain(copies.map { it.first } == listOf(1, 2))
-                copies.forEach { applied.requireEntry(it.second); requireDrain(it.second.replay == "APPLIED") }
-                copies[0].second.requireSame(copies[1].second)
-            }
         }
         requireDrain(primarySeen)
         return family
     }
 
     internal fun requireCompletedAllCompanion(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1, run: TestOrdinaryDrainRowsV1.Run, actor: UUID): Boolean {
-        requireDrain(original.routing.journalConfiguration.ownerDeleteAll)
+        original.requireInventoryKind("OWNER_DELETE_ALL")
+        return requireCompletedAllCompanionFacts(jdbc, FamilyFacts(original.routing, original.cutoff), run, actor).also { tick(original) }
+    }
+
+    internal fun requireCompletedAllCompanionFacts(jdbc: JdbcTemplate, facts: FamilyFacts, run: TestOrdinaryDrainRowsV1.Run, actor: UUID): Boolean {
+        requireDrain(facts.routing.journalConfiguration.ownerDeleteAll)
         // Read-only under the original controls: do not acquire another receipt/publication lock
         // after this conversion has locked counters/domain. No terminal state is accepted alone.
-        val receipt = jdbc.query(OwnerDeleteAllApplySql.test(original.routing.journalConfiguration.scope).LOCK_RECEIPTS.removeSuffix(" FOR UPDATE"),
+        val receipt = jdbc.query(OwnerDeleteAllApplySql.test(facts.routing.journalConfiguration.scope).LOCK_RECEIPTS.removeSuffix(" FOR UPDATE"),
             { row, _ -> OwnerDeleteAllApplyRows.receipt(row) }, actor).single()
-        val companion = primary(jdbc, original, receipt.reference, locked = false) as? AllPrimary ?: throw TestOrdinaryDrainExceptionV1()
+        val companion = closedPrimary(jdbc, facts, receipt.reference) as? AllPrimary ?: throw TestOrdinaryDrainExceptionV1()
         requireDrain(companion.installationId == actor)
-        requirePrimary(jdbc, original, run, companion, converted = false, staged = false)
+        val family = readFamilyFacts(jdbc, facts, companion, checkNotNull(companion.publication.verifiedAt))
+        requirePrimaryFacts(jdbc, facts, run, companion, family, converted = false, lockDomain = false)
         return true
     }
 
@@ -381,13 +440,18 @@ internal object TestOrdinaryDrainPersistenceV1 {
         }
         companion object {
             fun read(row: ResultSet, original: TestRunOrdinaryDrainV1, hasTime: Boolean = false): Applied {
+                original.requireInventoryKind(checkNotNull(row.getString("event_kind")))
+                return readFacts(row, FamilyFacts(original.routing, original.cutoff), hasTime)
+            }
+
+            fun readFacts(row: ResultSet, facts: FamilyFacts, hasTime: Boolean = false): Applied {
                 val kind = checkNotNull(row.getString("event_kind"))
-                original.requireInventoryKind(kind)
+                facts.requireKind(kind)
                 val targets = row.getInt("target_count").also { requireDrain(!row.wasNull()) }
-                requireDrain(row.getObject("data_scope_id", UUID::class.java) == original.scope && TestOrdinaryDrainRowsV1.boolean(row, "test_only") &&
-                    row.getObject("writer_generation", UUID::class.java).toString() == original.writer &&
+                requireDrain(row.getObject("data_scope_id", UUID::class.java) == facts.scope && TestOrdinaryDrainRowsV1.boolean(row, "test_only") &&
+                    row.getObject("writer_generation", UUID::class.java).toString() == facts.writer &&
                     (if (kind == "OWNER_DELETE_ALL") targets in 0..100 else targets == 1) &&
-                    TestOrdinaryDrainRowsV1.boolean(row, "finite") && row.getLong("journal_epoch") in 1..original.cutoff)
+                    TestOrdinaryDrainRowsV1.boolean(row, "finite") && row.getLong("journal_epoch") in 1..facts.cutoff)
                 return Applied(checkNotNull(row.getString("event_id")), checkNotNull(row.getString("object_key")), requireJournalVersion(row.getString("object_version")),
                     TestOrdinaryDrainRowsV1.hash(row, "ciphertext_hash"), row.getLong("journal_epoch"), kind, targets,
                     if (hasTime) checkNotNull(row.getTimestamp("applied_at")).toInstant() else null, if (hasTime) row.getString("stamp") else null)
@@ -423,8 +487,8 @@ internal object TestOrdinaryDrainPersistenceV1 {
         requireDrain(count == expected.versionCount && framed == cut.framedByteCount && HexFormat.of().formatHex(hash.digest()) == expected.sha256)
     }
 
-    private fun requireIdentity(row: ResultSet, original: TestRunOrdinaryDrainV1) {
-        requireDrain(row.getObject("data_scope_id", UUID::class.java) == original.scope && TestOrdinaryDrainRowsV1.boolean(row, "test_only") &&
+    private fun requireIdentity(row: ResultSet, facts: FamilyFacts) {
+        requireDrain(row.getObject("data_scope_id", UUID::class.java) == facts.scope && TestOrdinaryDrainRowsV1.boolean(row, "test_only") &&
             TestOrdinaryDrainRowsV1.boolean(row, "finite"))
     }
     fun now(jdbc: JdbcTemplate): Instant = checkNotNull(jdbc.queryForObject("SELECT clock_timestamp()", { row, _ -> row.getTimestamp(1).toInstant() }))

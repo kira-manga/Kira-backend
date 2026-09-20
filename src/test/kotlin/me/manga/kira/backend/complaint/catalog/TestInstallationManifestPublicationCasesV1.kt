@@ -192,6 +192,23 @@ internal object TestInstallationManifestPublicationCasesV1 {
         val observed = TestOrdinaryDrainAccountingObservationV1(f)
         val paid = observed.state()
         val order = f.sealHttp.order.size
+        val requests = f.sealHttp.requests.size
+        var mismatchedAcknowledgment = false
+        f.sealHttp.changeS3 = { request, reply ->
+            if (request.kind == "PUT") {
+                assertEquals(200, reply.status)
+                reply.headers = reply.headers + ("x-amz-version-id" to listOf("different-manifest-ack-version"))
+                mismatchedAcknowledgment = true
+            }
+        }
+        val wrongVersion = preparation.beginPublication().also { probe.original = it }
+        assertThrows<TestInstallationManifestExceptionV1> { wrongVersion.publish() }
+        f.sealHttp.changeS3 = { _, _ -> }; probe.assertReleased(requireCommitted = false)
+        assertTrue(mismatchedAcknowledgment)
+        assertEquals(listOf("LIST", "PUT", "LIST"), f.sealHttp.requests.drop(requests).map { it.kind }, "ACK and exact LIST must identify the same version before GET/KMS.")
+        assertEquals(listOf("PREPARED" to "WIRE_FROZEN"), manifestStatePairs(f))
+        assertTrue(probe.calls.none { it.step === TestInstallationManifestPublicationStepV1.VERIFY })
+        assertEquals(paid, observed.state())
         val corruptions = listOf<(S3CatalogReply) -> Unit>(
             { it.headers = it.headers + ("x-amz-meta-unexpected" to listOf("extra")) },
             { it.headers = it.headers + ("x-amz-object-lock-mode" to listOf("GOVERNANCE")) },
@@ -199,8 +216,8 @@ internal object TestInstallationManifestPublicationCasesV1 {
             { it.headers = it.headers + ("x-amz-checksum-sha256" to listOf("A".repeat(43) + "=")) },
             { it.bytes[0] = (it.bytes[0].toInt() xor 1).toByte() },
         )
-        corruptions.forEachIndexed { index, change ->
-            if (index > 0) { observed.expireLeaseForRetry(); probe.reset() }
+        corruptions.forEach { change ->
+            observed.expireLeaseForRetry(); probe.reset()
             f.sealHttp.changeS3 = { request, reply -> if (request.kind == "GET") change(reply) }
             val original = preparation.beginPublication().also { probe.original = it }
             assertThrows<TestInstallationManifestExceptionV1> { original.publish() }

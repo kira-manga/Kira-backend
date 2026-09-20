@@ -102,7 +102,8 @@ internal object TestInstallationManifestPublicationFailureCasesV1 {
     }
 
     fun completion(tls: VersionBoundPersistenceConnectedFixture, step: TestInstallationManifestPublicationStepV1,
-        cut: TestRegistrationCompletionCut, preconditionOnRetry: Boolean = false) = withManifestPublicationRun(tls) { f, preparation, probe ->
+        cut: TestRegistrationCompletionCut, preconditionOnRetry: Boolean = false) = withManifestPublicationRun(tls,
+        realTimeRetentionRetry = step === TestInstallationManifestPublicationStepV1.FREEZE && cut === TestRegistrationCompletionCut.AFTER_COMMIT) { f, preparation, probe ->
         require(step in setOf(TestInstallationManifestPublicationStepV1.FREEZE, TestInstallationManifestPublicationStepV1.VERIFY))
         require(!preconditionOnRetry || step === TestInstallationManifestPublicationStepV1.VERIFY && cut === TestRegistrationCompletionCut.BEFORE_COMMIT)
         val observed = TestOrdinaryDrainAccountingObservationV1(f)
@@ -181,10 +182,14 @@ internal object TestInstallationManifestPublicationFailureCasesV1 {
         val rowImage = manifestRowsImage(f)
         val beforeRetry = f.sealHttp.order.size
         val beforeRequests = f.sealHttp.requests.size
-        observed.expireLeaseForRetry(); probe.reset() // Synthetic fixture expiry, not a natural-expiry claim.
-        var lists = 0
-        if (preconditionOnRetry) f.sealHttp.beforeS3 = { request -> if (request.kind == "LIST") f.sealHttp.hideObject = ++lists == 1 }
-        val retry = TestInstallationManifestPublicationCasesV1.publish(preparation, probe)
+        val retry = if (step === TestInstallationManifestPublicationStepV1.FREEZE && cut === TestRegistrationCompletionCut.AFTER_COMMIT) {
+            TestInstallationManifestRetentionCasesV1.retryAfterLostFreeze(f, preparation, probe, original)
+        } else {
+            observed.expireLeaseForRetry(); probe.reset() // Other cuts retain explicit synthetic fixture expiry.
+            var lists = 0
+            if (preconditionOnRetry) f.sealHttp.beforeS3 = { request -> if (request.kind == "LIST") f.sealHttp.hideObject = ++lists == 1 }
+            TestInstallationManifestPublicationCasesV1.publish(preparation, probe)
+        }
         f.sealHttp.beforeS3 = {}; f.sealHttp.hideObject = false
         probe.assertReleased()
         assertEquals(if (frozen) 0 else 1, f.sealHttp.order.drop(beforeRetry).count { it == "GENERATE" })

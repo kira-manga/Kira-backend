@@ -303,9 +303,11 @@ internal class TestInstallationManifestOperationV1 private constructor(
         original.requireRunning()
         requireManifest(jdbc.query(TestInstallationManifestSqlV1.relation, { value, _ -> TestOrdinaryDrainRowsV1.boolean(value, "valid") }, original.scope,
             original.routing.journalConfiguration.ordinaryPrefix + "%", original.routing.journalConfiguration.sealTerminalPrefix + "%",
-            original.writer, original.control.cutoff, original.epoch).single())
+            original.writer, original.control.cutoff, original.epoch,
+            original.routing.journalConfiguration.ownerDeleteAll, original.routing.journalConfiguration.registeredAdminDelete).single())
     }
     private fun requireAppliedCut() {
+        TestInstallationManifestFamilyJoinV1.requireClosed(jdbc, this, run)
         val expected = original.ordinaryCut.denial.firstInventory
         val hash = MessageDigest.getInstance("SHA-256")
         var framed = EpochSealFramesV1.update(hash, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", original.writer,

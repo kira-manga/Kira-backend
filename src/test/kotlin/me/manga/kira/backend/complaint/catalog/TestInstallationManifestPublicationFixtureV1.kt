@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.catalog
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
@@ -14,15 +15,22 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import java.sql.Connection
+import java.time.Instant
+import java.time.ZoneOffset
+import java.time.temporal.ChronoUnit
 
 /**
  * Actual drain -> all-chunks PREPARE. Opt-in raw SDK responses precede consumers/full D/signing.
  * IAM, retention and historical open/D comparisons are synthetic, not deployed acceptance.
  * The sole501-row caller uses real lower-core enrollment, not HTTP quota/activation proof.
+ * The timed-retry case fixes a short valid horizon and existing30s scan bound BEFORE full D.
  */
 internal fun withManifestPublicationRun(tls: VersionBoundPersistenceConnectedFixture, multiChunk: Boolean = false,
+    realTimeRetentionRetry: Boolean = false,
     action: (TestRunOrdinaryDrainFixtureV1, TestRunInstallationManifestV1, TestInstallationManifestPublicationSqlProbeV1) -> Unit) =
     withOrdinaryDrainRun(tls, expireClosedSetupPredecessors = true, manifestPublication = true,
+        inputs = TestOrdinaryDrainFixtureInputsV1(scanMillis = if (realTimeRetentionRetry) 30_000 else null),
+        horizon = if (realTimeRetentionRetry) Instant.now().plusSeconds(86_400).truncatedTo(ChronoUnit.SECONDS) else Instant.parse("2038-01-01T00:00:00Z"),
         additionalRawEnrolled = if (multiChunk) 500 else 0) { f ->
         TestOrdinaryInventoryHttpFixtureV1(f.provider).use { native ->
             val drain = f.begin()
@@ -75,15 +83,19 @@ internal fun manifestInvariantImage(f: TestRunOrdinaryDrainFixtureV1): Map<Strin
         it !in setOf("complaint_journal_control", "complaint_journal_publications", "complaint_test_terminal_intents")
     }
 
-internal fun assertPublishedManifests(f: TestRunOrdinaryDrainFixtureV1, original: TestRunInstallationManifestPublicationV1, entries: Int = 1) {
+internal fun assertPublishedManifests(f: TestRunOrdinaryDrainFixtureV1, original: TestRunInstallationManifestPublicationV1, entries: Int = 1,
+    expectedDispositions: Map<String, TestTerminalDispositionV1>? = null) {
     requireConnectionFree()
     val json = TestTerminalJsonV1(f.registration.process.consumers.journalConfiguration)
     val expectedIds = f.observer.query("SELECT id::text FROM complaint_installation_ids WHERE data_scope_id = ? ORDER BY id", { row, _ -> row.getString(1) }, f.scope)
+    val dispositions = expectedDispositions ?: expectedIds.associateWith { TestTerminalDispositionV1.RETIRED }
+    assertEquals(expectedIds.toSet(), dispositions.keys)
     val seen = arrayListOf<String>()
     var chunks = 0
     f.observer.query("""
         SELECT p.event_bytes, p.object_key, p.object_version, encode(p.semantic_hash, 'hex') AS canonical_hash,
             encode(p.ciphertext_hash, 'hex') AS wire_hash, i.wire_bytes, i.canonical_bytes, i.object_ordinal,
+            i.retain_until AS metadata_minimum, p.verification_bytes, p.verified_at,
             (p.state = 'VERIFIED' AND i.state = 'WIRE_FROZEN' AND p.applied_at IS NULL AND p.ciphertext_hash = i.wire_hash
                 AND p.object_created_at <= p.verified_at AND p.retain_until >= i.retain_until AND p.retain_until > clock_timestamp()
                 AND r.state = 'RESERVED' AND r.reserved_amounts = array_fill(0::bigint, ARRAY[22])
@@ -101,10 +113,20 @@ internal fun assertPublishedManifests(f: TestRunOrdinaryDrainFixtureV1, original
         assertEquals(original.runContext, declaration.context().run)
         assertEquals(index, declaration.chunkIndex)
         seen.addAll(declaration.entries().map { it.installationId })
-        assertTrue(declaration.entries().all { it.disposition === TestTerminalDispositionV1.RETIRED })
+        declaration.entries().forEach { assertEquals(dispositions.getValue(it.installationId), it.disposition) }
         val provider = f.sealHttp.manifestObjects.getValue(row.getString("object_key"))
         assertArrayEquals(provider.bytes, row.getBytes("wire_bytes"))
         assertEquals(provider.version, row.getString("object_version"))
+        val minimum = row.getTimestamp("metadata_minimum").toInstant().toString()
+        assertEquals(minimum, provider.metadata.getValue("kira-journal-retain-until"))
+        val proof = ObjectMapper().readTree(row.getBytes("verification_bytes"))
+        assertEquals(minimum, proof["requestedRetainUntil"].textValue(), "Proof records the immutable metadata minimum, not a PUT transcript.")
+        assertEquals(provider.retainUntil.toString(), proof["retainUntil"].textValue())
+        assertEquals(provider.lastModified.toString(), proof["lastModified"].textValue())
+        assertEquals(provider.version, proof["objectVersion"].textValue())
+        assertEquals(row.getTimestamp("verified_at").toInstant().toString(), proof["verifiedAt"].textValue())
+        assertTrue(provider.retainUntil >= provider.lastModified.atOffset(ZoneOffset.UTC).plusYears(10).toInstant())
+        assertTrue(provider.retainUntil >= f.sealHttp.horizon.plusSeconds(31 * 86_400L))
         val ref = original.authenticatedChunk(index)
         assertEquals(provider.key, ref.objectKey); assertEquals(provider.version, ref.objectVersion)
         assertEquals(Sha256.hex(provider.bytes), ref.ciphertextSha256); assertEquals(Sha256.hex(body), ref.canonicalSha256)

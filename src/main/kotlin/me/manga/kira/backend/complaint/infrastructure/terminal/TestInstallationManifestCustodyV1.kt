@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.withJournalPublica
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import me.manga.kira.backend.security.TestTerminalEnvelopeV1
 import me.manga.kira.backend.security.aws.AwsTestInstallationManifestStsV1
+import java.time.Instant
 
 /** One concrete shared-J routine owner, retained across canonical release, codec, freeze and readback. */
 internal class TestInstallationManifestCustodyV1 private constructor(private val original: TestRunInstallationManifestPublicationV1) : AutoCloseable {
@@ -57,11 +58,15 @@ internal class TestInstallationManifestCustodyV1 private constructor(private val
     internal fun canonical() = original.loadedRow()
     internal fun frozen() = original.frozenRow()
     internal fun content() = original.content()
-    internal fun requirePutRetention() {
+    internal fun requirePut() {
         requirePublication()
         original.requireUnverifiedPublication()
+    }
+    /** Frozen metadata is a minimum, not a ceiling on a later attempt's actual creation lock. */
+    internal fun putRetention(): Instant {
+        requirePut()
         val row = frozen()
-        requireManifest(!checkNotNull(row.retainUntil).isBefore(acquisition.newRetention(attempt, row.binding.createdAt)))
+        return maxOf(checkNotNull(row.retainUntil), acquisition.newRetention(attempt, row.binding.createdAt))
     }
     internal fun requireListedVersion(version: String?) { requirePublication(); original.requireListedPublicationVersion(version) }
     internal fun requireReleasedProof(candidate: TestRunInstallationManifestPublicationV1, proof: TestInstallationManifestProofV1) {

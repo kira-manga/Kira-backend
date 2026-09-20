@@ -2,6 +2,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 
 import me.manga.kira.backend.complaint.catalog.TestInstallationManifestPublicationCasesV1
 import me.manga.kira.backend.complaint.catalog.TestInstallationManifestPublicationFailureCasesV1
+import me.manga.kira.backend.complaint.catalog.TestInstallationManifestFamilyJoinCasesV1
 import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestPublicationStepV1
 import org.junit.jupiter.api.AfterAll
@@ -97,6 +98,16 @@ class TestInstallationManifestPublicationIT {
     @Test
     fun realCanonicalRowsWithCorruptUnpaidRemainderCannotReachStsOrBeBackfilled() = withFixture {
         TestInstallationManifestPublicationCasesV1.unpaidRemainderRefusesBeforeProviders(it)
+    }
+
+    @Test
+    fun mixedOwnerAdminAndEmptyAllWithFourTotalAdminVersionsCloseIntoGenuineDeletedManifest() = withFixture {
+        TestInstallationManifestFamilyJoinCasesV1.mixedEmittedFamiliesAndAliases(it)
+    }
+
+    @Test
+    fun postDrainMissingAdminReceiptAndPaidAuditEvidenceRefuseBeforeManifestProviders() = withFixture {
+        TestInstallationManifestFamilyJoinCasesV1.missingReceiptAndPaidAuditRefuse(it)
     }
 
     private fun completion(step: TestInstallationManifestPublicationStepV1, cut: TestRegistrationCompletionCut) =

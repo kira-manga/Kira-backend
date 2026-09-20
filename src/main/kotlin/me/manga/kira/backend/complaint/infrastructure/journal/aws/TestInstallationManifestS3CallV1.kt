@@ -13,7 +13,8 @@ internal class TestInstallationManifestS3BindingV1 private constructor(internal 
     val attempt get() = custody.attempt
     val frozen get() = custody.frozen()
     fun requirePublicationStart() { requireConnectionFree(); custody.requirePublication() }
-    fun requirePut() { requirePublicationStart(); custody.requirePutRetention() }
+    fun requirePut() { requirePublicationStart(); custody.requirePut() }
+    fun putRetention() = custody.putRetention()
     companion object {
         internal fun released(custody: TestInstallationManifestCustodyV1): TestInstallationManifestS3BindingV1 =
             TestInstallationManifestS3BindingV1(custody).also { it.requirePublicationStart() }
@@ -55,24 +56,27 @@ internal class TestInstallationManifestS3CallV1 private constructor(
             TestInstallationManifestS3CallV1(binding, JournalS3OperationV1.GET, requireJournalVersion(versionId), null, nanoTime)
         fun put(binding: TestInstallationManifestS3BindingV1, candidate: TestInstallationManifestS3CandidateV1, nanoTime: () -> Long): TestInstallationManifestS3CallV1 {
             binding.requirePut()
-            requireJournalPublication(candidate.row === binding.frozen)
+            candidate.requireBinding(binding)
             return TestInstallationManifestS3CallV1(binding, JournalS3OperationV1.PUT, null, candidate, nanoTime)
         }
     }
 }
 
-/** Borrowed immutable winner, never an encryption candidate. Every access rechecks original dispatch custody. */
+/** Borrowed immutable winner. Capture the custody-derived PUT lock once; byte access rechecks dispatch custody. */
 internal class TestInstallationManifestS3CandidateV1 private constructor(private val binding: TestInstallationManifestS3BindingV1) {
-    internal val row: TestTerminalDurableRowV1 = binding.frozen
+    private val row: TestTerminalDurableRowV1 = binding.frozen
+    val retainUntil = binding.putRetention()
     val wireSha256 get() = checkNotNull(row.wireSha256)
     val checksum get() = checkNotNull(row.checksumSha256)
-    val retainUntil get() = checkNotNull(row.retainUntil)
     val size: Int get() = bytes().let { try { it.size } finally { it.fill(0) } }
     fun bytes(): ByteArray { binding.requirePublicationStart(); return checkNotNull(row.wireBytes()) }
     fun metadata(): Map<String, String> { binding.requirePublicationStart(); return checkNotNull(row.metadata()) }
+    internal fun requireBinding(selected: TestInstallationManifestS3BindingV1) {
+        requireJournalPublication(binding === selected && row === selected.frozen)
+    }
     companion object {
         fun frozen(binding: TestInstallationManifestS3BindingV1): TestInstallationManifestS3CandidateV1 {
-            binding.requirePublicationStart()
+            binding.requirePut()
             requireJournalPublication(binding.frozen.state === TestTerminalDurableStateV1.WIRE_FROZEN)
             return TestInstallationManifestS3CandidateV1(binding)
         }

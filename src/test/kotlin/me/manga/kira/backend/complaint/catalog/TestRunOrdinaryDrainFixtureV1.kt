@@ -20,6 +20,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import java.time.Clock
+import java.time.Instant
 
 /**
  * Existing PROJECT/raw-registration/ordinary-audit/history fixtures only. Full four-key TEST J,
@@ -36,10 +37,11 @@ internal fun withOrdinaryDrainRun(
     manifestPublication: Boolean = false,
     additionalRawEnrolled: Int = 0,
     protectedIntake: Boolean = false,
+    horizon: Instant = Instant.parse("2038-01-01T00:00:00Z"),
     action: (TestRunOrdinaryDrainFixtureV1) -> Unit,
 ) {
     require(additionalRawEnrolled == 0 || manifestPublication && additionalRawEnrolled == 500)
-    TestOrdinarySealHttpFixtureV1(manifestPublication = manifestPublication, protectedIntake = protectedIntake).use { sealHttp ->
+    TestOrdinarySealHttpFixtureV1(horizon = horizon, manifestPublication = manifestPublication, protectedIntake = protectedIntake).use { sealHttp ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(
             tls, ordinarySealHttp = sealHttp, ordinaryDrain = inputs,
             expireClosedSetupPredecessors = expireClosedSetupPredecessors,
