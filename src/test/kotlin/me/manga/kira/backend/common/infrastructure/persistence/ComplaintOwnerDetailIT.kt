@@ -41,6 +41,8 @@ import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.verifyNoMoreInteractions
 import org.mockito.Mockito.verifyNoInteractions
 import org.springframework.dao.DataAccessException
 import org.springframework.mock.web.MockHttpServletResponse
@@ -143,7 +145,11 @@ class ComplaintOwnerDetailIT {
                     assertEquals(before, f.rows.state())
                 }
             }
-            verifyNoInteractions(users, installations, history, create)
+            // Construction checks capability agreement; no create/reply request may be dispatched.
+            verify(create).hasDeleteStatus()
+            verify(create).hasEditStatus()
+            verifyNoMoreInteractions(create)
+            verifyNoInteractions(users, installations, history)
         }
         assertEquals(events + 2, lifecycleField(readEvents, "events"), "Only the actual detail reads, not converter preflight, pay the shared read charge.")
     }

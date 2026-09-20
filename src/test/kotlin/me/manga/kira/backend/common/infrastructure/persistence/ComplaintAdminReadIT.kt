@@ -468,7 +468,11 @@ class ComplaintAdminReadIT {
                 val id = f.rows.content()
                 for ((enter, read) in phases(f, id)) {
                     val operation = f.withPhase(enter) { phase ->
-                        assertEquals("repeatable read", f.ordinary.jdbc.queryForObject("SHOW default_transaction_isolation", String::class.java))
+                        // pgjdbc setTransactionIsolation changes the session default. reset_val
+                        // retains the startup role setting, proving the non-default role was real.
+                        assertEquals("repeatable read", f.ordinary.jdbc.queryForObject(
+                            "SELECT reset_val FROM pg_settings WHERE name = 'default_transaction_isolation'", String::class.java,
+                        ))
                         assertEquals(TransactionDefinition.ISOLATION_READ_COMMITTED, TransactionSynchronizationManager.getCurrentTransactionIsolationLevel())
                         assertEquals("read committed", f.ordinary.jdbc.queryForObject("SHOW transaction_isolation", String::class.java))
                         val retained = read()

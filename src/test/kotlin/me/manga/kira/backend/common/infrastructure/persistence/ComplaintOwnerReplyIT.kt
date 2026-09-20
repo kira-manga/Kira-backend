@@ -41,6 +41,7 @@ import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.mockito.Mockito.mock
 import org.mockito.Mockito.verifyNoInteractions
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.security.web.FilterChainProxy
@@ -48,6 +49,7 @@ import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -299,17 +301,7 @@ class ComplaintOwnerReplyIT {
         val report = f.attempt()
         val reply = f.replyAttempt(parent)
         val before = f.state()
-        val claimBarrierPassed = AtomicBoolean()
-        val barrier = CyclicBarrier(2) { claimBarrierPassed.set(true) }
-        val inputs = listOf(f.input(report), f.replyInput(reply))
-        f.beforeStep = { step -> if (step == OwnerCreateFixtureStep.CLAIM) barrier.await(500, TimeUnit.MILLISECONDS) }
-        val responses = try {
-            OwnedCallerTestScope().use { callers -> inputs.map { input -> callers.launch { f.send(input) } }.map { it.value() } }
-        } finally {
-            f.beforeStep = {}
-        }
-        f.assertReleased()
-        assertTrue(claimBarrierPassed.get(), "Both original callers must pass the claim barrier before any retry.")
+        val responses = raceOriginalOwnerClaims(f, listOf(f.input(report), f.replyInput(reply)))
         val claims = f.observations.filter { it.first == OwnerCreateFixtureStep.CLAIM }
         assertEquals(2, claims.size, "Both original claim statements must complete before any retry.")
         assertEquals(2, claims.map { it.second.identity.second }.toSet().size, "The original claims must use two real transactions.")
@@ -608,6 +600,41 @@ class ComplaintOwnerReplyIT {
     fun `populated predecessor migration permits only the reply resource rejection cell without rewriting data or other objects`() = withFixture { f ->
         assertOwnerReplyReceiptMigration(checkNotNull(f.observer.dataSource))
         f.assertReleased()
+    }
+
+    private fun raceOriginalOwnerClaims(f: ComplaintOwnerCreateFixture, inputs: List<MockHttpServletRequest>): List<MockHttpServletResponse> {
+        val firstAtClaim = AtomicBoolean()
+        val claimBarrierPassed = AtomicBoolean()
+        val barrier = CyclicBarrier(2) { claimBarrierPassed.set(true) }
+        val lastSql = ConcurrentHashMap<Thread, String>()
+        f.beforeStep = { step ->
+            lastSql[Thread.currentThread()] = "${TransactionSynchronizationManager.getCurrentTransactionName()}:$step"
+            if (step == OwnerCreateFixtureStep.CLAIM) {
+                firstAtClaim.set(true)
+                barrier.await(500, TimeUnit.MILLISECONDS)
+            }
+        }
+        return try {
+            OwnedCallerTestScope().use { callers ->
+                val first = callers.launch { f.send(inputs[0]) }
+                // Admission deliberately refuses CAS contention. Park the first write before admitting the second original.
+                awaitLifecycleFact { firstAtClaim.get() || !first.thread.isAlive }
+                assertTrue(firstAtClaim.get()) {
+                    "First original refused before CLAIM: status=${first.value().status}, lastSql=${lastSql[first.thread] ?: "NONE"}."
+                }
+                val second = callers.launch { f.send(inputs[1]) }
+                val originals = listOf(first, second)
+                val responses = originals.map { it.value() }
+                f.assertReleased()
+                assertTrue(claimBarrierPassed.get()) {
+                    "Both originals must pass CLAIM before retries: statuses=${responses.map { it.status }}, " +
+                        "lastSql=${originals.map { lastSql[it.thread] ?: "NONE" }}."
+                }
+                responses
+            }
+        } finally {
+            f.beforeStep = {}
+        }
     }
 
     private fun storedContent(f: ComplaintOwnerCreateFixture, id: UUID): String = checkNotNull(

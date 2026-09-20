@@ -378,8 +378,11 @@ internal object CatalogTestRunActivationProjectionRecoveryCases {
         f.signed.withFreshOwner(nanoClock = clock) { publishing ->
             val original = f.begin(publishing)
             val probe = f.signed.probe(publishing)
+            val publishingCaller = Thread.currentThread()
             var injected = false
-            clock.onSample = {
+            clock.onSample = sample@{
+                // The scanner samples this clock too; this post-release cut belongs only to the publishing caller.
+                if (Thread.currentThread() !== publishingCaller) return@sample
                 val complete = probe.calls.lastOrNull { it.step == "test-mark-pending" }?.phase
                 if (!injected && PersistencePhaseOwnership.current() == null && complete?.databaseOutcome() == PersistenceDatabaseOutcome.COMMITTED &&
                     !f.signed.exists(CatalogTestRunActivationReleaseLeafV1.COMPLETE_OUTCOME)) {
