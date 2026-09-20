@@ -61,7 +61,19 @@ internal object TestRunPreparedOwnerDeleteCases {
                 assertEquals(PersistenceDatabaseOutcome.COMMITTED, verify.databaseOutcome())
                 assertTrue(verify.testRunOwnerDeleteCleanupProven(original))
                 assertTrue(f.jdbc.observations.getValue(verify).lease.completion.quiescent())
-                assertEquals("VERIFIED", f.publicationState())
+                // A foreign JdbcTemplate would enlist another holder in the active APPLY synchronization.
+                checkNotNull(f.observer.dataSource).connection.use { connection ->
+                    connection.prepareStatement("SELECT state FROM complaint_journal_publications WHERE event_id = ?").use { statement ->
+                        statement.queryTimeout = 1
+                        statement.setString(1, f.eventId)
+                        statement.executeQuery().use { rows ->
+                            assertTrue(rows.next())
+                            assertEquals("VERIFIED", rows.getString(1))
+                            assertTrue(!rows.next())
+                        }
+                    }
+                }
+                assertEquals(1, TransactionSynchronizationManager.getResourceMap().size, "Observer must not join the original APPLY synchronization.")
                 assertEquals(before.filterKeys { it != "complaint_journal_publications" }, f.image().filterKeys { it != "complaint_journal_publications" })
                 sawReleasedVerify = true
             }

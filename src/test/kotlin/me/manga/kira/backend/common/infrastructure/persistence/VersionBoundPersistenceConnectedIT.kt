@@ -46,6 +46,7 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
 import me.manga.kira.backend.complaint.catalog.TestRunVerifiedOwnerDeleteCases
 import me.manga.kira.backend.complaint.catalog.TestRunPreparedOwnerDeleteCases
+import me.manga.kira.backend.complaint.catalog.TestRunOwnerDeletePageCases
 import me.manga.kira.backend.complaint.catalog.TestPreparedDeleteRefusalCut
 import me.manga.kira.backend.complaint.catalog.TestPreparedDeleteProviderCut
 import me.manga.kira.backend.complaint.catalog.TestVerifiedDeleteRefusalCut
@@ -1327,6 +1328,26 @@ class VersionBoundPersistenceConnectedIT {
                 withFixture(testActivation = true) { TestRunPreparedOwnerDeleteCases.completionBoundary(it, cut, verifyPhase) }
             }
         }
+    }
+
+    @Test
+    fun testRunOwnerDeletePageCompletesMixedPrimariesWithoutReleasingReserve() = withFixture(testActivation = true) {
+        TestRunOwnerDeletePageCases.mixedPageAndReplay(it)
+    }
+
+    @Test
+    fun testRunOwnerDeletePageDoesNotSkipInvalidOrOrphanedWork() = withFixture(testActivation = true) {
+        TestRunOwnerDeletePageCases.outstandingCorruptionIsNotSkipped(it)
+    }
+
+    @Test
+    fun testRunOwnerDeletePageRequiresOriginalSelectionCommitAndRelease() = withFixture(testActivation = true) {
+        TestRunOwnerDeletePageCases.selectionRequiresOriginalCommitAndRelease(it)
+    }
+
+    @Test
+    fun testRunOwnerDeletePageSharesOuterBudgetAndCancellation() = withFixture(testActivation = true) {
+        TestRunOwnerDeletePageCases.outerCancellationAndBudgetStopThePage(it)
     }
 
     @Test

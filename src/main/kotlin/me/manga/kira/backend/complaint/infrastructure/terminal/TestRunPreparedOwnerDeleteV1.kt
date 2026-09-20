@@ -11,16 +11,25 @@ import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Clock
 import java.util.UUID
 
-/** Existing primary only. Explicit BYO credentials select no route, scope, work or proof. */
+/** Existing primaries only. Explicit BYO credentials select no route, scope, work or proof. */
 internal class TestRunPreparedOwnerDeleteV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
     ownership: PersistencePhaseOwnership,
     jdbc: JdbcTemplate,
     audit: AuditService,
-    actorId: UUID,
-    operationKey: UUID,
+    actorId: UUID?,
+    operationKey: UUID?,
     publication: Publication,
-) : TestRunOwnerDeleteContinuationV1(registration, ownership, jdbc, audit, actorId, operationKey, publication) {
+    selectedBy: TestRunOwnerDeleteContinuationV1? = null,
+) : TestRunOwnerDeleteContinuationV1(registration, ownership, jdbc, audit, actorId, operationKey, publication, selectedBy) {
+    /** Only beginPage/pageWithHttpFixture entries can select. Single-primary entries retain complete(). */
+    fun completePage(): PageProgress = completeSelectedPage()
+
+    /** Diagnostic counts from one local page, never a family/scan/ordinary-range completion capability. */
+    class PageProgress internal constructor(val completedPrimaries: Int, val moreObserved: Boolean) {
+        override fun toString(): String = "TestRunOwnerDeletePageProgress(bounded-local-observation-only)"
+    }
+
     /** Configuration only; the existing factory still requires the original released work and owner. */
     internal class Publication(
         private val credentials: AwsSessionCredentials,
@@ -41,11 +50,27 @@ internal class TestRunPreparedOwnerDeleteV1 private constructor(
             audit: AuditService, actorId: UUID, operationKey: UUID, credentials: AwsSessionCredentials): TestRunPreparedOwnerDeleteV1 =
             TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, actorId, operationKey, Publication(credentials))
 
+        fun beginPage(registration: ComplaintTestNamespaceRegistrationV1, ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate,
+            audit: AuditService, credentials: AwsSessionCredentials): TestRunPreparedOwnerDeleteV1 =
+            TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, null, null, Publication(credentials))
+
+        /** The original page privately retains the next selected locator and admits this child once. */
+        internal fun selected(original: TestRunOwnerDeleteContinuationV1, registration: ComplaintTestNamespaceRegistrationV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, audit: AuditService, actorId: UUID, operationKey: UUID,
+            publication: Publication): TestRunPreparedOwnerDeleteV1 =
+            TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, actorId, operationKey, publication, original)
+
         /** Only raw HTTP/clock fixtures differ; no work, verification, phase or cleanup substitution. */
         fun withHttpFixture(registration: ComplaintTestNamespaceRegistrationV1, ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate,
             audit: AuditService, actorId: UUID, operationKey: UUID, credentials: AwsSessionCredentials,
             s3: () -> SdkHttpClient, kms: () -> SdkHttpClient, clock: Clock, nanoTime: () -> Long): TestRunPreparedOwnerDeleteV1 =
             TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, actorId, operationKey, Publication(credentials, s3, kms, clock, nanoTime))
+
+        /** Same one-page SQL/continuations and original cleanup; only existing raw HTTP/clock fixtures differ. */
+        fun pageWithHttpFixture(registration: ComplaintTestNamespaceRegistrationV1, ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate,
+            audit: AuditService, credentials: AwsSessionCredentials, s3: () -> SdkHttpClient, kms: () -> SdkHttpClient,
+            clock: Clock, nanoTime: () -> Long): TestRunPreparedOwnerDeleteV1 =
+            TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, null, null, Publication(credentials, s3, kms, clock, nanoTime))
     }
 }
 

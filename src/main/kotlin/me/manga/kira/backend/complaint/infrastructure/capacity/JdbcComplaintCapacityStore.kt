@@ -5,6 +5,7 @@ import me.manga.kira.backend.audit.infrastructure.ComplaintOwnerDeleteAuditInser
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAuthorizationOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteRegisteredReloadOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteRegisteredSelectionOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRegistrationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteApplyOperation
 import jakarta.persistence.EntityManager
@@ -130,6 +131,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForOwnerDelete(operation: ComplaintOwnerDeleteAuthorizationOperation): LockedOwnerDelete = LockedOwnerDelete.lock(this, operation)
     /** Only an original registered reload reads these counters; it receives no spending/settlement owner. */
     internal fun lockForRegisteredOwnerDeleteReload(operation: ComplaintOwnerDeleteRegisteredReloadOperation) {
+        operation.beginCounterLock(jdbc)
+        operation.requireCapacityPolicy(readLockedLedger(), jdbc)
+    }
+    /** The bounded selection variant has the same read-only counter prefix; no allocation is issued. */
+    internal fun lockForRegisteredOwnerDeleteSelection(operation: ComplaintOwnerDeleteRegisteredSelectionOperation) {
         operation.beginCounterLock(jdbc)
         operation.requireCapacityPolicy(readLockedLedger(), jdbc)
     }

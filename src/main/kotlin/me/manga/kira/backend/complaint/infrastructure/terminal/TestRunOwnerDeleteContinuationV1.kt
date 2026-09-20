@@ -17,10 +17,12 @@ import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWo
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteRegisteredReloadOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteRegisteredSelectionOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteVerificationOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteApplyStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteVerificationStore
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteVerificationInputV1
@@ -38,25 +40,30 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * One original caller and one existing primary receipt. Scope is registration-owned; actor/key are
- * only SQL locators, never work/proof authority. Two closed entries share this original lifecycle:
- * VERIFIED has no publication branch; PREPARED may publish only positively reloaded existing work.
- * No new authorization, reconstruction, drain or reserve-release right.
+ * One original caller for an existing primary, or one bounded page of SQL-discovered primaries.
+ * Scope is registration-owned; actor/key remain locators, never work/proof authority. Each selected
+ * primary still requires its own released RELOAD and uses the SAME outer budget and live custody.
+ * No new authorization, reconstruction, ordinary-range drain proof or reserve-release right.
  */
 internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     private val registration: ComplaintTestNamespaceRegistrationV1,
     private val ownership: PersistencePhaseOwnership,
     private val jdbc: JdbcTemplate,
-    audit: AuditService,
-    internal val actorId: UUID,
-    internal val operationKey: UUID,
+    private val audit: AuditService,
+    actor: UUID?,
+    key: UUID?,
     private val publication: TestRunPreparedOwnerDeleteV1.Publication?,
+    private val selectedBy: TestRunOwnerDeleteContinuationV1? = null,
 ) {
     private val caller = Thread.currentThread()
-    internal val budget = PersistenceTimeBudget.start(registration.process.catalogReadback.totalAttemptMillis, ownership.nanoClock)
+    internal val budget: PersistenceTimeBudget = selectedBy?.budget ?: PersistenceTimeBudget.start(registration.process.catalogReadback.totalAttemptMillis, ownership.nanoClock)
+    private val locator = actor?.let { it to checkNotNull(key) }
+    internal val actorId: UUID get() = checkNotNull(locator).first
+    internal val operationKey: UUID get() = checkNotNull(locator).second
     private val failure = AtomicReference<Throwable?>()
     private var started = false
     private var finished = false
+    private var successful = false
     private var stage = Stage.NEW
     private var phase: PersistencePhaseContext? = null
     private var phaseEntered = false
@@ -69,11 +76,16 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     private var publisher: TestOwnerDeleteJournalPublisherFactoryV1? = null
     private var publishedReadback: TestOwnerDeleteJournalReadbackV1? = null
     private var verificationInput: TestOwnerDeleteVerificationInputV1? = null
+    private var selectedLocator: Pair<UUID, UUID>? = null
+    private var selectedChild: TestRunOwnerDeleteContinuationV1? = null
 
     init {
         registration.requireUsable()
         registration.requireOwnerDeleteContinuationResources(ownership, jdbc)
-        requireContinuation(listOf(actorId, operationKey).all { it.version() == 4 && it.variant() == 2 })
+        requireContinuation((actor == null) == (key == null))
+        if (locator == null) requireContinuation(publication != null && selectedBy == null)
+        else requireContinuation(listOf(locator.first, locator.second).all { it.version() == 4 && it.variant() == 2 })
+        selectedBy?.retainSelected(this)
     }
 
     private val process = registration.process
@@ -89,7 +101,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     fun complete(): ComplaintOwnerDeleteReceipt {
         requireContinuation(caller === Thread.currentThread())
         throwIfSignalled()
-        requireContinuation(!started)
+        requireContinuation(!started && locator != null)
         started = true
         stage = Stage.RELOAD
         try {
@@ -111,6 +123,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
             requireConnectionFree()
             requireRunning()
             requireContinuation(phase == null && !cleanupUncertain && result === ComplaintOwnerDeleteReceipt.Applied)
+            successful = true
             return result
         } catch (problem: Throwable) {
             observeFailure(problem)
@@ -119,6 +132,76 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         } finally {
             finished = true
         }
+    }
+
+    /** Exactly one page, no automatic pagination/retry. A zero count or absent peek is not quiescence. */
+    protected fun completeSelectedPage(): TestRunPreparedOwnerDeleteV1.PageProgress {
+        requireContinuation(caller === Thread.currentThread())
+        throwIfSignalled()
+        requireContinuation(!started && locator == null && selectedBy == null && publication != null)
+        started = true
+        stage = Stage.SELECT
+        try {
+            requireConnectionFree()
+            requireRunning()
+            val page = select().released(store)
+            stage = Stage.PAGE
+            var completed = 0
+            for (candidate in page.take(OwnerDeletePersistenceSql.REGISTERED_PRIMARY_PAGE_LIMIT)) {
+                requireRunning()
+                requireContinuation(selectedChild == null && selectedLocator == null)
+                selectedLocator = candidate
+                val child: TestRunOwnerDeleteContinuationV1 = TestRunPreparedOwnerDeleteV1.selected(this, registration, ownership, jdbc, audit,
+                    candidate.first, candidate.second, checkNotNull(publication))
+                child.complete()
+                requireRunning()
+                requireContinuation(selectedChild === child && child.finished && child.successful && child.failure.get() == null &&
+                    child.phase == null && !child.cleanupUncertain)
+                selectedChild = null
+                selectedLocator = null
+                completed++
+            }
+            requireConnectionFree()
+            requireRunning()
+            successful = true
+            return TestRunPreparedOwnerDeleteV1.PageProgress(completed, page.size > OwnerDeletePersistenceSql.REGISTERED_PRIMARY_PAGE_LIMIT)
+        } catch (problem: Throwable) {
+            observeFailure(problem)
+            throwIfSignalled()
+            throw refusal()
+        } finally {
+            finished = true
+        }
+    }
+
+    private fun select(): ComplaintOwnerDeleteRegisteredSelectionOperation {
+        val selected = ownership.enterTestRunOwnerDeleteReload(this)
+        var operation: ComplaintOwnerDeleteRegisteredSelectionOperation? = null
+        try { selected.begin(); operation = store.selectRegistered(this); selected.commit() }
+        catch (problem: Throwable) { selected.recordFailure(problem) }
+        finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
+        return operation ?: throw selected.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+    }
+
+    private fun retainSelected(child: TestRunOwnerDeleteContinuationV1) {
+        requireConnectionFree()
+        requireRunning()
+        requireContinuation(stage === Stage.PAGE && locator == null && selectedBy == null && selectedChild == null && selectedLocator != null &&
+            child.selectedBy === this && child.locator == selectedLocator && child.registration === registration && child.ownership === ownership &&
+            child.jdbc === jdbc && child.audit === audit && child.publication === publication && child.budget === budget)
+        selectedChild = child
+    }
+
+    private fun requireSelectedRunning(child: TestRunOwnerDeleteContinuationV1) {
+        requireRunning()
+        requireContinuation(stage === Stage.PAGE && selectedChild === child && phase == null && !phaseEntered && !controlsChecked)
+    }
+
+    internal fun requireReleasedSelection() {
+        requireConnectionFree()
+        requireRunning()
+        requireContinuation(stage === Stage.SELECT && locator == null && phase == null && !phaseEntered && !controlsChecked &&
+            retainedOperation == null && sealedAt != null && selectedChild == null && selectedLocator == null)
     }
 
     private fun publishAndVerify(work: CommittedTestOwnerDeleteWork.Prepared): CommittedTestOwnerDeleteVerificationV1 {
@@ -165,10 +248,10 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     }
 
     private val path: PersistencePhasePath get() = when (stage) {
-        Stage.RELOAD -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD
+        Stage.SELECT, Stage.RELOAD -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD
         Stage.VERIFY -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY
         Stage.APPLY -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY
-        Stage.NEW, Stage.PUBLISH -> throw refusal()
+        Stage.NEW, Stage.PAGE, Stage.PUBLISH -> throw refusal()
     }
 
     internal fun requirePersistence(selected: PersistencePhaseOwnership, selectedJdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1) {
@@ -182,7 +265,8 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         requireConnectionFree()
         requireRunning()
         requireContinuation(selected === ownership && selectedPath === path && !phaseEntered && phase == null &&
-            (stage === Stage.RELOAD && applyInput == null && sealedAt == null && preparedWork == null ||
+            (stage === Stage.SELECT && locator == null && sealedAt == null && selectedChild == null ||
+                stage === Stage.RELOAD && locator != null && applyInput == null && sealedAt == null && preparedWork == null ||
                 stage === Stage.VERIFY && publication != null && preparedWork != null && publishedReadback != null && verificationInput != null && applyInput == null && sealedAt != null ||
                 stage === Stage.APPLY && applyInput != null && sealedAt != null))
         phaseEntered = true
@@ -212,10 +296,11 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         requirePersistence(selected, selectedJdbc, graph)
         requireContinuation(retainedOperation == null && !controlsChecked && phase != null)
         when (stage) {
+            Stage.SELECT -> requireContinuation(operation is ComplaintOwnerDeleteRegisteredSelectionOperation && operation.original === this)
             Stage.RELOAD -> requireContinuation(operation is ComplaintOwnerDeleteRegisteredReloadOperation && operation.original === this)
             Stage.VERIFY -> (operation as? ComplaintOwnerDeleteVerificationOperation ?: throw refusal()).requireRegisteredContinuation(this)
             Stage.APPLY -> (operation as? ComplaintOwnerDeleteApplyOperation ?: throw refusal()).requireRegisteredContinuation(this)
-            Stage.NEW, Stage.PUBLISH -> throw refusal()
+            Stage.NEW, Stage.PAGE, Stage.PUBLISH -> throw refusal()
         }
         retainedOperation = operation
         val openings = process.pools.descriptors().single { it.role === PersistenceJdbcParticipantRole.DELETION }.openings().map { it.publicDriverProperties() }
@@ -232,7 +317,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         controlsChecked = true
     }
 
-    /** RELOAD/APPLY lock after counters; short VERIFY observes after receipt/publication without a run lock. */
+    /** Selection/RELOAD/APPLY lock after counters; short VERIFY observes without a run lock. */
     internal fun requireSealedRun(selectedJdbc: JdbcTemplate) {
         requirePersistence(ownership, selectedJdbc, graph)
         requireContinuation(controlsChecked && retainedOperation != null)
@@ -240,7 +325,10 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
             requireContinuation(requiredBoolean(row, "valid") && row.getString("state") == "SEALED")
             checkNotNull(row.getTimestamp("sealed_at")).toInstant()
         }, *registration.sealingRunArguments()).single()
-        if (stage === Stage.RELOAD) { requireContinuation(sealedAt == null); sealedAt = at } else requireContinuation(sealedAt == at)
+        if (stage === Stage.SELECT || stage === Stage.RELOAD) {
+            requireContinuation(sealedAt == null && (selectedBy == null || selectedBy.sealedAt == at))
+            sealedAt = at
+        } else requireContinuation(sealedAt == at)
         // Read only: taking an audit lock before APPLY's domain locks would invert the existing lock order.
         requireContinuation(jdbc.query(TestRunSealingSqlV1.readAudit, { row, _ -> requiredBoolean(row, "valid") },
             *registration.sealingAuditArguments(at)).single())
@@ -249,7 +337,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
 
     internal fun requireEarlierAuthorization(at: Instant) {
         requireRunning()
-        requireContinuation(stage in setOf(Stage.RELOAD, Stage.VERIFY) && !at.isAfter(checkNotNull(sealedAt)))
+        requireContinuation(stage in setOf(Stage.SELECT, Stage.RELOAD, Stage.VERIFY) && !at.isAfter(checkNotNull(sealedAt)))
     }
 
     internal fun requireReleasedReload() {
@@ -306,6 +394,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         requireContinuation(caller === Thread.currentThread() && !finished && !cleanupUncertain)
         budget.remainingMillis(1)
         registration.requireOwnerDeleteContinuationResources(ownership, jdbc)
+        selectedBy?.requireSelectedRunning(this)
     }
 
     internal fun observeFailure(problem: Throwable) {
@@ -321,7 +410,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
             if (previous is Error || (previous is CancellationException && retained !is Error) ||
                 (previous is InterruptedException && retained !is Error && retained !is CancellationException) ||
                 (previous != null && retained is TestRunOwnerDeleteExceptionV1)) return
-            if (failure.compareAndSet(previous, retained)) return
+            if (failure.compareAndSet(previous, retained)) { selectedBy?.observeFailure(retained); return }
         }
     }
 
@@ -334,7 +423,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     private fun requiredBoolean(row: ResultSet, column: String): Boolean = row.getBoolean(column).also { requireContinuation(!row.wasNull()) }
 
     override fun toString(): String = "TestRunOwnerDeleteContinuationV1(same-registration,existing-primary-only,redacted)"
-    private enum class Stage { NEW, RELOAD, PUBLISH, VERIFY, APPLY }
+    private enum class Stage { NEW, SELECT, PAGE, RELOAD, PUBLISH, VERIFY, APPLY }
 }
 
 internal sealed class TestRunOwnerDeleteExceptionV1(message: String) : RuntimeException(message, null, false, false)

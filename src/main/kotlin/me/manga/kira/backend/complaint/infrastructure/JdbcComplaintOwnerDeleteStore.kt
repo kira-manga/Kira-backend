@@ -58,6 +58,9 @@ internal class JdbcComplaintOwnerDeleteStore(
     internal fun reloadRegistered(original: TestRunOwnerDeleteContinuationV1): ComplaintOwnerDeleteRegisteredReloadOperation =
         ComplaintOwnerDeleteRegisteredReloadOperation.capture(this, jdbc, capacity, graph, original)
 
+    internal fun selectRegistered(original: TestRunOwnerDeleteContinuationV1): ComplaintOwnerDeleteRegisteredSelectionOperation =
+        ComplaintOwnerDeleteRegisteredSelectionOperation.capture(this, jdbc, capacity, graph, original)
+
     internal fun releasedRegistered(operation: ComplaintOwnerDeleteRegisteredReloadOperation): CommittedTestOwnerDeleteWork =
         ComplaintOwnerDeleteAuthorizationOperation.releasedRegistered(operation, this, issuer, graph.routing)
 

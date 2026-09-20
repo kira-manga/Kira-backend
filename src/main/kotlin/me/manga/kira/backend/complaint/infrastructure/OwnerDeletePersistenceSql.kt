@@ -62,6 +62,25 @@ internal object OwnerDeletePersistenceSql {
         WHERE r.actor_kind = 'INSTALLATION' AND r.actor_id = ? AND r.idempotency_key = ?
             AND r.data_scope_id = ? AND r.test_only AND r.operation = 'OWNER_DELETE' FOR UPDATE
     """.trimIndent()
+    // One page, not a scan or a retained-key bound. The extra row reports only locally observed work.
+    const val REGISTERED_PRIMARY_PAGE_LIMIT = 2
+    val SELECT_REGISTERED_PRIMARY_PAGE = """
+        SELECT r.actor_id, r.idempotency_key, p.created_at,
+            COALESCE(r.actor_kind = 'INSTALLATION' AND r.operation = 'OWNER_DELETE'
+                AND r.state = 'AUTHORIZED_DELETE' AND r.data_scope_id = s.scope AND r.test_only
+                AND p.data_scope_id = s.scope AND p.test_only AND p.event_kind = 'OWNER_DELETE'
+                AND p.target_count = 1 AND p.canonicalizer = 'kcj-1' AND p.writer_generation = ?::uuid
+                AND p.state IN ('PREPARED', 'VERIFIED') AND r.authorized_at = p.created_at
+                AND isfinite(p.created_at), false) AS valid
+        FROM complaint_idempotency_receipts r
+        FULL JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
+        CROSS JOIN (SELECT ?::uuid AS scope) s
+        WHERE (r.data_scope_id = s.scope AND r.operation = 'OWNER_DELETE' AND r.state <> 'COMPLETED')
+            OR (p.data_scope_id = s.scope AND p.event_kind = 'OWNER_DELETE' AND p.state <> 'APPLIED')
+        ORDER BY COALESCE(p.created_at, r.authorized_at, r.created_at),
+            COALESCE(p.event_id, r.publication_ref) COLLATE "C", r.actor_kind COLLATE "C", r.actor_id, r.idempotency_key
+        LIMIT ${REGISTERED_PRIMARY_PAGE_LIMIT + 1}
+    """.trimIndent()
     val INSERT_CLAIM = """
         INSERT INTO complaint_idempotency_receipts
             (actor_kind, actor_id, idempotency_key, operation, fingerprint, target_ids, data_scope_id, test_only, state, created_at)
