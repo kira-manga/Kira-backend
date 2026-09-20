@@ -1,0 +1,18 @@
+{
+  "cleanup_reserve_seconds": 180,
+  "gradle_seconds": 2400,
+  "historical_paths_sha256": "0eb43a403be320539bd977b7ab43a13978155527e3656bac915472c211c99037",
+  "job_minutes": 100,
+  "original_owned_process_helper_sha256": "ac6fb4b61186c09ab06f9b4a543cb58e65dcbcdfe6ba405f6afbe1814b7fc455",
+  "primary_dispatch_authority": "ADMITTED_BY_PRIMARY",
+  "profile": "PUBLIC_SOURCE_RECONSTRUCTION_NONSHIPPING_ORDINARY_TEST_SEAL_29",
+  "runtime": "Fresh pinned public source builds; no private transport or historical binary equivalence claim",
+  "selection_sha256": "36c6a36f7809d45160b23cc24fead9cddcdb22b26ac0b2633d4ebaf3a6f36f0d",
+  "source": {
+    "inventory_sha256": "29d87538b0037d04889d13bfe42b2220db6335c85898846fc9cf30e1c8db331c",
+    "sha": "dfa0b75bf3a25c15387eab23b1f043fe982616a2",
+    "status": "REVIEWED_SOURCE_RUNTIME_UNVALIDATED",
+    "tree": "e4046085fb70c8b8e48a3c4d188e4a6632866d3c"
+  },
+  "status": "BOUND"
+}
