@@ -402,7 +402,8 @@ class ComplaintAdminReadHttpTest {
                     assertTrue(rejected.suppressed.isEmpty())
                     assertEquals(fault is InterruptedIOException, Thread.currentThread().isInterrupted)
                     assertEquals(fault is InterruptedIOException, fixture.owner.isOpen())
-                    assertEquals(1, guards)
+                    // The mock's setStatus checks commitment too, unless the explicit problem guard already threw.
+                    assertEquals(if (guardFault) 1 else 2, guards)
                     assertEquals(if (guardFault) 0 else 1, sends)
                 } finally {
                     Thread.interrupted()

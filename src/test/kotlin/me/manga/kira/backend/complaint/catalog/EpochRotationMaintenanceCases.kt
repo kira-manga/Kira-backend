@@ -39,6 +39,7 @@ internal object EpochRotationMaintenanceCases {
         val leader = f.acquire()
         val request = f.protocol.requestScan(leader.campaign)
         val before = f.row()
+        val cut = "resultSet=$resultSet admission=$admission"
         var observed: DirectMaintenanceObservation? = null
         clock.onSample = {
             session(f)?.let { original ->
@@ -47,8 +48,12 @@ internal object EpochRotationMaintenanceCases {
             }
         }
         try {
-            val failure = assertThrows<PersistencePhaseException> { f.protocol.captureEpoch(request) }
-            clock.requireHealthy()
+            val failure = try {
+                assertThrows<PersistencePhaseException>("Initial capture: $cut") { f.protocol.captureEpoch(request) }
+            } finally {
+                // A stored clock-seam failure must surface even when the capture unexpectedly returns normally.
+                clock.requireHealthy()
+            }
             assertEquals(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED, failure.code)
             val guard = checkNotNull(observed)
             guard.assertClosedAfterDeadline()
@@ -57,7 +62,7 @@ internal object EpochRotationMaintenanceCases {
             assertEquals(before, f.row())
             assertEquals("FAILED", ownedCutField(guard.session, "maintenanceStage").toString())
             assertTrue(f.entries().isEmpty())
-            assertThrows<PersistencePhaseException> { f.protocol.captureEpoch(request) }
+            assertThrows<PersistencePhaseException>("Retry of failed capture: $cut") { f.protocol.captureEpoch(request) }
             assertTrue(f.entries().isEmpty(), "Actual cleanup cannot revive this original failed direct request.")
             f.released()
         } finally {

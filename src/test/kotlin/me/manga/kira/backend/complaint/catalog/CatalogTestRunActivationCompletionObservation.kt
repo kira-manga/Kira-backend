@@ -11,6 +11,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReleaseLeafV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunCompletedPendingV1
@@ -35,7 +36,19 @@ internal fun withCompletionActivationRows(
 ) = withSignedActivationRows(tls, prefix) { signed ->
     val before = signed.rows.counters.snapshot()
     val original = signed.begin()
-    signed.assertSigned(signed.freeze(original))
+    val prepared = try {
+        signed.freeze(original)
+    } catch (failure: CatalogTestRunActivationExceptionV1) {
+        val last = signed.probe().calls.lastOrNull()
+        val phase = last?.phase?.failureException(PersistencePhaseFailureCode.WORK_FAILED)
+        // Last observations only, not an invented failing phase or the discarded raw cause.
+        throw AssertionError(
+            "COMPLETION_SIGNED_SETUP_FAILURE code=${failure.code.name} last_observed_phase=${last?.path?.name ?: "NONE"} " +
+                "last_observed_outcome=${phase?.databaseOutcome?.name ?: "NONE"} last_observed_cleanup_proven=${phase?.cleanupProven} " +
+                "sign_client_started=${signed.signing.createdClients > 0}",
+        )
+    }
+    signed.assertSigned(prepared)
     signed.assertReleased(original)
     signed.rows.assertPrepareCharge(before)
     action(CompletionActivationObservation(signed))

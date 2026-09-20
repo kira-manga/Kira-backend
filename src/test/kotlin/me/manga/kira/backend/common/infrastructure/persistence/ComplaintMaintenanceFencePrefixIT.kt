@@ -403,13 +403,14 @@ class ComplaintMaintenanceFencePrefixIT {
     fun originalGateChildCloseExpiryAtAdmissionOrReturnKeepsOriginalCleanup() {
         for ((resultSet, admissionExpiry) in listOf(true to false, false to false, true to true, false to true)) {
             val clock = MaintenanceProbeClock(fixed = true)
+            val remainingWork = if (admissionExpiry) 1_899L else 1_920L
             withFixture(clock) { f, reader ->
                 val before = f.base.state()
                 var lease: PersistenceJdbcLease? = null
                 var fence: Any? = null
                 var pid = 0
                 var close: MaintenanceGateCloseObservation? = null
-                var emergency: PersistenceTimeBudget? = null
+                var originalWork: PersistenceTimeBudget? = null
                 clock.at("OBSERVED") { _, observed ->
                     fence = observed
                     assertEquals(true, ownedCutField(observed, "observedLock"))
@@ -426,23 +427,26 @@ class ComplaintMaintenanceFencePrefixIT {
                     checkNotNull(close).requireOriginalCloseReturn()
                     assertEquals("FAILED", ownedCutField(checkNotNull(fence), "stage").toString())
                     assertNull(ownedCutField(checkNotNull(fence), "active"))
-                    // Expire original work only AFTER the sticky prefix refusal and successful original closes.
-                    clock.advanceMillis(2_000)
+                    // Isolate prefix refusal: WORK expiry independently authorizes scanner retirement.
                     val cleanup = phase.callBudget(PersistenceJdbcGuardCallKind.CLEANUP)
-                    emergency = cleanup
-                    assertSame(ownedCutField(phase, "emergency"), cleanup)
-                    assertEquals(1_000L, cleanup.remainingMillis(2_000))
+                    originalWork = cleanup
+                    assertSame(ownedCutField(phase, "work"), cleanup)
+                    assertNull(ownedCutField(phase, "emergency"))
+                    assertEquals(remainingWork, cleanup.remainingMillis(2_000))
                 }
                 clock.atPhase("FINALIZING") { phase, _ ->
-                    assertSame(emergency, phase.callBudget(PersistenceJdbcGuardCallKind.CLEANUP))
-                    assertSame(emergency, ownedCutField(phase, "emergency"))
+                    val cleanup = phase.callBudget(PersistenceJdbcGuardCallKind.CLEANUP)
+                    assertSame(originalWork, cleanup)
+                    assertSame(originalWork, ownedCutField(phase, "work"))
+                    assertNull(ownedCutField(phase, "emergency"))
+                    assertEquals(remainingWork, cleanup.remainingMillis(2_000))
                 }
                 try {
                     val failure = assertThrows<PersistencePhaseException> { f.execute() }
                     clock.requireHealthy()
                     val observed = checkNotNull(close)
                     observed.requireOriginalCloseReturn()
-                    observed.requireOriginalCleanup(checkNotNull(emergency))
+                    observed.requireOriginalCleanup(checkNotNull(originalWork))
                     assertEquals(PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED, failure.code)
                     assertRollback(failure)
                     assertTrue(checkNotNull(lease).completion.quiescent())
@@ -917,14 +921,14 @@ private class MaintenanceGateCloseObservation(
         requireNativeReturned(checkNotNull(selected), checkNotNull(selectedNative), "close")
     }
 
-    fun requireOriginalCleanup(emergency: PersistenceTimeBudget) {
+    fun requireOriginalCleanup(originalWork: PersistenceTimeBudget) {
         problem?.let { throw it }
         val statementClose = checkNotNull(statement)
         requireNativeReturned(statementClose.first, statementClose.second, "close")
         assertSame(ownedCutField(phase, "work"), statementClose.first.budget, "Original statement cleanup must never execute on an expired prefix allowance.")
         val originalRollback = checkNotNull(rollback)
         requireNativeReturned(originalRollback.first, originalRollback.second, "rollback")
-        assertSame(emergency, originalRollback.first.budget)
+        assertSame(originalWork, originalRollback.first.budget)
         assertEquals(0L, context.liveChildren())
     }
 
