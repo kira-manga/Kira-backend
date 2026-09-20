@@ -386,7 +386,7 @@ internal class CatalogSignerRotationProbeJdbc(
                     assertTrue(row.getBoolean(5) && !row.wasNull())
                     // Observe E exactly: the distinct shared maintenance fence M cannot satisfy an epoch-fence assertion.
                     val sharedFence = expectedSharedFence(path)
-                    assertEquals(sharedFence, row.getBoolean(6))
+                    assertEquals(sharedFence, row.getBoolean(6), "Epoch fence for $path")
                     val found = row.getInt(1) to row.getLong(2)
                     assertFalse(row.next())
                     found
@@ -440,13 +440,14 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SNAPSHOT,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_COORDINATOR_LEASE_RELINQUISH,
+        // TEST lease acquisition shares M, but does not acquire E or mutate the journal/counters.
+        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
         -> false
 
         PersistencePhasePath.COMPLAINT_CATALOG_SIGNER_ROTATION_READ,
         PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
         PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
-        PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_LEASE_ACQUIRE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
