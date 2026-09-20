@@ -133,7 +133,11 @@ internal class OwnerDeleteAllAuthorizationFixture(
         UUID.fromString(writer.restoreIdentity),
         ByteArray(32) { 5 },
     )
-    private val catalogHash = ByteArray(32) { 6 }
+    private val legacyCatalogBytes = if (process == null) {
+        "synthetic-owner-delete-all-catalog-marker-NOT-external-evidence".toByteArray(Charsets.UTF_8)
+    } else null
+    private val catalogHash = legacyCatalogBytes?.let(::ownerDeleteAllTestDigest) ?: ByteArray(32) { 6 }
+    private val legacyCatalogToken = legacyCatalogBytes?.let { UUID.randomUUID() }
     private val trustHash = ByteArray(32) { 7 }
     private val catalogWriter = UUID.randomUUID()
     val catalog = CatalogCommonHeadEvidence(
@@ -333,7 +337,9 @@ internal class OwnerDeleteAllAuthorizationFixture(
 
     fun controlRow(): String = rows("complaint_journal_control", "data_scope_id = ?", ComplaintDataScope.LIVE.id).single()
 
-    fun restoreControl(row: String) = transaction { selected ->
+    fun restoreControl(row: String) = transaction { selected -> restoreControl(selected, row) }
+
+    private fun restoreControl(selected: JdbcTemplate, row: String) {
         selected.update("DELETE FROM complaint_journal_control WHERE data_scope_id = ?", ComplaintDataScope.LIVE.id)
         assertEquals(
             1,
@@ -408,8 +414,18 @@ internal class OwnerDeleteAllAuthorizationFixture(
                 selected.update("DELETE FROM complaint_idempotency_receipts WHERE actor_id = ANY (?::uuid[])", uuidArray(base.ids))
                 selected.update("DELETE FROM complaints WHERE id = ANY (?::uuid[])", uuidArray(resources))
                 selected.update("DELETE FROM complaint_resource_ids WHERE id = ANY (?::uuid[])", uuidArray(resources))
+                restoreControl(selected, originalControl)
+                legacyCatalogToken?.let { token ->
+                    assertEquals(
+                        1,
+                        selected.update(
+                            "DELETE FROM complaint_catalog_mutations WHERE operation_token = ? AND successor_generation = 7 " +
+                                "AND catalog_writer_generation = ? AND envelope_hash = ? AND state = 'COMPLETED' AND projected_at IS NOT NULL",
+                            token, catalogWriter, catalogHash,
+                        ),
+                    )
+                }
             }
-            restoreControl(originalControl)
         } finally {
             if (closePoolOnClose) {
                 val receipt = checkNotNull(pool.requestShutdown())
@@ -431,12 +447,13 @@ internal class OwnerDeleteAllAuthorizationFixture(
         *args,
     )
 
-    private fun seedControl() {
+    private fun seedControl() = transaction { selected ->
+        seedLegacyAcceptedHead(selected)
         val bytes = "synthetic-checkpoint-and-seal-NOT-external-evidence".toByteArray(Charsets.UTF_8)
         val digest = ownerDeleteAllTestDigest(bytes)
         assertEquals(
             1,
-            observer.update(
+            selected.update(
                 "UPDATE complaint_journal_control SET publication_epoch = 11, desired_generation = 7, desired_configuration_hash = ?, " +
                     "database_identity = ?, restore_identity = ?, event_writer_generation = ?, accepted_catalog_generation = 7, accepted_catalog_hash = ?, " +
                     "trust_bundle_hash = ?, catalog_writer_generation = ?, maintenance_closed = false, creation_closed = true, scan_requested = false, " +
@@ -452,6 +469,34 @@ internal class OwnerDeleteAllAuthorizationFixture(
                 trustHash, catalogWriter, UUID.fromString(writer.generationId), UUID.randomUUID(), bytes, digest, digest, bytes, digest,
                 catalogHash, UUID.fromString(writer.generationId), desired.configurationHashBytes(), desired.databaseIdentity, desired.restoreIdentity,
                 bytes, digest, ComplaintDataScope.LIVE.id,
+            ),
+        )
+    }
+
+    /** Schema-valid bounded-gate marker only: no authenticated catalog chain, seal or external authority. */
+    private fun seedLegacyAcceptedHead(selected: JdbcTemplate) {
+        val bytes = legacyCatalogBytes ?: return // Process-bound callers own their own catalog history.
+        val token = checkNotNull(legacyCatalogToken)
+        assertEquals(
+            0L,
+            selected.queryForObject("SELECT count(*) FROM complaint_catalog_mutations", Long::class.java),
+            "The legacy synthetic fixture must not replace someone else's catalog history.",
+        )
+        assertEquals(
+            1,
+            selected.update(
+                """WITH b AS MATERIALIZED (SELECT ?::bytea AS bytes, clock_timestamp() AS at)
+                    INSERT INTO complaint_catalog_mutations (
+                        operation_token, operation_type, predecessor_generation, predecessor_hash, successor_generation, catalog_writer_generation,
+                        approval_bytes, approval_hash, canonicalizer, unsigned_bytes, unsigned_hash,
+                        signer_policy, signer_one_id, signer_one_algorithm, signer_one_signature, envelope_bytes, envelope_hash,
+                        object_key, object_version, retain_until, primary_evidence_bytes, primary_evidence_hash,
+                        replica_evidence_bytes, replica_evidence_hash, state, created_at, completed_at, projected_at
+                    ) SELECT ?, 'EPOCH_SEAL', 6, sha256(b.bytes), 7, ?, b.bytes, sha256(b.bytes), 'kcj-1', b.bytes, sha256(b.bytes),
+                        'SINGLE', 'synthetic-gate-signer', 'synthetic-gate-algorithm', b.bytes, b.bytes, sha256(b.bytes),
+                        ?, 'synthetic-gate-version', b.at + interval '70 days', b.bytes, sha256(b.bytes),
+                        b.bytes, sha256(b.bytes), 'COMPLETED', b.at, b.at, b.at FROM b""".trimIndent(),
+                bytes, token, catalogWriter, "synthetic/owner-delete-all/catalog/$token/7",
             ),
         )
     }

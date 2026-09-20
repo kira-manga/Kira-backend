@@ -48,6 +48,89 @@ import java.util.concurrent.CancellationException
 @ResourceLock(Resources.SYSTEM_PROPERTIES)
 class AwsTestTerminalDataKeyAdapterV1Test {
     @Test
+    fun ordinaryTestKmsGeneratesAndUnwrapsOnlyTheJournalSelectedDeletionFamilies() {
+        val old = TestTerminalTestFixture().journal
+        for (allEnabled in listOf(false, true)) {
+            val journal = TestOwnerDeleteJournalConfigurationV1.of(old.declaration(), ownerDeleteAll = allEnabled)
+            val f = TestTerminalCodecTestFixtureV1(TestTerminalTestFixture(journal))
+            val http = httpFixture(f)
+            val kinds = if (allEnabled) listOf("OWNER_DELETE", "OWNER_DELETE_ALL") else listOf("OWNER_DELETE")
+            AwsTestOwnerDeleteDataKeyAdapterV1.withHttpFixture(journal, CREDENTIALS, http::httpClient) { f.nanos }.use { owner ->
+                assertSame(journal, owner.journal)
+                for (kind in kinds) {
+                    val context = ordinaryContext(f, kind)
+                    if (kind == "OWNER_DELETE") {
+                        assertEquals(ordinaryContext(TestTerminalCodecTestFixtureV1(TestTerminalTestFixture(old))), context,
+                            "Selecting the two-family J must not relabel the existing DELETE context.")
+                    }
+                    val requested = ordinaryRequest(f, context)
+                    val offset = http.requests.size
+                    val generated = owner.generate(requested)
+                    val key = generated.plaintextKey
+                    val wrapped = generated.wrappedKey
+                    generated.use {
+                        assertArrayEquals(TestTerminalCryptoReferenceV1.key(), key)
+                        assertArrayEquals(TestTerminalCryptoReferenceV1.wrapped(), wrapped)
+                    }
+                    terminalCodecZero(key)
+                    terminalCodecZero(wrapped)
+                    val input = TestTerminalCryptoReferenceV1.wrapped()
+                    val plaintext = owner.unwrap(requested, input)
+                    val unwrapped = plaintext.plaintextKey
+                    plaintext.use { assertArrayEquals(TestTerminalCryptoReferenceV1.key(), unwrapped) }
+                    terminalCodecZero(unwrapped)
+                    assertArrayEquals(TestTerminalCryptoReferenceV1.wrapped(), input, "Unwrap cannot consume the caller's input.")
+                    assertEquals(offset + 2, http.requests.size)
+                    assertRequest(http.requests[offset], f, GENERATE_TARGET, context)
+                    assertRequest(http.requests[offset + 1], f, DECRYPT_TARGET, context)
+                }
+                http.replies.forEach(::assertReleased)
+            }
+            assertEquals(1, http.createdClients)
+            assertEquals(1, http.closedClients)
+            assertEquals(1, http.returnedClientCloses)
+        }
+    }
+
+    @Test
+    fun ordinaryTestKmsRejectsDisabledAllForeignScopeAndNonOrdinaryFamiliesBeforeDispatch() {
+        val old = TestTerminalTestFixture().journal
+        for (allEnabled in listOf(false, true)) {
+            val journal = TestOwnerDeleteJournalConfigurationV1.of(old.declaration(), ownerDeleteAll = allEnabled)
+            val f = TestTerminalCodecTestFixtureV1(TestTerminalTestFixture(journal))
+            val http = httpFixture(f)
+            val invalid = listOf("EPOCH_SEAL", "INSTALLATION_MANIFEST", "TEST_RUN_PURGE", "OWNER_DELETE_ALL_EXTRA")
+                .map { ordinaryContext(f, it) } + listOf(
+                    ordinaryContext(f, "OWNER_DELETE_ALL") { it[14] = "LIVE" },
+                    ordinaryContext(f, "OWNER_DELETE_ALL") { it[15] = TestTerminalTestFixture.uuid(99) },
+                    ordinaryContext(f, "OWNER_DELETE_ALL") { it[13] = journal.sealTerminalPrefix },
+                ) + if (allEnabled) emptyList() else listOf(ordinaryContext(f, "OWNER_DELETE_ALL"))
+            AwsTestOwnerDeleteDataKeyAdapterV1.withHttpFixture(journal, CREDENTIALS, http::httpClient) { f.nanos }.use { owner ->
+                invalid.forEach { context ->
+                    val requested = ordinaryRequest(f, context)
+                    val input = TestTerminalCryptoReferenceV1.wrapped()
+                    rejected { owner.generate(requested) }
+                    rejected { owner.unwrap(requested, input) }
+                    assertArrayEquals(TestTerminalCryptoReferenceV1.wrapped(), input)
+                    assertTrue(http.requests.isEmpty(), "A refused family/run cannot dispatch either key operation.")
+                }
+                // Rejected undispatched requests neither widen the old profile nor strand its slot.
+                val context = ordinaryContext(f)
+                val requested = ordinaryRequest(f, context)
+                owner.generate(requested).close()
+                owner.unwrap(requested, TestTerminalCryptoReferenceV1.wrapped()).close()
+                assertEquals(2, http.requests.size)
+                assertRequest(http.requests[0], f, GENERATE_TARGET, context)
+                assertRequest(http.requests[1], f, DECRYPT_TARGET, context)
+                http.replies.forEach(::assertReleased)
+            }
+            assertEquals(1, http.createdClients)
+            assertEquals(1, http.closedClients)
+            assertEquals(1, http.returnedClientCloses)
+        }
+    }
+
+    @Test
     fun threeTerminalFamiliesUseExactSignedContextsAndIndependentCryptoWithRetainedRoutes() {
         for (kind in TestTerminalCodecKindV1.entries) {
             val f = TestTerminalCodecTestFixtureV1()
@@ -399,12 +482,17 @@ class AwsTestTerminalDataKeyAdapterV1Test {
 
     private fun framed(fields: List<String>): Map<String, String> = mapOf(CONTEXT_KEY to TestTerminalCryptoReferenceV1.url(terminalFrame(fields)))
 
-    private fun ordinaryContext(f: TestTerminalCodecTestFixtureV1): Map<String, String> {
+    private fun ordinaryRequest(f: TestTerminalCodecTestFixtureV1, context: Map<String, String>) = JournalDataKeyRequestV1(
+        f.journal.declaration().encryption.keyArn, context, minOf(6144, f.journal.declaration().limits.decoder.maximumWrappedKeyBytes),
+        f.journal.declaration().limits.deadlines.kmsCallMillis,
+    )
+
+    private fun ordinaryContext(f: TestTerminalCodecTestFixtureV1, kind: String = "OWNER_DELETE", change: (MutableList<String>) -> Unit = {}): Map<String, String> {
         val d = f.journal.declaration()
         val id = TestTerminalTestFixture.opaque(77)
         val key = "${TestTerminalTestFixture.ordinaryPrefix()}writer/${d.writer.generationId}/epoch/0000000000000000003/${d.routing.activeKeyId}/$id"
         return framed(AwsJournalKmsFixture.testOwnerDeleteFields(f.journal, key, id, 3, d.routing.activeKeyId,
-            TestTerminalCryptoReferenceV1.url(TestTerminalCryptoReferenceV1.nonce())))
+            TestTerminalCryptoReferenceV1.url(TestTerminalCryptoReferenceV1.nonce())).toMutableList().also { it[5] = kind; change(it) })
     }
 
     private fun assertRequest(request: JournalKmsHttpRequest, f: TestTerminalCodecTestFixtureV1, target: String, context: Map<String, String>) {
