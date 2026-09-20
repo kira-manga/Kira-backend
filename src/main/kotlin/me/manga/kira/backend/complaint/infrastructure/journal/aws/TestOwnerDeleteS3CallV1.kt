@@ -4,6 +4,8 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
+import me.manga.kira.backend.complaint.infrastructure.CommittedTestAdminDeleteWork
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintAdminDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWork
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationFailureV1
@@ -26,19 +28,27 @@ internal class TestOwnerDeleteS3BindingV1 private constructor(
     private val work: CommittedTestOwnerDeleteWork.Prepared?,
     private val allStore: JdbcComplaintOwnerDeleteAllStore? = null,
     private val allWork: CommittedOwnerDeleteAllWork.Prepared? = null,
+    private val adminStore: JdbcComplaintAdminDeleteStore? = null,
+    private val adminWork: CommittedTestAdminDeleteWork.Prepared? = null,
 ) {
     fun requirePublicationStart() {
         requireConnectionFree()
         requireJournalPublication(event.belongsTo(routing))
         attempt.requireOwner(routing)
+        if (adminWork != null) requireJournalPublication(checkNotNull(adminStore).preparedEvent(adminWork) === event)
         if (work != null) requireJournalPublication(checkNotNull(store).preparedEvent(work) === event)
         if (allWork != null) {
             val original = checkNotNull(allStore).testPreparedEvent(allWork)
             requireJournalPublication(original.belongsTo(routing) && original.route == event.route && original.canonicalBytes().contentEquals(event.canonicalBytes()))
         }
     }
-    fun requirePut() { requirePublicationStart(); requireJournalPublication((work != null && store != null) xor (allWork != null && allStore != null)) }
+    fun requirePut() { requirePublicationStart(); requireJournalPublication(listOf(work != null && store != null, allWork != null && allStore != null, adminWork != null && adminStore != null).count { it } == 1) }
     companion object {
+        internal fun released(store: JdbcComplaintAdminDeleteStore, work: CommittedTestAdminDeleteWork.Prepared,
+            routing: TestOwnerDeleteJournalRoutingV1, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteS3BindingV1 {
+            requireConnectionFree()
+            return TestOwnerDeleteS3BindingV1(routing, store.preparedEvent(work), attempt, null, null, adminStore = store, adminWork = work).also { it.requirePut() }
+        }
         internal fun released(store: JdbcComplaintOwnerDeleteAllStore, work: CommittedOwnerDeleteAllWork.Prepared,
             routing: TestOwnerDeleteJournalRoutingV1, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteS3BindingV1 {
             requireConnectionFree()

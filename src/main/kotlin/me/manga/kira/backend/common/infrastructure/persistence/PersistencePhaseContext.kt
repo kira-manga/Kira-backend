@@ -8,6 +8,10 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintDailyAdmission
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeletePhaseOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteReadOperation
+import me.manga.kira.backend.security.ComplaintAdmittedAdminDelete
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteReadOperation
@@ -20,6 +24,8 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOpe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
@@ -176,6 +182,8 @@ constructor(
     private val testRunOwnerDeleteAllWork: PersistenceTimeBudget? = null,
     private val testOrdinaryDrain: TestRunOrdinaryDrainV1? = null,
     private val testOrdinaryDrainWork: PersistenceTimeBudget? = null,
+    private val testInstallationManifest: TestRunInstallationManifestV1? = null,
+    private val testInstallationManifestWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -230,6 +238,8 @@ constructor(
     internal val adminStatus: PersistenceComplaintAdminStatus = AdminStatusBoundary()
     internal val ownerOperation: PersistenceOwnerOperation = OwnerOperationBoundary()
     internal val ownerEdit: PersistenceOwnerEdit = OwnerEditBoundary()
+    internal val adminDelete: PersistenceAdminDelete = AdminDeleteBoundary()
+    internal val adminDeleteRead: PersistenceAdminDeleteRead = AdminDeleteReadBoundary()
     internal val ownerDelete: PersistenceOwnerDelete = OwnerDeleteBoundary()
     internal val ownerDeleteRead: PersistenceOwnerDeleteRead = OwnerDeleteReadBoundary()
     internal val ownerDeleteAll: PersistenceOwnerDeleteAll = OwnerDeleteAllBoundary()
@@ -253,6 +263,7 @@ constructor(
     internal val testNamespaceRegistration: PersistenceTestNamespaceRegistrationV1 = TestNamespaceRegistrationBoundary()
     internal val testRunSealing: PersistenceTestRunSealingV1 = TestRunSealingBoundary()
     internal val testOrdinarySeal: PersistenceTestOrdinarySealV1 = TestOrdinarySealBoundary()
+    internal val testInstallationManifestBoundary: PersistenceTestInstallationManifestV1 = TestInstallationManifestBoundary()
     internal val testOrdinaryDrainBoundary: PersistenceTestOrdinaryDrainV1 = TestOrdinaryDrainBoundary()
 
     // The SQL-created batch retains the private grant -> counters -> delete -> refund cursor, never a caller count or UUID.
@@ -279,7 +290,7 @@ constructor(
         val rechecksReadCommitted = firstDesiredAttempt != null || catalogPublisherAttempt != null ||
             catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationDelivery != null || signerRotationActivation != null ||
                 testRunActivation != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testOrdinaryDrain != null || path.complaintMaintenanceWriter
-        val adminReadCommitted = path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION ||
+        val adminReadCommitted = path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT || path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION ||
             path === PersistencePhasePath.COMPLAINT_ADMIN_SEARCH || path === PersistencePhasePath.COMPLAINT_ADMIN_DETAIL ||
                 path === PersistencePhasePath.COMPLAINT_ADMIN_STATS ||
                 path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT ||
@@ -413,7 +424,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork
+                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -421,7 +432,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork
+            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -637,6 +648,7 @@ constructor(
         PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
         -> testRunSealing.completed()
         PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL -> testOrdinarySeal.completed()
+        PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE -> testInstallationManifestBoundary.completed()
         PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN -> testOrdinaryDrainBoundary.completed()
 
         PersistencePhasePath.COMPLAINT_INSTALLATION_ENROLLMENT -> installationEnrollment.completed()
@@ -646,6 +658,13 @@ constructor(
         -> installationSession.completed()
 
         PersistencePhasePath.COMPLAINT_INSTALLATION_DELETION_PREFLIGHT -> installationDeletionPreflight.completed()
+
+        PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE,
+        PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
+        PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY,
+        PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY,
+        -> adminDelete.completed()
+        PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT -> adminDeleteRead.completed()
 
         PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE,
         PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD,
@@ -846,6 +865,7 @@ constructor(
         testRegistration?.observeFailure(problem)
         testRunSealer?.observeFailure(problem)
         testOrdinarySealer?.observeFailure(problem)
+        testInstallationManifest?.observeFailure(problem)
         testRunOwnerDelete?.observeFailure(problem)
         testRunOwnerDeleteAll?.observeFailure(problem)
         testOrdinaryDrain?.observeFailure(problem)
@@ -936,9 +956,16 @@ constructor(
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
+    internal fun testInstallationManifestCleanupProven(original: TestRunInstallationManifestV1): Boolean =
+        caller.isCurrent() && testInstallationManifest === original && path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
     internal fun testOrdinaryDrainCleanupProven(original: TestRunOrdinaryDrainV1): Boolean =
         caller.isCurrent() && testOrdinaryDrain === original &&
-            path in setOf(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) &&
+            path in setOf(PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
+                PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) &&
             stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
@@ -1000,7 +1027,8 @@ constructor(
 
     internal fun registeredInventoryControls(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): Long? {
         val original = testOrdinaryDrain ?: return null
-        if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY || graph.recoveryRegistration == null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) ||
+            graph.recoveryRegistration == null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         original.requireRecoveryPersistence(ownership, jdbc, graph)
         return original.requireRecoveryControls(jdbc)
     }
@@ -1018,7 +1046,11 @@ constructor(
     }
 
     internal fun requireTestRunOwnerDeleteAllApply(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate, input: OwnerDeleteAllApplyInputV1) {
-        if (testRunOwnerDeleteAll == null) {
+        if (testOrdinaryDrain != null) {
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY || testRunOwnerDeleteAll != null || testRunOwnerDelete != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testOrdinaryDrain.requireRecoveryPersistence(ownership, jdbc, graph)
+            testOrdinaryDrain.requireRecoveryInput(input)
+        } else if (testRunOwnerDeleteAll == null) {
             if (graph.recoveryRegistration != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         } else {
             if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
@@ -1046,6 +1078,12 @@ constructor(
     }
 
     internal fun requireTestRunOwnerDeleteAllRun(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate) {
+        if (testOrdinaryDrain != null) {
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testOrdinaryDrain.requireRecoveryPersistence(ownership, jdbc, graph)
+            testOrdinaryDrain.requireRecoveryRun(jdbc)
+            return
+        }
         val original = testRunOwnerDeleteAll ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         original.requirePersistence(ownership, jdbc, graph)
         original.requireSealedRun(jdbc)
@@ -1077,6 +1115,7 @@ constructor(
             testRunOwnerDeleteAll != null -> testRunOwnerDeleteAll.requireMaintenanceGate(ownership, path, gate)
             testRunSealer != null -> testRunSealer.requireMaintenanceGate(ownership, path, gate)
             testOrdinarySealer != null -> testOrdinarySealer.requireMaintenanceGate(ownership, path, gate)
+            testInstallationManifest != null -> testInstallationManifest.requireMaintenanceGate(ownership, path, gate)
             testRegistration != null -> testRegistration.requireMaintenanceGate(ownership, path, gate)
             testRunActivation != null -> testRunActivation.requireMaintenanceGate(ownership, path, gate)
             else -> gate.requireUnownedOpen()
@@ -1110,7 +1149,7 @@ constructor(
 
     internal fun requireDeletionFence(fence: PersistenceDeletionFence, selected: Connection): Boolean {
         selectedHolder.requireFence(fence, selected)
-        return path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN || testOrdinaryDrain != null
+        return path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL || path === PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN || testOrdinaryDrain != null
     }
 
     internal fun requireComplaintMaintenanceFence(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection) =
@@ -1226,6 +1265,7 @@ constructor(
                 testRegistration?.observeFailure(problem)
                 testRunSealer?.observeFailure(problem)
                 testOrdinarySealer?.observeFailure(problem)
+                testInstallationManifest?.observeFailure(problem)
                 testRunOwnerDelete?.observeFailure(problem)
                 testRunOwnerDeleteAll?.observeFailure(problem)
                 testOrdinaryDrain?.observeFailure(problem)
@@ -1305,7 +1345,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testOrdinarySealWork ?: testRunOwnerDeleteWork ?: testRunOwnerDeleteAllWork ?: testOrdinaryDrainWork ?: testInstallationManifestWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1345,13 +1385,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null || testRunActivation != null || testRegistration != null || testRunSealer != null || testOrdinarySealer != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testOrdinaryDrain != null
+        signerRotationActivation != null || testRunActivation != null || testRegistration != null || testRunSealer != null || testOrdinarySealer != null || testInstallationManifest != null || testRunOwnerDelete != null || testRunOwnerDeleteAll != null || testOrdinaryDrain != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            testRunOwnerDeleteAll?.budget ?: testOrdinaryDrain?.budget ?: testRunOwnerDelete?.budget ?: testRunSealer?.budget ?: testOrdinarySealer?.budget ?: testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testInstallationManifest?.budget ?: testRunOwnerDeleteAll?.budget ?: testOrdinaryDrain?.budget ?: testRunOwnerDelete?.budget ?: testRunSealer?.budget ?: testOrdinarySealer?.budget ?: testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1435,6 +1475,7 @@ constructor(
                 testRegistration?.observeFailure(problem)
                 testRunSealer?.observeFailure(problem)
                 testOrdinarySealer?.observeFailure(problem)
+                testInstallationManifest?.observeFailure(problem)
                 testRunOwnerDelete?.observeFailure(problem)
                 testRunOwnerDeleteAll?.observeFailure(problem)
                 testOrdinaryDrain?.observeFailure(problem)
@@ -1517,8 +1558,11 @@ constructor(
             PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
             PersistencePhasePath.COMPLAINT_DELETION_CONTROL_SNAPSHOT,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY,
+            PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_AUTHORIZE,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_RELOAD,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY,
@@ -1529,6 +1573,7 @@ constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
+            PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT, // The run-only seal must commit/release BEFORE E or any control/counter lock.
             PersistencePhasePath.COMPLAINT_DESIRED_SIGNED_GENESIS_FIRST,
@@ -2082,6 +2127,50 @@ constructor(
         }
 
         override fun completed(): Boolean = retained?.let { it.original === testOrdinarySealer && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
+    }
+
+    private inner class TestInstallationManifestBoundary : PersistenceTestInstallationManifestV1 {
+        private var selected = false
+        private var retained: TestInstallationManifestOperationV1? = null
+
+        override fun requireOperation(original: TestRunInstallationManifestV1, jdbc: JdbcTemplate) {
+            if (path !== PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE || original !== testInstallationManifest || original.path !== path) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, path)
+            if (selected || !selectedHolder.fenceReady()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            original.requirePersistence(ownership, jdbc)
+            selected = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: TestInstallationManifestOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!selected || retained != null || operation.original !== testInstallationManifest || operation.path !== path || !operation.belongsTo(this@PersistencePhaseContext)) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: TestInstallationManifestOperationV1, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || operation.original !== testInstallationManifest || operation.path !== path ||
+                !selectedHolder.fenceReady()) {
+                refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            }
+            operation.original.requirePersistence(ownership, jdbc)
+        }
+
+        override fun requireCommitted(operation: TestInstallationManifestOperationV1) {
+            if (retained !== operation || !completed() || !testInstallationManifestCleanupProven(operation.original)) {
+                failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            }
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.let { it.original === testInstallationManifest && it.path === path && it.completedFor(this@PersistencePhaseContext) } == true
     }
 
     private inner class TestOrdinaryDrainBoundary : PersistenceTestOrdinaryDrainV1 {
@@ -2674,6 +2763,99 @@ constructor(
             (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE || claimed)
     }
 
+    private inner class AdminDeleteBoundary : PersistenceAdminDelete {
+        private var issued = false
+        private var retained: ComplaintAdminDeletePhaseOperation? = null
+        private var admission: ComplaintAdmittedAdminDelete? = null
+        private val admissionIdentity = Any()
+        private var claimed = false
+        private var boundsChecked = false
+
+        override fun bindAuthorize(handoff: ComplaintAdmittedAdminDelete) {
+            requireCaller()
+            if (stage !== Stage.PREPARED || path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE || admission != null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.bindAdminDelete(handoff, admissionIdentity)
+            admission = handoff
+        }
+
+        override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            if (expected !in setOf(PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_RELOAD,
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY)) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, expected)
+            if (issued || entityManagerFactory != null || (expected !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY && !selectedHolder.fenceReady())) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (expected === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE && admission == null) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation || (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY && !selectedHolder.fenceReady())) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun claim(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, tuple: ComplaintAdminDeleteTuple) {
+            requireRetained(operation, jdbc)
+            if (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE || claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.claimAdminDelete(checkNotNull(admission), admissionIdentity, tuple)
+            claimed = true
+        }
+
+        override fun checkReceiptWrite(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            if (path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY) {
+                val recovery = operation as? me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteApplyOperation
+                    ?: refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                recovery.requireRecoveryReceiptClaim(jdbc)
+                return
+            }
+            if (!claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            ComplaintIngressAdmission.checkAdminDeleteReceipt(checkNotNull(admission), admissionIdentity)
+        }
+
+        override fun checkCapacity(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger) {
+            requireRetained(operation, jdbc)
+            if (boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            if (path === PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE) {
+                if (!claimed) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                ComplaintIngressAdmission.checkAdminDeleteBounds(checkNotNull(admission), admissionIdentity, ledger)
+            }
+            boundsChecked = true
+        }
+
+        override fun checkWrite(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate) {
+            requireRetained(operation, jdbc)
+            when (path) {
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE -> {
+                    if (!claimed || !boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                    ComplaintIngressAdmission.checkAdminDeleteWrite(checkNotNull(admission), admissionIdentity)
+                }
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY -> if (!boundsChecked) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+                PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY -> Unit
+                else -> refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            }
+        }
+
+        override fun connection(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate): Connection {
+            checkWrite(operation, jdbc)
+            return this@PersistencePhaseContext.connection ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+
+        override fun requireCommitted(operation: ComplaintAdminDeletePhaseOperation) {
+            if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true &&
+            (path !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE || claimed)
+    }
+
     private inner class OwnerDeleteReadBoundary : PersistenceOwnerDeleteRead {
         private var issued = false
         private var retained: ComplaintOwnerDeleteReadOperation? = null
@@ -2700,6 +2882,38 @@ constructor(
         }
 
         override fun requireCommitted(operation: ComplaintOwnerDeleteReadOperation) {
+            if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
+            requireSuccessfulResult()
+        }
+
+        override fun completed(): Boolean = retained?.completedFor(this@PersistencePhaseContext, path) == true
+    }
+
+    private inner class AdminDeleteReadBoundary : PersistenceAdminDeleteRead {
+        private var issued = false
+        private var retained: ComplaintAdminDeleteReadOperation? = null
+
+        override fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath) {
+            if (expected !== PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            requireStepUpResource(jdbc, expected)
+            if (issued) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            issued = true
+            installLimits()
+            requireWork()
+        }
+
+        override fun retain(operation: ComplaintAdminDeleteReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+            retained = operation
+        }
+
+        override fun requireRetained(operation: ComplaintAdminDeleteReadOperation, jdbc: JdbcTemplate) {
+            requireStepUpResource(jdbc, path)
+            if (retained !== operation) refuse(PersistencePhaseFailureCode.WORK_FAILED)
+        }
+
+        override fun requireCommitted(operation: ComplaintAdminDeleteReadOperation) {
             if (!caller.isCurrent() || retained !== operation || !completed()) failure.compareAndSet(null, PersistencePhaseFailureCode.WORK_FAILED)
             requireSuccessfulResult()
         }
@@ -3081,6 +3295,7 @@ constructor(
             if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             retained = operation
             testRunOwnerDeleteAll?.authenticateAndControls(ownership, jdbc, operation)
+            testOrdinaryDrain?.authenticateRecoveryAndControls(ownership, jdbc, operation)
         }
 
         override fun requireRetained(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
@@ -4002,5 +4217,28 @@ internal interface PersistenceOwnerDeleteRead {
     fun retain(operation: ComplaintOwnerDeleteReadOperation, jdbc: JdbcTemplate)
     fun requireRetained(operation: ComplaintOwnerDeleteReadOperation, jdbc: JdbcTemplate)
     fun requireCommitted(operation: ComplaintOwnerDeleteReadOperation)
+    fun completed(): Boolean
+}
+
+internal interface PersistenceAdminDelete {
+    fun bindAuthorize(handoff: ComplaintAdmittedAdminDelete)
+    fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath)
+    fun retain(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate)
+    fun claim(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, tuple: ComplaintAdminDeleteTuple)
+    fun checkReceiptWrite(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate)
+    fun checkCapacity(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate, ledger: ComplaintCapacityLedger)
+    fun checkWrite(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate)
+    fun connection(operation: ComplaintAdminDeletePhaseOperation, jdbc: JdbcTemplate): Connection
+    fun requireCommitted(operation: ComplaintAdminDeletePhaseOperation)
+    fun completed(): Boolean
+}
+
+
+internal interface PersistenceAdminDeleteRead {
+    fun requireOperation(jdbc: JdbcTemplate, expected: PersistencePhasePath)
+    fun retain(operation: ComplaintAdminDeleteReadOperation, jdbc: JdbcTemplate)
+    fun requireRetained(operation: ComplaintAdminDeleteReadOperation, jdbc: JdbcTemplate)
+    fun requireCommitted(operation: ComplaintAdminDeleteReadOperation)
     fun completed(): Boolean
 }

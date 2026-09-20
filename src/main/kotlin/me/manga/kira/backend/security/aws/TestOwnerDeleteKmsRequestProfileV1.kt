@@ -68,7 +68,7 @@ internal class TestOwnerDeleteKmsRequestProfileV1(val journal: TestOwnerDeleteJo
 
     private fun validateHeader(fields: List<String>) {
         val kind = fields[5]
-        requireJournalKms(kind == "OWNER_DELETE" || (journal.ownerDeleteAll && kind == "OWNER_DELETE_ALL"))
+        requireJournalKms(kind == "OWNER_DELETE" || (journal.ownerDeleteAll && kind == "OWNER_DELETE_ALL") || (journal.adminDelete && kind == "ADMIN_DELETE"))
         validateFixedHeader(fields, kind)
         val epoch = fields[16].toLongOrNull()
         requireJournalKms(epoch != null && epoch > 0 && epoch.toString() == fields[16])

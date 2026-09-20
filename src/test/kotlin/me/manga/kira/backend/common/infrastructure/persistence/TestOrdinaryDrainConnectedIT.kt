@@ -4,6 +4,7 @@ import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAccountingCasesV
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAuthorityCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainCommitStepV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFailureCasesV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainLargeRecycleCasesV1
 import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import org.flywaydb.core.Flyway
@@ -26,6 +27,7 @@ import java.util.UUID
  * Real registered four-key OWNER_DELETE closeout, retained native objects and owned PostgreSQL TLS.
  * Synthetic authority inputs test code behavior, not installed denial, approved bound or deployment.
  * The explicitly SQL-only 104-row case below does NOT prove producer-level partial-recycle takeover.
+ * The separate thirteen-primary case authors 52 native objects/two real scans for that connection.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -55,6 +57,11 @@ class TestOrdinaryDrainConnectedIT {
     @Test
     fun missingStoredSealVersionRefusesWithoutRecreatingOrRepayingIt() = withFixture {
         TestOrdinaryDrainAccountingCasesV1.paidReplayHasNoSecondTransfer(it, hideStoredSeal = true)
+    }
+
+    @Test
+    fun thirteenPrimaryFamiliesCommitFirstHundredRecycleRowsThenFreshOriginalFinishesFourWithoutDoublePayment() = withFixture {
+        TestOrdinaryDrainLargeRecycleCasesV1.committedPartialRecycle(it)
     }
 
     @Test
@@ -194,7 +201,7 @@ class TestOrdinaryDrainConnectedIT {
                     // The real RECYCLE authority would reject these unauthenticated rows.
                     assertEquals(1, syntheticUpdate(connection, TestOrdinaryDrainSqlV1.insertEntry,
                         row.scan, row.pass, row.scope, row.key, row.version, unhex(row.ciphertext), unhex(row.semantic),
-                        row.event, row.writer, row.epoch, row.bytes))
+                        row.event, "OWNER_DELETE", row.writer, row.epoch, row.bytes))
                 }
                 val first = syntheticRows(connection, TestOrdinaryDrainSqlV1.recyclePage, scope)
                 assertEquals(100, first.size, "Production unlocked discovery is bounded independently of the synthetic 104-row seed.")
@@ -249,7 +256,7 @@ class TestOrdinaryDrainConnectedIT {
 
     private fun syntheticDelete(connection: Connection, row: SyntheticRecycleRow): Int =
         syntheticUpdate(connection, TestOrdinaryDrainSqlV1.deleteEntry, row.scan, row.pass, row.scope, row.key, row.version,
-            unhex(row.ciphertext), unhex(row.semantic), row.event, row.writer, row.epoch, row.bytes, row.replay)
+            unhex(row.ciphertext), unhex(row.semantic), row.event, "OWNER_DELETE", row.writer, row.epoch, row.bytes, row.replay)
 
     private fun syntheticRows(connection: Connection, sql: String, vararg arguments: Any?): List<SyntheticRecycleRow> =
         connection.prepareStatement(sql).use { statement ->

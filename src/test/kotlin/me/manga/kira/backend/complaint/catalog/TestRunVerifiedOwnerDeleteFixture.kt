@@ -75,6 +75,7 @@ import me.manga.kira.backend.security.InstallationEnrollmentCredentials
 import me.manga.kira.backend.security.InstallationJwtCodec
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
+import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -167,8 +168,14 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     private var expectedProviders: List<Int>? = null
     private var preparedPublication = false
     private val ownedTargets = mutableListOf(target)
+    private val additionalActors = mutableListOf<ScopedInstallationId>()
     val histories = mutableListOf<History>()
     class History(val target: UUID, val key: UUID, val eventId: String)
+
+    /** Authored TEST history locator, not a work/proof/registration or paid-cut issuer. */
+    class LargeDrainHistory(val actor: ScopedInstallationId, val target: UUID, val key: UUID, val event: TestOwnerDeleteJournalEventV1) {
+        val eventId: String get() = event.route.eventId
+    }
 
     fun begin(actorId: UUID = actor.id, operationKey: UUID = key): TestRunVerifiedOwnerDeleteV1 =
         TestRunVerifiedOwnerDeleteV1.begin(registration, ownership, jdbc, audit, actorId, operationKey)
@@ -270,6 +277,90 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         assertReleased()
         restoreRegisteredComparisons()
         expectedProviders = providerImage()
+    }
+
+    /**
+     * Explicit thirteen-primary specimen only. The caller selects createGlobal=13 BEFORE signing.
+     * Two real enrollments split seven/six real creates, retaining the fixed ten/actor/hour quota.
+     * All AUTH/publish/VERIFY/APPLY calls share one actual raw provider/key map; no publication,
+     * receipt, recovery reservation or APPLIED row is inserted here. The same historical gate
+     * comparisons as authorEarlierHistory remain SYNTHETIC and are restored before real sealing.
+     */
+    fun authorEarlierLargeDrainHistory(): List<LargeDrainHistory> {
+        check(wire == null && histories.isEmpty() && additionalActors.isEmpty())
+        stageSyntheticComparisons()
+        val ordinaryCapacity = JdbcComplaintCapacityStore(ordinary.jdbc, policy.digestBytes())
+        val enrollment = ComplaintEnrollmentAdmissionCoordinator(ingress, ComplaintInstallationEnrollmentPhaseExecutor(ordinary.ownership,
+            JdbcComplaintInstallationEnrollmentStore(ordinary.jdbc, ordinaryCapacity,
+                ComplaintInstallationEnrollmentAudit { scope, paid, at -> audit.recordInstallationEnrollment(scope, paid, at) }, lowerDesired)))
+        val create = ComplaintOwnerCreatePhaseExecutor(ordinary.ownership, JdbcComplaintOwnerCreateStore(ordinary.jdbc, ordinaryCapacity, audit, lowerDesired))
+        val jwt = InstallationJwtCodec(process.consumers.jwt.installationKeyRing, Clock.systemUTC())
+        val secondActor = ScopedInstallationId(UUID.randomUUID(), scope).also(additionalActors::add)
+        val authored = mutableListOf<LargeDrainHistory>()
+        listOf(actor to 7, secondActor to 6).forEach { (selectedActor, count) ->
+            val candidate = InstallationEnrollmentCredentials.prepare(selectedActor, ComplaintPlatform.ANDROID, ByteArray(32) { it.toByte() })
+            val enrolled = ingress.withIngress(request()) { context ->
+                assertInstanceOf(InstallationEnrollmentResult.Enrolled::class.java, enrollment.enroll(context, enrollment.admitEnrollment(context, candidate)))
+            }
+            val token = jwt.issue(enrolled.installation, enrolled.credentialVersion, enrolled.issuedAt).value
+            fun identity() = jwt.verify(token).let { ComplaintOwnerOperationIdentity(it.installation, it.credentialVersion, it.issuedAt, it.expiresAt) }
+            repeat(count) {
+                val selectedTarget = if (authored.isEmpty()) target else UUID.randomUUID().also(ownedTargets::add)
+                val selectedKey = if (authored.isEmpty()) key else UUID.randomUUID()
+                val report = (ComplaintReportRequest.normalize(checkNotNull(ComplaintReportIdentity.checked(selectedTarget.toString(), UUID.randomUUID().toString(), scope.id.toString())),
+                    ComplaintType.TECHNICAL, "Synthetic retained report", "Synthetic content to erase", ComplaintReportMetadataInput(null, "fixture", "", "")) as ComplaintReportRequestResult.Accepted).request
+                val createCandidate = ComplaintOwnerCreateCandidate.prepare(selectedActor, report)
+                ingress.withIngress(request()) { context ->
+                    ingress.startOwnerCreate(context)
+                    val identity = identity()
+                    assertEquals(ComplaintPlatform.ANDROID, create.authenticate(identity).platform)
+                    assertNull(create.preflight(identity, createCandidate.tuple).receipt)
+                    val result = create.create(identity, createCandidate, ComplaintPlatform.ANDROID, ingress.admitOwnerCreate(context, createCandidate.tuple))
+                    assertNull(result.failure)
+                    assertEquals(selectedTarget, assertInstanceOf(ComplaintOwnerReceipt.Applied::class.java, result.receipt).id)
+                }
+                val deletion = ComplaintOwnerDeleteCandidate.prepare(selectedActor, ComplaintOwnerDeleteRequest.normalize(scope,
+                    ComplaintOwnerDeleteInput(selectedTarget, selectedKey, ComplaintOwnerDeletePrecondition.parse(selectedTarget, "\"complaint-$selectedTarget-v1\""))))
+                val event = codec.canonicalize(TestOwnerDeleteJournalTupleV1(11, selectedActor.id, enrolled.credentialVersion,
+                    selectedKey, deletion.tuple.fingerprintBytes(), scope), listOf(selectedTarget))
+                if (authored.isEmpty()) eventId = event.route.eventId
+                val provider = wire ?: TestOwnerDeleteJournalPublisherFixture(routing, event).also { selected ->
+                    wire = selected
+                    selected.wall = p.databaseTime()
+                    selected.beforeOpen = { requireConnectionFree(); selected.wall = p.databaseTime() }
+                    selected.beforePrepare = ::assertDatabaseReleased
+                }
+                provider.factory(store, process.publicationLanes).use { publishers ->
+                    val work = publishers.reserve().use {
+                        ingress.withIngress(request()) { context ->
+                            ingress.startOwnerDelete(context)
+                            val identity = identity()
+                            assertEquals(ComplaintPlatform.ANDROID, reads.authenticate(identity).platform)
+                            val preflight = reads.preflight(identity, deletion.tuple)
+                            assertNull(preflight.failure); assertNull(preflight.receipt); assertFalse(preflight.authorized)
+                            val result = phases.authorize(identity, deletion, preflight, ingress.admitOwnerDelete(context, deletion.tuple))
+                            assertInstanceOf(CommittedTestOwnerDeleteWork.Prepared::class.java, assertInstanceOf(TestOwnerDeleteAuthorizationV1.Continue::class.java, result).work)
+                        }
+                    }
+                    val proof = phases.verify(publishers.reserve().use { it.publish(work) })
+                    val beforeApply = p.counters()
+                    assertSame(ComplaintOwnerDeleteReceipt.Applied, phases.apply(work, proof))
+                    assertApplyCounters(beforeApply)
+                }
+                provider.assertClientsClosed()
+                assertEquals("APPLIED", publicationState(event.route.eventId))
+                assertEquals("COMPLETED", observer.queryForObject("SELECT state FROM complaint_idempotency_receipts WHERE actor_id = ? AND idempotency_key = ?",
+                    String::class.java, selectedActor.id, selectedKey))
+                assertEquals("PARTIAL", observer.queryForObject("SELECT state FROM complaint_recovery_capacity_reservations WHERE event_id = ?", String::class.java, event.route.eventId))
+                authored.add(LargeDrainHistory(selectedActor, selectedTarget, selectedKey, event))
+            }
+        }
+        assertEquals(13, authored.size)
+        assertEquals(13, provider.objects.size, "Every primary is the retained body from its actual publisher PUT.")
+        assertReleased()
+        restoreRegisteredComparisons()
+        expectedProviders = providerImage()
+        return authored.toList()
     }
 
     private fun restoreRegisteredComparisons() {
@@ -577,8 +668,11 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         jdbc.before = {}; jdbc.after = {}; jdbc.enabled = false
         assertReleased()
         // This fixture owns only its added actor/report/history; outer PROJECT fixture owns notices/run/control/counter teardown.
-        observer.update("DELETE FROM complaint_idempotency_receipts WHERE actor_kind = 'INSTALLATION' AND actor_id = ?", actor.id)
-        observer.update("DELETE FROM installation_deletion_receipts WHERE installation_id = ?", actor.id)
+        val actors = listOf(actor) + additionalActors
+        actors.forEach { selected ->
+            observer.update("DELETE FROM complaint_idempotency_receipts WHERE actor_kind = 'INSTALLATION' AND actor_id = ?", selected.id)
+            observer.update("DELETE FROM installation_deletion_receipts WHERE installation_id = ?", selected.id)
+        }
         observer.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", scope.id)
         observer.update("DELETE FROM complaint_deletion_journal_retirements WHERE data_scope_id = ?", scope.id)
         observer.update("DELETE FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", scope.id)
@@ -587,8 +681,10 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             observer.update("DELETE FROM complaints WHERE id = ?", target)
             observer.update("DELETE FROM complaint_resource_ids WHERE id = ?", target)
         }
-        observer.update("DELETE FROM app_installations WHERE id = ?", actor.id)
-        observer.update("DELETE FROM complaint_installation_ids WHERE id = ?", actor.id)
+        actors.forEach { selected ->
+            observer.update("DELETE FROM app_installations WHERE id = ?", selected.id)
+            observer.update("DELETE FROM complaint_installation_ids WHERE id = ?", selected.id)
+        }
         observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND id > ?", scope.id, lastAudit)
         controls.forEach { (id, json) ->
             assertEquals(1, observer.update("UPDATE complaint_journal_control SET ($HISTORICAL_FIELDS) = " +

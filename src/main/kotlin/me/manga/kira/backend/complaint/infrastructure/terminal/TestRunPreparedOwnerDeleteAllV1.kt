@@ -31,6 +31,11 @@ internal object TestRunPreparedOwnerDeleteAllV1 {
         audit: AuditService, actorId: UUID, operationKey: UUID, credentials: AwsSessionCredentials): TestRunOwnerDeleteAllContinuationV1 =
         TestRunOwnerDeleteAllContinuationV1(registration, ownership, jdbc, audit, actorId, operationKey, Publication(credentials))
 
+    internal fun forDrain(original: TestRunOrdinaryDrainV1, registration: ComplaintTestNamespaceRegistrationV1,
+        ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, audit: AuditService, actorId: UUID, operationKey: UUID,
+        publication: Publication): TestRunOwnerDeleteAllContinuationV1 =
+        TestRunOwnerDeleteAllContinuationV1(registration, ownership, jdbc, audit, actorId, operationKey, publication, original)
+
     /** Raw transport/clocks only; original SQL work, provider construction and native cleanup are unchanged. */
     fun withHttpFixture(registration: ComplaintTestNamespaceRegistrationV1, ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate,
         audit: AuditService, actorId: UUID, operationKey: UUID, credentials: AwsSessionCredentials,

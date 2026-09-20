@@ -11,18 +11,19 @@ import java.util.HexFormat
 import java.util.UUID
 
 /** Immutable TEST declarations only: no registered run, provider policy proof, projection or current authority. */
-internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private val stored: TestOwnerDeleteJournalDeclarationV1, val ownerDeleteAll: Boolean) {
+internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private val stored: TestOwnerDeleteJournalDeclarationV1, val ownerDeleteAll: Boolean, val adminDelete: Boolean = false) {
     val scope: ComplaintDataScope get() = stored.scope
     val ordinaryPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/ordinary/"
     val sealTerminalPrefix = "complaints/journal/v1/${stored.writer.generationId}/test/${scope.id}/seal-terminal/"
     private val wireDocument = TestOwnerDeleteJournalDocumentV1(
-        "kira-complaint-journal-configuration", 1, "kcj-1", if (ownerDeleteAll) "REGISTERED_TEST_OWNER_ERASURE" else "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
+        "kira-complaint-journal-configuration", 1, "kcj-1", if (adminDelete) "LOWER_TEST_ADMIN_ERASURE" else if (ownerDeleteAll) "REGISTERED_TEST_OWNER_ERASURE" else "REGISTERED_TEST_OWNER_DELETE", "TEST", scope.id.toString(),
         stored.writer, stored.journalLocation, ordinaryPrefix, sealTerminalPrefix, stored.authorities,
         stored.routing.activeKeyId,
         stored.routing.keys.map { TestOwnerDeleteRoutingKeyDocumentV1(it.keyId, it.secret.resourceArn, it.secret.versionId) },
         stored.routing.retentionSeconds, stored.routing.minimumRotationIntervalSeconds, stored.encryption, stored.recovery, stored.limits,
-        (if (ownerDeleteAll) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL" else "KJEV-1/OWNER_DELETE") +
-            "/INSTALLATION/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
+        (if (adminDelete) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL+ADMIN_DELETE/INSTALLATION+ADMIN"
+            else (if (ownerDeleteAll) "KJEV-1/OWNER_DELETE+OWNER_DELETE_ALL" else "KJEV-1/OWNER_DELETE") + "/INSTALLATION") +
+            "/TEST/LP32BE-UTF8/HMAC-SHA-256/AES-256-GCM/FRESH_PER_OBJECT_KMS_WRAPPED",
     )
     private val canonical = CanonicalJson.canonicalize(TestOwnerDeleteJournalDocumentV1.serializer(), wireDocument).toByteArray(Charsets.UTF_8)
     val sha256: String = Sha256.hex(canonical)
@@ -60,6 +61,11 @@ internal class TestOwnerDeleteJournalConfigurationV1 private constructor(private
             require(bytes.contentEquals(checked.canonical)) { INVALID }
             return checked
         }
+
+        /** Lower source composition only. Existing registered decoders deliberately reject this exact profile.
+         * One coherent J is retained by the same lane registry; this is not registration or activation. */
+        fun lowerAdminErasure(input: TestOwnerDeleteJournalDeclarationV1): TestOwnerDeleteJournalConfigurationV1 =
+            TestOwnerDeleteJournalConfigurationV1(of(input, ownerDeleteAll = true).declaration(), true, true)
 
         fun of(input: TestOwnerDeleteJournalDeclarationV1, ownerDeleteAll: Boolean = false): TestOwnerDeleteJournalConfigurationV1 {
             require(input.scope.testOnly && OfflineBootstrapGrammar.uuidV4(input.scope.id.toString())) { INVALID }

@@ -18,6 +18,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEpochSealV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProfileV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalProgressV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSealRefV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
 import me.manga.kira.backend.security.TestTerminalCodecKindV1
@@ -77,6 +78,7 @@ internal class TestRunOrdinarySealV1 private constructor(
     private var custody: TestOrdinarySealCustodyV1? = null
     private var proof: TestOrdinarySealProofV1? = null
     private var installationObservation: TestTerminalProgressV1? = null
+    private var completedStrictReference: TestTerminalSealRefV1? = null
     private val rows = ArrayList<TestTerminalDurableRowV1>()
 
     init {
@@ -129,6 +131,7 @@ internal class TestRunOrdinarySealV1 private constructor(
             requireRunning()
             requireConnectionFree()
             if (closedDrain == null) installationObservation = verified.releasedInstallationObservation()
+            else completedStrictReference = TestClosedOrdinarySealRowsV1.reference(frozenRow(), checkNotNull(proof))
             complete = true
         } catch (problem: Throwable) {
             observeFailure(problem)
@@ -150,6 +153,14 @@ internal class TestRunOrdinarySealV1 private constructor(
         throwIfSignalled()
         requireConnectionFree()
         return installationObservation ?: throw TestOrdinarySealExceptionV1()
+    }
+
+    /** Retained producer link only. A new manifest original must still reacquire every current SQL comparison. */
+    internal fun completedStrictReference(drain: TestRunOrdinaryDrainV1): TestTerminalSealRefV1 {
+        requireOrdinarySeal(caller === Thread.currentThread() && closedDrain === drain && started && finished &&
+            !cleanupUncertain && phase == null && !phaseEntered)
+        throwIfSignalled()
+        return completedStrictReference ?: throw TestOrdinarySealExceptionV1()
     }
 
     private fun bindCanonical() {

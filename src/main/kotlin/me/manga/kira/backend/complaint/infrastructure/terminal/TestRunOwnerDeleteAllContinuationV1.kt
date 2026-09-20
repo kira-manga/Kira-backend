@@ -51,15 +51,17 @@ internal class TestRunOwnerDeleteAllContinuationV1 internal constructor(
     actor: UUID,
     key: UUID,
     private val publication: TestRunPreparedOwnerDeleteAllV1.Publication,
+    private val drainBy: TestRunOrdinaryDrainV1? = null,
 ) {
     private val caller = Thread.currentThread()
-    internal val budget: PersistenceTimeBudget = PersistenceTimeBudget.start(registration.process.catalogReadback.totalAttemptMillis, ownership.nanoClock)
+    internal val budget: PersistenceTimeBudget = drainBy?.budget ?: PersistenceTimeBudget.start(registration.process.catalogReadback.totalAttemptMillis, ownership.nanoClock)
     private val locator = actor to key
     internal val actorId: UUID get() = locator.first
     internal val operationKey: UUID get() = locator.second
     private val failure = AtomicReference<Throwable?>()
     private var started = false
     private var finished = false
+    private var successful = false
     private var stage = Stage.NEW
     private var phase: PersistencePhaseContext? = null
     private var phaseEntered = false
@@ -79,6 +81,7 @@ internal class TestRunOwnerDeleteAllContinuationV1 internal constructor(
         registration.requireOwnerDeleteContinuationResources(ownership, jdbc)
         requireContinuation(listOf(actor, key).all { it.version() == 4 && it.variant() == 2 })
         requireContinuation(registration.process.consumers.journalConfiguration.ownerDeleteAll)
+        drainBy?.retainPrimaryContinuation(this, registration, ownership, jdbc)
     }
 
     private val process = registration.process
@@ -116,6 +119,7 @@ internal class TestRunOwnerDeleteAllContinuationV1 internal constructor(
             requireConnectionFree()
             requireRunning()
             requireContinuation(phase == null && !cleanupUncertain && result.responseStatus == 204)
+            successful = true
             return result
         } catch (problem: Throwable) {
             observeFailure(problem)
@@ -320,9 +324,17 @@ internal class TestRunOwnerDeleteAllContinuationV1 internal constructor(
         requireContinuation(caller === Thread.currentThread() && !finished && !cleanupUncertain)
         budget.remainingMillis(1)
         registration.requireOwnerDeleteContinuationResources(ownership, jdbc)
+        drainBy?.requirePrimaryContinuation(this)
+    }
+
+    internal fun requireCompletedForDrain(original: TestRunOrdinaryDrainV1) {
+        requireConnectionFree(); throwIfSignalled()
+        requireContinuation(drainBy === original && successful && finished && phase == null && !phaseEntered && !cleanupUncertain)
+        original.requirePrimaryContinuation(this)
     }
 
     internal fun observeFailure(problem: Throwable) {
+        drainBy?.observeFailure(problem)
         val retained = when {
             problem is Error -> problem
             problem is CancellationException -> CancellationException("TEST owner-delete-all continuation cancelled.")

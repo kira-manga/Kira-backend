@@ -22,12 +22,14 @@ import java.util.Base64
 internal class TestOrdinaryDrainFixtureInputsV1(
     val maximumRetainedVersions: Long = 10_000,
     val maximumFramedBytes: Long? = null,
+    val scanMillis: Int? = null,
 ) {
     private val signer by lazy { OfflineTrustBundleFixture.newKey() }
 
     init {
         require(maximumRetainedVersions in 1..10_000)
         require(maximumFramedBytes == null || maximumFramedBytes > 0)
+        require(scanMillis == null || scanMillis in 1..600_000)
     }
 
     fun limits(original: JournalLimitsV1): JournalLimitsV1 = original.copy(
@@ -35,6 +37,8 @@ internal class TestOrdinaryDrainFixtureInputsV1(
             maximumRetainedVersions = maximumRetainedVersions,
             maximumScanStagingBytes = maximumFramedBytes ?: original.capacity.maximumScanStagingBytes,
         ),
+        // Before consumers/full D/signing only; the real TEST configuration validates all deadline inequalities.
+        deadlines = scanMillis?.let { original.deadlines.copy(scanMillis = it) } ?: original.deadlines,
     )
 
     fun authorityInput(journal: TestOwnerDeleteJournalConfigurationV1, environment: String) =

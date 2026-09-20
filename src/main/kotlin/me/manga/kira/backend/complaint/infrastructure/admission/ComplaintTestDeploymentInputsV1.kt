@@ -119,11 +119,12 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
 
     init {
         valid(document.schemaVersion == 1 && implementationSchema == 1 && desiredGeneration > 0)
-        // Keep all three closed recipes distinct; drain has not acquired ALL-family support.
+        // Old recipes/default bytes stay distinct; ALL+drain is an explicit fourth recipe.
         valid(when (document.profile) {
             PROFILE -> !journal.ownerDeleteAll && ordinaryDenial == null
             OWNER_ERASURE_PROFILE -> journal.ownerDeleteAll && ordinaryDenial == null
             DRAIN_PROFILE -> !journal.ownerDeleteAll && ordinaryDenial != null
+            OWNER_ERASURE_DRAIN_PROFILE -> journal.ownerDeleteAll && ordinaryDenial != null
             else -> false
         })
         valid(database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME &&
@@ -204,6 +205,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         const val PROFILE = "PRE_CUTOVER_TEST_ORDINARY_SEAL_V1"
         const val OWNER_ERASURE_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_SEAL_V1"
         const val DRAIN_PROFILE = "PRE_CUTOVER_TEST_ORDINARY_DRAIN_V1"
+        const val OWNER_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_DRAIN_V1"
 
         @Suppress("TooGenericExceptionCaught")
         internal fun fromDecoded(document: ComplaintTestDeploymentDocumentV1): ComplaintTestDeploymentInputsV1 {

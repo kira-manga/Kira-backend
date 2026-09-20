@@ -2,6 +2,10 @@ package me.manga.kira.backend.complaint.infrastructure.capacity
 
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
 
+import me.manga.kira.backend.audit.domain.CountedAdminDeleteAuditEntry
+import me.manga.kira.backend.audit.infrastructure.ComplaintAdminDeleteAuditInsertion
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteAuthorizationOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintAdminDeleteApplyOperation
 import me.manga.kira.backend.audit.domain.CountedOwnerDeleteAuditEntry
 import me.manga.kira.backend.audit.infrastructure.ComplaintOwnerDeleteAuditInsertion
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
@@ -58,6 +62,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActi
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
@@ -93,6 +98,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestReserveSpend(operation: ComplaintTestReserveSpendOperation): LockedTestReserveSpend = LockedTestReserveSpend.lock(this, operation)
 
     internal fun lockForTestRunSealedAudit(operation: TestRunSealingOperationV1): LockedTestRunSealedAudit = LockedTestRunSealedAudit.lock(this, operation)
+    internal fun lockForTestInstallationManifest(operation: TestInstallationManifestOperationV1): LockedTestInstallationManifest = LockedTestInstallationManifest.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
     internal fun lockForTestOrdinaryDrain(operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain = LockedTestOrdinaryDrain.lock(this, operation)
 
@@ -128,6 +134,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForAdminContent(operation: ComplaintAdminContentOperation): LockedAdminContent = LockedAdminContent.lock(this, operation)
 
     internal fun lockForAdminStatus(operation: ComplaintAdminStatusMutation): LockedAdminStatus = LockedAdminStatus.lock(this, operation)
+
+    internal fun lockForAdminDelete(operation: ComplaintAdminDeleteAuthorizationOperation): LockedAdminDelete = LockedAdminDelete.lock(this, operation)
+    internal fun lockForAdminDeleteApply(operation: ComplaintAdminDeleteApplyOperation): LockedAdminDeleteApply = LockedAdminDeleteApply.lock(this, operation)
 
     internal fun lockForOwnerDeleteAll(operation: ComplaintOwnerDeleteAllOperation): LockedOwnerDeleteAll = LockedOwnerDeleteAll.lock(this, operation)
 
@@ -413,6 +422,140 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
+    /** Only these concrete counted allocations can enter the qualified single-delete JDBC audit insertion. */
+    internal sealed interface AdminDeleteAuditAllocation : ComplaintAuditAllocation {
+        fun beginAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion, entry: CountedAdminDeleteAuditEntry): Connection
+        fun requireAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion)
+        fun failed(problem: Throwable): Nothing
+    }
+
+    internal class LockedAdminDelete private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: ComplaintAdminDeleteAuthorizationOperation,
+        private val before: ComplaintCapacityLedger,
+        private val charged: ComplaintCapacityLedger,
+        private val fresh: Boolean,
+    ) : AdminDeleteAuditAllocation {
+        private var settled = false
+        private var rejected = false
+        private var audit: ComplaintAdminDeleteAuditInsertion? = null
+        fun belongsTo(candidate: ComplaintAdminDeleteAuthorizationOperation): Boolean = operation === candidate
+        fun settledFor(candidate: ComplaintAdminDeleteAuthorizationOperation): Boolean = belongsTo(candidate) && settled
+        fun completedFor(candidate: ComplaintAdminDeleteAuthorizationOperation): Boolean = settledFor(candidate) &&
+            (if (fresh && !rejected) audit?.completedFor(this) == true else audit == null)
+        fun keepReceiptOnly(candidate: ComplaintAdminDeleteAuthorizationOperation) {
+            try {
+                check(candidate === operation && settled && fresh && !rejected && audit == null)
+                val final = before.chargePrivacyActual(checkNotNull(store.expectedPolicyDigest), OwnerDeleteCapacityCharges.RECEIPT)
+                persist(charged.balance, final.balance, true)
+                rejected = true // The provisional obligation never commits; no promised future work is released here.
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        private fun persist(old: ComplaintCapacityBalance, after: ComplaintCapacityBalance, rejecting: Boolean) {
+            for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                operation.requireCapacityWrite(this, store.jdbc, rejecting)
+                if (old.free[counter] == after.free[counter] && old.actual[counter] == after.actual[counter] && old.recoveryReserved[counter] == after.recoveryReserved[counter]) continue
+                check(store.jdbc.update(RECOVERY_COUNTER, after.free[counter], after.actual[counter], after.recoveryReserved[counter], counter.storedName,
+                    old.free[counter], old.actual[counter], old.recoveryReserved[counter], old.testReserved[counter]) == 1)
+            }
+            operation.requireCapacityWrite(this, store.jdbc, rejecting)
+        }
+        override fun beginAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion, entry: CountedAdminDeleteAuditEntry): Connection {
+            check(fresh && settled && !rejected && audit == null && insertion.belongsTo(this))
+            val connection = operation.auditConnection(this, store.jdbc, entry)
+            audit = insertion; return connection
+        }
+        override fun requireAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion) { check(audit === insertion); operation.requireAuditWrite(this, store.jdbc) }
+        override fun failed(problem: Throwable): Nothing = operation.failed(problem)
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            fun lock(store: JdbcComplaintCapacityStore, operation: ComplaintAdminDeleteAuthorizationOperation): LockedAdminDelete {
+                try {
+                    val fresh = operation.beginCounterLock(store.jdbc)
+                    val before = store.readLockedLedger()
+                    operation.requireCapacityPolicy(before, store.jdbc)
+                    val after = if (fresh) before.chargePrivacyActual(checkNotNull(store.expectedPolicyDigest), OwnerDeleteCapacityCharges.AUTHORIZATION)
+                        .reserveRecovery(checkNotNull(store.expectedPolicyDigest), OwnerDeleteCapacityCharges.RECOVERY) else {
+                        check((OwnerDeleteCapacityCharges.AUTHORIZATION - ComplaintCapacityCharges.AUDIT).fitsWithin(before.balance.actual))
+                        check(operation.requiredRecovery().fitsWithin(before.balance.recoveryReserved))
+                        before
+                    }
+                    return LockedAdminDelete(store, operation, before, after, fresh).also {
+                        operation.retainCapacity(it, store.jdbc)
+                        if (fresh) it.persist(before.balance, after.balance, false)
+                        it.settled = true
+                    }
+                } catch (problem: Throwable) { operation.failed(problem) }
+            }
+        }
+    }
+
+    /** Missing bookkeeping is paid before reconstruction, then only privately measured new rows spend Y-U. */
+    internal class LockedAdminDeleteApply private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: ComplaintAdminDeleteApplyOperation,
+        private var ledger: ComplaintCapacityLedger,
+    ) : AdminDeleteAuditAllocation {
+        private var toppedUp = false
+        private var settled = false
+        private var expectedAudits = 0
+        private val audits = ArrayList<ComplaintAdminDeleteAuditInsertion>(2)
+        fun belongsTo(candidate: ComplaintAdminDeleteApplyOperation): Boolean = operation === candidate
+        fun settledFor(candidate: ComplaintAdminDeleteApplyOperation): Boolean = belongsTo(candidate) && settled
+        fun completedFor(candidate: ComplaintAdminDeleteApplyOperation): Boolean = settledFor(candidate) && audits.size == expectedAudits && audits.all { it.completedFor(this) }
+        private fun topUp() {
+            check(!toppedUp)
+            val missing = operation.missingBookkeeping(this, store.jdbc)
+            val expected = checkNotNull(store.expectedPolicyDigest)
+            val after = ledger.chargePrivacyActual(expected, missing.first).reserveRecovery(expected, missing.second)
+            persist(ledger.balance, after.balance)
+            ledger = after; toppedUp = true
+        }
+        @Suppress("TooGenericExceptionCaught")
+        fun settle(candidate: ComplaintAdminDeleteApplyOperation) {
+            try {
+                check(candidate === operation && toppedUp && !settled)
+                val counts = operation.materializedCounts(this, store.jdbc)
+                expectedAudits = counts.removed + counts.summary
+                val use = ComplaintCapacityCharges.INSTALLATION_ID.scaled(counts.installation.toLong()) + ComplaintCapacityCharges.RESOURCE_ID.scaled(counts.resource.toLong()) +
+                    ComplaintCapacityCharges.AUDIT.scaled(expectedAudits.toLong()) + OwnerDeleteCapacityCharges.APPLIED.scaled(counts.applied.toLong())
+                val refund = ComplaintCapacityCharges.INSTALLATION_CONTENT_V1.scaled(counts.removed.toLong())
+                val expected = checkNotNull(store.expectedPolicyDigest)
+                val after = ledger.spendRecovery(expected, operation.remainingReserve(this, store.jdbc), use).refundActual(expected, refund)
+                persist(ledger.balance, after.balance)
+                if (!use.isZero()) operation.recordProgress(this, store.jdbc, use)
+                ledger = after; settled = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        private fun persist(old: ComplaintCapacityBalance, after: ComplaintCapacityBalance) {
+            for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                operation.requireCapacityWrite(this, store.jdbc)
+                if (old.free[counter] == after.free[counter] && old.actual[counter] == after.actual[counter] && old.recoveryReserved[counter] == after.recoveryReserved[counter]) continue
+                check(store.jdbc.update(RECOVERY_COUNTER, after.free[counter], after.actual[counter], after.recoveryReserved[counter], counter.storedName,
+                    old.free[counter], old.actual[counter], old.recoveryReserved[counter], old.testReserved[counter]) == 1)
+            }
+            operation.requireCapacityWrite(this, store.jdbc)
+        }
+        override fun beginAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion, entry: CountedAdminDeleteAuditEntry): Connection {
+            check(settled && audits.size < expectedAudits && audits.all { it.completedFor(this) } && insertion.belongsTo(this))
+            val connection = operation.auditConnection(this, store.jdbc, entry, audits.size)
+            audits.add(insertion); return connection
+        }
+        override fun requireAuditInsert(insertion: ComplaintAdminDeleteAuditInsertion) { check(audits.lastOrNull() === insertion); operation.requireAuditWrite(this, store.jdbc) }
+        override fun failed(problem: Throwable): Nothing = operation.failed(problem)
+        companion object {
+            @Suppress("TooGenericExceptionCaught")
+            fun lock(store: JdbcComplaintCapacityStore, operation: ComplaintAdminDeleteApplyOperation): LockedAdminDeleteApply {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    val ledger = store.readLockedLedger()
+                    operation.requireCapacityPolicy(ledger, store.jdbc)
+                    return LockedAdminDeleteApply(store, operation, ledger).also { operation.retainCapacity(it, store.jdbc); it.topUp() }
+                } catch (problem: Throwable) { operation.failed(problem) }
+            }
+        }
+    }
+
     /** Immediate deletion bookkeeping plus one immutable future promise; reload validates without charging again. */
     internal class LockedOwnerDeleteAll private constructor(
         private val store: JdbcComplaintCapacityStore,
@@ -526,12 +669,9 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 val counts = operation.materializedCounts(this, store.jdbc)
                 issued = true
                 if (counts != null) {
-                    val (removed, reconstructed) = counts
-                    check(removed in 0..100 && reconstructed in 0..100)
-                    expectedAudits = removed + 1
-                    val use = ComplaintCapacityCharges.RESOURCE_ID.scaled(reconstructed.toLong()) + OwnerDeleteAllCapacityCharges.APPLIED +
-                        ComplaintCapacityCharges.AUDIT.scaled(expectedAudits.toLong())
-                    val refund = ComplaintCapacityCharges.INSTALLATION_CONTENT_V1.scaled(removed.toLong())
+                    expectedAudits = counts.audits
+                    val use = counts.use
+                    val refund = ComplaintCapacityCharges.INSTALLATION_CONTENT_V1.scaled(counts.removed.toLong())
                     val expected = checkNotNull(store.expectedPolicyDigest)
                     val after = before.spendRecovery(expected, operation.remainingReserve(this, store.jdbc), use).refundActual(expected, refund)
                     persist(before.balance, after.balance)
@@ -579,6 +719,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         internal fun auditScope(insertion: ComplaintOwnerDeleteAllAuditInsertion): ComplaintDataScope {
             requireAuditInsert(insertion)
             return operation.auditScope(this, store.jdbc)
+        }
+
+        internal fun auditActorKind(insertion: ComplaintOwnerDeleteAllAuditInsertion): String {
+            requireAuditInsert(insertion)
+            return operation.auditActorKind(this, store.jdbc)
         }
 
         internal fun failed(problem: Throwable): Nothing = operation.failed(problem)
@@ -1554,6 +1699,52 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     return LockedTestOrdinarySeal(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
+    internal class LockedTestInstallationManifest private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestInstallationManifestOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+
+        internal fun completedFor(candidate: TestInstallationManifestOperationV1): Boolean = operation === candidate && completed
+
+        internal fun settle(candidate: TestInstallationManifestOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc)
+                issued = true
+                val before = counters.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.actual[counter] == after.actual[counter] && before.recoveryReserved[counter] == after.recoveryReserved[counter] &&
+                        before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_RESERVE_COUNTER,
+                        after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        override fun toString(): String = "LockedTestInstallationManifest(original-run-paid-manifest-prepare,redacted)"
+
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestInstallationManifestOperationV1): LockedTestInstallationManifest {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestInstallationManifest(store, operation, store.readLockedCounters())
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }

@@ -111,6 +111,8 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
         val CLASS_NAMES = setOf(
             CLASS_NAME,
             "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+            "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainOwnerFamiliesIT",
+            "me.manga.kira.backend.common.infrastructure.persistence.TestInstallationManifestPrepareIT",
             "me.manga.kira.backend.complaint.journal.TestOrdinaryInventoryReaderV1ConnectedIT",
             "me.manga.kira.backend.common.infrastructure.persistence.CatalogGenesisPublishInterruptionIT",
             "me.manga.kira.backend.complaint.journal.LiveJournalCoverageV1IT",

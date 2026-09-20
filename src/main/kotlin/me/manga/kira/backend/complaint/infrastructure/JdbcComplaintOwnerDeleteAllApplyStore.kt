@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseF
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
@@ -32,6 +33,10 @@ import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapa
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVerificationRecordV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteAllContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalEventV1
 import me.manga.kira.backend.security.VersionBoundComplaintJournalRouting
@@ -89,10 +94,24 @@ internal class JdbcComplaintOwnerDeleteAllApplyStore private constructor(
         check(Instant.parse(record.retainUntil) == proof.retainUntil && Instant.parse(record.verifiedAt) == proof.verifiedAt)
         val verifier = verification.authenticatedVerifier(work, proof)
         return try {
-            CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash, verifier, work, proof)
+            CapturedOwnerDeleteAllPrimaryApply(issuer, routing, event, record, bytes, hash, verifier, work, proof)
         } finally {
             verifier.fill(0)
         }
+    }
+
+    /** Only this registered drain's freshly GET/decrypted, physically released readback can enter. */
+    internal fun captureRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1): OwnerDeleteAllApplyInputV1 {
+        requireConnectionFree()
+        val graph = checkNotNull(controls.testGraph)
+        check(graph.recoveryRegistration === original.registration)
+        val readback = original.ownedRecoveryReadback(this, graph, jdbc)
+        readback.requireOriginal(original)
+        val event = routing.fromTest(readback.event)
+        val record = codec.observed(readback)
+        val bytes = codec.canonicalBytes(record)
+        return CapturedOwnerDeleteAllInventoryApply(issuer, routing, event, record, bytes,
+            MessageDigest.getInstance("SHA-256").digest(bytes), original)
     }
 
     fun apply(input: OwnerDeleteAllApplyInputV1): ComplaintOwnerDeleteAllApplyOperation =
@@ -120,16 +139,13 @@ internal sealed interface OwnerDeleteAllReconciliationPendingV1 :
     OwnerDeleteAllApplyOutcomeV1,
     ComplaintOwnerDeleteAllResponse.Pending
 
-private class CapturedOwnerDeleteAllApply(
+private sealed class CapturedOwnerDeleteAllApply(
     private val issuer: Any,
     private val routing: OwnerDeleteAllJournalBindingV1,
     val event: OwnerDeleteAllJournalEventV1,
     val record: OwnerDeleteAllVerificationRecordV1,
     bytes: ByteArray,
     hash: ByteArray,
-    verifier: ByteArray,
-    val work: CommittedOwnerDeleteAllWork,
-    val proof: CommittedOwnerDeleteAllVerificationV1,
 ) : OwnerDeleteAllApplyInputV1 {
     val verificationBytes = bytes.copyOf()
     val verificationHash = hash.copyOf()
@@ -142,13 +158,34 @@ private class CapturedOwnerDeleteAllApply(
     val retainedUntil: Instant = Instant.parse(record.retainUntil)
     val verifiedAt: Instant = Instant.parse(record.verifiedAt)
     val credentialVersion = checkNotNull(event.tuple.credentialVersion).also { check(it > 0) }
-    val verifier = verifier.copyOf().also { check(it.size == 32) }
 
     fun requireOwned(selectedIssuer: Any, selectedRouting: OwnerDeleteAllJournalBindingV1) {
         check(issuer === selectedIssuer && routing === selectedRouting && event.belongsTo(selectedRouting))
     }
 
     override fun toString(): String = "OwnerDeleteAllApplyInputV1(private-committed-proof,redacted)"
+}
+
+private class CapturedOwnerDeleteAllPrimaryApply(issuer: Any, routing: OwnerDeleteAllJournalBindingV1,
+    event: OwnerDeleteAllJournalEventV1, record: OwnerDeleteAllVerificationRecordV1, bytes: ByteArray, hash: ByteArray,
+    verifier: ByteArray, val work: CommittedOwnerDeleteAllWork, val proof: CommittedOwnerDeleteAllVerificationV1,
+) : CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash) {
+    val verifier = verifier.copyOf().also { check(it.size == 32) }
+}
+
+/** No work/proof/verifier is fabricated from an inventory. This is a different, private issuer path. */
+private class CapturedOwnerDeleteAllInventoryApply(issuer: Any, routing: OwnerDeleteAllJournalBindingV1,
+    event: OwnerDeleteAllJournalEventV1, record: OwnerDeleteAllVerificationRecordV1, bytes: ByteArray, hash: ByteArray,
+    val original: TestRunOrdinaryDrainV1,
+) : CapturedOwnerDeleteAllApply(issuer, routing, event, record, bytes, hash)
+
+internal class OwnerDeleteAllMaterializedCountsV1(val removed: Int, val resources: Int, val installations: Int,
+    val applied: Int, val summary: Int) {
+    init { check(removed in 0..100 && resources in 0..100 && installations in 0..1 && applied in 0..1 && summary in 0..1) }
+    val audits get() = removed + summary
+    val use get() = ComplaintCapacityCharges.RESOURCE_ID.scaled(resources.toLong()) +
+        ComplaintCapacityCharges.INSTALLATION_ID.scaled(installations.toLong()) +
+        OwnerDeleteAllCapacityCharges.APPLIED.scaled(applied.toLong()) + ComplaintCapacityCharges.AUDIT.scaled(audits.toLong())
 }
 
 /** Fixed lock/mutation sequence; there is no caller-provided callback, vector, row list or alternate holder. */
@@ -158,8 +195,11 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private val controls: OwnerDeleteAllControlBinding,
     private val policy: ComplaintCapacityPolicyV1,
     private val codec: OwnerDeleteAllVerificationCodecV1,
+    private val routing: OwnerDeleteAllJournalBindingV1,
     private val observed: CapturedOwnerDeleteAllApply,
 ) {
+    private val inventory = observed as? CapturedOwnerDeleteAllInventoryApply
+    private fun primary() = observed as? CapturedOwnerDeleteAllPrimaryApply ?: error("Committed primary input required")
     private val sql = if (controls.scope.testOnly) OwnerDeleteAllApplySql.test(controls.scope) else OwnerDeleteAllApplySql.live
     private var stage = Stage.RETAINED
     private var replay = false
@@ -173,6 +213,8 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     private val removed = ArrayList<OwnerDeleteAllApplyRows.Content>()
     private var released: CommittedOwnerDeleteAllApplyV1? = null
     private var pending: OwnerDeleteAllReconciliationPendingV1? = null
+    private var inventoryCounts: OwnerDeleteAllMaterializedCountsV1? = null
+    private var inventoryAt: Instant? = null
 
     fun belongsTo(selected: PersistencePhaseContext): Boolean = phase === selected
     fun completedFor(selected: PersistencePhaseContext): Boolean = belongsTo(selected) && stage === Stage.COMPLETE &&
@@ -180,6 +222,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     val result: CommittedOwnerDeleteAllApplyV1
         get() {
+            check(inventory == null)
             phase.ownerDeleteAllApply.requireCommitted(this)
             requireConnectionFree()
             return released ?: Released(checkNotNull(completion), checkNotNull(expiry)).also { released = it }
@@ -187,14 +230,26 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     val continuationResult: OwnerDeleteAllApplyOutcomeV1
         get() {
+            check(inventory == null)
             if (!phase.ownerDeleteAllApply.reconciliationPending(this)) return result
             requireConnectionFree()
-            return pending ?: ReconciliationPending(observed.work, observed.proof).also { pending = it }
+            return pending ?: ReconciliationPending(primary().work, primary().proof).also { pending = it }
         }
 
-    internal fun requireRegisteredContinuation(original: TestRunOwnerDeleteAllContinuationV1) = original.requireApplyInput(observed)
+    internal fun requireRegisteredContinuation(original: TestRunOwnerDeleteAllContinuationV1) {
+        check(inventory == null); original.requireApplyInput(observed)
+    }
+    internal fun requireRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1) {
+        check(inventory?.original === original && controls.testGraph?.recoveryRegistration === original.registration)
+        original.requireRecoveryInput(observed)
+    }
+    internal fun requireRecovered() {
+        check(inventory != null)
+        phase.ownerDeleteAllApply.requireCommitted(this); requireConnectionFree()
+    }
 
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
+        if (inventory != null) { executeInventory(capacity, audit); return }
         requireRetained()
         check(stage === Stage.RETAINED)
         stage = Stage.CONTROL
@@ -286,6 +341,152 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         return receipt
     }
 
+    /** Existing N/P/L only; all native versions are authenticated before this privacy transaction. */
+    private fun executeInventory(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
+        val original = checkNotNull(inventory).original
+        val nativeSql = OwnerDeleteAllInventorySqlV1(controls.scope)
+        requireRetained()
+        stage = Stage.CONTROL
+        controls.lock(jdbc, false).requireContinuation(observed.event.tuple.epoch, prepared = false)
+        stage = Stage.RECEIPT
+        val tuple = observed.event.tuple
+        val receipt = jdbc.query(sql.LOCK_RECEIPTS, { row, _ -> OwnerDeleteAllApplyRows.receipt(row) }, tuple.actorId).single()
+        check(receipt.state == "COMPLETED" && receipt.key == tuple.operationKey && receipt.version == tuple.credentialVersion &&
+            receipt.fingerprint.contentEquals(observed.fingerprint))
+        stage = Stage.PUBLICATION
+        val routes = routing.derive(tuple)
+        check(routes.size == 4)
+        val publications = routes.sortedBy { it.eventId }.mapNotNull { route ->
+            jdbc.query(sql.LOCK_PUBLICATION, { row, _ -> OwnerDeleteAllApplyRows.publication(row) }, route.eventId).singleOrNull()
+        }
+        val publication = publications.single()
+        val primary = routing.restore(publication.bytes, publication.routingKeyId)
+        val p = primary.tuple
+        check(p.scope == tuple.scope && p.eventKind == tuple.eventKind && p.actorKind == tuple.actorKind &&
+            p.actorId == tuple.actorId && p.credentialVersion == tuple.credentialVersion && p.operationKey == tuple.operationKey &&
+            p.epoch == tuple.epoch && p.encodedFingerprint() == tuple.encodedFingerprint() && primary.complaintIds() == observed.targets)
+        check(publication.eventId == primary.route.eventId && publication.objectKey == primary.route.objectKey &&
+            publication.writer == controls.writer && publication.epoch == tuple.epoch && publication.targetCount == observed.targets.size &&
+            publication.hash.contentEquals(HexFormat.of().parseHex(primary.semanticSha256)) && publication.state == "APPLIED" &&
+            publication.eventId == receipt.reference && publication.createdAt == receipt.authorizedAt && publication.appliedAt == receipt.completedAt)
+        val verified = publication.verification
+        val record = codec.parse(verified.bytes, primary)
+        check(record.objectVersion == verified.version && record.ciphertextSha256 == HexFormat.of().formatHex(verified.hash) &&
+            Instant.parse(record.objectCreatedAt) == verified.createdAt && Instant.parse(record.retainUntil) == verified.retainUntil &&
+            Instant.parse(record.verifiedAt) == verified.verifiedAt)
+        val external = checkNotNull(receipt.external)
+        check(external.eventId == publication.eventId && external.epoch == publication.epoch && external.version == verified.version &&
+            external.hash.contentEquals(verified.hash))
+        if (primary.route == observed.event.route) check(publication.bytes.contentEquals(observed.eventBytes) && verified.hash.contentEquals(observed.ciphertextHash))
+        stage = Stage.RESERVATION
+        // Use the native terminal grammar here without widening the unchanged lower PARTIAL reader.
+        val strict = jdbc.query(TestOrdinaryDrainSqlV1.recovery, { row, _ ->
+            TestOrdinaryDrainRowsV1.Recovery(row, original, publication.eventId, "OWNER_DELETE_ALL")
+        }, publication.eventId).single()
+        recovery = OwnerDeleteAllApplyRows.Recovery(publication.eventId, strict.state, strict.promise, strict.used, strict.lastAppliedAt)
+        val reserve = checkNotNull(recovery)
+        check(reserve.state == "PARTIAL" && reserve.promise == OwnerDeleteAllCapacityCharges.RECOVERY)
+        val family = jdbc.query(TestOrdinaryDrainSqlV1.appliedFamily, { row, _ ->
+            TestOrdinaryDrainPersistenceV1.Applied.read(row, original, hasTime = true)
+        }, routes.joinToString(",", "{", "}") { it.eventId })
+        check(family.size in 1..4 && family.map { it.locator }.distinct().size == family.size &&
+            reserve.used[ComplaintCapacityCounter.JOURNAL_APPLIED] == family.size.toLong())
+        family.forEach { applied ->
+            val route = routes.single { it.eventId == applied.eventId }
+            check(applied.key == route.objectKey && applied.epoch == tuple.epoch && applied.targetCount == observed.targets.size &&
+                applied.kind == "OWNER_DELETE_ALL" && checkNotNull(applied.at) in verified.verifiedAt..checkNotNull(reserve.convertedAt))
+            if (applied.key == observed.record.objectKey) check(applied.ciphertext == observed.record.ciphertextSha256)
+        }
+        check(family.single { it.key == primary.route.objectKey && it.version == verified.version }.ciphertext == HexFormat.of().formatHex(verified.hash))
+        val exact = family.any { it.locator == (observed.record.objectKey to observed.record.objectVersion) }
+        check(exact || family.size < 4) // The existing promise pays FOUR exact versions total, not four per key.
+        stage = Stage.COUNTERS_READY
+        val paid = capacity.lockForOwnerDeleteAllApply(this)
+        stage = Stage.INSTALLATION
+        controls.lockRun(jdbc, false)
+        val installation = jdbc.query(nativeSql.installation, { row, _ -> OwnerDeleteAllApplyRows.installation(row) }, tuple.actorId).singleOrNull()
+        val credential = jdbc.query(nativeSql.credential, { row, _ -> OwnerDeleteAllApplyRows.credential(row) }, tuple.actorId).singleOrNull()
+        current = jdbc.query(sql.OWNER_TARGETS, { row, _ -> row.getObject(1, UUID::class.java) }, tuple.actorId)
+        check(current.size <= 100 && current.distinct().size == current.size)
+        val now = databaseNow()
+        inventoryAt = now
+        requireRetention(now)
+        check(verified.retainUntil.isAfter(now) && verified.verifiedAt <= checkNotNull(receipt.completedAt) &&
+            checkNotNull(receipt.completedAt) <= now && checkNotNull(reserve.convertedAt) <= now)
+        completion = receipt.completedAt; expiry = receipt.expiresAt
+        val identity = ScopedInstallationId(tuple.actorId, controls.scope)
+        val decision = InstallationRecoveryReducer.reduce(InstallationRecoverySnapshot(identity,
+            installation?.let { InstallationReservationSnapshot(identity, InstallationIdentityState.valueOf(it.state)) },
+            credential?.let { InstallationCredentialSnapshot(identity, InstallationCredentialState.valueOf(it.state)) },
+            hasOwnedContent = current.isNotEmpty()), InstallationRecoveryEvidence.DeleteAll(identity)) as? InstallationRecoveryDecision.Apply
+            ?: error("ALL recovery disposition required")
+        check(decision.identityState === InstallationIdentityState.DELETED && decision.contentEffect === RecoveryContentEffect.ERASE_ALL_OWNED_CONTENT)
+        credential?.let {
+            check(it.credentialVersion == if (it.state == "DELETED") nextCredentialVersion() else observed.credentialVersion)
+            if (it.state == "DELETED") check(it.deletedAt == installation?.terminalAt && checkNotNull(it.deletedAt) in checkNotNull(completion)..now)
+        }
+        val installationCount = if (decision.reserveIdentityCapacity) 1 else 0
+        val time = Timestamp.from(now)
+        if (decision.reserveIdentityCapacity) {
+            check(OwnerDeleteAllMaterializedCountsV1(current.size, 0, 1, if (exact) 0 else 1, 1).use.fitsWithin(reserve.remaining))
+            checkWrite(); check(jdbc.update(nativeSql.reconstructInstallation, tuple.actorId, time, time) == 1)
+        }
+        stage = Stage.RESOURCES
+        val union = (observed.targets + current).distinct().sortedBy(UUID::toString)
+        check(union.size <= 200)
+        val missing = ArrayList<UUID>()
+        resources = union.map { id ->
+            jdbc.query(sql.LOCK_RESOURCE, { row, _ -> OwnerDeleteAllApplyRows.resource(row) }, id).singleOrNull()?.also {
+                check(it.deletedAt?.isAfter(now) != true)
+            } ?: run {
+                check(id in observed.targets && id !in current); missing.add(id)
+                check(OwnerDeleteAllMaterializedCountsV1(current.size, missing.size, installationCount, if (exact) 0 else 1, 1).use.fitsWithin(reserve.remaining))
+                // A missing reservation is locked by its INSERT in the same UUID-ordered pass,
+                // before any content lock; never a late second lock/insertion sweep.
+                checkWrite(); check(jdbc.update(sql.RECONSTRUCT_RESOURCE, id, time, time) == 1)
+                OwnerDeleteAllApplyRows.Resource(id, "DELETED", now)
+            }
+        }
+        stage = Stage.CONTENT
+        val content = if (union.isEmpty()) emptyList() else jdbc.query(sql.LOCK_CONTENT, { row, _ -> OwnerDeleteAllApplyRows.content(row) }, uuidArray(union))
+        check(content.map { it.id } == current)
+        content.forEach { check(it.owner == tuple.actorId && resources.single { resource -> resource.id == it.id }.state in setOf("LIVE", "DELETION_PENDING")) }
+        val effects = !exact || content.isNotEmpty() || missing.isNotEmpty() || installation?.state != "DELETED" || resources.any { it.state != "DELETED" }
+        inventoryCounts = if (effects) OwnerDeleteAllMaterializedCountsV1(content.size, missing.size, installationCount, if (exact) 0 else 1, 1) else null
+        check((inventoryCounts?.use ?: ComplaintCapacityVector.ZERO).fitsWithin(reserve.remaining))
+        stage = Stage.ERASURE
+        if (!decision.reserveIdentityCapacity && installation?.state != "DELETED") {
+            checkWrite(); check(jdbc.update(nativeSql.deleteInstallation, time, tuple.actorId) == 1)
+        }
+        if (decision.credentialEffect === RecoveryCredentialEffect.COMPLETE_DELETE_ALL) {
+            val selected = checkNotNull(credential)
+            checkWrite(); check(jdbc.update(nativeSql.deleteCredential, time, Timestamp.from(now.plus(RETRY_RETENTION)), tuple.actorId,
+                selected.credentialVersion, selected.rowVersion, selected.verifier) == 1)
+        } else check(decision.credentialEffect === RecoveryCredentialEffect.PRESERVE)
+        content.forEach { row ->
+            checkWrite()
+            val actual = jdbc.query(sql.DELETE_CONTENT, { value, _ -> value.getObject("id", UUID::class.java) to value.getLong("version") },
+                row.id, tuple.actorId, row.version).single()
+            check(actual == (row.id to row.version)); removed.add(row)
+        }
+        resources.filter { it.state != "DELETED" }.forEach { checkWrite(); check(jdbc.update(sql.TOMBSTONE_RESOURCE, time, it.id) == 1) }
+        if (!exact) {
+            checkWrite(); check(jdbc.update(sql.INSERT_APPLIED, observed.record.objectKey, observed.record.objectVersion, observed.record.eventId,
+                observed.ciphertextHash, observed.writer, tuple.epoch, observed.targets.size, time) == 1)
+        }
+        stage = Stage.SETTLING
+        paid.settle(this)
+        stage = Stage.AUDIT
+        inventoryCounts?.let { counts ->
+            removed.forEach { audit.recordOwnerDeleteAll(OwnerDeleteAllAuditOutcome.Removed(it.id, it.version), paid, now) }
+            audit.recordOwnerDeleteAll(OwnerDeleteAllAuditOutcome.RecoveryApplied(observed.record.eventId, counts.removed, counts.resources, counts.installations), paid, now)
+        }
+        check(paid.completedFor(this))
+        requireFinalState()
+        original.recordRecoveredVersion(this, jdbc)
+        stage = Stage.COMPLETE
+    }
+
     private fun requirePair(
         installation: OwnerDeleteAllApplyRows.Installation,
         credential: OwnerDeleteAllApplyRows.Credential,
@@ -296,7 +497,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         check(installation.state == expected && credential.state == expected)
         check(credential.credentialVersion == if (replay) nextCredentialVersion() else observed.credentialVersion)
         check(credential.rowVersion > 0 && (!replay || credential.rowVersion > 1))
-        check(MessageDigest.isEqual(credential.verifier, observed.verifier))
+        check(MessageDigest.isEqual(credential.verifier, primary().verifier))
         check(installation.terminalAt == receipt.completedAt && credential.deletedAt == receipt.completedAt && credential.expiresAt == receipt.expiresAt)
     }
 
@@ -477,8 +678,9 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     }
 
     /** Null means an exact replay, never an instruction to release a future promise. */
-    internal fun materializedCounts(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): Pair<Int, Int>? {
+    internal fun materializedCounts(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): OwnerDeleteAllMaterializedCountsV1? {
         requireCapacityWrite(value, selected)
+        if (inventory != null) return inventoryCounts
         if (replay) {
             val reserve = checkNotNull(recovery)
             check(reserve.state == "PARTIAL" && reserve.convertedAt != null && !reserve.convertedAt.isBefore(checkNotNull(completion)))
@@ -486,7 +688,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             return null
         }
         check(removed.size == current.size && removed.size <= 100 && reconstructed in 0..100)
-        return removed.size to reconstructed
+        return OwnerDeleteAllMaterializedCountsV1(removed.size, reconstructed, 0, 1, 1)
     }
 
     internal fun remainingReserve(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): ComplaintCapacityVector {
@@ -496,7 +698,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
 
     internal fun recordProgress(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate, use: ComplaintCapacityVector) {
         requireCapacityWrite(value, selected)
-        check(!replay && use == actualUse(reconstructed, removed.size))
+        check(!replay && use == (if (inventory != null) checkNotNull(inventoryCounts).use else actualUse(reconstructed, removed.size)))
         val reserve = checkNotNull(recovery)
         val cumulative = reserve.used + use
         check(cumulative.fitsWithin(reserve.promise) && cumulative != reserve.promise && cumulative != ComplaintCapacityVector.ZERO)
@@ -505,7 +707,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
             jdbc.update(
                 sql.RECORD_PROGRESS,
                 vectorArray(cumulative),
-                Timestamp.from(checkNotNull(completion)),
+                Timestamp.from(checkNotNull(inventoryAt ?: completion)),
                 reserve.eventId,
                 vectorArray(reserve.promise),
                 reserve.state,
@@ -528,15 +730,21 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
         ordinal: Int,
     ): Connection {
         requireAuditWrite(value, selected)
-        check(entry.createdAt == completion && ordinal in 0..removed.size)
+        check(entry.createdAt == (inventoryAt ?: completion) && ordinal in 0..removed.size)
         when (val outcome = entry.outcome) {
             is OwnerDeleteAllAuditOutcome.Removed -> {
                 check(ordinal < removed.size && outcome.resourceId == removed[ordinal].id && outcome.version == removed[ordinal].version)
             }
 
             is OwnerDeleteAllAuditOutcome.InstallationCompleted -> {
-                check(ordinal == removed.size && outcome.version == nextCredentialVersion())
+                check(inventory == null && ordinal == removed.size && outcome.version == nextCredentialVersion())
                 check(outcome.removedCount == removed.size && outcome.reconstructedCount == reconstructed)
+            }
+
+            is OwnerDeleteAllAuditOutcome.RecoveryApplied -> {
+                val counts = checkNotNull(inventoryCounts)
+                check(inventory != null && ordinal == removed.size && outcome.eventId == observed.record.eventId &&
+                    outcome.removedCount == counts.removed && outcome.reconstructedCount == counts.resources && outcome.installationCount == counts.installations)
             }
         }
         return phase.ownerDeleteAllApply.connection(this, selected)
@@ -551,6 +759,11 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
     internal fun auditScope(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): ComplaintDataScope {
         requireAuditWrite(value, selected)
         return controls.scope
+    }
+
+    internal fun auditActorKind(value: JdbcComplaintCapacityStore.LockedOwnerDeleteAllApply, selected: JdbcTemplate): String {
+        requireAuditWrite(value, selected)
+        return if (inventory == null) "INSTALLATION" else "SYSTEM"
     }
 
     private fun requireFutureUse(newIds: Int, contentCount: Int) = check(actualUse(newIds, contentCount).fitsWithin(checkNotNull(recovery).remaining))
@@ -632,7 +845,7 @@ internal class ComplaintOwnerDeleteAllApplyOperation private constructor(
                 val captured = input as? CapturedOwnerDeleteAllApply ?: error("Private committed verification capture required")
                 captured.requireOwned(issuer, routing)
                 controls.testGraph?.let { phase.requireTestRunOwnerDeleteAllApply(it, jdbc, input) }
-                operation = ComplaintOwnerDeleteAllApplyOperation(phase, jdbc, controls, policy, codec, captured)
+                operation = ComplaintOwnerDeleteAllApplyOperation(phase, jdbc, controls, policy, codec, routing, captured)
                 phase.ownerDeleteAllApply.retain(operation, jdbc)
                 operation.execute(capacity, audit)
                 return operation

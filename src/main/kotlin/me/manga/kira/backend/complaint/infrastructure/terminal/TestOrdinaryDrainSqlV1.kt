@@ -138,7 +138,7 @@ internal object TestOrdinaryDrainSqlV1 {
     val insertEntry = """
         INSERT INTO complaint_journal_scan_entries (scan_id, pass, data_scope_id, test_only, object_key, object_version,
             ciphertext_hash, semantic_hash, event_id, event_kind, writer_generation, journal_epoch, entry_bytes, replay_state)
-        VALUES (?::uuid, ?, ?::uuid, true, ?, ?, ?, ?, ?, 'OWNER_DELETE', ?::uuid, ?, ?, 'PENDING')
+        VALUES (?::uuid, ?, ?::uuid, true, ?, ?, ?, ?, ?, ?, ?::uuid, ?, ?, 'PENDING')
     """.trimIndent()
     val appendRun = """
         UPDATE complaint_journal_scan_runs SET entry_count = entry_count + 1, entry_bytes = entry_bytes + ?
@@ -162,7 +162,7 @@ internal object TestOrdinaryDrainSqlV1 {
     val markApplied = """
         UPDATE complaint_journal_scan_entries SET replay_state = 'APPLIED'
         WHERE scan_id = ?::uuid AND data_scope_id = ?::uuid AND object_key = ? AND object_version = ? AND pass IN (1, 2)
-            AND ciphertext_hash = ? AND semantic_hash = ? AND event_id = ? AND test_only AND event_kind = 'OWNER_DELETE'
+            AND ciphertext_hash = ? AND semantic_hash = ? AND event_id = ? AND test_only AND event_kind = ?
             AND writer_generation = ?::uuid AND journal_epoch = ? AND entry_bytes = ? AND replay_state IN ('PENDING', 'APPLIED')
     """.trimIndent()
     val spendAndProgress = """
@@ -183,6 +183,18 @@ internal object TestOrdinaryDrainSqlV1 {
         SELECT event_id FROM complaint_journal_publications WHERE (data_scope_id = ?::uuid OR object_key LIKE ?::text)
             AND (?::text IS NULL OR event_id > ?::text COLLATE "C") ORDER BY event_id COLLATE "C" LIMIT $PAGE
     """.trimIndent()
+    val allPrimaryPage = """
+        SELECT r.installation_id, r.deletion_key,
+            (r.test_only AND r.state = 'AUTHORIZED_DELETE' AND r.data_scope_id = e.scope
+                AND p.test_only AND p.data_scope_id = e.scope AND p.event_kind = 'OWNER_DELETE_ALL'
+                AND p.state IN ('PREPARED', 'VERIFIED') AND p.writer_generation = e.writer
+                AND r.authorized_at = p.created_at AND isfinite(p.created_at) AND p.created_at <= e.sealed_at) IS TRUE AS valid
+        FROM installation_deletion_receipts r FULL JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
+        CROSS JOIN (SELECT ?::uuid AS scope, ?::uuid AS writer, ?::timestamptz AS sealed_at) e
+        WHERE (r.data_scope_id = e.scope AND r.state <> 'COMPLETED')
+            OR (p.data_scope_id = e.scope AND p.event_kind = 'OWNER_DELETE_ALL' AND p.state <> 'APPLIED')
+        ORDER BY p.created_at, p.event_id COLLATE "C", r.installation_id, r.deletion_key LIMIT 3
+    """.trimIndent()
     val recovery = OwnerDeletePersistenceSql.LOCK_RECOVERY
     val abandon = """
         UPDATE complaint_journal_scan_runs SET state = 'ABANDONED', manifest_hash = NULL, finished_at = clock_timestamp()
@@ -191,7 +203,7 @@ internal object TestOrdinaryDrainSqlV1 {
     val deleteEntry = """
         DELETE FROM complaint_journal_scan_entries WHERE scan_id = ?::uuid AND pass = ? AND data_scope_id = ?::uuid AND test_only
             AND object_key = ? AND object_version = ? AND ciphertext_hash = ? AND semantic_hash = ? AND event_id = ?
-            AND event_kind = 'OWNER_DELETE' AND writer_generation = ?::uuid AND journal_epoch = ? AND entry_bytes = ? AND replay_state = ?
+            AND event_kind = ? AND writer_generation = ?::uuid AND journal_epoch = ? AND entry_bytes = ? AND replay_state = ?
     """.trimIndent()
     val deleteRun = """
         DELETE FROM complaint_journal_scan_runs r WHERE r.scan_id = ?::uuid AND r.pass = ? AND r.data_scope_id = ?::uuid AND r.test_only
@@ -245,18 +257,18 @@ internal object TestOrdinaryDrainSqlV1 {
 
     /** Unfiltered applicable relations: unsupported kinds/foreign scope, extra intents or orphaned history fail the whole attempt. */
     val supported = """
-        WITH e AS MATERIALIZED (SELECT ?::uuid AS scope, ?::text AS ordinary_prefix, ?::text AS terminal_prefix, ?::uuid AS writer)
+        WITH e AS MATERIALIZED (SELECT ?::uuid AS scope, ?::text AS ordinary_prefix, ?::text AS terminal_prefix, ?::uuid AS writer, ?::boolean AS allow_all)
         SELECT (NOT EXISTS (SELECT 1 FROM complaint_journal_publications p CROSS JOIN e
                 WHERE (p.data_scope_id = e.scope OR p.object_key LIKE e.ordinary_prefix OR p.object_key LIKE e.terminal_prefix)
-                    AND (p.data_scope_id <> e.scope OR NOT p.test_only OR p.writer_generation <> e.writer OR p.event_kind <> 'OWNER_DELETE'
+                    AND (p.data_scope_id <> e.scope OR NOT p.test_only OR p.writer_generation <> e.writer OR NOT (p.event_kind = 'OWNER_DELETE' OR (e.allow_all AND p.event_kind = 'OWNER_DELETE_ALL'))
                         OR p.object_key NOT LIKE e.ordinary_prefix))
             AND NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_applied a CROSS JOIN e
                 WHERE (a.data_scope_id = e.scope OR a.object_key LIKE e.ordinary_prefix OR a.object_key LIKE e.terminal_prefix)
-                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR a.event_kind <> 'OWNER_DELETE'
-                        OR a.target_count <> 1 OR a.object_key NOT LIKE e.ordinary_prefix))
+                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR NOT (a.event_kind = 'OWNER_DELETE' OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL'))
+                        OR NOT ((a.event_kind = 'OWNER_DELETE' AND a.target_count = 1) OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL' AND a.target_count BETWEEN 0 AND 100)) OR a.object_key NOT LIKE e.ordinary_prefix))
             AND NOT EXISTS (SELECT 1 FROM complaint_journal_scan_entries a CROSS JOIN e
                 WHERE (a.data_scope_id = e.scope OR a.object_key LIKE e.ordinary_prefix OR a.object_key LIKE e.terminal_prefix)
-                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR a.event_kind <> 'OWNER_DELETE'
+                    AND (a.data_scope_id <> e.scope OR NOT a.test_only OR a.writer_generation <> e.writer OR NOT (a.event_kind = 'OWNER_DELETE' OR (e.allow_all AND a.event_kind = 'OWNER_DELETE_ALL'))
                         OR a.object_key NOT LIKE e.ordinary_prefix))
             AND NOT EXISTS (SELECT 1 FROM complaint_recovery_capacity_reservations r CROSS JOIN e
                 LEFT JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
@@ -267,12 +279,16 @@ internal object TestOrdinaryDrainSqlV1 {
                     (r.operation <> 'OWNER_DELETE' OR r.actor_kind <> 'INSTALLATION' OR p.event_id IS NULL OR p.data_scope_id <> e.scope))
                     OR (r.external_event_id IS NOT NULL AND r.publication_ref IS NULL)))
             AND NOT EXISTS (SELECT 1 FROM complaint_deletion_journal_retirements r CROSS JOIN e WHERE r.data_scope_id = e.scope)
-            AND NOT EXISTS (SELECT 1 FROM installation_deletion_receipts r CROSS JOIN e WHERE r.data_scope_id = e.scope)) AS valid
+            AND NOT EXISTS (SELECT 1 FROM installation_deletion_receipts r CROSS JOIN e
+                LEFT JOIN complaint_journal_publications p ON p.event_id = r.publication_ref
+                WHERE r.data_scope_id = e.scope AND (NOT e.allow_all OR NOT r.test_only OR p.event_id IS NULL OR
+                    p.data_scope_id <> e.scope OR NOT p.test_only OR p.event_kind <> 'OWNER_DELETE_ALL'))) AS valid
     """.trimIndent()
     val noPending = """
         SELECT (NOT EXISTS (SELECT 1 FROM complaint_journal_publications WHERE data_scope_id = ?::uuid AND state <> 'APPLIED')
             AND NOT EXISTS (SELECT 1 FROM complaint_idempotency_receipts WHERE data_scope_id = ?::uuid AND state <> 'COMPLETED')
             AND NOT EXISTS (SELECT 1 FROM complaint_resource_ids WHERE data_scope_id = ?::uuid AND state = 'DELETION_PENDING')
-            AND NOT EXISTS (SELECT 1 FROM complaint_installation_ids WHERE data_scope_id = ?::uuid AND state = 'DELETION_PENDING')) AS valid
+            AND NOT EXISTS (SELECT 1 FROM complaint_installation_ids WHERE data_scope_id = ?::uuid AND state = 'DELETION_PENDING')
+            AND NOT EXISTS (SELECT 1 FROM installation_deletion_receipts WHERE data_scope_id = ?::uuid AND state <> 'COMPLETED')) AS valid
     """.trimIndent()
 }

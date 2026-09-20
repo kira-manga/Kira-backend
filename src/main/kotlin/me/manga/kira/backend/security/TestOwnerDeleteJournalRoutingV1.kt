@@ -21,8 +21,11 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
     fun descriptors(): List<VersionedSecretBinding> = keys.map { it.binding }
 
     /** All retained keys participate in local collision accounting; only the declared active candidate is selected. */
-    fun derive(tuple: TestOwnerDeleteJournalTupleV1): TestOwnerDeleteJournalRoutesV1 {
-        require(tuple.scope == journalConfiguration.scope && (tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE || journalConfiguration.ownerDeleteAll)) { INVALID_CONFIGURATION }
+    fun derive(tuple: TestDeletionJournalTupleV1): TestOwnerDeleteJournalRoutesV1 {
+        require(tuple.scope == journalConfiguration.scope && when (tuple) {
+            is TestOwnerDeleteJournalTupleV1 -> tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE || journalConfiguration.ownerDeleteAll
+            is TestAdminDeleteJournalTupleV1 -> journalConfiguration.adminDelete
+        }) { INVALID_CONFIGURATION }
         val candidates = keys.map { key ->
             val opaqueKey = deriveMac(key, ROUTING_DOMAIN, tuple)
             val eventId = deriveMac(key, EVENT_ID_DOMAIN, tuple)
@@ -57,7 +60,7 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
         }
     }
 
-    private fun deriveMac(key: RoutingKey, domain: String, tuple: TestOwnerDeleteJournalTupleV1): String {
+    private fun deriveMac(key: RoutingKey, domain: String, tuple: TestDeletionJournalTupleV1): String {
         val frame = frameBytes(domain, key.binding.logicalKeyId, tuple)
         return try {
             val digest = Mac.getInstance("HmacSHA256").run {
@@ -71,11 +74,11 @@ internal class TestOwnerDeleteJournalRoutingV1 private constructor(
     }
 
     /** Fixed LP32BE-UTF8 field order. The domain/version/prefix are never caller-selected. */
-    private fun frameBytes(domain: String, keyId: String, tuple: TestOwnerDeleteJournalTupleV1): ByteArray {
+    private fun frameBytes(domain: String, keyId: String, tuple: TestDeletionJournalTupleV1): ByteArray {
         val fields = listOf(
             domain, "1", writerGeneration, ordinaryPrefix, "TEST", journalConfiguration.scope.id.toString(),
             tuple.epoch.toString(), keyId, tuple.eventKind.name, tuple.actorKind.name, tuple.actorId.toString(),
-            tuple.credentialVersion.toString(), tuple.operationKey.toString(), tuple.encodedFingerprint(),
+            tuple.credentialVersion?.toString().orEmpty(), tuple.operationKey.toString(), tuple.encodedFingerprint(),
         ).map { it.toByteArray(Charsets.UTF_8) }
         return try {
             val frame = ByteBuffer.allocate(fields.sumOf { 4 + it.size })
@@ -164,16 +167,16 @@ internal data class TestOwnerDeleteRoutingCandidateV1(val routingKeyId: String, 
 
 /** Closed TEST OWNER_DELETE/INSTALLATION tuple. Not an assigned epoch or authenticated actor. */
 internal class TestOwnerDeleteJournalTupleV1(
-    val epoch: Long,
-    val actorId: UUID,
-    val credentialVersion: Long,
-    val operationKey: UUID,
+    override val epoch: Long,
+    override val actorId: UUID,
+    override val credentialVersion: Long,
+    override val operationKey: UUID,
     fingerprint: ByteArray,
-    val scope: ComplaintDataScope,
-    val eventKind: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
-) {
+    override val scope: ComplaintDataScope,
+    override val eventKind: ComplaintJournalDeletionKindV1 = ComplaintJournalDeletionKindV1.OWNER_DELETE,
+) : TestDeletionJournalTupleV1 {
     private val storedFingerprint = fingerprint.copyOf()
-    val actorKind: ComplaintJournalActorKindV1 get() = ComplaintJournalActorKindV1.INSTALLATION
+    override val actorKind: ComplaintJournalActorKindV1 get() = ComplaintJournalActorKindV1.INSTALLATION
 
     init {
         require(epoch > 0 && credentialVersion > 0 && scope.testOnly && storedFingerprint.size == 32)
@@ -182,7 +185,7 @@ internal class TestOwnerDeleteJournalTupleV1(
         ComplaintIdentifiers.idempotencyKey(operationKey.toString())
     }
 
-    fun fingerprintBytes(): ByteArray = storedFingerprint.copyOf()
-    internal fun encodedFingerprint(): String = Base64.getUrlEncoder().withoutPadding().encodeToString(storedFingerprint)
+    override fun fingerprintBytes(): ByteArray = storedFingerprint.copyOf()
+    override fun encodedFingerprint(): String = Base64.getUrlEncoder().withoutPadding().encodeToString(storedFingerprint)
     override fun toString(): String = "TestOwnerDeleteJournalTupleV1(redacted,no-authority)"
 }

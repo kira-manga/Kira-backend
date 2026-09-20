@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenia
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialInputFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
 import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
+import me.manga.kira.backend.security.fullTestJournal
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -71,7 +72,7 @@ internal class ComplaintTestOrdinaryDenialIntakeV1Test {
             document.copy(profile = ComplaintTestDeploymentInputsV1.PROFILE), document.copy(ordinaryDenial = null),
             document.copy(profile = "D6"), document.copy(profile = "D7"), document.copy(profile = "LIVE"),
             document.copy(profile = "PRE_CUTOVER_TEST_ORDINARY_DRAIN_V2"),
-            // The composed ALL recipe cannot silently widen the current DELETE-only drain.
+            // Neither historical recipe silently opts into the separate ALL+drain composition.
             document.copy(profile = ComplaintTestDeploymentInputsV1.OWNER_ERASURE_PROFILE),
             document.copy(journal = document.journal.copy(profile = "REGISTERED_TEST_OWNER_ERASURE")),
             document.copy(profile = ComplaintTestDeploymentInputsV1.OWNER_ERASURE_PROFILE,
@@ -94,6 +95,32 @@ internal class ComplaintTestOrdinaryDenialIntakeV1Test {
         assertEquals(0, http.createdClients)
         assertEquals(0, http.closedClients)
         assertTrue(http.requests.isEmpty())
+    }
+
+    @Test
+    fun `explicit owner erasure drain recipe requires both retained families and independent denial`() {
+        val old = TestDeploymentInputFixture.document(fullTestJournal(ownerDeleteAll = true))
+        val journal = TestOwnerDeleteJournalConfigurationV1.fromDocument(old.journal)
+        val combined = old.copy(profile = ComplaintTestDeploymentInputsV1.OWNER_ERASURE_DRAIN_PROFILE,
+            ordinaryDenial = TestOrdinaryDenialInputFixtureV1.input(journal).copy(environment = old.retention.environment))
+        val inputs = ComplaintTestDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(combined))
+        assertTrue(inputs.journal.ownerDeleteAll)
+        assertNotNull(inputs.ordinaryDenial)
+        assertArrayEquals(journal.canonicalBytes(), inputs.journal.canonicalBytes(), "The explicit recipe cannot rewrite J.")
+        assertNull(ComplaintTestDeploymentJsonV1.parse(TestDeploymentInputFixture.bytes(old)).ordinaryDenial)
+        listOf(combined.copy(ordinaryDenial = null), combined.copy(profile = ComplaintTestDeploymentInputsV1.DRAIN_PROFILE),
+            combined.copy(profile = ComplaintTestDeploymentInputsV1.OWNER_ERASURE_PROFILE),
+            combined.copy(journal = TestDeploymentInputFixture.document().journal)).forEach {
+            refused(TestDeploymentInputFixture.bytes(it))
+        }
+        withAssembled(combined) { assembly ->
+            val target = assembly.target
+            assertTrue(target.consumers.journalConfiguration.ownerDeleteAll)
+            assertNotNull(target.ordinarySeal)
+            assertEquals(checkNotNull(inputs.ordinaryDenial).inventory(), checkNotNull(target.ordinaryDenial).inventory())
+            assertArrayEquals(journal.canonicalBytes(), target.consumers.journalConfiguration.canonicalBytes())
+            target.requireRegistrationTarget() // Cold owner comparison only; no registration/activation was performed.
+        }
     }
 
     @Test

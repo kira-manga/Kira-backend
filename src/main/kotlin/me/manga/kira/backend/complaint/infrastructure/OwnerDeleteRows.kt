@@ -74,13 +74,20 @@ internal object OwnerDeleteRows {
         val verificationHash: ByteArray? = row.getBytes("verification_hash")
         init {
             check(bool(row, "test_only") && bool(row, "valid_shape") && row.getString("event_kind") == kind.name)
-            check(if (kind === ComplaintJournalDeletionKindV1.OWNER_DELETE) targetCount == 1 else targetCount in 0..100)
+            check(if (kind === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) targetCount in 0..100 else targetCount == 1)
             check(row.getString("canonicalizer") == "kcj-1")
             check(state in setOf("PREPARED", "VERIFIED", "APPLIED"))
         }
         fun requireEvent(event: TestOwnerDeleteJournalEventV1) {
             check(kind === ComplaintJournalDeletionKindV1.OWNER_DELETE && event.tuple.eventKind === kind)
             check(eventId == event.route.eventId && scope == event.tuple.scope.id && epoch == event.tuple.epoch)
+            check(routingKey == event.route.routingKeyId && objectKey == event.route.objectKey)
+            check(bytes.contentEquals(event.canonicalBytes()) && semantic.contentEquals(HexFormat.of().parseHex(event.semanticSha256)))
+        }
+        fun requireAdminEvent(event: TestOwnerDeleteJournalEventV1) {
+            val tuple = event.adminTuple
+            check(kind === ComplaintJournalDeletionKindV1.ADMIN_DELETE && tuple.eventKind === kind && targetCount == 1)
+            check(eventId == event.route.eventId && scope == tuple.scope.id && epoch == tuple.epoch)
             check(routingKey == event.route.routingKeyId && objectKey == event.route.objectKey)
             check(bytes.contentEquals(event.canonicalBytes()) && semantic.contentEquals(HexFormat.of().parseHex(event.semanticSha256)))
         }
@@ -92,6 +99,7 @@ internal object OwnerDeleteRows {
         }
         companion object {
             /** Comparison reader only. The ordinary per-report constructor and requireEvent remain one-family. */
+            fun adminDelete(row: ResultSet): Publication = Publication(row, ComplaintJournalDeletionKindV1.ADMIN_DELETE)
             fun ownerDeleteAll(row: ResultSet): Publication = Publication(row, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL)
         }
     }

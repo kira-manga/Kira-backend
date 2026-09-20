@@ -37,6 +37,7 @@ internal class TestInstallationSourceV1(
     private val expectedChunks = TestTerminalSyntaxV1.chunkCount(enrolledCount)
     private var stage = Stage.FIRST_READY
     private var current: Pass? = null
+    private var completedChunk: ChunkSummary? = null
     private val completed = ArrayList<Read>(2)
 
     init {
@@ -49,6 +50,7 @@ internal class TestInstallationSourceV1(
         requireOrdinarySeal(stage === Stage.FIRST_READY || stage === Stage.SECOND_READY)
         completed.lastOrNull()?.let { requireOrdinarySeal(startedAt >= it.completedAt) }
         stage = if (stage === Stage.FIRST_READY) Stage.FIRST else Stage.SECOND
+        completedChunk = null
         current = Pass(startedAt)
     }
 
@@ -101,12 +103,18 @@ internal class TestInstallationSourceV1(
         progress
     }
 
+    /** Last bounded plaintext grouping only; no identities or database/read authority are exposed. */
+    internal fun lastChunk(): ChunkSummary {
+        requireOrdinarySeal(stage in setOf(Stage.FIRST, Stage.SECOND, Stage.SECOND_READY, Stage.COMPLETE))
+        return checkNotNull(completedChunk)
+    }
+    internal data class ChunkSummary(val ordinal: Int, val count: Int, val entriesSha256: String)
+
     private inner class Pass(val startedAt: Long) {
         val source: MessageDigest = MessageDigest.getInstance("SHA-256")
         val groups: MessageDigest = MessageDigest.getInstance("SHA-256")
         val chunk = ArrayList<TestTerminalInstallationEntryV1>(TestTerminalProfileV1.MAX_ENTRIES_PER_CHUNK)
-        var sourceBytes = append(source, 0, localPrefix("kira-local-test-installation-source-v1") + listOf(
-            binding.databaseIdentity, binding.restoreIdentity, binding.desiredGeneration.toString(), binding.fencingToken.toString(), enrolledCount.toString()))
+        var sourceBytes = append(source, 0, sourcePrefix(context, binding, enrolledCount))
         var groupBytes = append(groups, 0, localPrefix("kira-local-test-installation-groups-v1") + listOf(enrolledCount.toString(), expectedChunks.toString()))
         var entryBytes = 0L
         var count = 0L
@@ -117,7 +125,9 @@ internal class TestInstallationSourceV1(
         fun flushChunk() {
             if (chunk.isEmpty()) return
             requireOrdinarySeal(chunks < expectedChunks)
-            groupBytes = append(groups, groupBytes, listOf(chunks.toString(), chunk.size.toString(), TestTerminalSyntaxV1.entriesSha256(chunk)))
+            val entriesHash = TestTerminalSyntaxV1.entriesSha256(chunk)
+            groupBytes = append(groups, groupBytes, listOf(chunks.toString(), chunk.size.toString(), entriesHash))
+            completedChunk = ChunkSummary(chunks, chunk.size, entriesHash)
             chunks++
             chunk.clear()
         }
@@ -137,6 +147,7 @@ internal class TestInstallationSourceV1(
             stage = Stage.FAILED
             current?.let { it.chunk.clear(); it.source.reset(); it.groups.reset() }
             current = null
+            completedChunk = null
             completed.clear()
             throw problem
         }
@@ -199,4 +210,13 @@ internal class TestInstallationSourceV1(
         val sourceHash: String, val sourceBytes: Long, val entryBytes: Long, val groupHash: String, val groupBytes: Long)
     private enum class Stage { FIRST_READY, FIRST, SECOND_READY, SECOND, COMPLETE, DONE, FAILED }
     override fun toString(): String = "TestInstallationSourceV1(local-two-pass-observation,no-terminal-authority,redacted)"
+
+    companion object {
+        /** Shared spelling for historical hash comparison; using this prefix does not create an observed read. */
+        internal fun sourcePrefix(context: TestTerminalRunContextV1, binding: Binding, enrolledCount: Long): List<String> = listOf(
+            "kira-local-test-installation-source-v1", context.dataScopeId, context.activationCatalogGeneration.toString(),
+            context.activationCatalogSha256, context.configurationSha256, context.terminalEncodingSha256,
+            binding.databaseIdentity, binding.restoreIdentity, binding.desiredGeneration.toString(), binding.fencingToken.toString(), enrolledCount.toString(),
+        )
+    }
 }

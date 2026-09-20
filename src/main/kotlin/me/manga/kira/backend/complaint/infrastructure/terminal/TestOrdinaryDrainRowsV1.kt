@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityEncoding
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
+import me.manga.kira.backend.complaint.domain.OwnerDeleteAllCapacityCharges
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalAccountingPlanV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalCapacityChargesV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalInventoryWitnessV1
@@ -104,7 +105,7 @@ internal object TestOrdinaryDrainRowsV1 {
 
     data class Entry(
         val key: String, val version: String, val ciphertext: String, val semantic: String, val eventId: String,
-        val epoch: Long, val ciphertextBytes: Long, val replay: String,
+        val epoch: Long, val ciphertextBytes: Long, val replay: String, val kind: String,
     ) {
         val locator: Pair<String, String> get() = key to version
         fun fields(): List<String> = listOf(key, version, ciphertext)
@@ -114,18 +115,20 @@ internal object TestOrdinaryDrainRowsV1 {
             fun observed(original: TestRunOrdinaryDrainV1, read: TestOrdinaryInventoryReadbackV1): Entry {
                 original.requireInventoryEvent(read.event)
                 return Entry(read.event.route.objectKey, requireJournalVersion(read.versionId), read.wireSha256, read.event.semanticSha256,
-                    read.event.route.eventId, read.event.tuple.epoch, read.ciphertextByteCount, "PENDING").also { it.requireBound(original) }
+                    read.event.route.eventId, read.event.tuple.epoch, read.ciphertextByteCount, "PENDING", read.event.tuple.eventKind.name).also { it.requireBound(original) }
             }
             fun read(row: ResultSet, original: TestRunOrdinaryDrainV1): Entry {
                 requireDrain(row.getObject("data_scope_id", UUID::class.java) == original.scope && boolean(row, "test_only") &&
-                    row.getObject("writer_generation", UUID::class.java).toString() == original.writer && row.getString("event_kind") == "OWNER_DELETE")
+                    row.getObject("writer_generation", UUID::class.java).toString() == original.writer)
                 return Entry(checkNotNull(row.getString("object_key")), requireJournalVersion(row.getString("object_version")),
                     hash(row, "ciphertext_hash"), hash(row, "semantic_hash"), checkNotNull(row.getString("event_id")),
-                    row.getLong("journal_epoch"), row.getLong("entry_bytes"), checkNotNull(row.getString("replay_state"))).also { it.requireBound(original) }
+                    row.getLong("journal_epoch"), row.getLong("entry_bytes"), checkNotNull(row.getString("replay_state")),
+                    checkNotNull(row.getString("event_kind"))).also { it.requireBound(original) }
             }
         }
         private fun requireBound(original: TestRunOrdinaryDrainV1) {
             val journal = original.routing.journalConfiguration
+            original.requireInventoryKind(kind)
             requireDrain(epoch in 1..original.cutoff && ciphertextBytes in 1..journal.declaration().limits.decoder.maximumEnvelopeBytes.toLong() &&
                 ciphertext.matches(HASH) && semantic.matches(HASH) && replay in setOf("PENDING", "APPLIED"))
             EpochSealFramesV1.opaque(eventId)
@@ -140,24 +143,28 @@ internal object TestOrdinaryDrainRowsV1 {
     }
 
     /** Strict terminal reader deliberately separate from the unchanged RESERVED/PARTIAL lower reader. */
-    class Recovery(row: ResultSet, original: TestRunOrdinaryDrainV1, eventId: String) {
+    class Recovery(row: ResultSet, original: TestRunOrdinaryDrainV1, eventId: String, kind: String) {
         val state = checkNotNull(row.getString("state"))
         val promise = vector(row, "reserved_amounts")
         val used = vector(row, "converted_amounts")
         val lastAppliedAt = checkNotNull(row.getTimestamp("converted_at")).toInstant()
         val remaining get() = promise - used
         init {
+            original.requireInventoryKind(kind)
+            val all = kind == "OWNER_DELETE_ALL"
             requireDrain(row.getString("event_id") == eventId && row.getString("publication_ref") == eventId &&
                 row.getObject("data_scope_id", UUID::class.java) == original.scope && boolean(row, "test_only") && boolean(row, "finite") &&
-                row.getInt("accounting_version") == 1 && state in setOf("PARTIAL", "CONVERTED") && promise == OwnerDeleteCapacityCharges.RECOVERY &&
+                row.getInt("accounting_version") == 1 && state in setOf("PARTIAL", "CONVERTED") &&
+                promise == (if (all) OwnerDeleteAllCapacityCharges.RECOVERY else OwnerDeleteCapacityCharges.RECOVERY) &&
                 used.fitsWithin(promise) && !used.isZero())
             val installs = used[ComplaintCapacityCounter.INSTALLATION_IDS]
             val resources = used[ComplaintCapacityCounter.RESOURCE_IDS]
             val audits = used[ComplaintCapacityCounter.AUDIT_ROWS]
             val applied = used[ComplaintCapacityCounter.JOURNAL_APPLIED]
-            requireDrain(installs in 0..1 && resources in 0..1 && audits in 0..5 && applied in 1..4 &&
+            requireDrain(installs in 0..1 && resources in 0..(if (all) 100 else 1) && audits in 0..(if (all) 113 else 5) && applied in 1..4 &&
                 used == ComplaintCapacityCharges.INSTALLATION_ID.scaled(installs) + ComplaintCapacityCharges.RESOURCE_ID.scaled(resources) +
-                    ComplaintCapacityCharges.AUDIT.scaled(audits) + OwnerDeleteCapacityCharges.APPLIED.scaled(applied))
+                    ComplaintCapacityCharges.AUDIT.scaled(audits) +
+                    (if (all) OwnerDeleteAllCapacityCharges.APPLIED else OwnerDeleteCapacityCharges.APPLIED).scaled(applied))
         }
     }
 

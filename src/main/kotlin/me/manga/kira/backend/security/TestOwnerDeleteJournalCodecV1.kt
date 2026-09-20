@@ -31,6 +31,7 @@ internal class TestOwnerDeleteJournalCodecV1(
     private val writer = declaration.writer.generationId
     private val ordinaryPrefix = routingOwner.journalConfiguration.ordinaryPrefix
     private val json = TestOwnerDeleteJournalJsonV1(limits, routingOwner.journalConfiguration.ownerDeleteAll)
+    private val adminJson = TestAdminDeleteJournalJsonV1(limits)
     private val retainedIds = declaration.routing.keys.map { it.keyId }.toSet()
 
     /** Start once for the entire connection-free publication attempt, not once for each key call. */
@@ -64,6 +65,22 @@ internal class TestOwnerDeleteJournalCodecV1(
             }
         }
 
+    /** Explicit lower ADMIN family; owner canonicalization remains closed to INSTALLATION. */
+    fun canonicalizeAdmin(tuple: TestAdminDeleteJournalTupleV1, targetId: UUID, selectedRoutingKeyId: String? = null): TestOwnerDeleteJournalEventV1 =
+        testDeleteCodecBoundary {
+            requireJournalCodec(routingOwner.journalConfiguration.adminDelete && tuple.scope == routingOwner.journalConfiguration.scope)
+            ComplaintIdentifiers.resourceId(targetId.toString())
+            val routes = routingOwner.derive(tuple)
+            val route = if (selectedRoutingKeyId == null) routes.active else routes.candidates().single { it.routingKeyId == selectedRoutingKeyId }
+            val payload = TestAdminDeleteJournalPayloadV1(1, "ADMIN_DELETE", route.eventId, tuple.epoch, writer, "ADMIN", tuple.actorId.toString(),
+                tuple.operationKey.toString(), tuple.encodedFingerprint(), tuple.consumedGrantId.toString(), listOf(tuple.ownerInstallationId.toString()),
+                "TEST", tuple.scope.id.toString(), listOf(targetId.toString()))
+            withTestDeleteBuffers { buffers ->
+                val canonical = buffers.own(adminJson.encodePayload(payload))
+                event(bindTestAdminDeletePayload(routingOwner, payload, route.routingKeyId), canonical)
+            }
+        }
+
     /** Fresh randomized candidate. Its exact bytes may be reused, but it is not durably frozen evidence. */
     fun seal(event: TestOwnerDeleteJournalEventV1, attempt: TestOwnerDeleteCodecAttemptV1): EncodedTestOwnerDeleteEnvelopeV1 = testDeleteCodecBoundary {
         attempt.requireOwner(routingOwner)
@@ -72,7 +89,10 @@ internal class TestOwnerDeleteJournalCodecV1(
         requireJournalCodec(event.byteCount <= limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
         withTestDeleteBuffers { buffers ->
             val plaintext = buffers.own(event.canonicalBytes())
-            val bound = bindTestOwnerDeletePayload(routingOwner, json.payload(plaintext), event.route.routingKeyId)
+            val bound = when (event.comparison) {
+                is TestOwnerDeleteJournalTupleV1 -> bindTestOwnerDeletePayload(routingOwner, json.payload(plaintext), event.route.routingKeyId)
+                is TestAdminDeleteJournalTupleV1 -> bindTestAdminDeletePayload(routingOwner, adminJson.payload(plaintext), event.route.routingKeyId)
+            }
             requireJournalCodec(bound.route == event.route)
             val nonce = buffers.own(ByteArray(NONCE_BYTES))
             random.nextBytes(nonce)
@@ -101,7 +121,14 @@ internal class TestOwnerDeleteJournalCodecV1(
 
     /** Caller must independently supply the storage location. A decoded event is not S3/version evidence. */
     fun open(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1): DecodedTestOwnerDeleteJournalEventV1 =
+        openFamily(expectedBucket, expectedObjectKey, wireBytes, attempt, admin = false)
+
+    fun openAdmin(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1): DecodedTestOwnerDeleteJournalEventV1 =
+        openFamily(expectedBucket, expectedObjectKey, wireBytes, attempt, admin = true)
+
+    private fun openFamily(expectedBucket: String, expectedObjectKey: String, wireBytes: ByteArray, attempt: TestOwnerDeleteCodecAttemptV1, admin: Boolean): DecodedTestOwnerDeleteJournalEventV1 =
         testDeleteCodecBoundary {
+            requireJournalCodec(!admin || routingOwner.journalConfiguration.adminDelete)
             attempt.requireOwner(routingOwner)
             attempt.remainingMillis(1)
             requireJournalCodec(expectedBucket == declaration.journalLocation.bucket)
@@ -111,7 +138,7 @@ internal class TestOwnerDeleteJournalCodecV1(
                 val wire = buffers.own(wireBytes.copyOf())
                 val parts = split(wire, buffers)
                 val header = json.header(parts.header)
-                val nonce = buffers.own(bindHeader(header, expectedBucket, expectedObjectKey))
+                val nonce = buffers.own(bindHeader(header, expectedBucket, expectedObjectKey, admin))
                 val associatedData = buffers.own(aad(header, parts.header.size, parts.wrapped, parts.ciphertext.size))
                 val wrappedForPort = buffers.own(parts.wrapped.copyOf())
                 requireConnectionFree()
@@ -128,9 +155,15 @@ internal class TestOwnerDeleteJournalCodecV1(
                 }
                 attempt.remainingMillis(1)
                 requireJournalCodec(plaintext.size <= limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
-                val payload = json.payload(plaintext)
-                requireJournalCodec(payload.eventKind == header.objectKind && payload.eventId == header.eventId && payload.publicationEpoch == header.publicationEpoch)
-                val bound = bindTestOwnerDeletePayload(routingOwner, payload, header.routingKeyId)
+                val bound = if (admin) {
+                    val payload = adminJson.payload(plaintext)
+                    requireJournalCodec(payload.eventKind == header.objectKind && payload.eventId == header.eventId && payload.publicationEpoch == header.publicationEpoch)
+                    bindTestAdminDeletePayload(routingOwner, payload, header.routingKeyId)
+                } else {
+                    val payload = json.payload(plaintext)
+                    requireJournalCodec(payload.eventKind == header.objectKind && payload.eventId == header.eventId && payload.publicationEpoch == header.publicationEpoch)
+                    bindTestOwnerDeletePayload(routingOwner, payload, header.routingKeyId)
+                }
                 requireJournalCodec(bound.route.objectKey == expectedObjectKey && bound.route.eventId == header.eventId)
                 attempt.remainingMillis(1)
                 DecodedTestOwnerDeleteJournalEventV1(event(bound, plaintext), Sha256.hex(wire))
@@ -145,9 +178,11 @@ internal class TestOwnerDeleteJournalCodecV1(
         canonical,
     )
 
-    private fun bindHeader(value: TestOwnerDeleteJournalHeaderV1, expectedBucket: String, expectedKey: String): ByteArray {
+    private fun bindHeader(value: TestOwnerDeleteJournalHeaderV1, expectedBucket: String, expectedKey: String, admin: Boolean): ByteArray {
         requireJournalCodec(value.envelopeSchemaVersion == 1 && value.payloadSchemaVersion == 1 && value.canonicalizerId == "kcj-1")
-        requireJournalCodec((value.objectKind == KIND || (routingOwner.journalConfiguration.ownerDeleteAll && value.objectKind == "OWNER_DELETE_ALL")) && value.encryptionAlgorithm == "AES-256-GCM" && value.dataKeyMode == DATA_KEY_MODE)
+        requireJournalCodec(if (admin) routingOwner.journalConfiguration.adminDelete && value.objectKind == "ADMIN_DELETE"
+            else value.objectKind == KIND || (routingOwner.journalConfiguration.ownerDeleteAll && value.objectKind == "OWNER_DELETE_ALL"))
+        requireJournalCodec(value.encryptionAlgorithm == "AES-256-GCM" && value.dataKeyMode == DATA_KEY_MODE)
         requireJournalCodec(value.kmsKeyId == declaration.encryption.keyId && value.kmsKeyArn == declaration.encryption.keyArn)
         requireJournalCodec(value.bucket == expectedBucket && value.objectKey == expectedKey)
         requireJournalCodec(value.writerGeneration == writer && value.ordinaryPrefix == ordinaryPrefix)
@@ -288,6 +323,19 @@ internal class TestOwnerDeleteJournalCodecV1(
             }
         }
 
+        /** Portless Admin restoration is separate from the owner parser and is never apply authority. */
+        fun restoreAdminCanonical(routingOwner: TestOwnerDeleteJournalRoutingV1, canonicalBytes: ByteArray, selectedRoutingKeyId: String): TestOwnerDeleteJournalEventV1 =
+            testDeleteCodecBoundary {
+                requireJournalCodec(routingOwner.journalConfiguration.adminDelete)
+                val limits = routingOwner.journalConfiguration.declaration().limits.decoder
+                requireJournalCodec(canonicalBytes.size in 1..limits.maximumPlaintextBytes, OwnerDeleteAllJournalFailure.LIMIT_EXCEEDED)
+                withTestDeleteBuffers { buffers ->
+                    val canonical = buffers.own(canonicalBytes.copyOf())
+                    val bound = bindTestAdminDeletePayload(routingOwner, TestAdminDeleteJournalJsonV1(limits).payload(canonical), selectedRoutingKeyId)
+                    TestOwnerDeleteJournalEventV1(routingOwner, bound.tuple, bound.targets, bound.route, canonical)
+                }
+            }
+
         private const val MAGIC = 0x4b4a4556
         private const val OUTER_BYTES = 20
         private const val NONCE_BYTES = 12
@@ -353,11 +401,16 @@ internal class TestOwnerDeleteCodecAttemptV1(
 /** Immutable canonical content bound to the actual routing owner; not authorization or an outbox row. */
 internal class TestOwnerDeleteJournalEventV1(
     private val owner: TestOwnerDeleteJournalRoutingV1,
-    val tuple: TestOwnerDeleteJournalTupleV1,
+    val comparison: TestDeletionJournalTupleV1,
     targets: List<UUID>,
     val route: TestOwnerDeleteRoutingCandidateV1,
     canonical: ByteArray,
 ) {
+    /** Existing owner callers remain explicitly closed, even when this shared envelope carries Admin. */
+    val tuple: TestOwnerDeleteJournalTupleV1 get() = comparison as? TestOwnerDeleteJournalTupleV1
+        ?: throw OwnerDeleteAllJournalException(OwnerDeleteAllJournalFailure.INVALID_INPUT)
+    val adminTuple: TestAdminDeleteJournalTupleV1 get() = comparison as? TestAdminDeleteJournalTupleV1
+        ?: throw OwnerDeleteAllJournalException(OwnerDeleteAllJournalFailure.INVALID_INPUT)
     private val storedTargets = targets.toList()
     private val storedCanonical = canonical.copyOf()
     val semanticSha256: String = Sha256.hex(storedCanonical)
@@ -385,7 +438,7 @@ internal class DecodedTestOwnerDeleteJournalEventV1(val event: TestOwnerDeleteJo
     override fun toString(): String = "DecodedTestOwnerDeleteJournalEventV1(redacted,no-authority)"
 }
 
-private class TestOwnerDeleteBoundPayload(val tuple: TestOwnerDeleteJournalTupleV1, val targets: List<UUID>, val route: TestOwnerDeleteRoutingCandidateV1)
+private class TestOwnerDeleteBoundPayload(val tuple: TestDeletionJournalTupleV1, val targets: List<UUID>, val route: TestOwnerDeleteRoutingCandidateV1)
 
 private fun bindTestOwnerDeletePayload(
     routingOwner: TestOwnerDeleteJournalRoutingV1,
@@ -422,6 +475,24 @@ private fun bindTestOwnerDeletePayload(
     val route = routingOwner.derive(tuple).candidates().single { it.routingKeyId == selectedId }
     requireJournalCodec(value.eventId == route.eventId)
     return TestOwnerDeleteBoundPayload(tuple, targets, route)
+}
+
+private fun bindTestAdminDeletePayload(routingOwner: TestOwnerDeleteJournalRoutingV1, value: TestAdminDeleteJournalPayloadV1, selectedId: String): TestOwnerDeleteBoundPayload {
+    val journal = routingOwner.journalConfiguration
+    requireJournalCodec(journal.adminDelete && value.schemaVersion == 1 && value.eventKind == "ADMIN_DELETE" && value.actorKind == "ADMIN")
+    requireJournalCodec(value.writerGeneration == journal.declaration().writer.generationId && value.publicationEpoch > 0)
+    requireJournalCodec(value.dataScopeKind == "TEST" && value.dataScopeId == journal.scope.id.toString())
+    requireJournalCodec(value.ownerInstallationIds.size == 1 && value.complaintIds.size == 1)
+    val actor = UUID.fromString(value.actorId)
+    requireJournalCodec(actor.toString() == value.actorId && actor != UUID(0, 0))
+    val fingerprint = ComplaintIdentifiers.fingerprint(value.requestFingerprint)
+    val tuple = try { TestAdminDeleteJournalTupleV1(value.publicationEpoch, actor, ComplaintIdentifiers.idempotencyKey(value.operationKey), fingerprint,
+        journal.scope, ComplaintIdentifiers.idempotencyKey(value.consumedGrantId), ComplaintIdentifiers.installationId(value.ownerInstallationIds.single())) }
+    finally { fingerprint.fill(0) }
+    val target = ComplaintIdentifiers.resourceId(value.complaintIds.single())
+    val route = routingOwner.derive(tuple).candidates().single { it.routingKeyId == selectedId }
+    requireJournalCodec(route.eventId == value.eventId)
+    return TestOwnerDeleteBoundPayload(tuple, listOf(target), route)
 }
 
 private class TestDeleteOwnedBuffers {

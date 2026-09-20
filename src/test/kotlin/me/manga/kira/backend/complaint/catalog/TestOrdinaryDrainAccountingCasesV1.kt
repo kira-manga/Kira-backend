@@ -237,8 +237,9 @@ internal object TestOrdinaryDrainAccountingCasesV1 {
         }
     }
 
-    internal fun assertPaidOrdinaryResult(f: TestRunOrdinaryDrainFixtureV1, objects: List<JournalPublisherObject>, approval: ByteArray) {
-        val observed = TestOrdinaryDrainAccountingObservationV1(f)
+    internal fun assertPaidOrdinaryResult(f: TestRunOrdinaryDrainFixtureV1, objects: List<JournalPublisherObject>, approval: ByteArray,
+        eventId: String = f.history.eventId) {
+        val observed = TestOrdinaryDrainAccountingObservationV1(f, eventId)
         val journal = f.registration.process.consumers.journalConfiguration
         val json = TestTerminalJsonV1(journal)
         val cut = json.progress(observed.runBytes("permanent_denial_bytes")).let { progress ->
@@ -315,12 +316,12 @@ internal object TestOrdinaryDrainLiteralV1 {
 }
 
 /** Independent raw observer only, including while the real phase owns the single Spring resource. */
-internal class TestOrdinaryDrainAccountingObservationV1(private val f: TestRunOrdinaryDrainFixtureV1) {
+internal class TestOrdinaryDrainAccountingObservationV1(private val f: TestRunOrdinaryDrainFixtureV1, private val eventId: String = f.history.eventId) {
     fun state(): TestOrdinaryDrainAccountingStateV1 = raw { connection ->
         val run = rows(connection, "SELECT unused_reserve, encode(permanent_denial_bytes, 'hex') AS progress FROM complaint_test_runs WHERE data_scope_id = ?", f.scope) {
             vector(it, "unused_reserve") to it.getString("progress")
         }.single()
-        val recovery = rows(connection, "SELECT state, reserved_amounts, converted_amounts, converted_at::text AS applied FROM complaint_recovery_capacity_reservations WHERE event_id = ?", f.history.eventId) {
+        val recovery = rows(connection, "SELECT state, reserved_amounts, converted_amounts, converted_at::text AS applied FROM complaint_recovery_capacity_reservations WHERE event_id = ?", eventId) {
             val state = it.getString("state")
             val used = if (state == "RESERVED") { assertNull(it.getArray("converted_amounts")); ComplaintCapacityVector.ZERO }
                 else vector(it, "converted_amounts")
@@ -340,7 +341,7 @@ internal class TestOrdinaryDrainAccountingObservationV1(private val f: TestRunOr
 
     fun image(): Map<String, List<String>> = raw { connection ->
         f.history.p.image(connection).toMutableMap().also { result ->
-            listOf("complaint_installation_ids", "app_installations", "complaint_idempotency_receipts", "complaint_journal_publications",
+            listOf("complaint_installation_ids", "app_installations", "complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_journal_publications",
                 "complaint_recovery_capacity_reservations", "complaint_deletion_journal_applied", "complaint_deletion_journal_retirements",
                 "complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_test_terminal_intents").forEach { table ->
                 result[table] = rows(connection, "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", f.scope) { it.getString(1) }
@@ -351,6 +352,11 @@ internal class TestOrdinaryDrainAccountingObservationV1(private val f: TestRunOr
     fun primaryImage(): List<String> = raw { connection ->
         rows(connection, "SELECT jsonb_build_array(to_jsonb(p), p.xmin::text)::text FROM complaint_journal_publications p WHERE event_id = ?", f.history.eventId) { it.getString(1) } +
             rows(connection, "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM complaint_idempotency_receipts r WHERE publication_ref = ?", f.history.eventId) { it.getString(1) }
+    }
+
+    fun allPrimaryImage(): List<String> = raw { connection ->
+        rows(connection, "SELECT jsonb_build_array(to_jsonb(p), p.xmin::text)::text FROM complaint_journal_publications p WHERE event_id = ?", eventId) { it.getString(1) } +
+            rows(connection, "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM installation_deletion_receipts r WHERE publication_ref = ?", eventId) { it.getString(1) }
     }
 
     fun previousHistory(): String = raw { connection -> rows(connection,

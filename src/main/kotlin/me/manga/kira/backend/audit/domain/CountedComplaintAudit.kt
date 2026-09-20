@@ -61,3 +61,7 @@ internal fun ComplaintAuditMutation.scalarDetails(): Map<String, Any?> = when (t
 internal interface CountedOwnerDeleteAuditRepository {
     fun recordOwnerDelete(entry: CountedOwnerDeleteAuditEntry, allocation: ComplaintAuditAllocation)
 }
+
+internal interface CountedAdminDeleteAuditRepository {
+    fun recordAdminDelete(entry: CountedAdminDeleteAuditEntry, allocation: ComplaintAuditAllocation)
+}

@@ -40,12 +40,11 @@ internal class TestOwnerDeleteVersionReadbackV1(
                 val facts = cheapChecks(binding, listed, fetched)
                 acknowledgment?.let { requireJournalPublication(it.wireSha256 == facts.wireSha256, JournalPublicationFailureV1.CONFLICT) }
                 checkAttempt(binding)
-                val decoded = codec.open(
-                    routing.journalConfiguration.declaration().journalLocation.bucket,
-                    binding.event.route.objectKey,
-                    fetched.bytes,
-                    binding.attempt,
-                )
+                val bucket = routing.journalConfiguration.declaration().journalLocation.bucket
+                val decoded = when (binding.event.comparison) {
+                    is me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1 -> codec.open(bucket, binding.event.route.objectKey, fetched.bytes, binding.attempt)
+                    is me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1 -> codec.openAdmin(bucket, binding.event.route.objectKey, fetched.bytes, binding.attempt)
+                }
                 requireJournalPublication(decoded.event.belongsTo(routing) && decoded.event.route == binding.event.route, JournalPublicationFailureV1.CONFLICT)
                 val expected = binding.event.canonicalBytes()
                 val actual = decoded.event.canonicalBytes()

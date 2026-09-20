@@ -22,6 +22,11 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteApplyOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteApplyStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllVerificationStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteAllApplyStore
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteAllApplyOperation
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyInputV1
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteVerificationStore
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
@@ -49,8 +54,8 @@ import java.util.concurrent.locks.LockSupport
 /**
  * One registered original: primaries, independently admitted denial, native pair, paid durable cut,
  * exact residual recovery, P-U conversion, paid scan recycle, and the actual strict native successor.
- * First-same-process/single-writer OWNER_DELETE with all FOUR retained keys only. SEALED is a
- * prerequisite, not inferred from registration. No ordinary gate, restart registration, ALL or purge.
+ * First-same-process/single-writer owner deletion with FOUR paid exact versions per family.
+ * ALL is explicitly configured and typed; Admin/retirement remain unsupported. No restart or purge.
  */
 internal class TestRunOrdinaryDrainV1 private constructor(
     internal val registration: ComplaintTestNamespaceRegistrationV1,
@@ -80,14 +85,18 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         private set
     internal val cutoff: Long get() = checkNotNull(capturedControl).cutoff
     internal val currentEpoch: Long get() = checkNotNull(capturedControl).epoch
-    internal val path: PersistencePhasePath get() = if (step === TestOrdinaryDrainStepV1.RECOVERY_APPLY)
-        PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY else PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN
+    internal val path: PersistencePhasePath get() = if (step === TestOrdinaryDrainStepV1.RECOVERY_APPLY) when (checkNotNull(currentEntry).kind) {
+        "OWNER_DELETE" -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY
+        "OWNER_DELETE_ALL" -> PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY
+        else -> throw TestOrdinaryDrainExceptionV1()
+    } else PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN
     internal var step = TestOrdinaryDrainStepV1.OPEN
         private set
     private val authority = registration.process.ordinaryDenial ?: throw TestOrdinaryDrainExceptionV1()
     private val failure = AtomicReference<Throwable?>()
     private var started = false
     private var finished = false
+    private var completedStrictDrain = false
     private var cleanupUncertain = false
     private var phaseEntered = false
     private var phase: PersistencePhaseContext? = null
@@ -101,9 +110,13 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     private var currentEntry: TestOrdinaryDrainRowsV1.Entry? = null
     private var currentRecoveryInput: TestOwnerDeleteApplyInputV1? = null
     private var currentRecoveryOperation: ComplaintOwnerDeleteApplyOperation? = null
+    private var currentAllRecoveryInput: OwnerDeleteAllApplyInputV1? = null
+    private var currentAllRecoveryOperation: ComplaintOwnerDeleteAllApplyOperation? = null
     private var recoveryControls = false
     private var recoveryRun = false
     private var primaryContinuation: TestRunOwnerDeleteContinuationV1? = null
+    private var allContinuation: TestRunOwnerDeleteAllContinuationV1? = null
+    private var selectedAllLocator: Pair<UUID, UUID>? = null
     private var lastUtc: Instant? = null
     private var closedSeal: TestRunOrdinarySealV1? = null
     private var closeoutReady = false
@@ -125,6 +138,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
 
     private val graph: TestOwnerDeleteLocalGraphV1
     private val apply: JdbcComplaintOwnerDeleteApplyStore
+    private val allApply: JdbcComplaintOwnerDeleteAllApplyStore?
 
     init {
         requireConnectionFree()
@@ -143,6 +157,11 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         val store = JdbcComplaintOwnerDeleteStore(deletionJdbc, capacity, audit, graph, codec = null)
         val verification = JdbcComplaintOwnerDeleteVerificationStore(deletionJdbc, graph, store)
         apply = JdbcComplaintOwnerDeleteApplyStore(deletionJdbc, capacity, audit, graph, store, verification)
+        allApply = if (routing.journalConfiguration.ownerDeleteAll) {
+            val allStore = JdbcComplaintOwnerDeleteAllStore(deletionJdbc, capacity, audit, graph, codec = null)
+            JdbcComplaintOwnerDeleteAllApplyStore(deletionJdbc, capacity, audit, graph,
+                JdbcComplaintOwnerDeleteAllVerificationStore(deletionJdbc, graph, allStore))
+        } else null
     }
 
     fun drain(approval: ByteArray, rawEvidence: List<ByteArray>, primaryCredentials: AwsSessionCredentials,
@@ -164,6 +183,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
                     requireRunning()
                 } while (page.moreObserved)
                 primaryContinuation = null
+                if (routing.journalConfiguration.ownerDeleteAll) completeAllPrimaries(primaryCredentials)
                 execute(TestOrdinaryDrainStepV1.CAPTURE) // Exact locked completeness, never the page's diagnostic zero.
             }
             step = TestOrdinaryDrainStepV1.ADMISSION
@@ -207,12 +227,53 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         } catch (problem: Throwable) { observeFailure(problem) }
         finally {
             runCatching { native?.close() }.exceptionOrNull()?.let(::observeFailure)
-            currentReadback = null; currentEntry = null; currentRecoveryInput = null
+            currentReadback = null; currentEntry = null; currentRecoveryInput = null; currentAllRecoveryInput = null
             finished = true
         }
         throwIfSignalled()
         requireDrain(complete && !cleanupUncertain && phase == null && !phaseEntered)
+        completedStrictDrain = true
         return TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED
+    }
+
+    /** Actual next edge, not an enum-based admission. No terminal network dispatch is performed. */
+    fun prepareInstallationManifest(): TestRunInstallationManifestResultV1 = TestRunInstallationManifestV1.begin(this).prepare()
+
+    internal fun requireManifestPredecessor() {
+        throwIfSignalled()
+        requireDrain(caller === Thread.currentThread() && started && finished && completedStrictDrain && !cleanupUncertain &&
+            phase == null && !phaseEntered && step === TestOrdinaryDrainStepV1.SEAL && closeoutReady)
+        registration.requireSealingOwner(coordinator.ownership)
+        checkNotNull(closedSeal).completedStrictReference(this)
+    }
+    internal fun manifestControl(): TestOrdinaryDrainRowsV1.Control {
+        requireManifestPredecessor()
+        return checkNotNull(capturedControl)
+    }
+    internal fun manifestCut(): TestTerminalCompletedCutV1 {
+        requireManifestPredecessor()
+        return checkNotNull(paidProgress).completedCuts().single()
+    }
+    internal fun manifestDenialRetainUntil(): Long {
+        requireManifestPredecessor()
+        return checkNotNull(admitted).statement.evidenceRetainUntilEpochSecond
+    }
+    internal fun manifestSeal() = checkNotNull(closedSeal).completedStrictReference(this).also { requireManifestPredecessor() }
+
+    private fun completeAllPrimaries(credentials: AwsSessionCredentials) {
+        val publication = TestRunPreparedOwnerDeleteAllV1.Publication(credentials, s3, kms, clock, nanoTime)
+        do {
+            val page = execute(TestOrdinaryDrainStepV1.ALL_PRIMARY_PAGE).allPrimaries
+            for (locator in page.take(2)) {
+                step = TestOrdinaryDrainStepV1.PRIMARIES
+                selectedAllLocator = locator
+                val child = TestRunPreparedOwnerDeleteAllV1.forDrain(this, registration, deletionOwner, deletionJdbc, audit,
+                    locator.first, locator.second, publication)
+                child.complete()
+                requireRunning(); child.requireCompletedForDrain(this)
+                allContinuation = null; selectedAllLocator = null
+            }
+        } while (page.size > 2)
     }
 
     private fun execute(selected: TestOrdinaryDrainStepV1): TestOrdinaryDrainOperationV1 {
@@ -291,8 +352,17 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     }
     internal fun requireInventoryEvent(event: TestOwnerDeleteJournalEventV1) {
         requireRunning()
+        requireInventoryKind(event.tuple.eventKind.name)
         requireDrain(event.belongsTo(routing) && event.tuple.scope == routing.journalConfiguration.scope &&
-            event.tuple.eventKind === ComplaintJournalDeletionKindV1.OWNER_DELETE && event.tuple.epoch in 1..cutoff && event.complaintIds().size == 1)
+            event.tuple.epoch in 1..cutoff && when (event.tuple.eventKind) {
+                ComplaintJournalDeletionKindV1.OWNER_DELETE -> event.complaintIds().size == 1
+                ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> event.complaintIds().size in 0..100
+                else -> false
+            })
+    }
+    internal fun requireInventoryKind(kind: String) {
+        requireRunning()
+        requireDrain(kind == "OWNER_DELETE" || (kind == "OWNER_DELETE_ALL" && routing.journalConfiguration.ownerDeleteAll))
     }
     internal fun beginInventoryPass(reader: TestOrdinaryInventoryReaderV1, pass: Int, startedAt: Instant) {
         requireInventoryReader(reader)
@@ -347,20 +417,38 @@ internal class TestRunOrdinaryDrainV1 private constructor(
                     checkNotNull(native).requireReleasedReadback(this, observed); observed.requireOriginal(this)
                     entry.requireSame(TestOrdinaryDrainRowsV1.Entry.observed(this, observed))
                     currentReadback = observed
-                    currentRecoveryInput = apply.captureRegisteredInventoryRecovery(this)
-                    step = TestOrdinaryDrainStepV1.RECOVERY_APPLY
-                    val selected = deletionOwner.enterTestOrdinaryInventoryRecovery(this)
-                    var operation: ComplaintOwnerDeleteApplyOperation? = null
-                    try { selected.begin(); operation = apply.apply(checkNotNull(currentRecoveryInput)); selected.commit() }
-                    catch (problem: Throwable) { observeFailure(problem); selected.recordFailure(problem) }
-                    finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
-                    throwIfSignalled(); checkNotNull(operation).requireRecovered()
+                    when (entry.kind) {
+                        "OWNER_DELETE" -> recoverOwnerEntry()
+                        "OWNER_DELETE_ALL" -> recoverAllEntry()
+                        else -> throw TestOrdinaryDrainExceptionV1()
+                    }
                     currentReadback = null; currentRecoveryInput = null; currentRecoveryOperation = null
+                    currentAllRecoveryInput = null; currentAllRecoveryOperation = null
                     recoveryControls = false; recoveryRun = false
                 }
                 afterEntry = entry.locator; currentEntry = null
             }
         }
+    }
+    private fun recoverOwnerEntry() {
+        currentRecoveryInput = apply.captureRegisteredInventoryRecovery(this)
+        step = TestOrdinaryDrainStepV1.RECOVERY_APPLY
+        val selected = deletionOwner.enterTestOrdinaryInventoryRecovery(this)
+        var operation: ComplaintOwnerDeleteApplyOperation? = null
+        try { selected.begin(); operation = apply.apply(checkNotNull(currentRecoveryInput)); selected.commit() }
+        catch (problem: Throwable) { observeFailure(problem); selected.recordFailure(problem) }
+        finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
+        throwIfSignalled(); checkNotNull(operation).requireRecovered()
+    }
+    private fun recoverAllEntry() {
+        currentAllRecoveryInput = checkNotNull(allApply).captureRegisteredInventoryRecovery(this)
+        step = TestOrdinaryDrainStepV1.RECOVERY_APPLY
+        val selected = deletionOwner.enterTestOrdinaryAllInventoryRecovery(this)
+        var operation: ComplaintOwnerDeleteAllApplyOperation? = null
+        try { selected.begin(); operation = checkNotNull(allApply).apply(checkNotNull(currentAllRecoveryInput)); selected.commit() }
+        catch (problem: Throwable) { observeFailure(problem); selected.recordFailure(problem) }
+        finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
+        throwIfSignalled(); checkNotNull(operation).requireRecovered()
     }
     private fun convertPrimaries() {
         afterPrimary = null
@@ -376,11 +464,20 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     }
     internal fun ownedRecoveryReadback(store: JdbcComplaintOwnerDeleteApplyStore, selectedGraph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): TestOrdinaryInventoryReadbackV1 {
         requireConnectionFree(); requireRecoveryPersistence(deletionOwner, jdbc, selectedGraph)
-        requireDrain(store === apply && step === TestOrdinaryDrainStepV1.RECOVERY_NATIVE && currentRecoveryInput == null)
+        requireDrain(store === apply && step === TestOrdinaryDrainStepV1.RECOVERY_NATIVE && currentRecoveryInput == null && checkNotNull(currentEntry).kind == "OWNER_DELETE")
+        return checkNotNull(currentReadback)
+    }
+    internal fun ownedRecoveryReadback(store: JdbcComplaintOwnerDeleteAllApplyStore, selectedGraph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): TestOrdinaryInventoryReadbackV1 {
+        requireConnectionFree(); requireRecoveryPersistence(deletionOwner, jdbc, selectedGraph)
+        requireDrain(store === allApply && step === TestOrdinaryDrainStepV1.RECOVERY_NATIVE && currentAllRecoveryInput == null && checkNotNull(currentEntry).kind == "OWNER_DELETE_ALL")
         return checkNotNull(currentReadback)
     }
     internal fun requireRecoveryInput(input: TestOwnerDeleteApplyInputV1) {
         requireRunning(); requireDrain(step === TestOrdinaryDrainStepV1.RECOVERY_APPLY && currentRecoveryInput === input && currentReadback != null && currentEntry != null)
+    }
+    internal fun requireRecoveryInput(input: OwnerDeleteAllApplyInputV1) {
+        requireRunning(); requireDrain(step === TestOrdinaryDrainStepV1.RECOVERY_APPLY && currentAllRecoveryInput === input &&
+            currentReadback != null && checkNotNull(currentEntry).kind == "OWNER_DELETE_ALL" && currentRecoveryInput == null)
     }
     internal fun requireRecoveryPersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1) {
         requireRunning(); requireDrain(ownership === deletionOwner && jdbc === deletionJdbc && selectedGraph === graph)
@@ -396,9 +493,18 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         TestOrdinaryDrainPersistenceV1.requireControls(jdbc, this)
         recoveryControls = true
     }
+    internal fun authenticateRecoveryAndControls(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, operation: ComplaintOwnerDeleteAllApplyOperation) {
+        requireRecoveryPersistence(ownership, jdbc, graph)
+        requireDrain(step === TestOrdinaryDrainStepV1.RECOVERY_APPLY && currentAllRecoveryOperation == null && currentRecoveryOperation == null && !recoveryControls)
+        operation.requireRegisteredInventoryRecovery(this)
+        currentAllRecoveryOperation = operation
+        authenticateAs(jdbc, PersistenceJdbcParticipantRole.DELETION)
+        TestOrdinaryDrainPersistenceV1.requireControls(jdbc, this)
+        recoveryControls = true
+    }
     internal fun requireRecoveryControls(jdbc: JdbcTemplate): Long {
         requireRecoveryPersistence(deletionOwner, jdbc, graph)
-        requireDrain(recoveryControls && currentRecoveryOperation != null && phase != null)
+        requireDrain(recoveryControls && ((currentRecoveryOperation != null) xor (currentAllRecoveryOperation != null)) && phase != null)
         TestOrdinaryDrainPersistenceV1.requireLease(jdbc, this)
         return currentEpoch
     }
@@ -413,6 +519,11 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         requireDrain(operation === currentRecoveryOperation && recoveryRun)
         TestOrdinaryDrainPersistenceV1.markRecovered(jdbc, this, checkNotNull(currentEntry))
     }
+    internal fun recordRecoveredVersion(operation: ComplaintOwnerDeleteAllApplyOperation, jdbc: JdbcTemplate) {
+        requireRecoveryControls(jdbc)
+        requireDrain(operation === currentAllRecoveryOperation && recoveryRun)
+        TestOrdinaryDrainPersistenceV1.markRecovered(jdbc, this, checkNotNull(currentEntry))
+    }
 
     internal fun retainPrimaryContinuation(original: TestRunOwnerDeleteContinuationV1, candidate: ComplaintTestNamespaceRegistrationV1,
         ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
@@ -423,6 +534,16 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     internal fun requirePrimaryContinuation(original: TestRunOwnerDeleteContinuationV1) {
         requireRunning(); requireDrain(step === TestOrdinaryDrainStepV1.PRIMARIES && primaryContinuation === original && phase == null)
     }
+    internal fun retainPrimaryContinuation(original: TestRunOwnerDeleteAllContinuationV1, candidate: ComplaintTestNamespaceRegistrationV1,
+        ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
+        requireConnectionFree(); requireRunning()
+        requireDrain(step === TestOrdinaryDrainStepV1.PRIMARIES && allContinuation == null && primaryContinuation == null &&
+            selectedAllLocator == (original.actorId to original.operationKey) && candidate === registration && ownership === deletionOwner && jdbc === deletionJdbc)
+        allContinuation = original
+    }
+    internal fun requirePrimaryContinuation(original: TestRunOwnerDeleteAllContinuationV1) {
+        requireRunning(); requireDrain(step === TestOrdinaryDrainStepV1.PRIMARIES && allContinuation === original && phase == null)
+    }
 
     internal fun requirePersistence(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
         requireRunning(); registration.requireSealingOwner(ownership)
@@ -432,8 +553,11 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     }
     internal fun requirePhaseEntry(ownership: PersistencePhaseOwnership, selected: PersistencePhasePath) {
         requireConnectionFree(); requireRunning(); requireDrain(selected === path && phase == null && !phaseEntered)
-        if (selected === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) requireDrain(ownership === deletionOwner && currentRecoveryInput != null)
-        else registration.requireSealingOwner(ownership)
+        when (selected) {
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY -> requireDrain(ownership === deletionOwner && currentRecoveryInput != null && currentAllRecoveryInput == null)
+            PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY -> requireDrain(ownership === deletionOwner && currentAllRecoveryInput != null && currentRecoveryInput == null)
+            else -> registration.requireSealingOwner(ownership)
+        }
         if (step === TestOrdinaryDrainStepV1.WITNESS) requireReleasedNativePair()
         phaseEntered = true
     }
@@ -455,7 +579,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     }
     internal fun requireMaintenanceGate(ownership: PersistencePhaseOwnership, selected: PersistencePhasePath, gate: PersistenceComplaintMaintenanceGateV1) {
         requireRunning(); requireDrain(selected === path && phaseEntered && phase != null)
-        if (selected === PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) {
+        if (selected in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_APPLY)) {
             requireDrain(ownership === deletionOwner); registration.requireOwnerDeleteContinuationGate(gate)
         } else { registration.requireSealingOwner(ownership); registration.requireSealingGate(gate) }
     }
@@ -507,7 +631,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         }
     }
     internal fun throwIfSignalled() { failure.get()?.let { if (it is InterruptedException) Thread.currentThread().interrupt(); throw it } }
-    override fun toString(): String = "TestRunOrdinaryDrainV1(registered-four-key-owner-delete-only,redacted)"
+    override fun toString(): String = "TestRunOrdinaryDrainV1(registered-closed-owner-families,redacted)"
     companion object {
         fun begin(registration: ComplaintTestNamespaceRegistrationV1, deletionOwner: PersistencePhaseOwnership, deletionJdbc: JdbcTemplate,
             audit: AuditService): TestRunOrdinaryDrainV1 = TestRunOrdinaryDrainV1(registration, deletionOwner, deletionJdbc, audit, Clock.systemUTC(), System::nanoTime, null, null)
@@ -518,7 +642,7 @@ internal class TestRunOrdinaryDrainV1 private constructor(
 }
 
 internal enum class TestOrdinaryDrainStepV1 {
-    OPEN, PRIMARIES, CAPTURE, ADMISSION, ABANDON, NATIVE, BEGIN_PASS, APPEND, COMPLETE_PASS, WITNESS,
+    OPEN, PRIMARIES, ALL_PRIMARY_PAGE, CAPTURE, ADMISSION, ABANDON, NATIVE, BEGIN_PASS, APPEND, COMPLETE_PASS, WITNESS,
     RECOVERY_PAGE, RECOVERY_NATIVE, RECOVERY_APPLY, PRIMARY_PAGE, CONVERT, CLOSEOUT, RECYCLE, READY, SEAL,
 }
 internal enum class TestRunOrdinaryDrainResultV1 { POST_DENIAL_ORDINARY_SEAL_VERIFIED }

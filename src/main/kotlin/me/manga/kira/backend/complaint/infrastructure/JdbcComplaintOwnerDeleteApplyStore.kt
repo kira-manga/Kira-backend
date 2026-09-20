@@ -161,10 +161,17 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         publication?.let { row -> primary = TestOwnerDeleteJournalCodecV1.restoreCanonical(graph.routing, row.bytes, row.routingKey) }
         receipt?.let { check(it.publication == primary.route.eventId && (!missingP || input.recovery)) }
         if (receipt != null && missingP) error("Receipt cannot reference absent primary")
-        val isPrimary = primary.route == event.route
+        // Only the frozen exact version can complete/replay the primary. The registered native
+        // inventory may also observe byte-equivalent opaque versions at that SAME retained key.
+        // They are aliases, not permission to replace the primary's version/proof/receipt.
+        val isPrimary = primary.route == event.route && (input.registeredInventory == null ||
+            publication?.objectVersion == input.record.objectVersion)
         check(input.recovery || isPrimary)
         publication?.let { row ->
             if (isPrimary && row.state != "PREPARED") requireProof(row, exactLocal = !input.recovery)
+            if (input.registeredInventory != null && primary.route == event.route) {
+                check(primary.canonicalBytes().contentEquals(event.canonicalBytes()) && row.ciphertextHash.contentEquals(input.ciphertext))
+            }
             if (!input.recovery) check(row.state in setOf("VERIFIED", "APPLIED"))
             receipt?.let { check(it.authorizedAt == row.createdAt) }
         }
@@ -184,10 +191,15 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
             check(row.getString("object_key") == route.objectKey)
             val version = requireJournalVersion(row.getString("object_version"))
             val hash = checkNotNull(row.getBytes("ciphertext_hash")).also { check(it.size == 32) }
-            if (route == event.route) { check(version == input.record.objectVersion && hash.contentEquals(input.ciphertext)); exactApplied = true }
-            route.eventId
+            if (route == event.route) {
+                check(hash.contentEquals(input.ciphertext))
+                if (input.registeredInventory == null) check(version == input.record.objectVersion)
+                if (version == input.record.objectVersion) exactApplied = true
+            }
+            route.eventId to version
         }, routes.joinToString(",", "{", "}") { it.eventId })
         check(appliedRows.size <= OwnerDeleteCapacityCharges.MAX_RETAINED_CANDIDATES && appliedRows.distinct().size == appliedRows.size)
+        if (input.registeredInventory == null) check(appliedRows.map { it.first }.distinct().size == appliedRows.size)
         familyApplied = appliedRows.size
         // Each retained first application spends exactly one logical E in the same transaction.
         check((reserve?.used ?: ComplaintCapacityVector.ZERO)[ComplaintCapacityCounter.JOURNAL_APPLIED] == familyApplied.toLong())

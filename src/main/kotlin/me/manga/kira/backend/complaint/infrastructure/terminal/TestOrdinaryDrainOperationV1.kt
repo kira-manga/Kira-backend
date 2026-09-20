@@ -44,6 +44,8 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
         private set
     internal var primaries: List<String> = emptyList()
         private set
+    internal var allPrimaries: List<Pair<UUID, UUID>> = emptyList()
+        private set
     private var stage = Stage.NEW
     private var counters: JdbcComplaintCapacityStore.LockedTestOrdinaryDrain? = null
     private var initialScanCharge = ComplaintCapacityVector.ZERO
@@ -97,7 +99,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
         initialScanCharge = TestOrdinaryDrainPersistenceV1.scanCharge(jdbc, original, run)
         run.requirePaidRemainder(initialScanCharge, sidecars)
         progress = run.progress
-        if (step !in setOf(TestOrdinaryDrainStepV1.OPEN, TestOrdinaryDrainStepV1.CAPTURE, TestOrdinaryDrainStepV1.ABANDON,
+        if (step !in setOf(TestOrdinaryDrainStepV1.OPEN, TestOrdinaryDrainStepV1.ALL_PRIMARY_PAGE, TestOrdinaryDrainStepV1.CAPTURE, TestOrdinaryDrainStepV1.ABANDON,
                 TestOrdinaryDrainStepV1.BEGIN_PASS, TestOrdinaryDrainStepV1.APPEND, TestOrdinaryDrainStepV1.COMPLETE_PASS, TestOrdinaryDrainStepV1.WITNESS)) {
             original.requirePaidProgress(run.progress)
         }
@@ -110,6 +112,14 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
                 } else requireDrain(run.progress == null && scans.isEmpty() && sidecars == 0L)
             }
             TestOrdinaryDrainStepV1.CAPTURE -> capture()
+            TestOrdinaryDrainStepV1.ALL_PRIMARY_PAGE -> {
+                requireDrain(original.routing.journalConfiguration.ownerDeleteAll && run.progress == null && scans.isEmpty() && sidecars == 0L &&
+                    original.capturedControl().sequence == 0L)
+                allPrimaries = jdbc.query(TestOrdinaryDrainSqlV1.allPrimaryPage, { row, _ ->
+                    requireDrain(TestOrdinaryDrainRowsV1.boolean(row, "valid"))
+                    checkNotNull(row.getObject("installation_id", UUID::class.java)) to checkNotNull(row.getObject("deletion_key", UUID::class.java))
+                }, original.scope, original.writer, Timestamp.from(run.sealedAt))
+            }
             TestOrdinaryDrainStepV1.ABANDON -> recycle(abandon = true)
             TestOrdinaryDrainStepV1.BEGIN_PASS -> beginPass()
             TestOrdinaryDrainStepV1.APPEND -> append()
@@ -192,7 +202,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
         val charge = entry.framedBytes()
         // Plain INSERT: nonadjacent native repeats/cycles cannot be filtered or adopted as progress.
         requireDrain(jdbc.update(TestOrdinaryDrainSqlV1.insertEntry, original.scanId, scan.pass, original.scope, entry.key, entry.version,
-            hex(entry.ciphertext), hex(entry.semantic), entry.eventId, original.writer, entry.epoch, entry.ciphertextBytes) == 1)
+            hex(entry.ciphertext), hex(entry.semantic), entry.eventId, entry.kind, original.writer, entry.epoch, entry.ciphertextBytes) == 1)
         requireDrain(jdbc.update(TestOrdinaryDrainSqlV1.appendRun, charge, original.scanId, scan.pass, original.scope, charge) == 1)
         spend = TestTerminalCapacityChargesV1.SCAN_ENTRY
     }
@@ -263,6 +273,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
 
     private fun convert() {
         val value = checkNotNull(selectedPrimary)
+        TestOrdinaryDrainPersistenceV1.requireNoPending(jdbc, original)
         TestOrdinaryDrainPersistenceV1.requirePaidScanHeaders(original, scans, completePair = value.recovery.state != "CONVERTED")
         TestOrdinaryDrainPersistenceV1.requireAppliedCut(jdbc, original)
         TestOrdinaryDrainPersistenceV1.requirePrimary(jdbc, original, run, value, converted = false,
@@ -316,7 +327,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
             }, discovered.id, discovered.pass, discovered.entry.key, discovered.entry.version).single()
             requireDrain(actual == discovered.entry)
             requireDrain(jdbc.update(TestOrdinaryDrainSqlV1.deleteEntry, discovered.id, discovered.pass, original.scope, actual.key, actual.version,
-                hex(actual.ciphertext), hex(actual.semantic), actual.eventId, original.writer, actual.epoch, actual.ciphertextBytes, actual.replay) == 1)
+                hex(actual.ciphertext), hex(actual.semantic), actual.eventId, actual.kind, original.writer, actual.epoch, actual.ciphertextBytes, actual.replay) == 1)
             recycled += TestTerminalCapacityChargesV1.SCAN_ENTRY
         }
         scans.forEach { scan ->
@@ -362,7 +373,7 @@ internal class TestOrdinaryDrainOperationV1 private constructor(
     private data class Discovered(val id: UUID, val pass: Int, val entry: TestOrdinaryDrainRowsV1.Entry)
     private enum class Stage { NEW, CONTROLS, PRIMARY, COUNTERS_REQUESTED, COUNTERS_LOCKING, BODY, TRANSFER, COMPLETE }
     companion object {
-        private val SQL_STEPS = setOf(TestOrdinaryDrainStepV1.OPEN, TestOrdinaryDrainStepV1.CAPTURE, TestOrdinaryDrainStepV1.ABANDON,
+        private val SQL_STEPS = setOf(TestOrdinaryDrainStepV1.OPEN, TestOrdinaryDrainStepV1.ALL_PRIMARY_PAGE, TestOrdinaryDrainStepV1.CAPTURE, TestOrdinaryDrainStepV1.ABANDON,
             TestOrdinaryDrainStepV1.BEGIN_PASS, TestOrdinaryDrainStepV1.APPEND, TestOrdinaryDrainStepV1.COMPLETE_PASS, TestOrdinaryDrainStepV1.WITNESS,
             TestOrdinaryDrainStepV1.RECOVERY_PAGE, TestOrdinaryDrainStepV1.PRIMARY_PAGE, TestOrdinaryDrainStepV1.CONVERT,
             TestOrdinaryDrainStepV1.CLOSEOUT, TestOrdinaryDrainStepV1.RECYCLE, TestOrdinaryDrainStepV1.READY)

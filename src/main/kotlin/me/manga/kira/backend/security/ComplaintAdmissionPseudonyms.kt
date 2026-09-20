@@ -1,5 +1,6 @@
 package me.manga.kira.backend.security
 
+import me.manga.kira.backend.complaint.domain.ComplaintAdminDeleteTuple
 import me.manga.kira.backend.complaint.domain.ComplaintAdminContentTuple
 import me.manga.kira.backend.complaint.domain.ComplaintAdminStatusTuple
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
@@ -34,6 +35,18 @@ internal object ComplaintAdmissionPseudonyms {
         listOf(
             domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
             ascii(ComplaintAdminContentTuple.OPERATION), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
+        ),
+    )
+
+    /** ADMIN+scope is domain-separated from owner writes and Admin-read's minute store. */
+    fun adminDeleteActor(keys: List<ComplaintAdmissionKey>, actor: UUID, scope: ComplaintDataScope): List<ComplaintAdmissionBucketKey> =
+        derive(keys, listOf(domain(), ascii("ACTOR"), ascii("ADMIN"), uuid(actor), uuid(scope.id), ascii(ComplaintAdminDeleteTuple.OPERATION)))
+
+    fun adminDeleteMember(keys: List<ComplaintAdmissionKey>, tuple: ComplaintAdminDeleteTuple): List<ComplaintAdmissionBucketKey> = derive(
+        keys,
+        listOf(
+            domain(), ascii("MEMBER"), ascii("ADMIN"), uuid(tuple.actor), uuid(tuple.scope.id),
+            ascii(ComplaintAdminDeleteTuple.OPERATION), uuid(tuple.key), uuid(tuple.targetId), tuple.fingerprintBytes(),
         ),
     )
 

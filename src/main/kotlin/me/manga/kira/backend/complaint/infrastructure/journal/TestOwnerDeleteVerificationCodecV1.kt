@@ -25,7 +25,9 @@ import java.time.temporal.ChronoUnit
  * [observed] accepts evidence, and only the publisher's private same-routing readback can supply it.
  * Stored bytes are parsed without a JSONB round trip, routing HMAC, envelope open or provider call.
  */
-internal class TestOwnerDeleteVerificationCodecV1(private val routing: TestOwnerDeleteJournalRoutingV1) {
+internal class TestOwnerDeleteVerificationCodecV1 private constructor(private val routing: TestOwnerDeleteJournalRoutingV1, private val admin: Boolean) {
+    constructor(routing: TestOwnerDeleteJournalRoutingV1) : this(routing, false)
+    private val kind = if (admin) "ADMIN_DELETE" else "OWNER_DELETE"
     private val declaration = routing.journalConfiguration.declaration()
     private val factory = JsonFactory.builder()
         .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
@@ -55,9 +57,9 @@ internal class TestOwnerDeleteVerificationCodecV1(private val routing: TestOwner
         // observation or PostgreSQL/driver rounding may replace the genuine publisher observation.
         val verifiedAt = readback.verifiedAt.truncatedTo(ChronoUnit.MICROS)
         val value = TestOwnerDeleteVerificationRecordV1(
-            1, "OWNER_DELETE", routing.journalConfiguration.scope.id.toString(), true,
+            1, kind, routing.journalConfiguration.scope.id.toString(), true,
             routing.journalConfiguration.sha256, event.route.eventId, declaration.writer.generationId,
-            event.tuple.epoch, event.route.routingKeyId, event.route.objectKey, event.semanticSha256,
+            event.comparison.epoch, event.route.routingKeyId, event.route.objectKey, event.semanticSha256,
             readback.versionId, readback.wireSha256, readback.lastModified.toString(), "COMPLIANCE",
             readback.retainUntil.toString(), verifiedAt.toString(),
         )
@@ -99,10 +101,11 @@ internal class TestOwnerDeleteVerificationCodecV1(private val routing: TestOwner
 
     private fun requireBound(value: TestOwnerDeleteVerificationRecordV1, event: TestOwnerDeleteJournalEventV1) {
         validate(value)
-        val tuple = event.tuple
+        val tuple = event.comparison
         requireTestDeleteVerification(
             event.belongsTo(routing) && tuple.scope == routing.journalConfiguration.scope &&
-                tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE && tuple.actorKind == ComplaintJournalActorKindV1.INSTALLATION,
+                (if (admin) routing.journalConfiguration.adminDelete && tuple is me.manga.kira.backend.security.TestAdminDeleteJournalTupleV1
+                else tuple is me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1 && tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE),
         )
         requireTestDeleteVerification(
             value.journalConfigurationSha256 == routing.journalConfiguration.sha256 && value.writerGeneration == declaration.writer.generationId &&
@@ -112,7 +115,7 @@ internal class TestOwnerDeleteVerificationCodecV1(private val routing: TestOwner
     }
 
     private fun validate(value: TestOwnerDeleteVerificationRecordV1) = testDeleteVerificationValue {
-        requireTestDeleteVerification(value.schema == 1 && value.eventKind == "OWNER_DELETE")
+        requireTestDeleteVerification(value.schema == 1 && value.eventKind == kind)
         requireTestDeleteVerification(value.dataScopeId == routing.journalConfiguration.scope.id.toString() && value.testOnly && value.objectLockMode == "COMPLIANCE")
         requireTestDeleteVerification(value.journalEpoch > 0 && OfflineBootstrapGrammar.uuidV4(value.writerGeneration))
         requireTestDeleteVerification(
@@ -185,6 +188,10 @@ internal class TestOwnerDeleteVerificationCodecV1(private val routing: TestOwner
     override fun toString(): String = "TestOwnerDeleteVerificationCodecV1(redacted,comparison-only)"
 
     companion object {
+        fun forAdmin(routing: TestOwnerDeleteJournalRoutingV1): TestOwnerDeleteVerificationCodecV1 {
+            require(routing.journalConfiguration.adminDelete)
+            return TestOwnerDeleteVerificationCodecV1(routing, true)
+        }
         const val MAXIMUM_BYTES = 65_536
         private const val LAST_EPOCH_SECOND = 253_402_300_799L
         private val DECIMAL = Regex("0|[1-9][0-9]{0,18}")
