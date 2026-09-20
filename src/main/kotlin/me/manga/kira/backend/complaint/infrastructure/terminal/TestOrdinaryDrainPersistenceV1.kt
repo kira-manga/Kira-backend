@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplyRows
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteAllApplySql
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournalVersion
+import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
@@ -212,10 +213,21 @@ internal object TestOrdinaryDrainPersistenceV1 {
                 checkNotNull(row.getTimestamp("applied_at")).toInstant()
         }, id).single()
         val p = publication.first
-        val event = if (p.kind === ComplaintJournalDeletionKindV1.ADMIN_DELETE) {
-            requireDrain(original.routing.journalConfiguration.registeredAdminDelete)
-            TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(original.routing, p.bytes, p.routingKey).also(p::requireAdminEvent)
-        } else TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey).also(p::requireEvent)
+        val event = when (p.kind) {
+            ComplaintJournalDeletionKindV1.ADMIN_DELETE -> {
+                requireDrain(original.routing.journalConfiguration.registeredAdminDelete)
+                TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(original.routing, p.bytes, p.routingKey).also(p::requireAdminEvent)
+            }
+            ComplaintJournalDeletionKindV1.OWNER_DELETE ->
+                TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey).also(p::requireEvent)
+            ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL -> {
+                requireDrain(original.routing.journalConfiguration.ownerDeleteAll)
+                TestOwnerDeleteJournalCodecV1.restoreCanonical(original.routing, p.bytes, p.routingKey).also {
+                    p.requireEvent(OwnerDeleteAllJournalBindingV1(original.routing).fromTest(it))
+                }
+            }
+            else -> throw TestOrdinaryDrainExceptionV1()
+        }
         val recovery = jdbc.query(recoverySql, { row, _ -> TestOrdinaryDrainRowsV1.Recovery(row, original, id, p.kind.name) }, id).single()
         return when (p.kind) {
             ComplaintJournalDeletionKindV1.OWNER_DELETE -> {

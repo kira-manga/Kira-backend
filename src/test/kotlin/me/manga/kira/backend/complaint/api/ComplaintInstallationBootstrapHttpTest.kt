@@ -220,7 +220,13 @@ class ComplaintInstallationBootstrapHttpTest {
         bootstrapTestRequest().apply { addHeader("X-Kira-Complaint-Contract", "2") } to 400,
         bootstrapTestRequest().apply { addHeader("X-Kira-Complaint-Contract", "1\n") } to 400,
     ) + listOf("Content-Length", "Content-Encoding", "Content-Type", "X-Kira-Complaint-Contract").map { header ->
-        bootstrapTestRequest().apply { addHeader(header, "0"); addHeader(header, "0") } to 400
+        // MockHttpServletRequest.addHeader replaces Content-Type instead of preserving duplicates.
+        // Expose the actual two raw values to the handler; do not turn this into a singleton case.
+        object : MockHttpServletRequest("GET", ComplaintInstallationBootstrapHttpHandler.PATH) {
+            override fun getHeaders(name: String): Enumeration<String> =
+                if (name.equals(header, ignoreCase = true)) java.util.Collections.enumeration(listOf("0", "0"))
+                else super.getHeaders(name)
+        }.apply { remoteAddr = "192.0.2.1" } to 400
     }
 
     private fun assertHeaders(response: MockHttpServletResponse, media: String, head: Boolean = false) {

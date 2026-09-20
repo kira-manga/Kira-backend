@@ -65,7 +65,8 @@ class ComplaintAdminReadIT {
     }
 
     @Test
-    fun statsScopeWideCountsUseTheSameVisibleRelationAsAdminRead() = withFixture(::verifyComplaintAdminStatsPopulation)
+    fun statsScopeWideCountsUseTheSameVisibleRelationAsAdminRead() =
+        withFixture(installationLimit = 4, work = ::verifyComplaintAdminStatsPopulation)
 
     @Test
     fun statsTopFiftyUsesUtf8TiesAndExactRemainderWithNullRankedNormally() = withFixture(::verifyComplaintAdminStatsRanking)
@@ -689,9 +690,11 @@ class ComplaintAdminReadIT {
         return signed.serialize()
     }
 
-    private fun withFixture(work: (ComplaintAdminReadFixture) -> Unit) {
+    private fun withFixture(work: (ComplaintAdminReadFixture) -> Unit) = withFixture(installationLimit = 2, work = work)
+
+    private fun withFixture(installationLimit: Long, work: (ComplaintAdminReadFixture) -> Unit) {
         withOrdinaryComplaintInstallationEnrollment(database.value) { base ->
-            OrdinaryComplaintTestInstallationFixture(base).use { run ->
+            OrdinaryComplaintTestInstallationFixture(base, limit = installationLimit).use { run ->
                 ComplaintOwnerHistoryFixture(base, run).use { rows -> work(ComplaintAdminReadFixture(rows)) }
             }
         }

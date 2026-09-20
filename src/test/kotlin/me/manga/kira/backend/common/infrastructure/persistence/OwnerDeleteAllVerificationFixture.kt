@@ -89,16 +89,41 @@ internal class OwnerDeleteAllVerificationFixture(
     }
 
     fun assertNoForbiddenLocks(observation: StepUpPhaseObservation) {
+        // VERIFY is a maintenance writer: require its exact shared M, but no E or other advisory lock.
         assertEquals(
-            false,
+            1L,
             auth.observer.queryForObject(
-                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory')",
+                "SELECT count(*) FROM pg_locks WHERE pid = ? AND locktype = 'advisory'",
+                Long::class.java,
+                observation.identity.first,
+            ),
+        )
+        assertEquals(
+            true,
+            auth.observer.queryForObject(
+                "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE pid = ? AND locktype = 'advisory' " +
+                    "AND mode = 'ShareLock' AND granted " +
+                    "AND classid::bigint = ((hashtextextended('complaint-maintenance-v1', 0) >> 32) & 4294967295) " +
+                    "AND objid::bigint = (hashtextextended('complaint-maintenance-v1', 0) & 4294967295) AND objsubid = 1)",
                 Boolean::class.java,
                 observation.identity.first,
             ),
         )
+        // The mandatory M gate reads these tables only; no row/writer lock is permitted.
+        assertEquals(
+            listOf(
+                "complaint_catalog_mutations:relation:AccessShareLock:true",
+                "complaint_journal_control:relation:AccessShareLock:true",
+            ),
+            auth.observer.query(
+                "SELECT c.relname, l.locktype, l.mode, l.granted FROM pg_locks l JOIN pg_class c ON c.oid = l.relation " +
+                    "WHERE l.pid = ? AND c.relname IN ('complaint_catalog_mutations', 'complaint_journal_control') ORDER BY c.relname",
+                RowMapper { row, _ -> "${row.getString(1)}:${row.getString(2)}:${row.getString(3)}:${row.getBoolean(4)}" },
+                observation.identity.first,
+            ),
+        )
         val forbidden = listOf(
-            "complaint_journal_control", "complaint_recovery_capacity_reservations", "complaint_capacity_counters", "complaint_test_runs",
+            "complaint_recovery_capacity_reservations", "complaint_capacity_counters", "complaint_test_runs",
             "complaint_installation_ids", "app_installations", "complaint_resource_ids", "complaints", "audit_log", "complaint_deletion_journal_applied",
         ).joinToString(",", "{", "}")
         assertEquals(

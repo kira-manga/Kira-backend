@@ -44,7 +44,9 @@ class ComplaintAdminDeleteHttpHandlerTest {
                 override fun getOutputStream(): ServletOutputStream = error("No 204 stream")
                 override fun getWriter(): PrintWriter = error("No 204 writer")
             }.apply {
-                for (name in listOf("ETag", "Location", "Content-Type", "Content-Length", "Transfer-Encoding")) addHeader(name, "stale")
+                for (name in listOf("ETag", "Location", "Content-Type", "Content-Length", "Transfer-Encoding")) {
+                    addHeader(name, if (name == "Content-Length") "1" else "stale")
+                }
             }
             handler.handleRequest(input, output)
             assertEquals(204, output.status)

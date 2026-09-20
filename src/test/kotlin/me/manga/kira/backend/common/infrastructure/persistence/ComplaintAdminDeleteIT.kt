@@ -76,7 +76,22 @@ class ComplaintAdminDeleteIT {
             handler.handleRequest(f.input(attempt, grant.token), response)
             applied(response, grant.grantId)
             assertTrue(erasureReached)
-            assertEquals(5, f.observations.map { it.second.phase }.distinct().size)
+            // This observer sees JdbcTemplate statements, not normal authentication's phase-selected raw connection.
+            val observedPhases = f.observations.map { it.second.phase }.distinct()
+            assertEquals(
+                listOf(
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_PREFLIGHT,
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_AUTHORIZE,
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY,
+                    PersistencePhasePath.COMPLAINT_ADMIN_DELETE_APPLY,
+                ),
+                observedPhases.map { lifecycleField(it, "path") },
+            )
+            observedPhases.forEach { phase ->
+                assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+                assertEquals("CLOSED", lifecycleField(phase, "stage").toString())
+            }
+            assertTrue(f.observations.all { it.second.lease.completion.quiescent() })
             assertFalse(present(f, parent))
             assertEquals(identities, f.rows("complaint_installation_ids"))
             assertEquals(credentials, f.rows("app_installations"))
