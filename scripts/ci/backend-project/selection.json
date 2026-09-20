@@ -1,0 +1,174 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 1189,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures()"
+      ]
+    },
+    {
+      "annotation_line": 1226,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationTargetCommitAndReleaseFailuresAreSticky",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testRegistrationTargetCommitAndReleaseFailuresAreSticky()"
+      ]
+    },
+    {
+      "annotation_line": 1233,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation()"
+      ]
+    },
+    {
+      "annotation_line": 1134,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot()"
+      ]
+    },
+    {
+      "annotation_line": 1121,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes()"
+      ]
+    },
+    {
+      "annotation_line": 1252,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunSealingBarrierAndPaidAuditReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testRunSealingBarrierAndPaidAuditReplay()"
+      ]
+    },
+    {
+      "annotation_line": 1257,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunSealingRollbackAndUnknownDoNotChargeAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "3d7c543278220d3b85841b2574d4f26dd278ed1602c1feef9da3050cedd977c9",
+      "xml_names": [
+        "testRunSealingRollbackAndUnknownDoNotChargeAudit()"
+      ]
+    },
+    {
+      "annotation_line": 10,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "every admitted phase has an explicit maintenance lock classification",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "2a80f4e573e100e7318be4537339b61bdf184e90ea5e90f71d996396ed55d9ac",
+      "xml_names": [
+        "every admitted phase has an explicit maintenance lock classification()"
+      ]
+    },
+    {
+      "annotation_line": 140,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "settings M and fresh gate dispatch cap at seventy five without restarting the hundred millisecond prefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "2a80f4e573e100e7318be4537339b61bdf184e90ea5e90f71d996396ed55d9ac",
+      "xml_names": [
+        "settings M and fresh gate dispatch cap at seventy five without restarting the hundred millisecond prefix()"
+      ]
+    },
+    {
+      "annotation_line": 168,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "earlier original work deadline clips settings and native dispatch without a new phase allowance",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "2a80f4e573e100e7318be4537339b61bdf184e90ea5e90f71d996396ed55d9ac",
+      "xml_names": [
+        "earlier original work deadline clips settings and native dispatch without a new phase allowance()"
+      ]
+    },
+    {
+      "annotation_line": 186,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "expected_invocations_from_annotation": 1,
+      "method": "fractional last millisecond exact expiry and overrun cannot become zero unlimited timeouts",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+      "source_sha256": "2a80f4e573e100e7318be4537339b61bdf184e90ea5e90f71d996396ed55d9ac",
+      "xml_names": [
+        "fractional last millisecond exact expiry and overrun cannot become zero unlimited timeouts()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_pg_classes": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT"
+  ],
+  "expected_pg_methods": 7,
+  "expected_total": 11,
+  "expected_unit_methods": 4,
+  "selection_basis": {
+    "carry_unchanged_remaining43_passes": 31,
+    "prior_runs": [
+      35486231042,
+      35486232819,
+      35486234514
+    ],
+    "reviewed_joined_source": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+    "scope": "Disjoint terminal batchB: failed-only recovery plus new terminal scope; no unchanged passing suites."
+  },
+  "source_head": "b3b31d9dd2ad350069679ee77ff3f857edfe3047",
+  "source_status": "SOURCE_ONLY_REVIEWED_NOT_ACCEPTED",
+  "static_sources": {},
+  "status": "SOURCE_BOUND_DISPATCH_BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test": 4,
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 7
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRetainsOriginalDeadlineCancellationAndCleanupFailures",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationTargetCommitAndReleaseFailuresAreSticky",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRegistrationRejectsChangedTargetNamedRootAndClosedContinuation",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRejectsForeignOrExhaustedLeasesAndConcurrentRoot",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testActivationProjectionRechecksOriginalDCorePolicyHistoryAndRawBytes",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunSealingBarrierAndPaidAuditReplay",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunSealingRollbackAndUnknownDoNotChargeAudit",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.every admitted phase has an explicit maintenance lock classification",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.settings M and fresh gate dispatch cap at seventy five without restarting the hundred millisecond prefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.earlier original work deadline clips settings and native dispatch without a new phase allowance",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.fractional last millisecond exact expiry and overrun cannot become zero unlimited timeouts"
+  ]
+}
