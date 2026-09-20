@@ -134,7 +134,7 @@ internal class StepUpGrantIssuance private constructor(
         val token = ByteArray(TOKEN_BYTES).also(random::nextBytes).let(encoder::encodeToString)
         val id = UUID.randomUUID()
         val hash = Sha256.hexUtf8(token)
-        proof = IssuedScopedAdminStepUp(token, expiresAt, scope)
+        proof = IssuedScopedAdminStepUp(token, expiresAt, scope, id)
         stage = Stage.INSERTING
         requireAt(Stage.INSERTING, jdbc)
         check(jdbc.update(INSERT_GRANT, id, snapshot.userId, hash, scope.storedName, Timestamp.from(now), Timestamp.from(expiresAt)) == 1)

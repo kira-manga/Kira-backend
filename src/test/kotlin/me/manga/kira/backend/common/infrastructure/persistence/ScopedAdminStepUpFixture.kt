@@ -100,11 +100,14 @@ internal class ScopedStepUpFixture(
     fun assertStoredProof(proof: IssuedScopedAdminStepUp, createdAt: Instant) {
         assertEquals(32, Base64.getUrlDecoder().decode(proof.token).size)
         assertTrue(proof.token.length <= 128)
+        assertEquals(4, proof.grantId.version())
+        assertEquals(2, proof.grantId.variant())
         assertFalse(proof.toString().contains(proof.token))
+        assertFalse(proof.toString().contains(proof.grantId.toString()))
         val matched = ordinary.foreignTemplate().query(
-            "SELECT user_id, token_hash, scope, created_at, expires_at, used_at FROM admin_step_up_grants WHERE token_hash = ?",
+            "SELECT id, user_id, token_hash, scope, created_at, expires_at, used_at FROM admin_step_up_grants WHERE token_hash = ?",
             { result, _ ->
-                result.getObject("user_id", UUID::class.java) == ordinary.userId &&
+                result.getObject("id", UUID::class.java) == proof.grantId && result.getObject("user_id", UUID::class.java) == ordinary.userId &&
                     result.getString("token_hash") == Sha256.hexUtf8(proof.token) &&
                     result.getString("scope") == proof.scope.storedName &&
                     result.getTimestamp("created_at").toInstant() == createdAt &&

@@ -188,7 +188,23 @@ internal class VersionBoundTestActivationConfigurationV1 private constructor(
             totalAttemptMillis: Long,
         ): VersionBoundTestActivationConfigurationV1 {
             requireConnectionFree()
-            require(totalAttemptMillis in 1..30_000 && pools.epochRotation == null) { INVALID_TEST_ACTIVATION_CONFIGURATION }
+            require(pools.epochRotation == null) { INVALID_TEST_ACTIVATION_CONFIGURATION }
+            val (checked, spki) = checkIndependentInputs(reader, journal, signingKey, initialWriterRegistryBytes, totalAttemptMillis)
+            return VersionBoundTestActivationConfigurationV1(pools, reader, journal, signingKey, checked, spki, totalAttemptMillis).also {
+                it.requireRetained(pools, reader, journal)
+            }
+        }
+
+        /** Shared cold validation before intake acquires secrets; the actual retained owner rechecks the same raw inputs. */
+        internal fun checkIndependentInputs(
+            reader: VersionBoundCatalogReadbackConfigurationV1,
+            journal: TestOwnerDeleteJournalConfigurationV1,
+            signingKey: CatalogSigningKeyV1,
+            initialWriterRegistryBytes: ByteArray,
+            totalAttemptMillis: Long,
+        ): Pair<CheckedOfflineBootstrapRegistry, ByteArray> {
+            requireConnectionFree()
+            require(totalAttemptMillis in 1..30_000) { INVALID_TEST_ACTIVATION_CONFIGURATION }
             require(initialWriterRegistryBytes.size in 1..OfflineTrustBundleProtocol.MAX_ENVELOPE_BYTES) { INVALID_TEST_ACTIVATION_CONFIGURATION }
             val rawRegistry = initialWriterRegistryBytes.copyOf()
             val currentBytes = reader.currentBundleBytes()
@@ -207,9 +223,7 @@ internal class VersionBoundTestActivationConfigurationV1 private constructor(
             require(spki.contentEquals(Base64.getDecoder().decode(member.publicKeySpkiBase64))) {
                 INVALID_TEST_ACTIVATION_CONFIGURATION
             }
-            return VersionBoundTestActivationConfigurationV1(pools, reader, journal, signingKey, checked, spki, totalAttemptMillis).also {
-                it.requireRetained(pools, reader, journal)
-            }
+            return checked to spki
         }
 
         private fun requireWriter(

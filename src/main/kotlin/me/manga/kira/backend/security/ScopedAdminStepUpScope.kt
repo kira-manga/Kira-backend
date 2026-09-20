@@ -2,6 +2,7 @@ package me.manga.kira.backend.security
 
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import java.time.Instant
+import java.util.UUID
 
 /** Internal grant identity. The HTTP allowlist defaults to SOURCE; complaint admission stays separately closed. */
 internal enum class ScopedAdminStepUpScope(val storedName: String) {
@@ -23,6 +24,6 @@ internal enum class ScopedAdminStepUpScope(val storedName: String) {
 }
 
 /** The plaintext proof is returned once after committed, released completion; never a generated data-class diagnostic. */
-internal class IssuedScopedAdminStepUp(val token: String, val expiresAt: Instant, val scope: ScopedAdminStepUpScope) {
+internal class IssuedScopedAdminStepUp(val token: String, val expiresAt: Instant, val scope: ScopedAdminStepUpScope, val grantId: UUID) {
     override fun toString(): String = "IssuedScopedAdminStepUp(redacted)"
 }

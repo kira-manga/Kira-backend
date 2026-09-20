@@ -131,7 +131,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     override fun toString(): String = "VersionBoundTestNamespaceProcessV1(PRE_CUTOVER_TEST,memory,redacted,no-authority)"
 
     companion object {
-        /** No supplied D/preimage, LIVE conversion or current-state input. Optional seal intake is cold and fixture-only. */
+        /** No supplied D/preimage, LIVE conversion or current-state input. Any optional seal owner is retained BEFORE D. */
         fun fromRetained(
             consumers: VersionBoundTestComplaintConsumerConfigurationV1,
             pools: VersionBoundPersistencePools,

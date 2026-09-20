@@ -29,6 +29,12 @@ class AdminStepUpController(private val stepUp: AdminStepUpService, private val 
         return ResponseEntity
             .ok()
             .cacheControl(CacheControl.noStore())
+            .headers { headers ->
+                if (issued.scope == AdminStepUpService.COMPLAINT_MODERATION_MUTATION_SCOPE) {
+                    // Server-to-server correlation only. The existing JSON and source scope remain unchanged.
+                    headers.set(GRANT_ID_HEADER, issued.grantId.toString())
+                }
+            }
             .body(
                 AdminStepUpResponse(
                     token = issued.token,
@@ -36,6 +42,10 @@ class AdminStepUpController(private val stepUp: AdminStepUpService, private val 
                     scope = issued.scope,
                 ),
             )
+    }
+
+    companion object {
+        const val GRANT_ID_HEADER = "X-Kira-Admin-Step-Up-Grant-Id"
     }
 }
 

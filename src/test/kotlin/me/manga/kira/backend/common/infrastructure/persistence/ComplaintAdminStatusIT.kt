@@ -210,6 +210,48 @@ class ComplaintAdminStatusIT {
     }
 
     @Test
+    fun statusAndClosureAssociateAppliedRejectedAndLegacyReplaysWithoutUsingFreshProof() = withFixture { s ->
+        val e = s.content
+        for (operation in listOf(STATUS, CLOSURE)) for (rejected in listOf(false, true)) {
+            val attempt = AdminStatusAttempt(e.report(), operation, version = if (rejected) 2L else 1L)
+            val a = e.proof()
+            val original = s.change(attempt, a.token)
+            if (rejected) e.problem(original, 412, "PRECONDITION_FAILED", consumed = true) else e.acknowledged(original, attempt.id, 2)
+            e.association(original, a.grantId)
+            assertEquals(a.grantId, e.observer.queryForObject(
+                "SELECT consumed_grant_id FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?",
+                UUID::class.java, e.ordinary.userId, attempt.key,
+            ))
+            val b = e.proof()
+            assertEquals(0L, e.observer.queryForObject("SELECT count(*) FROM admin_step_up_grants WHERE id = ?", Long::class.java, a.grantId))
+            val before = e.state()
+            for (proof in listOf(null, b.token)) {
+                val replay = s.change(attempt, proof)
+                assertEquals(original.status, replay.status)
+                assertArrayEquals(original.contentAsByteArray, replay.contentAsByteArray)
+                e.association(replay, a.grantId)
+                assertEquals(before, e.state())
+            }
+            // Historical fixture only; the producer is required to retain its consumed grant on every new completion.
+            assertEquals(1, e.observer.update(
+                "UPDATE complaint_idempotency_receipts SET consumed_grant_id = NULL WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?",
+                e.ordinary.userId, attempt.key,
+            ))
+            val historical = e.state()
+            for (proof in listOf(null, b.token)) {
+                val replay = s.change(attempt, proof)
+                assertEquals(original.status, replay.status)
+                assertArrayEquals(original.contentAsByteArray, replay.contentAsByteArray)
+                assertEquals(listOf("true"), replay.getHeaders(ComplaintAdminContentFixture.CONSUMED).toList())
+                e.association(replay, null)
+                assertEquals(historical, e.state())
+            }
+            assertFalse(used(s, b.token))
+            e.association(s.ownerDetail(attempt.id), null)
+        }
+    }
+
+    @Test
     fun contentAndModerationRaceOnOneVersionAndCrossOperationClaimCannotConsumeTheLosingProof() = withFixture { s ->
         val e = s.content
         val f = s.base
@@ -508,7 +550,8 @@ class ComplaintAdminStatusIT {
             if (initiallyClosed) applied(s, AdminStatusAttempt(id, CLOSURE, reason = "Original complete tuple"))
             val attempt = AdminStatusAttempt(id, operation, version = if (initiallyClosed) 2L else 1L, status = ComplaintStatus.OPEN, reason = "Corrected tuple")
             val next = attempt.version + 1
-            val proof = e.proof().token
+            val issued = e.proof()
+            val proof = issued.token
             val before = e.state()
             val reached = AtomicBoolean()
             f.observations.clear()
@@ -550,13 +593,13 @@ class ComplaintAdminStatusIT {
                 assertEquals(PersistenceDatabaseOutcome.COMMITTED, f.observations.last().second.phase.databaseOutcome())
                 assertTrue(used(s, proof))
                 val committed = e.state()
-                e.acknowledged(s.change(attempt), id, next)
+                e.acknowledged(s.change(attempt).also { e.association(it, issued.grantId) }, id, next)
                 assertEquals(committed, e.state())
             } else {
                 assertEquals(if (fault == "COMMIT") PersistenceDatabaseOutcome.UNKNOWN else PersistenceDatabaseOutcome.ROLLED_BACK, f.observations.last().second.phase.databaseOutcome())
                 assertEquals(before, e.state(), "Restores complete prior closure tuple, counters, audit, receipt and proof together.")
                 assertFalse(used(s, proof))
-                e.acknowledged(s.change(attempt, proof), id, next)
+                e.acknowledged(s.change(attempt, proof).also { e.association(it, issued.grantId) }, id, next)
             }
             f.assertCharge(before.ownerState.counters, ComplaintCapacityCharges.NORMAL_RECEIPT + ComplaintCapacityCharges.AUDIT)
         }

@@ -41,7 +41,7 @@ class AdminStepUpService internal constructor(
                 COMPLAINT_MODERATION_MUTATION_SCOPE -> issuer.issueComplaint(userId, rawPassword, clientIp)
                 else -> throw BadRequestException("Unsupported password verification scope.", code = "INVALID_STEP_UP_SCOPE")
             }
-            return IssuedAdminStepUp(issued.token, issued.expiresAt, issued.scope.storedName)
+            return IssuedAdminStepUp(issued.token, issued.expiresAt, issued.scope.storedName, issued.grantId)
         } catch (_: PersistencePhaseException) {
             // No proof, automatic retry or guessed rollback after an unresolved/unknown phase.
             throw ServiceUnavailableException("Password verification is temporarily unavailable.", code = "ADMIN_STEP_UP_UNAVAILABLE")
@@ -86,6 +86,7 @@ class IssuedAdminStepUp(
     val token: String,
     val expiresAt: Instant,
     val scope: String = AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE,
+    val grantId: UUID,
 ) {
     override fun toString(): String = "IssuedAdminStepUp(redacted)"
 }

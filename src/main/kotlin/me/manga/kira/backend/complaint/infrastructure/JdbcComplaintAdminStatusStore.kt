@@ -96,11 +96,13 @@ internal class ComplaintAdminStatusMutation private constructor(
     private var mutation: ComplaintAuditMutation? = null
     private var newClaim = false
     private var grantConsumed = false
+    private var consumedGrantId: UUID? = null
 
     fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
 
     fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) &&
-        stage === Stage.COMPLETE && captured != null && (!newClaim || grantConsumed && allocation?.completedFor(this, captured?.receipt) == true)
+        stage === Stage.COMPLETE && captured != null && (!newClaim || grantConsumed && consumedGrantId != null &&
+            captured?.receipt?.consumedGrantId == consumedGrantId && allocation?.completedFor(this, captured?.receipt) == true)
 
     val result: ComplaintAdminStatusObservation
         get() {
@@ -147,15 +149,16 @@ internal class ComplaintAdminStatusMutation private constructor(
 
     private fun decodeReceipt(row: ResultSet): ComplaintAdminStatusReceipt {
         check(row.getBoolean("valid_shape") && !row.wasNull())
+        val grantId = row.getObject("consumed_grant_id", UUID::class.java)
         return when (row.getString("outcome")) {
             "APPLIED" -> {
                 check(row.getInt("response_status") == 200 && row.getObject("ack_id", UUID::class.java) == tuple.targetId)
-                val receipt = ComplaintAdminStatusReceipt.Applied(tuple.targetId, row.getLong("ack_version"))
+                val receipt = ComplaintAdminStatusReceipt.Applied(tuple.targetId, row.getLong("ack_version"), grantId)
                 check(row.getString("response_etag") == receipt.etag)
                 receipt
             }
             "REJECTED" -> {
-                val receipt = ComplaintAdminStatusReceipt.Rejected(ComplaintAdminStatusRejection.valueOf(checkNotNull(row.getString("problem_code"))))
+                val receipt = ComplaintAdminStatusReceipt.Rejected(ComplaintAdminStatusRejection.valueOf(checkNotNull(row.getString("problem_code"))), grantId)
                 check(row.getInt("response_status") == receipt.status)
                 receipt
             }
@@ -244,7 +247,7 @@ internal class ComplaintAdminStatusMutation private constructor(
         val counted = paid.prepaidAudit(this)
         audit.recordComplaintMutation(checkNotNull(mutation), counted, updatedAt)
         check(counted.completedFor(this))
-        val receipt = ComplaintAdminStatusReceipt.Applied(tuple.targetId, changed.version)
+        val receipt = ComplaintAdminStatusReceipt.Applied(tuple.targetId, changed.version, checkNotNull(consumedGrantId))
         complete(receipt)
         return ComplaintAdminStatusObservation(receipt)
     }
@@ -285,6 +288,7 @@ internal class ComplaintAdminStatusMutation private constructor(
         val consumed = jdbc.query(CONSUME_GRANT, { row, _ -> row.getObject("id", UUID::class.java) }, grants.single(), identity.actor, hash)
         if (consumed != grants) rejectAdminStatus(ComplaintAdminStatusFailure.STEP_UP_REQUIRED)
         requireRetained()
+        consumedGrantId = checkNotNull(consumed.single())
         grantConsumed = true
         stage = Stage.PROVED
     }
@@ -342,7 +346,7 @@ internal class ComplaintAdminStatusMutation private constructor(
         requireTokenTime()
         stage = Stage.REJECTING
         paid.keepReceiptOnly(this)
-        val receipt = ComplaintAdminStatusReceipt.Rejected(code)
+        val receipt = ComplaintAdminStatusReceipt.Rejected(code, checkNotNull(consumedGrantId))
         complete(receipt)
         return ComplaintAdminStatusObservation(receipt)
     }
@@ -350,6 +354,7 @@ internal class ComplaintAdminStatusMutation private constructor(
     private fun complete(receipt: ComplaintAdminStatusReceipt) {
         requireTokenTime()
         check(newClaim && grantConsumed && checkNotNull(allocation).completedFor(this, receipt))
+        check(receipt.consumedGrantId == checkNotNull(consumedGrantId))
         phase.adminStatus.checkStatusWrite(this, jdbc)
         stage = Stage.COMPLETING
         val outcomeArguments = when (receipt) {
@@ -357,7 +362,7 @@ internal class ComplaintAdminStatusMutation private constructor(
             is ComplaintAdminStatusReceipt.Rejected -> arrayOf<Any?>(receipt.status, receipt.problemCode)
         }
         val arguments = outcomeArguments.plus(
-            elements = arrayOf<Any?>(identity.actor, tuple.key, binding.scope.id, tuple.operation.name, targetArray(tuple), tuple.fingerprintBytes()),
+            elements = arrayOf<Any?>(consumedGrantId, identity.actor, tuple.key, binding.scope.id, tuple.operation.name, targetArray(tuple), tuple.fingerprintBytes()),
         )
         check(jdbc.update(if (receipt is ComplaintAdminStatusReceipt.Applied) COMPLETE_APPLIED else COMPLETE_REJECTED, *arguments) == 1)
     }
@@ -497,14 +502,15 @@ internal class ComplaintAdminStatusMutation private constructor(
                 r.state = 'COMPLETED' AND r.expires_at > receipt_time.at AS visible,
                 r.data_scope_id = ?::uuid AND r.test_only AND r.operation = ?
                     AND r.target_ids = ?::uuid[] AND r.fingerprint = ? AS tuple_matches,
-                r.outcome, r.response_status,
+                r.outcome, r.response_status, r.consumed_grant_id,
                 CASE WHEN cardinality(r.ack_ids) = 1 THEN r.ack_ids[1] END AS ack_id,
                 CASE WHEN cardinality(r.ack_versions) = 1 THEN r.ack_versions[1] END AS ack_version,
                 CASE WHEN octet_length(r.response_etag) <= 69 THEN r.response_etag END AS response_etag,
                 CASE WHEN octet_length(r.problem_code) <= 64 THEN r.problem_code END AS problem_code,
                 r.completed_at IS NOT NULL AND isfinite(r.completed_at) AND isfinite(r.created_at) AND isfinite(r.expires_at)
                     AND r.expires_at = r.completed_at + interval '192 hours'
-                    AND r.response_location IS NULL AND r.authorized_at IS NULL AND r.publication_ref IS NULL AND r.consumed_grant_id IS NULL
+                    AND r.response_location IS NULL AND r.authorized_at IS NULL AND r.publication_ref IS NULL
+                    AND (r.consumed_grant_id IS NULL OR complaint_is_v4(r.consumed_grant_id))
                     AND r.external_event_id IS NULL AND r.external_epoch IS NULL AND r.external_object_version IS NULL AND r.external_ciphertext_hash IS NULL
                     AND ((r.outcome = 'APPLIED' AND complaint_uuid_array_valid(r.ack_ids, 1, 1)
                             AND complaint_amounts_valid(r.ack_versions, 1, 1) AND r.problem_code IS NULL)
@@ -564,13 +570,13 @@ internal class ComplaintAdminStatusMutation private constructor(
         private val COMPLETE_APPLIED = """
             WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE complaint_idempotency_receipts
             SET state = 'COMPLETED', outcome = 'APPLIED', response_status = 200, ack_ids = ARRAY[?::uuid], ack_versions = ARRAY[?::bigint],
-                response_etag = ?, completed_at = stamp.at, expires_at = stamp.at + interval '192 hours'
+                response_etag = ?, consumed_grant_id = ?, completed_at = stamp.at, expires_at = stamp.at + interval '192 hours'
             $COMPLETE_WHERE
         """.trimIndent()
         private val COMPLETE_REJECTED = """
             WITH stamp AS (SELECT clock_timestamp() AS at) UPDATE complaint_idempotency_receipts
             SET state = 'COMPLETED', outcome = 'REJECTED', response_status = ?, problem_code = ?,
-                completed_at = stamp.at, expires_at = stamp.at + interval '192 hours'
+                consumed_grant_id = ?, completed_at = stamp.at, expires_at = stamp.at + interval '192 hours'
             $COMPLETE_WHERE
         """.trimIndent()
 

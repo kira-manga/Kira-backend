@@ -110,7 +110,7 @@ class ComplaintAdminContentIT {
         assertEquals(before.receipts.size + 4, after.receipts.size)
         assertEquals(4L, e.observer.queryForObject(
             "SELECT count(*) FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? " +
-                "AND operation = 'ADMIN_EDIT' AND state = 'COMPLETED' AND consumed_grant_id IS NULL AND publication_ref IS NULL",
+                "AND operation = 'ADMIN_EDIT' AND state = 'COMPLETED' AND consumed_grant_id IS NOT NULL AND publication_ref IS NULL",
             Long::class.java, e.ordinary.userId,
         ))
     }
@@ -121,8 +121,10 @@ class ComplaintAdminContentIT {
         val limited = ComplaintAdminContentFixture(f, adminContentTestIngress(f.policy, perHour = 1), e.responseOwner)
         val id = e.report()
         val attempt = AdminContentAttempt(id)
-        val original = limited.edit(attempt, e.proof().token)
+        val originalProof = e.proof()
+        val original = limited.edit(attempt, originalProof.token)
         e.acknowledged(original, id, 2)
+        e.association(original, originalProof.grantId)
         e.acknowledged(e.edit(attempt.copy(key = UUID.randomUUID(), version = 2, body = "Later content"), e.proof().token), id, 3)
         val unused = e.proof().token // Real cleanup has removed the first used grant; the terminal receipt must suffice.
         assertEquals(0L, e.observer.queryForObject("SELECT count(*) FROM admin_step_up_grants WHERE user_id = ? AND used_at IS NOT NULL", Long::class.java, e.ordinary.userId))
@@ -134,6 +136,7 @@ class ComplaintAdminContentIT {
             for (proof in listOf(null, unused)) {
                 val replay = selected.edit(attempt, proof)
                 e.acknowledged(replay, id, 2)
+                e.association(replay, originalProof.grantId)
                 assertArrayEquals(original.contentAsByteArray, replay.contentAsByteArray)
                 assertEquals(before, e.state(), "Replay must not consume a newly supplied proof or charge any dimension.")
             }
@@ -161,6 +164,47 @@ class ComplaintAdminContentIT {
         }
         assertEquals(before, e.state())
         assertFalse(grantUsed(e, unused))
+    }
+
+    @Test
+    fun exactAssociationSurvivesGrantCleanupAndHistoricalNullNeverBorrowsFreshProofIdentity() = withFixture { e ->
+        for (rejected in listOf(false, true)) {
+            val attempt = AdminContentAttempt(e.report(), version = if (rejected) 2L else 1L)
+            val a = e.proof()
+            val original = e.edit(attempt, a.token)
+            if (rejected) e.problem(original, 412, "PRECONDITION_FAILED", consumed = true) else e.acknowledged(original, attempt.id, 2)
+            e.association(original, a.grantId)
+            assertEquals(a.grantId, e.observer.queryForObject(
+                "SELECT consumed_grant_id FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?",
+                UUID::class.java, e.ordinary.userId, attempt.key,
+            ))
+            val b = e.proof() // Existing real cleanup removes A, not its historical receipt scalar.
+            assertEquals(0L, e.observer.queryForObject("SELECT count(*) FROM admin_step_up_grants WHERE id = ?", Long::class.java, a.grantId))
+            val before = e.state()
+            for (proof in listOf(null, b.token)) {
+                val replay = e.edit(attempt, proof)
+                assertEquals(original.status, replay.status)
+                assertArrayEquals(original.contentAsByteArray, replay.contentAsByteArray)
+                e.association(replay, a.grantId)
+                assertEquals(before, e.state())
+            }
+            // Explicit historical fixture only: V22 must not backfill or guess an association absent in older receipts.
+            assertEquals(1, e.observer.update(
+                "UPDATE complaint_idempotency_receipts SET consumed_grant_id = NULL WHERE actor_kind = 'ADMIN' AND actor_id = ? AND idempotency_key = ?",
+                e.ordinary.userId, attempt.key,
+            ))
+            val historical = e.state()
+            for (proof in listOf(null, b.token)) {
+                val replay = e.edit(attempt, proof)
+                assertEquals(original.status, replay.status)
+                assertArrayEquals(original.contentAsByteArray, replay.contentAsByteArray)
+                assertEquals(listOf("true"), replay.getHeaders(ComplaintAdminContentFixture.CONSUMED).toList())
+                e.association(replay, null)
+                assertEquals(historical, e.state())
+            }
+            assertFalse(grantUsed(e, b.token))
+            e.association(e.detail(attempt.id), null)
+        }
     }
 
     @Test
@@ -464,7 +508,10 @@ class ComplaintAdminContentIT {
 
         for (insertAlreadyHeld in listOf(true, false)) {
             val attempt = AdminContentAttempt(id, version = if (insertAlreadyHeld) 2 else 3, body = "Next $insertAlreadyHeld")
-            val proof = e.proof().token
+            val first = e.proof()
+            val second = e.proof()
+            val proof = first.token
+            val winningGrant = if (insertAlreadyHeld) first.grantId else second.grantId
             val baseline = e.state()
             f.observations.clear()
             OwnedCallerTestScope().use { callers ->
@@ -477,7 +524,7 @@ class ComplaintAdminContentIT {
                 try {
                     val held = callers.launch { e.send(e.input(attempt, proof)) }
                     gate.awaitEntered()
-                    val competing = e.send(e.input(attempt, proof))
+                    val competing = e.send(e.input(attempt, second.token))
                     if (insertAlreadyHeld) {
                         e.problem(competing, 409, "IDEMPOTENCY_IN_PROGRESS")
                         assertEquals("1", competing.getHeader("Retry-After"))
@@ -487,7 +534,9 @@ class ComplaintAdminContentIT {
                     }
                     gate.release()
                     e.acknowledged(held.value(), id, attempt.version + 1)
+                    e.association(held.value(), winningGrant)
                     if (!insertAlreadyHeld) {
+                        e.association(competing, second.grantId)
                         assertArrayEquals(competing.contentAsByteArray, held.value().contentAsByteArray)
                         assertEquals(2, f.observations.count { it.first == OwnerCreateFixtureStep.CLAIM })
                     }
@@ -497,12 +546,13 @@ class ComplaintAdminContentIT {
                     f.afterStep = {}
                 }
             }
-            assertTrue(grantUsed(e, proof))
+            assertEquals(insertAlreadyHeld, grantUsed(e, proof))
+            assertEquals(!insertAlreadyHeld, grantUsed(e, second.token))
             assertEquals(1, f.observations.count { it.first == OwnerCreateFixtureStep.EDIT_CONTENT })
             assertEquals(baseline.receipts.size + 1, e.state().receipts.size)
             f.assertCharge(baseline.ownerState.counters, ComplaintCapacityCharges.NORMAL_RECEIPT + ComplaintCapacityCharges.AUDIT)
             val completed = e.state()
-            e.acknowledged(e.edit(attempt), id, attempt.version + 1)
+            e.acknowledged(e.edit(attempt).also { e.association(it, winningGrant) }, id, attempt.version + 1)
             assertEquals(completed, e.state())
         }
 
@@ -542,7 +592,8 @@ class ComplaintAdminContentIT {
             val f = e.base
             val id = e.report()
             val attempt = AdminContentAttempt(id)
-            val proof = e.proof().token
+            val issued = e.proof()
+            val proof = issued.token
             val before = e.state()
             val installed = AtomicBoolean()
             f.observations.clear()
@@ -586,6 +637,7 @@ class ComplaintAdminContentIT {
                     assertEquals(12, prefix.size())
                     assertArrayEquals("{\"id\":\"$id\",\"version\":2}".toByteArray().copyOfRange(0, 12), prefix.toByteArray())
                     assertEquals(listOf("true"), response.getHeaders(ComplaintAdminContentFixture.CONSUMED).toList())
+                    e.association(response, issued.grantId)
                 } else {
                     e.problem(e.edit(attempt, proof), 503, "SERVICE_UNAVAILABLE")
                 }
@@ -599,11 +651,11 @@ class ComplaintAdminContentIT {
             if (mode == "COMMIT") {
                 assertEquals(before, e.state())
                 assertFalse(grantUsed(e, proof))
-                e.acknowledged(e.edit(attempt, proof), id, 2)
+                e.acknowledged(e.edit(attempt, proof).also { e.association(it, issued.grantId) }, id, 2)
             } else {
                 assertTrue(grantUsed(e, proof))
                 val committed = e.state()
-                e.acknowledged(e.edit(attempt), id, 2)
+                e.acknowledged(e.edit(attempt).also { e.association(it, issued.grantId) }, id, 2)
                 assertEquals(committed, e.state())
             }
             f.assertCharge(before.ownerState.counters, ComplaintCapacityCharges.NORMAL_RECEIPT + ComplaintCapacityCharges.AUDIT)

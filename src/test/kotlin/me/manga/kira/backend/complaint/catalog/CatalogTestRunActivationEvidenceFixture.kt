@@ -5,6 +5,9 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceNanoClock
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePoolLaunchProfile
+import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseSettings
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistencePools
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
@@ -31,6 +34,12 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActiv
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationManifestV3
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEncodingV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintProcessPoolFixture
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCapacityInputV1
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogChainLimitsV1
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogSigningKeyInputV1
+import me.manga.kira.backend.complaint.infrastructure.admission.DesiredSecretReferenceV1
+import me.manga.kira.backend.complaint.infrastructure.admission.TestDeploymentInputFixture
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationCanonicalV3
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationReadbackV3
@@ -39,6 +48,8 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalo
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
+import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
+import me.manga.kira.backend.security.aws.AwsSecretVersionFixture
 import me.manga.kira.backend.security.boundConsumerTestSettings
 import me.manga.kira.backend.security.fullTestJournal
 import java.security.MessageDigest
@@ -71,7 +82,7 @@ internal fun withActivationEvidence(
     ComplaintProcessPoolFixture(testActivation = testActivation).use { database ->
         val pools = database.bind()
         JournalPublicationLanesV1(journal).use { lanes ->
-            action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, pools, lanes, ordinarySealHttp = ordinarySealHttp))
+            CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, pools, lanes, ordinarySealHttp = ordinarySealHttp).use(action)
         }
     }
 }
@@ -95,7 +106,8 @@ internal fun withActivationEvidence(
         ),
     )
     JournalPublicationLanesV1(journal).use { lanes ->
-        action(CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp))
+        CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
+            if (ordinarySealHttp?.protectedIntake == true) tls else null).use(action)
     }
 }
 
@@ -113,7 +125,8 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private val lanes: JournalPublicationLanesV1,
     createGlobal: Int = 2,
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
-) {
+    intakeTls: VersionBoundPersistenceConnectedFixture? = null,
+) : AutoCloseable {
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
     val policy = OfflineCatalogRotationFixture.policy()
@@ -149,8 +162,12 @@ internal class CatalogTestRunActivationEvidenceFixture(
         pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
         OfflineTrustBundleFixture.registryBytes(rotations.genesis.manifest.initialWriterRegistry),
     )
-    // Only this explicit synthetic fixture input is pinned before process/full-D, signed intent and PROJECT.
-    private val ordinarySeal = ordinarySealHttp?.owner(consumers.journalRouting, lanes,
+    internal var intakeAssembly: ComplaintTestProcessAssemblyV1? = null
+        private set
+    // The new specimen starts from a protected document, not this fixture's former owner-only seam.
+    private val intakeProcess = if (ordinarySealHttp?.protectedIntake == true) assembleIntake(checkNotNull(intakeTls), ordinarySealHttp, createGlobal) else null
+    // Preserve the historical fixture-present and absent profiles byte-for-byte.
+    private val ordinarySeal = if (intakeProcess != null) null else ordinarySealHttp?.owner(consumers.journalRouting, lanes,
         reader.chainPolicy.trustBundlePolicy.expectedEnvironment, rotations.genesis.manifest.initialWriterRegistry.catalogWriter)
     val process = process()
     val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, INSTALLATION_LIMIT)
@@ -173,6 +190,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     )
 
     fun process(desiredGeneration: Long = 7): VersionBoundTestNamespaceProcessV1 {
+        if (intakeProcess != null) return processOn(pools, desiredGeneration)
         val writer = journal.declaration().writer
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
@@ -182,6 +200,15 @@ internal class CatalogTestRunActivationEvidenceFixture(
 
     /** Reuses the original signed prefix/configuration; no randomized re-signing changes its raw identity. */
     fun processOn(pools: VersionBoundPersistencePools, desiredGeneration: Long = 7): VersionBoundTestNamespaceProcessV1 {
+        val native = intakeProcess
+        if (native != null) {
+            if (pools === native.pools && desiredGeneration == native.desiredGeneration) return native
+            val selected = FullTestCatalogInputs.activation(pools, native.consumers.journalConfiguration, native.catalogReadback,
+                FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
+                OfflineTrustBundleFixture.registryBytes(rotations.genesis.manifest.initialWriterRegistry))
+            return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
+                native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected, native.ordinarySeal)
+        }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
             pools, journal, reader, FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
@@ -192,6 +219,61 @@ internal class CatalogTestRunActivationEvidenceFixture(
             lanes, reader, activation, ordinarySeal,
         )
     }
+
+    /** Existing signed-prefix/P/HTTP inputs only; all policy/horizon authority remains explicitly synthetic. */
+    private fun assembleIntake(
+        tls: VersionBoundPersistenceConnectedFixture,
+        http: TestOrdinarySealHttpFixtureV1,
+        createGlobal: Int,
+    ): VersionBoundTestNamespaceProcessV1 {
+        val template = TestDeploymentInputFixture.document(journal)
+        val trust = policy.trustBundlePolicy
+        val limits = policy.limits
+        val reference = tls.configuration.descriptor.authenticationPassword
+        val registry = rotations.genesis.manifest.initialWriterRegistry
+        val spki = key(signerId).public.encoded
+        val document = template.copy(
+            database = template.database.copy(host = tls.database.host, port = tls.endpointPort, name = PgLifecycleDatabaseSettings.DATABASE,
+                runtimeUsername = PgLifecycleDatabaseSettings.CANDIDATE,
+                runtimePassword = DesiredSecretReferenceV1(reference.logicalKeyId, reference.version.resourceArn, reference.version.versionId),
+                publicTrustPemBase64 = TestDeploymentInputFixture.base64(tls.database.versionBoundTls().publicTrust(false)),
+                protectedTrustParent = tls.database.versionBoundTls().publicTrustParent().toString()),
+            capacity = DesiredCapacityInputV1(consumers.capacityPolicy.hardLimit.toLongArray().toList(),
+                consumers.capacityPolicy.creationLimit.toLongArray().toList(), consumers.capacityPolicy.dailyEnrollmentLimit),
+            admission = template.admission.copy(ownerCreateGlobalPerHour = createGlobal),
+            catalog = template.catalog.copy(readerProfile = "PROJECTED_CURRENT", initialBundleBase64 = TestDeploymentInputFixture.base64(initial),
+                currentBundleBase64 = TestDeploymentInputFixture.base64(current),
+                rootPublicKeySpkiBase64 = TestDeploymentInputFixture.base64(trust.rootPublicKeySpki),
+                rootPublicKeySha256 = trust.rootPublicKeySha256, rootKeyId = trust.rootKeyId, rootAlgorithmId = trust.rootAlgorithmId,
+                expectedEnvironment = trust.expectedEnvironment, expectedCatalogLocations = trust.expectedCatalogLocations,
+                minimumBundleVersion = trust.minimumBundleVersion, currentWriterGenerationIds = policy.currentWriterGenerationIds,
+                currentApproverIds = policy.currentApproverIds, expectedGenesisEnvelopeSha256 = Sha256.hex(prefix.first()), pageSize = 1,
+                chainLimits = DesiredCatalogChainLimitsV1(
+                    limits.maximumEnvelopeBytes, limits.maximumManifestRecords, limits.maximumGenerations, limits.maximumEncodedBytes,
+                )),
+            activation = template.activation.copy(signingKey = DesiredCatalogSigningKeyInputV1(signerId, FullTestCatalogInputs.KEY_ARN,
+                OfflineTrustBundleFixture.ALGORITHM, TestDeploymentInputFixture.base64(spki), Sha256.hex(spki)),
+                initialWriterRegistryBase64 = TestDeploymentInputFixture.base64(OfflineTrustBundleFixture.registryBytes(registry))),
+            sealer = template.sealer.copy(catalogPut = template.sealer.catalogPut.copy(reference = registry.catalogWriter.putAuthority),
+                catalogSign = template.sealer.catalogSign.copy(reference = registry.catalogWriter.signAuthority)),
+            retention = template.retention.copy(
+                environment = trust.expectedEnvironment, lastPreRunRestoreHorizon = http.horizon.toString(), horizonPolicy = http.horizonPolicy,
+            ),
+        )
+        val secrets = AwsSecretVersionFixture()
+        TestDeploymentInputFixture.secrets(secrets, document, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray())
+        http.prepareIndependent(journal) // Raw factories and clocks fixed BEFORE the actual intake/owner construction.
+        val assembly = ComplaintTestProcessAssemblyV1.withHttpFixture(secrets::httpClient, PersistenceNanoClock(http::nanos), http::now,
+            PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3).also { intakeAssembly = it }
+        TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(document)) { path ->
+            assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
+        }
+        check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
+        check(http.sts.createdClients + http.kms.createdClients + http.s3Created == 0)
+        return assembly.target
+    }
+
+    override fun close() { intakeAssembly?.close() }
 
     fun assembled(): ByteArray = expected.assemble(
         OfflineCatalogInventoryChainVerifier.verifyInventoryChain(prefix.asSequence(), initial, current, policy),

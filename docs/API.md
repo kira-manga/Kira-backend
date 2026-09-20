@@ -575,3 +575,37 @@ persistence composition refuses complaint phases before SQL and the public servi
 returns `ADMIN_STEP_UP_UNAVAILABLE` (503), never a substitute source proof. Existing
 complaint route denial, authenticated authority/capacity requirements and mutation
 activation gates remain unchanged. No new endpoint or deployment is introduced.
+
+### Exact complaint proof association (prepared, not activated)
+
+Successful complaint-scope issuance additionally returns exactly one
+`X-Kira-Admin-Step-Up-Grant-Id` header: the actual issued grant's lowercase canonical UUIDv4
+(36 ASCII characters, RFC-4122 variant). The JSON remains exactly `{token,expiresAt,scope}`.
+Source issuance omits this header. This non-secret identity is server-to-server correlation, not
+an authorization credential; it is not accepted from the caller in place of a proof.
+
+The existing TEST-only Admin content/status/closure paths retain the consumed grant UUID in
+`complaint_idempotency_receipts.consumed_grant_id` on both APPLIED and REJECTED completion. They
+return the association only after the original transaction commits and releases its resources,
+in `X-Kira-Admin-Step-Up-Consumed-Grant-Id` with the same single-value UUID grammar. The separate
+`X-Kira-Admin-Step-Up-Consumed: true` remains the historical operation-level marker. A replay
+of A supplied with fresh proof B returns A's stored identity and never consumes or identifies B.
+Exact replay still needs current ADMIN authentication, not a fresh proof or a surviving grant row.
+Receipt status/body/ETag and eight-day expiry remain unchanged; the scalar is not a grant-table FK.
+
+V22 is forward-only and preserves historical NULL associations. Such a receipt replays with the
+historical Boolean and **without** the identity header; no time/user/proof-based backfill occurs.
+New ordinary writers require their actual consumed UUID. IN_PROGRESS, owner and existing deletion
+constraints remain unchanged. No marker is inferred after rollback, unknown commit or failed
+phase release. If a released terminal receipt is known before a later bounded delivery failure,
+both available markers remain attached; a transport timeout/partial response is not confirmation.
+
+The BFF must retain the issuance ID privately with its exact authenticated login generation,
+scope and proof issuance, clearing only that matching cookie identity at its original path after
+validating the bounded response. It retains proof on timeout or unknown/missing association, and
+must never clear a fresh B from the historical Boolean alone. Duplicate/noncanonical headers are
+not usable evidence. Neither identity nor token/hash belongs in browser JSON, history/detail,
+URLs, logs or audits. Complaint mutation activation and BFF mounting remain separate work.
+Older backend readers require NULL ordinary associations: mixed old/new writers and rollback
+are not transparently compatible and require coordinated rollout. Future Admin delete/batch
+paths must preserve exact association, including the authorized-deletion phase-two 503 rule.

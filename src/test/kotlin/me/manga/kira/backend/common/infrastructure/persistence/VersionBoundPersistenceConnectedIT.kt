@@ -48,6 +48,8 @@ import me.manga.kira.backend.complaint.catalog.TestOrdinarySealCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealFailureCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHistoryCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealInstallationCutV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealIntakeCasesV1
+import me.manga.kira.backend.complaint.catalog.TestOrdinarySealIntakeCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealProviderCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealLifetimeCutV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealStepV1
@@ -1286,6 +1288,13 @@ class VersionBoundPersistenceConnectedIT {
     @Test
     fun testRunOrdinarySealEmptyRunAtomicPhasesAndImmutableReplay() = withFixture(testActivation = true) {
         TestOrdinarySealCasesV1.emptyAndReplay(it)
+    }
+
+    @Test
+    fun testRunOrdinarySealProtectedIntakeConnectsRegistrationAndNativeCustody() {
+        TestOrdinarySealIntakeCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestOrdinarySealIntakeCasesV1.connected(it, cut) }
+        }
     }
 
     @Test

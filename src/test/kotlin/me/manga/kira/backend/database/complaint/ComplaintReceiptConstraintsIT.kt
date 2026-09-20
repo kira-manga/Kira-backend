@@ -113,6 +113,36 @@ class ComplaintReceiptConstraintsIT : ComplaintFixtureTest() {
     }
 
     @Test
+    fun `ordinary admin completion retains only a bounded optional historical grant scalar`() {
+        val grantId = "30000000-0000-4000-8000-000000000001"
+        for (operation in listOf("ADMIN_EDIT", "ADMIN_STATUS", "ADMIN_CLOSURE")) for (rejected in listOf(false, true)) {
+            connection.withRollbackPoint {
+                val result = if (rejected) {
+                    "outcome='REJECTED',response_status=412,problem_code='PRECONDITION_FAILED'"
+                } else {
+                    "outcome='APPLIED',response_status=200,ack_ids=target_ids,ack_versions=ARRAY[7]::bigint[]," +
+                        "response_etag='\"complaint-$OWNED_COMPLAINT_ID-v7\"'"
+                }
+                connection.exec(receiptUpdate("actor_kind='ADMIN',operation='$operation',$COMPLETED,$result,consumed_grant_id='$grantId'"))
+                val constraint = if (rejected) "chk_complaint_receipt_result" else "chk_complaint_receipt_external"
+                for (set in listOf(
+                    "consumed_grant_id='$LIVE_SCOPE'", "consumed_grant_id='10000000-0000-5000-8000-000000000001'",
+                    "consumed_grant_id='10000000-0000-4000-c000-000000000001'", "publication_ref=$FIXTURE_EVENT",
+                    "authorized_at=$FIXTURE_INSTANT", "external_event_id=$FIXTURE_EVENT", "external_epoch=1",
+                )) connection.expectSqlFailure(receiptUpdate(set), constraint = constraint)
+                connection.expectSqlFailure(receiptUpdate("actor_kind='INSTALLATION',operation='OWNER_EDIT'"), constraint = constraint)
+                // No FK: a cleaned-up grant must not invalidate the immutable receipt or shorten its replay window.
+                assertEquals(listOf("1"), connection.strings("SELECT count(*) FROM admin_step_up_grants WHERE id='$grantId'"))
+                connection.exec("DELETE FROM admin_step_up_grants WHERE id='$grantId'")
+                assertEquals(listOf("0"), connection.strings("SELECT count(*) FROM admin_step_up_grants WHERE id='$grantId'"))
+                assertEquals(listOf(grantId), connection.strings("SELECT consumed_grant_id::text FROM complaint_idempotency_receipts"))
+                connection.exec(receiptUpdate("consumed_grant_id=NULL"))
+                assertEquals(listOf("true"), connection.strings("SELECT (consumed_grant_id IS NULL)::text FROM complaint_idempotency_receipts"))
+            }
+        }
+    }
+
+    @Test
     fun `authorized and applied deletions retain exact external tuple and admin grant only where required`() {
         for (operation in listOf("OWNER_DELETE", "ADMIN_DELETE", "ADMIN_BATCH_DELETE")) {
             connection.withRollbackPoint {

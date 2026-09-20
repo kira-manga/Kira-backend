@@ -5,8 +5,9 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
-import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
+import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialCatalogPrincipalV1
+import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintEffectiveEpochSealAcquisitionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealDeploymentMappingV1
@@ -15,11 +16,14 @@ import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalHmacRet
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalKmsRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalTimeBoundV1
 import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
+import me.manga.kira.backend.complaint.infrastructure.journal.aws.journalS3UrlConnectionClient
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
+import me.manga.kira.backend.security.aws.AwsEpochSealStsAdapter
 import me.manga.kira.backend.security.aws.AwsEpochSealStsBinding
 import me.manga.kira.backend.security.aws.AwsEpochSealStsLimits
 import me.manga.kira.backend.security.aws.AwsTestOrdinarySealStsV1
+import me.manga.kira.backend.security.aws.journalKmsUrlConnectionClient
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.time.Instant
@@ -64,8 +68,10 @@ internal class TestOrdinarySealRetentionDeclarationV1(
         }
     }
 
-    internal fun requireJournal(routing: TestOwnerDeleteJournalRoutingV1) {
-        val journal = routing.journalConfiguration
+    internal fun requireJournal(routing: TestOwnerDeleteJournalRoutingV1) = requireJournal(routing.journalConfiguration)
+
+    /** Same declaration check before secret acquisition; this still does not verify installed retention. */
+    internal fun requireJournal(journal: TestOwnerDeleteJournalConfigurationV1) {
         val declared = journal.declaration()
         requireOrdinarySeal(dataScopeId == journal.scope.id.toString() && writerGeneration == declared.writer.generationId &&
             databaseIdentity == declared.writer.databaseIdentity && restoreIdentity == declared.writer.restoreIdentity)
@@ -104,10 +110,9 @@ internal class TestOrdinarySealRetentionDeclarationV1(
 }
 
 /**
- * Optional owner pinned BEFORE full-D/PROJECT. There is deliberately NO deployed/config-property
- * factory: this repository has no independently authenticated TEST deployment+retention intake yet.
- * The only construction is explicitly controlled raw HTTP qualification. It does not authenticate
- * supplied horizon/policy declarations or installed IAM, and must never be wired as a ready flag.
+ * Optional owner pinned BEFORE full-D/PROJECT. Protected TEST intake can retain native factories;
+ * parsing declares consistency, NOT authenticated deployment, horizon completeness or installed IAM.
+ * The historical controlled fixture profile remains distinct. Neither profile is a ready flag.
  */
 internal class VersionBoundTestOrdinarySealV1 private constructor(
     private val routing: TestOwnerDeleteJournalRoutingV1,
@@ -116,9 +121,10 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
     internal val retention: TestOrdinarySealRetentionDeclarationV1,
     credentials: AwsSessionCredentials,
     sessionName: String?,
-    private val sts: () -> SdkHttpClient,
-    private val kms: () -> SdkHttpClient,
-    private val s3: () -> SdkHttpClient,
+    private val sts: (remainingMillis: () -> Int) -> SdkHttpClient,
+    private val kms: (remainingMillis: () -> Int) -> SdkHttpClient,
+    private val s3: (remainingMillis: () -> Int) -> SdkHttpClient,
+    private val independentInputs: Boolean,
     private val limits: AwsEpochSealStsLimits,
     internal val nanoTime: () -> Long,
     private val wallClock: () -> Instant,
@@ -160,8 +166,14 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
         requireConnectionFree()
         requireRetained(routing, lanes)
         put("profileVersion", 1)
-        put("profile", "CONTROLLED_TEST_ONLY_FIRST_ORDINARY_EPOCH_SEAL")
-        put("externalIntake", "ABSENT_EXTERNAL_VERIFICATION_REQUIRED")
+        put(
+            "profile",
+            if (independentInputs) "TEST_FIRST_ORDINARY_EPOCH_SEAL_INDEPENDENT_DECLARATIONS" else "CONTROLLED_TEST_ONLY_FIRST_ORDINARY_EPOCH_SEAL",
+        )
+        put(
+            "externalIntake",
+            if (independentInputs) "INDEPENDENT_DECLARATIONS_EXTERNAL_VERIFICATION_REQUIRED" else "ABSENT_EXTERNAL_VERIFICATION_REQUIRED",
+        )
         put("journalConfigurationSha256", routing.journalConfiguration.sha256)
         put("deployment", ComplaintEffectiveEpochSealAcquisitionV1.deployment(deployment))
         put("sdk", ComplaintEffectiveEpochSealAcquisitionV1.sdk(routing.journalConfiguration.declaration().journalLocation.region, limits))
@@ -173,7 +185,7 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
         requireConnectionFree()
         custody.requireAcquisition(this)
         requireRetained(routing, lanes)
-        return AwsTestOrdinarySealStsV1.cold(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
+        return AwsTestOrdinarySealStsV1.coldBudgeted(routing, checkNotNull(material.get()), binding, limits, sts, kms, s3, nanoTime, ::sampleUtc)
     }
 
     @Synchronized internal fun sampleUtc(): Instant {
@@ -206,11 +218,32 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
     override fun close() {
         requireConnectionFree()
         stopped.set(true)
-        try { lanes.closeTestOrdinarySealAcquisition(this) } finally { material.set(null) }
+        try { lanes.closeTestOrdinarySealAcquisition(this) } finally { material.set(null) } // No zeroization or session revocation claim.
     }
-    override fun toString(): String = "VersionBoundTestOrdinarySealV1(controlled-http-fixture-only,redacted,external-intake-closed)"
+    override fun toString(): String = "VersionBoundTestOrdinarySealV1(cold-declarations,redacted,external-verification-required)"
 
     companion object {
+        /**
+         * Actual native recipe used by protected TEST assembly, still not external policy acceptance.
+         * Fixture substitutions are raw HTTP only, chosen BEFORE construction. Dynamic original
+         * remaining-budget callbacks reach every native URL opening and must not be discarded.
+         */
+        fun fromIndependentInputs(
+            routing: TestOwnerDeleteJournalRoutingV1, lanes: JournalPublicationLanesV1,
+            deployment: EpochSealDeploymentMappingV1, retention: TestOrdinarySealRetentionDeclarationV1,
+            bootstrapCredentials: AwsSessionCredentials, bootstrapSessionName: String?,
+            limits: AwsEpochSealStsLimits = AwsEpochSealStsLimits(),
+            nanoTime: () -> Long = System::nanoTime, wallClock: () -> Instant = Instant::now,
+            stsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            kmsHttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+            s3HttpFixture: ((remainingMillis: () -> Int) -> SdkHttpClient)? = null,
+        ): VersionBoundTestOrdinarySealV1 = VersionBoundTestOrdinarySealV1(
+            routing, lanes, deployment, retention, bootstrapCredentials, bootstrapSessionName,
+            stsHttpFixture ?: { remaining -> AwsEpochSealStsAdapter.urlClient(limits, remaining) },
+            kmsHttpFixture ?: ::journalKmsUrlConnectionClient, s3HttpFixture ?: ::journalS3UrlConnectionClient,
+            true, limits, nanoTime, wallClock,
+        )
+
         /** Synthetic authority, real SDK/wire/SQL mechanics. No arbitrary adapter or authority callback. */
         fun withHttpFixture(
             routing: TestOwnerDeleteJournalRoutingV1, lanes: JournalPublicationLanesV1,
@@ -219,7 +252,8 @@ internal class VersionBoundTestOrdinarySealV1 private constructor(
             sts: () -> SdkHttpClient, kms: () -> SdkHttpClient, s3: () -> SdkHttpClient,
             limits: AwsEpochSealStsLimits = AwsEpochSealStsLimits(), nanoTime: () -> Long = System::nanoTime, wallClock: () -> Instant = Instant::now,
         ): VersionBoundTestOrdinarySealV1 = VersionBoundTestOrdinarySealV1(
-            routing, lanes, deployment, syntheticRetention, bootstrapCredentials, bootstrapSessionName, sts, kms, s3, limits, nanoTime, wallClock,
+            routing, lanes, deployment, syntheticRetention, bootstrapCredentials, bootstrapSessionName,
+            { sts() }, { kms() }, { s3() }, false, limits, nanoTime, wallClock,
         )
         internal fun tenYears(at: Instant): Instant = at.atOffset(ZoneOffset.UTC).plusYears(10).toInstant().also {
             OrdinaryJournalRetentionV1.requireInstant(it, false)

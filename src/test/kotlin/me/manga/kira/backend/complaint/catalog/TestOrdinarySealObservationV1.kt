@@ -36,10 +36,11 @@ import java.util.concurrent.atomic.AtomicReference
 internal fun withOrdinarySealRun(tls: VersionBoundPersistenceConnectedFixture, histories: Int = 0, drain: Boolean = true,
     recoverMissingInstallation: Boolean = false,
     expireClosedSetupPredecessors: Boolean = false,
+    httpFixture: TestOrdinarySealHttpFixtureV1? = null,
     action: (TestOrdinarySealObservationV1, TestRunVerifiedOwnerDeleteFixture?) -> Unit) {
     require(histories in 0..2) // No third-history admission changes; that independent page fixture slice is untouched.
     require(!recoverMissingInstallation || (histories == 1 && !drain)) // Genuine lower recovery completes the single primary before sealing.
-    TestOrdinarySealHttpFixtureV1().use { http ->
+    (httpFixture ?: TestOrdinarySealHttpFixtureV1()).use { http ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(tls, ordinarySealHttp = http,
             expireClosedSetupPredecessors = expireClosedSetupPredecessors) { p, runtime, registration, _ ->
             val f = TestOrdinarySealObservationV1(p, runtime, registration, http)

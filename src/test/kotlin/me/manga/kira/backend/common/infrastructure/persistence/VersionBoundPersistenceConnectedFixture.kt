@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.security.AcquiredVersionedSecret
 import me.manga.kira.backend.security.ImmutableSecretVersion
 import me.manga.kira.backend.security.SecretMaterialFamily
@@ -7,9 +8,11 @@ import me.manga.kira.backend.security.SecretMaterialPurpose
 import me.manga.kira.backend.security.SecretVersionSnapshot
 import me.manga.kira.backend.security.VersionedSecretBinding
 import org.flywaydb.core.Flyway
+import org.junit.jupiter.api.Assertions.assertAll
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.function.Executable
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import java.nio.file.Files
@@ -31,8 +34,13 @@ internal class VersionBoundPersistenceConnectedFixture(
     private val catalogAuthor: Boolean = false,
     private val testActivation: Boolean = false,
     internal val endpointPort: Int = database.port,
+    private val testIntake: ComplaintTestProcessAssemblyV1? = null,
 ) : AutoCloseable {
-    private val trustParent = database.versionBoundTls().publicTrustParent()
+    // Narrow observation of the intake's ACTUAL normal graph, never supplied replacement pools/credentials.
+    private val intakeConfiguration = testIntake?.let { poolTestField<VersionBoundPersistenceConfiguration>(it, "persistence") }
+    private val trustParent = intakeConfiguration?.let {
+        Path.of(poolTestField<ResolvedPersistenceEndpoint>(it, "endpoint").driverProperties().getProperty("sslrootcert")).parent.parent
+    } ?: database.versionBoundTls().publicTrustParent()
     private val suppliedPassword = when {
         client == ConnectedTlsClient.WRONG_PASSWORD -> "synthetic-wrong-only"
         desiredOperator -> DESIRED_OPERATOR_TEST_PASSWORD
@@ -41,13 +49,16 @@ internal class VersionBoundPersistenceConnectedFixture(
     }.toByteArray(Charsets.UTF_8)
     var acquisitions = 0
         private set
-    val acquired = AcquiredVersionedSecret.acquire(
-        if (catalogAuthor) catalogAuthorTestPasswordBinding() else VersionBoundPersistenceTestInputs.binding(),
-    ) { version ->
-        acquisitions++
-        SecretVersionSnapshot(version, suppliedPassword)
+    val acquired: AcquiredVersionedSecret by lazy {
+        check(testIntake == null) // Intake performed its own actual SDK acquisition; do not fabricate a second report.
+        AcquiredVersionedSecret.acquire(
+            if (catalogAuthor) catalogAuthorTestPasswordBinding() else VersionBoundPersistenceTestInputs.binding(),
+        ) { version ->
+            acquisitions++
+            SecretVersionSnapshot(version, suppliedPassword)
+        }
     }
-    val configuration = when {
+    val configuration = intakeConfiguration ?: when {
         desiredOperator -> VersionBoundPersistenceConfiguration.forDesiredInstallationOperator(
             acquired,
             if (client == ConnectedTlsClient.WRONG_HOST) "127.0.0.2" else database.host,
@@ -78,7 +89,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         )
     }
     val scope = PgLifecycleTestScope(
-        when {
+        testIntake?.lifecycleOwner ?: when {
             desiredOperator -> configuration.bindDesiredInstallationOperatorOwner()
             catalogAuthor -> configuration.bindCatalogGenesisAuthoringOwner()
             testActivation -> configuration.bindCatalogTestRunActivationOwner()
@@ -97,6 +108,7 @@ internal class VersionBoundPersistenceConnectedFixture(
 
     init {
         check(listOf(desiredOperator, catalogAuthor, testActivation, epochRotation).count { it } <= 1)
+        check(testIntake == null || (client == ConnectedTlsClient.MATCHED && !desiredOperator && !catalogAuthor && !testActivation && !epochRotation))
         suppliedPassword.fill(0) // The connected path must use its captured acquisition, never a later caller buffer.
     }
 
@@ -105,6 +117,7 @@ internal class VersionBoundPersistenceConnectedFixture(
         nanoClock: PersistenceNanoClock = SystemPersistenceNanoClock,
     ) {
         pools = when {
+            testIntake != null -> testIntake.target.pools.also { check(it === owner.versionBoundPools) }
             desiredOperator -> owner.bindDesiredInstallationOperatorPools(nanoClock)
             catalogAuthor -> owner.bindCatalogGenesisAuthoringPools(nanoClock)
             testActivation -> owner.bindCatalogTestRunActivationPools(nanoClock)
@@ -234,26 +247,82 @@ internal class VersionBoundPersistenceConnectedFixture(
 
     private fun closeSelected(fixtures: List<VersionBoundPersistenceConnectedFixture>) {
         val selected = fixtures.filterNot { it.closed }
-        val shutdown = selected.map { runCatching { it.owner.requestShutdown() } }
-        val beforeClose = selected.map { fixture ->
+        val intakes = selected.filter { it.testIntake != null }
+        val peers = selected.filter { it.testIntake == null }
+        val shutdown = peers.map { runCatching { it.owner.requestShutdown() } }
+        val beforeClose = peers.map { fixture ->
             runCatching {
                 if (fixture.trustPrepared && !fixture.stoppedBeforeClose) {
                     assertEquals(PersistencePublicTrustRelease.RETAINED, fixture.owner.releasePublicTrustAfterShutdown())
                 }
             }
         }
-        val poolsClosed = selected.map { runCatching { checkNotNull(it.owner.versionBoundPools).close() } }
+        val poolsClosed = peers.map { runCatching { checkNotNull(it.owner.versionBoundPools).close() } }
+        if (intakes.isEmpty()) {
+            // Preserve the existing non-intake sequencing and cleanup-failure behavior.
+            val rootsClosed = selected.map { runCatching { it.scope.close() } }
+            requireCleanup(shutdown + beforeClose + poolsClosed + rootsClosed)
+            requireCleanup(selected.map { runCatching { it.completeClose() } })
+            return
+        }
+        val beforeAssembly = intakes.map { fixture ->
+            runCatching {
+                assertAll(
+                    Executable { assertFalse(fixture.pools.shutdownRequested(), "The fixture must not pre-stop the intake root.") },
+                    Executable {
+                        val snapshot = fixture.owner.snapshot()
+                        assertTrue(snapshot.ordinaryReady && snapshot.timerReady)
+                    },
+                    Executable { assertTrue(fixture.trustPrepared && Files.isRegularFile(fixture.trustPath())) },
+                )
+            }
+        }
+        // Do not await a peer's shared Timer while the intake root still pins it. Assembly initiates its own stop.
+        val assembliesClosed = intakes.map { runCatching { checkNotNull(it.testIntake).close() } }
+        val assemblyObserved = intakes.map { runCatching { it.assertAssemblyClosedBeforeFallback() } }
+        // Fallback cleanup cannot supply the observations above; every attempt still runs after any earlier failure.
         val rootsClosed = selected.map { runCatching { it.scope.close() } }
-        requireCleanup(shutdown + beforeClose + poolsClosed + rootsClosed)
-        // All roots have actually ended before either retains its unchanged global candidate-session proof.
-        requireCleanup(selected.map { runCatching { it.completeClose() } })
+        val completed = selected.map { runCatching { it.completeClose() } }
+        requireCleanup(
+            shutdown + beforeClose + poolsClosed + beforeAssembly + assembliesClosed + assemblyObserved + rootsClosed + completed,
+            assertionsFirst = true,
+        )
     }
 
-    private fun requireCleanup(results: List<Result<*>>) {
+    /** Read-only observations, without another wait, stop, close or trust release that could repair the result. */
+    private fun assertAssemblyClosedBeforeFallback() {
+        assertAll(
+            "Assembly-owned running shutdown before fixture fallback; the connected clock is healthy.",
+            Executable { assertTrue(pools.shutdownRequested()) },
+            Executable { assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, scope.root.shutdownObservation()) },
+            Executable { assertTrue(pools.poolsEndedForTrust()) },
+            Executable {
+                listOf(pools.ordinary, pools.deletion, pools.catalogCoordinator.dataSource).forEach { source ->
+                    assertTrue(actualPool(source).isClosed)
+                    assertFalse(actualPool(source).isRunning)
+                }
+            },
+            Executable { assertTrue(scope.actors().all { it.termination().ended() && !it.thread.isAlive }) },
+            Executable {
+                assertTrue(
+                    trustPrepared && Files.notExists(trustPath().parent),
+                    "Assembly must already remove the prepared trust generation.",
+                )
+            },
+        )
+    }
+
+    private fun requireCleanup(results: List<Result<*>>, assertionsFirst: Boolean = false) {
         val failures = results.mapNotNull { it.exceptionOrNull() }
-        failures.firstOrNull()?.let { first ->
-            failures.drop(1).filterNot { it === first }.forEach(first::addSuppressed)
-            throw first
+        // Expected native RuntimeExceptions must not hide this specimen's before-fallback cleanup AssertionErrors.
+        val first = if (assertionsFirst) {
+            failures.firstOrNull { it is AssertionError } ?: failures.firstOrNull()
+        } else {
+            failures.firstOrNull()
+        }
+        first?.let { primary ->
+            failures.filterNot { it === primary }.forEach(primary::addSuppressed)
+            throw primary
         }
     }
 

@@ -369,7 +369,7 @@ internal class AwsEpochSealStsAdapter private constructor(
             )
         }
 
-        private fun urlClient(limits: AwsEpochSealStsLimits, remainingMillis: () -> Int): SdkHttpClient = UrlConnectionHttpClient.create { uri ->
+        internal fun urlClient(limits: AwsEpochSealStsLimits, remainingMillis: () -> Int): SdkHttpClient = UrlConnectionHttpClient.create { uri ->
             requireConnectionFree()
             requireEpochSealSts(uri.scheme == "https")
             val remaining = remainingMillis()

@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.catalog
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialCatalogWriterV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.EpochSealBootstrapOriginV1
@@ -31,6 +32,8 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
+import software.amazon.awssdk.http.ExecutableHttpRequest
+import software.amazon.awssdk.http.HttpExecuteRequest
 import software.amazon.awssdk.http.SdkHttpClient
 import java.net.URLDecoder
 import java.time.Instant
@@ -45,6 +48,7 @@ import java.util.concurrent.atomic.AtomicReference
 internal class TestOrdinarySealHttpFixtureV1(
     val horizon: Instant = Instant.parse("2038-01-01T00:00:00Z"),
     val horizonPolicy: InitialPolicyReferenceV1 = policy("synthetic-test-restore-horizon"),
+    val protectedIntake: Boolean = false,
 ) : AutoCloseable {
     val sts = AwsJournalKmsFixture()
     val kms = AwsJournalKmsFixture()
@@ -57,6 +61,10 @@ internal class TestOrdinarySealHttpFixtureV1(
     var beforeS3: (JournalPublisherHttpRequest) -> Unit = {}
     var changeS3: (JournalPublisherHttpRequest, S3CatalogReply) -> Unit = { _, _ -> }
     var onNativeClose: () -> Unit = {}
+    var beforeNativeFactory: (String) -> Unit = {}
+    var beforeNativeRequest: (String, () -> Int) -> Unit = { _, _ -> }
+    val nativeFactories = mutableListOf<String>()
+    val requestBudgets = mutableListOf<Pair<String, Int>>()
     var hideObject = false
     var lostPutAcknowledgment = false
     var stored: JournalPublisherObject? = null
@@ -68,7 +76,7 @@ internal class TestOrdinarySealHttpFixtureV1(
         private set
     private var session = ""
     private val assertion = AtomicReference<AssertionError?>()
-    private var routing: TestOwnerDeleteJournalRoutingV1? = null
+    private var journal: TestOwnerDeleteJournalConfigurationV1? = null
     private var acquisition: VersionBoundTestOrdinarySealV1? = null
     private var expectedKey: String? = null
 
@@ -77,8 +85,8 @@ internal class TestOrdinarySealHttpFixtureV1(
 
     fun owner(routing: TestOwnerDeleteJournalRoutingV1, lanes: JournalPublicationLanesV1, environment: String,
         catalog: InitialCatalogWriterV1): VersionBoundTestOrdinarySealV1 {
-        check(acquisition == null && this.routing == null)
-        this.routing = routing
+        check(!protectedIntake && acquisition == null)
+        configure(routing.journalConfiguration)
         val d = routing.journalConfiguration.declaration()
         val retained = TestOrdinarySealRetentionDeclarationV1(environment, routing.journalConfiguration.scope.id.toString(),
             d.writer.generationId, d.writer.databaseIdentity, d.writer.restoreIdentity, horizon, horizonPolicy,
@@ -97,6 +105,21 @@ internal class TestOrdinarySealHttpFixtureV1(
             EpochSealCatalogPrincipalV1(catalog.signAuthority, role("test-catalog-sign", 'E')),
             EpochSealBootstrapOriginV1("test-bootstrap-origin", 1, "test-bootstrap-credential", role("test-bootstrap", 'F')),
             policy("synthetic-test-installed-bundle"))
+        return VersionBoundTestOrdinarySealV1.withHttpFixture(routing, lanes, deployment, retained,
+            AwsJournalKmsFixture.CREDENTIALS, SOURCE_SESSION, sts::httpClient, kms::httpClient, ::s3Client,
+            nanoTime = ::nanos, wallClock = ::now).also { acquisition = it }
+    }
+
+    /** Raw HTTP expectations are fixed before intake; the fixture does not construct/replace the native owner. */
+    fun prepareIndependent(journal: TestOwnerDeleteJournalConfigurationV1) {
+        check(protectedIntake && acquisition == null)
+        configure(journal)
+    }
+
+    private fun configure(journal: TestOwnerDeleteJournalConfigurationV1) {
+        check(this.journal == null)
+        this.journal = journal
+        val d = journal.declaration()
         sts.respond = ::stsReply
         sts.beforePrepare = { checked { released() } }
         kms.beforePrepare = { checked { released() } }
@@ -111,9 +134,29 @@ internal class TestOrdinarySealHttpFixtureV1(
             JournalKmsHttpReply(if (generated) AwsJournalKmsFixture.generateDocument(d.encryption.keyArn, AwsJournalKmsFixture.keyBytes(), AwsJournalKmsFixture.wrappedBytes())
                 else AwsJournalKmsFixture.decryptDocument(d.encryption.keyArn, AwsJournalKmsFixture.keyBytes()))
         } }
-        return VersionBoundTestOrdinarySealV1.withHttpFixture(routing, lanes, deployment, retained,
-            AwsJournalKmsFixture.CREDENTIALS, SOURCE_SESSION, sts::httpClient, kms::httpClient, ::s3Client,
-            nanoTime = ::nanos, wallClock = ::now).also { acquisition = it }
+    }
+
+    fun nativeSts(remaining: () -> Int): SdkHttpClient = nativeClient("STS", remaining, sts::httpClient)
+    fun nativeKms(remaining: () -> Int): SdkHttpClient = nativeClient("KMS", remaining, kms::httpClient)
+    fun nativeS3(remaining: () -> Int): SdkHttpClient = nativeClient("S3", remaining, ::s3Client)
+
+    private fun nativeClient(kind: String, remaining: () -> Int, factory: () -> SdkHttpClient): SdkHttpClient {
+        check(protectedIntake)
+        nativeFactories.add(kind)
+        beforeNativeFactory(kind)
+        val raw = factory()
+        // Like the URL helper, evaluate remaining only at request I/O, after the owning transport exists.
+        return object : SdkHttpClient {
+            override fun prepareRequest(request: HttpExecuteRequest): ExecutableHttpRequest = checked {
+                val budget = remaining()
+                assertTrue(budget > 0)
+                requestBudgets.add(kind to budget)
+                beforeNativeRequest(kind, remaining)
+                raw.prepareRequest(request)
+            }
+            override fun close() = raw.close()
+            override fun clientName(): String = "SyntheticNativeTestSeal$kind"
+        }
     }
 
     private fun s3Client(): SdkHttpClient {
@@ -130,7 +173,7 @@ internal class TestOrdinarySealHttpFixtureV1(
         released()
         beforeS3(request)
         order.add(request.kind)
-        val j = checkNotNull(routing).journalConfiguration
+        val j = checkNotNull(journal)
         val location = j.declaration().journalLocation
         val key = checkNotNull(expectedKey)
         journalPublisherRawAssertSigned(request, location.region, location.accountId, TARGET)
@@ -182,9 +225,9 @@ internal class TestOrdinarySealHttpFixtureV1(
             assertTrue(Regex("kira-seal-[0-9a-f-]{36}").matches(session))
             val policy = ObjectMapper().readTree(fields.getValue("Policy"))
             expectedKey = policy["Statement"][4]["Condition"]["StringEquals"]["s3:prefix"].textValue()
-            val location = checkNotNull(routing).journalConfiguration.declaration().journalLocation
+            val location = checkNotNull(journal).declaration().journalLocation
             val resources = policy["Statement"][3]["Resource"].map { it.textValue() }
-            assertEquals(listOf("arn:aws:s3:::${location.bucket}/$expectedKey", checkNotNull(routing).journalConfiguration.declaration().encryption.keyArn), resources)
+            assertEquals(listOf("arn:aws:s3:::${location.bucket}/$expectedKey", checkNotNull(journal).declaration().encryption.keyArn), resources)
             """<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/"><AssumeRoleResult>""" +
                 "<Credentials><AccessKeyId>${TARGET.accessKeyId()}</AccessKeyId><SecretAccessKey>${TARGET.secretAccessKey()}</SecretAccessKey>" +
                 "<SessionToken>${TARGET.sessionToken()}</SessionToken><Expiration>${now().plusSeconds(900)}</Expiration></Credentials>" +
@@ -206,7 +249,7 @@ internal class TestOrdinarySealHttpFixtureV1(
 
     private fun signed(request: JournalKmsHttpRequest, credentials: AwsSessionCredentials, service: String) {
         assertEquals("https", request.http.protocol())
-        assertEquals("$service.${checkNotNull(routing).journalConfiguration.declaration().journalLocation.region}.amazonaws.com", request.http.host())
+        assertEquals("$service.${checkNotNull(journal).declaration().journalLocation.region}.amazonaws.com", request.http.host())
         assertEquals(credentials.sessionToken(), request.http.firstMatchingHeader("x-amz-security-token").orElseThrow())
         val authorization = request.http.firstMatchingHeader("Authorization").orElseThrow()
         assertTrue(authorization.startsWith("AWS4-HMAC-SHA256 Credential=${credentials.accessKeyId()}/") && "/$service/aws4_request" in authorization)

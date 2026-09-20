@@ -133,7 +133,7 @@ keys are supplied or generated automatically. The recipe needs Ed25519-capable O
 [test signing material](docs/LOCAL_DEV.md#running-tests), never production keys.
 
 `ddl-auto=validate` — **Flyway owns the schema** (`src/main/resources/db/migration/`, V1..V13 then
-V13.1 credential versions, V13.2 bootstrap state and V14..V21 complaint migrations); Hibernate
+V13.1 credential versions, V13.2 bootstrap state and V14..V22 complaint migrations); Hibernate
 only validates against it. Swagger UI
 (dev profile only) is at `/swagger-ui/index.html`; the OpenAPI document is at `/v3/api-docs`.
 
@@ -191,7 +191,7 @@ src/main/kotlin/me/manga/kira/backend/
   audit/           # domain / application (AuditService) / infrastructure
 src/main/resources/
   application.yml, application-dev.yml, application-prod.yml
-  db/migration/    # forward-only V1..V13, V13_1 credential versions, V13_2 bootstrap state, V14..V21 complaint storage/evidence
+  db/migration/    # forward-only V1..V13, V13_1 credential versions, V13_2 bootstrap state, V14..V22 complaint storage/evidence
 src/test/kotlin/me/manga/kira/backend/
   ...mirrors main; support/ (Testcontainers base, JWT helpers, MutableClock); resources/fixtures/
 ```

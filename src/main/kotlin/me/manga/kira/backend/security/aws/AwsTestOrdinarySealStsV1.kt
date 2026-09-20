@@ -231,10 +231,20 @@ internal class AwsTestOrdinarySealStsV1 private constructor(
             routing: TestOwnerDeleteJournalRoutingV1, source: AwsSessionCredentials, binding: AwsEpochSealStsBinding,
             limits: AwsEpochSealStsLimits, sts: () -> SdkHttpClient, kms: () -> SdkHttpClient, s3: () -> SdkHttpClient,
             nanoTime: () -> Long, wallClock: () -> Instant,
+        ): AwsTestOrdinarySealStsV1 = coldBudgeted(routing, source, binding, limits, { sts() }, { kms() }, { s3() }, nanoTime, wallClock)
+
+        /** Native remaining-budget factories are retained, not evaluated early or replaced with renewed timeouts. */
+        internal fun coldBudgeted(
+            routing: TestOwnerDeleteJournalRoutingV1, source: AwsSessionCredentials, binding: AwsEpochSealStsBinding,
+            limits: AwsEpochSealStsLimits,
+            sts: (remainingMillis: () -> Int) -> SdkHttpClient,
+            kms: (remainingMillis: () -> Int) -> SdkHttpClient,
+            s3: (remainingMillis: () -> Int) -> SdkHttpClient,
+            nanoTime: () -> Long, wallClock: () -> Instant,
         ): AwsTestOrdinarySealStsV1 {
             requireConnectionFree()
             validateCredentials(source)
-            return AwsTestOrdinarySealStsV1(routing, source, binding, limits, { sts() }, { kms() }, { s3() }, nanoTime, wallClock)
+            return AwsTestOrdinarySealStsV1(routing, source, binding, limits, sts, kms, s3, nanoTime, wallClock)
         }
         private fun validateCredentials(credentials: AwsSessionCredentials) {
             requireEpochSealSts(credentials.accessKeyId().length in 1..128 && credentials.secretAccessKey().length in 1..256, EpochSealStsFailure.INVALID_INPUT)

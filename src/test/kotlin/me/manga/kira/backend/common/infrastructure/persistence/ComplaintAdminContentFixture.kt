@@ -27,6 +27,7 @@ import me.manga.kira.backend.security.adminReadTestCursors
 import me.manga.kira.backend.user.domain.Role
 import me.manga.kira.backend.user.domain.User
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.mock.web.MockHttpServletResponse
@@ -136,7 +137,13 @@ internal class ComplaintAdminContentFixture(
     fun problem(response: MockHttpServletResponse, status: Int, code: String, consumed: Boolean = false) {
         base.problem(response, status, code)
         assertEquals(if (consumed) listOf("true") else emptyList<String>(), response.getHeaders(CONSUMED).toList())
+        if (!consumed) association(response, null)
         assertNull(response.getHeader("ETag"))
+    }
+
+    fun association(response: MockHttpServletResponse, grantId: UUID?) {
+        assertEquals(grantId?.let { listOf(it.toString()) } ?: emptyList<String>(), response.getHeaders(CONSUMED_GRANT).toList())
+        if (grantId != null) assertFalse(response.contentAsString.contains(grantId.toString()))
     }
 
     fun state(): AdminContentFixtureState = AdminContentFixtureState(
@@ -156,7 +163,10 @@ internal class ComplaintAdminContentFixture(
         observer.update("DELETE FROM complaint_idempotency_receipts WHERE actor_kind = 'ADMIN' AND actor_id = ? AND data_scope_id = ?", ordinary.userId, scope.id)
     }
 
-    companion object { const val CONSUMED = "X-Kira-Admin-Step-Up-Consumed" }
+    companion object {
+        const val CONSUMED = "X-Kira-Admin-Step-Up-Consumed"
+        const val CONSUMED_GRANT = "X-Kira-Admin-Step-Up-Consumed-Grant-Id"
+    }
 }
 
 internal data class AdminContentFixtureState(

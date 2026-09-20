@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import java.sql.Connection
 import java.time.Duration
 import java.util.UUID
@@ -723,7 +724,16 @@ class ScopedAdminStepUpIT {
                 assertEquals(200, response.statusCode.value())
                 assertEquals("no-store", response.headers.cacheControl)
                 assertEquals(scope.storedName, proof.scope)
-                f.assertStoredProof(IssuedScopedAdminStepUp(proof.token, proof.expiresAt, scope), f.ordinary.cutoff.plusSeconds(37))
+                val grantId = f.ordinary.grantIds().single()
+                assertEquals(
+                    if (scope === ScopedAdminStepUpScope.COMPLAINT) listOf(grantId.toString()) else null,
+                    response.headers[AdminStepUpController.GRANT_ID_HEADER],
+                )
+                val mapper = ObjectMapper().findAndRegisterModules()
+                val encoded = mapper.writeValueAsBytes(proof)
+                assertEquals(setOf("token", "expiresAt", "scope"), mapper.readTree(encoded).fieldNames().asSequence().toSet())
+                assertFalse(encoded.toString(Charsets.UTF_8).contains(grantId.toString()))
+                f.assertStoredProof(IssuedScopedAdminStepUp(proof.token, proof.expiresAt, scope, grantId), f.ordinary.cutoff.plusSeconds(37))
                 if (scope === ScopedAdminStepUpScope.COMPLAINT) f.assertGrantDelta(before, 1) else assertEquals(before, f.counters.snapshot())
                 assertEquals(1, f.jdbc.insertAttempts)
             }
@@ -764,7 +774,10 @@ class ScopedAdminStepUpIT {
 
         val source = checkNotNull(issueHttp(f, AdminStepUpRequest(ScopedStepUpFixture.PASSWORD, AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE)).body)
         assertEquals(AdminStepUpService.SOURCE_ADMIN_MUTATION_SCOPE, source.scope)
-        f.assertStoredProof(IssuedScopedAdminStepUp(source.token, source.expiresAt, ScopedAdminStepUpScope.SOURCE), f.ordinary.cutoff.plusSeconds(37))
+        f.assertStoredProof(
+            IssuedScopedAdminStepUp(source.token, source.expiresAt, ScopedAdminStepUpScope.SOURCE, f.ordinary.grantIds().single()),
+            f.ordinary.cutoff.plusSeconds(37),
+        )
         assertEquals(before, f.counters.snapshot())
     }
 

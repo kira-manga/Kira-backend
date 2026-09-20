@@ -96,6 +96,39 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     }
 
     @Test
+    fun `V22 preserves populated V21 receipts with unknown association and changes only the two selected constraints`() {
+        for (rejected in listOf(false, true)) database.schema { schema ->
+            schema.flyway(21).migrate()
+            schema.exec("UPDATE document_publication_state SET bootstrap_phase='reconciliation_required' WHERE id=1")
+            schema.exec(complaintResource("fixtures/complaint/v13-rich.sql"))
+            schema.exec(complaintResource("fixtures/complaint/v14-rich.sql"))
+            val result = if (rejected) {
+                "outcome='REJECTED',response_status=412,problem_code='PRECONDITION_FAILED'"
+            } else {
+                "outcome='APPLIED',response_status=200,ack_ids=target_ids,ack_versions=ARRAY[7]::bigint[]," +
+                    "response_etag='\"complaint-$OWNED_COMPLAINT_ID-v7\"'"
+            }
+            schema.exec(receiptUpdate("actor_kind='ADMIN',operation='ADMIN_EDIT',$RECEIPT_COMPLETED,$result"))
+            val before = schema.connection().use { it.tableSnapshots() }
+            val sequences = schema.connection().use { it.sequenceValues() }
+            val changedConstraints = listOf("chk_complaint_receipt_result", "chk_complaint_receipt_external")
+                .map { "constraint|complaint_idempotency_receipts|$it|" }
+            fun retainedSchema() = schema.connection().use { connection ->
+                connection.schemaSnapshot().filterNot { line -> changedConstraints.any(line::startsWith) }
+            }
+            val retained = retainedSchema()
+            assertEquals(1, schema.flyway(22).migrate().migrationsExecuted)
+            assertTrue(schema.flyway(22).validateWithResult().validationSuccessful)
+            schema.connection().use {
+                it.assertPreserved(before)
+                assertEquals(sequences, it.sequenceValues())
+            }
+            assertEquals(retained, retainedSchema())
+            assertEquals(listOf("true"), schema.strings("SELECT (consumed_grant_id IS NULL)::text FROM complaint_idempotency_receipts"))
+        }
+    }
+
+    @Test
     fun `failure after all V14 statements rolls back DDL alterations seeds and history without repair`() = database.schema { schema ->
         schema.flyway(13).migrate()
         schema.exec(complaintResource("fixtures/complaint/v13-rich.sql"))
@@ -196,7 +229,7 @@ class ComplaintMigrationIT : ComplaintPostgresTest() {
     }
 
     companion object {
-        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "13.2") + (14..21).map(Int::toString)
+        private val latestVersions = (1..13).map(Int::toString) + listOf("13.1", "13.2") + (14..22).map(Int::toString)
         private const val V14 = "V14__backend_owned_complaints.sql"
         private const val SYNTHETIC_BCRYPT = "{bcrypt}\$2a\$10\$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
         private val historicalInputs = complaintResource("fixtures/complaint/migration-sha256.txt")

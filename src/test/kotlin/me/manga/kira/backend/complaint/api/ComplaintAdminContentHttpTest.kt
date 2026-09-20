@@ -513,12 +513,68 @@ class ComplaintAdminContentHttpTest {
         addHeader(name, value)
     }
 
-    private fun envelope(response: MockHttpServletResponse, confirmed: Boolean) {
+    @Test
+    fun receiptAssociationIsBoundedHistoricalAndIndependentOfThePresentedRequestHeader() {
+        val a = UUID.fromString("44444444-4444-4444-8444-444444444444")
+        val b = UUID.fromString("55555555-5555-4555-8555-555555555555")
+        fun laterBoundedFailure(): MockHttpServletResponse = object : MockHttpServletResponse() {
+            private var failEtag = true
+            override fun setHeader(name: String, value: String?) {
+                // A returned receipt is known before headers are written; no partial body has been sent.
+                if (name.equals("ETag", ignoreCase = true) && failEtag) {
+                    failEtag = false
+                    throw IllegalStateException("Synthetic private delivery failure")
+                }
+                super.setHeader(name, value)
+            }
+        }
+        for (grantId in listOf(null, a)) {
+            for (receipt in listOf(
+                ComplaintAdminContentReceipt.Applied(id, 8, grantId),
+                ComplaintAdminContentReceipt.Rejected(ComplaintAdminContentRejection.PRECONDITION_FAILED, grantId),
+            )) {
+                val response = Fixture().apply { this.receipt = receipt }.send(input().apply {
+                    addHeader("X-Kira-Admin-Step-Up-Grant-Id", b.toString()) // Not consumed or echoed as authority.
+                })
+                assertEquals(if (receipt is ComplaintAdminContentReceipt.Applied) 200 else 412, response.status)
+                envelope(response, confirmed = true, grantId = grantId)
+                assertFalse(response.contentAsString.contains(a.toString()) || response.contentAsString.contains(b.toString()))
+                val bounded = laterBoundedFailure()
+                Fixture().apply { this.receipt = receipt }.handler.handleRequest(input(), bounded)
+                assertEquals(500, bounded.status)
+                assertNull(bounded.getHeader("ETag"))
+                envelope(bounded, confirmed = true, grantId = grantId)
+            }
+            for (operation in ComplaintAdminStatusOperation.entries) for (receipt in listOf(
+                ComplaintAdminStatusReceipt.Applied(id, 8, grantId),
+                ComplaintAdminStatusReceipt.Rejected(ComplaintAdminStatusRejection.PRECONDITION_FAILED, grantId),
+            )) {
+                val response = StatusFixture().apply { this.receipt = receipt }.send(statusInput(operation).apply {
+                    addHeader("X-Kira-Admin-Step-Up-Grant-Id", b.toString())
+                })
+                assertEquals(if (receipt is ComplaintAdminStatusReceipt.Applied) 200 else 412, response.status)
+                envelope(response, confirmed = true, grantId = grantId)
+                assertFalse(response.contentAsString.contains(a.toString()) || response.contentAsString.contains(b.toString()))
+                val bounded = laterBoundedFailure()
+                StatusFixture().apply { this.receipt = receipt }.handler.handleRequest(statusInput(operation), bounded)
+                assertEquals(500, bounded.status)
+                assertNull(bounded.getHeader("ETag"))
+                envelope(bounded, confirmed = true, grantId = grantId)
+            }
+        }
+        for (invalid in listOf(UUID(0, 0), UUID.fromString("44444444-4444-5444-8444-444444444444"), UUID.fromString("44444444-4444-4444-c444-444444444444"))) {
+            assertThrows<IllegalArgumentException> { ComplaintAdminContentReceipt.Applied(id, 8, invalid) }
+            assertThrows<IllegalArgumentException> { ComplaintAdminStatusReceipt.Rejected(ComplaintAdminStatusRejection.PRECONDITION_FAILED, invalid) }
+        }
+    }
+
+    private fun envelope(response: MockHttpServletResponse, confirmed: Boolean, grantId: UUID? = null) {
         assertEquals("1", response.getHeader("X-Kira-Complaint-Contract"))
         assertEquals("no-store, no-transform", response.getHeader("Cache-Control"))
         assertEquals(response.contentAsByteArray.size.toString(), response.getHeader("Content-Length"))
         assertTrue(response.contentAsByteArray.size <= 512)
         assertEquals(if (confirmed) listOf("true") else emptyList<String>(), response.getHeaders(CONSUMED).toList())
+        assertEquals(grantId?.let { listOf(it.toString()) } ?: emptyList<String>(), response.getHeaders(ComplaintAdminContentHttpHandler.CONSUMED_GRANT_HEADER).toList())
         assertNull(response.getHeader("Location"))
         for (privateValue in listOf("Synthetic", "private-proof", "synthetic-token", key.toString(), scope.id.toString(), "consumedGrantId")) {
             assertFalse(response.contentAsString.contains(privateValue))

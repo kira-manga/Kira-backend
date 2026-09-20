@@ -557,6 +557,16 @@ not anonymity, encryption, authentication or identity proof; access/retention ru
 
 ## 6. Security model
 
+**Prepared complaint association amendment (2026-09-20):** the dormant Admin edit/status/closure
+receipt path retains the actual consumed grant UUID on APPLIED and REJECTED completion (V22).
+Successful complaint issuance and confirmed receipt/replay delivery expose separate bounded
+server-to-server UUID headers; the three-field issuance JSON and historical consumption Boolean
+are unchanged. Historical NULL means association unknown, never the fresh proof presented on a
+replay. Exact BFF generation/scope/issuance matching and timeout retention follow the
+[API contract](API.md#exact-complaint-proof-association-prepared-not-activated). No new grant FK,
+retention policy, backfill, route activation or native TEST authority is implied. This is an additive
+refinement of App29 v6 §§6.2/6.3/7.3/11, not a waiver of their proof/replay requirements.
+
 - **Auth flow:** `POST /auth/login` → user lookup → BCrypt verify → acknowledged throttle completion
   → `JwtService` issues an **HS256 JWT** via Nimbus from the **same immutable verified User snapshot**.
   Claims: `sub` = UUID, `email`, `role` (`ADMIN`|`USER`), `credential_version` = canonical nonnegative

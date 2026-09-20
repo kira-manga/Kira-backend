@@ -107,8 +107,13 @@ internal enum class ComplaintAdminContentRejection(val status: Int) {
 }
 
 /** The concrete port returns these only after its exact terminal receipt commit and physical release. */
-internal sealed class ComplaintAdminContentReceipt private constructor() {
-    class Applied(val id: UUID, val version: Long) : ComplaintAdminContentReceipt() {
+internal sealed class ComplaintAdminContentReceipt private constructor(val consumedGrantId: UUID?) {
+    init {
+        // Historical NULL is unknown association, never consumption of the proof presented on replay.
+        require(consumedGrantId == null || consumedGrantId.version() == 4 && consumedGrantId.variant() == 2)
+    }
+
+    class Applied(val id: UUID, val version: Long, consumedGrantId: UUID? = null) : ComplaintAdminContentReceipt(consumedGrantId) {
         init {
             ComplaintIdentifiers.resourceId(id.toString())
             require(version > 0)
@@ -117,7 +122,7 @@ internal sealed class ComplaintAdminContentReceipt private constructor() {
         val etag: String get() = "\"complaint-$id-v$version\""
     }
 
-    class Rejected(val code: ComplaintAdminContentRejection) : ComplaintAdminContentReceipt() {
+    class Rejected(val code: ComplaintAdminContentRejection, consumedGrantId: UUID? = null) : ComplaintAdminContentReceipt(consumedGrantId) {
         val status: Int get() = code.status
         val problemCode: String get() = code.name
     }

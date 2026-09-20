@@ -483,7 +483,8 @@ internal object ComplaintTestNamespaceRegistrationCases {
 
     private fun withRuntimeRoot(p: ProjectionActivationObservation, projector: VersionBoundPersistenceConnectedFixture,
         action: (VersionBoundPersistenceConnectedFixture, VersionBoundTestNamespaceProcessV1, CatalogSignerRotationProbeJdbc) -> Unit) {
-        val runtime = VersionBoundPersistenceConnectedFixture(projector.database, endpointPort = projector.endpointPort)
+        val runtime = VersionBoundPersistenceConnectedFixture(projector.database, endpointPort = projector.endpointPort,
+            testIntake = p.f.rows.evidence.intakeAssembly)
         try {
             runtime.bind() // Existing CONTROLLED_TEST_ONLY fixture choice; production UNKNOWN is neither changed nor qualified.
             runtime.start()

@@ -91,7 +91,7 @@ internal class ComplaintAdminContentHttpHandler(
         val receipt = service.edit(context, headers.bearer ?: rejectAdminContent(ComplaintAdminContentFailure.UNAUTHORIZED), headers.proof, input)
         // A returned terminal receipt, not HTTP success, establishes historical operation-level consumption.
         // The supplied replay proof might be different and remains untouched; unknown/rollback outcomes never reach here.
-        response.confirmConsumption()
+        response.confirmConsumption(receipt.consumedGrantId)
         val encoded = responses.encode(permit, receipt)
         try {
             if (!responses.isOpen()) rejectAdminContent(ComplaintAdminContentFailure.UNAVAILABLE)
@@ -233,6 +233,7 @@ internal class ComplaintAdminContentHttpHandler(
         response.setHeader("X-Kira-Complaint-Contract", "1")
         response.setHeader("Cache-Control", "no-store, no-transform")
         response.setHeader(CONSUMED_HEADER, if (response.consumptionConfirmed) "true" else null)
+        response.setHeader(CONSUMED_GRANT_HEADER, response.consumedGrantId?.toString())
         response.contentType = "$media;charset=UTF-8"
         response.setContentLength(length)
     }
@@ -251,10 +252,13 @@ internal class ComplaintAdminContentHttpHandler(
         var problemAttempted = false
         var consumptionConfirmed = false
             private set
+        var consumedGrantId: UUID? = null
+            private set
         private var permit: ComplaintOwnerHistoryResponses.Permit? = null
 
-        fun confirmConsumption() {
+        fun confirmConsumption(grantId: UUID?) {
             consumptionConfirmed = true
+            consumedGrantId = grantId
         }
 
         fun retainPermit(selected: ComplaintOwnerHistoryResponses.Permit) {
@@ -282,6 +286,7 @@ internal class ComplaintAdminContentHttpHandler(
     companion object {
         const val MAX_BODY_BYTES = ComplaintAdminContentParser.MAX_BODY_BYTES
         const val CONSUMED_HEADER = "X-Kira-Admin-Step-Up-Consumed"
+        const val CONSUMED_GRANT_HEADER = "X-Kira-Admin-Step-Up-Consumed-Grant-Id"
         private const val PATH_PREFIX = "/api/v1/admin/complaints/"
         private const val PATH_SUFFIX = "/content"
         private const val DELIVERY_FAILURE = "Complaint response delivery failed."
