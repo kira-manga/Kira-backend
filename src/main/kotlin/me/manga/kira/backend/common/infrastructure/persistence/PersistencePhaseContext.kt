@@ -11,10 +11,13 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreationOperation
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteReadOperation
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRegistrationOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditTuple
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationTuple
@@ -157,6 +160,8 @@ constructor(
     private val testRegistrationWork: PersistenceTimeBudget? = null,
     private val testRunSealer: TestRunSealingV1? = null,
     private val testRunSealingWork: PersistenceTimeBudget? = null,
+    private val testVerifiedOwnerDelete: TestRunVerifiedOwnerDeleteV1? = null,
+    private val testVerifiedOwnerDeleteWork: PersistenceTimeBudget? = null,
 ) {
     private val manager = ownership.manager
     private val dataSource = ownership.dataSource
@@ -257,7 +262,7 @@ constructor(
         stage = Stage.STARTING
         val rechecksReadCommitted = firstDesiredAttempt != null || catalogPublisherAttempt != null ||
             catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationDelivery != null || signerRotationActivation != null ||
-                testRunActivation != null || path.complaintMaintenanceWriter
+                testRunActivation != null || testVerifiedOwnerDelete != null || path.complaintMaintenanceWriter
         val adminReadCommitted = path === PersistencePhasePath.COMPLAINT_ADMIN_READ_AUTHENTICATION ||
             path === PersistencePhasePath.COMPLAINT_ADMIN_SEARCH || path === PersistencePhasePath.COMPLAINT_ADMIN_DETAIL ||
                 path === PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT ||
@@ -391,7 +396,7 @@ constructor(
         work =
             rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
                 ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork
+                ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testVerifiedOwnerDeleteWork
                 ?: PersistenceTimeBudget.start(WORK_MILLIS, ownership.nanoClock)
     }
 
@@ -399,7 +404,7 @@ constructor(
         requireCaller()
         val retained = rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork ?: catalogFinalizerWork
             ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork ?: signerRotationDeliveryWork
-            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork
+            ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testVerifiedOwnerDeleteWork
         return retained?.systemCappedSnapshot(ceilingMillis)
     }
 
@@ -820,6 +825,7 @@ constructor(
         testRunActivation?.observeFailure(problem)
         testRegistration?.observeFailure(problem)
         testRunSealer?.observeFailure(problem)
+        testVerifiedOwnerDelete?.observeFailure(problem)
         if (problem is InterruptedException) restoreInterrupt = true
         val reason = when (problem) {
             is InterruptedException -> PersistencePhaseFailureCode.INTERRUPTED
@@ -901,6 +907,34 @@ constructor(
             acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
             (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
 
+    internal fun testVerifiedOwnerDeleteCleanupProven(original: TestRunVerifiedOwnerDeleteV1): Boolean =
+        caller.isCurrent() && testVerifiedOwnerDelete === original &&
+            path in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) &&
+            stage === Stage.CLOSED && finalizerEnded && springSettled && refunded.get() &&
+            acquisition?.quiescent() != false && !completionActive && (!beginDispatched || beginEnded) &&
+            (rootStatus?.hasReturnedStatus() != true || completionEnded) && failure.get() !== PersistencePhaseFailureCode.CLEANUP_UNRESOLVED
+
+    internal fun requireTestVerifiedOwnerDeleteReload(original: TestRunVerifiedOwnerDeleteV1, graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate) {
+        if (testVerifiedOwnerDelete !== original || path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requirePersistence(ownership, jdbc, graph)
+    }
+
+    internal fun requireTestVerifiedOwnerDeleteApply(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate, input: TestOwnerDeleteApplyInputV1) {
+        if (testVerifiedOwnerDelete == null) {
+            if (graph.recoveryRegistration != null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        } else {
+            if (path !== PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+            testVerifiedOwnerDelete.requirePersistence(ownership, jdbc, graph)
+            testVerifiedOwnerDelete.requireApplyInput(input)
+        }
+    }
+
+    internal fun requireTestVerifiedOwnerDeleteRun(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate) {
+        val original = testVerifiedOwnerDelete ?: refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requirePersistence(ownership, jdbc, graph)
+        original.requireSealedRun(jdbc)
+    }
+
     internal fun initialTestActivationPrepare(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection): Boolean {
         selectedHolder.requireMaintenanceFence(fence, selected)
         if (path !== PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE) return false
@@ -916,6 +950,7 @@ constructor(
     ) {
         selectedHolder.requireMaintenanceFence(fence, selected)
         when {
+            testVerifiedOwnerDelete != null -> testVerifiedOwnerDelete.requireMaintenanceGate(ownership, path, gate)
             testRunSealer != null -> testRunSealer.requireMaintenanceGate(ownership, path, gate)
             testRegistration != null -> testRegistration.requireMaintenanceGate(ownership, path, gate)
             testRunActivation != null -> testRunActivation.requireMaintenanceGate(ownership, path, gate)
@@ -1062,6 +1097,7 @@ constructor(
                 testRunActivation?.observeFailure(problem)
                 testRegistration?.observeFailure(problem)
                 testRunSealer?.observeFailure(problem)
+                testVerifiedOwnerDelete?.observeFailure(problem)
                 // Discard raw restoration details, but retain unresolved custody instead of claiming settlement/refund.
                 failure.set(PersistencePhaseFailureCode.CLEANUP_UNRESOLVED)
                 springSettled = false
@@ -1138,7 +1174,7 @@ constructor(
     internal fun deadlineExpired(): Boolean {
         val selected = work ?: rotationWork ?: cutoffWork ?: catalogRefreshWork ?: desiredWork ?: firstDesiredWork ?: catalogAuthorWork
             ?: catalogFinalizerWork ?: catalogPublisherWork ?: catalogSignerRotationWork ?: signerRotationRecoveryWork ?: signerRotationAuthorWork
-            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork
+            ?: signerRotationDeliveryWork ?: signerRotationActivationWork ?: testRunActivationWork ?: testRegistrationWork ?: testRunSealingWork ?: testVerifiedOwnerDeleteWork
             ?: return false
         val expired = persistenceFactoryRemainingMillis(selected) == 0L
         if (expired) failure.compareAndSet(null, PersistencePhaseFailureCode.TIME_BUDGET_EXHAUSTED)
@@ -1178,13 +1214,13 @@ constructor(
 
     private fun usesCatalogLifecycleCleanup(): Boolean = catalogAuthorAttempt != null || catalogFinalizerAttempt != null || catalogPublisherAttempt != null ||
         catalogSignerRotationAttempt != null || signerRotationRecovery != null || signerRotationAuthor != null || signerRotationDelivery != null ||
-        signerRotationActivation != null || testRunActivation != null || testRegistration != null || testRunSealer != null
+        signerRotationActivation != null || testRunActivation != null || testRegistration != null || testRunSealer != null || testVerifiedOwnerDelete != null
 
     private fun emergencyBudget(): PersistenceTimeBudget {
         emergency?.let { return it }
         requireCaller()
         val catalogBudget =
-            testRunSealer?.budget ?: testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
+            testVerifiedOwnerDelete?.budget ?: testRunSealer?.budget ?: testRegistration?.budget ?: testRunActivation?.budget ?: signerRotationActivation?.budget ?: signerRotationDelivery?.budget ?: signerRotationAuthorAllowance ?: signerRotationRecovery?.budget
                 ?: catalogSignerRotationAttempt?.budget
                 ?: catalogPublisherAttempt?.budget
                 ?: catalogFinalizerAttempt?.phaseBudget ?: catalogAuthorAttempt?.budget
@@ -1267,6 +1303,7 @@ constructor(
                 testRunActivation?.observeFailure(problem)
                 testRegistration?.observeFailure(problem)
                 testRunSealer?.observeFailure(problem)
+                testVerifiedOwnerDelete?.observeFailure(problem)
                 // The release callback is never retried if claimed but unfinished/failed. Keep the original recovery path.
                 ownership.retainCallerForRecovery(this@PersistencePhaseContext)
                 false
@@ -1340,7 +1377,7 @@ constructor(
 
     /** Read-only guard view of this phase's retained resources, not another owner or finalizer. */
     private inner class SelectedHolderBoundary {
-        private val maintenanceFence = if (path.complaintMaintenanceWriter) PersistenceComplaintMaintenanceFenceV1(this@PersistencePhaseContext) else null
+        private val maintenanceFence = if (path.complaintMaintenanceWriter || testVerifiedOwnerDelete != null) PersistenceComplaintMaintenanceFenceV1(this@PersistencePhaseContext) else null
         private var maintenanceLimitsRestored = false
         private val deletionFence = when (path) {
             PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
@@ -2354,6 +2391,7 @@ constructor(
             requireStepUpResource(jdbc, path)
             if (!issued || retained != null || !operation.belongsTo(this@PersistencePhaseContext, path)) refuse(PersistencePhaseFailureCode.WORK_FAILED)
             retained = operation
+            testVerifiedOwnerDelete?.authenticateAndControls(ownership, jdbc, operation)
         }
 
         override fun requireRetained(operation: ComplaintOwnerDeletePhaseOperation, jdbc: JdbcTemplate) {

@@ -44,6 +44,8 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationDriftCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
+import me.manga.kira.backend.complaint.catalog.TestRunVerifiedOwnerDeleteCases
+import me.manga.kira.backend.complaint.catalog.TestVerifiedDeleteRefusalCut
 import me.manga.kira.backend.complaint.catalog.CutoffResolverCases
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceClock
 import me.manga.kira.backend.complaint.catalog.EpochMaintenanceGateCut
@@ -1267,6 +1269,32 @@ class VersionBoundPersistenceConnectedIT {
             for (auditPhase in listOf(false, true)) {
                 withFixture(testActivation = true) { TestRunSealingCases.completionFailure(it, cut, auditPhase) }
             }
+        }
+    }
+
+    @Test
+    fun testRunVerifiedOwnerDeleteCompletesPrimaryAndExactReplay() = withFixture(testActivation = true) {
+        TestRunVerifiedOwnerDeleteCases.verifiedPrimaryAndExactReplay(it)
+    }
+
+    @Test
+    fun testRunVerifiedOwnerDeleteRefusesPreparedAndChangedAuthorityWithoutRepair() {
+        TestVerifiedDeleteRefusalCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestRunVerifiedOwnerDeleteCases.refusesWithoutRepair(it, cut) }
+        }
+    }
+
+    @Test
+    fun testRunVerifiedOwnerDeleteReloadRequiresPositiveCommitAndOriginalRelease() {
+        TestRegistrationCompletionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestRunVerifiedOwnerDeleteCases.originalCompletionFailure(it, cut, applyPhase = false) }
+        }
+    }
+
+    @Test
+    fun testRunVerifiedOwnerDeleteApplyFailureAndLostAcknowledgmentReplay() {
+        TestRegistrationCompletionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { TestRunVerifiedOwnerDeleteCases.originalCompletionFailure(it, cut, applyPhase = true) }
         }
     }
 

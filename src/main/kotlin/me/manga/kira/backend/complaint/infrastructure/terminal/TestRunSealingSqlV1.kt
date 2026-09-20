@@ -74,7 +74,7 @@ internal object TestRunSealingSqlV1 {
     private val expectedAudit = """
         WITH expected AS MATERIALIZED (SELECT ?::uuid AS scope, ?::bigint AS generation, ?::timestamptz AS sealed_at)
     """.trimIndent()
-    val lockAudit = """
+    val readAudit = """
         $expectedAudit
         SELECT (a.id > 0 AND a.complaint_data_scope_id = e.scope AND a.actor_user_id IS NULL AND a.complaint_actor_kind = 'SYSTEM'
             AND a.entity_type = 'complaint_test_run' AND a.entity_id = e.scope::text
@@ -82,8 +82,9 @@ internal object TestRunSealingSqlV1 {
         FROM audit_log a CROSS JOIN expected e
         WHERE a.action = 'COMPLAINT_TEST_RUN_SEALED'
             AND (a.complaint_data_scope_id = e.scope OR (a.entity_type = 'complaint_test_run' AND a.entity_id = e.scope::text))
-        ORDER BY a.id LIMIT 2 FOR UPDATE OF a
+        ORDER BY a.id LIMIT 2
     """.trimIndent()
+    val lockAudit = "$readAudit FOR UPDATE OF a"
     val spendRun = """
         $expectedRun
         UPDATE complaint_test_runs r SET unused_reserve = ?::bigint[] FROM expected e

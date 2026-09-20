@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.domain.OwnerDeleteCapacityCharges
 import me.manga.kira.backend.complaint.domain.ScopedInstallationId
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
@@ -35,13 +36,13 @@ import java.time.Instant
 import java.util.HexFormat
 import java.util.UUID
 
-/** Dormant lower producer. There is deliberately no registered/current TEST runtime issuer or bean. */
+/** Dormant request producer plus fixed registered VERIFIED reload; no request-authorizing runtime issuer or bean. */
 internal class JdbcComplaintOwnerDeleteStore(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
     private val audit: AuditService,
     internal val graph: TestOwnerDeleteLocalGraphV1,
-    private val codec: TestOwnerDeleteJournalCodecV1,
+    private val codec: TestOwnerDeleteJournalCodecV1?,
 ) {
     private val issuer = Any()
     init { graph.requireDeletion(jdbc) }
@@ -49,8 +50,16 @@ internal class JdbcComplaintOwnerDeleteStore(
         capture(identity, candidate, platform, PersistencePhasePath.COMPLAINT_OWNER_DELETE_AUTHORIZE)
     fun reload(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, platform: ComplaintPlatform): ComplaintOwnerDeleteAuthorizationOperation =
         capture(identity, candidate, platform, PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD)
-    private fun capture(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, platform: ComplaintPlatform, path: PersistencePhasePath) =
-        ComplaintOwnerDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, codec, issuer, identity, candidate, platform, path)
+    private fun capture(identity: ComplaintOwnerOperationIdentity, candidate: ComplaintOwnerDeleteCandidate, platform: ComplaintPlatform, path: PersistencePhasePath): ComplaintOwnerDeleteAuthorizationOperation {
+        check(graph.recoveryRegistration == null) // The registered recovery graph can never become request authorization.
+        return ComplaintOwnerDeleteAuthorizationOperation.capture(jdbc, capacity, audit, graph, checkNotNull(codec), issuer, identity, candidate, platform, path)
+    }
+
+    internal fun reloadVerified(original: TestRunVerifiedOwnerDeleteV1): ComplaintOwnerDeleteVerifiedReloadOperation =
+        ComplaintOwnerDeleteVerifiedReloadOperation.capture(this, jdbc, capacity, graph, original)
+
+    internal fun releasedVerified(operation: ComplaintOwnerDeleteVerifiedReloadOperation): CommittedTestOwnerDeleteWork.RecordedVerified =
+        ComplaintOwnerDeleteAuthorizationOperation.releasedVerified(operation, this, issuer, graph.routing)
 
     fun preparedEvent(work: CommittedTestOwnerDeleteWork.Prepared): TestOwnerDeleteJournalEventV1 = ownedEvent(work)
     fun recordedEvent(work: CommittedTestOwnerDeleteWork.RecordedVerified): TestOwnerDeleteJournalEventV1 = ownedEvent(work)
@@ -344,6 +353,12 @@ internal class ComplaintOwnerDeleteAuthorizationOperation private constructor(
         override fun verificationHash(): ByteArray = hash.copyOf()
     }
     companion object {
+        internal fun releasedVerified(operation: ComplaintOwnerDeleteVerifiedReloadOperation, store: JdbcComplaintOwnerDeleteStore,
+            issuer: Any, routing: TestOwnerDeleteJournalRoutingV1): CommittedTestOwnerDeleteWork.RecordedVerified {
+            val (event, row) = operation.released(store)
+            check(event.belongsTo(routing))
+            return ReleasedVerified(issuer, routing, event, row)
+        }
         fun requireTuple(event: TestOwnerDeleteJournalEventV1, tuple: ComplaintOwnerDeleteTuple) {
             check(event.tuple.scope == tuple.installation.scope && event.tuple.actorId == tuple.installation.id && event.tuple.operationKey == tuple.key)
             check(event.tuple.fingerprintBytes().contentEquals(tuple.fingerprintBytes()) && event.complaintIds() == listOf(tuple.targetId))

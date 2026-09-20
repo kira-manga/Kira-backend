@@ -57,6 +57,11 @@ internal object OwnerDeletePersistenceSql {
         LEFT JOIN complaint_idempotency_receipts r ON r.actor_kind = 'INSTALLATION' AND r.actor_id = actor.id AND r.idempotency_key = ?::uuid
     """.trimIndent()
     val LOCK_RECEIPT = "SELECT $RECEIPT_COLUMNS FROM complaint_idempotency_receipts r WHERE r.actor_kind = 'INSTALLATION' AND r.actor_id = ? AND r.idempotency_key = ? FOR UPDATE"
+    val LOCK_REGISTERED_RECEIPT = """
+        SELECT $RECEIPT_COLUMNS FROM complaint_idempotency_receipts r
+        WHERE r.actor_kind = 'INSTALLATION' AND r.actor_id = ? AND r.idempotency_key = ?
+            AND r.data_scope_id = ? AND r.test_only AND r.operation = 'OWNER_DELETE' FOR UPDATE
+    """.trimIndent()
     val INSERT_CLAIM = """
         INSERT INTO complaint_idempotency_receipts
             (actor_kind, actor_id, idempotency_key, operation, fingerprint, target_ids, data_scope_id, test_only, state, created_at)

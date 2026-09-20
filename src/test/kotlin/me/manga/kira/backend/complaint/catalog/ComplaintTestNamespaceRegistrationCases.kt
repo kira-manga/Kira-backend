@@ -471,7 +471,13 @@ internal object ComplaintTestNamespaceRegistrationCases {
         }
     }
 
-    private fun withUnseededOrdinary(runtime: VersionBoundPersistenceConnectedFixture, action: (OrdinarySourceGrantCleanupFixture, ComplaintInstallationEnrollmentAudit) -> Unit) {
+    private fun withUnseededOrdinary(runtime: VersionBoundPersistenceConnectedFixture, action: (OrdinarySourceGrantCleanupFixture, ComplaintInstallationEnrollmentAudit) -> Unit) =
+        withOrdinaryAudit(runtime) { ordinary, service ->
+            action(ordinary, ComplaintInstallationEnrollmentAudit { scope, allocation, at -> service.recordInstallationEnrollment(scope, allocation, at) })
+        }
+
+    /** Existing real ordinary JPA/JDBC and counted audit adapter, also used to produce earlier authorized history. */
+    internal fun withOrdinaryAudit(runtime: VersionBoundPersistenceConnectedFixture, action: (OrdinarySourceGrantCleanupFixture, AuditService) -> Unit) {
         val factory = ordinaryCleanupFactory(runtime.pools.ordinary, includeAuditEntities = true)
         try {
             factory.afterPropertiesSet()
@@ -480,7 +486,7 @@ internal object ComplaintTestNamespaceRegistrationCases {
                 val repository = JpaAuditRepositoryAdapter(JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(ordinary.entityManagerFactory))
                     .getRepository(SpringDataAuditLogRepository::class.java))
                 val service = AuditService(repository, CurrentUser(), SignedActivationObservation.WALL_CLOCK)
-                action(ordinary, ComplaintInstallationEnrollmentAudit { scope, allocation, at -> service.recordInstallationEnrollment(scope, allocation, at) })
+                action(ordinary, service)
             }
         } finally { factory.destroy() }
     }

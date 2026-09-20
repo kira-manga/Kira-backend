@@ -6,18 +6,20 @@ import java.util.UUID
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityPolicyV1
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationDesiredSettings
 import me.manga.kira.backend.complaint.domain.ComplaintInstallationMode
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.TestOwnerDeleteJournalRoutingV1
 import org.springframework.jdbc.core.JdbcTemplate
 
-/** No issuer exists. Real registered/projected TEST authority is owned by the separate activation producer. */
+/** No request-authorizing issuer exists. The registered VERIFIED-only continuation does not issue this type. */
 internal class TestOwnerDeleteProcessBindingV1 private constructor(val lower: TestOwnerDeleteLocalGraphV1)
 
 /**
- * Retained lower graph and necessary SQL comparisons ONLY. Its hash is not full-D/current or
- * registration authority. It permits no deployment composition, activation, secret acquisition or
- * catalog assertion. In particular, a fixture's matching ACTIVE/hash row cannot construct the type above.
+ * Retained graph and necessary SQL comparisons. The default lower hash is NOT full-D/registration
+ * authority. Only the narrow registered continuation derives full-D from its actual retained process;
+ * that graph cannot authorize new work. No activation, secret acquisition, catalog assertion or
+ * request-authorizing binding above is issued by either form.
  */
 internal class TestOwnerDeleteLocalGraphV1(
     private val ordinary: JdbcTemplate,
@@ -27,6 +29,7 @@ internal class TestOwnerDeleteLocalGraphV1(
     val policy: ComplaintCapacityPolicyV1,
     val lanes: JournalPublicationLanesV1,
     desiredGeneration: Long = 1,
+    internal val recoveryRegistration: ComplaintTestNamespaceRegistrationV1? = null,
 ) {
     private val ordinarySource = checkNotNull(ordinary.dataSource)
     private val deletionSource = checkNotNull(deletion.dataSource)
@@ -38,6 +41,17 @@ internal class TestOwnerDeleteLocalGraphV1(
     init {
         require(desiredGeneration > 0 && ordinarySource !== deletionSource)
         lanes.retainTestJournal(journal)
+        desired = if (recoveryRegistration == null) lowerSettings(desiredGeneration) else {
+            recoveryRegistration.requireUsable()
+            val process = recoveryRegistration.process
+            check(ordinarySource === process.pools.ordinary && deletionSource === process.pools.deletion)
+            check(ingress === process.consumers.ingressAdmission && routing === process.consumers.journalRouting &&
+                policy === process.consumers.capacityPolicy && lanes === process.publicationLanes && desiredGeneration == process.desiredGeneration)
+            process.desiredSettings() // Only the retained full root derives D; a supplied hash is never accepted.
+        }
+    }
+
+    private fun lowerSettings(desiredGeneration: Long): ComplaintInstallationDesiredSettings.Configured {
         val fields = listOf(
             "kira-complaint-test-owner-delete-lower-comparison-v1".toByteArray(Charsets.UTF_8),
             ByteBuffer.allocate(8).putLong(desiredGeneration).array(), journal.canonicalBytes(), policy.digestBytes(),
@@ -46,11 +60,12 @@ internal class TestOwnerDeleteLocalGraphV1(
         val hash = MessageDigest.getInstance("SHA-256").digest(frame)
         frame.fill(0)
         fields.forEach { it.fill(0) }
-        desired = ComplaintInstallationDesiredSettings.Configured(
+        val result = ComplaintInstallationDesiredSettings.Configured(
             ComplaintInstallationMode.PRE_CUTOVER_TEST, 1, desiredGeneration, journal.scope,
             UUID.fromString(declaration.writer.databaseIdentity), UUID.fromString(declaration.writer.restoreIdentity), hash,
         )
         hash.fill(0)
+        return result
     }
 
     fun desiredSettings(): ComplaintInstallationDesiredSettings.Configured {
@@ -62,6 +77,7 @@ internal class TestOwnerDeleteLocalGraphV1(
         check(ordinary.dataSource === ordinarySource && deletion.dataSource === deletionSource)
         check(routing.journalConfiguration === journal)
         lanes.requireTestJournal(journal)
+        recoveryRegistration?.process?.requireUnchangedConfiguration()
     }
 
     fun requireOrdinary(jdbc: JdbcTemplate) {
@@ -74,5 +90,5 @@ internal class TestOwnerDeleteLocalGraphV1(
         check(jdbc.dataSource === deletionSource)
     }
 
-    override fun toString(): String = "TestOwnerDeleteLocalGraphV1(lower-comparisons-only,no-runtime-authority)"
+    override fun toString(): String = "TestOwnerDeleteLocalGraphV1(retained-comparisons,no-request-issuer)"
 }

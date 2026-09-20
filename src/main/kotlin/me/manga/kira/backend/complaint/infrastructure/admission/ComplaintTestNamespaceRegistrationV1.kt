@@ -57,6 +57,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
 ) : AutoCloseable {
     private val closed = AtomicBoolean()
     private val installation = AtomicReference<InstallationResources?>()
+    private val verifiedOwnerDelete = AtomicReference<InstallationResources?>()
 
     internal fun requireUsable() {
         try {
@@ -120,6 +121,22 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
             if (failure is CancellationException) throw failure
             throw ComplaintTestNamespaceRegistrationExceptionV1()
         }
+    }
+
+    /** Same retained deletion permit/manager/template only; no new pool, request identity or gate opener. */
+    internal fun requireVerifiedOwnerDeleteResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
+        requireLifetime()
+        ownership.requireBoundComplaintDeletion(process.pools)
+        requireRegistration(process.pools.deletion.businessReady() && jdbc.dataSource === process.pools.deletion)
+        verifiedOwnerDelete.compareAndSet(null, InstallationResources(ownership, jdbc))
+        val retained = checkNotNull(verifiedOwnerDelete.get())
+        requireRegistration(retained.ownership === ownership && retained.jdbc === jdbc)
+        requireLifetime()
+    }
+
+    internal fun requireVerifiedOwnerDeleteGate(gate: PersistenceComplaintMaintenanceGateV1) {
+        requireLifetime()
+        requireRegistration(gate.matchesProjected(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
     }
 
     override fun close() { closed.set(true) }

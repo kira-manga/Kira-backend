@@ -29,6 +29,7 @@ internal class JdbcComplaintOwnerDeleteVerificationStore(
     init { authorization.requireBinding(graph, jdbc) }
     fun capture(readback: TestOwnerDeleteJournalReadbackV1): TestOwnerDeleteVerificationInputV1 {
         requireConnectionFree()
+        check(graph.recoveryRegistration == null) // Registered continuation consumes stored VERIFIED only; it cannot initiate VERIFY.
         graph.requireUnchanged()
         val record = codec.observed(readback)
         return CapturedTestDeleteVerification(issuer, readback.event, record, codec.canonicalBytes(record))

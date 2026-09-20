@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure
 
 import me.manga.kira.backend.complaint.domain.ComplaintDataScope
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.time.Duration
@@ -14,6 +15,7 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
 
     fun lock(jdbc: JdbcTemplate, authorizing: Boolean): Locked {
         graph.requireDeletion(jdbc)
+        check(!authorizing || graph.recoveryRegistration == null)
         val global = jdbc.query(LOCK_CONTROL, { row, _ -> read(row) }, ComplaintDataScope.LIVE.id).single()
         val scoped = jdbc.query(LOCK_CONTROL, { row, _ -> read(row) }, desired.scope.id).single()
         check(!global.test && scoped.test)
@@ -35,6 +37,11 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
     /** Run comes AFTER counters, before owner/resource locks, never in the control-lock prefix. */
     fun lockRun(jdbc: JdbcTemplate, authorizing: Boolean) {
         graph.requireDeletion(jdbc)
+        if (graph.recoveryRegistration != null) {
+            check(!authorizing)
+            checkNotNull(PersistencePhaseOwnership.current()).requireTestVerifiedOwnerDeleteRun(graph, jdbc)
+            return
+        }
         jdbc.query("SELECT state, configuration_hash, test_only, purging_at, purged_at FROM complaint_test_runs WHERE data_scope_id = ? FOR UPDATE", { row, _ ->
             check(row.getBoolean("test_only") && !row.wasNull())
             check(row.getBytes("configuration_hash").contentEquals(desired.configurationHashBytes()))

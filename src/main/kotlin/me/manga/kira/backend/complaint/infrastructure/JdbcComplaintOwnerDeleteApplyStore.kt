@@ -33,6 +33,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJou
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationCodecV1
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournalVersion
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunVerifiedOwnerDeleteV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
@@ -66,6 +67,7 @@ internal class JdbcComplaintOwnerDeleteApplyStore(
     }
     fun captureRecovery(readback: TestOwnerDeleteJournalReadbackV1): TestOwnerDeleteApplyInputV1 {
         requireConnectionFree()
+        check(graph.recoveryRegistration == null) // The registered continuation cannot acquire reconstruction/alias authority.
         val record = codec.observed(readback)
         return CapturedTestDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true)
     }
@@ -115,6 +117,10 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         phase.ownerDelete.requireCommitted(this); requireConnectionFree(); check(!input.recovery && primaryCompleted); return ComplaintOwnerDeleteReceipt.Applied
     }
     fun requireRecovered() { phase.ownerDelete.requireCommitted(this); requireConnectionFree(); check(input.recovery) }
+    internal fun requireVerifiedContinuation(original: TestRunVerifiedOwnerDeleteV1) {
+        check(!input.recovery)
+        original.requireApplyInput(input)
+    }
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
         retained()
         val controls = TestOwnerDeleteControlBindingV1(graph)
@@ -331,6 +337,7 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
                 phase.ownerDelete.requireOperation(jdbc, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY)
+                phase.requireTestVerifiedOwnerDeleteApply(graph, jdbc, input)
                 val selected = input as? CapturedTestDeleteApply ?: error("Original verified input required")
                 check(selected.issuer === issuer && selected.event.belongsTo(graph.routing))
                 return ComplaintOwnerDeleteApplyOperation(phase, jdbc, graph, codec, selected).also { phase.ownerDelete.retain(it, jdbc); it.execute(capacity, audit) }
