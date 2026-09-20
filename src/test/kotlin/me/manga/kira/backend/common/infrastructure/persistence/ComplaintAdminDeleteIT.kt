@@ -57,7 +57,7 @@ class ComplaintAdminDeleteIT {
             assertEquals("VERIFIED", publicationState(f), "Independent connection must see a committed VERIFIED record")
             assertEquals("AUTHORIZED_DELETE", receiptState(f, attempt))
             assertTrue(wire.requests.any { it.kind == "GET" })
-            assertTrue(f.observations.filter { it.second.phase.path == PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY }
+            assertTrue(f.observations.filter { lifecycleField(it.second.phase, "path") == PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY }
                 .all { it.second.lease.completion.quiescent() })
         } }
         f.factory(wire).use { publishers ->
