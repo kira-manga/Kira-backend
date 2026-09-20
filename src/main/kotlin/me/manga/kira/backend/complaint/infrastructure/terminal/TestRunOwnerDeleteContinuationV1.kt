@@ -54,9 +54,10 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     key: UUID?,
     private val publication: TestRunPreparedOwnerDeleteV1.Publication?,
     private val selectedBy: TestRunOwnerDeleteContinuationV1? = null,
+    private val drainBy: TestRunOrdinaryDrainV1? = null,
 ) {
     private val caller = Thread.currentThread()
-    internal val budget: PersistenceTimeBudget = selectedBy?.budget ?: PersistenceTimeBudget.start(registration.process.catalogReadback.totalAttemptMillis, ownership.nanoClock)
+    internal val budget: PersistenceTimeBudget = selectedBy?.budget ?: drainBy?.budget ?: PersistenceTimeBudget.start(registration.process.catalogReadback.totalAttemptMillis, ownership.nanoClock)
     private val locator = actor?.let { it to checkNotNull(key) }
     internal val actorId: UUID get() = checkNotNull(locator).first
     internal val operationKey: UUID get() = checkNotNull(locator).second
@@ -86,6 +87,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         if (locator == null) requireContinuation(publication != null && selectedBy == null)
         else requireContinuation(listOf(locator.first, locator.second).all { it.version() == 4 && it.variant() == 2 })
         selectedBy?.retainSelected(this)
+        drainBy?.retainPrimaryContinuation(this, registration, ownership, jdbc)
     }
 
     private val process = registration.process
@@ -395,6 +397,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         budget.remainingMillis(1)
         registration.requireOwnerDeleteContinuationResources(ownership, jdbc)
         selectedBy?.requireSelectedRunning(this)
+        drainBy?.requirePrimaryContinuation(this)
     }
 
     internal fun observeFailure(problem: Throwable) {
@@ -410,7 +413,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
             if (previous is Error || (previous is CancellationException && retained !is Error) ||
                 (previous is InterruptedException && retained !is Error && retained !is CancellationException) ||
                 (previous != null && retained is TestRunOwnerDeleteExceptionV1)) return
-            if (failure.compareAndSet(previous, retained)) { selectedBy?.observeFailure(retained); return }
+            if (failure.compareAndSet(previous, retained)) { selectedBy?.observeFailure(retained); drainBy?.observeFailure(retained); return }
         }
     }
 

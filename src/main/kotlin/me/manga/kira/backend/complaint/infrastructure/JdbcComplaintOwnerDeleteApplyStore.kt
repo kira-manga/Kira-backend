@@ -34,6 +34,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVer
 import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteVerificationRecordV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.requireJournalVersion
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import org.springframework.jdbc.core.JdbcTemplate
@@ -71,10 +72,19 @@ internal class JdbcComplaintOwnerDeleteApplyStore(
         val record = codec.observed(readback)
         return CapturedTestDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true)
     }
+    internal fun captureRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1): TestOwnerDeleteApplyInputV1 {
+        requireConnectionFree()
+        check(graph.recoveryRegistration === original.registration)
+        val readback = original.ownedRecoveryReadback(this, graph, jdbc)
+        readback.requireOriginal(original)
+        val record = codec.observed(readback)
+        return CapturedTestDeleteApply(issuer, readback.event, record, codec.canonicalBytes(record), recovery = true, registeredInventory = original)
+    }
     fun apply(input: TestOwnerDeleteApplyInputV1): ComplaintOwnerDeleteApplyOperation = ComplaintOwnerDeleteApplyOperation.capture(jdbc, capacity, audit, graph, codec, issuer, input)
 }
 internal sealed interface TestOwnerDeleteApplyInputV1
-private class CapturedTestDeleteApply(val issuer: Any, val event: TestOwnerDeleteJournalEventV1, val record: TestOwnerDeleteVerificationRecordV1, bytes: ByteArray, val recovery: Boolean) : TestOwnerDeleteApplyInputV1 {
+private class CapturedTestDeleteApply(val issuer: Any, val event: TestOwnerDeleteJournalEventV1, val record: TestOwnerDeleteVerificationRecordV1,
+    bytes: ByteArray, val recovery: Boolean, val registeredInventory: TestRunOrdinaryDrainV1? = null) : TestOwnerDeleteApplyInputV1 {
     val bytes = bytes.copyOf()
     val hash: ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
     val ciphertext: ByteArray = HexFormat.of().parseHex(record.ciphertextSha256)
@@ -121,6 +131,10 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         check(!input.recovery)
         original.requireApplyInput(input)
     }
+    internal fun requireRegisteredInventoryRecovery(original: TestRunOrdinaryDrainV1) {
+        check(input.recovery && input.registeredInventory === original && graph.recoveryRegistration === original.registration)
+        original.requireRecoveryInput(input)
+    }
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService) {
         retained()
         val controls = TestOwnerDeleteControlBindingV1(graph)
@@ -158,6 +172,11 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         reserve = jdbc.query(OwnerDeletePersistenceSql.LOCK_RECOVERY, { row, _ -> OwnerDeleteRows.Recovery(row, scope, primary.route.eventId) }, primary.route.eventId).singleOrNull()
         missingL = reserve == null
         check(input.recovery || !missingL)
+        if (input.registeredInventory != null) {
+            // A native inventory is not permission to manufacture another primary/N/P/L from free
+            // capacity. Only aliases (or exact primary replay) of the actual retained promise apply.
+            check(!missingN && !missingP && !missingL && publication?.state == "APPLIED" && receipt?.state == "COMPLETED")
+        }
         val appliedRows = jdbc.query(OwnerDeletePersistenceSql.READ_APPLIED_FAMILY, { row, _ ->
             check(row.getObject("data_scope_id", UUID::class.java) == scope.id && row.getBoolean("test_only") && row.getObject("writer_generation", UUID::class.java) == graph.writer &&
                 row.getLong("journal_epoch") == event.tuple.epoch && row.getString("event_kind") == "OWNER_DELETE" && row.getInt("target_count") == 1 && row.getBoolean("finite"))
@@ -237,6 +256,7 @@ internal class ComplaintOwnerDeleteApplyOperation private constructor(
         stage = Stage.COMPLETING
         if (isPrimary) completePrimary()
         // An alias has only its applied row and (first recovery) summary; never rewrite primary object/proof/receipt.
+        input.registeredInventory?.recordRecoveredVersion(this, jdbc)
         retained(); stage = Stage.COMPLETE
     }
     private fun reconstructBookkeeping(isPrimary: Boolean) {

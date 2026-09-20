@@ -59,11 +59,11 @@ internal class TestOrdinarySealCustodyV1 private constructor(private val origina
     internal fun content() = original.content()
     internal fun requirePutRetention() {
         requirePublication()
-        original.capturedCut().requireUnverified()
+        original.requireUnverifiedSeal()
         val row = frozen()
         requireOrdinarySeal(!checkNotNull(row.retainUntil).isBefore(acquisition.newRetention(attempt, row.binding.createdAt)))
     }
-    internal fun requireListedVersion(version: String?) { requirePublication(); original.capturedCut().requireListedVersion(version) }
+    internal fun requireListedVersion(version: String?) { requirePublication(); original.requireListedSealVersion(version) }
     internal fun requireReleasedProof(candidate: TestRunOrdinarySealV1, proof: TestOrdinarySealProofV1) {
         synchronized(lifecycle) { requireOrdinarySeal(candidate === original && proof === observed && closed && !cleaning && closeFailure == null && !reserved) }
     }

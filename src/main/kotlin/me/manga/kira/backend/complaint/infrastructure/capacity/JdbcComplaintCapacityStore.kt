@@ -58,6 +58,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActi
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintDeletionOperation
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
 import me.manga.kira.backend.security.StepUpGrantIssuance
@@ -93,6 +94,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
 
     internal fun lockForTestRunSealedAudit(operation: TestRunSealingOperationV1): LockedTestRunSealedAudit = LockedTestRunSealedAudit.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
+    internal fun lockForTestOrdinaryDrain(operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain = LockedTestOrdinaryDrain.lock(this, operation)
 
     internal fun lockForInstallationEnrollment(operation: ComplaintInstallationEnrollmentOperation): LockedInstallationEnrollment =
         LockedInstallationEnrollment.lock(this, operation)
@@ -1559,6 +1561,52 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         }
     }
 
+    internal class LockedTestOrdinaryDrain private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestOrdinaryDrainOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+
+        internal fun completedFor(candidate: TestOrdinaryDrainOperationV1): Boolean = operation === candidate && completed
+
+        internal fun settle(candidate: TestOrdinaryDrainOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc)
+                issued = true
+                val before = counters.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter] && before.recoveryReserved[counter] == after.recoveryReserved[counter] &&
+                        before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_ORDINARY_DRAIN_COUNTER,
+                        after.free[counter], after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                completed = true
+            } catch (problem: Throwable) {
+                operation.failed(problem)
+            }
+        }
+
+        override fun toString(): String = "LockedTestOrdinaryDrain(original-run-paid-ordinary-drain,redacted)"
+
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestOrdinaryDrain(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) {
+                    operation.failed(problem)
+                }
+            }
+        }
+    }
+
     /** Counters are retained before run locking; only that operation may spend its subsequently validated unused slice. */
     internal class LockedTestReserveSpend private constructor(
         private val store: JdbcComplaintCapacityStore,
@@ -1963,6 +2011,11 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
         val TEST_RESERVE_COUNTER = """
             UPDATE complaint_capacity_counters
             SET actual_units = ?, recovery_reserved_units = ?, test_reserved_units = ?, updated_at = now()
+            WHERE name = ? AND free_units = ? AND actual_units = ? AND recovery_reserved_units = ? AND test_reserved_units = ?
+        """.trimIndent()
+        val TEST_ORDINARY_DRAIN_COUNTER = """
+            UPDATE complaint_capacity_counters
+            SET free_units = ?, actual_units = ?, recovery_reserved_units = ?, test_reserved_units = ?, updated_at = clock_timestamp()
             WHERE name = ? AND free_units = ? AND actual_units = ? AND recovery_reserved_units = ? AND test_reserved_units = ?
         """.trimIndent()
         val ENROLLMENT_COUNTER_MATCH = """

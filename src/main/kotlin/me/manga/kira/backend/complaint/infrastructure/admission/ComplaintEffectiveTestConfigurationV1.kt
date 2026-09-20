@@ -52,6 +52,9 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("catalogActivation", owner.catalogActivation.inventory())
             // Absence preserves the previous profile/preimage exactly and cannot publish a seal.
             owner.ordinarySeal?.let { put("ordinarySeal", it.inventory()) }
+            // Independently retained purpose/implementation/timing policy, before D and activation.
+            // Legacy absence deliberately leaves its existing preimage byte-for-byte unchanged.
+            owner.ordinaryDenial?.let { put("ordinaryDenial", it.inventory()) }
         }
         return CanonicalJson.canonicalize(result).toByteArray(Charsets.UTF_8)
     }

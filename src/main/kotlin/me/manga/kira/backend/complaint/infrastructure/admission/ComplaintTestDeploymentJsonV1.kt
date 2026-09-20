@@ -9,6 +9,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalDocumentV1
 import me.manga.kira.backend.complaint.domain.catalog.InitialPolicyReferenceV1
+import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialAuthorityInputV1
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.util.concurrent.CancellationException
@@ -62,7 +63,7 @@ internal object ComplaintTestDeploymentJsonV1 {
     }
 }
 
-/** Every field is required, including nested nullable values. Independent intent is not an approval. */
+/** Legacy fields remain required. The new drain profile alone requires the optional purpose policy. */
 @Serializable
 internal data class ComplaintTestDeploymentDocumentV1(
     val schemaVersion: Int,
@@ -81,6 +82,7 @@ internal data class ComplaintTestDeploymentDocumentV1(
     val activation: TestActivationInputV1,
     val sealer: DesiredSealerInputV1,
     val retention: TestOrdinarySealRetentionInputV1,
+    val ordinaryDenial: TestOrdinaryDenialAuthorityInputV1? = null,
 )
 
 /** One ordinary runtime principal only, never the LIVE install operator or catalog author. */

@@ -246,6 +246,8 @@ private class PgLifecycleControllerOwnedServer(
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgOwnedCutIntegrationTest",
                     "me.manga.kira.backend.common.infrastructure.persistence.PersistencePgNativePhysicalCloseIT",
                     "me.manga.kira.backend.common.infrastructure.persistence.CatalogGenesisPublishInterruptionIT",
+                    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+                    "me.manga.kira.backend.complaint.journal.TestOrdinaryInventoryReaderV1ConnectedIT",
                     PgLifecycleDatabaseTls.CLASS_NAME,
                 ),
             )

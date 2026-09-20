@@ -38,20 +38,24 @@ import java.util.concurrent.atomic.AtomicReference
  * autodrain, checkpoint, provider/lineage quiescence, terminal closure, settlement or reserve release.
  * Cold deployment/retention intake is deliberately absent outside controlled HTTP qualification.
  */
-internal class TestRunOrdinarySealV1 private constructor(internal val registration: ComplaintTestNamespaceRegistrationV1) {
+internal class TestRunOrdinarySealV1 private constructor(
+    internal val registration: ComplaintTestNamespaceRegistrationV1,
+    internal val closedDrain: TestRunOrdinaryDrainV1? = null,
+) {
     internal val acquisition = registration.process.ordinarySeal ?: throw TestOrdinarySealExceptionV1()
     private val caller = Thread.currentThread()
     internal val coordinator = registration.process.pools.catalogCoordinator
     internal val routing = registration.process.consumers.journalRouting
     internal val scope = routing.journalConfiguration.scope.id
     internal val writer = routing.journalConfiguration.declaration().writer.generationId
-    internal val budget = PersistenceTimeBudget.start(routing.journalConfiguration.declaration().limits.deadlines.epochSealMillis.toLong(), coordinator.ownership.nanoClock)
+    internal val budget = closedDrain?.budget?.capped(routing.journalConfiguration.declaration().limits.deadlines.epochSealMillis.toLong())
+        ?: PersistenceTimeBudget.start(routing.journalConfiguration.declaration().limits.deadlines.epochSealMillis.toLong(), coordinator.ownership.nanoClock)
     internal val codec = TestTerminalCodecV1.fromRetained(routing, acquisition.nanoTime)
     internal val codecAttempt = codec.startAttempt(TestTerminalCodecKindV1.EPOCH_SEAL, budget)
-    internal val attemptId = UUID.randomUUID()
+    internal val attemptId = closedDrain?.attemptId ?: UUID.randomUUID()
     internal val captureId = UUID.randomUUID()
     internal val leaseDurationMillis = routing.journalConfiguration.declaration().limits.deadlines.epochSealMillis.toLong()
-    internal var leaseToken: Long = 0
+    internal var leaseToken: Long = closedDrain?.leaseToken ?: 0
         private set
     internal val runContext: TestTerminalRunContextV1
     internal var step = TestOrdinarySealStepV1.CAPTURE
@@ -82,6 +86,10 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
         val args = registration.sealingRunArguments()
         runContext = TestTerminalRunContextV1(scope.toString(), args[3] as Long, HexFormat.of().formatHex(args[4] as ByteArray),
             HexFormat.of().formatHex(args[1] as ByteArray), TestTerminalProfileV1.encodingSha256)
+        closedDrain?.let {
+            requireDrain(it.registration === registration && it.runContext == runContext && leaseToken > 0)
+            it.retainClosedSeal(this)
+        }
     }
 
     fun seal(): TestRunOrdinarySealResultV1 {
@@ -120,7 +128,7 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
             verified.requireReleased()
             requireRunning()
             requireConnectionFree()
-            installationObservation = verified.releasedInstallationObservation()
+            if (closedDrain == null) installationObservation = verified.releasedInstallationObservation()
             complete = true
         } catch (problem: Throwable) {
             observeFailure(problem)
@@ -132,12 +140,13 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
         }
         throwIfSignalled()
         requireOrdinarySeal(complete)
-        return TestRunOrdinarySealResultV1.CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED
+        return if (closedDrain == null) TestRunOrdinarySealResultV1.CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED
+        else TestRunOrdinarySealResultV1.POST_DENIAL_ORDINARY_SET_SEAL_VERIFIED
     }
 
     /** Released historical local observations only. Not a reusable barrier, terminal intent, denial or purge authority. */
     fun localInstallationObservation(): TestTerminalProgressV1 {
-        requireOrdinarySeal(caller === Thread.currentThread() && started && finished && !cleanupUncertain && phase == null && !phaseEntered)
+        requireOrdinarySeal(closedDrain == null && caller === Thread.currentThread() && started && finished && !cleanupUncertain && phase == null && !phaseEntered)
         throwIfSignalled()
         requireConnectionFree()
         return installationObservation ?: throw TestOrdinarySealExceptionV1()
@@ -148,15 +157,18 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
         requireReleased(captured)
         val retained = captured.row
         val fence = retained?.binding?.preparingFencingToken ?: leaseToken
-        val value = TestTerminalEpochSealV1(1, "EPOCH_SEAL", "A".repeat(43), writer, "TEST", scope.toString(), 1, captured.cut.cutoff,
+        val cutoff = if (closedDrain == null) captured.cut.cutoff else checkNotNull(captured.closedCut).control.cutoff
+        val capturedAt = if (closedDrain == null) checkNotNull(captured.cut.capturedAt) else checkNotNull(checkNotNull(captured.closedCut).control.capturedAt)
+        val token = if (closedDrain == null) checkNotNull(captured.cut.token) else checkNotNull(checkNotNull(captured.closedCut).control.captureId)
+        val value = TestTerminalEpochSealV1(1, "EPOCH_SEAL", "A".repeat(43), writer, "TEST", scope.toString(), 1, cutoff,
             captured.manifest.count, captured.manifest.sha256, "", fence)
         val expected = codec.canonicalizeEpochSeal(value, codecAttempt, retained?.binding?.routingKeyId)
         if (retained == null) {
             content = expected
-            val created = OrdinaryJournalRetentionV1.ceilingSecond(checkNotNull(captured.cut.capturedAt))
-            val binding = TestTerminalDurableBindingV1(captured.cut.token.toString(), runContext, routing.journalConfiguration.sha256,
+            val created = OrdinaryJournalRetentionV1.ceilingSecond(capturedAt)
+            val binding = TestTerminalDurableBindingV1(token.toString(), runContext, routing.journalConfiguration.sha256,
                 TestTerminalDurableKindV1.EPOCH_SEAL, 0, expected.route.journalId, expected.route.objectKey, expected.route.routingKeyId,
-                writer, 1, captured.cut.cutoff, fence, acquisition.newRetention(codecAttempt, created), created)
+                writer, 1, cutoff, fence, acquisition.newRetention(codecAttempt, created), created)
             val bytes = expected.canonicalBytes()
             canonicalCandidate = try { ownRow(TestTerminalDurableRowV1.canonical(binding, bytes)) } finally { bytes.fill(0) }
         } else {
@@ -212,6 +224,13 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
     }
     internal fun ownRow(row: TestTerminalDurableRowV1): TestTerminalDurableRowV1 { rows.add(row); return row }
     internal fun capturedCut() = checkNotNull(capture).cut
+    internal fun capturedClosedCut() = checkNotNull(checkNotNull(capture).closedCut)
+    internal fun requireUnverifiedSeal() {
+        if (closedDrain == null) capturedCut().requireUnverified() else capturedClosedCut().requireUnverified()
+    }
+    internal fun requireListedSealVersion(version: String?) {
+        if (closedDrain == null) capturedCut().requireListedVersion(version) else capturedClosedCut().requireListedVersion(version)
+    }
     internal fun capturedManifest() = checkNotNull(capture).manifest
     internal fun preparedRow(): TestTerminalDurableRowV1 = checkNotNull(checkNotNull(prepared).row)
     internal fun frozenRow(): TestTerminalDurableRowV1 = checkNotNull(checkNotNull(frozen).row)
@@ -256,8 +275,10 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
         budget.remainingMillis(1); codecAttempt.remainingMillis(1)
         registration.requireSealingOwner(coordinator.ownership)
         acquisition.requireRetained(routing, registration.process.publicationLanes)
+        closedDrain?.requireClosedSeal(this)
     }
     internal fun observeFailure(problem: Throwable) {
+        closedDrain?.observeFailure(problem)
         val retained = when {
             problem is Error -> problem
             problem is CancellationException -> CancellationException("TEST ordinary seal cancelled.")
@@ -274,10 +295,13 @@ internal class TestRunOrdinarySealV1 private constructor(internal val registrati
     }
     internal fun throwIfSignalled() { failure.get()?.let { if (it is InterruptedException) Thread.currentThread().interrupt(); throw it } }
     override fun toString(): String = "TestRunOrdinarySealV1(first-registered-local-set-only,redacted)"
-    companion object { fun begin(registration: ComplaintTestNamespaceRegistrationV1): TestRunOrdinarySealV1 = TestRunOrdinarySealV1(registration) }
+    companion object {
+        fun begin(registration: ComplaintTestNamespaceRegistrationV1): TestRunOrdinarySealV1 = TestRunOrdinarySealV1(registration)
+        internal fun forClosedDrain(drain: TestRunOrdinaryDrainV1): TestRunOrdinarySealV1 = TestRunOrdinarySealV1(drain.registration, drain)
+    }
 }
 
 internal enum class TestOrdinarySealStepV1 { CAPTURE, PREPARE, FREEZE, VERIFY }
-internal enum class TestRunOrdinarySealResultV1 { CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED }
+internal enum class TestRunOrdinarySealResultV1 { CAPTURED_LOCAL_ORDINARY_SET_SEAL_VERIFIED, POST_DENIAL_ORDINARY_SET_SEAL_VERIFIED }
 internal class TestOrdinarySealExceptionV1 : RuntimeException("TEST ordinary seal refused.", null, false, false)
 internal fun requireOrdinarySeal(allowed: Boolean) { if (!allowed) throw TestOrdinarySealExceptionV1() }

@@ -23,6 +23,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalHmacRet
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalKmsRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.LiveJournalTimeBoundV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealRetentionDeclarationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
 import me.manga.kira.backend.config.KiraSecurityProperties
 import me.manga.kira.backend.security.ImmutableSecretVersion
 import me.manga.kira.backend.security.JwtService
@@ -84,6 +85,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     }
     private val initialRegistry = binary(document.activation.initialWriterRegistryBase64, 131_072)
     val activationTotalAttemptMillis = document.activation.totalAttemptMillis
+    val ordinaryDenial = document.ordinaryDenial?.let(TestOrdinaryDenialAuthorityPolicyV1::fromIndependentInput)
     val sealerMapping = document.sealer.let { sealer ->
         val authorities = journal.declaration().authorities
         EpochSealDeploymentMappingV1(
@@ -117,9 +119,13 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
 
     init {
         valid(document.schemaVersion == 1 && implementationSchema == 1 && desiredGeneration > 0)
-        // Select the same closed family at BOTH boundaries, before immutable acquisition. The
-        // old recipe must not silently gain ALL when composed with the wider TEST J reader.
-        valid(document.profile == if (journal.ownerDeleteAll) OWNER_ERASURE_PROFILE else PROFILE)
+        // Keep all three closed recipes distinct; drain has not acquired ALL-family support.
+        valid(when (document.profile) {
+            PROFILE -> !journal.ownerDeleteAll && ordinaryDenial == null
+            OWNER_ERASURE_PROFILE -> journal.ownerDeleteAll && ordinaryDenial == null
+            DRAIN_PROFILE -> !journal.ownerDeleteAll && ordinaryDenial != null
+            else -> false
+        })
         valid(database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME &&
             database.runtimeUsername != VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME)
         valid(database.host.length in 1..253 && database.host.split('.').all { DNS_LABEL.matches(it) })
@@ -140,6 +146,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             declaration.writer.restoreIdentity == restoreIdentity.toString())
         retention.requireJournal(journal)
         valid(retention.environment == catalog.chainPolicy.trustBundlePolicy.expectedEnvironment)
+        ordinaryDenial?.requireEnvironment(retention.environment)
+        ordinaryDenial?.requireJournal(journal)
         valid(sealerMapping.sealTerminal.principal.accountId == declaration.journalLocation.accountId)
         // Validate the private source-session spelling before any secret acquisition; it is excluded from D.
         sealerMapping.bootstrap.principal.callerArn(sealerSessionName)
@@ -195,6 +203,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     companion object {
         const val PROFILE = "PRE_CUTOVER_TEST_ORDINARY_SEAL_V1"
         const val OWNER_ERASURE_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_SEAL_V1"
+        const val DRAIN_PROFILE = "PRE_CUTOVER_TEST_ORDINARY_DRAIN_V1"
 
         @Suppress("TooGenericExceptionCaught")
         internal fun fromDecoded(document: ComplaintTestDeploymentDocumentV1): ComplaintTestDeploymentInputsV1 {

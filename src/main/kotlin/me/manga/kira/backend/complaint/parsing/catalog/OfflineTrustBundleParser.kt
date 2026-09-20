@@ -21,6 +21,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleExceptio
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleFailure
 import me.manga.kira.backend.complaint.domain.catalog.OfflineTrustBundleProtocol
 import me.manga.kira.backend.complaint.domain.catalog.requireOfflineTrustBundle
+import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialEnvelopeV1
 import java.nio.ByteBuffer
 import java.nio.CharBuffer
 import java.nio.charset.CharacterCodingException
@@ -59,6 +60,10 @@ internal object OfflineTrustBundleParser {
     fun parse(bytes: ByteArray): OfflineTrustBundleEnvelopeV1 = parseCanonical(bytes, OfflineTrustBundleEnvelopeV1.serializer())
 
     fun parseRegistry(bytes: ByteArray): OfflineBootstrapRegistryV1 = parseCanonical(bytes, OfflineBootstrapRegistryV1.serializer())
+
+    /** Separate fixed-purpose approval grammar; this parser does not admit its signer or evidence. */
+    fun parseOrdinaryDenial(bytes: ByteArray): TestOrdinaryDenialEnvelopeV1 =
+        parseCanonical(bytes, TestOrdinaryDenialEnvelopeV1.serializer(), maximumBytes = 65_536)
 
     fun parseGenesis(bytes: ByteArray): OfflineCatalogGenesisEnvelopeV1 = parseCanonical(bytes, OfflineCatalogGenesisEnvelopeV1.serializer())
 

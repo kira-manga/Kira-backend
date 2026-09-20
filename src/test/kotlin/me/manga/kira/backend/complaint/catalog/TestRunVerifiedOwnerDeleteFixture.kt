@@ -128,6 +128,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
     private val ordinary: OrdinarySourceGrantCleanupFixture,
     val audit: AuditService,
     clock: PersistenceNanoClock = SystemPersistenceNanoClock,
+    private val expectSubsequentProviderReads: Boolean = false,
 ) : AutoCloseable {
     val process = registration.process
     val observer = p.f.rows.observer
@@ -470,7 +471,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
         assertDatabaseReleased()
         expectedProviders?.let {
             assertEquals(it.first(), providerImage().first(), "Continuation cannot renew registration or obtain another catalog observation.")
-            if (!preparedPublication) assertEquals(it, providerImage(), "VERIFIED continuation/refusal cannot open a provider.")
+            if (!preparedPublication && !expectSubsequentProviderReads) assertEquals(it, providerImage(), "VERIFIED continuation/refusal cannot open a provider.")
             wire?.assertClientsClosed()
         }
     }
@@ -494,7 +495,7 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             assertEquals(PersistenceDatabaseOutcome.COMMITTED, it.databaseOutcome())
             assertTrue(it.testRunOwnerDeleteCleanupProven(original))
         }
-        if (!preparedPublication) assertEquals(checkNotNull(expectedProviders), providerImage(), "No fresh authorization/provider/registration activity.")
+        if (!preparedPublication && !expectSubsequentProviderReads) assertEquals(checkNotNull(expectedProviders), providerImage(), "No fresh authorization/provider/registration activity.")
         checkNotNull(wire).assertClientsClosed()
         assertEquals(0L, process.publicationLanes.activeOwners().totalOwners)
     }

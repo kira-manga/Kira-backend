@@ -11,6 +11,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublication
 import me.manga.kira.backend.security.ComplaintOwnerDeleteAllAdmissionPolicy
 import me.manga.kira.backend.security.VersionBoundTestComplaintConsumerConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestOrdinarySealV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
 import java.security.MessageDigest
 import java.util.UUID
 
@@ -31,6 +32,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
     val catalogActivation: VersionBoundTestActivationConfigurationV1,
     val ordinarySeal: VersionBoundTestOrdinarySealV1?,
+    val ordinaryDenial: TestOrdinaryDenialAuthorityPolicyV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -129,6 +131,9 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         require(ordinarySeal == null || ordinarySeal.retention.environment == catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment) {
             INVALID_TEST_PROCESS_CONFIGURATION
         }
+        require(ordinaryDenial == null || ordinarySeal != null) { INVALID_TEST_PROCESS_CONFIGURATION }
+        ordinaryDenial?.requireEnvironment(catalogReadback.chainPolicy.trustBundlePolicy.expectedEnvironment)
+        ordinaryDenial?.requireJournal(journal)
     }
 
     override fun toString(): String = "VersionBoundTestNamespaceProcessV1(PRE_CUTOVER_TEST,memory,redacted,no-authority)"
@@ -146,11 +151,12 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             catalogReadback: VersionBoundCatalogReadbackConfigurationV1,
             catalogActivation: VersionBoundTestActivationConfigurationV1,
             ordinarySeal: VersionBoundTestOrdinarySealV1? = null,
+            ordinaryDenial: TestOrdinaryDenialAuthorityPolicyV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial,
             )
         }
 

@@ -392,8 +392,9 @@ internal object ComplaintTestNamespaceRegistrationCases {
         ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
         expireClosedSetupPredecessors: Boolean = false,
         ownerDeleteAll: Boolean = false,
+        ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
         action: (ProjectionActivationObservation, VersionBoundPersistenceConnectedFixture, ComplaintTestNamespaceRegistrationV1, CatalogSignerRotationProbeJdbc) -> Unit,
-    ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll) { f ->
+    ) = withCompletionActivationRows(tls, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain) { f ->
         check(!expireClosedSetupPredecessors || ordinarySealHttp != null)
         fun expireClosedSetupPredecessor(previous: VersionBoundPersistenceConnectedFixture) {
             if (!expireClosedSetupPredecessors) return

@@ -213,7 +213,7 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         checkpoint()
         assembled = VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
-            publication, inputs.catalog, activation, ordinarySeal,
+            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial,
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }

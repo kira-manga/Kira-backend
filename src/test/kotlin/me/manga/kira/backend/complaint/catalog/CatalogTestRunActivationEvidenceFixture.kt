@@ -97,6 +97,7 @@ internal fun withActivationEvidence(
     createGlobal: Int = 2,
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     ownerDeleteAll: Boolean = false,
+    ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -105,13 +106,14 @@ internal fun withActivationEvidence(
     val journal = TestOwnerDeleteJournalConfigurationV1.of(
         original.copy(
             writer = JournalWriterV1(registry.databaseIdentity, registry.restoreIdentity, registry.eventWriter.generationId),
-            limits = original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
+            limits = ordinaryDrain?.limits(original.limits)
+                ?: original.limits.copy(capacity = original.limits.capacity.copy(maximumRetainedVersions = 10_000)),
         ),
         ownerDeleteAll = ownerDeleteAll,
     )
     JournalPublicationLanesV1(journal).use { lanes ->
         CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
-            if (ordinarySealHttp?.protectedIntake == true) tls else null).use(action)
+            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain).use(action)
     }
 }
 
@@ -130,7 +132,11 @@ internal class CatalogTestRunActivationEvidenceFixture(
     createGlobal: Int = 2,
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     intakeTls: VersionBoundPersistenceConnectedFixture? = null,
+    ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
 ) : AutoCloseable {
+    init {
+        require(ordinaryDrain == null || ordinarySealHttp != null && !ordinarySealHttp.protectedIntake)
+    }
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
     val policy = OfflineCatalogRotationFixture.policy()
@@ -173,6 +179,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     // Preserve the historical fixture-present and absent profiles byte-for-byte.
     private val ordinarySeal = if (intakeProcess != null) null else ordinarySealHttp?.owner(consumers.journalRouting, lanes,
         reader.chainPolicy.trustBundlePolicy.expectedEnvironment, rotations.genesis.manifest.initialWriterRegistry.catalogWriter)
+    private val ordinaryDenial = ordinaryDrain?.authority(journal, reader.chainPolicy.trustBundlePolicy.expectedEnvironment)
     val process = process()
     val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, INSTALLATION_LIMIT)
     val generation = prefix.size + 1L
@@ -198,7 +205,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         val writer = journal.declaration().writer
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            lanes, reader, activation, ordinarySeal,
+            lanes, reader, activation, ordinarySeal, ordinaryDenial,
         )
     }
 
@@ -211,7 +218,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
                 FullTestCatalogInputs.key(signerId, key(signerId).public.encoded),
                 OfflineTrustBundleFixture.registryBytes(rotations.genesis.manifest.initialWriterRegistry))
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
-                native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected, native.ordinarySeal)
+                native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected, native.ordinarySeal, native.ordinaryDenial)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -220,7 +227,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         )
         return VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, 1, desiredGeneration, UUID.fromString(writer.databaseIdentity), UUID.fromString(writer.restoreIdentity),
-            lanes, reader, activation, ordinarySeal,
+            lanes, reader, activation, ordinarySeal, ordinaryDenial,
         )
     }
 
@@ -312,7 +319,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             journal.scope.id.toString(), 1, 7, Sha256.hex(process.canonicalBytes()),
             Json.decodeFromString(TestOwnerDeleteJournalDocumentV1.serializer(), journal.canonicalBytes().decodeToString()),
             1, INSTALLATION_LIMIT, TestTerminalEncodingV1("TEST_TERMINAL_V1", 1),
-            accounting(INSTALLATION_LIMIT, 10_000), notices(journal.scope.id.toString()),
+            accounting(INSTALLATION_LIMIT, journal.declaration().limits.capacity.maximumRetainedVersions), notices(journal.scope.id.toString()),
         )
         val record = CatalogTestRunActivationRecordV1(token, generation, Sha256.hex(prefix.last()), run)
         return OfflineCatalogTestRunActivationManifestV3(

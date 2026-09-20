@@ -13,6 +13,66 @@ internal class TestOrdinarySealManifestV1 private constructor(val count: Long, v
     }
     override fun toString(): String = "TestOrdinarySealManifestV1(two-local-passes,no-provider-quiescence,redacted)"
 
+    /**
+     * Closed-drain producer reads the complete actually applied alias set twice, after exact P-U
+     * settlement and paid recycle. These are comparison folds, not a replacement native inventory.
+     * The caller also compares the result with the admitted durable native cut in both transactions.
+     */
+    internal class ClosedBuilder(private val original: TestRunOrdinarySealV1) {
+        private val drain = checkNotNull(original.closedDrain)
+        private val first = MessageDigest.getInstance("SHA-256")
+        private val second = MessageDigest.getInstance("SHA-256")
+        private val manifest = MessageDigest.getInstance("SHA-256")
+        private var firstHash: String? = null
+        private var count = 0L
+        private var repeated = 0L
+        private var entryBytes = 0L
+        private var repeatedBytes = 0L
+        private var previous: Pair<String, String>? = null
+        private var secondPass = false
+        private var ended = false
+
+        fun entry(row: TestOrdinaryDrainPersistenceV1.Applied) {
+            drain.requireClosedSeal(original)
+            original.codecAttempt.remainingMillis(1)
+            requireDrain(!ended && previous?.let { TestOrdinaryDrainRowsV1.compare(it, row.locator) < 0 } != false &&
+                row.key.length in 1..1024 && row.key.all { it in ' '..'~' } && row.ciphertext.matches(Regex("[0-9a-f]{64}")) &&
+                row.stamp?.matches(Regex("[0-9]{1,10}")) == true)
+            val fields = listOf(row.key, row.version, row.ciphertext)
+            val stamps = fields + checkNotNull(row.stamp)
+            if (!secondPass) {
+                requireDrain(count < drain.maximumVersions)
+                val frame = EpochSealFramesV1.frame(fields)
+                try { entryBytes = Math.addExact(entryBytes, frame.size.toLong()) } finally { frame.fill(0) }
+                EpochSealFramesV1.update(first, stamps)
+                requireDrain(entryBytes <= drain.maximumFramedBytes)
+                count++
+            } else {
+                requireDrain(repeated < count)
+                repeatedBytes = Math.addExact(repeatedBytes, EpochSealFramesV1.update(manifest, fields))
+                EpochSealFramesV1.update(second, stamps)
+                requireDrain(repeatedBytes <= drain.maximumFramedBytes)
+                repeated++
+            }
+            previous = row.locator
+        }
+        fun beginSecond() {
+            requireDrain(!secondPass && !ended)
+            val prefixBytes = EpochSealFramesV1.update(manifest, listOf(EpochSealFramesV1.DOMAIN, "1", "manifest", drain.writer,
+                drain.routing.journalConfiguration.ordinaryPrefix, "TEST", drain.scope.toString(), "1", drain.cutoff.toString(), count.toString()))
+            requireDrain(Math.addExact(prefixBytes, entryBytes) == drain.paidCut().framedByteCount)
+            firstHash = HexFormat.of().formatHex(first.digest())
+            secondPass = true; previous = null
+        }
+        fun finish(): TestOrdinarySealManifestV1 {
+            requireDrain(secondPass && !ended && count == repeated && entryBytes == repeatedBytes && firstHash == HexFormat.of().formatHex(second.digest()))
+            val root = HexFormat.of().formatHex(manifest.digest())
+            requireDrain(count == drain.paidCut().denial.firstInventory.versionCount && root == drain.paidCut().denial.firstInventory.sha256)
+            ended = true
+            return TestOrdinarySealManifestV1(count, root, checkNotNull(firstHash))
+        }
+    }
+
     /** O(1) digest state. SQL's fixed producer supplies every relevant row twice; this builder alone cannot prove that. */
     internal class Builder(
         private val routing: TestOwnerDeleteJournalRoutingV1,

@@ -30,6 +30,8 @@ import me.manga.kira.backend.complaint.infrastructure.journal.OwnerDeleteAllVeri
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.OwnerDeleteAllJournalBindingV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalCodecV1
+import me.manga.kira.backend.security.TestTerminalJsonV1
+import me.manga.kira.backend.security.TestTerminalRootsV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.Timestamp
@@ -49,6 +51,8 @@ internal class TestOrdinarySealOperationV1 private constructor(
     internal val step = original.step
     internal lateinit var cut: TestOrdinarySealRowsV1.Control
         private set
+    internal var closedCut: TestClosedOrdinarySealRowsV1.Cut? = null
+        private set
     internal lateinit var manifest: TestOrdinarySealManifestV1
         private set
     internal var row: TestTerminalDurableRowV1? = null
@@ -56,6 +60,7 @@ internal class TestOrdinarySealOperationV1 private constructor(
     private var stage = Stage.NEW
     private var counters: JdbcComplaintCapacityStore.LockedTestOrdinarySeal? = null
     private lateinit var run: Run
+    private var closedRun: TestOrdinaryDrainRowsV1.Run? = null
     private var spend = false
     private var installationObservation: TestTerminalProgressV1? = null
 
@@ -70,6 +75,10 @@ internal class TestOrdinarySealOperationV1 private constructor(
 
     private fun execute() {
         retained(Stage.NEW)
+        if (original.closedDrain != null) {
+            executeClosed()
+            return
+        }
         stage = Stage.CONTROLS
         for (sql in listOf(TestRunSealingSqlV1.lockGlobalControl, TestRunSealingSqlV1.lockScopeControl)) {
             requireOrdinarySeal(jdbc.query(sql, { value, _ -> TestOrdinarySealRowsV1.boolean(value, "valid") }, *original.registration.sealingControlArguments()).single())
@@ -136,12 +145,130 @@ internal class TestOrdinarySealOperationV1 private constructor(
         stage = Stage.COMPLETE
     }
 
+    /**
+     * Different entry/SQL contract from the old first-seal path. The entire ordinary range was
+     * independently admitted and natively inventoried by this same drain; every actual alias was
+     * recovered and every P-U settled before the paid pool was restored. No old c.seal/checkpoint
+     * is cleared, adopted as a predecessor, or mistaken for the result below.
+     */
+    private fun executeClosed() {
+        val drain = checkNotNull(original.closedDrain)
+        drain.requireClosedSeal(original)
+        stage = Stage.CONTROLS
+        TestOrdinaryDrainPersistenceV1.requireControls(jdbc, drain)
+        stage = Stage.COUNTERS_REQUESTED
+        counters = JdbcComplaintCapacityStore(jdbc, original.registration.process.consumers.capacityPolicy.digestBytes()).lockForTestOrdinarySeal(this)
+        retained(Stage.COUNTERS_LOCKING)
+        stage = Stage.RUN
+        val run = TestOrdinaryDrainPersistenceV1.readRun(jdbc, drain).also { closedRun = it }
+        drain.requirePaidProgress(run.progress)
+        requireDrain(TestOrdinaryDrainPersistenceV1.scanCharge(jdbc, drain, run).isZero() && TestOrdinaryDrainPersistenceV1.scans(jdbc, drain).isEmpty())
+        val sidecars = TestOrdinaryDrainPersistenceV1.sidecars(jdbc, drain, run)
+        run.requirePaidRemainder(ComplaintCapacityVector.ZERO, sidecars)
+        closedCut = TestClosedOrdinarySealRowsV1.Cut(drain, run)
+        if (step !== TestOrdinarySealStepV1.CAPTURE) checkNotNull(closedCut).requireSameCut(original.capturedClosedCut())
+        stage = Stage.SIDECAR
+        row = loadSidecar()
+        requireDrain((row == null) == (sidecars == 0L))
+        checkNotNull(closedCut).requireSidecar(row)
+        stage = Stage.MANIFEST
+        manifest = readClosedManifest()
+        if (step !== TestOrdinarySealStepV1.CAPTURE) manifest.requireSame(original.capturedManifest())
+        when (step) {
+            TestOrdinarySealStepV1.CAPTURE -> Unit
+            TestOrdinarySealStepV1.PREPARE -> prepareClosed()
+            TestOrdinarySealStepV1.FREEZE -> freeze()
+            TestOrdinarySealStepV1.VERIFY -> verifyClosed()
+        }
+        stage = Stage.TRANSFER
+        checkNotNull(counters).settle(this)
+        requireDrain(checkNotNull(counters).completedFor(this))
+        if (spend) requireDrain(jdbc.update(TestOrdinaryDrainSqlV1.spend, OwnerDeleteRows.array(run.unused - TestTerminalCapacityChargesV1.SIDECAR),
+            drain.scope, OwnerDeleteRows.array(run.unused)) == 1)
+        val after = TestOrdinaryDrainPersistenceV1.readRun(jdbc, drain)
+        after.requirePaidRemainder(ComplaintCapacityVector.ZERO, sidecars + if (spend) 1L else 0L)
+        drain.requirePaidProgress(after.progress)
+        TestOrdinaryDrainPersistenceV1.requireControls(jdbc, drain)
+        retained(Stage.TRANSFER)
+        stage = Stage.COMPLETE
+    }
+
+    private fun readClosedManifest(): TestOrdinarySealManifestV1 {
+        val drain = checkNotNull(original.closedDrain)
+        val run = checkNotNull(closedRun)
+        val builder = TestOrdinarySealManifestV1.ClosedBuilder(original)
+        repeat(2) { pass ->
+            retained(Stage.MANIFEST)
+            TestOrdinaryDrainPersistenceV1.requireAllPrimaries(jdbc, drain, run, converted = true, staged = false)
+            TestOrdinaryDrainPersistenceV1.requireAppliedCut(jdbc, drain)
+            var after: Pair<String, String>? = null
+            while (true) {
+                retained(Stage.MANIFEST)
+                val page = TestOrdinaryDrainPersistenceV1.appliedPage(jdbc, drain, after)
+                if (page.isEmpty()) break
+                page.forEach { value -> builder.entry(value); after = value.locator }
+            }
+            TestOrdinaryDrainPersistenceV1.requireAllPrimaries(jdbc, drain, run, converted = true, staged = false)
+            if (pass == 0) builder.beginSecond()
+        }
+        return builder.finish()
+    }
+
+    private fun prepareClosed() {
+        stage = Stage.SIDECAR
+        requireDrain(row == null && checkNotNull(closedCut).existing == null)
+        val candidate = original.canonicalCandidate(this)
+        val b = candidate.binding
+        val control = checkNotNull(closedCut).control
+        requireDrain(candidate.state === TestTerminalDurableStateV1.CANONICAL && b.operationToken == control.captureId.toString() &&
+            b.preparingFencingToken == original.leaseToken && b.epochStartInclusive == 1L && b.epochEndInclusive == control.cutoff)
+        val bytes = candidate.canonicalBytes()
+        try {
+            requireDrain(jdbc.update(TestOrdinarySealSqlV1.insert, b.operationToken, b.run.dataScopeId, b.objectId, b.objectKey, b.routingKeyId,
+                b.writerGeneration, b.epochEndInclusive, b.preparingFencingToken, b.run.activationCatalogGeneration,
+                TestOrdinarySealRowsV1.hex(b.run.activationCatalogSha256), TestOrdinarySealRowsV1.hex(b.run.configurationSha256),
+                TestOrdinarySealRowsV1.hex(b.journalConfigurationSha256), TestOrdinarySealRowsV1.hex(b.run.terminalEncodingSha256),
+                bytes, TestOrdinarySealRowsV1.hex(candidate.canonicalSha256), Timestamp.from(b.retentionFloor), Timestamp.from(b.createdAt)) == 1)
+        } finally { bytes.fill(0) }
+        spend = true
+        row = checkNotNull(loadSidecar())
+        original.requireSameCanonical(candidate, checkNotNull(row))
+    }
+
+    private fun verifyClosed() {
+        stage = Stage.SIDECAR
+        val drain = checkNotNull(original.closedDrain)
+        val run = checkNotNull(closedRun)
+        val durable = checkNotNull(row)
+        original.requireSameFrozen(original.frozenRow(), durable)
+        val proof = original.providerProof(this) // Actual native/STS/KMS/S3 cleanup has already completed.
+        val at = now()
+        requireDrain(!proof.verifiedAt.isAfter(at) && !proof.lastModified.isAfter(at) && proof.retainUntil.isAfter(at))
+        if (checkNotNull(closedCut).existing != null) {
+            checkNotNull(closedCut).requireProof(durable, proof)
+            return
+        }
+        val set = TestClosedOrdinarySealRowsV1.set(drain, durable, proof)
+        val root = TestTerminalRootsV1(original.routing.journalConfiguration, run.installationLimit, run.plan.manifestChunkCount.toInt()).preTerminalSeals(set)
+        val bytes = TestTerminalJsonV1(original.routing.journalConfiguration).encodeSealSet(set)
+        try {
+            // terminal_seal_epoch reserves the already-captured dedicated epoch only. The set is
+            // ORDINARY-only: this is neither a verified TERMINAL seal nor PURGING/PURGED authority.
+            requireDrain(jdbc.update(TestClosedOrdinarySealSqlV1.verifyRun, drain.cutoff, drain.currentEpoch, root.count,
+                TestOrdinarySealRowsV1.hex(root.sha256), bytes, TestOrdinarySealRowsV1.hex(me.manga.kira.backend.common.Sha256.hex(bytes)),
+                drain.scope, OwnerDeleteRows.array(run.unused), run.progressBytes, run.progressHash) == 1)
+        } finally { bytes.fill(0) }
+        val after = TestOrdinaryDrainPersistenceV1.readRun(jdbc, drain)
+        closedCut = TestClosedOrdinarySealRowsV1.Cut(drain, after).also { it.requireProof(durable, proof) }
+    }
+
     private fun control(): TestOrdinarySealRowsV1.Control {
         retained(Stage.CONTROLS)
         return jdbc.query(TestOrdinarySealSqlV1.control, { value, _ -> TestOrdinarySealRowsV1.Control(value) }, original.scope).single().also { retained(Stage.CONTROLS) }
     }
     private fun loadSidecar(): TestTerminalDurableRowV1? = jdbc.query(TestOrdinarySealSqlV1.sidecar, { value, _ ->
-        original.ownRow(TestOrdinarySealRowsV1.sidecar(value, original, cut))
+        original.ownRow(if (original.closedDrain == null) TestOrdinarySealRowsV1.sidecar(value, original, cut)
+            else TestClosedOrdinarySealRowsV1.sidecar(value, original, checkNotNull(closedCut)))
     }, original.scope, original.routing.journalConfiguration.sealTerminalPrefix + "%").let { values ->
         retained(Stage.SIDECAR); requireOrdinarySeal(values.size <= 1); values.singleOrNull()
     }
@@ -424,8 +551,10 @@ internal class TestOrdinarySealOperationV1 private constructor(
         retained(Stage.TRANSFER, selected)
         ledger.configuration.requireMatching(expectedDigest)
         val policy = original.registration.process.consumers.capacityPolicy
+        val unused = closedRun?.unused ?: run.unused
         requireOrdinarySeal(ledger.balance.hardLimit == policy.hardLimit && ledger.balance.creationLimit == policy.creationLimit &&
-            daily.dailyLimit == policy.dailyEnrollmentLimit && run.unused.fitsWithin(ledger.balance.testReserved))
+            daily.dailyLimit == policy.dailyEnrollmentLimit && unused.fitsWithin(ledger.balance.testReserved) &&
+            (!spend || TestTerminalCapacityChargesV1.SIDECAR.fitsWithin(unused)))
         return if (spend) ledger.spendTestReserve(expectedDigest, TestTerminalCapacityChargesV1.SIDECAR, ComplaintCapacityVector.ZERO) else ledger
     }
     internal fun failed(problem: Throwable): Nothing {

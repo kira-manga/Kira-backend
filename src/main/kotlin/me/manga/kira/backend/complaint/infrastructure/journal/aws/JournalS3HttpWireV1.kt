@@ -13,7 +13,7 @@ import java.io.InputStream
 import java.net.URI
 import java.security.MessageDigest
 
-/** Exact closed ordinary/seal request grammar. Header bounds start AFTER native HTTP header parsing. */
+/** Exact closed ordinary/seal and TEST inventory grammar. Header bounds start AFTER native HTTP header parsing. */
 internal class JournalS3HttpWireV1(private val endpoint: URI, private val accessKeyId: String, private val sessionToken: String) {
     fun request(request: HttpExecuteRequest, call: JournalS3RequestV1, check: () -> Unit): ByteArray? = request(request, JournalS3WireBindingV1.of(call), check)
     internal fun request(request: HttpExecuteRequest, call: JournalS3WireBindingV1, check: () -> Unit): ByteArray? {
@@ -26,7 +26,7 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(single(http.headers(), "x-amz-expected-bucket-owner") == location.accountId)
         FORBIDDEN_REQUEST_HEADERS.forEach { requireJournalPublication(single(http.headers(), it) == null) }
         checkSignature(http.headers(), call)
-        checkQuery(http)
+        checkQuery(http, call)
         when (call.operation) {
             JournalS3OperationV1.LIST -> validateList(http, call)
             JournalS3OperationV1.GET -> validateGet(http, call)
@@ -64,10 +64,13 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
     private fun validateList(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
         requireJournalPublication(http.method() == SdkHttpMethod.GET, JournalPublicationFailureV1.INVALID_LISTING)
         requireJournalPublication(http.encodedPath() in listOf("/${call.location.bucket}", "/${call.location.bucket}/"))
-        requireJournalPublication(http.rawQueryParameters().keys == LIST_PARAMETERS || http.rawQueryParameters().keys == LIST_PARAMETERS + "x-id")
+        val markers = if (call.inventoryList && call.keyMarker != null) setOf("key-marker", "version-id-marker") else emptySet()
+        val parameters = LIST_PARAMETERS + markers
+        requireJournalPublication(http.rawQueryParameters().keys == parameters || http.rawQueryParameters().keys == parameters + "x-id")
         requireJournalPublication(http.rawQueryParameters().getValue("versions").all { it.isNullOrEmpty() })
         requireJournalPublication(parameter(http, "prefix") == call.objectKey && parameter(http, "max-keys") == "2")
         requireJournalPublication(parameter(http, "encoding-type") == "url" && parameter(http, "x-id") in listOf(null, "ListObjectVersions"))
+        requireJournalPublication(parameter(http, "key-marker") == call.keyMarker && parameter(http, "version-id-marker") == call.versionIdMarker)
     }
 
     private fun validateGet(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
@@ -98,9 +101,10 @@ internal class JournalS3HttpWireV1(private val endpoint: URI, private val access
         requireJournalPublication(http.encodedPath() == "/${call.location.bucket}/${call.objectKey}")
     }
 
-    private fun checkQuery(http: SdkHttpRequest) {
+    private fun checkQuery(http: SdkHttpRequest, call: JournalS3WireBindingV1) {
         val values = http.rawQueryParameters()
-        requireJournalPublication(values.size <= 5)
+        val maximumParameters = if (call.inventoryList && call.keyMarker != null) 7 else 5
+        requireJournalPublication(values.size <= maximumParameters)
         requireJournalPublication(
             values.all { (name, items) ->
                 name.length in 1..32 && if (name == "versions") {

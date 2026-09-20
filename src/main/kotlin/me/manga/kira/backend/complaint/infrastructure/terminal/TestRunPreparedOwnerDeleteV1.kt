@@ -21,7 +21,8 @@ internal class TestRunPreparedOwnerDeleteV1 private constructor(
     operationKey: UUID?,
     publication: Publication,
     selectedBy: TestRunOwnerDeleteContinuationV1? = null,
-) : TestRunOwnerDeleteContinuationV1(registration, ownership, jdbc, audit, actorId, operationKey, publication, selectedBy) {
+    drainBy: TestRunOrdinaryDrainV1? = null,
+) : TestRunOwnerDeleteContinuationV1(registration, ownership, jdbc, audit, actorId, operationKey, publication, selectedBy, drainBy) {
     /** Only beginPage/pageWithHttpFixture entries can select. Single-primary entries retain complete(). */
     fun completePage(): PageProgress = completeSelectedPage()
 
@@ -46,6 +47,11 @@ internal class TestRunPreparedOwnerDeleteV1 private constructor(
     }
 
     companion object {
+        /** The actual drain retains this page and its single outer deadline before any SQL or provider work. */
+        internal fun forDrain(original: TestRunOrdinaryDrainV1, registration: ComplaintTestNamespaceRegistrationV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate, audit: AuditService, publication: Publication): TestRunPreparedOwnerDeleteV1 =
+            TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, null, null, publication, drainBy = original)
+
         fun begin(registration: ComplaintTestNamespaceRegistrationV1, ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate,
             audit: AuditService, actorId: UUID, operationKey: UUID, credentials: AwsSessionCredentials): TestRunPreparedOwnerDeleteV1 =
             TestRunPreparedOwnerDeleteV1(registration, ownership, jdbc, audit, actorId, operationKey, Publication(credentials))
