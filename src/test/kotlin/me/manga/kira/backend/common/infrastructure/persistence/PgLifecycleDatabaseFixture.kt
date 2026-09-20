@@ -5,6 +5,10 @@ import org.testcontainers.utility.DockerImageName
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption
+import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.PosixFilePermissions
+import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.Statement
@@ -13,26 +17,32 @@ import java.util.Properties
 import java.util.UUID
 
 /** JUnit owns its container; an explicitly bound local server remains controller-owned. No arbitrary external datasource. */
-internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : AutoCloseable {
-    private val local = PgLifecycleControllerOwnedServer.load(fixtureClass)
-    private val tls = PgLifecycleDatabaseTls.forFixture(fixtureClass, local?.tlsRoot())
-    private val postgres = if (local == null) newPostgres() else null
+internal class PgLifecycleDatabaseFixture private constructor(
+    private val fixtureClass: Class<*>?,
+    private val child: PgLifecycleOwnedChildAttachmentV1?,
+) : AutoCloseable {
+    constructor(fixtureClass: Class<*>? = null) : this(fixtureClass, null)
+    private val local = if (child == null) PgLifecycleControllerOwnedServer.load(fixtureClass) else null
+    private val tls = child?.let { PgLifecycleDatabaseTls.borrowOwnedContainerMaterial(it.tlsRoot) }
+        ?: PgLifecycleDatabaseTls.forFixture(fixtureClass, local?.tlsRoot())
+    private val postgres = if (local == null && child == null) newPostgres() else null
     private lateinit var generation: Instant
     private var localVerified = false
 
     val host: String
         get() = postgres?.host ?: run {
             check(localVerified)
-            "127.0.0.1"
+            child?.host ?: "127.0.0.1"
         }
     val port: Int
         get() = postgres?.firstMappedPort ?: run {
             check(localVerified)
-            requireNotNull(local).port
+            child?.port ?: requireNotNull(local).port
         }
 
     fun start() {
         try {
+            child?.requireParent()
             tls?.prepare()
             postgres?.let { server ->
                 tls?.configureContainer(server)
@@ -51,14 +61,23 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
                         check(!result.next())
                     }
                     local?.verify(statement, generation)
-                    statement.execute(
-                        "CREATE ROLE ${PgLifecycleDatabaseSettings.CANDIDATE} LOGIN PASSWORD '${PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD}'",
-                    )
+                    if (child == null) {
+                        statement.execute(
+                            "CREATE ROLE ${PgLifecycleDatabaseSettings.CANDIDATE} LOGIN PASSWORD '${PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD}'",
+                        )
+                    } else {
+                        check(generation == child.generation)
+                        check(ColdFixtureFilesV1.sha256(checkNotNull(tls).publicTrust()) == child.trustSha256)
+                        statement.executeQuery("SELECT rolcanlogin AND NOT rolsuper FROM pg_roles WHERE rolname = '${PgLifecycleDatabaseSettings.CANDIDATE}'").use { row ->
+                            check(row.next() && row.getBoolean(1) && !row.wasNull() && !row.next())
+                        }
+                    }
                     tls?.verifyServer(statement, local?.tlsData())
                 }
             }
-            localVerified = local != null
+            localVerified = local != null || child != null
             if (tls != null) verifySecondLoopback()
+            child?.requireParent()
         } catch (failure: Throwable) {
             runCatching { close() }.exceptionOrNull()?.let(failure::addSuppressed)
             throw failure
@@ -66,13 +85,13 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
     }
 
     fun observer(nonce: String = UUID.randomUUID().toString()): PgLifecycleDatabaseObserver {
-        check(local == null || localVerified)
+        check(postgres != null || localVerified)
         check(UUID.fromString(nonce).toString() == nonce)
         return PgLifecycleDatabaseObserver(connection("w03o_$nonce"), generation)
     }
 
     fun versionBoundTls(): PgLifecycleDatabaseTls {
-        check(::generation.isInitialized && (local == null || localVerified))
+        check(::generation.isInitialized && (postgres != null || localVerified))
         return checkNotNull(tls)
     }
 
@@ -111,7 +130,7 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
         val url = if (selectedHost != null) {
             "jdbc:postgresql://$selectedHost:$port/${PgLifecycleDatabaseSettings.DATABASE}"
         } else {
-            postgres?.jdbcUrl ?: "jdbc:postgresql://127.0.0.1:${requireNotNull(local).port}/${PgLifecycleDatabaseSettings.DATABASE}"
+            postgres?.jdbcUrl ?: "jdbc:postgresql://${child?.host ?: "127.0.0.1"}:${child?.port ?: requireNotNull(local).port}/${PgLifecycleDatabaseSettings.DATABASE}"
         }
         val connection = DriverManager.getConnection(url, properties)
         try {
@@ -130,6 +149,24 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
         tls?.close() // Never remove server material if the owned container's stop failed; local material stays controller-owned.
     }
 
+    /** Only the actual owning synthetic container can export this TEST attachment. No endpoint setter. */
+    fun exportColdChildAttachment(root: Path): Path {
+        check(fixtureClass == TestOrdinaryDrainConnectedIT::class.java && postgres != null && local == null && child == null)
+        check(::generation.isInitialized)
+        val material = versionBoundTls()
+        return PgLifecycleOwnedChildAttachmentV1.write(root, host, port, generation, material.root,
+            ColdFixtureFilesV1.sha256(material.publicTrust()))
+    }
+
+    companion object {
+        /** Nonowning child view; no CREATE ROLE, migration, seeding, container stop or TLS deletion. */
+        fun attachColdChild(path: Path, expectedSha256: String): PgLifecycleDatabaseFixture {
+            check(System.getenv("KIRA_PG_LIFECYCLE_LOCAL_RUN") == null)
+            return PgLifecycleDatabaseFixture(TestOrdinaryDrainConnectedIT::class.java,
+                PgLifecycleOwnedChildAttachmentV1.read(path, expectedSha256)).also { it.start() }
+        }
+    }
+
     private fun newPostgres(): PostgreSQLContainer<*> = PostgreSQLContainer(DockerImageName.parse("postgres:17.6-alpine"))
         .withDatabaseName(PgLifecycleDatabaseSettings.DATABASE)
         .withUsername(PgLifecycleDatabaseSettings.OBSERVER)
@@ -138,6 +175,81 @@ internal class PgLifecycleDatabaseFixture(fixtureClass: Class<*>? = null) : Auto
         .withEnv("POSTGRES_HOST_AUTH_METHOD", "scram-sha-256")
         .withCommand("postgres", "-c", "max_connections=35", "-c", "shared_buffers=64MB", "-c", "password_encryption=scram-sha-256")
         .withReuse(false)
+}
+
+/** Private parent-owned TEST-container descriptor; entirely separate from the unchanged local-controller gate. */
+private class PgLifecycleOwnedChildAttachmentV1(
+    val host: String, val port: Int, val generation: Instant, val tlsRoot: Path, val trustSha256: String,
+    private val parentPid: Long, private val parentStart: Instant,
+) {
+    fun requireParent() {
+        val parent = ProcessHandle.current().parent().orElseThrow()
+        check(parent.pid() == parentPid && parent.isAlive && parent.info().startInstant().orElseThrow() == parentStart)
+    }
+
+    companion object {
+        fun write(root: Path, host: String, port: Int, generation: Instant, tlsRoot: Path, trustHash: String): Path {
+            check(host in setOf("127.0.0.1", "localhost") && port in 1..65535)
+            ColdFixtureFilesV1.directory(root); ColdFixtureFilesV1.directory(tlsRoot)
+            val process = ProcessHandle.current()
+            val values = listOf("kira-cold-owned-container-1", UUID.randomUUID().toString(), host, port.toString(),
+                generation.toString(), tlsRoot.toString(), trustHash, process.pid().toString(), process.info().startInstant().orElseThrow().toString())
+            check(values.all { '\n' !in it && '\r' !in it })
+            return root.resolve("owned-container.txt").also { ColdFixtureFilesV1.write(it, (values.joinToString("\n") + "\n").toByteArray()) }
+        }
+
+        fun read(path: Path, expectedHash: String): PgLifecycleOwnedChildAttachmentV1 {
+            check(path.fileName.toString() == "owned-container.txt" && expectedHash.matches(Regex("[0-9a-f]{64}")))
+            val bytes = ColdFixtureFilesV1.read(path, 4096)
+            check(ColdFixtureFilesV1.sha256(bytes) == expectedHash)
+            val lines = bytes.toString(Charsets.UTF_8).removeSuffix("\n").split('\n')
+            check(lines.size == 9 && lines[0] == "kira-cold-owned-container-1")
+            check(UUID.fromString(lines[1]).toString() == lines[1])
+            check(lines[2] in setOf("127.0.0.1", "localhost"))
+            val port = lines[3].toInt().also { check(it in 1..65535 && it.toString() == lines[3]) }
+            val tls = Path.of(lines[5]); ColdFixtureFilesV1.directory(tls)
+            check(lines[6].matches(Regex("[0-9a-f]{64}")))
+            return PgLifecycleOwnedChildAttachmentV1(lines[2], port, Instant.parse(lines[4]), tls, lines[6], lines[7].toLong(),
+                Instant.parse(lines[8])).also { it.requireParent() }
+        }
+    }
+}
+
+/** Private synthetic inputs only. Bounded, stable, same-owner regular files; never upload the scratch tree. */
+internal object ColdFixtureFilesV1 {
+    val directoryMode = PosixFilePermissions.fromString("rwx------")
+    private val fileMode = PosixFilePermissions.fromString("rw-------")
+    fun directory(path: Path) {
+        check(path.isAbsolute && path.normalize() == path && path.toRealPath() == path)
+        check(Files.isDirectory(path, NOFOLLOW_LINKS) && Files.getPosixFilePermissions(path, NOFOLLOW_LINKS) == directoryMode)
+        owner(path)
+    }
+    private fun owner(path: Path) {
+        val expected = path.fileSystem.userPrincipalLookupService.lookupPrincipalByName(System.getProperty("user.name"))
+        check(Files.getOwner(path, NOFOLLOW_LINKS) == expected)
+    }
+    fun write(path: Path, bytes: ByteArray) {
+        directory(path.parent)
+        Files.newByteChannel(path, setOf(StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, NOFOLLOW_LINKS),
+            PosixFilePermissions.asFileAttribute(fileMode)).use { channel ->
+            val buffer = java.nio.ByteBuffer.wrap(bytes)
+            while (buffer.hasRemaining()) channel.write(buffer)
+        }
+    }
+    fun read(path: Path, maximum: Int = 16 * 1024 * 1024): ByteArray {
+        directory(path.parent)
+        check(path.toRealPath() == path && Files.getPosixFilePermissions(path, NOFOLLOW_LINKS) == fileMode)
+        owner(path)
+        check(Files.getAttribute(path, "unix:nlink", NOFOLLOW_LINKS) == 1)
+        val before = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        check(before.isRegularFile && before.fileKey() != null && before.size() in 1..maximum.toLong())
+        val bytes = Files.newInputStream(path, NOFOLLOW_LINKS).use { it.readNBytes(maximum + 1) }
+        val after = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        check(after.isRegularFile && after.fileKey() == before.fileKey() && after.size() == before.size() &&
+            after.lastModifiedTime() == before.lastModifiedTime() && bytes.size.toLong() == before.size())
+        return bytes
+    }
+    fun sha256(bytes: ByteArray): String = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes))
 }
 
 /** Private Linux gate input, not an endpoint configuration API or a server lifecycle implementation. */

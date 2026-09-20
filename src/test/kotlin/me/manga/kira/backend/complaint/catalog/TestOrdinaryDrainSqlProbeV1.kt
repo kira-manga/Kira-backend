@@ -38,10 +38,12 @@ import java.util.concurrent.atomic.AtomicReference
  * Reflection reads actual phase/child originals only, never constructs or injects authority.
  */
 internal class TestOrdinaryDrainSqlProbeV1(
-    private val p: ProjectionActivationObservation,
+    private val advisory: (Connection, String, String) -> Boolean,
     private val runtime: VersionBoundPersistenceConnectedFixture,
     private val deletion: Boolean = false,
 ) : JdbcTemplate(if (deletion) runtime.pools.deletion else runtime.pools.catalogCoordinator.dataSource) {
+    constructor(p: ProjectionActivationObservation, runtime: VersionBoundPersistenceConnectedFixture, deletion: Boolean = false) :
+        this(p::advisory, runtime, deletion)
     var original: TestRunOrdinaryDrainV1? = null
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<TestOrdinaryDrainSqlCallV1>()
@@ -131,13 +133,13 @@ internal class TestOrdinaryDrainSqlProbeV1(
         val connection = (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection
         assertEquals(setOf(source), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
-        assertTrue(p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-        assertFalse(p.advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
+        assertTrue(advisory(connection, "complaint-maintenance-v1", "ShareLock"))
+        assertFalse(advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
         val exclusiveEpoch = drain != null || seal != null
         val sharedEpoch = (primary != null || allPrimary != null || adminPrimary != null) && path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_VERIFY,
             PersistencePhasePath.COMPLAINT_OWNER_DELETE_ALL_VERIFY, PersistencePhasePath.COMPLAINT_ADMIN_DELETE_VERIFY)
-        assertEquals(exclusiveEpoch, p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
-        assertEquals(sharedEpoch, p.advisory(connection, "complaint-journal-epoch", "ShareLock"),
+        assertEquals(exclusiveEpoch, advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
+        assertEquals(sharedEpoch, advisory(connection, "complaint-journal-epoch", "ShareLock"),
             "Primary RELOAD/APPLY use shared E; VERIFY uses no E; drain/recovery/seal use exclusive E.")
         val lease = ownedPoolLease(connection)
         val observed = observations.getOrPut(phase) {

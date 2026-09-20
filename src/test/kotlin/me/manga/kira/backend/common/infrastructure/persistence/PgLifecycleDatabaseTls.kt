@@ -129,5 +129,11 @@ internal class PgLifecycleDatabaseTls private constructor(val root: Path, privat
                 .resolve("kira-versionbound-pg-tls-${UUID.randomUUID()}")
             return PgLifecycleDatabaseTls(root, controllerRoot != null)
         }
+
+        /** Borrow only material of the parent-owned container verified by the cold-child descriptor. */
+        fun borrowOwnedContainerMaterial(root: Path): PgLifecycleDatabaseTls {
+            ColdFixtureFilesV1.directory(root)
+            return PgLifecycleDatabaseTls(root, controllerOwned = true)
+        }
     }
 }

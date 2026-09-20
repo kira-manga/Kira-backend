@@ -35,6 +35,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActiv
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEncodingV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintProcessPoolFixture
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentDocumentV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentInputsV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCapacityInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogChainLimitsV1
@@ -181,6 +182,11 @@ internal class CatalogTestRunActivationEvidenceFixture(
     internal var intakeAssembly: ComplaintTestProcessAssemblyV1? = null
         private set
     private var intakeDocument: ComplaintTestDeploymentDocumentV1? = null
+    private var originalIntakeBytes: ByteArray? = null
+    private var originalSecretReplies: List<ColdSecretObjectV1> = emptyList()
+    /** Exact raw fixture inputs only; no acquired secret, target, registration or projection is exported. */
+    internal fun coldInputBytes(): ByteArray = checkNotNull(originalIntakeBytes).copyOf()
+    internal fun coldSecretObjects(): List<ColdSecretObjectV1> = originalSecretReplies.toList()
     // The new specimen starts from a protected document, not this fixture's former owner-only seam.
     private val intakeProcess = if (ordinarySealHttp?.protectedIntake == true) assembleIntake(checkNotNull(intakeTls), ordinarySealHttp, createGlobal) else null
     // Preserve the historical fixture-present and absent profiles byte-for-byte.
@@ -251,6 +257,13 @@ internal class CatalogTestRunActivationEvidenceFixture(
         val registry = rotations.genesis.manifest.initialWriterRegistry
         val spki = key(signerId).public.encoded
         val document = template.copy(
+            // Select the explicit denial recipe before parsing/acquisition/D; absence preserves the legacy bytes.
+            profile = when {
+                ordinaryDrain == null -> template.profile
+                journal.registeredAdminDelete -> ComplaintTestDeploymentInputsV1.ADMIN_ERASURE_DRAIN_PROFILE
+                journal.ownerDeleteAll -> ComplaintTestDeploymentInputsV1.OWNER_ERASURE_DRAIN_PROFILE
+                else -> ComplaintTestDeploymentInputsV1.DRAIN_PROFILE
+            },
             database = template.database.copy(host = tls.database.host, port = tls.endpointPort, name = PgLifecycleDatabaseSettings.DATABASE,
                 runtimeUsername = PgLifecycleDatabaseSettings.CANDIDATE,
                 runtimePassword = DesiredSecretReferenceV1(reference.logicalKeyId, reference.version.resourceArn, reference.version.versionId),
@@ -280,15 +293,24 @@ internal class CatalogTestRunActivationEvidenceFixture(
             ordinaryDenial = ordinaryDrain?.authorityInput(journal, trust.expectedEnvironment),
         )
         intakeDocument = document
+        val inputBytes = TestDeploymentInputFixture.bytes(document)
+        originalIntakeBytes = inputBytes.copyOf()
         val secrets = AwsSecretVersionFixture()
         TestDeploymentInputFixture.secrets(secrets, document, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray())
         http.prepareIndependent(journal) // Raw factories and clocks fixed BEFORE the actual intake/owner construction.
         val assembly = ComplaintTestProcessAssemblyV1.withHttpFixture(secrets::httpClient, PersistenceNanoClock(http::nanos), http::now,
             PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3).also { intakeAssembly = it }
-        TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(document)) { path ->
+        TestDeploymentInputFixture.withManifest(inputBytes) { path ->
             assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
         }
         check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
+        check(secrets.requests.size == secrets.replies.size)
+        originalSecretReplies = secrets.requests.zip(secrets.replies).map { (request, reply) ->
+            check(reply.status == 200 && reply.calls == 1 && reply.closes > 0 && reply.aborts == 1)
+            val fields = request.fields()
+            ColdSecretObjectV1(fields.getValue("SecretId"), fields.getValue("VersionId"),
+                Base64.getEncoder().encodeToString(reply.bytes), reply.headers)
+        }
         check(http.sts.createdClients + http.kms.createdClients + http.s3Created == 0)
         return assembly.target
     }

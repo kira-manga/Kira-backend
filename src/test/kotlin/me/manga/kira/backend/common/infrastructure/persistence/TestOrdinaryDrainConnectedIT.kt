@@ -1,5 +1,6 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.ComplaintTestColdRecoveryProcessCasesV1
 import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRecoveryRegistrationCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAccountingCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAuthorityCutV1
@@ -78,6 +79,14 @@ class TestOrdinaryDrainConnectedIT {
     fun coldTestRecoveryFreshRootReusesCommittedPaidCutWithoutSecondCharge() = withFixture {
         ComplaintTestNamespaceRecoveryRegistrationCasesV1.freshRootContinuesWithoutReplayingProjection(it, paidCut = true)
     }
+
+    @Test
+    fun coldTestRecoveryTwoJvmPreCutReassemblesRegistersAndDrainsWithoutProjectionOrEnrollment() =
+        ComplaintTestColdRecoveryProcessCasesV1.qualify(paidCut = false)
+
+    @Test
+    fun coldTestRecoveryTwoJvmCommittedWitnessIsReadmittedWithoutRescanOrSecondCharge() =
+        ComplaintTestColdRecoveryProcessCasesV1.qualify(paidCut = true)
 
     @Test
     fun coldTestRecoveryChangedFullDRefusesBeforeNativeReadback() = recoveryIdentity(TestRecoveryRegistrationIdentityCutV1.FULL_D)

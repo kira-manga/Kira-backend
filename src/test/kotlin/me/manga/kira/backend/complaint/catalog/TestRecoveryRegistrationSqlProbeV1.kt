@@ -32,9 +32,10 @@ import java.util.concurrent.atomic.AtomicReference
  * SOURCE-ONLY addition: NOT_COMPILED / NOT_RUN / NOT_INDEPENDENTLY_REVIEWED.
  */
 internal class TestRecoveryRegistrationSqlProbeV1(
-    private val p: ProjectionActivationObservation,
+    private val advisory: (Connection, String, String) -> Boolean,
     private val runtime: VersionBoundPersistenceConnectedFixture,
 ) : JdbcTemplate(runtime.pools.catalogCoordinator.dataSource) {
+    constructor(p: ProjectionActivationObservation, runtime: VersionBoundPersistenceConnectedFixture) : this(p::advisory, runtime)
     var original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1? = null
     val observations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = mutableListOf<TestRecoveryRegistrationSqlCallV1>()
@@ -73,10 +74,10 @@ internal class TestRecoveryRegistrationSqlProbeV1(
         val connection = (TransactionSynchronizationManager.getResource(source) as ConnectionHolder).connection
         assertEquals(setOf(source), TransactionSynchronizationManager.getResourceMap().keys)
         assertEquals(Connection.TRANSACTION_READ_COMMITTED, connection.transactionIsolation)
-        assertTrue(p.advisory(connection, "complaint-maintenance-v1", "ShareLock"))
-        assertFalse(p.advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
-        assertTrue(p.advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
-        assertFalse(p.advisory(connection, "complaint-journal-epoch", "ShareLock"))
+        assertTrue(advisory(connection, "complaint-maintenance-v1", "ShareLock"))
+        assertFalse(advisory(connection, "complaint-maintenance-v1", "ExclusiveLock"))
+        assertTrue(advisory(connection, "complaint-journal-epoch", "ExclusiveLock"))
+        assertFalse(advisory(connection, "complaint-journal-epoch", "ShareLock"))
         val lease = ownedPoolLease(connection)
         val observed = observations.getOrPut(phase) {
             val identity = connection.createStatement().use { statement ->

@@ -834,6 +834,13 @@ internal class TestRunVerifiedOwnerDeleteFixture(
             UUID.randomUUID(), bytes, digest, digest, bytes, digest, bytes, digest, ComplaintDataScope.LIVE.id, scope.id))
     }
 
+    /** TEST main only: end the actual JPA factory, without running the outer fixture's row teardown. */
+    internal fun closePersistenceFactoryBeforeProcessExit() {
+        requireConnectionFree()
+        ordinary.entityManagerFactory.close()
+        assertFalse(ordinary.entityManagerFactory.isOpen)
+    }
+
     override fun close() {
         jdbc.before = {}; jdbc.after = {}; jdbc.enabled = false
         assertReleased()

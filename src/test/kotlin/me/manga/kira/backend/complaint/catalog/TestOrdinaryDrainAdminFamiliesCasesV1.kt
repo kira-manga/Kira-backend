@@ -247,7 +247,10 @@ internal object TestOrdinaryDrainAdminFamiliesCasesV1 {
 
     fun auditClosureRefusal(tls: VersionBoundPersistenceConnectedFixture, badAttribution: Boolean) = withAdminRun(tls) { f, admin ->
         val observed = observation(f, admin)
+        val protected = protectedRows(f, admin)
         var damaged: TestOrdinaryDrainAccountingStateV1? = null
+        var damagedImage: Map<String, List<String>>? = null
+        var auditReadCompleted = false
         f.probe.before = { call ->
             if (damaged == null && call.step === TestOrdinaryDrainStepV1.ADMIN_PRIMARY_PAGE) {
                 if (badAttribution) assertEquals(1, update(f, "UPDATE audit_log SET complaint_actor_kind = 'SYSTEM', actor_user_id = NULL " +
@@ -258,16 +261,60 @@ internal object TestOrdinaryDrainAdminFamiliesCasesV1 {
                         use.toLongArray().joinToString(",", "{", "}"), admin.eventId))
                 }
                 damaged = observed.state()
+                damagedImage = observed.image()
             }
         }
-        TestOrdinaryInventoryHttpFixtureV1(f.provider).use {
+        f.probe.after = { call ->
+            if (call.step === TestOrdinaryDrainStepV1.CAPTURE && call.sql == adminAuditRead) auditReadCompleted = true
+        }
+        TestOrdinaryInventoryHttpFixtureV1(f.provider).use { native ->
+            val requests = f.provider.requests.toList()
+            val kmsRequests = f.provider.kms.requests.toList()
+            val s3Clients = f.provider.s3ClientsCreated
+            val kmsClients = f.provider.kms.createdClients
             refuse(f)
-            f.probe.before = {}
+            f.probe.before = {}; f.probe.after = {}
             assertEquals(checkNotNull(damaged), observed.state())
-            assertTrue(f.probe.calls.any { it.step === TestOrdinaryDrainStepV1.CONVERT })
+            assertEquals(checkNotNull(damagedImage), observed.image())
+            assertEquals(protected, protectedRows(f, admin))
+            // CAPTURE checks the complete applied family before capturing an epoch or admitting
+            // a native inventory. Corruption installed at ADMIN_PRIMARY_PAGE must stop there,
+            // not survive until the later CONVERT pass over the same exact audit/U relation.
+            val refusal = f.probe.calls.last()
+            assertEquals(TestOrdinaryDrainStepV1.CAPTURE, refusal.step)
+            assertEquals(adminAuditRead, refusal.sql)
+            assertEquals(listOf(f.scope, admin.target.toString()), refusal.arguments)
+            assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, refusal.phase.databaseOutcome())
+            assertEquals(1, f.probe.calls.count { it.phase === refusal.phase && it.sql == adminAuditRead })
+            assertEquals(listOf(admin.eventId), f.probe.calls.single {
+                it.phase === refusal.phase && it.sql == TestOrdinaryDrainSqlV1.recovery.removeSuffix(" FOR UPDATE")
+            }.arguments)
+            // Wrong attribution fails inside the row mapper; unattributed U fails only after
+            // the real audit rows return. Neither a pre-read refusal nor a swallowed probe
+            // assertion is a substitute for exercising the intended closed-family check.
+            assertEquals(!badAttribution, auditReadCompleted)
+            f.probe.observations.keys.filter { it !== refusal.phase }.forEach {
+                assertEquals(PersistenceDatabaseOutcome.COMMITTED, it.databaseOutcome())
+            }
+            f.jdbc.assertReleased()
+            assertTrue(f.probe.calls.none { it.sql == TestOrdinaryDrainSqlV1.capture || it.step === TestOrdinaryDrainStepV1.CONVERT })
+            assertTrue(native.requests.isEmpty())
+            assertEquals(requests, f.provider.requests.toList()); assertEquals(kmsRequests, f.provider.kms.requests.toList())
+            assertEquals(s3Clients, f.provider.s3ClientsCreated); assertEquals(kmsClients, f.provider.kms.createdClients)
             assertNoConversionOrSeal(f)
         }
     }
+
+    private val adminAuditRead = """
+        SELECT action, actor_user_id, complaint_actor_kind, created_at,
+            CASE WHEN action <> 'COMPLAINT_RECOVERY_APPLIED' THEN (detail->>'version')::bigint END AS version,
+            (complaint_data_scope_id = ?::uuid AND entity_type = 'complaint' AND isfinite(created_at) AND
+                ((action IN ('COMPLAINT_DELETE_AUTHORIZED', 'COMPLAINT_DELETED') AND jsonb_typeof(detail->'version') = 'number'
+                    AND detail = jsonb_build_object('version', (detail->>'version')::bigint) AND (detail->>'version')::bigint > 0)
+                OR (action = 'COMPLAINT_RECOVERY_APPLIED' AND detail = '{}'::jsonb))) IS TRUE AS valid
+        FROM audit_log WHERE entity_type = 'complaint' AND entity_id = ?::text
+            AND action IN ('COMPLAINT_DELETE_AUTHORIZED', 'COMPLAINT_DELETED', 'COMPLAINT_RECOVERY_APPLIED') ORDER BY id LIMIT 7
+    """.trimIndent()
 
     fun mixedCompanion(tls: VersionBoundPersistenceConnectedFixture, spoofed: Boolean) = withAdminRun(tls, mixed = true) { f, admin ->
         val owner = TestOrdinaryDrainAccountingObservationV1(f)
