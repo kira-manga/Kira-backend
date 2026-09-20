@@ -77,6 +77,7 @@ internal class VersionBoundTestOwnerDeleteAllConfigurationV1(
                     verification.verify(lane.publish(work))
                 }
                 is CommittedOwnerDeleteAllWork.RecordedVerified -> verificationStore.resume(work)
+                else -> error("Unsupported TEST deletion work")
             }
             application.apply(work, proof)
         }, { publication?.close() })
