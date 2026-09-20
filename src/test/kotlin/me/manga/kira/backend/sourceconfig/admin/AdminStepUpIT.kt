@@ -1,6 +1,9 @@
 package me.manga.kira.backend.sourceconfig.admin
 
+import ch.qos.logback.classic.LoggerContext
 import com.zaxxer.hikari.HikariDataSource
+import io.micrometer.core.instrument.MeterRegistry
+import io.micrometer.core.instrument.binder.logging.LogbackMetrics
 import jakarta.persistence.EntityManager
 import jakarta.persistence.EntityManagerFactory
 import me.manga.kira.backend.common.Sha256
@@ -34,6 +37,7 @@ import org.mockito.ArgumentMatchers.anyBoolean
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.doAnswer
 import org.mockito.Mockito.spy
+import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor
@@ -158,6 +162,10 @@ class AdminStepUpIT : AbstractAdminSourceIT() {
 
     @Test
     fun `password step-up stores only a hash and proof is one-time`() {
+        assertTrue(context.getBeansOfType(LogbackMetrics::class.java).isEmpty())
+        assertTrue((LoggerFactory.getILoggerFactory() as LoggerContext).turboFilterList.isEmpty())
+        assertFalse(context.getBeansOfType(MeterRegistry::class.java).isEmpty())
+
         val response =
             mockMvc.post("/api/v1/admin/step-up") {
                 header("Authorization", "Bearer $adminToken")

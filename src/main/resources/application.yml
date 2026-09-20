@@ -2,6 +2,11 @@ spring:
   application:
     name: kira-backend
 
+  autoconfigure:
+    # Persistence preflight forbids Logback turbo filters; retain other metrics.
+    exclude:
+      - org.springframework.boot.actuate.autoconfigure.metrics.LogbackMetricsAutoConfiguration
+
   # DB credentials come from the environment in every non-dev context:
   #   SPRING_DATASOURCE_URL / SPRING_DATASOURCE_USERNAME / SPRING_DATASOURCE_PASSWORD
   # Spring Boot relaxed binding maps those env vars straight onto spring.datasource.* — no
