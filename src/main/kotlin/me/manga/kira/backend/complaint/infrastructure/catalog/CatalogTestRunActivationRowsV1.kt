@@ -296,8 +296,20 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
         private const val HISTORY_DOMAIN = "kira-test-activation-sql-history-v1"
 
         /** JDBC's original ResultSet is consumed to exhaustion; no List<Row>, signature or textual preimage escapes. */
-        fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean, signed: Boolean = false, completed: Boolean = false): CatalogTestRunActivationHistoryV1 {
-            val predecessorCount = Math.toIntExact(input.generation - 1L)
+        fun read(rows: ResultSet, input: CatalogTestRunActivationFrozenV1, retainRaw: Boolean, signed: Boolean = false, completed: Boolean = false): CatalogTestRunActivationHistoryV1 =
+            readBounded(rows, input.generation, input.maximumGenerations, retainRaw, signed, completed)
+
+        /** Closed recovery comparison only; no FrozenV1/first-projection authority is manufactured. */
+        internal fun readRecoveryRegistration(rows: ResultSet, generation: Long, maximumGenerations: Int): CatalogTestRunActivationHistoryV1 {
+            check(generation in 2L..maximumGenerations.toLong())
+            return readBounded(rows, generation, maximumGenerations, retainRaw = true, signed = true, completed = true).also {
+                it.requireExpected(generation, prepared = true, signed = true, completed = true)
+            }
+        }
+
+        private fun readBounded(rows: ResultSet, expectedGeneration: Long, maximumGenerations: Int, retainRaw: Boolean,
+            signed: Boolean, completed: Boolean): CatalogTestRunActivationHistoryV1 {
+            val predecessorCount = Math.toIntExact(expectedGeneration - 1L)
             val bindings = if (retainRaw) ByteArray(Math.multiplyExact(predecessorCount, HASH_BYTES)) else null
             val retention = if (retainRaw) LongArray(predecessorCount) else null
             val all = historyDigest()
@@ -305,14 +317,14 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
             var count = 0
             var prepared = false
             while (rows.next()) {
-                check(count < input.maximumGenerations && rows.requiredTestActivationBoolean("valid"))
+                check(count < maximumGenerations && rows.requiredTestActivationBoolean("valid"))
                 val generation = rows.requiredTestActivationLong("successor_generation")
-                check(generation == count + 1L && generation <= input.generation)
+                check(generation == count + 1L && generation <= expectedGeneration)
                 val rowHash = checkNotNull(rows.getBytes("row_digest")).also { check(it.size == HASH_BYTES) }
                 val preparedMatches = rows.requiredTestActivationBoolean("prepared_matches")
                 all.update(long(generation))
                 all.update(rowHash)
-                if (generation < input.generation) {
+                if (generation < expectedGeneration) {
                     check(!preparedMatches)
                     prefix.update(long(generation))
                     prefix.update(rowHash)
@@ -328,7 +340,7 @@ internal class CatalogTestRunActivationHistoryV1 private constructor(
                 }
                 count++
             }
-            check(count in predecessorCount..input.maximumGenerations)
+            check(count in predecessorCount..maximumGenerations)
             check(!signed || prepared)
             check(!completed || signed)
             all.update(long(count.toLong()))

@@ -1,6 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.catalog
 
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
@@ -28,6 +29,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     private val activation: CatalogSignerRotationActivationV1? = null,
     private val testActivation: CatalogTestRunActivationV1? = null,
     private val testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
+    private val testRecoveryRegistration: ComplaintTestNamespaceRecoveryRegistrationAttemptV1? = null,
 ) : SdkHttpClient {
     constructor(owner: CatalogSignerRotationFreezeAttemptV1, budget: PersistenceTimeBudget) : this(owner, null, budget)
     internal constructor(owner: CatalogSignerRotationPreparedRecoveryV1, budget: PersistenceTimeBudget) : this(null, owner, budget)
@@ -36,6 +38,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
     internal constructor(owner: CatalogSignerRotationActivationV1, budget: PersistenceTimeBudget) : this(null, null, budget, activation = owner)
     internal constructor(owner: CatalogTestRunActivationV1, budget: PersistenceTimeBudget) : this(null, null, budget, testActivation = owner)
     internal constructor(owner: ComplaintTestNamespaceRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testRegistration = owner)
+    internal constructor(owner: ComplaintTestNamespaceRecoveryRegistrationAttemptV1, budget: PersistenceTimeBudget) : this(null, null, budget, testRecoveryRegistration = owner)
     private val closed = AtomicBoolean()
     private var opened = false
 
@@ -107,6 +110,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
             activation != null -> activation.requireProviderRunning()
             testActivation != null -> testActivation.requireProviderRunning()
             testRegistration != null -> testRegistration.requireProviderRunning()
+            testRecoveryRegistration != null -> testRecoveryRegistration.requireProviderRunning()
             else -> checkNotNull(initialAuthor).requireReadbackRunning()
         }
         readbackBudget.remainingMillis(1)
@@ -122,6 +126,7 @@ internal class CatalogSignerRotationReadbackHttpV1 private constructor(
         activation?.observeFailure(failure)
         testActivation?.observeFailure(failure)
         testRegistration?.observeFailure(failure)
+        testRecoveryRegistration?.observeFailure(failure)
         val signal = signerRotationSignal(failure)
         if (signal is Error || signal is CancellationException || signal is InterruptedException) {
             workSignal = preferSignerRotationCleanup(workSignal, signal)
@@ -294,6 +299,8 @@ internal class CatalogSignerRotationReadbackHttpPairV1 private constructor(
     internal constructor(owner: CatalogTestRunActivationV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     internal constructor(owner: ComplaintTestNamespaceRegistrationAttemptV1, budget: PersistenceTimeBudget) :
+        this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
+    internal constructor(owner: ComplaintTestNamespaceRecoveryRegistrationAttemptV1, budget: PersistenceTimeBudget) :
         this(CatalogSignerRotationReadbackHttpV1(owner, budget), CatalogSignerRotationReadbackHttpV1(owner, budget))
     private var primaryOpened = false
     private var replicaOpened = false

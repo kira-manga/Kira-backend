@@ -1,11 +1,15 @@
 package me.manga.kira.backend.common.infrastructure.persistence
 
+import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRecoveryRegistrationCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAccountingCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainAuthorityCutV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainCommitStepV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainFailureCasesV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinaryDrainLargeRecycleCasesV1
 import me.manga.kira.backend.complaint.catalog.TestRegistrationCompletionCut
+import me.manga.kira.backend.complaint.catalog.TestRecoveryRegistrationIdentityCutV1
+import me.manga.kira.backend.complaint.catalog.TestRecoveryRegistrationPhaseCutV1
+import me.manga.kira.backend.complaint.catalog.TestRecoveryRegistrationRawCutV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainSqlV1
 import org.flywaydb.core.Flyway
 import org.junit.jupiter.api.AfterAll
@@ -63,6 +67,76 @@ class TestOrdinaryDrainConnectedIT {
     fun thirteenPrimaryFamiliesCommitFirstHundredRecycleRowsThenFreshOriginalFinishesFourWithoutDoublePayment() = withFixture {
         TestOrdinaryDrainLargeRecycleCasesV1.committedPartialRecycle(it)
     }
+
+    // Source-only additions: fresh actual root in one JVM, not separate-process qualification.
+    @Test
+    fun coldTestRecoveryFreshRootRegistersSealedCurrentStateWithoutProjectOrMutationAdmission() = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.freshRootContinuesWithoutReplayingProjection(it, paidCut = false)
+    }
+
+    @Test
+    fun coldTestRecoveryFreshRootReusesCommittedPaidCutWithoutSecondCharge() = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.freshRootContinuesWithoutReplayingProjection(it, paidCut = true)
+    }
+
+    @Test
+    fun coldTestRecoveryChangedFullDRefusesBeforeNativeReadback() = recoveryIdentity(TestRecoveryRegistrationIdentityCutV1.FULL_D)
+
+    @Test
+    fun coldTestRecoveryChangedDatabaseIdentityRefusesWithoutRepair() = recoveryIdentity(TestRecoveryRegistrationIdentityCutV1.DATABASE)
+
+    @Test
+    fun coldTestRecoveryChangedRestoreIdentityRefusesWithoutRepair() = recoveryIdentity(TestRecoveryRegistrationIdentityCutV1.RESTORE)
+
+    @Test
+    fun coldTestRecoveryChangedEventWriterRefusesWithoutRepair() = recoveryIdentity(TestRecoveryRegistrationIdentityCutV1.EVENT_WRITER)
+
+    @Test
+    fun coldTestRecoveryChangedCatalogWriterRefusesWithoutRepair() = recoveryIdentity(TestRecoveryRegistrationIdentityCutV1.CATALOG_WRITER)
+
+    @Test
+    fun coldTestRecoveryMissingRawReplicaCannotRegister() = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.rawCopiesAreIndependentlyRequired(it, TestRecoveryRegistrationRawCutV1.MISSING_REPLICA)
+    }
+
+    @Test
+    fun coldTestRecoveryChangedRawEnvelopeCannotRegister() = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.rawCopiesAreIndependentlyRequired(it, TestRecoveryRegistrationRawCutV1.CHANGED_ENVELOPE)
+    }
+
+    @Test
+    fun coldTestRecoveryUnattributedUnusedReserveCannotBeRepaid() = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.currentReserveMismatchIsNotRepaid(it)
+    }
+
+    @Test
+    fun coldTestRecoveryInstallationManifestProgressRemainsFailClosed() = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.manifestProgressRemainsOutsideColdSlice(it)
+    }
+
+    @Test
+    fun coldTestRecoveryCaptureRollbackCannotIssueOrReadProvider() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.CAPTURE, TestRegistrationCompletionCut.BEFORE_COMMIT)
+
+    @Test
+    fun coldTestRecoveryCaptureNativeCommitUnknownRetainsOriginalCustody() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.CAPTURE, TestRegistrationCompletionCut.DEFERRED_COMMIT_UNKNOWN)
+
+    @Test
+    fun coldTestRecoveryCaptureAcknowledgmentLossCannotIssueOrReadProvider() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.CAPTURE, TestRegistrationCompletionCut.AFTER_COMMIT)
+
+    @Test
+    fun coldTestRecoveryCaptureUnresolvedReleaseRetainsOriginalCustody() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.CAPTURE, TestRegistrationCompletionCut.UNRESOLVED_RELEASE)
+
+    @Test
+    fun coldTestRecoveryRecheckRollbackCannotIssueAfterRawReadback() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.RECHECK, TestRegistrationCompletionCut.BEFORE_COMMIT)
+
+    @Test
+    fun coldTestRecoveryRecheckNativeCommitUnknownRetainsOriginalCustody() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.RECHECK, TestRegistrationCompletionCut.DEFERRED_COMMIT_UNKNOWN)
+
+    @Test
+    fun coldTestRecoveryRecheckAcknowledgmentLossCannotIssue() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.RECHECK, TestRegistrationCompletionCut.AFTER_COMMIT)
+
+    @Test
+    fun coldTestRecoveryRecheckUnresolvedReleaseRetainsOriginalCustody() = recoveryCompletion(TestRecoveryRegistrationPhaseCutV1.RECHECK, TestRegistrationCompletionCut.UNRESOLVED_RELEASE)
 
     @Test
     fun foreignDenialSignerCannotAuthorizeTheCapturedRange() = denied(TestOrdinaryDrainAuthorityCutV1.FOREIGN_SIGNER)
@@ -236,6 +310,14 @@ class TestOrdinaryDrainConnectedIT {
 
     private fun denied(cut: TestOrdinaryDrainAuthorityCutV1) = withFixture {
         TestOrdinaryDrainFailureCasesV1.deniedAuthority(it, cut)
+    }
+
+    private fun recoveryIdentity(cut: TestRecoveryRegistrationIdentityCutV1) = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.changedIdentityRefuses(it, cut)
+    }
+
+    private fun recoveryCompletion(phase: TestRecoveryRegistrationPhaseCutV1, cut: TestRegistrationCompletionCut) = withFixture {
+        ComplaintTestNamespaceRecoveryRegistrationCasesV1.actualCompletionAndCleanupAreRequired(it, phase, cut)
     }
 
     private fun completion(step: TestOrdinaryDrainCommitStepV1, cut: TestRegistrationCompletionCut) = withFixture {

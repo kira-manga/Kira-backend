@@ -35,10 +35,11 @@ internal fun withOrdinaryDrainRun(
     expireClosedSetupPredecessors: Boolean = false,
     manifestPublication: Boolean = false,
     additionalRawEnrolled: Int = 0,
+    protectedIntake: Boolean = false,
     action: (TestRunOrdinaryDrainFixtureV1) -> Unit,
 ) {
     require(additionalRawEnrolled == 0 || manifestPublication && additionalRawEnrolled == 500)
-    TestOrdinarySealHttpFixtureV1(manifestPublication = manifestPublication).use { sealHttp ->
+    TestOrdinarySealHttpFixtureV1(manifestPublication = manifestPublication, protectedIntake = protectedIntake).use { sealHttp ->
         ComplaintTestNamespaceRegistrationCases.withRegisteredRun(
             tls, ordinarySealHttp = sealHttp, ordinaryDrain = inputs,
             expireClosedSetupPredecessors = expireClosedSetupPredecessors,

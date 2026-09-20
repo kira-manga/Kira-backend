@@ -26,218 +26,34 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActi
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationCustodyFailureV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationFailureV1
-import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunFirstProjectionV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackAdapter
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
 import me.manga.kira.backend.complaint.infrastructure.catalog.preferSignerRotationCleanup
-import me.manga.kira.backend.complaint.infrastructure.catalog.copyEvidence
 import me.manga.kira.backend.complaint.infrastructure.catalog.withSignerRotationCleanup
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import software.amazon.awssdk.auth.credentials.AwsSessionCredentials
 import software.amazon.awssdk.http.SdkHttpClient
 import java.io.InterruptedIOException
-import java.sql.Timestamp
 import java.time.Clock
-import java.time.Instant
-import java.util.HexFormat
-import java.util.UUID
 import java.util.concurrent.CancellationException
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * Privately registered TEST target with its actual ordinary/coordinator graph. The original
- * first-PROJECT issuer and separate cold recovery issuer remain distinct; neither opens the gates.
- * Closing revokes further use, not already issued JWTs; ordinary transactions retain their guards.
+ * Independent closed TEST recovery admission from the actual protected cold assembly. Never replays
+ * PROJECT, consumes a first-projection ticket, changes writer generation or grants mutation ingress.
+ * Current SQL facts are comparison inputs only until complete raw dual-copy authentication and the
+ * original capture/readback/recheck/native/transaction cleanup have all finished under one budget.
  */
-internal class ComplaintTestNamespaceRegistrationV1 private constructor(
-    internal val process: VersionBoundTestNamespaceProcessV1,
-    private val activation: Activation,
-    private val recoveryAssembly: ComplaintTestProcessAssemblyV1? = null,
-) : AutoCloseable {
-    private val closed = AtomicBoolean()
-    private val installation = AtomicReference<InstallationResources?>()
-    private val ownerDeleteContinuation = AtomicReference<InstallationResources?>()
-
-    internal fun requireUsable() {
-        try {
-            requireConnectionFree()
-            requireLifetime()
-        } catch (failure: RuntimeException) {
-            if (failure is CancellationException) throw failure
-            throw ComplaintTestNamespaceRegistrationExceptionV1()
-        }
-    }
-
-    /** Local lifetime checks also used inside the original sealing holder; never requires another checkout. */
-    private fun requireLifetime() {
-        requireRegistration(!closed.get())
-        recoveryAssembly?.let { requireRegistration(it.target === process) }
-        process.requireRegistrationTarget()
-        requireRegistration(process.pools.ordinary.businessReady() && process.pools.catalogCoordinator.dataSource.businessReady())
-        requireRegistration(activation.scope == process.consumers.journalConfiguration.scope.id &&
-            activation.configurationHash == HexFormat.of().formatHex(process.configurationHashBytes()))
-        requireRegistration(!closed.get())
-    }
-
-    internal fun requireSealingOwner(ownership: PersistencePhaseOwnership) {
-        requireLifetime()
-        val coordinator = process.pools.catalogCoordinator
-        requireRegistration(ownership === coordinator.ownership && ownership.manager === coordinator.manager && ownership.dataSource === coordinator.dataSource)
-    }
-
-    internal fun requireSealingGate(gate: PersistenceComplaintMaintenanceGateV1) {
-        requireLifetime()
-        requireRegistration(gate.matchesProjected(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
-    }
-
-    /** Detached, fixed SQL arguments only. The privately issued registration, not these values, admits sealing. */
-    internal fun sealingRunArguments(): Array<Any?> = copySealingArguments(activation.runArguments)
-    internal fun sealingControlArguments(): Array<Any?> = copySealingArguments(activation.controlArguments)
-    internal fun sealingAuditArguments(sealedAt: Instant): Array<Any?> {
-        requireLifetime()
-        return arrayOf(activation.scope, activation.generation, Timestamp.from(sealedAt))
-    }
-
-    private fun copySealingArguments(values: Array<Any?>): Array<Any?> {
-        requireLifetime()
-        return values.map { value -> when (value) {
-            is ByteArray -> value.copyOf()
-            is Timestamp -> Timestamp.from(value.toInstant())
-            else -> value
-        } }.toTypedArray()
-    }
-
-    /** Cold recovery only continues already-authorized deletion/drain; it never bootstraps mutation ingress. */
-    internal fun requireInitialMutationAdmission() {
-        requireLifetime()
-        requireRegistration(recoveryAssembly == null)
-    }
-
-    internal fun requireInstallationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
-        try {
-            requireUsable()
-            requireInitialMutationAdmission()
-            ownership.requireBoundComplaintOrdinary(process.pools)
-            requireRegistration(jdbc.dataSource === process.pools.ordinary && ownership.dataSource === jdbc.dataSource)
-            // One actual admission/manager/template pair for this binding, not another permit owner on the same pool.
-            installation.compareAndSet(null, InstallationResources(ownership, jdbc))
-            val retained = checkNotNull(installation.get())
-            requireRegistration(retained.ownership === ownership && retained.jdbc === jdbc)
-            requireUsable() // A concurrent close cannot rebind or revive the original binding.
-        } catch (failure: RuntimeException) {
-            if (failure is CancellationException) throw failure
-            throw ComplaintTestNamespaceRegistrationExceptionV1()
-        }
-    }
-
-    /** The already-retained ordinary pair only; safe inside its read phase, and never a binding/checkout path. */
-    internal fun requireInstallationPhaseResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
-        requireLifetime()
-        val retained = installation.get()
-        requireRegistration(retained != null && retained.ownership === ownership && retained.jdbc === jdbc)
-        ownership.requireBoundComplaintOrdinary(process.pools)
-        requireRegistration(jdbc.dataSource === process.pools.ordinary && ownership.dataSource === jdbc.dataSource)
-        requireLifetime()
-    }
-
-    /** Comparison inputs only. Only the registered, committed and released concrete read can emit bootstrap data. */
-    internal fun bootstrapExpectedArguments(): Array<Any?> {
-        requireInitialMutationAdmission()
-        return arrayOf(*copySealingArguments(activation.runArguments), *copySealingArguments(activation.controlArguments))
-    }
-
-    /** Same retained deletion permit/manager/template only; no new pool, request identity or gate opener. */
-    internal fun requireOwnerDeleteContinuationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
-        requireLifetime()
-        ownership.requireBoundComplaintDeletion(process.pools)
-        requireRegistration(process.pools.deletion.businessReady() && jdbc.dataSource === process.pools.deletion)
-        ownerDeleteContinuation.compareAndSet(null, InstallationResources(ownership, jdbc))
-        val retained = checkNotNull(ownerDeleteContinuation.get())
-        requireRegistration(retained.ownership === ownership && retained.jdbc === jdbc)
-        requireLifetime()
-    }
-
-    internal fun requireOwnerDeleteContinuationGate(gate: PersistenceComplaintMaintenanceGateV1) {
-        requireLifetime()
-        requireRegistration(gate.matchesProjected(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
-    }
-
-    override fun close() { closed.set(true) }
-    override fun toString(): String = "ComplaintTestNamespaceRegistrationV1(private-issued,closed-gates,redacted)"
-
-    /** Bounded detached identity only; no closed projector, provider/phase graph or global-accounting snapshot. */
-    private class Activation {
-        val token: UUID
-        val scope: UUID
-        val generation: Long
-        val configurationHash: String
-        val unsigned: ByteArray
-        val unsignedHash: ByteArray
-        val runArguments: Array<Any?>
-        val controlArguments: Array<Any?>
-
-        constructor(completed: CatalogTestRunFirstProjectionV1.State) {
-            token = completed.frozen.token
-            scope = completed.frozen.scope
-            generation = completed.frozen.generation
-            configurationHash = completed.frozen.manifest().activationRecord.run.configurationSha256
-            unsigned = completed.frozen.unsignedBytes()
-            unsignedHash = completed.frozen.unsignedHash()
-            val projectedAt = checkNotNull(checkNotNull(completed.snapshot.completedTail).projectedAt)
-            val run = completed.frozen.manifest().activationRecord.run
-            val envelopeHash = HexFormat.of().parseHex(completed.signed.envelopeSha256)
-            runArguments = arrayOf(
-                scope, HexFormat.of().parseHex(configurationHash), run.installationLimit, generation, envelopeHash,
-                Timestamp.from(projectedAt), completed.frozen.reserve.toLongArray().joinToString(",", "{", "}"),
-            )
-            controlArguments = arrayOf(
-                scope, run.desiredGeneration, run.implementationSchema, HexFormat.of().parseHex(configurationHash),
-                completed.frozen.databaseIdentity, completed.frozen.restoreIdentity, completed.frozen.eventWriter,
-                completed.frozen.catalogWriter, HexFormat.of().parseHex(completed.frozen.currentTrustHash), generation, envelopeHash,
-            )
-        }
-
-        constructor(recovered: TestNamespaceRecoveryRegistrationBindingV1) {
-            token = recovered.tail.token
-            scope = recovered.scope
-            generation = recovered.tail.generation
-            configurationHash = recovered.configurationHash
-            unsigned = recovered.tail.unsigned.copyOf()
-            unsignedHash = recovered.tail.unsignedHash.copyOf()
-            runArguments = recovered.runArguments()
-            controlArguments = recovered.controlArguments()
-        }
-    }
-
-    private class InstallationResources(val ownership: PersistencePhaseOwnership, val jdbc: JdbcTemplate)
-
-    companion object {
-        internal fun issuedByRecovery(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {
-            val recovered = original.consumeRegistration()
-            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(recovered), original.assembly)
-        }
-
-        internal fun issuedBy(original: ComplaintTestNamespaceRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {
-            val completed = original.consumeRegistration()
-            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(completed))
-        }
-    }
-}
-
-/** Original target attempt: no caller-supplied readback/SQL/cleanup predicate, and no PROJECT writes. */
-internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
-    completion: CatalogTestRunFirstProjectionV1,
+internal class ComplaintTestNamespaceRecoveryRegistrationAttemptV1 private constructor(
+    internal val assembly: ComplaintTestProcessAssemblyV1,
     private val httpFactory: (() -> SdkHttpClient)?,
     private val clock: Clock,
 ) : AutoCloseable {
-    internal val process = completion.target
+    internal val process = assembly.target
     private val caller = Thread.currentThread()
     internal val coordinator = process.pools.catalogCoordinator
     internal val budget = PersistenceTimeBudget.start(process.catalogReadback.totalAttemptMillis, coordinator.ownership.nanoClock)
-    internal val completion = completion.claim(this)
-    private val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, this.completion.frozen.manifest().activationRecord.run.installationLimit)
     private val construction = S3CatalogReadbackAdapter.Construction()
     private val http = CatalogSignerRotationReadbackHttpPairV1(this, budget)
     private val signal = AtomicReference<Throwable?>()
@@ -253,17 +69,19 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
     private var closeFailure: Throwable? = null
     private var phase: PersistencePhaseContext? = null
     private var phaseEntered = false
-    private var captured: TestNamespaceRegistrationOperationV1? = null
-    private var rechecked: TestNamespaceRegistrationOperationV1? = null
+    private var captured: TestNamespaceRecoveryRegistrationOperationV1? = null
+    private var capturedSnapshot: TestNamespaceRecoveryRegistrationSnapshotV1? = null
+    private var rechecked: TestNamespaceRecoveryRegistrationOperationV1? = null
     private var proof: CatalogTestRunActivationReadbackV3? = null
+    private var gate: PersistenceComplaintMaintenanceGateV1? = null
     private var successful = false
     private var issued = false
 
     init {
         requireConnectionFree()
         process.requireRegistrationTarget()
-        process.claimInitialRegistration(this)
-        expected.requireManifest(this.completion.frozen.manifest()) // Comparison only; target raw verification is still mandatory.
+        process.claimRecoveryRegistration(this)
+        requireRegistration(process.ordinarySeal != null && process.ordinaryDenial != null)
     }
 
     fun register(primary: AwsSessionCredentials, replica: AwsSessionCredentials): ComplaintTestNamespaceRegistrationV1 {
@@ -273,15 +91,16 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
             requireConnectionFree()
             requireRunning()
             requireRegistration(stage === Stage.NEW)
-            coordinator.catalogRefreshCustody.reserveTestRegistration(this)
+            coordinator.catalogRefreshCustody.reserveTestRecoveryRegistration(this)
             reserved = true
             stage = Stage.CAPTURE
-            captured = coordinator.testNamespaceRegistration.execute(this)
+            captured = coordinator.testNamespaceRecoveryRegistration.execute(this)
+            capturedSnapshot = checkNotNull(captured).snapshot
             stage = Stage.READBACK
             observe(primary, replica)
             stage = Stage.RECHECK
-            rechecked = coordinator.testNamespaceRegistration.execute(this)
-            checkNotNull(rechecked).snapshot.requireSame(checkNotNull(captured).snapshot, closed = false)
+            rechecked = coordinator.testNamespaceRecoveryRegistration.execute(this)
+            checkNotNull(rechecked).snapshot.requireSame(checkNotNull(captured).snapshot)
             requireRunning()
             requireRegistration(providerClosed && providerFailure == null && phase == null)
             successful = true
@@ -293,11 +112,13 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
         }
         throwIfSignalled()
         if (failure != null || !successful) throw ComplaintTestNamespaceRegistrationExceptionV1()
-        return ComplaintTestNamespaceRegistrationV1.issuedBy(this)
+        return ComplaintTestNamespaceRegistrationV1.issuedByRecovery(this)
     }
 
     private fun observe(primary: AwsSessionCredentials, replica: AwsSessionCredentials) {
         requireProviderRunning()
+        val snapshot = checkNotNull(captured).snapshot
+        val expected = CatalogTestRunActivationCanonicalV3.fromRetained(process, snapshot.binding.installationLimit)
         val reader = process.catalogReadback
         val at = clock.instant()
         val policy = reader.policyAt(at)
@@ -309,13 +130,12 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
         val read = withSignerRotationCleanup({
             val adapter = S3CatalogReadbackAdapter.openOwned(construction, reader.currentBundleBytes(), reader.chainPolicy.trustBundlePolicy,
                 primary, replica, limits, { http.open(limits, httpFactory) }, System::nanoTime)
-            CatalogTestRunActivationReadbackV3.verify(TimedReadback(adapter), reader.initialBundleBytes(), reader.currentBundleBytes(), policy,
-                completion.snapshot.control.head, expected)
+            CatalogTestRunActivationReadbackV3.verifyRecovery(TimedReadback(adapter), reader.initialBundleBytes(), reader.currentBundleBytes(), policy,
+                snapshot.tail.head, expected, snapshot.history)
         }, ::closeProviders)
         requireRunning()
-        requireRegistration(!clock.instant().isBefore(at) && read.signedEnvelopeBytes().contentEquals(completion.signed.envelopeBytes()))
-        checkNotNull(completion.snapshot.completedTail).requireCustody(read.objectVersion, read.retainUntilEpochSecond,
-            copyEvidence(read.primaryMetadata, read.tail.envelopeSha256), copyEvidence(read.replicaMetadata, read.tail.envelopeSha256))
+        requireRegistration(!clock.instant().isBefore(at))
+        snapshot.tail.requireRaw(read, reader.chainPolicy.limits.maximumManifestRecords)
         requireRegistration(providerClosed && providerFailure == null)
         proof = read
     }
@@ -336,7 +156,7 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
     internal fun requirePhaseEntry(ownership: PersistencePhaseOwnership, path: PersistencePhasePath) {
         requireConnectionFree()
         requireRunning()
-        requireRegistration(ownership === coordinator.ownership && path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION &&
+        requireRegistration(ownership === coordinator.ownership && path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION &&
             !phaseEntered && phase == null && (stage === Stage.CAPTURE && captured == null || stage === Stage.RECHECK && rechecked == null && proof != null))
         phaseEntered = true
     }
@@ -349,9 +169,9 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
 
     internal fun observePhaseCleanup(selected: PersistencePhaseContext) {
         try {
-            if (caller !== Thread.currentThread() || phase !== selected || !selected.testRegistrationCleanupProven(this) ||
+            if (caller !== Thread.currentThread() || phase !== selected || !selected.testRecoveryRegistrationCleanupProven(this) ||
                 selected.databaseOutcome() === PersistenceDatabaseOutcome.UNKNOWN) cleanupUncertain = true
-            else { phase = null; phaseEntered = false }
+            else { phase = null; phaseEntered = false; gate = null }
         } catch (problem: Throwable) {
             cleanupUncertain = true
             observeFailure(problem)
@@ -371,9 +191,16 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
 
     internal fun requireMaintenanceGate(ownership: PersistencePhaseOwnership, path: PersistencePhasePath, gate: PersistenceComplaintMaintenanceGateV1) {
         requireRunning()
-        requireRegistration(ownership === coordinator.ownership && path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION && phaseEntered && phase != null)
-        val input = completion.frozen
-        requireRegistration(gate.matchesProjected(input.token, input.scope, input.unsignedBytes(), input.unsignedHash()))
+        requireRegistration(ownership === coordinator.ownership && path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION && phaseEntered && phase != null)
+        requireRegistration(this.gate == null && gate.matchesClosedProjectedRecoveryScope(process.consumers.journalConfiguration.scope.id))
+        capturedSnapshot?.tail?.requireGate(gate)
+        this.gate = gate
+    }
+
+    /** The initial M gate is re-bound to the exact subsequently locked activation before any result. */
+    internal fun requireCapturedGate(tail: TestNamespaceRecoveryRegistrationTailV1) {
+        requireRunning()
+        tail.requireGate(checkNotNull(gate))
     }
 
     internal fun requireCustody(selected: CatalogReadbackRefreshCustodyV1) = requireRegistration(
@@ -384,21 +211,22 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
         throwIfSignalled()
         requireRegistration(caller === Thread.currentThread() && !closed && !released && !cleanupUncertain && !Thread.currentThread().isInterrupted)
         budget.remainingMillis(1)
+        requireRegistration(assembly.target === process)
         process.requireRegistrationTarget()
-        if (reserved) coordinator.catalogRefreshCustody.requireTestRegistration(this)
+        if (reserved) coordinator.catalogRefreshCustody.requireTestRecoveryRegistration(this)
     }
 
     internal fun observeFailure(problem: Throwable) {
         val retained = when {
             problem is Error -> problem
-            problem is CancellationException -> CancellationException("TEST registration cancelled.")
+            problem is CancellationException -> CancellationException("TEST recovery registration cancelled.")
             problem is InterruptedException || problem is InterruptedIOException ||
                 (problem is PersistencePhaseException && problem.code === PersistencePhaseFailureCode.INTERRUPTED) ||
                 (problem is CatalogReadbackException && problem.code === CatalogReadbackFailure.INTERRUPTED) ||
                 (problem is CatalogSignerRotationFreezeExceptionV1 && problem.code === CatalogSignerRotationFreezeFailureV1.INTERRUPTED) ||
                 (problem is CatalogTestRunActivationCustodyExceptionV1 && problem.code === CatalogTestRunActivationCustodyFailureV1.INTERRUPTED) ||
                 (problem is CatalogTestRunActivationExceptionV1 && problem.code === CatalogTestRunActivationFailureV1.INTERRUPTED) ->
-                InterruptedException("TEST registration interrupted.")
+                InterruptedException("TEST recovery registration interrupted.")
             else -> return
         }
         while (true) {
@@ -434,7 +262,7 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
         throwIfSignalled()
         failure?.let { throw ComplaintTestNamespaceRegistrationExceptionV1() }
         cleanupProven = true
-        if (reserved) coordinator.catalogRefreshCustody.releaseTestRegistrationAfterCleanup(this)
+        if (reserved) coordinator.catalogRefreshCustody.releaseTestRecoveryRegistrationAfterCleanup(this)
         released = true
         closeFailure = null
     }
@@ -444,15 +272,16 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
         requireRegistration(caller === Thread.currentThread() && closed && cleanupProven && !cleanupUncertain && phase == null)
     }
 
-    internal fun consumeRegistration(): CatalogTestRunFirstProjectionV1.State {
+    internal fun consumeRegistration(): TestNamespaceRecoveryRegistrationBindingV1 {
         requireActualCleanup()
         requireRegistration(successful && released && closeFailure == null && !issued && proof != null && providerStarted && providerClosed)
         checkNotNull(captured).requireReleased()
         checkNotNull(rechecked).requireReleased()
+        requireRegistration(assembly.target === process)
         process.requireRegistrationTarget()
         budget.remainingMillis(1)
         issued = true
-        return completion
+        return checkNotNull(rechecked).snapshot.binding
     }
 
     private inner class TimedReadback(private val actual: S3CatalogReadbackAdapter) : CatalogReadbackPort {
@@ -471,18 +300,16 @@ internal class ComplaintTestNamespaceRegistrationAttemptV1 private constructor(
         private fun <T> checked(action: () -> T): T { requireProviderRunning(); return action().also { requireProviderRunning() } }
     }
 
-    override fun toString(): String = "ComplaintTestNamespaceRegistrationAttemptV1(original-runtime-root,fresh-only,redacted)"
+    override fun toString(): String = "ComplaintTestNamespaceRecoveryRegistrationAttemptV1(original-cold-runtime,closed-recovery-only,redacted)"
     private enum class Stage { NEW, CAPTURE, READBACK, RECHECK }
 
     companion object {
-        fun begin(completion: CatalogTestRunFirstProjectionV1): ComplaintTestNamespaceRegistrationAttemptV1 =
-            ComplaintTestNamespaceRegistrationAttemptV1(completion, null, Clock.systemUTC())
+        fun begin(assembly: ComplaintTestProcessAssemblyV1): ComplaintTestNamespaceRecoveryRegistrationAttemptV1 =
+            ComplaintTestNamespaceRecoveryRegistrationAttemptV1(assembly, null, Clock.systemUTC())
 
-        /** Only raw transport/time substitution; no issuer, proof, cleanup or SQL result seam. */
-        internal fun withHttpFixture(completion: CatalogTestRunFirstProjectionV1, http: () -> SdkHttpClient, clock: Clock): ComplaintTestNamespaceRegistrationAttemptV1 =
-            ComplaintTestNamespaceRegistrationAttemptV1(completion, http, clock)
+        /** Raw transport/time only. No supplied proof, registered state, SQL result or cleanup seam. */
+        internal fun withHttpFixture(assembly: ComplaintTestProcessAssemblyV1, http: () -> SdkHttpClient,
+            clock: Clock): ComplaintTestNamespaceRecoveryRegistrationAttemptV1 =
+            ComplaintTestNamespaceRecoveryRegistrationAttemptV1(assembly, http, clock)
     }
 }
-
-internal class ComplaintTestNamespaceRegistrationExceptionV1 : RuntimeException("TEST registration refused.", null, false, false)
-internal fun requireRegistration(allowed: Boolean) { if (!allowed) throw ComplaintTestNamespaceRegistrationExceptionV1() }

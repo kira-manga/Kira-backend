@@ -35,6 +35,7 @@ internal class VersionBoundPersistenceConnectedFixture(
     private val testActivation: Boolean = false,
     internal val endpointPort: Int = database.port,
     private val testIntake: ComplaintTestProcessAssemblyV1? = null,
+    private val testRegistrationPredecessor: VersionBoundPersistenceConnectedFixture? = null,
 ) : AutoCloseable {
     // Narrow observation of the intake's ACTUAL normal graph, never supplied replacement pools/credentials.
     private val intakeConfiguration = testIntake?.let { poolTestField<VersionBoundPersistenceConfiguration>(it, "persistence") }
@@ -230,14 +231,36 @@ internal class VersionBoundPersistenceConnectedFixture(
         closeSelected(listOf(this, peer))
     }
 
+    /** Physical original-root cleanup, not copied ready/closed flags or a recovery authority issuer. */
+    internal fun closeRegisteredRuntimeForRecovery() {
+        check(testIntake != null)
+        val predecessor = checkNotNull(testRegistrationPredecessor)
+        check(predecessor.testActivation)
+        closeWith(predecessor)
+    }
+
     private fun completeClose() {
-        assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, owner.observeShutdown())
+        val nativeShutdown = owner.observeShutdown()
+        assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, nativeShutdown)
         owner.epochRotation?.let { rotation ->
             assertEquals(PersistenceLifecycleObservation.EPOCH_ROTATION_LOCAL_ENDED, rotation.observeShutdown())
             val participant = poolTestField<PersistenceJdbcParticipant>(scope.root, "epochRotationParticipant")
             assertTrue(scope.actors(participant).all { it.termination().ended() && !it.thread.isAlive })
         }
-        assertEquals(PersistencePublicTrustRelease.RELEASED, owner.releasePublicTrustAfterShutdown())
+        val release = owner.releasePublicTrustAfterShutdown()
+        val diagnostic = if (release === PersistencePublicTrustRelease.RELEASED) "" else {
+            // Nonwaiting enum-only observations AFTER the one release attempt, not proof of its earlier conjunct.
+            val poolStates = listOf("ordinaryBinding", "deletionBinding", "catalogBinding").joinToString(",") { name ->
+                val state = runCatching {
+                    poolTestField<VersionBoundPersistencePoolBinding>(checkNotNull(owner.versionBoundPools), name).localShutdownObservation().name
+                }.getOrDefault("UNAVAILABLE")
+                "$name=$state"
+            }
+            val afterNative = runCatching { scope.root.shutdownObservation().name }.getOrDefault("UNAVAILABLE")
+            "root=${if (testIntake != null) "INTAKE" else "PEER"} native=$nativeShutdown release=$release " +
+                "AFTER_RELEASE native=$afterNative pools=[$poolStates]"
+        }
+        assertEquals(PersistencePublicTrustRelease.RELEASED, release, diagnostic)
         assertFalse(Files.exists(trustPath().parent))
         if (parentCreated) Files.delete(trustParent) // Never recursively remove unknown/retained trust material.
         assertSessionsEnded()

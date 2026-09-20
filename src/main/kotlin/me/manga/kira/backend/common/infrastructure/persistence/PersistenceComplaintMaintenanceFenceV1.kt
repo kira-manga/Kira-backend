@@ -139,6 +139,10 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
         maintenanceClosed && creationClosed && projectedTestClosed && pendingTestToken == null && !pendingTestPrepared &&
             projectedTestToken == token && projectedTestScope == scope && projectedUnsigned.contentEquals(unsigned) && projectedHash.contentEquals(hash)
 
+    /** Named cold read-only capture only. Not a projected-ticket issuer or mutation/continuation predicate. */
+    internal fun matchesClosedProjectedRecoveryScope(scope: UUID): Boolean =
+        maintenanceClosed && creationClosed && projectedTestClosed && pendingTestToken == null && !pendingTestPrepared && projectedTestScope == scope
+
     override fun toString(): String = "PersistenceComplaintMaintenanceGateV1(bounded-facts,no-continuation-authority)"
 
     companion object {

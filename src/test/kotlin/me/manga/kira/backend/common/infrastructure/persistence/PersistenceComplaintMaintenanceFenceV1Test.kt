@@ -80,16 +80,20 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PUBLICATION,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_DRAIN,
         )
-        val registration = PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION
+        val registration = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+            PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
+        )
         val sealing = setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT)
         val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + sealing
-        assertEquals(108, PersistencePhasePath.entries.size)
+        assertEquals(109, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
         assertEquals(3, adminDeletionWriters.size)
         assertEquals(4, terminalWriters.size)
-        assertEquals(64, writers.size)
+        assertEquals(2, registration.size)
+        assertEquals(65, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,
@@ -152,8 +156,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertTrue(snapshot.readOnly)
         assertFalse(testWriters.any { it.readOnly })
         assertFalse(adminWriters.any { it.readOnly })
-        assertFalse(registration.readOnly) // PostgreSQL SELECT FOR UPDATE requires a writable transaction, not DML permission.
-        assertFalse(registration.catalogTestRunActivation) // Separate normal-root ownership, never a named-projector route.
+        assertFalse(registration.any { it.readOnly }) // PostgreSQL SELECT FOR UPDATE requires a writable transaction, not DML permission.
+        assertFalse(registration.any { it.catalogTestRunActivation }) // Separate normal-root ownership, never a named-projector route.
         assertEquals(sealing, PersistencePhasePath.entries.filter { it.testRunSealing }.toSet())
         assertFalse(sealing.any { it.readOnly || it.catalogTestRunActivation })
         assertTrue(PersistencePhasePath.COMPLAINT_ADMIN_EDIT_PREFLIGHT.readOnly)

@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.domain.InstallationDeletionPreflightTuple
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintDesiredInstallAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedGenesisFirstDAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
@@ -98,6 +99,9 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestNamespaceRegistration(original: ComplaintTestNamespaceRegistrationAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION, testRegistration = original)
+
+    internal fun enterTestNamespaceRecoveryRegistration(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1): PersistencePhaseContext =
+        enter(PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION, testRecoveryRegistration = original)
 
     internal fun enterTestRunSeal(original: TestRunSealingV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, testRunSealer = original)
@@ -499,6 +503,7 @@ internal class PersistencePhaseOwnership private constructor(
         signerRotationActivation: CatalogSignerRotationActivationV1? = null,
         testRunActivation: CatalogTestRunActivationV1? = null,
         testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
+        testRecoveryRegistration: ComplaintTestNamespaceRecoveryRegistrationAttemptV1? = null,
         testRunSealer: TestRunSealingV1? = null,
         testOrdinarySealer: TestRunOrdinarySealV1? = null,
         testRunOwnerDelete: TestRunOwnerDeleteContinuationV1? = null,
@@ -522,6 +527,9 @@ internal class PersistencePhaseOwnership private constructor(
         requireSignerRotationActivationEntry(path, signerRotationActivation)
         requireTestRunActivationEntry(path, testRunActivation)
         if ((path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION) != (testRegistration != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if ((path === PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION) != (testRecoveryRegistration != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_INSTALLATION_MANIFEST_PREPARE) != (testInstallationManifest != null)) {
@@ -569,6 +577,7 @@ internal class PersistencePhaseOwnership private constructor(
         signerRotationActivation?.requirePhaseEntry(this, path)
         testRunActivation?.requirePhaseEntry(this, path)
         testRegistration?.requirePhaseEntry(this, path)
+        testRecoveryRegistration?.requirePhaseEntry(this, path)
         testRunSealer?.requirePhaseEntry(this, path)
         testOrdinarySealer?.requirePhaseEntry(this, path)
         testInstallationManifest?.requirePhaseEntry(this, path)
@@ -593,6 +602,7 @@ internal class PersistencePhaseOwnership private constructor(
         val signerRotationActivationWork = signerRotationActivation?.budget?.capped(2_000)
         val testRunActivationWork = testRunActivation?.budget?.capped(2_000)
         val testRegistrationWork = testRegistration?.budget?.capped(2_000)
+        val testRecoveryRegistrationWork = testRecoveryRegistration?.budget?.capped(2_000)
         val testRunSealingWork = testRunSealer?.budget?.capped(2_000)
         val testOrdinarySealWork = testOrdinarySealer?.budget?.capped(2_000)
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
@@ -653,6 +663,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunActivationWork,
                 testRegistration,
                 testRegistrationWork,
+                testRecoveryRegistration,
+                testRecoveryRegistrationWork,
                 testRunSealer,
                 testRunSealingWork,
                 testOrdinarySealer,
@@ -679,6 +691,7 @@ internal class PersistencePhaseOwnership private constructor(
             signerRotationActivation?.retainPhase(prepared)
             testRunActivation?.retainPhase(prepared)
             testRegistration?.retainPhase(prepared)
+            testRecoveryRegistration?.retainPhase(prepared)
             testRunSealer?.retainPhase(prepared)
             testOrdinarySealer?.retainPhase(prepared)
             testInstallationManifest?.retainPhase(prepared)
@@ -701,6 +714,7 @@ internal class PersistencePhaseOwnership private constructor(
             signerRotationActivation?.observeFailure(failure)
             testRunActivation?.observeFailure(failure)
             testRegistration?.observeFailure(failure)
+            testRecoveryRegistration?.observeFailure(failure)
             testRunSealer?.observeFailure(failure)
             testOrdinarySealer?.observeFailure(failure)
             testInstallationManifest?.observeFailure(failure)
@@ -719,6 +733,7 @@ internal class PersistencePhaseOwnership private constructor(
                 signerRotationActivation?.observeFailure(cleanup)
                 testRunActivation?.observeFailure(cleanup)
                 testRegistration?.observeFailure(cleanup)
+                testRecoveryRegistration?.observeFailure(cleanup)
                 testRunSealer?.observeFailure(cleanup)
                 testOrdinarySealer?.observeFailure(cleanup)
                 testInstallationManifest?.observeFailure(cleanup)
@@ -736,6 +751,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { signerRotationActivation?.observePhaseCleanup(it) }
                 phase?.let { testRunActivation?.observePhaseCleanup(it) }
                 phase?.let { testRegistration?.observePhaseCleanup(it) }
+                phase?.let { testRecoveryRegistration?.observePhaseCleanup(it) }
                 phase?.let { testRunSealer?.observePhaseCleanup(it) }
                 phase?.let { testOrdinarySealer?.observePhaseCleanup(it) }
                 phase?.let { testInstallationManifest?.observePhaseCleanup(it) }
@@ -952,6 +968,7 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
                 PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
                 PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+                PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
                 PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
@@ -1139,6 +1156,7 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT,
             PersistencePhasePath.COMPLAINT_CATALOG_PROJECTED_HEAD,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+            PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT,
             PersistencePhasePath.COMPLAINT_TEST_ORDINARY_SEAL,
@@ -1307,6 +1325,7 @@ internal enum class PersistencePhasePath {
     COMPLAINT_CATALOG_SNAPSHOT,
     COMPLAINT_CATALOG_PROJECTED_HEAD,
     COMPLAINT_TEST_NAMESPACE_REGISTRATION,
+    COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
     COMPLAINT_TEST_RUN_SEAL,
     COMPLAINT_TEST_RUN_SEALED_AUDIT,
     COMPLAINT_TEST_ORDINARY_SEAL,
@@ -1375,6 +1394,7 @@ internal enum class PersistencePhasePath {
     internal val complaintMaintenanceWriter: Boolean
         get() = when (this) {
             COMPLAINT_TEST_NAMESPACE_REGISTRATION, // SELECT FOR UPDATE needs M/RC; only its typed owner admits the closed TEST gate.
+            COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION, // SELECT FOR UPDATE needs M/RC; only its typed owner admits the closed TEST gate.
             COMPLAINT_TEST_RUN_SEAL,
             COMPLAINT_TEST_RUN_SEALED_AUDIT,
             COMPLAINT_TEST_ORDINARY_SEAL,

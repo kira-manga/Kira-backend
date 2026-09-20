@@ -224,6 +224,13 @@ internal object CatalogTestRunActivationSqlV1 {
     val readProjectionHistory = historySelect(projectionMatch, historyBound(projectionCompletedBound))
     val lockProjectionHistory = readProjectionHistory + "\nFOR UPDATE"
 
+    /** Cold read-only admission: every row is already projected; the named operation supplies only captured comparison identities. */
+    val lockRecoveryRegistrationHistory = historySelect(
+        "m.operation_type = 'TEST_RUN_ACTIVATION' AND m.operation_token = ?::uuid AND m.data_scope_id = ?::uuid " +
+            "AND m.successor_generation = ?::bigint AND m.envelope_hash = ?::bytea",
+        historyBound(projectionCompletedBound) + " AND m.state = 'COMPLETED' AND m.projected_at IS NOT NULL",
+    ) + "\nFOR UPDATE"
+
     /** At most ONE exact TEST tail, bounded before detaching; never raw historical rows or a parser under locks. */
     val readPreparedTail = """
         SELECT (($preparedColumnsMatch) AND (($unsignedSignatureMatch) OR ($signedSignatureMatch))) IS TRUE AS valid,

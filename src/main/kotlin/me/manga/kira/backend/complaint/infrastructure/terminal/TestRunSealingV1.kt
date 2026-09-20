@@ -38,7 +38,7 @@ internal class TestRunSealingV1 private constructor(internal val registration: C
     private var cleanupUncertain = false
     private var sealedAt: Instant? = null
 
-    init { registration.requireUsable() }
+    init { registration.requireUsable(); registration.requireInitialMutationAdmission() }
 
     fun seal(): TestRunSealingResultV1 {
         requireSealing(caller === Thread.currentThread())

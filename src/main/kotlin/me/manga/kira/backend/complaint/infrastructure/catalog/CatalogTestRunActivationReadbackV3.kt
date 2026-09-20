@@ -58,6 +58,21 @@ internal class CatalogTestRunActivationReadbackV3 private constructor(
             policy: CatalogReadbackPolicy,
             expectedHead: CatalogLocalHead,
             expected: CatalogTestRunActivationCanonicalV3,
+        ): CatalogTestRunActivationReadbackV3 = verifyCaptured(provider, initialBundleBytes, currentBundleBytes, policy, expectedHead, expected, null)
+
+        internal fun verifyRecovery(
+            provider: CatalogReadbackPort, initialBundleBytes: ByteArray, currentBundleBytes: ByteArray,
+            policy: CatalogReadbackPolicy, expectedHead: CatalogLocalHead, expected: CatalogTestRunActivationCanonicalV3,
+            history: CatalogTestRunActivationHistoryV1,
+        ): CatalogTestRunActivationReadbackV3 {
+            history.requireExpected(expectedHead.generation, prepared = true, signed = true, completed = true)
+            return verifyCaptured(provider, initialBundleBytes, currentBundleBytes, policy, expectedHead, expected, history)
+        }
+
+        private fun verifyCaptured(
+            provider: CatalogReadbackPort, initialBundleBytes: ByteArray, currentBundleBytes: ByteArray,
+            policy: CatalogReadbackPolicy, expectedHead: CatalogLocalHead, expected: CatalogTestRunActivationCanonicalV3,
+            recoveryHistory: CatalogTestRunActivationHistoryV1?,
         ): CatalogTestRunActivationReadbackV3 {
             requireConnectionFree()
             val initial = snapshotBundle(initialBundleBytes)
@@ -82,6 +97,10 @@ internal class CatalogTestRunActivationReadbackV3 private constructor(
                             val pair = stream.lastPair ?: throw CatalogReadbackException(CatalogReadbackFailure.HEAD_CONFLICT)
                             requireCatalogReadback(!stream.waitingForReplica, CatalogReadbackFailure.HEAD_CONFLICT)
                             requireCreationRetention(raw, generation, pair.primary, policy)
+                            if (recoveryHistory != null && generation < expectedHead.generation) {
+                                recoveryHistory.requireRaw(Math.toIntExact(generation - 1L),
+                                    CatalogFrozenManifestParser.signed(raw, policy.chain.limits), pair.primary)
+                            }
                         }
                     } ?: break
                     // Both exact-version bodies have closed successfully before the chain can see bytes.

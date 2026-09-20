@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogSignerRotationPersistencePhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatalogTestRunActivationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRegistrationPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunSealingPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestOrdinarySealPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPhaseExecutorV1
@@ -65,6 +66,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var testRegistrationExecutor: ComplaintTestNamespaceRegistrationPhaseExecutorV1? = null
     private var testInstallationManifestPublicationExecutor: ComplaintTestInstallationManifestPublicationPhaseExecutorV1? = null
     internal val testInstallationManifestPublication: ComplaintTestInstallationManifestPublicationPhaseExecutorV1 get() = checkNotNull(testInstallationManifestPublicationExecutor)
+    private var testRecoveryRegistrationExecutor: ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1? = null
     private var testInstallationManifestExecutor: ComplaintTestInstallationManifestPhaseExecutorV1? = null
     internal val testInstallationManifest: ComplaintTestInstallationManifestPhaseExecutorV1 get() = checkNotNull(testInstallationManifestExecutor)
     private var testOrdinarySealExecutor: ComplaintTestOrdinarySealPhaseExecutorV1? = null
@@ -73,6 +75,7 @@ internal class CatalogCoordinatorPersistence private constructor(
     internal val testOrdinaryDrain: ComplaintTestOrdinaryDrainPhaseExecutorV1 get() = checkNotNull(testOrdinaryDrainExecutor)
     private var testRunSealingExecutor: ComplaintTestRunSealingPhaseExecutorV1? = null
     internal val testNamespaceRegistration: ComplaintTestNamespaceRegistrationPhaseExecutorV1 get() = checkNotNull(testRegistrationExecutor)
+    internal val testNamespaceRecoveryRegistration: ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1 get() = checkNotNull(testRecoveryRegistrationExecutor)
     internal val testRunSealing: ComplaintTestRunSealingPhaseExecutorV1 get() = checkNotNull(testRunSealingExecutor)
     internal val testRunActivation: ComplaintCatalogTestRunActivationPhaseExecutorV1 get() = checkNotNull(testRunActivationExecutor)
 
@@ -134,6 +137,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         }
         if (catalogGenesisAuthoring || catalogGenesisFinalization) return // Only the named attempt may select its three fixed phases.
         testRegistrationExecutor = ComplaintTestNamespaceRegistrationPhaseExecutorV1(this)
+        testRecoveryRegistrationExecutor = ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1(this)
         testRunSealingExecutor = ComplaintTestRunSealingPhaseExecutorV1(this)
         testOrdinarySealExecutor = ComplaintTestOrdinarySealPhaseExecutorV1(this)
         testInstallationManifestExecutor = ComplaintTestInstallationManifestPhaseExecutorV1(this)

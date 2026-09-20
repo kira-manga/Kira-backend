@@ -34,6 +34,7 @@ import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActiv
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationManifestV3
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEncodingV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintProcessPoolFixture
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestDeploymentDocumentV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCapacityInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.DesiredCatalogChainLimitsV1
@@ -134,10 +135,11 @@ internal class CatalogTestRunActivationEvidenceFixture(
     createGlobal: Int = 2,
     ordinarySealHttp: TestOrdinarySealHttpFixtureV1? = null,
     intakeTls: VersionBoundPersistenceConnectedFixture? = null,
-    ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
+    private val ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
 ) : AutoCloseable {
     init {
-        require(ordinaryDrain == null || ordinarySealHttp != null && !ordinarySealHttp.protectedIntake)
+        // The optional denial input is selected BEFORE full D and all actual protected acquisitions.
+        require(ordinaryDrain == null || ordinarySealHttp != null)
     }
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
@@ -178,6 +180,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
     )
     internal var intakeAssembly: ComplaintTestProcessAssemblyV1? = null
         private set
+    private var intakeDocument: ComplaintTestDeploymentDocumentV1? = null
     // The new specimen starts from a protected document, not this fixture's former owner-only seam.
     private val intakeProcess = if (ordinarySealHttp?.protectedIntake == true) assembleIntake(checkNotNull(intakeTls), ordinarySealHttp, createGlobal) else null
     // Preserve the historical fixture-present and absent profiles byte-for-byte.
@@ -274,7 +277,9 @@ internal class CatalogTestRunActivationEvidenceFixture(
             retention = template.retention.copy(
                 environment = trust.expectedEnvironment, lastPreRunRestoreHorizon = http.horizon.toString(), horizonPolicy = http.horizonPolicy,
             ),
+            ordinaryDenial = ordinaryDrain?.authorityInput(journal, trust.expectedEnvironment),
         )
+        intakeDocument = document
         val secrets = AwsSecretVersionFixture()
         TestDeploymentInputFixture.secrets(secrets, document, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray())
         http.prepareIndependent(journal) // Raw factories and clocks fixed BEFORE the actual intake/owner construction.
@@ -286,6 +291,37 @@ internal class CatalogTestRunActivationEvidenceFixture(
         check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
         check(http.sts.createdClients + http.kms.createdClients + http.s3Created == 0)
         return assembly.target
+    }
+
+    /**
+     * TEST-only fresh assembly from the SAME protected input values and immutable secret versions.
+     * Caller first closes the actual old runtime+projector and proves native/pool/session retirement.
+     * No old target, registration, projection continuation or acquired value is passed to the new graph.
+     * This is a same-JVM fixture, NOT evidence of separate-process restart qualification.
+     */
+    internal fun reassembleRecoveryIntake(
+        http: TestOrdinarySealHttpFixtureV1,
+        changeDocument: (ComplaintTestDeploymentDocumentV1) -> ComplaintTestDeploymentDocumentV1 = { it },
+    ): ComplaintTestProcessAssemblyV1 {
+        val previous = checkNotNull(intakeProcess)
+        check(http.protectedIntake && previous.pools.shutdownRequested() && previous.pools.poolsEndedForTrust())
+        val document = changeDocument(checkNotNull(intakeDocument))
+        val secrets = AwsSecretVersionFixture()
+        TestDeploymentInputFixture.secrets(secrets, document, PgLifecycleDatabaseSettings.CANDIDATE_PASSWORD.toByteArray())
+        // The external raw retained object fixture was configured once, before the original intake.
+        // New native clients are acquired by this new owner; no second configure/reset of its objects.
+        val assembly = ComplaintTestProcessAssemblyV1.withHttpFixture(secrets::httpClient, PersistenceNanoClock(http::nanos), http::now,
+            PersistencePoolLaunchProfile.CONTROLLED_TEST_ONLY, http::nativeSts, http::nativeKms, http::nativeS3)
+        try {
+            TestDeploymentInputFixture.withManifest(TestDeploymentInputFixture.bytes(document)) { path ->
+                assembly.assemble(path, AwsSecretVersionFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
+            }
+            check(secrets.createdClients == secrets.closedClients && secrets.requests.size > 1)
+            return assembly
+        } catch (failure: Throwable) {
+            runCatching(assembly::close).exceptionOrNull()?.let(failure::addSuppressed)
+            throw failure
+        }
     }
 
     override fun close() { intakeAssembly?.close() }

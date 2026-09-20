@@ -486,7 +486,8 @@ internal object ComplaintTestNamespaceRegistrationCases {
     private fun withRuntimeRoot(p: ProjectionActivationObservation, projector: VersionBoundPersistenceConnectedFixture,
         action: (VersionBoundPersistenceConnectedFixture, VersionBoundTestNamespaceProcessV1, CatalogSignerRotationProbeJdbc) -> Unit) {
         val runtime = VersionBoundPersistenceConnectedFixture(projector.database, endpointPort = projector.endpointPort,
-            testIntake = p.f.rows.evidence.intakeAssembly)
+            testIntake = p.f.rows.evidence.intakeAssembly, testRegistrationPredecessor = projector)
+        var bodyFailure: Throwable? = null
         try {
             runtime.bind() // Existing CONTROLLED_TEST_ONLY fixture choice; production UNKNOWN is neither changed nor qualified.
             runtime.start()
@@ -502,9 +503,18 @@ internal object ComplaintTestNamespaceRegistrationCases {
             coordinator.testNamespaceRegistration.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }.set(coordinator.testNamespaceRegistration, probe)
             action(runtime, target, probe)
             probe.assertNoLostAssertions()
+        } catch (failure: Throwable) {
+            bodyFailure = failure
+            throw failure
         } finally {
             // The shared driver Timer/session assertion requires both real roots to stop before either fixture waits.
-            runtime.closeWith(projector)
+            try {
+                runtime.closeWith(projector)
+            } catch (cleanup: Throwable) {
+                val original = bodyFailure
+                if (original == null) throw cleanup
+                if (cleanup !== original) original.addSuppressed(cleanup)
+            }
         }
     }
 

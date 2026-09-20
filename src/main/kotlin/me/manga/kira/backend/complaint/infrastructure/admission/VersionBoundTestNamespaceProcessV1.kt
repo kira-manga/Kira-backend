@@ -14,6 +14,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.VersionBoundTestO
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenialAuthorityPolicyV1
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Complete cold PRE_CUTOVER_TEST/memory/one-declared-instance inventory and full D, separate from LIVE.
@@ -37,6 +38,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
     private val hash: ByteArray
+    private val registrationClaimed = AtomicBoolean()
 
     init {
         requireOwners()
@@ -97,6 +99,19 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             it == me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConfiguration.CATALOG_GENESIS_AUTHOR_USERNAME }) {
             INVALID_TEST_PROCESS_CONFIGURATION
         }
+    }
+
+    /** A recovery admission requires a fresh retained process target, not the already-used first-PROJECT graph. */
+    internal fun claimInitialRegistration(original: ComplaintTestNamespaceRegistrationAttemptV1) {
+        requireConnectionFree()
+        requireRegistrationTarget()
+        requireRegistration(original.process === this && registrationClaimed.compareAndSet(false, true))
+    }
+
+    internal fun claimRecoveryRegistration(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1) {
+        requireConnectionFree()
+        requireRegistrationTarget()
+        requireRegistration(original.process === this && original.assembly.target === this && registrationClaimed.compareAndSet(false, true))
     }
 
     private fun requireOwners() {
