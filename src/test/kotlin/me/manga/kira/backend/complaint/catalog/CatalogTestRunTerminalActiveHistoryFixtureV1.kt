@@ -4,8 +4,10 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
@@ -318,8 +320,17 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
     require(completeHistoricalPrimary || allRecovery in setOf(TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY,
         TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_COMPLETION))
     val inputs = TestOrdinaryDrainFixtureInputsV1(terminalQuiescence = TestTerminalQuiescenceFixtureInputsV1())
+    var edge = "REGISTERED_PRODUCER_SETUP"
+    var reported = false
+    fun report() {
+        if (reported) return
+        reported = true
+        reportRetainedDUnexpectedFailure(edge)
+    }
     fun continueFrom(a: TestRegisteredInitialCheckpointDeletionFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1?, historical: TestActiveQueueHistoricalAllObjectV1? = null) {
+        edge = "PRODUCER_RELEASE"
         a.assertReleased()
+        edge = "PRODUCER_SNAPSHOT"
         val record = checkNotNull(a.record)
         assertSame(checkNotNull(a.event), record.event); assertEquals(2L, record.event.comparison.epoch)
         val producerCounts = a.native.counts(); val originalBytes = record.stored.bytes.copyOf()
@@ -328,25 +339,42 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
         val queueOpenings = queueClients(); val queueSqlCalls = b?.calls?.size
         val sealer = a.checkpoint.sealer
         assertSame(a.runtime, sealer.runtime)
+        edge = "CHILD_CONSTRUCTION"
         val primaryBeforeChildClose = TestRunPurgeFixtureV1(sealer.p, a.runtime, a.registration, a.audit,
             sealer.native, inputs, borrowedPrimaryOwner = a).use { f ->
-            val history = terminalCatalogActiveRows(f)
-            val pending = if (completeHistoricalPrimary) null else terminalCatalogAllPrimaryRows(f.observer, f.scope).filterKeys {
-                it in setOf("installation_deletion_receipts", "complaint_journal_publications")
+            try {
+                edge = "CHILD_HISTORY_SNAPSHOT"
+                val history = terminalCatalogActiveRows(f)
+                val pending = if (completeHistoricalPrimary) null else terminalCatalogAllPrimaryRows(f.observer, f.scope).filterKeys {
+                    it in setOf("installation_deletion_receipts", "complaint_journal_publications")
+                }
+                assertEquals(1, history.getValue("V26").size)
+                assertEquals(if (b == null) 0 else 1, history.getValue("V29").size)
+                edge = "SEALING_PROBE"
+                CatalogTerminalHistorySealingProbeV1(f).use { probe ->
+                    edge = "SEALING_BEGIN_AND_SEAL"
+                    assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, probe.begin().seal())
+                    edge = "SEALING_RELEASE"
+                    probe.assertReleased(); f.assertReleased()
+                    edge = "SEALING_PROBE_CLOSE"
+                }
+                edge = "SEALED_HISTORY_CHECK"
+                assertEquals(history, terminalCatalogActiveRows(f))
+                pending?.let { assertEquals(it, terminalCatalogAllPrimaryRows(f.observer, f.scope).filterKeys { table -> table in it.keys },
+                    "Real sealing preserves the original pending N/P/proof and their xmin.") }
+                edge = "CASE_CALLBACK"
+                action(f, a, b, inputs, historical)
+                edge = "CASE_RETURN_CHECK"
+                assertEquals(history, terminalCatalogActiveRows(f))
+                val primaryImage = a.image()
+                edge = "CHILD_CLOSE"
+                primaryImage
+            } catch (failure: Throwable) {
+                report() // Before the child's existing row-erasure cleanup.
+                throw failure
             }
-            assertEquals(1, history.getValue("V26").size)
-            assertEquals(if (b == null) 0 else 1, history.getValue("V29").size)
-            CatalogTerminalHistorySealingProbeV1(f).use { probe ->
-                assertEquals(TestRunSealingResultV1.SEALED_AND_AUDITED, probe.begin().seal())
-                probe.assertReleased(); f.assertReleased()
-            }
-            assertEquals(history, terminalCatalogActiveRows(f))
-            pending?.let { assertEquals(it, terminalCatalogAllPrimaryRows(f.observer, f.scope).filterKeys { table -> table in it.keys },
-                "Real sealing preserves the original pending N/P/proof and their xmin.") }
-            action(f, a, b, inputs, historical)
-            assertEquals(history, terminalCatalogActiveRows(f))
-            a.image()
         }
+        edge = "CHILD_CLOSED_CHECK"
         assertEquals(primaryBeforeChildClose, a.image(),
             "Child teardown preserves the outer A owner's N/L/P and domain rows, including xmin, until its own ordered cleanup.")
         assertArrayEquals(originalBytes, record.stored.bytes); originalBytes.fill(0)
@@ -356,8 +384,22 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
         b?.assertReleased()
     }
     if (queue === TerminalCatalogQueueHistoryV1.ABSENT) {
-        withRegisteredInitialCheckpointDeletion(tls, family, terminalHistory = inputs) { a ->
-            a.authorize(); a.publish(); if (verifyPublication) a.verify(); continueFrom(a, null)
+        try {
+            withRegisteredInitialCheckpointDeletion(tls, family, terminalHistory = inputs) { a ->
+                try {
+                    edge = "A_AUTHORIZE"; a.authorize()
+                    edge = "A_PUBLISH"; a.publish()
+                    if (verifyPublication) { edge = "A_VERIFY"; a.verify() }
+                    continueFrom(a, null)
+                    edge = "REGISTERED_PRODUCER_CLOSE"
+                } catch (failure: Throwable) {
+                    report() // Before the original A fixture's existing cleanup.
+                    throw failure
+                }
+            }
+        } catch (failure: Throwable) {
+            report() // Fallback for setup before A's callback, or its own teardown.
+            throw failure
         }
     } else withActiveQueueFixture(tls, family, verifyPublication, terminalHistory = inputs) { b ->
         if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
@@ -404,6 +446,14 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
         if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) assertRetainedAllQueuePrimary(b, "PARTIAL")
         continueFrom(b.precursor, b) // Keep the actual observation alive until every D/E assertion.
     }
+}
+
+/** Failure-only passive labels; no new SQL, raw failure content, authority or cleanup operation. */
+private fun reportRetainedDUnexpectedFailure(edge: String, injected: Int? = null) {
+    try {
+        val phasePath = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path").name } ?: "NONE"
+        System.err.println("TEST_CATALOG_RETAINED_D_UNEXPECTED edge=$edge phasePath=$phasePath injected=${injected ?: "NOT_IN_CASE"}")
+    } catch (_: Throwable) { /* Diagnostics cannot replace the original failure. */ }
 }
 
 internal enum class TerminalCatalogRetainedPrimaryFaultV1 { RELOAD_OWNER, VERIFY_LEASE, APPLY_LEASE, APPLY_CONTROL }
@@ -461,78 +511,102 @@ internal object CatalogRetainedDPrimaryCasesV1 {
         val prepared = fault === TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE
         withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.ABSENT,
             ComplaintJournalDeletionKindV1.OWNER_DELETE, verifyPublication = !prepared) { f, a, _, inputs, _ ->
-            val before = refusalRows(f.observer, f.scope)
-            val sealOrderBefore = f.sealHttp.order.toList()
-            assertTrue(sealOrderBefore.isNotEmpty(), "The shared native transport already records the genuine A predecessor.")
-            val record = checkNotNull(a.record)
-            val nonTargetRowsBeforeD = nonTargetDomainRows(f.observer, f.scope, record.event.complaintIds().single())
-            var controlBeforeFault: String? = null
+            var edge = "CASE_SNAPSHOT"
             var injected = 0
-            CatalogTerminalHistoryDrainProbeV1(f, a, preparedPrimary = prepared).use { probe ->
-                val primary = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
-                val inventory = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
-                val drain = probe.begin(inventory::client, inventory.keys::httpClient, primary::primaryClient, primary.keys::httpClient)
-                val targetSql = when (fault) {
-                    TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> TestRunSealingSqlV1.lockScopeControl
-                    TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE -> OwnerDeletePersistenceSql.RECORD_VERIFIED
-                    else -> OwnerDeletePersistenceSql.COMPLETE_RECEIPT
-                }
-                probe.afterPrimary = { call, jdbc ->
-                    if (injected == 0 && call.sql == targetSql &&
-                        (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER || probe.isSelectedReload(call))) {
-                        probe.expectPrimaryRollback(call)
-                        controlBeforeFault = control(jdbc, f.scope)
-                        if (fault === TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE) {
-                            assertEquals("VERIFIED", jdbc.queryForObject("SELECT state FROM complaint_journal_publications WHERE data_scope_id = ?", String::class.java, f.scope))
-                        } else if (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) {
-                            assertCompletedPrimary(jdbc, a, "PARTIAL", nonTargetRowsBeforeD) // Real domain/E/L/audit/N/P writes already happened on this holder.
+            try {
+                val before = refusalRows(f.observer, f.scope)
+                val sealOrderBefore = f.sealHttp.order.toList()
+                assertTrue(sealOrderBefore.isNotEmpty(), "The shared native transport already records the genuine A predecessor.")
+                val record = checkNotNull(a.record)
+                val nonTargetRowsBeforeD = nonTargetDomainRows(f.observer, f.scope, record.event.complaintIds().single())
+                var controlBeforeFault: String? = null
+                edge = "CASE_DRAIN_PROBE"
+                CatalogTerminalHistoryDrainProbeV1(f, a, preparedPrimary = prepared).use { probe ->
+                    edge = "CASE_NATIVE_FIXTURES"
+                    val primary = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
+                    val inventory = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
+                    edge = "CASE_DRAIN_CONSTRUCTION"
+                    val drain = probe.begin(inventory::client, inventory.keys::httpClient, primary::primaryClient, primary.keys::httpClient)
+                    edge = "CASE_FAULT_HOOK"
+                    val targetSql = when (fault) {
+                        TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> TestRunSealingSqlV1.lockScopeControl
+                        TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE -> OwnerDeletePersistenceSql.RECORD_VERIFIED
+                        else -> OwnerDeletePersistenceSql.COMPLETE_RECEIPT
+                    }
+                    probe.afterPrimary = { call, jdbc ->
+                        if (injected == 0 && call.sql == targetSql &&
+                            (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER || probe.isSelectedReload(call))) {
+                            edge = "FAULT_PREIMAGE"
+                            probe.expectPrimaryRollback(call)
+                            controlBeforeFault = control(jdbc, f.scope)
+                            edge = "FAULT_PRIMARY_ASSERTIONS"
+                            if (fault === TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE) {
+                                assertEquals("VERIFIED", jdbc.queryForObject("SELECT state FROM complaint_journal_publications WHERE data_scope_id = ?", String::class.java, f.scope))
+                            } else if (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) {
+                                assertCompletedPrimary(jdbc, a, "PARTIAL", nonTargetRowsBeforeD) // Real domain/E/L/audit/N/P writes already happened on this holder.
+                            }
+                            edge = "FAULT_UPDATE"
+                            val change = when (fault) {
+                                TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> "lease_owner = ?::uuid"
+                                TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL -> "maintenance_closed = false"
+                                else -> "lease_expires_at = clock_timestamp() - interval '1 second'"
+                            }
+                            val prefix: Array<out Any> = if (fault === TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER)
+                                arrayOf(UUID.randomUUID().also { assertNotEquals(drain.attemptId, it) }) else emptyArray()
+                            assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET $change WHERE data_scope_id = ? AND test_only " +
+                                "AND lease_owner = ? AND lease_token = ? AND lease_expires_at > clock_timestamp()",
+                                *prefix, f.scope, drain.attemptId, drain.leaseToken))
+                            injected++ // Only after the actual fault SQL returned, never by throwing from the callback.
+                            edge = "FIRST_DRAIN_AFTER_INJECTION"
                         }
-                        val change = when (fault) {
-                            TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> "lease_owner = ?::uuid"
-                            TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL -> "maintenance_closed = false"
-                            else -> "lease_expires_at = clock_timestamp() - interval '1 second'"
+                    }
+                    edge = "CASE_APPROVAL"
+                    val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
+                    // Preserve the refusal assertion's original failure if existing native cleanup also fails.
+                    AutoCloseable { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }.use {
+                        edge = "FIRST_DRAIN"
+                        assertThrows<TestOrdinaryDrainExceptionV1> {
+                            drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
                         }
-                        val prefix: Array<out Any> = if (fault === TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER)
-                            arrayOf(UUID.randomUUID().also { assertNotEquals(drain.attemptId, it) }) else emptyArray()
-                        assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET $change WHERE data_scope_id = ? AND test_only " +
-                            "AND lease_owner = ? AND lease_token = ? AND lease_expires_at > clock_timestamp()",
-                            *prefix, f.scope, drain.attemptId, drain.leaseToken))
-                        injected++ // Only after the actual fault SQL returned, never by throwing from the callback.
+                        edge = "REFUSAL_SEQUENCE"
+                        assertEquals(1, injected)
+                        val expected = listOf("SELECT", "RELOAD") + when (fault) {
+                            TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> emptyList()
+                            TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE -> listOf("VERIFY")
+                            else -> listOf("APPLY")
+                        }
+                        probe.assertRetainedPrimarySequence(expected)
+                        probe.assertPrimaryRefusal(if (fault === TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL)
+                            TestRunSealingSqlV1.readScopeControl else TestOrdinarySealSqlV1.lease, targetSql,
+                            if (fault === TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) OwnerDeletePersistenceSql.LOCK_REGISTERED_RECEIPT else null)
+                        edge = "REFUSAL_ROWS"
+                        assertEquals(before, refusalRows(f.observer, f.scope),
+                            "The actual refused transaction rolls back proof/primary/domain/audit/counters/run/scan rows and xmin; OPEN pays nothing.")
+                        assertEquals(checkNotNull(controlBeforeFault), control(f.observer, f.scope), "The negative comparison drift rolls back too; no lease reset is manufactured.")
+                        edge = "REFUSAL_NATIVE"
+                        if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
+                        inventory.assertUnused(); assertEquals(sealOrderBefore, f.sealHttp.order,
+                            "The refused D cannot append native work to the retained A/first-cut transport.")
+                        assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                        edge = "CONSUMED_RETRY"
+                        val calls = probe.observedCallCounts()
+                        assertThrows<TestOrdinaryDrainExceptionV1> {
+                            drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
+                        }
+                        edge = "CONSUMED_ASSERTIONS"
+                        assertEquals(calls, probe.observedCallCounts()); inventory.assertUnused()
+                        assertEquals(sealOrderBefore, f.sealHttp.order, "The consumed original cannot append native work either.")
+                        if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
+                        probe.assertRetainedPrimarySequence(expected) // Consumed original adds no phase/SQL/native attempt.
+                        edge = "CASE_RELEASE"
+                        a.assertReleased(); f.assertReleased()
+                        edge = "CASE_NATIVE_CLOSE"
                     }
+                    edge = "CASE_PROBE_CLOSE"
                 }
-                val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
-                // Preserve the refusal assertion's original failure if existing native cleanup also fails.
-                AutoCloseable { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }.use {
-                    assertThrows<TestOrdinaryDrainExceptionV1> {
-                        drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
-                    }
-                    assertEquals(1, injected)
-                    val expected = listOf("SELECT", "RELOAD") + when (fault) {
-                        TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> emptyList()
-                        TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE -> listOf("VERIFY")
-                        else -> listOf("APPLY")
-                    }
-                    probe.assertRetainedPrimarySequence(expected)
-                    probe.assertPrimaryRefusal(if (fault === TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL)
-                        TestRunSealingSqlV1.readScopeControl else TestOrdinarySealSqlV1.lease, targetSql,
-                        if (fault === TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) OwnerDeletePersistenceSql.LOCK_REGISTERED_RECEIPT else null)
-                    assertEquals(before, refusalRows(f.observer, f.scope),
-                        "The actual refused transaction rolls back proof/primary/domain/audit/counters/run/scan rows and xmin; OPEN pays nothing.")
-                    assertEquals(checkNotNull(controlBeforeFault), control(f.observer, f.scope), "The negative comparison drift rolls back too; no lease reset is manufactured.")
-                    if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
-                    inventory.assertUnused(); assertEquals(sealOrderBefore, f.sealHttp.order,
-                        "The refused D cannot append native work to the retained A/first-cut transport.")
-                    assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
-                    val calls = probe.observedCallCounts()
-                    assertThrows<TestOrdinaryDrainExceptionV1> {
-                        drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
-                    }
-                    assertEquals(calls, probe.observedCallCounts()); inventory.assertUnused()
-                    assertEquals(sealOrderBefore, f.sealHttp.order, "The consumed original cannot append native work either.")
-                    if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
-                    probe.assertRetainedPrimarySequence(expected) // Consumed original adds no phase/SQL/native attempt.
-                    a.assertReleased(); f.assertReleased()
-                }
+            } catch (failure: Throwable) {
+                reportRetainedDUnexpectedFailure(edge, injected) // Before the enclosing child erases rows.
+                throw failure
             }
         }
     }
