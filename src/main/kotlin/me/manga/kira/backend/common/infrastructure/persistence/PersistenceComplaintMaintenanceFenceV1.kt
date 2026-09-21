@@ -40,8 +40,12 @@ internal class PersistenceComplaintMaintenanceFenceV1(private val phase: Persist
             phase.requireComplaintMaintenanceFence(this, connection)
             if (observedLock != true) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
             stage = FenceStage.READING_GATE
-            val gate = if (phase.terminalCatalogMaintenanceRead(this, connection))
-                PersistenceComplaintMaintenanceGateV1.readTerminal(connection) else PersistenceComplaintMaintenanceGateV1.read(connection)
+            val gate = when {
+                phase.testRunErasureMaintenanceRead(this, connection) -> PersistenceComplaintMaintenanceGateV1.readErasure(connection)
+                phase.terminalCatalogMaintenanceRead(this, connection) ->
+                    PersistenceComplaintMaintenanceGateV1.readTerminal(connection)
+                else -> PersistenceComplaintMaintenanceGateV1.read(connection)
+            }
             requireRemaining() // The separate gate statement and its original descendants have returned/closed.
             phase.requireComplaintMaintenanceGate(this, connection, gate)
             stage = FenceStage.GATE_OBSERVED
@@ -124,6 +128,7 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
     private val projectedHash: ByteArray?,
     private val pendingCatalog: Boolean,
     private val terminal: TerminalFacts? = null,
+    private val erasure: TerminalFacts? = null,
 ) {
     internal fun requireUnownedOpen() {
         if (pendingTestToken != null || projectedTestClosed) throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
@@ -175,6 +180,19 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
             it.activationUnsigned.contentEquals(activationUnsigned) && it.activationHash.contentEquals(activationHash)
     } == true
 
+    /** Fixed eraser READ selector; never admits a mutation without native reauthentication. */
+    internal fun matchesErasureCapture(scope: UUID): Boolean = maintenanceClosed && creationClosed && !pendingCatalog &&
+        pendingTestToken == null && erasure?.let { it.valid && it.scope == scope } == true
+
+    /** Only completed, projected, closed/current terminal lineage; PURGED needs no scoped control. */
+    internal fun matchesErasureTuple(token: UUID, scope: UUID, unsigned: ByteArray, hash: ByteArray,
+        activationToken: UUID, activationUnsigned: ByteArray, activationHash: ByteArray): Boolean =
+        matchesErasureCapture(scope) && erasure?.let {
+            it.token == token && it.unsigned.contentEquals(unsigned) && it.hash.contentEquals(hash) &&
+                it.activationToken == activationToken && it.activationUnsigned.contentEquals(activationUnsigned) &&
+                it.activationHash.contentEquals(activationHash)
+        } == true
+
     private class TerminalFacts(
         val valid: Boolean, val token: UUID?, val scope: UUID?, val unsigned: ByteArray?, val hash: ByteArray?,
         val activationToken: UUID?, val activationUnsigned: ByteArray?, val activationHash: ByteArray?,
@@ -183,6 +201,59 @@ internal class PersistenceComplaintMaintenanceGateV1 private constructor(
     override fun toString(): String = "PersistenceComplaintMaintenanceGateV1(bounded-facts,no-continuation-authority)"
 
     companion object {
+        /** Separate post-M RC read. E/D predicates and the ordinary unowned-open gate are unchanged. */
+        internal fun readErasure(connection: Connection): PersistenceComplaintMaintenanceGateV1 {
+            val base = read(connection)
+            val observed = connection.prepareStatement(READ_ERASURE_GATE).use { statement ->
+                statement.executeQuery().use { rows ->
+                    if (!rows.next()) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    val valid = rows.getBoolean("terminal_valid").also { check(!rows.wasNull()) }
+                    val facts = TerminalFacts(valid, rows.getObject("terminal_token", UUID::class.java), rows.getObject("terminal_scope", UUID::class.java),
+                        rows.getBytes("terminal_unsigned")?.copyOf(), rows.getBytes("terminal_hash")?.copyOf(),
+                        rows.getObject("activation_token", UUID::class.java), rows.getBytes("activation_unsigned")?.copyOf(), rows.getBytes("activation_hash")?.copyOf())
+                    if (rows.next()) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+                    facts
+                }
+            }
+            return PersistenceComplaintMaintenanceGateV1(base.maintenanceClosed, base.creationClosed, base.pendingTestToken, base.pendingTestScope,
+                base.pendingUnsigned, base.pendingHash, base.pendingTestPrepared, base.projectedTestClosed, base.projectedTestToken,
+                base.projectedTestScope, base.projectedUnsigned, base.projectedHash, base.pendingCatalog, erasure = observed)
+        }
+
+        private val READ_ERASURE_GATE = """
+            SELECT (c.maintenance_closed AND c.creation_closed AND c.pending_projection_token IS NULL
+                AND t.operation_type = 'TEST_RUN_TERMINAL' AND t.test_only AND complaint_scope_valid(t.data_scope_id, t.test_only)
+                AND t.state = 'COMPLETED' AND t.projected_at IS NOT NULL
+                AND complaint_bytes_match(t.unsigned_bytes, t.unsigned_hash, 131072)
+                AND complaint_bytes_match(t.envelope_bytes, t.envelope_hash, 131072)
+                AND t.successor_generation = c.accepted_catalog_generation AND t.envelope_hash = c.accepted_catalog_hash
+                AND t.catalog_writer_generation = c.catalog_writer_generation
+                AND a.operation_type = 'TEST_RUN_ACTIVATION' AND a.test_only AND a.data_scope_id = t.data_scope_id
+                AND a.state = 'COMPLETED' AND a.projected_at IS NOT NULL AND complaint_bytes_match(a.unsigned_bytes, a.unsigned_hash, 131072)
+                AND a.successor_generation = t.predecessor_generation AND a.envelope_hash = t.predecessor_hash
+                AND a.catalog_writer_generation = t.catalog_writer_generation AND r.test_only
+                AND r.activation_catalog_generation = a.successor_generation AND r.activation_catalog_hash = a.envelope_hash
+                AND r.terminal_catalog_generation = t.successor_generation AND r.terminal_catalog_hash = t.envelope_hash
+                AND r.purging_at = t.projected_at
+                AND ((r.state = 'PURGING' AND r.purged_at IS NULL AND s.test_only AND s.maintenance_closed AND s.creation_closed
+                        AND s.accepted_catalog_generation = a.successor_generation AND s.accepted_catalog_hash = a.envelope_hash
+                        AND s.pending_projection_token IS NULL AND s.desired_configuration_hash = r.configuration_hash)
+                    OR (r.state = 'PURGED' AND r.purged_at IS NOT NULL AND s.data_scope_id IS NULL
+                        AND r.unused_reserve = array_fill(0::bigint, ARRAY[22])))) IS TRUE AS terminal_valid,
+                t.operation_token AS terminal_token, t.data_scope_id AS terminal_scope,
+                CASE WHEN octet_length(t.unsigned_bytes) BETWEEN 1 AND 131072 THEN t.unsigned_bytes END AS terminal_unsigned,
+                CASE WHEN octet_length(t.unsigned_hash) = 32 THEN t.unsigned_hash END AS terminal_hash,
+                a.operation_token AS activation_token,
+                CASE WHEN octet_length(a.unsigned_bytes) BETWEEN 1 AND 131072 THEN a.unsigned_bytes END AS activation_unsigned,
+                CASE WHEN octet_length(a.unsigned_hash) = 32 THEN a.unsigned_hash END AS activation_hash
+            FROM complaint_journal_control c
+            LEFT JOIN complaint_catalog_mutations t ON t.successor_generation = c.accepted_catalog_generation
+            LEFT JOIN complaint_test_runs r ON r.data_scope_id = t.data_scope_id
+            LEFT JOIN complaint_journal_control s ON s.data_scope_id = t.data_scope_id
+            LEFT JOIN complaint_catalog_mutations a ON a.successor_generation = r.activation_catalog_generation
+            WHERE c.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
+        """.trimIndent()
+
         /** Only the two fixed terminal paths use this second, separately closed post-M RC observation.
          * READ_GATE and every old predicate/default stay unchanged. No row lock or provider call. */
         internal fun readTerminal(connection: Connection): PersistenceComplaintMaintenanceGateV1 {

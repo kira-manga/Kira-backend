@@ -20,6 +20,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinarySe
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgePublicationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalEpochSealV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
@@ -147,6 +148,9 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestRunTerminalCatalogPreflight(original: CatalogTestRunTerminalV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT, testRunTerminalCatalog = original)
+
+    internal fun enterTestRunErasure(original: TestRunErasureV1): PersistencePhaseContext =
+        enter(original.path, testRunErasure = original)
 
     internal fun enterTestTerminalQuiescence(original: TestRunTerminalQuiescenceV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE, testTerminalQuiescence = original)
@@ -579,6 +583,7 @@ internal class PersistencePhaseOwnership private constructor(
         testActiveQueue: TestActiveOwnerDeleteQueueV1? = null,
         testActiveSealRecovery: TestActiveOrdinarySealRecoveryV1? = null,
         testTerminalQuiescence: TestRunTerminalQuiescenceV1? = null,
+        testRunErasure: TestRunErasureV1? = null,
         testRunTerminalCatalog: CatalogTestRunTerminalV1? = null,
     ): PersistencePhaseContext {
         try {
@@ -624,6 +629,9 @@ internal class PersistencePhaseOwnership private constructor(
         }
         if ((path in setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_VERIFY)) != (testRunPurge != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (path.testRunErasure != (testRunErasure != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if ((path === PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE) != (testTerminalQuiescence != null)) {
@@ -701,6 +709,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRunPurge?.requirePhaseEntry(this, path)
         testTerminalEpochSeal?.requirePhaseEntry(this, path)
         testTerminalQuiescence?.requirePhaseEntry(this, path)
+        testRunErasure?.requirePhaseEntry(this, path)
         testRunTerminalCatalog?.requirePhaseEntry(this, path)
         testRunOwnerDelete?.requirePhaseEntry(this, path)
         testRunOwnerDeleteAll?.requirePhaseEntry(this, path)
@@ -736,6 +745,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testInstallationManifestWork = testInstallationManifest?.budget?.capped(2_000)
         val testInstallationManifestPublicationWork = testInstallationManifestPublication?.phaseBudget()?.capped(2_000)
         val testTerminalQuiescenceWork = testTerminalQuiescence?.phaseBudget()?.capped(2_000)
+        val testRunErasureWork = testRunErasure?.budget?.capped(2_000)
         val testRunTerminalCatalogWork = testRunTerminalCatalog?.budget?.capped(2_000)
         val testRunPurgeWork = testRunPurge?.phaseBudget()?.capped(2_000)
         val testTerminalEpochSealWork = testTerminalEpochSeal?.phaseBudget()?.capped(2_000)
@@ -835,6 +845,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testActiveOrdinarySealRecoveryWork = testActiveOrdinarySealRecoveryWork,
                 testTerminalQuiescence = testTerminalQuiescence,
                 testTerminalQuiescenceWork = testTerminalQuiescenceWork,
+                testRunErasure = testRunErasure,
+                testRunErasureWork = testRunErasureWork,
                 testRunTerminalCatalog = testRunTerminalCatalog,
                 testRunTerminalCatalogWork = testRunTerminalCatalogWork,
             )
@@ -863,6 +875,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRunPurge?.retainPhase(prepared)
             testTerminalEpochSeal?.retainPhase(prepared)
             testTerminalQuiescence?.retainPhase(prepared)
+            testRunErasure?.retainPhase(prepared)
             testRunTerminalCatalog?.retainPhase(prepared)
             testRunOwnerDelete?.retainPhase(prepared)
             testRunOwnerDeleteAll?.retainPhase(prepared)
@@ -899,6 +912,7 @@ internal class PersistencePhaseOwnership private constructor(
             testTerminalEpochSeal?.observeFailure(failure)
             testTerminalQuiescence?.observeFailure(failure)
             testRunTerminalCatalog?.observeFailure(failure)
+            testRunErasure?.observeFailure(failure)
             testRunOwnerDelete?.observeFailure(failure)
             testRunOwnerDeleteAll?.observeFailure(failure)
             testRunAdminDelete?.observeFailure(failure)
@@ -929,6 +943,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testRunPurge?.observeFailure(cleanup)
                 testTerminalEpochSeal?.observeFailure(cleanup)
                 testRunTerminalCatalog?.observeFailure(cleanup)
+                testRunErasure?.observeFailure(cleanup)
                 testRunOwnerDelete?.observeFailure(cleanup)
                 testRunOwnerDeleteAll?.observeFailure(cleanup)
                 testRunAdminDelete?.observeFailure(cleanup)
@@ -958,6 +973,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testRunPurge?.observePhaseCleanup(it) }
                 phase?.let { testTerminalEpochSeal?.observePhaseCleanup(it) }
                 phase?.let { testRunTerminalCatalog?.observePhaseCleanup(it) }
+                phase?.let { testRunErasure?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDelete?.observePhaseCleanup(it) }
                 phase?.let { testRunOwnerDeleteAll?.observePhaseCleanup(it) }
                 phase?.let { testRunAdminDelete?.observePhaseCleanup(it) }
@@ -1194,6 +1210,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
                 PersistencePhasePath.COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
                 PersistencePhasePath.COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+                PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_READ,
+                PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_BATCH,
+                PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_FINAL,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
                 PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
@@ -1438,6 +1457,9 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_SEAL_PREPARE,
         )
         private val DELETION_PATHS = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_READ,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_BATCH,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_FINAL,
             PersistencePhasePath.COMPLAINT_DELETION_MUTATION,
             PersistencePhasePath.COMPLAINT_DELETION_ADMIN_AUDIT,
             PersistencePhasePath.COMPLAINT_DELETION_FENCE_PREFIX,
@@ -1605,6 +1627,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
     COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
     COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+    COMPLAINT_TEST_RUN_ERASURE_READ,
+    COMPLAINT_TEST_RUN_ERASURE_BATCH,
+    COMPLAINT_TEST_RUN_ERASURE_FINAL,
     COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
     COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
     COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,
@@ -1681,6 +1706,10 @@ internal enum class PersistencePhasePath {
         get() = this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ || this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE ||
             this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE
 
+    internal val testRunErasure: Boolean
+        get() = this === COMPLAINT_TEST_RUN_ERASURE_READ || this === COMPLAINT_TEST_RUN_ERASURE_BATCH ||
+            this === COMPLAINT_TEST_RUN_ERASURE_FINAL
+
     internal val testRunSealing: Boolean
         get() = this === COMPLAINT_TEST_RUN_SEAL || this === COMPLAINT_TEST_RUN_SEALED_AUDIT
 
@@ -1733,6 +1762,9 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_RUN_PURGE_PUBLICATION,
             COMPLAINT_TEST_TERMINAL_EPOCH_SEAL,
             COMPLAINT_TEST_TERMINAL_QUIESCENCE,
+            COMPLAINT_TEST_RUN_ERASURE_READ,
+            COMPLAINT_TEST_RUN_ERASURE_BATCH,
+            COMPLAINT_TEST_RUN_ERASURE_FINAL,
             COMPLAINT_CATALOG_TEST_RUN_TERMINAL_CAPTURE,
             COMPLAINT_CATALOG_TEST_RUN_TERMINAL_ACQUIRE,
             COMPLAINT_CATALOG_TEST_RUN_TERMINAL_PREPARE,

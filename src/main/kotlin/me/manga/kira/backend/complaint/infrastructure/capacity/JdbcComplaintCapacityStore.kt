@@ -83,6 +83,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuies
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgeOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalEpochSealOperationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainOperationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureOperationV1
 import me.manga.kira.backend.security.ComplaintGrantCleanupBatch
 import me.manga.kira.backend.security.ComplaintGrantConsumption
 import me.manga.kira.backend.security.StepUpGrantIssuance
@@ -128,6 +129,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
     internal fun lockForTestTerminalEpochSeal(operation: TestTerminalEpochSealOperationV1): LockedTestTerminalEpochSeal = LockedTestTerminalEpochSeal.lock(this, operation)
     internal fun lockForTestOrdinarySeal(operation: TestOrdinarySealOperationV1): LockedTestOrdinarySeal = LockedTestOrdinarySeal.lock(this, operation)
     internal fun lockForTestOrdinaryDrain(operation: TestOrdinaryDrainOperationV1): LockedTestOrdinaryDrain = LockedTestOrdinaryDrain.lock(this, operation)
+    internal fun lockForTestRunErasure(operation: TestRunErasureOperationV1): LockedTestRunErasure = LockedTestRunErasure.lock(this, operation)
 
     internal fun lockForInstallationEnrollment(operation: ComplaintInstallationEnrollmentOperation): LockedInstallationEnrollment =
         LockedInstallationEnrollment.lock(this, operation)
@@ -2331,6 +2333,47 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 } catch (problem: Throwable) {
                     operation.failed(problem)
                 }
+            }
+        }
+    }
+
+    /** One typed erasure transfer. Refunds update free as well; unchanged READ/PURGED balances do not write. */
+    internal class LockedTestRunErasure private constructor(
+        private val store: JdbcComplaintCapacityStore,
+        private val operation: TestRunErasureOperationV1,
+        private val counters: LockedCounters,
+    ) {
+        private var issued = false
+        private var completed = false
+        internal fun completedFor(candidate: TestRunErasureOperationV1) = operation === candidate && completed
+        internal fun settle(candidate: TestRunErasureOperationV1) {
+            try {
+                check(candidate === operation && !issued)
+                operation.requireCounterTransfer(this, store.jdbc); issued = true
+                val before = counters.ledger.balance
+                val after = operation.settleLockedLedger(store.jdbc, counters.ledger, counters.daily, checkNotNull(store.expectedPolicyDigest)).balance
+                for (counter in ComplaintCapacityEncoding.lockOrder()) {
+                    operation.requireCounterTransfer(this, store.jdbc)
+                    if (before.free[counter] == after.free[counter] && before.actual[counter] == after.actual[counter] &&
+                        before.recoveryReserved[counter] == after.recoveryReserved[counter] && before.testReserved[counter] == after.testReserved[counter]) continue
+                    check(store.jdbc.update(TEST_ORDINARY_DRAIN_COUNTER,
+                        after.free[counter], after.actual[counter], after.recoveryReserved[counter], after.testReserved[counter], counter.storedName,
+                        before.free[counter], before.actual[counter], before.recoveryReserved[counter], before.testReserved[counter]) == 1)
+                }
+                operation.requireCounterTransfer(this, store.jdbc)
+                // Read-only exact reread of the already locked catalogue, not another lock prefix.
+                val observed = store.readCounters(READ_COUNTERS)
+                check(observed.ledger.balance == after && observed.daily == counters.daily)
+                operation.requireCounterTransfer(this, store.jdbc); completed = true
+            } catch (problem: Throwable) { operation.failed(problem) }
+        }
+        override fun toString(): String = "LockedTestRunErasure(one-original,exact-physical-refund,redacted)"
+        companion object {
+            internal fun lock(store: JdbcComplaintCapacityStore, operation: TestRunErasureOperationV1): LockedTestRunErasure {
+                try {
+                    operation.beginCounterLock(store.jdbc)
+                    return LockedTestRunErasure(store, operation, store.readLockedCounters())
+                } catch (problem: Throwable) { operation.failed(problem) }
             }
         }
     }

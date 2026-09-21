@@ -18,6 +18,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoun
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveInitialCheckpointV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureV1
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -54,6 +55,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     private val canonical: ByteArray
     private val hash: ByteArray
     private val registrationClaimed = AtomicBoolean()
+    private var erasureOriginal: TestRunErasureV1? = null
 
     init {
         requireOwners()
@@ -146,6 +148,18 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         requireConnectionFree()
         requireRegistrationTarget()
         requireRegistration(original.process === this && registrationClaimed.compareAndSet(false, true))
+    }
+
+    /** Same-lineage partial/PURGED replay, not PREPARED repair or a replacement registration. */
+    internal fun claimTestRunErasure(original: TestRunErasureV1) {
+        requireConnectionFree(); requireRegistrationTarget()
+        requireRegistration(original.process === this && registrationClaimed.compareAndSet(false, true))
+        erasureOriginal = original
+    }
+
+    internal fun requireTestRunErasure(original: TestRunErasureV1) {
+        requireRegistrationTarget()
+        requireRegistration(original.process === this && erasureOriginal === original && registrationClaimed.get())
     }
 
     private fun requireOwners() {

@@ -94,6 +94,11 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_TERMINAL_RELEASE,
         )
         val terminalCatalogPreflight = PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT
+        val erasure = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_READ,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_BATCH,
+            PersistencePhasePath.COMPLAINT_TEST_RUN_ERASURE_FINAL,
+        )
         val registration = setOf(
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
@@ -122,8 +127,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         val initialCheckpoint = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_INITIAL_CHECKPOINT)
         val activeQueue = setOf(PersistencePhasePath.COMPLAINT_TEST_ACTIVE_OWNER_DELETE_QUEUE)
         val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + terminalCatalog + terminalCatalogPreflight +
-            registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor + initialCheckpoint + activeSealRecovery + activeQueue
-        assertEquals(136, PersistencePhasePath.entries.size)
+            registration + initialAdmission + sealing + activeFirstCut + activeSeal + activeFirstCutSuccessor + initialCheckpoint + activeSealRecovery + activeQueue + erasure
+        assertEquals(139, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
@@ -137,7 +142,9 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertEquals(1, activeSealRecovery.size)
         assertEquals(3, activeFirstCutSuccessor.size)
         assertEquals(1, activeQueue.size)
-        assertEquals(91, writers.size)
+        assertEquals(3, erasure.size)
+        assertEquals(erasure, PersistencePhasePath.entries.filter { it.testRunErasure }.toSet())
+        assertEquals(94, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,

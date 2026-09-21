@@ -160,6 +160,61 @@ internal class TestTerminalCodecV1 private constructor(
             Header(buffers.own(json.encodeEventHeader(value)), value.framedValues(), value.nonce)
         }
 
+    /**
+     * Historical exact-reference decode when the accepted erasure already removed V21. References
+     * are comparison data, never catalog/erasure authority. The owning reader separately proves
+     * actual version/retention/full inventory and the original authenticates the complete catalog.
+     * No canonical row is fabricated and no active route is substituted for the retained route.
+     */
+    internal fun openReferenced(
+        kind: TestTerminalCodecKindV1,
+        expectedObjectKey: String,
+        expectedRoutingKeyId: String,
+        expectedId: String,
+        expectedStart: Long,
+        expectedEnd: Long,
+        expectedCanonicalSha256: String,
+        expectedWireSha256: String,
+        wireBytes: ByteArray,
+        attempt: TestTerminalAttemptV1,
+        dataKeys: TestTerminalDataKeyPortV1,
+    ): TestTerminalDecodedV1 = testTerminalCodecBoundary {
+        canonical.checkAttempt(attempt, kind)
+        requireTestTerminalCodec(dataKeys.attempt === attempt && expectedStart > 0 && expectedEnd >= expectedStart &&
+            (kind == TestTerminalCodecKindV1.EPOCH_SEAL || expectedStart == expectedEnd))
+        requireTestTerminalCodec(declaration.routing.keys.any { it.keyId == expectedRoutingKeyId })
+        requireTestTerminalCodec(wireBytes.size in TestTerminalWireV1.OUTER_BYTES..wire.maximumEnvelopeBytes,
+            TestTerminalCodecFailureV1.LIMIT_EXCEEDED)
+        val expected = TestTerminalCanonicalV1.Binding(kind, TestTerminalRouteV1(expectedRoutingKeyId, expectedObjectKey, expectedId),
+            expectedStart, expectedEnd)
+        withTestTerminalBuffers { buffers ->
+            val bytes = buffers.own(wireBytes.copyOf())
+            requireTestTerminalCodec(Sha256.hex(bytes) == expectedWireSha256)
+            val parts = wire.split(bytes, buffers)
+            val header = bindHeader(parts.header, expected) // Exact scope/bucket/KMS/route/epoch before any unwrap.
+            val nonce = buffers.own(Base64.getUrlDecoder().decode(header.nonce))
+            requireTestTerminalCodec(nonce.size == TestTerminalWireV1.NONCE_BYTES && TestTerminalWireV1.encode(nonce) == header.nonce)
+            val associatedData = buffers.own(aad(header, parts.wrapped, parts.ciphertext.size))
+            val wrapped = buffers.own(parts.wrapped.copyOf())
+            val request = request(header, wire.maximumWrappedBytes, attempt, buffers)
+            requireConnectionFree()
+            val lease = try { journalKeyCall { dataKeys.unwrap(request, wrapped) } } finally { wrapped.fill(0) }
+            val plaintext = withJournalDataKey(request, lease, generated = false) { key, _ ->
+                attempt.remainingMillis(1)
+                buffers.own(TestTerminalWireV1.crypt(Cipher.DECRYPT_MODE, key, nonce, associatedData, parts.ciphertext))
+            }
+            // Only after doFinal AND actual key-lease cleanup can plaintext reach the closed parser.
+            attempt.remainingMillis(1)
+            requireTestTerminalCodec(plaintext.size in 1..wire.maximumPlaintextBytes, TestTerminalCodecFailureV1.LIMIT_EXCEEDED)
+            val content = canonical.restoreCanonical(kind, plaintext, expectedRoutingKeyId, expectedObjectKey, expectedCanonicalSha256, attempt)
+            try {
+                requireTestTerminalCodec(canonical.checkedContent(content, buffers).binding == expected)
+                attempt.remainingMillis(1)
+                TestTerminalDecodedV1(content, expectedWireSha256)
+            } catch (problem: Throwable) { content.close(); throw problem }
+        }
+    }
+
     private fun bindHeader(bytes: ByteArray, expected: TestTerminalCanonicalV1.Binding): Header =
         if (expected.kind == TestTerminalCodecKindV1.EPOCH_SEAL) {
             val value = json.sealHeader(bytes)

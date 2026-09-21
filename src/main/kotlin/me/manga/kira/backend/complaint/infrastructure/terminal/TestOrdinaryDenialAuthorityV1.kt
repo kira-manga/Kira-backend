@@ -76,6 +76,18 @@ internal class TestOrdinaryDenialAuthorityPolicyV1 private constructor(
         return CatalogAdmitted(original, this, body, evidence)
     }
 
+    /** Fixed same-lineage eraser admission; historical row bytes are never denial authority. */
+    internal fun readmitErasure(
+        original: TestRunErasureV1, approval: ByteArray, rawEvidence: List<ByteArray>,
+    ): AdmittedErasureOrdinaryDenialV1 {
+        requireConnectionFree()
+        original.requireOrdinaryAuthority(this)
+        val (body, evidence) = verify(approval, rawEvidence)
+        original.requireOrdinaryDenialContext(body, evidence)
+        original.requireOrdinaryAuthority(this)
+        return ErasureAdmitted(original, this, body, evidence)
+    }
+
     /** Cryptographic/closed-body validation only; the two fixed callers separately bind their actual original. */
     private fun verify(approval: ByteArray, rawEvidence: List<ByteArray>): Pair<TestOrdinaryDenialStatementV1, TestTerminalEvidenceDigestV1> {
         val count = rawEvidence.size
@@ -160,6 +172,22 @@ internal class TestOrdinaryDenialAuthorityPolicyV1 private constructor(
         override fun toString(): String = "AdmittedCatalogOrdinaryDenialV1(original-only,redacted)"
     }
 
+    private class ErasureAdmitted(
+        private val original: TestRunErasureV1,
+        private val policy: TestOrdinaryDenialAuthorityPolicyV1,
+        override val statement: TestOrdinaryDenialStatementV1,
+        override val policyEvidence: TestTerminalEvidenceDigestV1,
+    ) : AdmittedErasureOrdinaryDenialV1 {
+        override fun requireOriginal(candidate: TestRunErasureV1) {
+            require(candidate === original) { REFUSAL }
+            original.requireOrdinaryAuthority(policy)
+        }
+        override fun firstStartAfter(): Instant = Instant.ofEpochSecond(Math.addExact(Math.addExact(
+            maxOf(statement.denialEffectiveAtEpochSecond, statement.lastSessionExpiryEpochSecond), statement.acceptedRequestBoundSeconds),
+            Math.multiplyExact(2L, statement.utcUncertaintySeconds)))
+        override fun toString(): String = "AdmittedErasureOrdinaryDenialV1(original-only,redacted)"
+    }
+
     companion object {
         const val PROFILE = "TEST_ORDINARY_DENIAL_AUTHORITY_V1"
         const val PURPOSE = "TEST_ORDINARY_PUT_DENIAL_AND_REQUEST_BOUND_V1"
@@ -222,5 +250,13 @@ internal sealed interface AdmittedCatalogOrdinaryDenialV1 {
     val statement: TestOrdinaryDenialStatementV1
     val policyEvidence: TestTerminalEvidenceDigestV1
     fun requireOriginal(candidate: CatalogTestRunTerminalV1)
+    fun firstStartAfter(): Instant
+}
+
+/** Private admitted wrapper for the exact eraser original only. */
+internal sealed interface AdmittedErasureOrdinaryDenialV1 {
+    val statement: TestOrdinaryDenialStatementV1
+    val policyEvidence: TestTerminalEvidenceDigestV1
+    fun requireOriginal(candidate: TestRunErasureV1)
     fun firstStartAfter(): Instant
 }

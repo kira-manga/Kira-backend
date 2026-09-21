@@ -22,6 +22,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEvidenceDiges
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalInventoryWitnessV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalObjectRefV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPurgeV1
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeleteRows
 import me.manga.kira.backend.complaint.infrastructure.admission.VersionBoundTestNamespaceProcessV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutIdentityV1
@@ -37,6 +38,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDenia
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainPersistenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainActiveHistoryV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalDenialAuthorityPolicyV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceTargetV1
@@ -162,6 +164,10 @@ internal class CatalogTestRunTerminalV1 private constructor(
     private var dualProof: CatalogTestRunTerminalDeliveryReadbackV1? = null
     private var dualSnapshot: CatalogTestRunTerminalSnapshotV1? = null
     private var completeSnapshot: CatalogTestRunTerminalSnapshotV1? = null
+    private var projectedReload: CatalogTestRunTerminalSnapshotV1? = null
+    private var completedResult: CatalogTestRunTerminalResultV1? = null
+    private var erasureClaimed = false
+    private var erasureChild: TestRunErasureV1? = null
     private var lease: CatalogTestRunActivationLeaseV1? = null
     private var leaseOwner: UUID? = null
     private var leaseStartedAt: Long? = null
@@ -219,6 +225,30 @@ internal class CatalogTestRunTerminalV1 private constructor(
         return run(null, request)
     }
 
+    /** Historical successful-original handoff only; no E lease, budget, reader or provider authority is transferred. */
+    internal fun beginErasure(deletionOwner: PersistencePhaseOwnership, deletionJdbc: JdbcTemplate): TestRunErasureV1 {
+        requireActualCleanup(); requireCompletedProjection(); requireProjectedReload()
+        requireTestTerminalCatalog(!erasureClaimed && erasureChild == null)
+        erasureClaimed = true // Spent BEFORE construction; a failed constructor cannot be retried.
+        val child = TestRunErasureV1.begin(this, deletionOwner, deletionJdbc) // Construction only; no IO or admission.
+        erasureChild = child // Retain exact identity BEFORE exposing it or permitting the child's first work.
+        return child
+    }
+
+    /** May run under the child's own SQL holder: inspect only this original's already-closed historical state. */
+    internal fun requireErasureChild(candidate: TestRunErasureV1) {
+        requireCompletedProjection()
+        requireTestTerminalCatalog(erasureClaimed && erasureChild === candidate)
+    }
+
+    /** The child separately authenticates current raw dual history; these are comparisons, never exported authority. */
+    internal fun requireErasureLineage(child: TestRunErasureV1, context: TestTerminalRunContextV1,
+        terminalCatalogGeneration: Long, terminalCatalogSha256: String) {
+        requireActualCleanup(); requireErasureChild(child); requireProjectedReload()
+        requireTestTerminalCatalog(context == runContext && terminalCatalogGeneration == checkNotNull(frozen).generation &&
+            terminalCatalogSha256 == checkNotNull(signed).envelopeSha256)
+    }
+
     private fun run(unsigned: ByteArray?, request: CatalogTestRunTerminalRequestV1): CatalogTestRunTerminalResultV1 {
         requireConnectionFree(); requireTestTerminalCatalog(caller === Thread.currentThread() && !started && !closed)
         started = true
@@ -250,7 +280,10 @@ internal class CatalogTestRunTerminalV1 private constructor(
         finally { runCatching(::close).exceptionOrNull()?.let(::observeFailure) }
         throwIfSignalled(); requireActualCleanup()
         requireTestTerminalCatalog(released && (leaseReleased || projectedReplay) && result != null)
-        return checkNotNull(result)
+        val completed = checkNotNull(result)
+        if (completed === CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED) requireProjectedReload()
+        completedResult = completed // Only AFTER every actual native/file/JDBC/custody/lease cleanup succeeded.
+        return completed
     }
 
     /** An already projected exact row is confirmed read-only, including the global control's xmin. */
@@ -265,6 +298,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
         row.requireSigned(checkNotNull(signed)); row.requireDual(checkNotNull(dualProof))
         final.run.requireProjected(checkNotNull(frozen), checkNotNull(signed), checkNotNull(row.projectedAt))
         checkNotNull(release).requireSnapshot(final)
+        projectedReload = final // Comparison material only until run() has returned through actual cleanup.
         projectedReplay = true
         return CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED
     }
@@ -323,6 +357,7 @@ internal class CatalogTestRunTerminalV1 private constructor(
             checkNotNull(release).requireSnapshot(checkNotNull(snapshot))
             val final = checkNotNull(snapshot)
             final.run.requireProjected(checkNotNull(frozen), checkNotNull(signed), checkNotNull(final.terminal?.projectedAt))
+            projectedReload = final // The actual final RELOAD, not the PROJECT operation's returned row.
             CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED
         } else {
             closeNative()
@@ -935,6 +970,32 @@ internal class CatalogTestRunTerminalV1 private constructor(
     internal fun requireActualCleanup() {
         requireConnectionFree(); requireNoPhase(); throwIfSignalled()
         requireTestTerminalCatalog(caller === Thread.currentThread() && closed && cleanupProven && !cleanupUncertain && (lease == null || leaseReleased))
+    }
+
+    /** Deliberately never calls requireRunning(): E's deadline and ownership ended before this historical child. */
+    private fun requireCompletedProjection() {
+        throwIfSignalled(); requireNoPhase()
+        requireTestTerminalCatalog(caller === Thread.currentThread() && started && closed && stage === Stage.CLOSED && cleanupProven &&
+            !cleanupUncertain && reserved && released && selecting == null && selectedPhase == null && selectedPreflight == null &&
+            completedResult === CatalogTestRunTerminalResultV1.DUAL_COPY_ACCEPTED_AND_PURGING_PROJECTED &&
+            projectedReload != null && projectedReload === snapshot && nativeClosed && native != null &&
+            ordinaryRetired && ordinaryReader != null && terminalRetired && terminalReader != null &&
+            files != null && release != null && release === capturedRelease && releaseRetentionClaimed && releaseCaptureClaimed &&
+            dualProof != null && dualProof === latestProof && dualSnapshot != null && frozen != null && signed != null && record != null &&
+            (projectedReplay && lease == null && leaseOwner == null && leaseStartedAt == null ||
+                !projectedReplay && lease != null && leaseOwner != null && leaseStartedAt != null && leaseReleased))
+    }
+
+    /** Rechecks retained actual native/final-row lineage without resurrecting E or reading custody after close. */
+    private fun requireProjectedReload() {
+        requireActualCleanup()
+        requireTestTerminalCatalog(released && projectedReload != null && projectedReload === snapshot)
+        requireDualSource()
+        val final = checkNotNull(projectedReload); val row = checkNotNull(final.terminal)
+        val input = checkNotNull(frozen); val signature = checkNotNull(signed)
+        input.requireOwner(this); final.requireHead(); row.requireSigned(signature); row.requireDual(checkNotNull(dualProof))
+        final.run.requirePayment(prepared = true, projected = true)
+        final.run.requireProjected(input, signature, checkNotNull(row.projectedAt))
     }
     override fun toString(): String = "CatalogTestRunTerminalV1(original-only,bounded-history,PURGING-only,redacted)"
 

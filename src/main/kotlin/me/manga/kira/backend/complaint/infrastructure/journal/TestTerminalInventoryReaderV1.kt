@@ -1,5 +1,10 @@
 package me.manga.kira.backend.complaint.infrastructure.journal
 
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureEvidenceV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunErasureDocumentV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceTargetV1
+import me.manga.kira.backend.security.TestTerminalJsonV1
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunTerminalV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableStateV1
@@ -27,20 +32,21 @@ import java.util.concurrent.atomic.AtomicReference
 internal class TestTerminalInventoryReaderV1 private constructor(
     private val original: TestRunTerminalQuiescenceV1?,
     private val catalog: CatalogTestRunTerminalV1? = null,
+    private val erasure: TestRunErasureV1? = null,
 ) : AutoCloseable {
-    init { requireJournalPublication((original == null) != (catalog == null)) }
-    internal val routing = original?.routing ?: checkNotNull(catalog).routing
+    init { requireJournalPublication(listOf(original, catalog, erasure).count { it != null } == 1) }
+    internal val routing = original?.routing ?: catalog?.routing ?: checkNotNull(erasure).routing
     internal val sealTerminalPrefix = routing.journalConfiguration.sealTerminalPrefix
-    private val acquisition = original?.acquisition ?: checkNotNull(catalog).acquisition
+    private val acquisition = original?.acquisition ?: catalog?.acquisition ?: checkNotNull(erasure).acquisition
     // D already owns the entire configured scan budget. The separate catalog original also has
     // catalog work in its total, so its terminal pair needs a nonrenewable configured scan cap.
-    private val budget = original?.budget ?: checkNotNull(catalog).budget.capped(
+    private val budget = original?.budget ?: (catalog?.budget ?: checkNotNull(erasure).budget).capped(
         routing.journalConfiguration.declaration().limits.deadlines.scanMillis.toLong())
-    private val runContext = original?.runContext ?: checkNotNull(catalog).runContext
-    private val epoch = original?.epoch ?: checkNotNull(catalog).epoch
-    private val writer = original?.writer ?: checkNotNull(catalog).writer
+    private val runContext = original?.runContext ?: catalog?.runContext ?: checkNotNull(erasure).runContext
+    private val epoch = original?.epoch ?: catalog?.epoch ?: checkNotNull(erasure).epoch
+    private val writer = original?.writer ?: catalog?.writer ?: checkNotNull(erasure).writer
     private val codec = TestTerminalCodecV1.fromRetained(routing, acquisition.nanoTime)
-    private val expected = (original?.targets ?: checkNotNull(catalog).terminalTargets()).associateBy { it.objectRef.objectKey }
+    private val expected = (original?.targets ?: catalog?.terminalTargets() ?: checkNotNull(erasure).terminalTargets()).associateBy { it.objectRef.objectKey }
     private val maximumPages = Math.addExact(routing.journalConfiguration.declaration().limits.capacity.maximumRetainedVersions, 1L)
     private val busy = AtomicBoolean()
     private val closed = AtomicBoolean()
@@ -58,7 +64,8 @@ internal class TestTerminalInventoryReaderV1 private constructor(
         stage = Stage.BEGIN_PASS
         val started = acquisition.sampleUtc()
         if (original != null) original.beginInventoryPass(this, pass, started)
-        else checkNotNull(catalog).beginTerminalInventoryPass(this, pass, started)
+        else if (catalog != null) catalog.beginTerminalInventoryPass(this, pass, started)
+        else checkNotNull(erasure).beginTerminalInventoryPass(this, pass, started)
         val observed = ArrayList<TestPostTerminalInventoryEntryV1>(expected.size)
         val seen = HashSet<String>(expected.size)
         val fold = TestPostTerminalInventoryFoldV1(routing.journalConfiguration, runContext, epoch, expected.size.toLong())
@@ -83,11 +90,12 @@ internal class TestTerminalInventoryReaderV1 private constructor(
                     requireJournalPublication(listed.version == target.objectRef.objectVersion, JournalPublicationFailureV1.INVALID_LISTING)
                     // Only native exchange/byte/key cleanup is required before SQL; idle concrete clients
                     // stay retained in this pass graph. No native call executes with a DB connection held.
+                    val read = if (erasure != null) readHistorical(native, s3, listed, target) else {
                     stage = Stage.SQL_READ
                     val row = if (original != null) original.expectedRow(this, listed.key, listed.version)
                         else checkNotNull(catalog).expectedTerminalRow(this, listed.key, listed.version)
                     stage = Stage.INVENTORY
-                    val read = try {
+                    try {
                         requireJournalPublication(row.state === TestTerminalDurableStateV1.WIRE_FROZEN && row.binding.objectKey == listed.key &&
                             row.binding.objectId == target.id && row.canonicalSha256 == target.objectRef.canonicalSha256 && row.wireSha256 == target.objectRef.ciphertextSha256)
                         val attempt = codec.startAttempt(target.kind, budget).also { codecAttempt = it }
@@ -114,13 +122,15 @@ internal class TestTerminalInventoryReaderV1 private constructor(
                             }, fetched::close)
                         } finally { content.close() }
                     } finally { codecAttempt = null; row.close() }
+                    }
                     fold.entry(read.entry)
                     if (pass == 2) requireJournalPublication(read.entry == checkNotNull(entries[0])[observed.size], JournalPublicationFailureV1.INVALID_READBACK)
                     observed.add(read.entry)
                     currentReadback = read; stage = Stage.STAGING
                     try {
                         if (original != null) original.stageInventoryVersion(this, pass, read)
-                        else checkNotNull(catalog).stageTerminalInventoryVersion(this, pass, read)
+                        else if (catalog != null) catalog.stageTerminalInventoryVersion(this, pass, read)
+                        else checkNotNull(erasure).stageTerminalInventoryVersion(this, pass, read)
                     }
                     finally { currentReadback = null; stage = Stage.INVENTORY }
                 }
@@ -134,8 +144,40 @@ internal class TestTerminalInventoryReaderV1 private constructor(
         requireJournalPublication(finished >= started && graph.get() == null)
         entries[pass - 1] = observed.toList(); completedPasses = pass; stage = Stage.PASS_RELEASED
         if (original != null) original.completeInventoryPass(this, pass, finished, summary)
-        else checkNotNull(catalog).completeTerminalInventoryPass(this, pass, finished, summary)
+        else if (catalog != null) catalog.completeTerminalInventoryPass(this, pass, finished, summary)
+        else checkNotNull(erasure).completeTerminalInventoryPass(this, pass, finished, summary)
         requireReader(); stage = Stage.READY; passAttempt = null
+    }
+
+    /** Exact catalog-linked history; deliberately no ordinary P/L or V21 SQL lookup. */
+    private fun readHistorical(native: AwsTestTerminalInventoryRecoveryV1, s3: TestOrdinaryInventoryS3ClientV1,
+        listed: TestOrdinaryInventoryS3ClientV1.Entry, target: TestTerminalQuiescenceTargetV1): Observed {
+        requireNativeRead()
+        val attempt = codec.startAttempt(target.kind, budget).also { codecAttempt = it }
+        attempt.bindTerminalInventory(this)
+        try {
+            val fetched = s3.getVersion(listed.key, listed.version, attempt)
+            return withJournalPublicationCleanup({
+                val facts = TestRunErasureEvidenceV1.checkReferenced(target, listed, fetched)
+                acquisition.verifyRetention(facts.createdAt, facts.retainedUntil, facts.requestedUntil)
+                val keys = native.openKeys(this, attempt)
+                withJournalPublicationCleanup({
+                    val decoded = codec.openReferenced(target.kind, listed.key,
+                        TestRunErasureEvidenceV1.routingKey(target, routing.journalConfiguration), target.id,
+                        target.startEpoch, target.endEpoch, target.objectRef.canonicalSha256, target.objectRef.ciphertextSha256,
+                        fetched.bytes, attempt, keys)
+                    try {
+                        val document = TestRunErasureDocumentV1.decode(decoded.content, TestTerminalJsonV1(routing.journalConfiguration))
+                        requireJournalPublication(decoded.wireSha256 == target.objectRef.ciphertextSha256)
+                        acquisition.verifyRetention(facts.createdAt, facts.retainedUntil, facts.requestedUntil)
+                        requireNativeRead()
+                        Observed(this, TestPostTerminalInventoryEntryV1(writer, target.kind, target.startEpoch, target.endEpoch,
+                            if (target.kind === TestTerminalCodecKindV1.EPOCH_SEAL) null else target.id, target.objectRef,
+                            listed.size, facts.createdAt, facts.requestedUntil, facts.retainedUntil), document)
+                    } finally { decoded.content.close() }
+                }, { native.releaseKeys(this) })
+            }, fetched::close)
+        } finally { codecAttempt = null }
     }
 
     internal fun requireAcquisition(owner: VersionBoundTestOrdinarySealV1) {
@@ -201,10 +243,30 @@ internal class TestTerminalInventoryReaderV1 private constructor(
     private fun requireCatalogObserved(owner: CatalogTestRunTerminalV1, observed: Observed) {
         requireReader(); requireJournalPublication(original == null && catalog === owner && currentReadback === observed && stage === Stage.STAGING && codecAttempt == null)
     }
+    internal fun requireCompletedErasurePass(owner: TestRunErasureV1, pass: Int) {
+        requireReader(); requireJournalPublication(original == null && catalog == null && erasure === owner && pass in 1..2 && completedPasses >= pass &&
+            graph.get() == null && stage in setOf(Stage.PASS_RELEASED, Stage.READY))
+    }
+    internal fun erasureComparisonEntries(owner: TestRunErasureV1, pass: Int): List<TestPostTerminalInventoryEntryV1> {
+        owner.requireRunning(); failure.get()?.let { throw it }
+        requireJournalPublication(original == null && catalog == null && erasure === owner && pass in 1..2 && completedPasses >= pass && graph.get() == null &&
+            stage in setOf(Stage.PASS_RELEASED, Stage.READY, Stage.CLOSED))
+        return checkNotNull(entries[pass - 1]).toList()
+    }
+    internal fun requireRetiredErasurePair(owner: TestRunErasureV1) {
+        requireConnectionFree(); owner.requireRunning(); failure.get()?.let { throw it }
+        requireJournalPublication(original == null && catalog == null && erasure === owner && closed.get() && stage === Stage.CLOSED && !busy.get() && graph.get() == null &&
+            completedPasses == 2 && entries[0] == entries[1] && entries[0]?.size == expected.size)
+    }
+    private fun requireErasureObserved(owner: TestRunErasureV1, observed: Observed) {
+        requireReader(); requireJournalPublication(original == null && catalog == null && erasure === owner && currentReadback === observed && stage === Stage.STAGING && codecAttempt == null)
+    }
     private fun requireReader() {
         requireConnectionFree(); failure.get()?.let { throw it }
         requireJournalPublication(!closed.get())
-        if (original != null) original.requireInventoryReader(this) else checkNotNull(catalog).requireTerminalInventoryReader(this)
+        if (original != null) original.requireInventoryReader(this)
+        else if (catalog != null) catalog.requireTerminalInventoryReader(this)
+        else checkNotNull(erasure).requireTerminalInventoryReader(this)
         budget.remainingMillis(1)
     }
     private fun requireObserved(owner: TestRunTerminalQuiescenceV1, observed: Observed) {
@@ -240,9 +302,15 @@ internal class TestTerminalInventoryReaderV1 private constructor(
         stage = Stage.CLOSED
     }
     private class Observed(private val reader: TestTerminalInventoryReaderV1,
-        override val entry: TestPostTerminalInventoryEntryV1) : TestTerminalInventoryReadbackV1 {
+        override val entry: TestPostTerminalInventoryEntryV1,
+        private val document: TestRunErasureDocumentV1? = null) : TestTerminalInventoryReadbackV1 {
         override fun requireOriginal(original: TestRunTerminalQuiescenceV1) = reader.requireObserved(original, this)
         override fun requireCatalog(original: CatalogTestRunTerminalV1) = reader.requireCatalogObserved(original, this)
+        override fun requireErasure(original: TestRunErasureV1) = reader.requireErasureObserved(original, this)
+        override fun erasureDocument(original: TestRunErasureV1): TestRunErasureDocumentV1 {
+            requireErasure(original)
+            return checkNotNull(document)
+        }
         override fun toString(): String = "TestTerminalInventoryReadbackV1(actual-native,redacted,no-cut-authority)"
     }
     private enum class Stage { READY, BEGIN_PASS, ACQUISITION, INVENTORY, SQL_READ, STAGING, PASS_RELEASED, CLOSED, FAILED }
@@ -251,6 +319,10 @@ internal class TestTerminalInventoryReaderV1 private constructor(
         internal fun beginCatalog(original: CatalogTestRunTerminalV1): TestTerminalInventoryReaderV1 {
             requireConnectionFree(); original.requireTerminalInventoryStart()
             return TestTerminalInventoryReaderV1(null, original)
+        }
+        internal fun beginErasure(original: TestRunErasureV1): TestTerminalInventoryReaderV1 {
+            requireConnectionFree(); original.requireTerminalInventoryStart()
+            return TestTerminalInventoryReaderV1(null, erasure = original)
         }
         internal fun begin(original: TestRunTerminalQuiescenceV1): TestTerminalInventoryReaderV1 {
             requireConnectionFree(); original.requireInventoryStart()
@@ -263,4 +335,6 @@ internal sealed interface TestTerminalInventoryReadbackV1 {
     val entry: TestPostTerminalInventoryEntryV1
     fun requireOriginal(original: TestRunTerminalQuiescenceV1)
     fun requireCatalog(original: CatalogTestRunTerminalV1)
+    fun requireErasure(original: TestRunErasureV1)
+    fun erasureDocument(original: TestRunErasureV1): TestRunErasureDocumentV1
 }
