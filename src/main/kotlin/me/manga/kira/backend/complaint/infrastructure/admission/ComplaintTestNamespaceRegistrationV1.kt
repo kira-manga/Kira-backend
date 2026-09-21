@@ -48,19 +48,19 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Privately registered TEST target with its actual ordinary/coordinator graph. The original
- * first-PROJECT issuer and separate cold recovery issuer remain distinct; neither opens the gates.
+ * first-PROJECT, cold ACTIVE identity and cold SEALED recovery issuers remain distinct; none opens gates.
  * Closing revokes further use, not already issued JWTs; ordinary transactions retain their guards.
  */
 internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     internal val process: VersionBoundTestNamespaceProcessV1,
     private val activation: Activation,
-    private val recoveryAssembly: ComplaintTestProcessAssemblyV1? = null,
+    private val origin: Origin = Origin.Initial,
 ) : AutoCloseable {
     private val closed = AtomicBoolean()
     private val installation = AtomicReference<InstallationResources?>()
     private val ownerDeleteContinuation = AtomicReference<InstallationResources?>()
     private val initialAdmissionClaimed = AtomicBoolean()
-    private val identityAdmission = AtomicReference<InitialIdentityAdmission?>()
+    private val identityAdmission = AtomicReference<IdentityAdmission?>()
 
     internal fun requireUsable() {
         try {
@@ -75,7 +75,11 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     /** Local lifetime checks also used inside the original sealing holder; never requires another checkout. */
     private fun requireLifetime() {
         requireRegistration(!closed.get())
-        recoveryAssembly?.let { requireRegistration(it.target === process) }
+        when (val current = origin) {
+            Origin.Initial -> Unit
+            is Origin.ColdActive -> requireRegistration(current.assembly.target === process)
+            is Origin.SealedRecovery -> requireRegistration(current.assembly.target === process)
+        }
         process.requireRegistrationTarget()
         requireRegistration(process.pools.ordinary.businessReady() && process.pools.catalogCoordinator.dataSource.businessReady())
         requireRegistration(activation.scope == process.consumers.journalConfiguration.scope.id &&
@@ -84,13 +88,13 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     }
 
     internal fun requireSealingOwner(ownership: PersistencePhaseOwnership) {
-        requireLifetime()
+        requireTerminalOrigin()
         val coordinator = process.pools.catalogCoordinator
         requireRegistration(ownership === coordinator.ownership && ownership.manager === coordinator.manager && ownership.dataSource === coordinator.dataSource)
     }
 
     internal fun requireSealingGate(gate: PersistenceComplaintMaintenanceGateV1) {
-        requireLifetime()
+        requireTerminalOrigin()
         requireRegistration(gate.matchesProjected(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
     }
 
@@ -111,10 +115,24 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         } }.toTypedArray()
     }
 
-    /** Cold recovery only continues already-authorized deletion/drain; it never bootstraps mutation ingress. */
+    /** Initial mutation/sealing rights remain attached to the real first-PROJECT origin only. */
     internal fun requireInitialMutationAdmission() {
         requireLifetime()
-        requireRegistration(recoveryAssembly == null)
+        requireRegistration(origin === Origin.Initial && activation.initial != null)
+    }
+
+    /** The new ACTIVE identity origin cannot be laundered through legacy closed terminal resource methods. */
+    private fun requireTerminalOrigin() {
+        requireLifetime()
+        requireRegistration(origin !is Origin.ColdActive)
+    }
+
+    private fun requireIdentityRouteOrigin() {
+        when (origin) {
+            Origin.Initial -> requireInitialMutationAdmission()
+            is Origin.ColdActive -> requireReleasedIdentityAdmission()
+            is Origin.SealedRecovery -> throw ComplaintTestNamespaceRegistrationExceptionV1()
+        }
     }
 
     /** One initial claim only. Bad/failed attempts spend it; a later maintenance interval is not a retry. */
@@ -141,14 +159,43 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         requireConnectionFree()
         requireInitialAdmissionTarget(original.assembly)
         val current = original.consumeAdmission(this)
-        requireRegistration(identityAdmission.compareAndSet(null, InitialIdentityAdmission(original.assembly, current)))
+        requireRegistration(identityAdmission.compareAndSet(null, IdentityAdmission.Initial(original.assembly, current)))
         requireLifetime()
     }
 
     internal fun requireReleasedIdentityAdmission() {
-        val released = identityAdmission.get()
-        requireRegistration(released != null)
-        requireInitialAdmissionTarget(checkNotNull(released).assembly)
+        try {
+            requireLifetime()
+            when (val released = identityAdmission.get()) {
+                is IdentityAdmission.Initial -> requireInitialAdmissionTarget(released.assembly)
+                is IdentityAdmission.ColdActive -> {
+                    val active = origin as? Origin.ColdActive ?: throw ComplaintTestNamespaceRegistrationExceptionV1()
+                    requireRegistration(activation.initial == null && released.assembly === active.assembly && active.assembly.target === process)
+                }
+                null -> throw ComplaintTestNamespaceRegistrationExceptionV1()
+            }
+        } catch (failure: RuntimeException) {
+            if (failure is CancellationException) throw failure
+            throw ComplaintTestNamespaceRegistrationExceptionV1()
+        }
+    }
+
+    /** Shared current-identity comparison seam, not initial-PROJECT or interrupted-cut/seal authority. */
+    internal fun requireActiveIdentityTarget(assembly: ComplaintTestProcessAssemblyV1) {
+        requireReleasedIdentityAdmission()
+        requireRegistration(checkNotNull(identityAdmission.get()).assembly === assembly && assembly.target === process)
+    }
+
+    internal fun requireActiveIdentityGate(gate: PersistenceComplaintMaintenanceGateV1) {
+        requireReleasedIdentityAdmission()
+        requireRegistration(gate.matchesOpenProjectedActive(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
+    }
+
+    /** Detached [token, scope, generation, envelopeHash, unsigned, unsignedHash] for a fresh typed raw read. */
+    internal fun activeReadbackArguments(): Array<Any?> {
+        requireReleasedIdentityAdmission()
+        return arrayOf(activation.token, activation.scope, activation.generation, activation.envelopeHash.copyOf(),
+            activation.unsigned.copyOf(), activation.unsignedHash.copyOf())
     }
 
     /** Same registered pair inside its original holder, never a checkout or a bootstrap promotion. */
@@ -159,13 +206,13 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
 
     internal fun identityAdmissionArguments(): Array<Any?> {
         requireReleasedIdentityAdmission()
-        return arrayOf(*bootstrapExpectedArguments(), *checkNotNull(identityAdmission.get()).controls.globalIdentityArguments())
+        return arrayOf(*bootstrapExpectedArguments(), *checkNotNull(identityAdmission.get()).globalIdentityArguments())
     }
 
     internal fun requireInstallationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
         try {
             requireUsable()
-            requireInitialMutationAdmission()
+            requireIdentityRouteOrigin()
             ownership.requireBoundComplaintOrdinary(process.pools)
             requireRegistration(jdbc.dataSource === process.pools.ordinary && ownership.dataSource === jdbc.dataSource)
             // One actual admission/manager/template pair for this binding, not another permit owner on the same pool.
@@ -191,13 +238,13 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
 
     /** Comparison inputs only. Only the registered, committed and released concrete read can emit bootstrap data. */
     internal fun bootstrapExpectedArguments(): Array<Any?> {
-        requireInitialMutationAdmission()
+        requireIdentityRouteOrigin()
         return arrayOf(*copySealingArguments(activation.runArguments), *copySealingArguments(activation.controlArguments))
     }
 
     /** Same retained deletion permit/manager/template only; no new pool, request identity or gate opener. */
     internal fun requireOwnerDeleteContinuationResources(ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate) {
-        requireLifetime()
+        requireTerminalOrigin()
         ownership.requireBoundComplaintDeletion(process.pools)
         requireRegistration(process.pools.deletion.businessReady() && jdbc.dataSource === process.pools.deletion)
         ownerDeleteContinuation.compareAndSet(null, InstallationResources(ownership, jdbc))
@@ -207,7 +254,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
     }
 
     internal fun requireOwnerDeleteContinuationGate(gate: PersistenceComplaintMaintenanceGateV1) {
-        requireLifetime()
+        requireTerminalOrigin()
         requireRegistration(gate.matchesProjected(activation.token, activation.scope, activation.unsigned, activation.unsignedHash))
     }
 
@@ -222,6 +269,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
         val configurationHash: String
         val unsigned: ByteArray
         val unsignedHash: ByteArray
+        val envelopeHash: ByteArray
         val runArguments: Array<Any?>
         val controlArguments: Array<Any?>
         val initial: TestInitialAdmissionFactsV1?
@@ -236,7 +284,7 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
             unsignedHash = completed.frozen.unsignedHash()
             val projectedAt = checkNotNull(checkNotNull(completed.snapshot.completedTail).projectedAt)
             val run = completed.frozen.manifest().activationRecord.run
-            val envelopeHash = HexFormat.of().parseHex(completed.signed.envelopeSha256)
+            envelopeHash = HexFormat.of().parseHex(completed.signed.envelopeSha256)
             runArguments = arrayOf(
                 scope, HexFormat.of().parseHex(configurationHash), run.installationLimit, generation, envelopeHash,
                 Timestamp.from(projectedAt), completed.frozen.reserve.toLongArray().joinToString(",", "{", "}"),
@@ -256,18 +304,54 @@ internal class ComplaintTestNamespaceRegistrationV1 private constructor(
             configurationHash = recovered.configurationHash
             unsigned = recovered.tail.unsigned.copyOf()
             unsignedHash = recovered.tail.unsignedHash.copyOf()
+            envelopeHash = recovered.tail.envelopeHash.copyOf()
             runArguments = recovered.runArguments()
             controlArguments = recovered.controlArguments()
         }
+
+        constructor(active: TestNamespaceActiveRegistrationBindingV1) {
+            initial = null
+            token = active.tail.token
+            scope = active.scope
+            generation = active.tail.generation
+            configurationHash = active.configurationHash
+            unsigned = active.tail.unsigned.copyOf()
+            unsignedHash = active.tail.unsignedHash.copyOf()
+            envelopeHash = active.tail.envelopeHash.copyOf()
+            runArguments = active.runArguments()
+            controlArguments = active.controlArguments()
+        }
+    }
+
+    private sealed interface Origin {
+        data object Initial : Origin
+        class ColdActive(val assembly: ComplaintTestProcessAssemblyV1) : Origin
+        class SealedRecovery(val assembly: ComplaintTestProcessAssemblyV1) : Origin
     }
 
     private class InstallationResources(val ownership: PersistencePhaseOwnership, val jdbc: JdbcTemplate)
-    private class InitialIdentityAdmission(val assembly: ComplaintTestProcessAssemblyV1, val controls: TestInitialAdmissionControlsV1)
+    private sealed class IdentityAdmission(val assembly: ComplaintTestProcessAssemblyV1, global: Array<Any?>) {
+        private val globalIdentity = global.map { if (it is ByteArray) it.copyOf() else it }.toTypedArray()
+        fun globalIdentityArguments(): Array<Any?> = globalIdentity.map { if (it is ByteArray) it.copyOf() else it }.toTypedArray()
+        class Initial(assembly: ComplaintTestProcessAssemblyV1, controls: TestInitialAdmissionControlsV1) :
+            IdentityAdmission(assembly, controls.globalIdentityArguments())
+        class ColdActive(assembly: ComplaintTestProcessAssemblyV1, binding: TestNamespaceActiveRegistrationBindingV1) :
+            IdentityAdmission(assembly, binding.globalIdentityArguments())
+    }
 
     companion object {
+        /** Sole cold ACTIVE issuer/latch writer: original known commits and all actual cleanup have already returned. */
+        internal fun issuedByActiveRegistration(original: ComplaintTestNamespaceActiveRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {
+            val active = original.consumeRegistration()
+            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(active), Origin.ColdActive(original.assembly)).also {
+                requireRegistration(it.identityAdmission.compareAndSet(null, IdentityAdmission.ColdActive(original.assembly, active)))
+                it.requireReleasedIdentityAdmission()
+            }
+        }
+
         internal fun issuedByRecovery(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {
             val recovered = original.consumeRegistration()
-            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(recovered), original.assembly)
+            return ComplaintTestNamespaceRegistrationV1(original.process, Activation(recovered), Origin.SealedRecovery(original.assembly))
         }
 
         internal fun issuedBy(original: ComplaintTestNamespaceRegistrationAttemptV1): ComplaintTestNamespaceRegistrationV1 {

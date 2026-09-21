@@ -84,6 +84,7 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         val registration = setOf(
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
+            PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_ACTIVE_REGISTRATION,
         )
         val initialAdmission = setOf(
             PersistencePhasePath.COMPLAINT_TEST_INITIAL_ADMISSION_CAPTURE,
@@ -91,15 +92,15 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         )
         val sealing = setOf(PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL, PersistencePhasePath.COMPLAINT_TEST_RUN_SEALED_AUDIT)
         val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing
-        assertEquals(113, PersistencePhasePath.entries.size)
+        assertEquals(114, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
         assertEquals(3, adminDeletionWriters.size)
         assertEquals(5, terminalWriters.size)
-        assertEquals(2, registration.size)
+        assertEquals(3, registration.size)
         assertEquals(2, initialAdmission.size)
-        assertEquals(68, writers.size)
+        assertEquals(69, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,

@@ -114,6 +114,13 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         requireRegistration(original.process === this && original.assembly.target === this && registrationClaimed.compareAndSet(false, true))
     }
 
+    /** Fresh ACTIVE origin shares the same one-use process claim with initial/SEALED registration. */
+    internal fun claimActiveRegistration(original: ComplaintTestNamespaceActiveRegistrationAttemptV1) {
+        requireConnectionFree()
+        requireRegistrationTarget()
+        requireRegistration(original.process === this && original.assembly.target === this && registrationClaimed.compareAndSet(false, true))
+    }
+
     private fun requireOwners() {
         require(implementationSchema == 1 && desiredGeneration > 0 && isV4(databaseIdentity) && isV4(restoreIdentity)) {
             INVALID_TEST_PROCESS_CONFIGURATION

@@ -38,6 +38,7 @@ import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedCas
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunActivationSignedRecoveryCases
 import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceRegistrationCases
 import me.manga.kira.backend.complaint.catalog.ComplaintTestInitialAdmissionCases
+import me.manga.kira.backend.complaint.catalog.ComplaintTestNamespaceActiveRegistrationCasesV1
 import me.manga.kira.backend.complaint.catalog.InitialAdmissionDriftCut
 import me.manga.kira.backend.complaint.catalog.InitialAdmissionLifetimeCut
 import me.manga.kira.backend.complaint.catalog.InitialAdmissionLockCut
@@ -1333,6 +1334,43 @@ class VersionBoundPersistenceConnectedIT {
     fun testInitialAdmissionEveryRealIdentityPhaseRechecksCurrentRows() {
         InitialIdentityDriftCut.entries.forEach { cut ->
             withFixture(testActivation = true) { ComplaintTestInitialAdmissionCases.everyRealIdentityPhaseRechecksCurrentRows(it, cut) }
+        }
+    }
+
+    @Test
+    fun testColdActiveRegistrationFreshRootAdmitsIdentityAfterEnrollmentWithoutReprojecting() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.freshRootAdmitsIdentityAfterEnrollmentWithoutReprojecting(it)
+    }
+
+    @Test
+    fun testColdActiveRegistrationChangedFullDRefusesBeforeRawRead() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.changedColdFullDRefusesBeforeRawRead(it)
+    }
+
+    @Test
+    fun testColdActiveRegistrationCurrentControlChangedDuringRawReadCannotPublish() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.currentControlChangedDuringRawReadCannotPublish(it)
+    }
+
+    @Test
+    fun testColdActiveRegistrationCurrentAccountingMismatchIsNotRepaid() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.currentAccountingMismatchIsNotRepaid(it)
+    }
+
+    @Test
+    fun testColdActiveRegistrationBothRawCopiesRemainRequired() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.bothRawCopiesRemainRequired(it)
+    }
+
+    @Test
+    fun testColdActiveRegistrationActualNativeCloseRefusalRetainsOriginalCustody() = withFixture(testActivation = true) {
+        ComplaintTestNamespaceActiveRegistrationCasesV1.actualNativeCloseRefusalRetainsOriginalCustody(it)
+    }
+
+    @Test
+    fun testColdActiveRegistrationActualFinalCommitAndCleanupAreRequired() {
+        TestRegistrationCompletionCut.entries.forEach { cut ->
+            withFixture(testActivation = true) { ComplaintTestNamespaceActiveRegistrationCasesV1.actualFinalCommitAndCleanupAreRequired(it, cut) }
         }
     }
 
