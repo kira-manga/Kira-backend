@@ -1,0 +1,109 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 75,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "OPEN_FAILED38_INITIAL_EMPTY_A_POSITIVE_HELD_PENDING_45_ACTUAL_CAUSES",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "9e96f90c1da511a9095e2687e2962a6b38c6f036",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge()"
+      ]
+    },
+    {
+      "annotation_line": 95,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "OPEN_FAILED38_RECURRENT_TWO_ACTIVE_SEAL_POSITIVE_HELD_PENDING_45_ACTUAL_CAUSES",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "9e96f90c1da511a9095e2687e2962a6b38c6f036",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges()"
+      ]
+    },
+    {
+      "annotation_line": 115,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "OPEN_FAILED38_PREPARED_RETAINED_D_POSITIVE_HELD_PENDING_45_ACTUAL_CAUSES",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "9e96f90c1da511a9095e2687e2962a6b38c6f036",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain()"
+      ]
+    },
+    {
+      "annotation_line": 117,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "OPEN_FAILED38_RETAINED_D_VERIFY_LEASE_REQUIRES_45_PREREQUISITES",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "9e96f90c1da511a9095e2687e2962a6b38c6f036",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification()"
+      ]
+    },
+    {
+      "annotation_line": 119,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "OPEN_FAILED38_RETAINED_D_APPLY_CONTROL_REQUIRES_45_PREREQUISITES",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedDPrimaryFinalFullDDriftRollsBackItsActualApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "9e96f90c1da511a9095e2687e2962a6b38c6f036",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "retainedDPrimaryFinalFullDDriftRollsBackItsActualApply()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 5,
+  "expected_total": 5,
+  "selection_basis": {
+    "additional_cold_E_runtimes": 0,
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "OPEN_FAILED38_INITIAL_EMPTY_A_POSITIVE_HELD_PENDING_45_ACTUAL_CAUSES": 1,
+      "OPEN_FAILED38_PREPARED_RETAINED_D_POSITIVE_HELD_PENDING_45_ACTUAL_CAUSES": 1,
+      "OPEN_FAILED38_RECURRENT_TWO_ACTIVE_SEAL_POSITIVE_HELD_PENDING_45_ACTUAL_CAUSES": 1,
+      "OPEN_FAILED38_RETAINED_D_APPLY_CONTROL_REQUIRES_45_PREREQUISITES": 1,
+      "OPEN_FAILED38_RETAINED_D_VERIFY_LEASE_REQUIRES_45_PREREQUISITES": 1
+    },
+    "full_fixture_chains": 5,
+    "gradle_seconds": 2400,
+    "open_failed38_record": "review/working/app-29-recurrent-current-composition-20260921-01/OPEN-FAILED38.json",
+    "prerequisite_focused45": "35648341500: root-reported ACTIVE/PENDING, not PASS; no author result collection",
+    "previous_failed_run": "35638519067",
+    "previous_terminal_run": "35643583997",
+    "remaining_D_E_methods": 17,
+    "remaining_deletion_methods": 9,
+    "required_source": "9e96f90c1da511a9095e2687e2962a6b38c6f036",
+    "retained_D_E_plan": "review/working/app-29-recurrent-terminal-remaining-batch-20260921-01/BATCHES.json",
+    "scope": "Exactly five open failed38 terminal selectors, each retaining its independent full fixture chain; no additional cold-E recovery assemblies. These five are required beyond the retained17, not replacements. Root must resolve/adjudicate relevant focused45 actual causes and prerequisites before binding focused48; the initial-empty-A, recurrent-two-active-seal and prepared retained-D positives remain held pending actual causes. Historical PASS is method/source/scope-specific, never an inferred candidate PASS."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 5
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineRecurrentTwoActiveSealsReachFourSealTerminalWithFullHistoricalAndTailRootsAndOnlyTwoNewV21Charges",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.retainedDPrimaryFinalFullDDriftRollsBackItsActualApply"
+  ]
+}
