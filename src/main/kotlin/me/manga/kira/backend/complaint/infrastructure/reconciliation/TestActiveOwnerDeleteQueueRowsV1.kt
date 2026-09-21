@@ -8,6 +8,7 @@ import java.util.UUID
 internal object TestActiveOwnerDeleteQueueRowsV1 {
     class Current(row: ResultSet) {
         val epoch = long(row, "publication_epoch")
+        val sequence = long(row, "rotation_sequence")
         val token = long(row, "lease_token")
         val owner: UUID? = row.getObject("lease_owner", UUID::class.java)
         val expiresAt: Instant? = row.getTimestamp("lease_expires_at")?.toInstant()
@@ -15,9 +16,17 @@ internal object TestActiveOwnerDeleteQueueRowsV1 {
         private val global = digest(row, "global_fingerprint")
         private val run = digest(row, "run_fingerprint")
         private val control = digest(row, "control_fingerprint")
-        init { requireQueue(boolean(row, "valid") && epoch in 1..2 && token >= 0 && (owner == null) == (expiresAt == null)) }
-        fun requireSame(other: Current) = requireQueue(epoch == other.epoch && global.contentEquals(other.global) &&
-            run.contentEquals(other.run) && control.contentEquals(other.control) && !other.sampledAt.isBefore(sampledAt))
+        private val history = row.getBytes("history_fingerprint")?.also { requireQueue(it.size == 32) }?.copyOf()
+        init { requireQueue(boolean(row, "valid") && epoch > 0 && sequence in 0..14 && token >= 0 &&
+            (sequence < 2) == (history == null) && (owner == null) == (expiresAt == null)) }
+        fun requireSame(other: Current) = requireQueue(epoch == other.epoch && sequence == other.sequence && global.contentEquals(other.global) &&
+            run.contentEquals(other.run) && control.contentEquals(other.control) && history.contentEquals(other.history) && !other.sampledAt.isBefore(sampledAt))
+        /** Bind the reused passive recurrent projection to this actual B observation, including its own lease. */
+        fun requireRecurrentControl(row: ResultSet) = requireQueue(sequence >= 2 && epoch == long(row, "publication_epoch") &&
+            sequence == long(row, "rotation_sequence") && token == long(row, "lease_token") && owner == row.getObject("lease_owner", UUID::class.java) &&
+            expiresAt == row.getTimestamp("lease_expires_at")?.toInstant() && global.contentEquals(digest(row, "global_fingerprint")) &&
+            run.contentEquals(digest(row, "run_fingerprint")) && control.contentEquals(digest(row, "content_fingerprint")) &&
+            !checkNotNull(row.getTimestamp("sampled_at")).toInstant().isBefore(sampledAt))
         fun requireLease(original: TestActiveOwnerDeleteQueueV1) = requireQueue(owner == original.attemptId && token == original.leaseToken &&
             expiresAt == original.leaseExpiresAt && checkNotNull(expiresAt).isAfter(sampledAt))
         override fun toString() = "ActiveQueueCurrent(detached,redacted,no-authority)"

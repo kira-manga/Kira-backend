@@ -140,7 +140,19 @@ internal class TestActiveOwnerDeleteQueueOperationV1 private constructor(
         }
         private fun readCurrent(jdbc: JdbcTemplate, original: TestActiveOwnerDeleteQueueV1): TestActiveOwnerDeleteQueueRowsV1.Current {
             val args = original.identity.arguments()
-            return try { jdbc.query(TestActiveOwnerDeleteQueueSqlV1.current, { row, _ -> TestActiveOwnerDeleteQueueRowsV1.Current(row) }, *args).single() }
+            return try {
+                val before = jdbc.query(TestActiveOwnerDeleteQueueSqlV1.current, { row, _ -> TestActiveOwnerDeleteQueueRowsV1.Current(row) }, *args).single()
+                if (before.sequence < 2) before else {
+                    val (sampledAt, retainedUntil) = TestActiveOwnerDeleteQueueRecurrentCurrentV1.read(jdbc, original, before)
+                    // DB time is sampled again after every source/history read and bounded parse, not
+                    // before them. The physical commitment remains fixed across this whole comparison.
+                    val after = jdbc.query(TestActiveOwnerDeleteQueueSqlV1.current, { row, _ -> TestActiveOwnerDeleteQueueRowsV1.Current(row) }, *args).single()
+                    before.requireSame(after)
+                    val uncertainty = checkNotNull(original.process.ordinarySeal).retention.utcUncertainty.maximumMillis
+                    requireQueue(after.sampledAt >= sampledAt && retainedUntil > after.sampledAt.plusMillis(uncertainty))
+                    after
+                }
+            }
             finally { args.filterIsInstance<ByteArray>().forEach { it.fill(0) } }
         }
         private fun readObservation(jdbc: JdbcTemplate, original: TestActiveOwnerDeleteQueueV1): TestActiveOwnerDeleteQueueRowsV1.Observation? {
