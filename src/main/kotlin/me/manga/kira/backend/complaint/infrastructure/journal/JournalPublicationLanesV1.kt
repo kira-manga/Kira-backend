@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.CommittedTestOwnerDeleteWo
 import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogEpochSealCustodyV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.ReleasedTestActiveCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.ReleasedCutoffPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundEpochSealAcquisitionV1
 import me.manga.kira.backend.security.JournalCodecAttemptV1
@@ -38,6 +39,7 @@ internal class JournalPublicationLanesV1 private constructor(
     private var testJournal: TestOwnerDeleteJournalConfigurationV1? = null
     private val testAdminPrivacy = HashSet<TestAdminDeleteReservation>()
     private val testPrivacy = HashSet<TestOwnerDeleteReservation>()
+    private val testCutoff = HashSet<TestOwnerDeleteReservation>()
     private val testAllPrivacy = HashSet<TestOwnerDeleteAllReservation>()
     private val lock = ReentrantLock()
     private val routine = HashSet<RoutineReservation>()
@@ -66,23 +68,32 @@ internal class JournalPublicationLanesV1 private constructor(
             if (stopping || factory.isClosed() || routineCount() + privacy.size + testPrivacy.size + testAllPrivacy.size + testAdminPrivacy.size >= limits.maximumPublicationLanes.toLong()) return null
             factory.requireLane(this)
             requireTestJournal(factory.journalConfiguration())
-            return TestOwnerDeleteReservation(factory).also { testPrivacy.add(it) }
+            return TestOwnerDeleteReservation(factory, routineOwner = false).also { testPrivacy.add(it) }
         } finally {
             lock.unlock()
         }
     }
 
+    internal fun tryTestActiveCutoff(factory: TestOwnerDeleteJournalPublisherFactoryV1): TestOwnerDeleteReservation? {
+        if (!lock.tryLock()) return null
+        try {
+            if (stopping || factory.isClosed() || privacy.isNotEmpty() || testPrivacy.isNotEmpty() || testAllPrivacy.isNotEmpty() || testAdminPrivacy.isNotEmpty() || routineCount() >= limits.routinePublicationLanes) return null
+            factory.requireCutoffMode(); factory.requireLane(this); requireTestJournal(factory.journalConfiguration())
+            return TestOwnerDeleteReservation(factory, routineOwner = true).also { testCutoff.add(it) }
+        } finally { lock.unlock() }
+    }
+
     private fun requireRunning(owner: TestOwnerDeleteReservation) = lock.withLock {
-        requireJournalPublication(!stopping && !owner.factory.isClosed() && owner in testPrivacy)
+        requireJournalPublication(!stopping && !owner.factory.isClosed() && (if (owner.routineOwner) owner in testCutoff else owner in testPrivacy))
     }
 
     private fun release(owner: TestOwnerDeleteReservation): Boolean = lock.withLock {
-        testPrivacy.remove(owner)
+        if (owner.routineOwner) testCutoff.remove(owner) else testPrivacy.remove(owner)
         !stopping && !owner.factory.isClosed()
     }
 
     internal fun closeFactory(factory: TestOwnerDeleteJournalPublisherFactoryV1) {
-        val owned = lock.withLock { testPrivacy.filter { it.factory === factory } }
+        val owned = lock.withLock { (testPrivacy + testCutoff).filter { it.factory === factory } }
         closeOwners(owned)
     }
 
@@ -254,7 +265,7 @@ internal class JournalPublicationLanesV1 private constructor(
     }
 
     // Call only under the registry lock. Widen before every addition, including held/failed seal owners.
-    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size + testSeals.size + testManifests.size + testPurges.size
+    private fun routineCount(): Long = routine.size.toLong() + cutoff.size + seals.size + testSeals.size + testManifests.size + testPurges.size + testCutoff.size
 
     fun activeOwners(): JournalPublicationLaneSnapshotV1 = lock.withLock { JournalPublicationLaneSnapshotV1(routineCount().toInt(), privacy.size + testPrivacy.size + testAllPrivacy.size + testAdminPrivacy.size) }
 
@@ -280,6 +291,7 @@ internal class JournalPublicationLanesV1 private constructor(
             buildList<AutoCloseable> {
                 addAll(privacy)
                 addAll(testPrivacy)
+                addAll(testCutoff)
                 addAll(testAllPrivacy)
                 addAll(testAdminPrivacy)
                 addAll(cutoff)
@@ -433,6 +445,7 @@ internal class JournalPublicationLanesV1 private constructor(
 
     internal inner class TestOwnerDeleteReservation internal constructor(
         internal val factory: TestOwnerDeleteJournalPublisherFactoryV1,
+        internal val routineOwner: Boolean,
     ) : AutoCloseable {
         private val lifecycle = Any()
         private val construction = TestOwnerDeleteJournalPublisherV1.Construction()
@@ -441,12 +454,14 @@ internal class JournalPublicationLanesV1 private constructor(
         private var caller: Thread? = null
         private var attempt: TestOwnerDeleteCodecAttemptV1? = null
         private var closeFailure: Throwable? = null
+        private var cutoffWork: ReleasedTestActiveCutoffPublicationV1? = null
+        private var cutoffCompleted = false
 
         fun publish(work: CommittedTestOwnerDeleteWork.Prepared): TestOwnerDeleteJournalReadbackV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
                 requireConnectionFree()
                 synchronized(lifecycle) {
-                    requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                    requireJournalPublication(!routineOwner && state == PublicationOwnerStateV1.RESERVED && !stopRequested)
                     requireRunning(this)
                     state = PublicationOwnerStateV1.RUNNING
                     caller = Thread.currentThread()
@@ -463,13 +478,39 @@ internal class JournalPublicationLanesV1 private constructor(
                 )
             }
 
+        /** Same native lifecycle, routine-only. The returned observation is not an APPLY receipt. */
+        internal fun publishCutoff(work: ReleasedTestActiveCutoffPublicationV1): TestOwnerDeleteJournalReadbackV1 =
+            journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
+                requireConnectionFree()
+                synchronized(lifecycle) {
+                    requireJournalPublication(routineOwner && state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                    requireRunning(this)
+                    state = PublicationOwnerStateV1.RUNNING; caller = Thread.currentThread(); cutoffWork = work
+                }
+                val observed = withJournalPublicationCleanup({
+                    val time = factory.startCutoffAttempt(work).also { synchronized(lifecycle) { attempt = it } }
+                    work.retainPublication(this, time)
+                    val publisher = factory.construct(this, construction, time)
+                    requireConstructing(factory, construction, time)
+                    publisher.publishCutoff(work, time).also { requireConstructing(factory, construction, time) }
+                }, ::finishPublication)
+                synchronized(lifecycle) { requireJournalPublication(!stopRequested && state == PublicationOwnerStateV1.CLOSED); cutoffCompleted = true }
+                work.retainReleasedObservation(this, checkNotNull(attempt), observed)
+                observed
+            }
+
+        internal fun requireReleasedCutoff(work: ReleasedTestActiveCutoffPublicationV1, time: TestOwnerDeleteCodecAttemptV1) = synchronized(lifecycle) {
+            requireJournalPublication(routineOwner && cutoffWork === work && attempt === time && state == PublicationOwnerStateV1.CLOSED &&
+                caller == null && cutoffCompleted && closeFailure == null)
+        }
+
         internal fun readExisting(tuple: me.manga.kira.backend.security.TestOwnerDeleteJournalTupleV1, targetId: java.util.UUID, routingKeyId: String): TestOwnerDeleteJournalReadbackV1 =
             journalPublicationCall(JournalPublicationFailureV1.INVALID_BINDING) {
                 requireConnectionFree()
                 factory.requireRecoveryRead() // A registered continuation publishes only its exact retained primary work.
                 requireJournalPublication(tuple.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE)
                 synchronized(lifecycle) {
-                    requireJournalPublication(state == PublicationOwnerStateV1.RESERVED && !stopRequested)
+                    requireJournalPublication(!routineOwner && state == PublicationOwnerStateV1.RESERVED && !stopRequested)
                     requireRunning(this)
                     state = PublicationOwnerStateV1.RUNNING
                     caller = Thread.currentThread()

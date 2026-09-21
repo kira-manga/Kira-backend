@@ -72,7 +72,8 @@ internal class TestTerminalAttemptV1 internal constructor(
         ordinarySealCustody?.requireAttempt(this)
         installationManifestCustody?.requireAttempt(this)
         testRunPurgeCustody?.requireAttempt(this)
-        return remainingMillis(ceilingMillis)
+        val local = remainingMillis(ceilingMillis)
+        return minOf(local, ordinarySealCustody?.remainingProviderMillis(local) ?: local)
     }
 
     @Synchronized

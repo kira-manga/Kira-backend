@@ -19,6 +19,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.TestActiveFirs
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceActiveRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunSealingPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestActiveOrdinarySealPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestOrdinarySealPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInstallationManifestPublicationPhaseExecutorV1
@@ -80,6 +81,8 @@ internal class CatalogCoordinatorPersistence private constructor(
     private var testActiveRegistrationExecutor: ComplaintTestNamespaceActiveRegistrationPhaseExecutorV1? = null
     private var testInstallationManifestExecutor: ComplaintTestInstallationManifestPhaseExecutorV1? = null
     internal val testInstallationManifest: ComplaintTestInstallationManifestPhaseExecutorV1 get() = checkNotNull(testInstallationManifestExecutor)
+    private var testActiveOrdinarySealExecutor: ComplaintTestActiveOrdinarySealPhaseExecutorV1? = null
+    internal val testActiveOrdinarySeal: ComplaintTestActiveOrdinarySealPhaseExecutorV1 get() = checkNotNull(testActiveOrdinarySealExecutor)
     private var testOrdinarySealExecutor: ComplaintTestOrdinarySealPhaseExecutorV1? = null
     internal val testOrdinarySeal: ComplaintTestOrdinarySealPhaseExecutorV1 get() = checkNotNull(testOrdinarySealExecutor)
     private var testOrdinaryDrainExecutor: ComplaintTestOrdinaryDrainPhaseExecutorV1? = null
@@ -155,6 +158,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         testActiveRegistrationExecutor = ComplaintTestNamespaceActiveRegistrationPhaseExecutorV1(this)
         testRunSealingExecutor = ComplaintTestRunSealingPhaseExecutorV1(this)
         testOrdinarySealExecutor = ComplaintTestOrdinarySealPhaseExecutorV1(this)
+        testActiveOrdinarySealExecutor = ComplaintTestActiveOrdinarySealPhaseExecutorV1(this)
         testInstallationManifestExecutor = ComplaintTestInstallationManifestPhaseExecutorV1(this)
         testInstallationManifestPublicationExecutor = ComplaintTestInstallationManifestPublicationPhaseExecutorV1(this)
         testRunPurgeExecutor = ComplaintTestRunPurgePhaseExecutorV1(this)

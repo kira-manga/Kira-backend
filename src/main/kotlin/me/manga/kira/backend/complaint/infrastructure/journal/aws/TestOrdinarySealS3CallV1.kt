@@ -31,14 +31,14 @@ internal class TestOrdinarySealS3CallV1 private constructor(
     val declaration = routing.journalConfiguration.declaration()
     val objectKey get() = binding.frozen.binding.objectKey
     private val started = nanoTime()
-    private val allowance = binding.attempt.remainingMillis(declaration.limits.deadlines.s3CallMillis) * 1_000_000L
+    private val allowance = binding.attempt.remainingProviderMillis(declaration.limits.deadlines.s3CallMillis) * 1_000_000L
     private var lastElapsed = 0L
     private var expired = false
     @Synchronized fun remainingMillis(): Int {
         requireConnectionFree()
         if (Thread.currentThread().isInterrupted) throw InterruptedException()
         binding.requirePublicationStart()
-        val total = binding.attempt.remainingMillis(declaration.limits.deadlines.s3CallMillis)
+        val total = binding.attempt.remainingProviderMillis(declaration.limits.deadlines.s3CallMillis)
         val elapsed = nanoTime() - started
         val remaining = (allowance - elapsed) / 1_000_000L
         if (expired || elapsed < 0 || elapsed < lastElapsed || remaining <= 0) {

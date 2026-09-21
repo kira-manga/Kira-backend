@@ -96,8 +96,12 @@ class PersistenceComplaintMaintenanceFenceV1Test {
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
         )
-        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut
-        assertEquals(117, PersistencePhasePath.entries.size)
+        val activeSeal = setOf(
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_ORDINARY_SEAL,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_CUTOFF_EVIDENCE,
+        )
+        val writers = oldWriters + testWriters + adminWriters + adminDeletionWriters + terminalWriters + registration + initialAdmission + sealing + activeFirstCut + activeSeal
+        assertEquals(119, PersistencePhasePath.entries.size)
         assertEquals(40, oldWriters.size)
         assertEquals(11, testWriters.size)
         assertEquals(3, adminWriters.size)
@@ -106,7 +110,8 @@ class PersistenceComplaintMaintenanceFenceV1Test {
         assertEquals(3, registration.size)
         assertEquals(2, initialAdmission.size)
         assertEquals(3, activeFirstCut.size)
-        assertEquals(72, writers.size)
+        assertEquals(2, activeSeal.size)
+        assertEquals(74, writers.size)
         assertEquals(writers, PersistencePhasePath.entries.filter { it.complaintMaintenanceWriter }.toSet())
         val source = setOf(
             PersistencePhasePath.SOURCE_GRANT_CLEANUP,

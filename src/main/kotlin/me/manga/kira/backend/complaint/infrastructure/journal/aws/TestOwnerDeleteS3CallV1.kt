@@ -1,5 +1,6 @@
 package me.manga.kira.backend.complaint.infrastructure.journal.aws
 
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.ReleasedTestActiveCutoffPublicationV1
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.infrastructure.CommittedOwnerDeleteAllWork
@@ -30,11 +31,13 @@ internal class TestOwnerDeleteS3BindingV1 private constructor(
     private val allWork: CommittedOwnerDeleteAllWork.Prepared? = null,
     private val adminStore: JdbcComplaintAdminDeleteStore? = null,
     private val adminWork: CommittedTestAdminDeleteWork.Prepared? = null,
+    private val cutoffWork: ReleasedTestActiveCutoffPublicationV1? = null,
 ) {
     fun requirePublicationStart() {
         requireConnectionFree()
         requireJournalPublication(event.belongsTo(routing))
         attempt.requireOwner(routing)
+        cutoffWork?.requirePublication(routing, event, attempt)
         if (adminWork != null) requireJournalPublication(checkNotNull(adminStore).preparedEvent(adminWork) === event)
         if (work != null) requireJournalPublication(checkNotNull(store).preparedEvent(work) === event)
         if (allWork != null) {
@@ -42,8 +45,11 @@ internal class TestOwnerDeleteS3BindingV1 private constructor(
             requireJournalPublication(original.belongsTo(routing) && original.route == event.route && original.canonicalBytes().contentEquals(event.canonicalBytes()))
         }
     }
-    fun requirePut() { requirePublicationStart(); requireJournalPublication(listOf(work != null && store != null, allWork != null && allStore != null, adminWork != null && adminStore != null).count { it } == 1) }
+    fun requirePut() { requirePublicationStart(); requireJournalPublication(listOf(work != null && store != null, allWork != null && allStore != null, adminWork != null && adminStore != null, cutoffWork != null).count { it } == 1) }
     companion object {
+        internal fun releasedCutoff(work: ReleasedTestActiveCutoffPublicationV1, routing: TestOwnerDeleteJournalRoutingV1,
+            attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteS3BindingV1 =
+            TestOwnerDeleteS3BindingV1(routing, work.event, attempt, null, null, cutoffWork = work).also { it.requirePut() }
         internal fun released(store: JdbcComplaintAdminDeleteStore, work: CommittedTestAdminDeleteWork.Prepared,
             routing: TestOwnerDeleteJournalRoutingV1, attempt: TestOwnerDeleteCodecAttemptV1): TestOwnerDeleteS3BindingV1 {
             requireConnectionFree()

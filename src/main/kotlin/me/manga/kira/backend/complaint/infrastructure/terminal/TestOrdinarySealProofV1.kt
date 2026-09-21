@@ -5,6 +5,7 @@ import kotlinx.serialization.json.put
 import me.manga.kira.backend.common.CanonicalJson
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOrdinarySealV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalFetchedVersionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalListedVersionV1
 import me.manga.kira.backend.complaint.infrastructure.journal.aws.JournalPutObservationV1
@@ -31,6 +32,7 @@ internal class TestOrdinarySealProofV1 private constructor(
     val verifiedAt: Instant,
 ) {
     internal fun requireOriginal(original: TestRunOrdinarySealV1) { custody.requireReleasedProof(original, this) }
+    internal fun requireOriginal(original: TestActiveOrdinarySealV1) { custody.requireReleasedProof(original, this) }
 
     /** Stored comparison bytes, not a capability. Exact replay preserves its first observed timestamp. */
     internal fun canonicalBytes(row: TestTerminalDurableRowV1, at: Instant = verifiedAt): ByteArray {

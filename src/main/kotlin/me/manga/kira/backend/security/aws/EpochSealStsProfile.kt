@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineBootstrapGrammar
 import me.manga.kira.backend.security.EpochSealAttemptV1
+import me.manga.kira.backend.security.TestOwnerDeleteCodecAttemptV1
 import me.manga.kira.backend.security.TestTerminalAttemptV1
 import me.manga.kira.backend.complaint.domain.TestOwnerDeleteJournalConfigurationV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalSyntaxV1
@@ -164,10 +165,12 @@ internal object EpochSealStsPolicy {
 
 /** A stricter acquisition slice retains, never restarts, the original enclosing seal attempt. */
 internal class EpochSealStsAcquisition private constructor(
-    private val live: EpochSealAttemptV1?, private val test: TestTerminalAttemptV1?, private val nanoTime: () -> Long,
+    private val live: EpochSealAttemptV1?, private val test: TestTerminalAttemptV1?,
+    private val publication: TestOwnerDeleteCodecAttemptV1?, private val nanoTime: () -> Long,
 ) {
-    constructor(original: EpochSealAttemptV1, nanoTime: () -> Long) : this(original, null, nanoTime)
-    constructor(original: TestTerminalAttemptV1, nanoTime: () -> Long) : this(null, original, nanoTime)
+    constructor(original: EpochSealAttemptV1, nanoTime: () -> Long) : this(original, null, null, nanoTime)
+    constructor(original: TestTerminalAttemptV1, nanoTime: () -> Long) : this(null, original, null, nanoTime)
+    constructor(original: TestOwnerDeleteCodecAttemptV1, nanoTime: () -> Long) : this(null, null, original, nanoTime)
     private val started = nanoTime()
     private var lastElapsed = 0L
     private var failed = false
@@ -182,7 +185,9 @@ internal class EpochSealStsAcquisition private constructor(
         lastElapsed = elapsed
         val remaining = ((9_000_000_000L - elapsed) / 1_000_000).toInt()
         requireEpochSealSts(remaining > 0, EpochSealStsFailure.DEADLINE_EXHAUSTED)
-        return live?.remainingProviderMillis(minOf(ceiling, remaining)) ?: checkNotNull(test).remainingProviderMillis(minOf(ceiling, remaining))
+        return live?.remainingProviderMillis(minOf(ceiling, remaining))
+            ?: test?.remainingProviderMillis(minOf(ceiling, remaining))
+            ?: checkNotNull(publication).remainingMillis(minOf(ceiling, remaining))
     }
 
     override fun toString(): String = "EpochSealStsAcquisition(original-budget,no-lease-authority)"
