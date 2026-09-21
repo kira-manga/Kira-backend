@@ -244,11 +244,14 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
 
     fun assertSqlReleased() {
         precursor.assertSqlReleased()
+        assertQueueSqlQuiescent()
+        coordinator.assertNoLostAssertions(); deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
+    }
+    private fun assertQueueSqlQuiescent() {
         requireConnectionFree(); assertNull(PersistencePhaseOwnership.current())
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
         assertEquals(0, runtime.pools.catalogCoordinator.activeSnapshotOwners())
         (coordinator.observations.values + deletionObservations.values).forEach { assertTrue(it.lease.completion.quiescent()) }
-        coordinator.assertNoLostAssertions(); deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
     }
     fun assertProviderBoundary() {
         assertSqlReleased()
@@ -324,11 +327,17 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         initial.p.f.http.beforeRead = beforeRead
         deletion.before = beforeDeletion; deletion.after = afterDeletion
         assertSame(coordinator, field.get(executor)); field.set(executor, actual)
-        raw.detach(this); coordinator.assertNoLostAssertions(); deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
-        requireConnectionFree()
-        // B owns only its observation teardown. A then removes deletion N/P/L; creator/initial
-        // nesting owns its genuine domain/identity history. This is not a product refund/purge.
-        observer.update("DELETE FROM complaint_test_active_queue_observations WHERE data_scope_id = ?", scope)
+        raw.detach(this)
+        // A sticky test verdict must still be reported, but must not strand this owned FK child
+        // after all SQL writers are independently proved retired. No assertion is cleared.
+        AutoCloseable {
+            coordinator.assertNoLostAssertions(); deletion.assertNoLostAssertions(); raw.assertNoLostAssertions()
+        }.use {
+            precursor.assertSqlQuiescent(); assertQueueSqlQuiescent()
+            // B owns only its observation teardown. A then removes deletion N/P/L; creator/initial
+            // nesting owns its genuine domain/identity history. This is not a product refund/purge.
+            observer.update("DELETE FROM complaint_test_active_queue_observations WHERE data_scope_id = ?", scope)
+        }
     }
     private data class ExpectedAppliedObject(val key: String, val version: String, val eventId: String, val ciphertextHash: String,
         val writer: UUID, val epoch: Long, val kind: String, val targetCount: Int, val scope: UUID, val testOnly: Boolean)

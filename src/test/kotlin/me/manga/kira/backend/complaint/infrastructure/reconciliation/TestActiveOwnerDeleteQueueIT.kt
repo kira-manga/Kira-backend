@@ -42,11 +42,11 @@ import org.junit.jupiter.api.parallel.Execution
 import org.junit.jupiter.api.parallel.ExecutionMode
 import org.slf4j.LoggerFactory
 import org.springframework.jdbc.core.JdbcTemplate
-import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.InterruptedIOException
 import java.security.MessageDigest
+import java.sql.Connection
 import java.sql.Timestamp
 import java.time.Duration
 import java.util.Base64
@@ -138,9 +138,12 @@ class TestActiveOwnerDeleteQueueIT {
             completeRecurrentQueueHistory(h)
             h.withFreshQueue { b ->
                 val original = recurrentQueueHistoryImage(h); val checkpoint = (b.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
-                mutateRecurrentQueueHistory(b, source = false) { jdbc ->
-                    assertEquals(1, if (partial) jdbc.update("UPDATE complaint_test_active_checkpoint_history SET checkpoint_bytes = NULL, checkpoint_hash = NULL, checkpointed_at = NULL WHERE data_scope_id = ? AND ordinal = 2", b.scope)
-                        else jdbc.update("DELETE FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? AND ordinal = 2", b.scope))
+                mutateRecurrentQueueHistory(b, source = false) { connection ->
+                    connection.prepareStatement(if (partial) "UPDATE complaint_test_active_checkpoint_history SET checkpoint_bytes = NULL, checkpoint_hash = NULL, checkpointed_at = NULL WHERE data_scope_id = ? AND ordinal = 2"
+                        else "DELETE FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? AND ordinal = 2").use { statement ->
+                        statement.queryTimeout = 1; statement.setObject(1, b.scope)
+                        assertEquals(1, statement.executeUpdate())
+                    }
                 }
                 val damaged = recurrentQueueHistoryImage(h)
                 assertEquals(original - "complaint_test_active_checkpoint_history", damaged - "complaint_test_active_checkpoint_history")
@@ -171,22 +174,32 @@ class TestActiveOwnerDeleteQueueIT {
                         cut = call
                         assertEquals(1, b.raw.order.count { it == "GET" }); assertEquals(1, b.raw.order.count { it == "DECRYPT" })
                         assertTrue(b.raw.ackRequests.isEmpty())
-                        assertEquals(domain, b.domainImage(), "The actual epoch2 event was already APPLIED before this queue original.")
-                        if (afterApply) b.deletionObservations.keys.forEach { phase ->
-                            assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
-                            assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(checkNotNull(b.original)))
-                        }
-                        val history = recurrentQueueHistoryImage(h)
-                        mutateRecurrentQueueHistory(b, source = !afterApply) { jdbc ->
+                        val resources = TransactionSynchronizationManager.getResourceMap().toMap()
+                        // This callback runs inside the original Spring phase. Independent observer
+                        // reads/writes must use raw JDBC, never enlist foreign JdbcTemplate holders.
+                        b.precursor.raw { observer ->
+                            assertEquals(domain, recurrentQueueBodyImage(b, observer) - "complaint_test_active_queue_observations",
+                                "The actual epoch2 event was already APPLIED before this queue original.")
+                            if (afterApply) b.deletionObservations.keys.forEach { phase ->
+                                assertEquals(PersistenceDatabaseOutcome.COMMITTED, phase.databaseOutcome())
+                                assertTrue(phase.testActiveOwnerDeleteQueueCleanupProven(checkNotNull(b.original)))
+                            }
+                            val history = recurrentQueueHistoryImage(h, observer)
+                            mutateRecurrentQueueHistory(b, source = !afterApply) { connection ->
+                                val table = if (afterApply) "complaint_test_active_checkpoint_history" else "complaint_test_active_recurrent_seal_intents"
+                                val ordinal = if (afterApply) "ordinal" else "rotation_sequence"
+                                connection.prepareStatement("UPDATE $table SET charged_storage_bytes = charged_storage_bytes WHERE data_scope_id = ? AND $ordinal = 2").use { statement ->
+                                    statement.queryTimeout = 1; statement.setObject(1, b.scope)
+                                    assertEquals(1, statement.executeUpdate())
+                                }
+                            }
+                            assertEquals(immutable, recurrentQueueImmutableImage(h, observer), "Every source/archive/checkpoint/native byte is identical; only the selected physical xmin changed.")
+                            val changed = recurrentQueueHistoryImage(h, observer)
                             val table = if (afterApply) "complaint_test_active_checkpoint_history" else "complaint_test_active_recurrent_seal_intents"
-                            val ordinal = if (afterApply) "ordinal" else "rotation_sequence"
-                            assertEquals(1, jdbc.update("UPDATE $table SET charged_storage_bytes = charged_storage_bytes WHERE data_scope_id = ? AND $ordinal = 2", b.scope))
+                            assertFalse(history.getValue(table) == changed.getValue(table)); assertEquals(history - table, changed - table)
+                            damaged = recurrentQueueImage(h, b, observer)
                         }
-                        assertEquals(immutable, h.immutableImage(), "Every source/archive/checkpoint/native byte is identical; only the selected physical xmin changed.")
-                        val changed = recurrentQueueHistoryImage(h)
-                        val table = if (afterApply) "complaint_test_active_checkpoint_history" else "complaint_test_active_recurrent_seal_intents"
-                        assertFalse(history.getValue(table) == changed.getValue(table)); assertEquals(history - table, changed - table)
-                        damaged = recurrentQueueImage(h, b)
+                        assertEquals(resources, TransactionSynchronizationManager.getResourceMap(), "Adversarial observation did not enlist or replace any original Spring resource.")
                     }
                 }
                 val original = b.begin()
@@ -1249,19 +1262,42 @@ class TestActiveOwnerDeleteQueueIT {
         h.raw.sts.requests.size, h.raw.kms.requests.size, h.raw.queue.order.size, h.raw.queue.requests.size,
         h.raw.queue.sts.requests.size, h.raw.queue.kms.requests.size, h.raw.queue.sqs.requests.size)
 
-    private fun recurrentQueueHistoryImage(h: TestActiveRecurrentFixtureV1): Map<String, List<String>> = listOf(
-        "complaint_test_active_seal_intents", "complaint_test_active_recurrent_seal_intents", "complaint_test_active_checkpoint_history",
-    ).associateWith { table -> h.observer.queryForList(
-        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text COLLATE \"C\"",
-        String::class.java, h.scope) }
+    private fun recurrentQueueHistoryImage(h: TestActiveRecurrentFixtureV1): Map<String, List<String>> =
+        h.precursor.raw { recurrentQueueHistoryImage(h, it) }
 
-    private fun recurrentQueueImage(h: TestActiveRecurrentFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1) =
-        b.image() + recurrentQueueHistoryImage(h) + ("queue_current_controls" to b.observer.queryForList(
+    private fun recurrentQueueHistoryImage(h: TestActiveRecurrentFixtureV1, observer: Connection): Map<String, List<String>> = listOf(
+        "complaint_test_active_seal_intents", "complaint_test_active_recurrent_seal_intents", "complaint_test_active_checkpoint_history",
+    ).associateWith { table -> recurrentQueueRows(observer,
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text COLLATE \"C\"",
+        h.scope) }
+
+    private fun recurrentQueueImmutableImage(h: TestActiveRecurrentFixtureV1, observer: Connection): Map<String, List<String>> = listOf(
+        "complaint_test_active_seal_intents", "complaint_test_active_recurrent_seal_intents", "complaint_test_active_checkpoint_history",
+    ).associateWith { table -> recurrentQueueRows(observer,
+        "SELECT to_jsonb(t)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", h.scope) }
+
+    private fun recurrentQueueBodyImage(b: TestActiveOwnerDeleteQueueFixtureV1, observer: Connection): Map<String, List<String>> =
+        TestActiveOwnerDeleteQueueFixtureV1.TABLES.associateWith { table -> recurrentQueueRows(observer,
+            "SELECT jsonb_build_array(to_jsonb(r), r.xmin::text)::text FROM $table r WHERE data_scope_id = ? ORDER BY to_jsonb(r)::text COLLATE \"C\"", b.scope) } +
+            ("audit" to recurrentQueueRows(observer, "SELECT to_jsonb(a)::text FROM audit_log a WHERE complaint_data_scope_id = ? ORDER BY id", b.scope))
+
+    private fun recurrentQueueImage(h: TestActiveRecurrentFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1): Map<String, List<String>> =
+        b.precursor.raw { recurrentQueueImage(h, b, it) }
+
+    private fun recurrentQueueImage(h: TestActiveRecurrentFixtureV1, b: TestActiveOwnerDeleteQueueFixtureV1, observer: Connection): Map<String, List<String>> =
+        recurrentQueueBodyImage(b, observer) + recurrentQueueHistoryImage(h, observer) + ("queue_current_controls" to recurrentQueueRows(observer,
             "SELECT jsonb_build_array(to_jsonb(c), c.xmin::text)::text FROM complaint_journal_control c WHERE data_scope_id IN (?, ?) ORDER BY data_scope_id",
-            String::class.java, UUID(0, 0), b.scope))
+            UUID(0, 0), b.scope))
+
+    private fun recurrentQueueRows(observer: Connection, sql: String, vararg arguments: Any): List<String> =
+        observer.prepareStatement(sql).use { statement ->
+            statement.queryTimeout = 1
+            arguments.forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { rows -> buildList { while (rows.next()) add(rows.getString(1)) } }
+        }
 
     /** Explicit negative physical damage only. Never insert, repair, or reuse damaged history positively. */
-    private fun mutateRecurrentQueueHistory(b: TestActiveOwnerDeleteQueueFixtureV1, source: Boolean, action: (JdbcTemplate) -> Unit) {
+    private fun mutateRecurrentQueueHistory(b: TestActiveOwnerDeleteQueueFixtureV1, source: Boolean, action: (Connection) -> Unit) {
         val table = if (source) "complaint_test_active_recurrent_seal_intents" else "complaint_test_active_checkpoint_history"
         val trigger = if (source) "complaint_test_active_recurrent_seal_immutable" else "complaint_test_active_history_immutable"
         // The existing raw observer also permits a separate committed input at a before-SQL callback.
@@ -1270,7 +1306,7 @@ class TestActiveOwnerDeleteQueueIT {
             connection.autoCommit = false
             try {
                 connection.createStatement().use { it.queryTimeout = 1; it.execute("ALTER TABLE $table DISABLE TRIGGER $trigger") }
-                action(JdbcTemplate(SingleConnectionDataSource(connection, true)))
+                action(connection)
                 connection.createStatement().use { it.queryTimeout = 1; it.execute("ALTER TABLE $table ENABLE TRIGGER $trigger") }
                 connection.commit()
             } finally { connection.rollback() }
