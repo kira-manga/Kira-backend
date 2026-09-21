@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -10,8 +11,8 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 
 /**
  * SOURCE ONLY / NOT_COMPILED / NOT_RUN. Actual PG/TLS and genuine registered native fixture chain;
- * only raw provider HTTP is substituted. Initial-only CREATE and explicit read/CREATE HTTP subsets,
- * not recurrence/reply/health/queue, default activation or deployment.
+ * only raw provider HTTP is substituted. Initial-only CREATE and separately selected read/CREATE/REPLY,
+ * not recurrence/edit/health/queue, default activation or deployment.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -62,6 +63,28 @@ class TestRegisteredInitialCheckpointCreateIT {
     @Test fun explicitLoopbackStartupReadsOnlyOwnCreatedItemsAndScopedNoticesWithBoundCursorAndNoReadMutation() = withFixture {
         TestRegisteredHttpStartupCasesV1.ownerReadsNoticesAndCursor(it)
     }
+    @Test fun explicitReplyStartupCreatesOnlyOwnReportReplyAndReplaysItsExactReceiptWithoutAnotherCharge() = withFixture {
+        TestRegisteredHttpStartupCasesV1.ownReportReply(it)
+    }
+    @Test fun explicitReplyStartupInheritsScopedNoticeKeyThroughReplyToReplyWithoutServerProse() = withFixture {
+        TestRegisteredHttpStartupCasesV1.noticeReplyThread(it)
+    }
+    @Test fun explicitReplyStartupReceiptsForeignParentDenialWithoutContentResourceOrAuditMutation() = withFixture {
+        TestRegisteredHttpStartupCasesV1.foreignParentReply(it)
+    }
+    @Test fun actualRegisteredReplyClaimLoserReplaysBeforeClosedControlsAndNeverDuplicatesCapacityOrAudit() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = replyInput(), action = TestRegisteredInitialCheckpointCreateRaceCasesV1::replyClaimLoser)
+    }
+    @Test fun actualReplyParentResourceWaitCrossesCheckpointExpiryAndRollsBackProvisionalChildWhileReplaySurvives() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, shortFreshness = true, initialCheckpointCreate = replyInput()) { fixture ->
+            TestRegisteredInitialCheckpointCreateRaceCasesV1.replyWaitedCheckpointExpiry(fixture, resource = true)
+        }
+    }
+    @Test fun actualReplyParentContentWaitCrossesCheckpointExpiryBeforeContentOrReceiptCompletionWhileReplaySurvives() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, shortFreshness = true, initialCheckpointCreate = replyInput()) { fixture ->
+            TestRegisteredInitialCheckpointCreateRaceCasesV1.replyWaitedCheckpointExpiry(fixture, resource = false)
+        }
+    }
     @Test fun explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen() = withFixture {
         TestRegisteredHttpStartupCasesV1.heldRequestDrainsBeforeJpaClose(it)
     }
@@ -71,4 +94,5 @@ class TestRegisteredInitialCheckpointCreateIT {
 
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use { it.bind(); action(it) }
+    private fun replyInput() = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.REPLY_PROFILE)
 }

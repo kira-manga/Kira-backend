@@ -36,6 +36,7 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
     private val assembly: ComplaintTestProcessAssemblyV1,
     private val ownership: PersistencePhaseOwnership,
     private val jdbc: JdbcTemplate,
+    private val replyPolicy: VersionBoundTestInitialCheckpointCreateV1? = null,
 ) {
     private val process = registration.process
     internal val policy = checkNotNull(process.initialCheckpointCreate)
@@ -63,6 +64,8 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
     /** Local retained-owner checks only; safe during begin/SQL ownership, no checkout/JSON/provider. */
     internal fun requirePhaseOwner(selected: PersistencePhaseOwnership) {
         check(selected === ownership && assembly.target === process && process.initialCheckpointCreate === policy && process.initialCheckpoint === checkpoint)
+        check(replyPolicy == null || replyPolicy === policy)
+        replyPolicy?.requireReplies()
         policy.requireRetained(process.pools, process.consumers.journalRouting, checkpoint)
         process.pools.ordinary.requireTestInitialCheckpointCreate(policy)
         registration.requireActiveIdentityTarget(assembly)
@@ -70,7 +73,12 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
     }
 
     internal fun requirePath(path: PersistencePhasePath) {
-        if (path !in PATHS) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        if (path !in PATHS && !(replyPolicy != null && path in REPLY_PATHS)) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun requireNewWorkPath(path: PersistencePhasePath) {
+        check(path === PersistencePhasePath.COMPLAINT_OWNER_CREATE ||
+            (replyPolicy != null && path === PersistencePhasePath.COMPLAINT_OWNER_REPLY))
     }
 
     internal fun requireAdmission(handoff: ComplaintAdmittedOwnerCreate) =
@@ -89,7 +97,8 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         path: PersistencePhasePath, tuple: ComplaintOwnerOperationTuple?) {
         requirePhaseOwner(ownership); requirePath(path)
         phase.ownerOperation.requireOwner(operation, jdbc, ownership)
-        check(operation.registeredWith(this) && (tuple == null || tuple.operation === ComplaintOwnerCreationOperation.OWNER_CREATE))
+        check(operation.registeredWith(this) && (tuple == null || tuple.operation === ComplaintOwnerCreationOperation.OWNER_CREATE ||
+            (replyPolicy != null && tuple.operation === ComplaintOwnerCreationOperation.OWNER_REPLY)))
     }
 
     internal fun lockAndCheck(operation: ComplaintOwnerCreateOperation, phase: PersistencePhaseContext) {
@@ -178,6 +187,7 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         private val PATHS = setOf(PersistencePhasePath.COMPLAINT_OWNER_OPERATION_AUTHENTICATION,
             PersistencePhasePath.COMPLAINT_OWNER_CREATE_PREFLIGHT, PersistencePhasePath.COMPLAINT_OWNER_OPERATION_STATUS,
             PersistencePhasePath.COMPLAINT_OWNER_CREATE)
+        private val REPLY_PATHS = setOf(PersistencePhasePath.COMPLAINT_OWNER_REPLY_PREFLIGHT, PersistencePhasePath.COMPLAINT_OWNER_REPLY)
         private val CHECKPOINT_BYTES = "SELECT CASE WHEN complaint_bytes_match(checkpoint_bytes, checkpoint_hash, 65536) THEN checkpoint_bytes END " +
             "FROM complaint_journal_control WHERE data_scope_id = ?::uuid AND test_only"
 
@@ -187,6 +197,16 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
             checkNotNull(registration.process.initialCheckpointCreate)
             registration.requireInstallationResources(ownership, jdbc)
             return TestRegisteredInitialCheckpointCreateV1(registration, assembly, ownership, jdbc).also { it.requireEntry(ownership) }
+        }
+
+        /** New explicit selection on the original reply-capable full-D/pool pin; the old factory stays CREATE-only. */
+        internal fun fromRegisteredWithReplies(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate): TestRegisteredInitialCheckpointCreateV1 {
+            requireConnectionFree(); registration.requireUsable(); registration.requireActiveIdentityTarget(assembly)
+            val policy = checkNotNull(registration.process.initialCheckpointCreate)
+            policy.requireReplies()
+            registration.requireInstallationResources(ownership, jdbc)
+            return TestRegisteredInitialCheckpointCreateV1(registration, assembly, ownership, jdbc, policy).also { it.requireEntry(ownership) }
         }
 
         private fun hex(bytes: ByteArray): String = try { HexFormat.of().formatHex(bytes) } finally { bytes.fill(0) }

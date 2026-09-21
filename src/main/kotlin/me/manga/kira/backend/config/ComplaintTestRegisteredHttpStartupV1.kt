@@ -70,6 +70,7 @@ import java.util.function.Supplier
 internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private val assembly: ComplaintTestProcessAssemblyV1,
     private val registration: ComplaintTestNamespaceRegistrationV1,
+    private val replyPolicy: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1? = null,
 ) : AutoCloseable {
     private val startupBudget = PersistenceTimeBudget.start(60_000)
     private val ingress = registration.process.consumers.ingressAdmission
@@ -115,6 +116,8 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             checkpoint()
             registration.requireActiveIdentityTarget(assembly)
             requireTestDeployment(registration.process.initialCheckpointCreate != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            requireTestDeployment(replyPolicy == null || replyPolicy === registration.process.initialCheckpointCreate, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            replyPolicy?.requireReplies()
             val pool = registration.process.pools.ordinary
             val originalFactory = LocalContainerEntityManagerFactoryBean().also { factory = it }
             originalFactory.dataSource = pool
@@ -147,7 +150,11 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val repositories = JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(checkNotNull(emf)))
             val counted = JpaAuditRepositoryAdapter(repositories.getRepository(SpringDataAuditLogRepository::class.java))
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
-            val composition = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreate(registration, assembly, owner, template, service)
+            val composition = if (replyPolicy == null) {
+                ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreate(registration, assembly, owner, template, service)
+            } else {
+                ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateReply(registration, assembly, owner, template, service)
+            }
             val userKey = checkNotNull(registration.process.consumers.jwt.boundUserKeyProvider)
             val properties = KiraSecurityProperties(
                 issuer = userKey.versionBoundIssuer, audience = userKey.versionBoundAudience,
@@ -296,6 +303,13 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
         /** Inert child construction only. start/close require the assembly's exact retained identity/caller. */
         internal fun retained(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 =
             ComplaintTestRegisteredHttpStartupV1(assembly, registration)
+
+        /** Original reply-capable full-D/pool pin, not a public readiness switch or default startup expansion. */
+        internal fun retainedWithReplies(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+            val policy = checkNotNull(registration.process.initialCheckpointCreate)
+            policy.requireReplies()
+            return ComplaintTestRegisteredHttpStartupV1(assembly, registration, policy)
+        }
     }
 }
 

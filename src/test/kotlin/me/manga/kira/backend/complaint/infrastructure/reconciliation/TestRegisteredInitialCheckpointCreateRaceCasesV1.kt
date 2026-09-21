@@ -10,18 +10,23 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerReplyParentRows
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateStore
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateCasesV1.refused
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
+import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
 import java.sql.Timestamp
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -33,6 +38,118 @@ import java.util.concurrent.locks.LockSupport
 internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     fun claimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) = claimLoser(f, desiredDrift = false)
     fun desiredIdentityClaimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) = claimLoser(f, desiredDrift = true)
+
+    fun replyClaimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val attempt = registeredReplyAttempt(f.actor, f.notice())
+        val before = f.counters(); val providers = f.providerCounts()
+        assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> {
+            JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(JdbcTemplate(f.process.pools.ordinary), f.exchange.service,
+                f.exchange.ordinary.ownership, f.registration, f.checkpoint.assembly)
+        }
+        // Even this reply-capable full D cannot widen the older registered CREATE-only store.
+        refused { f.ingress.withIngress(f.request()) { f.adapter.reply(it, f.token, attempt.input) } }
+        assertEquals(before, f.counters()); assertTrue(f.replySql().isEmpty())
+        val winnerThread = AtomicReference<Thread?>(); val loserPid = AtomicInteger()
+        val loserEntering = CountDownLatch(1); val closedAfterClaim = AtomicBoolean()
+        f.raw { observer ->
+            OwnedCallerTestScope().use { callers ->
+                val completedWinner = callers.gate()
+                f.jdbc.before = { path, sql ->
+                    if (path === REGISTERED_REPLY && sql.startsWith("INSERT INTO complaint_idempotency_receipts") &&
+                        winnerThread.get() != null && Thread.currentThread() !== winnerThread.get()) {
+                        loserPid.set(currentPid(f)); loserEntering.countDown()
+                    }
+                }
+                f.jdbc.after = { path, sql -> if (path === REGISTERED_REPLY) {
+                    if ("UPDATE complaint_idempotency_receipts" in sql && winnerThread.compareAndSet(null, Thread.currentThread())) completedWinner.hold()
+                    if (sql.startsWith("INSERT INTO complaint_idempotency_receipts") && winnerThread.get() != null &&
+                        Thread.currentThread() !== winnerThread.get() && closedAfterClaim.compareAndSet(false, true)) {
+                        assertEquals(1, f.exchange.f.foreignUpdate("UPDATE complaint_journal_control SET creation_closed = true, maintenance_closed = true WHERE data_scope_id = ?", f.scope))
+                    }
+                } }
+                val winner = callers.launch { f.reply(attempt) }
+                completedWinner.awaitEntered()
+                try {
+                    val loser = callers.launch { f.reply(attempt) }
+                    assertTrue(loserEntering.await(1, TimeUnit.SECONDS))
+                    awaitActualLockWait(observer, loserPid.get())
+                    completedWinner.release()
+                    f.assertApplied(winner.value(), attempt); f.assertApplied(loser.value(), attempt)
+                } finally { completedWinner.release() }
+            }
+        }
+        f.jdbc.before = { _, _ -> }; f.jdbc.after = { _, _ -> }
+        assertTrue(closedAfterClaim.get()); f.assertReleased()
+        assertEquals(2, f.replyPhases().size)
+        assertTrue(f.replyPhases().all { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED })
+        assertEquals(7, f.replySql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate }, "Only the winner runs new-work checks, including both resources and parent content.")
+        assertEquals(1, f.replySql().count { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it })
+        f.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE)
+        assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM complaint_idempotency_receipts WHERE actor_id = ? AND operation = 'OWNER_REPLY'", Long::class.java, f.actor.id))
+        val state = f.state(); f.jdbc.calls.clear()
+        f.assertApplied(f.reply(attempt), attempt); f.assertApplied(f.replyStatus(attempt), attempt)
+        assertTrue(f.replySql().isEmpty()); assertEquals(state, f.state())
+        assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
+
+    fun replyWaitedCheckpointExpiry(f: TestRegisteredInitialCheckpointCreateFixtureV1, resource: Boolean) {
+        val deadlines = f.process.consumers.journalConfiguration.declaration().limits.deadlines
+        assertEquals(30_000, deadlines.scanMillis); assertEquals(30_000, deadlines.scanCadenceMillis); assertEquals(30_000, deadlines.checkpointMaxAgeMillis)
+        val first = registeredReplyAttempt(f.actor, f.notice())
+        f.assertApplied(f.reply(first), first); f.assertReleased()
+        val before = f.state(); val counters = f.counters(); val providers = f.providerCounts()
+        val expires = (f.checkpoint.control().getValue("checkpoint_completed_at") as Timestamp).toInstant().plusMillis(deadlines.checkpointMaxAgeMillis.toLong())
+        val second = registeredReplyAttempt(f.actor, first.input.id, UUID.fromString("00000000-0000-4000-8000-000000000001"))
+        assertTrue(second.input.id.toString() < first.input.id.toString(), "The provisional child must precede the locked parent.")
+        val entering = CountDownLatch(1); val reached = AtomicBoolean(); val pid = AtomicInteger()
+        val blockedSql = if (resource) ComplaintOwnerReplyParentRows.RESOURCE else ComplaintOwnerReplyParentRows.content
+        f.raw { locker ->
+            locker.autoCommit = false
+            try {
+                val table = if (resource) "complaint_resource_ids" else "complaints"
+                locker.prepareStatement("SELECT id FROM $table WHERE id = ? FOR UPDATE").use { statement ->
+                    statement.queryTimeout = 1; statement.setObject(1, first.input.id)
+                    statement.executeQuery().use { row -> assertTrue(row.next()); assertFalse(row.next()) }
+                }
+                f.raw { observer ->
+                    waitUntil(observer, expires.minusMillis(800), 31_000) // No original request/admission exists during this wait.
+                    f.jdbc.calls.clear()
+                    OwnedCallerTestScope().use { callers ->
+                        f.jdbc.before = { path, sql -> if (path === REGISTERED_REPLY && sql == blockedSql && reached.compareAndSet(false, true)) {
+                            // Negative caller stall consumes the same 2s original. Then the real 100ms
+                            // lock_timeout remains untouched while the actual row wait crosses expiry.
+                            waitUntil(observer, expires.minusMillis(45), 900)
+                            assertTrue(now(observer).isBefore(expires))
+                            pid.set(currentPid(f)); entering.countDown()
+                        } }
+                        val original = callers.launch { f.reply(second) }
+                        assertTrue(entering.await(1, TimeUnit.SECONDS))
+                        awaitActualLockWait(observer, pid.get())
+                        waitUntil(observer, expires.plusNanos(1000), 80)
+                        locker.commit()
+                        val failure = original.problem()
+                        assertTrue(failure is ComplaintOwnerOperationRejected)
+                        assertEquals(ComplaintOwnerOperationFailure.UNAVAILABLE, (failure as ComplaintOwnerOperationRejected).failure)
+                    }
+                }
+            } finally { f.jdbc.before = { _, _ -> }; locker.rollback() }
+        }
+        assertTrue(reached.get()); f.assertReleased()
+        assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, f.replyPhases().last().databaseOutcome())
+        assertTrue(f.replySql().any { it.startsWith("INSERT INTO complaint_resource_ids") })
+        assertEquals(if (resource) 5 else 6, f.replySql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+        if (resource) assertFalse(f.replySql().contains(ComplaintOwnerReplyParentRows.content))
+        assertFalse(f.replySql().any { it.startsWith("INSERT INTO complaints") || "UPDATE complaint_idempotency_receipts" in it })
+        assertEquals(before, f.state()); assertEquals(counters, f.counters()) // Includes provisional child, claim, capacity and audit rollback.
+        f.jdbc.calls.clear()
+        f.assertApplied(f.reply(first), first); f.assertApplied(f.replyStatus(first), first)
+        refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { f.replyStatus(second) }
+        assertTrue(f.replySql().isEmpty(), "Expired current checkpoint cannot block exact completed reply receipt reads.")
+        refused { f.reply(second) }
+        assertFalse(f.replySql().any { "complaint_capacity_counters" in it })
+        assertEquals(before, f.state()); assertEquals(counters, f.counters())
+        assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
 
     private fun claimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1, desiredDrift: Boolean) {
         val attempt = f.attempt(); val before = f.counters(); val providers = f.providerCounts()

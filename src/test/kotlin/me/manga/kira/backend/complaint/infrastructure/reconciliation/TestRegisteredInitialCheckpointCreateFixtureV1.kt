@@ -15,7 +15,10 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerReplyInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerStatusQuery
+import me.manga.kira.backend.complaint.domain.ComplaintReplyFingerprint
+import me.manga.kira.backend.complaint.domain.ComplaintReplyRequest
 import me.manga.kira.backend.complaint.domain.ComplaintReportFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintReportIdentity
 import me.manga.kira.backend.complaint.domain.ComplaintReportMetadataInput
@@ -27,6 +30,7 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpoi
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateCandidate
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerOperationIdentity
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerReplyCandidate
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateStore
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
 import me.manga.kira.backend.security.InstallationJwtCodec
@@ -42,21 +46,24 @@ import java.time.Instant
 import java.util.UUID
 
 internal val REGISTERED_CREATE = PersistencePhasePath.COMPLAINT_OWNER_CREATE
+internal val REGISTERED_REPLY = PersistencePhasePath.COMPLAINT_OWNER_REPLY
 
 /**
  * Genuine global G1/full-D/request/capture precedes TEST activation; no global seal/health claim.
  * Thin nesting of existing producers. The SAME enrollment ordinary owner/template stays
- * alive through capture, seal, both checkpoint passes and CREATE. No SQL-seeded checkpoint,
+ * alive through capture, seal, both checkpoint passes and CREATE. Reply cases explicitly select
+ * their born-with sibling on that same graph. No SQL-seeded checkpoint,
  * accepted DTO, current/healthy stub or copied registration is supplied to the registered factory.
  */
 internal fun withRegisteredInitialCheckpointCreate(tls: VersionBoundPersistenceConnectedFixture,
     completeCheckpoint: Boolean = true, shortFreshness: Boolean = false,
     terminalHistory: TestOrdinaryDrainFixtureInputsV1? = null,
+    initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
     action: (TestRegisteredInitialCheckpointCreateFixtureV1) -> Unit) {
     val ordinary = TestActiveOrdinaryRawFixtureV1()
     val raw = TestActiveInitialCheckpointRawFixtureV1()
     val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
-        initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
+        initialCheckpointCreate = initialCheckpointCreate,
         shortInitialCheckpointFreshness = shortFreshness) }
     withTestActiveFirstCut(tls, ordinaryRawHttp = factories, terminalHistory = terminalHistory, globalScanBeforeActivation = true) { first ->
         first.initial.withExchange { exchange ->
@@ -101,6 +108,11 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
         registration, checkpoint.assembly)
     val phases = ComplaintOwnerCreatePhaseExecutor(exchange.ordinary.ownership, store)
     val adapter = ComplaintOwnerCreateAdapter(actor.scope, jwt, phases, ingress)
+    private val replyAdapter by lazy {
+        val selected = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, exchange.service, exchange.ordinary.ownership,
+            registration, checkpoint.assembly)
+        ComplaintOwnerCreateAdapter(actor.scope, jwt, ComplaintOwnerCreatePhaseExecutor(exchange.ordinary.ownership, selected), ingress)
+    }
 
     init {
         assertSame(jdbc.dataSource, process.pools.ordinary)
@@ -123,6 +135,19 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
         adapter.status(it, token, ComplaintOwnerStatusQuery("OWNER_CREATE", attempt.input.key.toString(), attempt.input.id.toString(),
             ComplaintReportFingerprint.of(attempt.candidate.request).encoded))
     }
+    fun reply(attempt: RegisteredInitialReplyAttemptV1): ComplaintOwnerReceipt =
+        ingress.withIngress(request()) { replyAdapter.reply(it, token, attempt.input) }
+    fun replyStatus(attempt: RegisteredInitialReplyAttemptV1): ComplaintOwnerReceipt = ingress.withIngress(request()) {
+        replyAdapter.status(it, token, ComplaintOwnerStatusQuery("OWNER_REPLY", attempt.input.key.toString(),
+            listOf(attempt.input.parentId.toString(), attempt.input.id.toString()), ComplaintReplyFingerprint.of(attempt.candidate.request).encoded))
+    }
+    fun assertApplied(receipt: ComplaintOwnerReceipt, attempt: RegisteredInitialReplyAttemptV1) {
+        assertTrue(receipt is ComplaintOwnerReceipt.Applied)
+        receipt as ComplaintOwnerReceipt.Applied
+        assertEquals(attempt.input.id, receipt.id); assertEquals(1L, receipt.version)
+    }
+    fun notice(): UUID = checkNotNull(observer.queryForObject("SELECT id FROM complaints WHERE data_scope_id = ? AND ownership = 'SYSTEM' AND kind = 'NOTICE' ORDER BY id LIMIT 1",
+        UUID::class.java, scope)) // The genuine activation's scoped notice, never a synthetic seed.
     fun identity(): ComplaintOwnerOperationIdentity = jwt.verify(token).let {
         ComplaintOwnerOperationIdentity(it.installation, it.credentialVersion, it.issuedAt, it.expiresAt)
     }
@@ -169,6 +194,8 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
     fun createSql(): List<String> = jdbc.calls.filter { it.first === REGISTERED_CREATE }.map { it.second }
     fun assertNoCounterSql() = assertFalse(createSql().any { "complaint_capacity_counters" in it })
     fun createPhases() = jdbc.observations.keys.filter { poolTestField<PersistencePhasePath>(it, "path") === REGISTERED_CREATE }
+    fun replySql(): List<String> = jdbc.calls.filter { it.first === REGISTERED_REPLY }.map { it.second }
+    fun replyPhases() = jdbc.observations.keys.filter { poolTestField<PersistencePhasePath>(it, "path") === REGISTERED_REPLY }
 
     /** Independent observer only. Never enlisted into the original phase's Spring resource map. */
     fun <T> raw(action: (Connection) -> T): T = checkNotNull(observer.dataSource).connection.use(action)
@@ -189,3 +216,13 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
 }
 
 internal class RegisteredInitialCreateAttemptV1(val input: ComplaintOwnerCreateInput, val candidate: ComplaintOwnerCreateCandidate)
+
+/** Request data only; both HTTP and phase cases still authenticate and normalize in the existing product adapter. */
+internal class RegisteredInitialReplyAttemptV1(val input: ComplaintOwnerReplyInput, val candidate: ComplaintOwnerReplyCandidate)
+
+internal fun registeredReplyAttempt(actor: ScopedInstallationId, parent: UUID, id: UUID = UUID.randomUUID()): RegisteredInitialReplyAttemptV1 {
+    val input = ComplaintOwnerReplyInput(parent, id, UUID.randomUUID(), " Registered reply\r\nline ", ComplaintReportMetadataInput(null, "fixture-os", "", ""))
+    val identity = checkNotNull(ComplaintReportIdentity.checked(input.id.toString(), input.key.toString(), actor.scope.id.toString()))
+    val normalized = ComplaintReplyRequest.normalize(identity, parent, input.body, input.metadata)
+    return RegisteredInitialReplyAttemptV1(input, ComplaintOwnerReplyCandidate.prepare(actor, normalized))
+}

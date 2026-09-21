@@ -64,7 +64,8 @@ import java.util.UUID
  * additionally needs its current owned read; retaining this composition does not cache that result.
  * Bootstrap-only remains the default. The separate explicit initial-checkpoint factory selects only
  * registered identity exchange and current CREATE/status. A further explicit factory adds the two
- * existing owner reads only; no /me, reply/edit, LIVE/restart/quarantine or broad Core.
+ * existing owner reads only. A separate born-with reply selection adds only OWNER_REPLY;
+ * no /me, edit/delete, LIVE/restart/quarantine or broad Core.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
@@ -73,10 +74,12 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     assembly: ComplaintTestProcessAssemblyV1? = null,
     audit: AuditService? = null,
     private val reads: RegisteredOwnerReads? = null,
+    private val replyStore: JdbcComplaintOwnerCreateStore? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
         require(reads == null || assembly != null)
+        require(replyStore == null || reads != null)
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -92,7 +95,7 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         val ingress = registration.process.consumers.ingressAdmission
         val scope = registration.process.desiredSettings().scope
         val jwt = reads?.jwt ?: InstallationJwtCodec(registration.process.consumers.jwt.installationKeyRing, Clock.systemUTC())
-        val store = JdbcComplaintOwnerCreateStore.registeredInitialCheckpoint(jdbc, selectedAudit, ownership, registration, assembly)
+        val store = replyStore ?: JdbcComplaintOwnerCreateStore.registeredInitialCheckpoint(jdbc, selectedAudit, ownership, registration, assembly)
         val create = ComplaintOwnerCreateHttpHandler(
             ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(scope, jwt, ComplaintOwnerCreatePhaseExecutor(ownership, store), ingress)), ingress,
         )
@@ -105,7 +108,11 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         // AUTH remains early rejection only. Direct CREATE constructs no read producer/handler.
         val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt,
             reads?.authenticationPhases ?: ComplaintOwnerHistoryPhaseExecutor(ownership, JdbcComplaintOwnerHistoryStore(jdbc, scope)), ingress)
-        if (reads == null) ComplaintInstallationSecurityChainFactory.registeredCreateSubset(bridge, producer, authentication, installations, create)
+        if (replyStore != null) {
+            val selectedReads = checkNotNull(reads)
+            ComplaintInstallationSecurityChainFactory.registeredReadCreateReplySubset(
+                bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail)
+        } else if (reads == null) ComplaintInstallationSecurityChainFactory.registeredCreateSubset(bridge, producer, authentication, installations, create)
         else ComplaintInstallationSecurityChainFactory.registeredReadCreateSubset(bridge, producer, authentication, installations, create, reads.history, reads.detail)
     }
     private val disabled = DisabledComplaintRoutesFilter()
@@ -115,11 +122,14 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         ComplaintInstallationRoutes.HISTORY, ComplaintInstallationRoutes.STATUS,
     )
 
-    /** MVC templates do not grant ingress. Both pre-buffer guards use the canonical GET predicate below. */
-    val mappedPaths: Set<String> = literalPaths + if (reads == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}")
+    /** MVC templates do not grant ingress. Both pre-buffer guards use the concrete method/path predicates below. */
+    val mappedPaths: Set<String> = literalPaths +
+        (if (reads == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}")) +
+        (if (replyStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/replies"))
 
     internal fun mapsRequest(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.path(request) in literalPaths ||
-        (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request))
+        (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
+        (replyStore != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request))
 
     /** Original admission surrounds the fixed bodyless check, generic body guard, Spring and MVC. */
     val ingressFilter: Filter = Filter { request, response, chain ->
@@ -137,7 +147,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         } else {
             bridge.doFilter(request, response, FilterChain { admitted, output ->
                 val selected = admitted as HttpServletRequest
-                if (selected.method == "GET" && (path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) {
+                if ((selected.method == "GET" && (path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) ||
+                    (replyStore != null && selected.method == "POST" && ComplaintInstallationRoutes.isReply(selected))) {
                     reads?.requireWithinIngress()
                 }
                 if ((path != ComplaintInstallationRoutes.BOOTSTRAP ||
@@ -246,6 +257,21 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             registration.requireInstallationResources(ownership, jdbc)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc))
+        }
+
+        /** Separate concrete reply-capable store/handler selection. All earlier factories retain their narrower routes. */
+        fun fromRegisteredInitialCheckpointReadCreateReply(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireInstallationResources(ownership, jdbc)
+            val replyStore = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, audit, ownership, registration, assembly)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc), replyStore)
         }
     }
 }

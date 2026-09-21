@@ -2,6 +2,7 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.persistence.EntityManagerFactory
+import me.manga.kira.backend.audit.application.AuditService
 import me.manga.kira.backend.common.infrastructure.persistence.CounterSnapshot
 import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransactionManager
 import me.manga.kira.backend.common.infrastructure.persistence.OrdinaryPersistenceAdmission
@@ -17,7 +18,9 @@ import me.manga.kira.backend.complaint.catalog.TestActiveOrdinaryRawHttpV1
 import me.manga.kira.backend.complaint.catalog.withTestActiveFirstCut
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
+import me.manga.kira.backend.complaint.domain.ComplaintReplyFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintReportFingerprint
 import me.manga.kira.backend.complaint.domain.ComplaintReportIdentity
 import me.manga.kira.backend.complaint.domain.ComplaintReportMetadataInput
@@ -36,6 +39,7 @@ import me.manga.kira.backend.security.ComplaintInstallationRoutes
 import me.manga.kira.backend.security.InstallationJwtCodec
 import me.manga.kira.backend.security.JwtKeyProvider
 import org.apache.catalina.LifecycleState
+import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -47,6 +51,7 @@ import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactor
 import org.springframework.boot.web.embedded.tomcat.TomcatWebServer
 import org.springframework.boot.web.servlet.context.AnnotationConfigServletWebServerApplicationContext
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.orm.jpa.EntityManagerFactoryInfo
 import org.springframework.security.web.SecurityFilterChain
 import org.springframework.web.servlet.handler.SimpleUrlHandlerMapping
@@ -75,6 +80,8 @@ internal object TestRegisteredHttpStartupCasesV1 {
     fun identityCreateAndReceipts(tls: VersionBoundPersistenceConnectedFixture) =
         withPrepared(tls, globalScanBeforeActivation = true) { first, ordinary, raw ->
         val providers = providerCounts(first, ordinary, raw)
+        assertThrows<IllegalStateException> { first.assembly.beginRegisteredReplyHttpStartup(first.registration) }
+        assertNull(poolTestField<Any?>(first.assembly, "httpStartup"), "The CREATE-only profile cannot retain a reply startup.")
         first.assembly.beginRegisteredHttpStartup(first.registration).use { startup ->
             assertSame(startup, poolTestField<ComplaintTestRegisteredHttpStartupV1>(first.assembly, "httpStartup"))
             assertRefused { first.assembly.beginRegisteredHttpStartup(first.registration) }
@@ -296,6 +303,136 @@ internal object TestRegisteredHttpStartupCasesV1 {
         }
     }
 
+    fun ownReportReply(tls: VersionBoundPersistenceConnectedFixture) = ownerReplies(tls, ReplyParent.OWN_REPORT)
+    fun noticeReplyThread(tls: VersionBoundPersistenceConnectedFixture) = ownerReplies(tls, ReplyParent.NOTICE)
+    fun foreignParentReply(tls: VersionBoundPersistenceConnectedFixture) = ownerReplies(tls, ReplyParent.FOREIGN_REPORT)
+
+    private fun ownerReplies(tls: VersionBoundPersistenceConnectedFixture, kind: ReplyParent) =
+        withPrepared(tls, globalScanBeforeActivation = true,
+            initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.REPLY_PROFILE)) { first, ordinary, raw ->
+        first.assembly.beginRegisteredReplyHttpStartup(first.registration).use { startup ->
+            startup.start()
+            StartedHttpView(first, startup, SUBSET + "${ComplaintInstallationRoutes.HISTORY}/{id}/replies").use { web ->
+                val actor = first.initial.candidate().installation
+                val foreign = if (kind === ReplyParent.FOREIGN_REPORT) first.initial.candidate().installation else null
+                try {
+                    val enrolled = web.post(ComplaintInstallationRoutes.ENROLLMENT, identityBody(actor, enrollment = true))
+                    checked(enrolled, 201)
+                    val bearer = token(enrolled, actor, first)
+                    val foreignBearer = foreign?.let {
+                        val other = web.post(ComplaintInstallationRoutes.ENROLLMENT, identityBody(it, enrollment = true))
+                        checked(other, 201); token(other, it, first)
+                    }
+                    web.assertRequestsReleased()
+                    val captured = first.capture()
+                    first.awaitNativeReclaimed()
+                    TestActiveOrdinarySealFixtureV1(first, captured, ordinary).use { sealer ->
+                        val verified = sealer.seal(); sealer.assertReleased()
+                        awaitInitialCheckpointLeaseExpiry(sealer.observer, sealer.scope)
+                        TestActiveInitialCheckpointFixtureV1(sealer, verified, raw).use { checkpoint ->
+                            checkpoint.checkpoint(); checkpoint.assertReleased() // Discard Completed; retain only the genuine original graph.
+                            first.p.f.rows.globalPredecessor?.assertPreserved(first.observer)
+                            val providers = providerCounts(first, ordinary, raw)
+                            val applied = mutableListOf<Pair<RegisteredInitialReplyAttemptV1, HttpResponse<ByteArray>>>()
+                            var noticeKey: String? = null
+                            // Exactly two new admissions per fixture: report+reply, two notice-thread replies,
+                            // or report+rejected foreign reply. No raised createGlobal2 or cleared quota history.
+                            val parent = if (kind === ReplyParent.NOTICE) {
+                                val page = web.get(ComplaintInstallationRoutes.HISTORY, bearer)
+                                checked(page, 200)
+                                val notice = mapper.readTree(page.body())["notices"].first()
+                                noticeKey = notice["noticeKey"].textValue()
+                                val initial = registeredReplyAttempt(actor, UUID.fromString(notice["id"].textValue()))
+                                val before = first.counters()
+                                val reply = web.post(replyPath(initial), replyBody(initial), bearer, initial.input.key)
+                                checked(reply, 201); assertCreateCharge(before, first.counters())
+                                applied += initial to reply
+                                initial.input.id
+                            } else {
+                                val report = attempt(actor)
+                                val before = first.counters()
+                                checked(web.post(ComplaintInstallationRoutes.HISTORY, createBody(report), bearer, report.input.key), 201)
+                                assertCreateCharge(before, first.counters())
+                                report.input.id
+                            }
+                            val selectedActor = foreign ?: actor
+                            val selectedBearer = foreignBearer ?: bearer
+                            val attempt = registeredReplyAttempt(selectedActor, parent)
+                            val before = first.counters(); val auditBefore = auditImage(first)
+                            val reply = web.post(replyPath(attempt), replyBody(attempt), selectedBearer, attempt.input.key)
+                            val rejected = kind === ReplyParent.FOREIGN_REPORT
+                            checked(reply, if (rejected) 404 else 201)
+                            assertCreateCharge(before, first.counters(), if (rejected) ComplaintCapacityCharges.NORMAL_RECEIPT else ComplaintCapacityCharges.OWNER_CREATE)
+                            if (rejected) {
+                                assertEquals("COMPLAINT_PARENT_NOT_FOUND", mapper.readTree(reply.body())["errors"][0]["code"].textValue())
+                                assertEquals(auditBefore, auditImage(first))
+                                assertEquals(0L, first.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE id = ?", Long::class.java, attempt.input.id))
+                                checked(web.get("${ComplaintInstallationRoutes.HISTORY}/$parent", selectedBearer), 404)
+                            } else applied += attempt to reply
+                            for ((created, response) in applied) {
+                                assertEquals("""{"id":"${created.input.id}","version":1}""", response.body().decodeToString())
+                                assertEquals("${ComplaintInstallationRoutes.HISTORY}/${created.input.id}", header(response, "Location"))
+                                val detail = web.get("${ComplaintInstallationRoutes.HISTORY}/${created.input.id}", bearer)
+                                checked(detail, 200)
+                                val item = mapper.readTree(detail.body())
+                                assertEquals("REPLY", item["kind"].textValue()); assertEquals(created.input.parentId.toString(), item["replyToId"].textValue())
+                                assertEquals(created.candidate.request.body, item["body"].textValue()); assertEquals(1L, item["version"].longValue())
+                                assertEquals(header(response, "ETag"), header(detail, "ETag"))
+                                assertEquals("ANDROID", item["platform"].textValue())
+                                if (kind === ReplyParent.NOTICE) {
+                                    assertEquals("CUSTOM", item["type"].textValue()); assertTrue(item["subject"].isNull)
+                                    assertEquals(noticeKey, item["noticeKey"].textValue())
+                                } else {
+                                    assertEquals("TECHNICAL", item["type"].textValue()); assertEquals("Registered subject", item["subject"].textValue())
+                                    assertFalse(item.has("noticeKey"))
+                                }
+                            }
+                            // Earlier read/CREATE factory remains narrow even on a reply-capable birth profile.
+                            val old = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreate(first.registration, first.assembly,
+                                web.context.getBean(PersistencePhaseOwnership::class.java), web.context.getBean(JdbcTemplate::class.java), web.context.getBean(AuditService::class.java))
+                            assertEquals(SUBSET, old.mappedPaths)
+                            assertFalse(old.mapsRequest(MockHttpServletRequest("POST", replyPath(attempt))))
+                            for ((method, path) in listOf(
+                                "GET" to replyPath(attempt), "POST" to "${replyPath(attempt)}/",
+                                "POST" to "${ComplaintInstallationRoutes.HISTORY}/AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA/replies",
+                                "GET" to ComplaintInstallationRoutes.ME, "PATCH" to "${ComplaintInstallationRoutes.HISTORY}/$parent/content",
+                                "DELETE" to "${ComplaintInstallationRoutes.HISTORY}/$parent", "POST" to ComplaintInstallationRoutes.DELETE_ALL,
+                            )) web.refusedBeforeBody(method, path, selectedBearer, 404)
+                            val counters = first.counters(); val audits = auditImage(first)
+                            assertEquals(1, first.observer.update("UPDATE complaint_journal_control SET maintenance_closed = true, creation_closed = true WHERE data_scope_id = ?", first.scope))
+                            val replay = web.post(replyPath(attempt), replyBody(attempt), selectedBearer, attempt.input.key)
+                            checked(replay, reply.statusCode()); assertArrayEquals(reply.body(), replay.body())
+                            assertEquals(header(reply, "Location"), header(replay, "Location")); assertEquals(header(reply, "ETag"), header(replay, "ETag"))
+                            val status = web.post(ComplaintInstallationRoutes.STATUS, statusBody(attempt), selectedBearer)
+                            checked(status, 200)
+                            val receipt = mapper.readTree(status.body())
+                            assertEquals(if (rejected) "REJECTED" else "APPLIED", receipt["outcome"].textValue())
+                            assertEquals(reply.statusCode(), receipt["originalStatus"].intValue())
+                            if (rejected) assertEquals("COMPLAINT_PARENT_NOT_FOUND", receipt["problemCode"].textValue())
+                            else { assertEquals(attempt.input.id.toString(), receipt["body"]["id"].textValue()); assertEquals(header(reply, "ETag"), receipt["etag"].textValue()) }
+                            checked(web.post(ComplaintInstallationRoutes.STATUS, statusBody(attempt, reversed = true), selectedBearer), 409)
+                            first.registration.close() // Even an exact receipt cannot revive the original closed registration.
+                            checked(web.post(replyPath(attempt), replyBody(attempt), selectedBearer, attempt.input.key), 503)
+                            assertEquals(counters, first.counters()); assertEquals(audits, auditImage(first))
+                            assertEquals(providers, providerCounts(first, ordinary, raw))
+                            web.assertRequestsReleased(); checkpoint.assertReleased()
+                        }
+                    }
+                } finally {
+                    web.assertRequestsReleased()
+                    // Disposable scope cleanup, not product erasure/refund, gate repair or checkpoint authority.
+                    first.observer.update("DELETE FROM complaints WHERE data_scope_id = ?", first.scope)
+                    first.observer.update("DELETE FROM complaint_resource_ids WHERE data_scope_id = ?", first.scope)
+                    for (owner in listOfNotNull(actor, foreign)) first.observer.update("DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND actor_id = ?", first.scope, owner.id)
+                    first.observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", first.scope)
+                }
+                startup.close(); web.assertDisposed(nativeStillActive = true)
+            }
+        }
+    }
+
+    private enum class ReplyParent { OWN_REPORT, NOTICE, FOREIGN_REPORT }
+
     fun heldRequestDrainsBeforeJpaClose(tls: VersionBoundPersistenceConnectedFixture) = withPrepared(tls) { first, _, _ ->
         first.assembly.beginRegisteredHttpStartup(first.registration).use { startup ->
             startup.start()
@@ -363,18 +500,20 @@ internal object TestRegisteredHttpStartupCasesV1 {
 
     // CREATE and read-after-CREATE cases need the captured global predecessor. Lifecycle-only cases keep the old prerequisite.
     private fun withPrepared(tls: VersionBoundPersistenceConnectedFixture, globalScanBeforeActivation: Boolean = false,
+        initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
         action: (TestActiveFirstCutFixtureV1, TestActiveOrdinaryRawFixtureV1, TestActiveInitialCheckpointRawFixtureV1) -> Unit) {
         val ordinary = TestActiveOrdinaryRawFixtureV1()
         val raw = TestActiveInitialCheckpointRawFixtureV1()
         val factories = ordinary.factories.let { TestActiveOrdinaryRawHttpV1(it.sts, it.kms, it.s3, raw.input,
-            initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE)) }
+            initialCheckpointCreate = initialCheckpointCreate) }
         withTestActiveFirstCut(tls, ordinaryRawHttp = factories, globalScanBeforeActivation = globalScanBeforeActivation) {
             first -> action(first, ordinary, raw)
         }
     }
 
     /** Passive references to the actual product graph; this view owns only its real TCP client. */
-    private class StartedHttpView(val first: TestActiveFirstCutFixtureV1, val startup: ComplaintTestRegisteredHttpStartupV1) : AutoCloseable {
+    private class StartedHttpView(val first: TestActiveFirstCutFixtureV1, val startup: ComplaintTestRegisteredHttpStartupV1,
+        expectedPaths: Set<String> = SUBSET) : AutoCloseable {
         val context = poolTestField<AnnotationConfigServletWebServerApplicationContext>(startup, "context")
         val emf = poolTestField<EntityManagerFactory>(startup, "emf")
         val server = poolTestField<TomcatWebServer>(startup, "server")
@@ -404,7 +543,7 @@ internal object TestRegisteredHttpStartupCasesV1 {
             assertEquals(2, context.getBeansOfType(SecurityFilterChain::class.java).size)
             val composition = context.getBean(ComplaintTestBootstrapHttpCompositionV1::class.java)
             val mapping = context.getBean("complaintTestBootstrapHandlerMapping", SimpleUrlHandlerMapping::class.java)
-            assertEquals(SUBSET, mapping.urlMap.keys)
+            assertEquals(expectedPaths, mapping.urlMap.keys)
             mapping.urlMap.values.forEach { assertSame(composition.handler, it) }
             val listener = context.getBean(TomcatServletWebServerFactory::class.java)
             assertEquals("127.0.0.1", checkNotNull(listener.address).hostAddress); assertEquals(0, listener.port)
@@ -500,6 +639,14 @@ internal object TestRegisteredHttpStartupCasesV1 {
     private fun statusBody(attempt: RegisteredInitialCreateAttemptV1): ByteArray = mapper.writeValueAsBytes(mapOf(
         "operation" to "OWNER_CREATE", "key" to attempt.input.key.toString(), "targetIds" to listOf(attempt.input.id.toString()),
         "fingerprint" to ComplaintReportFingerprint.of(attempt.candidate.request).encoded))
+    private fun replyPath(attempt: RegisteredInitialReplyAttemptV1) = "${ComplaintInstallationRoutes.HISTORY}/${attempt.input.parentId}/replies"
+    private fun replyBody(attempt: RegisteredInitialReplyAttemptV1): ByteArray = mapper.writeValueAsBytes(mapOf(
+        "id" to attempt.input.id.toString(), "body" to attempt.input.body,
+        "metadata" to mapOf("appVersion" to null, "osVersion" to "fixture-os", "manufacturer" to "", "deviceModel" to "")))
+    private fun statusBody(attempt: RegisteredInitialReplyAttemptV1, reversed: Boolean = false): ByteArray = mapper.writeValueAsBytes(mapOf(
+        "operation" to "OWNER_REPLY", "key" to attempt.input.key.toString(),
+        "targetIds" to listOf(attempt.input.parentId.toString(), attempt.input.id.toString()).let { if (reversed) it.reversed() else it },
+        "fingerprint" to ComplaintReplyFingerprint.of(attempt.candidate.request).encoded))
     private fun token(response: HttpResponse<ByteArray>, actor: ScopedInstallationId, first: TestActiveFirstCutFixtureV1): String {
         val parsed = mapper.readTree(response.body())
         assertEquals(actor.id.toString(), parsed["installationId"].textValue()); assertEquals(actor.scope.id.toString(), parsed["dataScopeId"].textValue())
@@ -508,14 +655,13 @@ internal object TestRegisteredHttpStartupCasesV1 {
             assertEquals(actor, InstallationJwtCodec(first.process.consumers.jwt.installationKeyRing, Clock.systemUTC()).verify(it).installation)
         }
     }
-    private fun assertCreateCharge(before: Map<String, CounterSnapshot>, after: Map<String, CounterSnapshot>) {
+    private fun assertCreateCharge(before: Map<String, CounterSnapshot>, after: Map<String, CounterSnapshot>, amount: ComplaintCapacityVector = ComplaintCapacityCharges.OWNER_CREATE) {
         assertEquals(before.keys, after.keys)
         for (counter in ComplaintCapacityCounter.entries) {
             val old = before.getValue(counter.storedName); val current = after.getValue(counter.storedName)
-            val amount = ComplaintCapacityCharges.OWNER_CREATE[counter]
-            if (amount == 0L) assertEquals(old, current) else {
+            if (amount[counter] == 0L && ComplaintCapacityCharges.OWNER_CREATE[counter] == 0L) assertEquals(old, current) else {
                 assertEquals(old.preserved, current.preserved)
-                assertEquals(old.free - amount, current.free); assertEquals(old.actual + amount, current.actual)
+                assertEquals(old.free - amount[counter], current.free); assertEquals(old.actual + amount[counter], current.actual)
             }
         }
     }

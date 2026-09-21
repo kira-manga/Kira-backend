@@ -125,6 +125,15 @@ internal class JdbcComplaintOwnerCreateStore private constructor(
             val capacity = JdbcComplaintCapacityStore(jdbc, registration.process.consumers.capacityPolicy.digestBytes())
             return JdbcComplaintOwnerCreateStore(jdbc, capacity, audit, registration.process.desiredSettings(), current)
         }
+
+        /** Explicit registered CREATE/REPLY, never a widening of the original CREATE-only factory. */
+        fun registeredInitialCheckpointWithReplies(jdbc: JdbcTemplate, audit: AuditService,
+            ownership: PersistencePhaseOwnership, registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1): JdbcComplaintOwnerCreateStore {
+            val current = TestRegisteredInitialCheckpointCreateV1.fromRegisteredWithReplies(registration, assembly, ownership, jdbc)
+            val capacity = JdbcComplaintCapacityStore(jdbc, registration.process.consumers.capacityPolicy.digestBytes())
+            return JdbcComplaintOwnerCreateStore(jdbc, capacity, audit, registration.process.desiredSettings(), current)
+        }
     }
 }
 
@@ -184,8 +193,9 @@ internal class ComplaintOwnerCreateOperation private constructor(
     /** Only the retained original's new claim, never PREFLIGHT/STATUS or a losing claim, may run freshness checks. */
     internal fun requireCurrentCheckpointRead(selected: TestRegisteredInitialCheckpointCreateV1, original: PersistencePhaseContext) {
         requireRetained()
-        check(phase === original && registeredCurrent === selected && path === PersistencePhasePath.COMPLAINT_OWNER_CREATE && newClaim &&
+        check(phase === original && registeredCurrent === selected && newClaim &&
             stage in setOf(Stage.CLAIMED, Stage.COUNTERS, Stage.LOCKING_DOMAIN, Stage.DOMAIN, Stage.RESOURCE, Stage.AUDITING, Stage.REJECTING))
+        selected.requireNewWorkPath(path) // The original selector still refuses REPLY, including direct phase entry.
     }
 
     internal fun requireCheckpointTime(selected: TestRegisteredInitialCheckpointCreateV1, original: PersistencePhaseContext, sampledAt: Instant) {
@@ -411,6 +421,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
             if (id == selected.targetId) {
                 if (jdbc.update(INSERT_RESOURCE, id, binding.scope.id) != 1) {
                     requireTokenTime()
+                    registeredCurrent?.checkCurrent(this, phase) // A losing unique insert can have waited too.
                     return rejectBusiness(ComplaintOwnerReceipt.Rejected(ComplaintOwnerCreateRejection.COMPLAINT_RESOURCE_ID_REUSED), paid, platform)
                 }
                 provisionalReplyResource = true
@@ -422,6 +433,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
                     binding.scope.id,
                 ).singleOrNull()
             }
+            registeredCurrent?.checkCurrent(this, phase) // AFTER each original child/parent resource wait; no new locks.
         }
         // Resource reservations (including the new child) all precede the locked parent content.
         val parent = jdbc.query(
@@ -430,6 +442,7 @@ internal class ComplaintOwnerCreateOperation private constructor(
             *parentArguments,
         ).singleOrNull()
         requireTokenTime() // Sampling inside a locking SELECT would precede its possible wait.
+        registeredCurrent?.checkCurrent(this, phase) // Before either reply content or a bounded parent rejection.
         val rejected = when {
             parent == null -> ComplaintOwnerReplyRejection.COMPLAINT_PARENT_NOT_FOUND
             parentState == "DELETION_PENDING" -> ComplaintOwnerReplyRejection.COMPLAINT_DELETION_PENDING

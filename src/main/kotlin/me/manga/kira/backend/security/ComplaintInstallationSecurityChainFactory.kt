@@ -61,7 +61,10 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
 
     init {
         require(core == null || initialCreate == null)
-        initialCreate?.let { require(!it.create.hasDeleteStatus() && !it.create.hasEditStatus()) { "Complaint CREATE subset refused." } }
+        initialCreate?.let {
+            require(!it.create.hasDeleteStatus() && !it.create.hasEditStatus()) { "Complaint CREATE subset refused." }
+            require(it.reply == null || it.reply === it.create) { "Complaint REPLY subset refused." }
+        }
         core?.let {
             require(it.create.hasDeleteStatus() == (it.delete != null)) { "Complaint delete/status composition refused." }
             if (it.delete != null) require(it.create.usesDeleteStatus(it.delete)) { "Complaint delete/status composition refused." }
@@ -78,6 +81,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     }
     private val authentication: ComplaintInstallationBearerAuthenticator? get() = core?.authentication ?: initialCreate?.authentication
     private val detail: ComplaintOwnerDetailHttpHandler? get() = core?.detail ?: initialCreate?.reads?.detail
+    private val reply: ComplaintOwnerCreateHttpHandler? get() = core?.reply ?: initialCreate?.reply
 
     fun build(http: HttpSecurity): SecurityFilterChain {
         http.securityMatcher(ComplaintInstallationRoutes)
@@ -148,7 +152,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
                 }
 
                 else -> if (ComplaintInstallationRoutes.isReply(request)) {
-                    checkNotNull(core?.reply).handleWithinIngress(request, response, context)
+                    checkNotNull(reply).handleWithinIngress(request, response, context)
                 } else if (ComplaintInstallationRoutes.isContent(request)) {
                     checkNotNull(core?.edit).handleWithinIngress(request, response, context)
                 } else if (request.method == "DELETE") {
@@ -168,7 +172,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         (initialCreate?.reads != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.HISTORY) ||
         (bootstrap != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.BOOTSTRAP) ||
         (core?.deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
-        (core?.reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
+        (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
         (core?.edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
         (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
         (core?.delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
@@ -204,12 +208,13 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         val delete: ComplaintOwnerDeleteHttpHandler?,
     )
 
-    /** Fixed narrower tuple: no me/reply/edit/delete handlers, including through its separate read pair. */
+    /** Fixed narrower tuple; optional reply is the same concrete creation handler, never me/edit/delete. */
     private class InitialCreate(
         val authentication: ComplaintInstallationBearerAuthenticator,
         val installations: ComplaintInstallationHttpHandler,
         val create: ComplaintOwnerCreateHttpHandler,
         val reads: OwnerReads? = null,
+        val reply: ComplaintOwnerCreateHttpHandler? = null,
     )
 
     private class OwnerReads(val history: ComplaintOwnerHistoryHttpHandler, val detail: ComplaintOwnerDetailHttpHandler)
@@ -234,6 +239,14 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
             detail: ComplaintOwnerDetailHttpHandler): ComplaintInstallationSecurityChainFactory =
             ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap, InitialCreate(authentication, installations, create, OwnerReads(history, detail)))
+
+        /** Explicit reply-capable sibling only; original CREATE/read-CREATE selectors do not acquire this handler. */
+        fun registeredReadCreateReplySubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,
+            authentication: ComplaintInstallationBearerAuthenticator, installations: ComplaintInstallationHttpHandler,
+            create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
+            detail: ComplaintOwnerDetailHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
+                InitialCreate(authentication, installations, create, OwnerReads(history, detail), create))
     }
 }
 
