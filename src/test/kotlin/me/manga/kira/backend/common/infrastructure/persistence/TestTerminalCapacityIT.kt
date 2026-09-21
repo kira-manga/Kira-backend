@@ -51,7 +51,7 @@ class TestTerminalCapacityIT {
             try {
                 assertTestTerminalCapacitySchema(sql)
                 sizeCatalog(sql, maximumDocumentBytes)
-                sizeRun(sql)
+                sizeRun(sql, connection)
                 sizeControl(sql)
                 sizeNoticeAndResource(sql)
                 sizePublications(sql, connection)
@@ -229,7 +229,7 @@ class TestTerminalCapacityIT {
 
                 // Purely synthetic lifecycle declarations: ordinary PURGING shapes retain every sidecar and its declared charge.
                 for (state in listOf("SEALED", "PURGING")) {
-                    populateTestTerminalRun(sql, state)
+                    populateTestTerminalRun(connection, state)
                     assertEquals(frozenRows, testTerminalDurableRows(sql))
                     assertEquals(3L, sql.queryForObject("SELECT count(*) FROM $TEST_TERMINAL_DURABLE_TABLE WHERE ${scope()}", Long::class.java))
                 }
@@ -444,19 +444,36 @@ class TestTerminalCapacityIT {
         // Both the pending and projected shape conservatively price all five indexes, not just currently matching partial entries.
     }
 
-    private fun sizeRun(sql: JdbcTemplate) {
+    private fun sizeRun(sql: JdbcTemplate, connection: Connection) {
         seedTestTerminalActiveRun(sql)
         val activePrice = 5632L
         val maximumTerminalPrice = 1074240L
         assertEquals(1068608L, maximumTerminalPrice - activePrice)
         measureTestTerminalCapacity(sql, "complaint_test_runs", scope(), 2 * 22 * 8L, activePrice)
+        // V31.3 storage-only shape, never E-authored custody. Restore ACTIVE before the original legacy maximum.
+        testTerminalDurableSavepoint(connection) {
+            for (state in listOf("SEALED", "PURGING", "PURGED")) {
+                populateTestTerminalRun(connection, state, recurrentHashShape = true)
+                val historyBytes = if (state == "SEALED") 0 else 32
+                measureTestTerminalCapacity(sql, "complaint_test_runs", scope(), 65536 + 51291 + historyBytes + 2 * 1024 + 2 * 22 * 8L, maximumTerminalPrice)
+                assertEquals(true, sql.queryForObject(
+                    "SELECT state = ? AND generation_seal_count = 16 AND octet_length(seal_set_bytes) = 65536 " +
+                        "AND octet_length(permanent_denial_bytes) = 51291 " +
+                        "AND (CASE WHEN state = 'SEALED' THEN recurrent_erasure_history_hash IS NULL ELSE octet_length(recurrent_erasure_history_hash) = 32 END) " +
+                        "AND (state <> 'PURGED' OR unused_reserve = array_fill(0::bigint, ARRAY[22])) FROM complaint_test_runs WHERE ${scope()}",
+                    Boolean::class.java, state,
+                ))
+            }
+        }
+        // Legacy projected NULL remains a valid storage shape; retain the full 65536-byte denial maximum and price.
         for (state in listOf("SEALED", "PURGING", "PURGED")) {
-            populateTestTerminalRun(sql, state)
+            populateTestTerminalRun(connection, state)
             measureTestTerminalCapacity(sql, "complaint_test_runs", scope(), 2 * 65536 + 2 * 1024 + 2 * 22 * 8L, maximumTerminalPrice)
             assertEquals(true, sql.queryForObject(
-                "SELECT octet_length(seal_set_bytes) = 65536 AND octet_length(permanent_denial_bytes) = 65536 " +
+                "SELECT state = ? AND generation_seal_count = 16 AND recurrent_erasure_history_hash IS NULL " +
+                    "AND octet_length(seal_set_bytes) = 65536 AND octet_length(permanent_denial_bytes) = 65536 " +
                     "AND (state <> 'PURGED' OR unused_reserve = array_fill(0::bigint, ARRAY[22])) FROM complaint_test_runs WHERE ${scope()}",
-                Boolean::class.java,
+                Boolean::class.java, state,
             ))
         }
     }

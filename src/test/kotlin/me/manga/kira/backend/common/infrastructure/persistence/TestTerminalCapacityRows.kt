@@ -4,6 +4,8 @@ import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.datasource.SingleConnectionDataSource
+import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import java.security.MessageDigest
 import java.sql.Connection
 import java.sql.Timestamp
@@ -11,7 +13,7 @@ import java.time.Instant
 import java.util.Base64
 import java.util.UUID
 
-/** Legal synthetic V14/V17 storage shapes only: no signed catalog, provider evidence, TEST sealer or reserve authority. */
+/** Synthetic V14/V17 storage shapes only: no signed catalog, provider evidence, TEST sealer or reserve authority. */
 internal val TEST_TERMINAL_CAPACITY_SCOPE: UUID = UUID.fromString("00000000-0000-4000-8000-000000000001")
 internal val TEST_TERMINAL_CAPACITY_TOKEN: UUID = UUID.fromString("00000000-0000-4000-8000-000000000002")
 internal val TEST_TERMINAL_NOTICE_ID: UUID = UUID.fromString("00000000-0000-4000-8000-000000000003")
@@ -49,20 +51,58 @@ internal fun seedTestTerminalActiveRun(sql: JdbcTemplate) {
     )
 }
 
-internal fun populateTestTerminalRun(sql: JdbcTemplate, state: String) {
+/** Only the owned rollback sizing IT may use these declarations; a sized hash is not E-authored custody. */
+internal fun populateTestTerminalRun(connection: Connection, state: String, recurrentHashShape: Boolean = false) {
     require(state in setOf("SEALED", "PURGING", "PURGED"))
+    require(!connection.autoCommit) { "Synthetic terminal sizing requires an explicit transaction owned by the rollback IT" }
+    val sql = JdbcTemplate(SingleConnectionDataSource(connection, true)).apply { exceptionTranslator = SQLExceptionSubclassTranslator() }
     val evidence = sizingBytes(65536)
-    sql.update(
-        "WITH v AS (SELECT ?::bytea AS b, ?::bytea AS h, ?::timestamptz AS t) UPDATE complaint_test_runs SET state = ?, " +
-            "sealed_at = v.t, purging_at = ?, purged_at = ?, final_ordinary_epoch = 9223372036854775806, terminal_seal_epoch = 9223372036854775807, " +
-            "generation_seal_count = 16, generation_seal_root = v.h, seal_set_bytes = v.b, seal_set_hash = v.h, event_manifest_count = 500, " +
-            "event_manifest_root = v.h, installation_manifest_count = 500, installation_manifest_root = v.h, installation_chunk_count = 1, " +
-            "retired_count = 250, deleted_count = 250, permanent_denial_bytes = v.b, permanent_denial_hash = v.h, terminal_event_id = repeat('A',43), " +
-            "terminal_object_key = repeat('k',1024), terminal_object_version = repeat('v',1024), terminal_ciphertext_hash = v.h, " +
-            "terminal_catalog_generation = 65536, terminal_catalog_hash = v.h, unused_reserve = " +
-            (if (state == "PURGED") "array_fill(0::bigint, ARRAY[22])" else "original_reserve") + " FROM v WHERE data_scope_id = ?",
-        evidence, sizingHash(evidence), sizingTime, state, if (state == "SEALED") null else sizingTime,
-        if (state == "PURGED") sizingTime else null, TEST_TERMINAL_CAPACITY_SCOPE,
+    val evidenceHash = sizingHash(evidence)
+    val denial = if (recurrentHashShape) sizingBytes(51291) else evidence
+    val denialHash = sizingHash(denial)
+    val syntheticHistoryHash = if (recurrentHashShape && state != "SEALED") sizingHash(sizingBytes(34)) else null
+    assertSizingCustodyGuardEnabled(sql)
+    val savepoint = if (state == "PURGING") connection.setSavepoint() else null
+    try {
+        // Suspend only this named guard, only around the fixed synthetic SEALED -> PURGING UPDATE.
+        // No callback, E/F transaction, provider operation or consumer runs while it is disabled.
+        if (savepoint != null) sql.execute("ALTER TABLE complaint_test_runs DISABLE TRIGGER complaint_run_recurrent_erasure_custody")
+        val updated = sql.update(
+            "WITH v AS (SELECT ?::bytea AS b, ?::bytea AS h, ?::timestamptz AS t) UPDATE complaint_test_runs SET state = ?, " +
+                "sealed_at = v.t, purging_at = ?, purged_at = ?, final_ordinary_epoch = 9223372036854775806, terminal_seal_epoch = 9223372036854775807, " +
+                "generation_seal_count = 16, generation_seal_root = v.h, seal_set_bytes = v.b, seal_set_hash = v.h, event_manifest_count = 500, " +
+                "event_manifest_root = v.h, installation_manifest_count = 500, installation_manifest_root = v.h, installation_chunk_count = 1, " +
+                "retired_count = 250, deleted_count = 250, permanent_denial_bytes = ?, permanent_denial_hash = ?, recurrent_erasure_history_hash = ?, " +
+                "terminal_event_id = repeat('A',43), terminal_object_key = repeat('k',1024), terminal_object_version = repeat('v',1024), terminal_ciphertext_hash = v.h, " +
+                "terminal_catalog_generation = 65536, terminal_catalog_hash = v.h, unused_reserve = " +
+                (if (state == "PURGED") "array_fill(0::bigint, ARRAY[22])" else "original_reserve") + " FROM v WHERE data_scope_id = ? AND test_only" +
+                (if (state == "PURGING") " AND complaint_test_runs.state = 'SEALED'" else ""),
+            evidence, evidenceHash, sizingTime, state, if (state == "SEALED") null else sizingTime,
+            if (state == "PURGED") sizingTime else null, denial, denialHash, syntheticHistoryHash, TEST_TERMINAL_CAPACITY_SCOPE,
+        )
+        if (savepoint != null) {
+            sql.execute("ALTER TABLE complaint_test_runs ENABLE TRIGGER complaint_run_recurrent_erasure_custody")
+            assertSizingCustodyGuardEnabled(sql)
+        }
+        assertEquals(1, updated)
+        if (savepoint != null) connection.releaseSavepoint(savepoint)
+    } catch (failure: Throwable) {
+        if (savepoint != null) runCatching {
+            // A failed UPDATE aborts the SQL transaction: roll back the DDL too before checking restoration.
+            connection.rollback(savepoint)
+            assertSizingCustodyGuardEnabled(sql)
+            connection.releaseSavepoint(savepoint)
+        }.exceptionOrNull()?.let(failure::addSuppressed)
+        throw failure // No consumer proceeds if restoration cannot be verified; the owning IT also rolls back.
+    }
+}
+
+private fun assertSizingCustodyGuardEnabled(sql: JdbcTemplate) {
+    assertEquals(
+        "O", sql.queryForObject(
+            "SELECT tgenabled::text FROM pg_trigger WHERE tgrelid = 'complaint_test_runs'::regclass " +
+                "AND tgname = 'complaint_run_recurrent_erasure_custody' AND NOT tgisinternal", String::class.java,
+        ), "Synthetic sizing must leave the recurrent custody guard enabled",
     )
 }
 
