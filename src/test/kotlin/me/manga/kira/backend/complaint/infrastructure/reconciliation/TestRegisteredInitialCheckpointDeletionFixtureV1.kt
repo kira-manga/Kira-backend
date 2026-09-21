@@ -6,6 +6,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.GuardedJdbcTransa
 import me.manga.kira.backend.common.infrastructure.persistence.NeverOwnerDeleteAllDataKeys
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.ScopedStepUpFixture
@@ -81,6 +82,7 @@ import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.core.ResultSetExtractor
 import org.springframework.jdbc.core.RowMapper
@@ -89,6 +91,7 @@ import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
+import java.sql.SQLException
 import java.time.Clock
 import java.util.Collections
 import java.util.UUID
@@ -473,6 +476,8 @@ internal class TestRegisteredInitialDeletionProbeJdbcV1(private val f: TestRegis
     private fun <T> observed(sql: String, args: Array<out Any?>, execute: () -> T): T {
         if (observing.get()) return execute()
         observing.set(true)
+        var attempted: TestRegisteredInitialDeletionSqlCallV1? = null
+        var stage = "OBSERVATION"
         try {
             val phase = checkNotNull(PersistencePhaseOwnership.current())
             val path = poolTestField<PersistencePhasePath>(phase, "path")
@@ -494,13 +499,63 @@ internal class TestRegisteredInitialDeletionProbeJdbcV1(private val f: TestRegis
                 args.map { if (it is ByteArray) it.copyOf() else it }
             } else emptyList()
             val call = TestRegisteredInitialDeletionSqlCallV1(phase, path, sql, owned)
+            attempted = call
+            stage = "BEFORE_CALLBACK"
             calls.add(call); before(call)
-            return execute().also { after(call) }
-        } catch (failure: AssertionError) { assertion.compareAndSet(null, failure); throw failure }
+            stage = "EXECUTE_AND_MAP"
+            val result = execute()
+            stage = "AFTER_CALLBACK"
+            after(call)
+            return result
+        } catch (failure: Throwable) {
+            if (failure is AssertionError) assertion.compareAndSet(null, failure)
+            try {
+                // Only this callback's original throw, before the phase erases its cause. This
+                // can also describe an expected negative; it is not a whole-case failure verdict.
+                val sqlState = ((failure as? SQLException) ?: (failure.cause as? SQLException))?.sqlState?.uppercase()
+                    ?.takeIf { it.length == 5 && it.all { c -> c in 'A'..'Z' || c in '0'..'9' } } ?: "NONE"
+                println("TEST_REGISTERED_DELETION_CALLBACK_FAILURE stage=$stage path=${attempted?.path?.name ?: "NONE"} " +
+                    "sqlStep=${attempted?.sqlStep ?: "NONE"} kind=${testDeletionFailureKind(failure)} sqlState=$sqlState")
+            } catch (_: Throwable) { /* Diagnostics must not replace the original failure. */ }
+            throw failure
+        }
         finally { observing.remove() }
     }
     fun assertNoLostAssertions() { assertion.get()?.let { throw it } }
 }
 
 internal class TestRegisteredInitialDeletionSqlCallV1(val phase: PersistencePhaseContext, val path: PersistencePhasePath, val sql: String,
-    val ownedArguments: List<Any?> = emptyList())
+    val ownedArguments: List<Any?> = emptyList()) {
+    /** Fixed labels only; the existing private SQL/argument observations are never printed. */
+    val sqlStep: String get() = when (sql) {
+        TestRegisteredInitialCheckpointDeletionSqlV1.current -> "INITIAL_CURRENT"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.branch -> "RECURRENT_BRANCH"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.current -> "RECURRENT_CURRENT"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.owned -> "RECURRENT_OWNED"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.initialHeaders -> "INITIAL_HEADERS"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.recurrentHeaders -> "RECURRENT_HEADERS"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.initialPayload -> "INITIAL_PAYLOAD"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.recurrentPayload -> "RECURRENT_PAYLOAD"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.history -> "CHECKPOINT_HISTORY"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.historyCounts -> "PRIOR_COUNTS"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.publications -> "PRIOR_IDS"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.publication -> "PRIOR_PUBLICATION"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.ownerReceipt -> "PRIOR_OWNER_RECEIPT"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.adminReceipt -> "PRIOR_ADMIN_RECEIPT"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.family -> "PRIOR_FAMILY"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.appliedFamily -> "PRIOR_APPLIED_FAMILY"
+        TestRegisteredRecurrentCheckpointDeletionSqlV1.recovery -> "PRIOR_RECOVERY"
+        TestActiveRecurrentScanSqlV1.appliedPage -> "APPLIED_COVERAGE"
+        "SELECT clock_timestamp()" -> "DB_CLOCK"
+        else -> "OTHER"
+    }
+}
+
+internal fun testDeletionFailureKind(failure: Throwable): String = when (failure) {
+    is PersistencePhaseException -> "PERSISTENCE_PHASE"
+    is TestActiveRecurrentExceptionV1 -> "RECURRENT_REFUSED"
+    is DataAccessException -> "DATA_ACCESS"
+    is SQLException -> "SQL"
+    is AssertionError -> "ASSERTION"
+    else -> "OTHER"
+}
