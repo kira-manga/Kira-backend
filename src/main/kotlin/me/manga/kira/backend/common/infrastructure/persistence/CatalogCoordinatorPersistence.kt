@@ -16,6 +16,7 @@ import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintCatal
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestInitialAdmissionPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.TestActiveFirstCutPhaseExecutorV1
+import me.manga.kira.backend.complaint.infrastructure.transaction.TestActiveFirstCutSuccessorPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestNamespaceActiveRegistrationPhaseExecutorV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintTestRunSealingPhaseExecutorV1
@@ -69,7 +70,9 @@ internal class CatalogCoordinatorPersistence private constructor(
 
     private var testRunActivationExecutor: ComplaintCatalogTestRunActivationPhaseExecutorV1? = null
     private var testActiveFirstCutExecutor: TestActiveFirstCutPhaseExecutorV1? = null
+    private var testActiveFirstCutSuccessorExecutor: TestActiveFirstCutSuccessorPhaseExecutorV1? = null
     internal val testActiveFirstCut: TestActiveFirstCutPhaseExecutorV1 get() = checkNotNull(testActiveFirstCutExecutor)
+    internal val testActiveFirstCutSuccessor: TestActiveFirstCutSuccessorPhaseExecutorV1 get() = checkNotNull(testActiveFirstCutSuccessorExecutor)
     private var testInitialAdmissionExecutor: ComplaintTestInitialAdmissionPhaseExecutorV1? = null
     internal val testInitialAdmission: ComplaintTestInitialAdmissionPhaseExecutorV1 get() = checkNotNull(testInitialAdmissionExecutor)
     private var testRegistrationExecutor: ComplaintTestNamespaceRegistrationPhaseExecutorV1? = null
@@ -154,6 +157,7 @@ internal class CatalogCoordinatorPersistence private constructor(
         testRegistrationExecutor = ComplaintTestNamespaceRegistrationPhaseExecutorV1(this)
         testInitialAdmissionExecutor = ComplaintTestInitialAdmissionPhaseExecutorV1(this)
         testActiveFirstCutExecutor = TestActiveFirstCutPhaseExecutorV1(this)
+        testActiveFirstCutSuccessorExecutor = TestActiveFirstCutSuccessorPhaseExecutorV1(this)
         testRecoveryRegistrationExecutor = ComplaintTestNamespaceRecoveryRegistrationPhaseExecutorV1(this)
         testActiveRegistrationExecutor = ComplaintTestNamespaceActiveRegistrationPhaseExecutorV1(this)
         testRunSealingExecutor = ComplaintTestRunSealingPhaseExecutorV1(this)

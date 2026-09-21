@@ -292,7 +292,7 @@ internal object TestActiveFirstCutCasesV1 {
         val original = f.begin()
         when (cut) {
             TestFirstCutClosedV1.REGISTRATION -> f.registration.close()
-            TestFirstCutClosedV1.ROOT -> f.runtime.stopWithoutWaiting()
+            TestFirstCutClosedV1.ROOT -> f.runtime.requestIntakeShutdownForRefusal()
             TestFirstCutClosedV1.SEALED_RUN -> assertEquals(1, f.initial.foreignUpdate(
                 "UPDATE complaint_test_runs SET state = 'SEALED', sealed_at = clock_timestamp() WHERE data_scope_id = ?", f.scope))
             TestFirstCutClosedV1.MAINTENANCE -> assertEquals(1, f.initial.foreignUpdate(

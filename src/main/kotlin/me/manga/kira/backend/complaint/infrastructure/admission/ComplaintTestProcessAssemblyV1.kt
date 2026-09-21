@@ -236,9 +236,14 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         val activeFirstCut = inputs.activeFirstCut?.let {
             me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1.fromRetained(it, pools, inputs.journal, ordinarySeal)
         }
+        val activeFirstCutSuccessor = inputs.activeFirstCutSuccessor?.let {
+            me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1.fromRetained(
+                it, pools, inputs.journal, checkNotNull(activeFirstCut), ordinarySeal,
+            )
+        }
         assembled = VersionBoundTestNamespaceProcessV1.fromRetained(
             consumers, pools, inputs.implementationSchema, inputs.desiredGeneration, inputs.databaseIdentity, inputs.restoreIdentity,
-            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication,
+            publication, inputs.catalog, activation, ordinarySeal, inputs.ordinaryDenial, activeFirstCut, ordinaryPublication, activeFirstCutSuccessor,
         )
         // No public-trust preparation, JDBC connection, STS/KMS/S3 construction, activation or registration was performed.
     }

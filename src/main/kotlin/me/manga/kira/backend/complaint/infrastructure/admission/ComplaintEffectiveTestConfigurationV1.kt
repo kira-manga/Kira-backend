@@ -34,7 +34,8 @@ internal object ComplaintEffectiveTestConfigurationV1 {
             put("kind", "kira-complaint-effective-test-configuration")
             put("schemaVersion", 1)
             put("canonicalizerId", "kcj-1")
-            put("profile", if (owner.activeFirstCut != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+            put("profile", if (owner.activeFirstCutSuccessor != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_RESERVED_RECOVERY_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
+                else if (owner.activeFirstCut != null) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.registeredAdminBatchDelete) "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.registeredAdminDelete) "PRE_CUTOVER_TEST_ADMIN_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
                 else if (journal.ownerDeleteAll) "PRE_CUTOVER_TEST_OWNER_ERASURE_MEMORY_SINGLE_INSTANCE_SINGLE_CATALOG_SIGNER"
@@ -65,6 +66,10 @@ internal object ComplaintEffectiveTestConfigurationV1 {
                 put("activeFirstCut", it.inventory())
             }
             owner.activeCutoffPublication?.let { put("activeCutoffPublication", it.inventory()) }
+            owner.activeFirstCutSuccessor?.let {
+                it.requireRetained(owner.pools, journal, owner.activeFirstCut, owner.ordinarySeal)
+                put("activeFirstCutSuccessor", it.inventory())
+            }
         }
         return CanonicalJson.canonicalize(result).toByteArray(Charsets.UTF_8)
     }

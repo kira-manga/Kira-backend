@@ -52,17 +52,17 @@ import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * First-only ACTIVE original. Historical Captured is consumed privately once, then a fresh higher
- * scoped lease and current raw/full-D are required. No terminal spend, checkpoint, health or APPLY.
+ * First-range ACTIVE seal original. Typed original/recovered history is claimed privately once,
+ * then a fresh higher scoped lease and current raw/full-D are required. No checkpoint, health or APPLY.
  * Every SQL success below is known COMMIT AND physical release; failure/UNKNOWN poisons this original.
  */
 internal class TestActiveOrdinarySealV1 private constructor(
-    private val handoff: TestActiveFirstCutV1.SealHandoff,
+    private val origin: Origin,
     private val httpFixture: (() -> SdkHttpClient)?, private val clock: Clock,
 ) {
-    internal val registration = handoff.registration
-    internal val process = handoff.process
-    internal val slot = handoff.slot
+    internal val registration = origin.registration
+    internal val process = origin.process
+    internal val slot = origin.slot
     internal val identity = slot.identity
     internal val coordinator = process.pools.catalogCoordinator
     internal val routing = process.consumers.journalRouting
@@ -121,7 +121,7 @@ internal class TestActiveOrdinarySealV1 private constructor(
     private var raw: CatalogTestRunActivationReadbackV3? = null
 
     init {
-        requireConnectionFree(); handoff.requireRetained()
+        requireConnectionFree(); origin.requireRetained()
         requireActiveSeal(identity.writer.toString() == routing.journalConfiguration.declaration().writer.generationId &&
             scope == routing.journalConfiguration.scope.id && slot.epochStart == 1L && cutoff == 1L && slot.epochAfter == 2L &&
             routing.journalConfiguration.registeredAdminBatchDelete)
@@ -334,7 +334,7 @@ internal class TestActiveOrdinarySealV1 private constructor(
         if (Thread.currentThread().isInterrupted) throw InterruptedException("ACTIVE TEST seal interrupted.")
         requireActiveSeal(caller === Thread.currentThread() && started && !finished && !cleanupUncertain)
         budget.remainingMillis(1); codecAttempt.remainingMillis(1) // NOT remainingProviderMillis: avoid a custody recursion.
-        handoff.requireRetained(); acquisition.requireRetained(routing, process.publicationLanes); cutoffRecipe.requireRetained(routing, process.publicationLanes)
+        origin.requireRetained(); acquisition.requireRetained(routing, process.publicationLanes); cutoffRecipe.requireRetained(routing, process.publicationLanes)
         if (readbackReserved) coordinator.catalogRefreshCustody.requireTestActiveOrdinarySeal(this)
     }
     private fun requireReleased(operation: TestActiveOrdinarySealOperationV1?) { requireRunning(); requireActiveSeal(phase == null && !phaseEntered); checkNotNull(operation).requireReleased() }
@@ -436,11 +436,41 @@ internal class TestActiveOrdinarySealV1 private constructor(
         }
         override fun toString(): String = "TestActiveOrdinarySealV1.Verified(historical-only,redacted)"
     }
+    /**
+     * Closed provenance, not a caller-implementable row/current flag. Each private constructor is
+     * reached only by its own typed one-use claim. Recovered never constructs the old Captured,
+     * and both histories still enter the same RESERVED-only/current-raw/fresh-lease seal pipeline.
+     */
+    private sealed class Origin private constructor() {
+        class Original private constructor(val handoff: TestActiveFirstCutV1.SealHandoff) : Origin() {
+            companion object {
+                fun claim(captured: TestActiveFirstCutV1.Captured, registration: ComplaintTestNamespaceRegistrationV1,
+                    assembly: ComplaintTestProcessAssemblyV1): Original = Original(captured.claimSeal(registration, assembly))
+            }
+        }
+        class Recovered private constructor(val handoff: TestActiveFirstCutSuccessorV1.RecoveredSealHandoff) : Origin() {
+            companion object {
+                fun claim(recovered: TestActiveFirstCutSuccessorV1.Recovered, registration: ComplaintTestNamespaceRegistrationV1,
+                    assembly: ComplaintTestProcessAssemblyV1): Recovered = Recovered(recovered.claimSeal(registration, assembly))
+            }
+        }
+        val registration get() = when (this) { is Original -> handoff.registration; is Recovered -> handoff.registration }
+        val process get() = when (this) { is Original -> handoff.process; is Recovered -> handoff.process }
+        val slot get() = when (this) { is Original -> handoff.slot; is Recovered -> handoff.slot }
+        fun requireRetained() = when (this) { is Original -> handoff.requireRetained(); is Recovered -> handoff.requireRetained() }
+    }
+
     companion object {
         fun begin(captured: TestActiveFirstCutV1.Captured, registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1): TestActiveOrdinarySealV1 =
-            TestActiveOrdinarySealV1(captured.claimSeal(registration, assembly), null, Clock.systemUTC())
+            TestActiveOrdinarySealV1(Origin.Original.claim(captured, registration, assembly), null, Clock.systemUTC())
+        fun begin(recovered: TestActiveFirstCutSuccessorV1.Recovered, registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1): TestActiveOrdinarySealV1 =
+            TestActiveOrdinarySealV1(Origin.Recovered.claim(recovered, registration, assembly), null, Clock.systemUTC())
         internal fun withHttpFixture(captured: TestActiveFirstCutV1.Captured, registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
-            http: () -> SdkHttpClient, clock: Clock): TestActiveOrdinarySealV1 = TestActiveOrdinarySealV1(captured.claimSeal(registration, assembly), http, clock)
+            http: () -> SdkHttpClient, clock: Clock): TestActiveOrdinarySealV1 = TestActiveOrdinarySealV1(Origin.Original.claim(captured, registration, assembly), http, clock)
+        internal fun withHttpFixture(recovered: TestActiveFirstCutSuccessorV1.Recovered, registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1, http: () -> SdkHttpClient, clock: Clock): TestActiveOrdinarySealV1 =
+            TestActiveOrdinarySealV1(Origin.Recovered.claim(recovered, registration, assembly), http, clock)
         private fun hex(value: ByteArray): String = try { HexFormat.of().formatHex(value) } finally { value.fill(0) }
     }
 }

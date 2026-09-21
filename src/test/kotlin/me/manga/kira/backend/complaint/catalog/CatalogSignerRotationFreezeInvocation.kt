@@ -13,6 +13,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.infrastructure.admission.TestInitialAdmissionSqlV1
 import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRecoveryRegistrationSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSqlV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorSqlV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.ACQUIRE_COORDINATOR_LEASE
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogSignerRotationFreezeRequestV1
@@ -325,6 +326,8 @@ internal class CatalogSignerRotationProbeJdbc(
         val path = PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path") }
         return if (path === PersistencePhasePath.COMPLAINT_CATALOG_SNAPSHOT ||
             (path?.testActiveFirstCut == true && sql == TRY_CATALOG_LOCK) ||
+            (path?.testActiveFirstCutSuccessor == true && sql in setOf(TRY_CATALOG_LOCK,
+                TestActiveFirstCutSuccessorSqlV1.lockCounters, TestActiveFirstCutSuccessorSqlV1.readCounters)) ||
             ((observeDeliveryQueries || observeActivationQueries) && sql == DELIVERY_GATES)
         ) {
             observed(sql, emptyArray()) { super.query(sql, rse) }
@@ -334,7 +337,7 @@ internal class CatalogSignerRotationProbeJdbc(
     }
 
     override fun <T : Any?> query(sql: String, rse: ResultSetExtractor<T>, vararg args: Any?): T? =
-        if ((PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path").testActiveFirstCut } == true &&
+        if ((PersistencePhaseOwnership.current()?.let { poolTestField<PersistencePhasePath>(it, "path").let { selected -> selected.testActiveFirstCut || selected.testActiveFirstCutSuccessor } } == true &&
                 sql in setOf(TestActiveFirstCutSqlV1.authenticate, CatalogTestRunActivationSqlV1.lockRecoveryRegistrationHistory)) ||
             ((observeDeliveryQueries || observeActivationQueries || observeTestActivationQueries) && sql == DELIVERY_AUTHENTICATE) ||
             (observeTestActivationQueries && sql in setOf(
@@ -401,6 +404,8 @@ internal class CatalogSignerRotationProbeJdbc(
             observations[phase] = StepUpPhaseObservation(phase, ownedPoolLease(holder.connection), identity)
         }
         val step = when {
+            path.testActiveFirstCutSuccessor && successorStep(sql) != null -> checkNotNull(successorStep(sql))
+
             path.testActiveFirstCut && firstCutStep(sql) != null -> checkNotNull(firstCutStep(sql))
 
             path.testRunSealing && sql == DELIVERY_AUTHENTICATE -> "test-run-sealing-authenticate"
@@ -465,6 +470,9 @@ internal class CatalogSignerRotationProbeJdbc(
         PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
         PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
         PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ,
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE,
+        PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARE,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_PREPARED_RELOAD,
         PersistencePhasePath.COMPLAINT_CATALOG_TEST_RUN_ACTIVATION_SIGNATURE,
@@ -558,6 +566,25 @@ internal class CatalogSignerRotationProbeJdbc(
         CatalogTestRunActivationProjectionSqlV1.lockResources -> "test-project-resources-lock"
         CatalogTestRunActivationProjectionSqlV1.lockNotices -> "test-project-notices-lock"
         CatalogTestRunActivationProjectionSqlV1.lockAudits -> "test-project-audits-lock"
+        else -> null
+    }
+
+    private fun successorStep(sql: String): String? = when (sql) {
+        TestActiveFirstCutSuccessorSqlV1.authenticate -> "test-first-cut-successor-authenticate"
+        TestActiveFirstCutSuccessorSqlV1.lockGlobal -> "test-first-cut-successor-global-lock"
+        TestActiveFirstCutSuccessorSqlV1.lockScope -> "test-first-cut-successor-control-lock"
+        TRY_CATALOG_LOCK -> "test-first-cut-successor-catalog"
+        CatalogTestRunActivationSqlV1.lockRecoveryRegistrationHistory -> "test-first-cut-successor-history-lock"
+        TestNamespaceRecoveryRegistrationSqlV1.tail -> "test-first-cut-successor-tail"
+        TestActiveFirstCutSuccessorSqlV1.lockCounters -> "test-first-cut-successor-counters-lock"
+        TestActiveFirstCutSuccessorSqlV1.readCounters -> "test-first-cut-successor-counters-read"
+        TestActiveFirstCutSuccessorSqlV1.lockRun -> "test-first-cut-successor-run-lock"
+        TestActiveFirstCutSuccessorSqlV1.lockSlot -> "test-first-cut-successor-slot-lock"
+        TestActiveFirstCutSuccessorSqlV1.read -> "test-first-cut-successor-read"
+        TestActiveFirstCutSuccessorSqlV1.runAccounting -> "test-first-cut-successor-run-accounting"
+        TestActiveFirstCutSuccessorSqlV1.installationCounts -> "test-first-cut-successor-identities"
+        TestActiveFirstCutSuccessorSqlV1.acquireLease -> "test-first-cut-successor-acquire"
+        TestActiveFirstCutSuccessorSqlV1.releaseCapturedLease -> "test-first-cut-successor-release"
         else -> null
     }
 

@@ -45,8 +45,9 @@ internal val FIRST_CUT_REQUEST = PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRS
 internal fun withTestActiveFirstCut(
     tls: VersionBoundPersistenceConnectedFixture,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
+    activeFirstCutSuccessor: Boolean = false,
     action: (TestActiveFirstCutFixtureV1) -> Unit,
-) = withInitialAdmission(tls, activeFirstCut = true, ordinaryRawHttp = ordinaryRawHttp) { identity ->
+) = withInitialAdmission(tls, activeFirstCut = true, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { identity ->
         identity.release()
         identity.probe.resetObservations()
         val executor = identity.runtime.pools.catalogCoordinator.testActiveFirstCut

@@ -66,6 +66,10 @@ internal class TestActiveOrdinarySealOperationV1 private constructor(
             if (step === TestActiveOrdinarySealStepV1.ACQUIRE) {
                 val token = jdbc.query(TestActiveOrdinarySealSqlV1.acquire, { row, _ -> row.getLong("lease_token").also { requireActiveSeal(!row.wasNull()) } },
                     original.attemptId, original.scope, original.slot.operationToken, maxOf(original.slot.captureToken, original.slot.requestToken)).single()
+                // A recovered history may have relinquished a lease newer than its capture token.
+                // The fixed UPDATE increments current control under this same scope lock; compare
+                // against that actual pre-acquisition read, never infer freshness from the handoff.
+                requireActiveSeal(token > current.leaseToken)
                 original.retainAcquiringToken(this, token)
             } else current.requireLease(original)
             if (step === TestActiveOrdinarySealStepV1.RENEW) requireActiveSeal(jdbc.update(TestActiveOrdinarySealSqlV1.renew, original.scope, original.attemptId, original.leaseToken) == 1)

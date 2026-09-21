@@ -88,6 +88,9 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     val activeFirstCut = document.activeFirstCut?.also(
         me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1::requireInput,
     )
+    val activeFirstCutSuccessor = document.activeFirstCutSuccessor?.also(
+        me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1::requireInput,
+    )
     val ordinaryDenial = document.ordinaryDenial?.let(TestOrdinaryDenialAuthorityPolicyV1::fromIndependentInput)
     val sealerMapping = document.sealer.let { sealer ->
         val authorities = journal.declaration().authorities
@@ -124,7 +127,8 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
     init {
         valid(document.schemaVersion == 1 && implementationSchema == 1 && desiredGeneration > 0)
         // Old recipes/default bytes stay distinct. Admin requires its own J AND denial recipe.
-        valid((document.profile == ACTIVE_FIRST_CUT_PROFILE) == (activeFirstCut != null))
+        valid((document.profile == ACTIVE_FIRST_CUT_PROFILE || document.profile == ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE) == (activeFirstCut != null))
+        valid((document.profile == ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE) == (activeFirstCutSuccessor != null))
         valid((activeFirstCut != null) == (ordinaryPublication != null))
         valid(when (document.profile) {
             PROFILE -> !journal.adminDelete && !journal.ownerDeleteAll && ordinaryDenial == null
@@ -134,6 +138,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
             ADMIN_ERASURE_DRAIN_PROFILE -> journal.registeredAdminDelete && !journal.adminBatchDelete && ordinaryDenial != null
             ADMIN_BATCH_ERASURE_DRAIN_PROFILE -> journal.registeredAdminBatchDelete && ordinaryDenial != null
             ACTIVE_FIRST_CUT_PROFILE -> journal.registeredAdminBatchDelete && ordinaryDenial != null && activeFirstCut != null
+            ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE -> journal.registeredAdminBatchDelete && ordinaryDenial != null && activeFirstCut != null && activeFirstCutSuccessor != null
             else -> false
         })
         valid(database.runtimeUsername != VersionBoundPersistenceConfiguration.DESIRED_INSTALLATION_OPERATOR_USERNAME &&
@@ -220,6 +225,7 @@ internal class ComplaintTestDeploymentInputsV1 private constructor(document: Com
         const val DRAIN_PROFILE = "PRE_CUTOVER_TEST_ORDINARY_DRAIN_V1"
         const val OWNER_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_OWNER_ERASURE_ORDINARY_DRAIN_V1"
         const val ACTIVE_FIRST_CUT_PROFILE = "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_V1"
+        const val ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE = "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ACTIVE_FIRST_CUT_RESERVED_RECOVERY_V1"
         const val ADMIN_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_ADMIN_ERASURE_ORDINARY_DRAIN_V1"
         const val ADMIN_BATCH_ERASURE_DRAIN_PROFILE = "PRE_CUTOVER_TEST_ADMIN_BATCH_ERASURE_ORDINARY_DRAIN_V1"
 

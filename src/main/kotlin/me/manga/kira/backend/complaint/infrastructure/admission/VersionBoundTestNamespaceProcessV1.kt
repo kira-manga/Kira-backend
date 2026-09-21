@@ -38,6 +38,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
     val ordinaryDenial: TestOrdinaryDenialAuthorityPolicyV1?,
     val activeFirstCut: VersionBoundTestActiveFirstCutV1?,
     val activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1?,
+    val activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1?,
 ) {
     private val retainedPools: List<VersionBoundPersistencePoolDescriptor>
     private val canonical: ByteArray
@@ -153,6 +154,7 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
         ) { INVALID_TEST_PROCESS_CONFIGURATION }
         require((activeFirstCut == null) == (activeCutoffPublication == null)) { INVALID_TEST_PROCESS_CONFIGURATION }
         activeFirstCut?.requireRetained(pools, journal, ordinarySeal)
+        activeFirstCutSuccessor?.requireRetained(pools, journal, activeFirstCut, ordinarySeal)
         activeCutoffPublication?.requireRetained(consumers.journalRouting, publicationLanes)
         catalogActivation.requireRetained(pools, catalogReadback, journal)
         ordinarySeal?.requireRetained(consumers.journalRouting, publicationLanes)
@@ -183,11 +185,12 @@ internal class VersionBoundTestNamespaceProcessV1 private constructor(
             ordinaryDenial: TestOrdinaryDenialAuthorityPolicyV1? = null,
             activeFirstCut: VersionBoundTestActiveFirstCutV1? = null,
             activeCutoffPublication: VersionBoundTestActiveCutoffPublicationV1? = null,
+            activeFirstCutSuccessor: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1? = null,
         ): VersionBoundTestNamespaceProcessV1 {
             requireConnectionFree()
             return VersionBoundTestNamespaceProcessV1(
                 consumers, pools, implementationSchema, desiredGeneration, databaseIdentity, restoreIdentity,
-                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication,
+                publicationLanes, catalogReadback, catalogActivation, ordinarySeal, ordinaryDenial, activeFirstCut, activeCutoffPublication, activeFirstCutSuccessor,
             )
         }
 

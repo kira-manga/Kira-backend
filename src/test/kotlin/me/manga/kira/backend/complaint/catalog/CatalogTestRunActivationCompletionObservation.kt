@@ -40,8 +40,9 @@ internal fun withCompletionActivationRows(
     registeredAdminBatchDelete: Boolean = false,
     activeFirstCut: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
+    activeFirstCutSuccessor: Boolean = false,
     action: (CompletionActivationObservation) -> Unit,
-) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, ordinaryRawHttp = ordinaryRawHttp) { signed ->
+) = withSignedActivationRows(tls, prefix, createGlobal = createGlobal, ordinarySealHttp = ordinarySealHttp, ownerDeleteAll = ownerDeleteAll, ordinaryDrain = ordinaryDrain, registeredAdminDelete = registeredAdminDelete, registeredAdminBatchDelete = registeredAdminBatchDelete, activeFirstCut = activeFirstCut, ordinaryRawHttp = ordinaryRawHttp, activeFirstCutSuccessor = activeFirstCutSuccessor) { signed ->
     val before = signed.rows.counters.snapshot()
     val original = signed.begin()
     val prepared = try {

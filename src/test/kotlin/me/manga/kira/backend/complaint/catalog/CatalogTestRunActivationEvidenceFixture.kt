@@ -49,6 +49,7 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.OfflineCatalogInve
 import me.manga.kira.backend.complaint.infrastructure.catalog.VersionBoundCatalogReadbackConfigurationV1
 import me.manga.kira.backend.complaint.infrastructure.catalog.aws.S3CatalogReadbackLimits
 import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationLanesV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutSuccessorV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveFirstCutV1
 import me.manga.kira.backend.security.BoundTestComplaintConsumerFixture
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
@@ -105,6 +106,7 @@ internal fun withActivationEvidence(
     registeredAdminBatchDelete: Boolean = false,
     activeFirstCut: Boolean = false,
     ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
+    activeFirstCutSuccessor: Boolean = false,
     action: (CatalogTestRunActivationEvidenceFixture) -> Unit,
 ) {
     val rotations = OfflineCatalogRotationFixture.chain()
@@ -127,7 +129,7 @@ internal fun withActivationEvidence(
     } else TestOwnerDeleteJournalConfigurationV1.of(declaration, ownerDeleteAll = ownerDeleteAll)
     JournalPublicationLanesV1(journal).use { lanes ->
         CatalogTestRunActivationEvidenceFixture(rotations, prefix, selectedSigner, journal, tls.pools, lanes, createGlobal, ordinarySealHttp,
-            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, ordinaryRawHttp).use(action)
+            if (ordinarySealHttp?.protectedIntake == true) tls else null, ordinaryDrain, activeFirstCut, ordinaryRawHttp, activeFirstCutSuccessor).use(action)
     }
 }
 
@@ -149,15 +151,18 @@ internal class CatalogTestRunActivationEvidenceFixture(
     private val ordinaryDrain: TestOrdinaryDrainFixtureInputsV1? = null,
     activeFirstCut: Boolean = false,
     private val ordinaryRawHttp: TestActiveOrdinaryRawHttpV1? = null,
+    activeFirstCutSuccessor: Boolean = false,
 ) : AutoCloseable {
     init {
         // The optional denial input is selected BEFORE full D and all actual protected acquisitions.
         require(ordinaryDrain == null || ordinarySealHttp != null)
         require(ordinaryRawHttp == null || activeFirstCut)
+        require(!activeFirstCutSuccessor || activeFirstCut)
         require(!activeFirstCut || (ordinarySealHttp?.protectedIntake == true && intakeTls != null &&
             ordinaryDrain != null && journal.registeredAdminBatchDelete && pools.epochRotation != null))
     }
     val activeFirstCutInput = if (activeFirstCut) TestActiveFirstCutInputFixtureV1.input() else null
+    val activeFirstCutSuccessorInput = if (activeFirstCutSuccessor) TestActiveFirstCutSuccessorInputFixtureV1.input() else null
     val initial = OfflineTrustBundleFixture.bytes(rotations.initial)
     val current = OfflineTrustBundleFixture.bytes(rotations.current)
     val policy = OfflineCatalogRotationFixture.policy()
@@ -251,9 +256,13 @@ internal class CatalogTestRunActivationEvidenceFixture(
             val firstCut = activeFirstCutInput?.let {
                 VersionBoundTestActiveFirstCutV1.fromRetained(it, pools, native.consumers.journalConfiguration, checkNotNull(native.ordinarySeal))
             }
+            val successor = activeFirstCutSuccessorInput?.let {
+                VersionBoundTestActiveFirstCutSuccessorV1.fromRetained(it, pools, native.consumers.journalConfiguration,
+                    checkNotNull(firstCut), checkNotNull(native.ordinarySeal))
+            }
             return VersionBoundTestNamespaceProcessV1.fromRetained(native.consumers, pools, 1, desiredGeneration,
                 native.databaseIdentity, native.restoreIdentity, native.publicationLanes, native.catalogReadback, selected,
-                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication)
+                native.ordinarySeal, native.ordinaryDenial, firstCut, native.activeCutoffPublication, successor)
         }
         val writer = journal.declaration().writer
         val activation = FullTestCatalogInputs.activation(
@@ -281,6 +290,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
         val document = template.copy(
             // Select the explicit denial recipe before parsing/acquisition/D; absence preserves the legacy bytes.
             profile = when {
+                activeFirstCutSuccessorInput != null -> ComplaintTestDeploymentInputsV1.ACTIVE_FIRST_CUT_SUCCESSOR_PROFILE
                 activeFirstCutInput != null -> ComplaintTestDeploymentInputsV1.ACTIVE_FIRST_CUT_PROFILE
                 ordinaryDrain == null -> template.profile
                 journal.registeredAdminBatchDelete -> ComplaintTestDeploymentInputsV1.ADMIN_BATCH_ERASURE_DRAIN_PROFILE
@@ -318,6 +328,7 @@ internal class CatalogTestRunActivationEvidenceFixture(
             ),
             ordinaryDenial = ordinaryDrain?.authorityInput(journal, trust.expectedEnvironment),
             activeFirstCut = activeFirstCutInput,
+            activeFirstCutSuccessor = activeFirstCutSuccessorInput,
             ordinaryPublication = activeFirstCutInput?.let { TestActiveFirstCutInputFixtureV1.ordinaryInput() },
         )
         intakeDocument = document

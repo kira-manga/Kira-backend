@@ -12,10 +12,11 @@ import java.nio.file.Path
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 
-/** The two fixed TEST entrypoints only; no alternate runtime/classpath or application bootstrap. */
+/** Closed fixed TEST entrypoints only; no alternate runtime/classpath or application bootstrap. */
 internal enum class ColdTestProcessEntryV1(val type: Class<*>) {
     SEALED(ComplaintTestColdRecoveryProcessV1::class.java),
     ACTIVE(ComplaintTestColdActiveRegistrationProcessV1::class.java),
+    ACTIVE_FIRST_CUT_RESERVED(TestActiveFirstCutColdSuccessorProcessV1::class.java),
 }
 
 /** Exact existing two-JVM launch/classpath/retirement mechanics, shared without changing their bounds. */

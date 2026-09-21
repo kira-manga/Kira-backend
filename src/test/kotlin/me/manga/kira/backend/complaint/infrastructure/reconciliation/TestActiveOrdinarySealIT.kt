@@ -30,6 +30,10 @@ class TestActiveOrdinarySealIT {
         TestActiveOrdinarySealCasesV1.genuineEmpty(it, enrolled = false, lostPutAcknowledgment = true)
     }
 
+    @Test fun genuineRecoveredCapturedWithNewerCurrentLeaseSealsWithoutRechargeOrHealth() = withFixture {
+        TestActiveRecoveredOrdinarySealCasesV1.genuineCapturedSuccessorSealsEmpty(it)
+    }
+
     @Test fun wrongNativeRoleVersionWireMetadataLockAndRetentionCannotVerify() {
         ActiveSealProviderCut.entries.forEach { cut -> withFixture { TestActiveOrdinarySealFailureCasesV1.provider(it, cut) } }
     }

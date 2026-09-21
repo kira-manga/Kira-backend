@@ -8,6 +8,16 @@ import me.manga.kira.backend.complaint.infrastructure.catalog.READ_EPOCH_ROTATIO
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutCaptureOperationV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutStateV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSqlV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorCaptureOperationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorAccountingV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorRunV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorSqlV1
+import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRecoveryRegistrationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.admission.TestNamespaceRecoveryRegistrationTailV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationHistoryV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationProjectionCountersV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.CatalogTestRunActivationSqlV1
+import me.manga.kira.backend.complaint.infrastructure.catalog.TRY_CATALOG_LOCK
 import java.util.UUID
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.InvocationTargetException
@@ -37,6 +47,7 @@ internal class PersistenceEpochRotationSession private constructor(
     @Volatile private var work: PersistenceTimeBudget? = null
     private var retained: CatalogEpochRotationCaptureOperation? = null
     private var retainedTest: TestActiveFirstCutCaptureOperationV1? = null
+    private var retainedSuccessor: TestActiveFirstCutSuccessorCaptureOperationV1? = null
     private var stage = Stage.PREPARED
     private var clippingRead = false
     private var readCapKind: PersistenceJdbcGuardCallKind? = null
@@ -66,7 +77,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun retain(operation: CatalogEpochRotationCaptureOperation) {
         requireWork()
-        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         retained = operation
     }
 
@@ -109,7 +120,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     internal fun retain(operation: TestActiveFirstCutCaptureOperationV1) {
         requireWork()
-        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         retainedTest = operation
     }
 
@@ -167,7 +178,7 @@ internal class PersistenceEpochRotationSession private constructor(
     }
 
     internal fun requireReleased(operation: TestActiveFirstCutCaptureOperationV1) {
-        if (!caller.isCurrent() || retainedTest !== operation || retained != null || !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
+        if (!caller.isCurrent() || retainedTest !== operation || retained != null || retainedSuccessor != null || !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
         if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
         if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
         requireWork()
@@ -175,7 +186,143 @@ internal class PersistenceEpochRotationSession private constructor(
 
     private fun requireOperation(operation: TestActiveFirstCutCaptureOperationV1) {
         requireWork()
-        check(retainedTest === operation && retained == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(retainedTest === operation && retained == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
+        attempt.requireCore(resource)
+    }
+
+    internal fun retain(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
+        requireWork()
+        check(stage === Stage.EXCLUSIVE && retained == null && retainedTest == null && retainedSuccessor == null &&
+            attempt.owns(operation) && operation.belongsTo(this))
+        retainedSuccessor = operation
+    }
+
+    /** Only the concrete successor gets this fixed full current prefix; original C dispatch/checks are unchanged. */
+    internal fun lockControl(operation: TestActiveFirstCutSuccessorCaptureOperationV1): TestActiveFirstCutSuccessorAccountingV1 {
+        requireOperation(operation)
+        check(stage === Stage.EXCLUSIVE)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        connection.prepareStatement(TestActiveFirstCutSuccessorSqlV1.authenticate).use { statement ->
+            operation.authenticationArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row -> check(row.next() && row.getBoolean("valid") && !row.wasNull() && !row.next()) }
+        }
+        lockTestRow(TestActiveFirstCutSuccessorSqlV1.lockGlobal, emptyArray(), "data_scope_id", UUID(0L, 0L))
+        lockTestRow(TestActiveFirstCutSuccessorSqlV1.lockScope, operation.scopeArguments(), "data_scope_id", operation.expectedScope())
+        requireOperation(operation)
+        connection.prepareStatement(TRY_CATALOG_LOCK).use { statement ->
+            statement.executeQuery().use { row -> check(row.next() && row.getBoolean("locked") && !row.wasNull() && !row.next()) }
+        }
+        val original = operation.original
+        val history = connection.prepareStatement(CatalogTestRunActivationSqlV1.lockRecoveryRegistrationHistory).use { statement ->
+            original.historyArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { rows ->
+                CatalogTestRunActivationHistoryV1.readActiveCurrent(rows, original.identity.generation,
+                    original.process.catalogReadback.chainPolicy.limits.maximumGenerations)
+            }
+        }
+        requireOperation(operation)
+        val tail = connection.prepareStatement(TestNamespaceRecoveryRegistrationSqlV1.tail).use { statement ->
+            original.identity.tailArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row ->
+                check(row.next())
+                TestNamespaceRecoveryRegistrationTailV1(row, original.identity.scope).also { check(!row.next()) }
+            }
+        }
+        original.requireRawComparisons(tail, history)
+        requireOperation(operation)
+        val counters = connection.prepareStatement(TestActiveFirstCutSuccessorSqlV1.lockCounters).use { statement ->
+            statement.executeQuery().use { rows -> TestActiveFirstCutSuccessorAccountingV1.readCounters(rows, original.process.consumers.capacityPolicy) }
+        }
+        requireOperation(operation)
+        lockTestRow(TestActiveFirstCutSuccessorSqlV1.lockRun, operation.scopeArguments(), "data_scope_id", operation.expectedScope())
+        lockTestRow(TestActiveFirstCutSuccessorSqlV1.lockSlot, operation.scopeArguments(), "operation_token", operation.expectedSlot())
+        val accounting = successorAccounting(operation, counters)
+        stage = Stage.LOCKED
+        return accounting
+    }
+
+    internal fun readControl(operation: TestActiveFirstCutSuccessorCaptureOperationV1): TestActiveFirstCutStateV1 {
+        requireOperation(operation)
+        val initial = stage === Stage.LOCKED
+        check(initial || stage === Stage.WRITTEN)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        val observed = connection.prepareStatement(TestActiveFirstCutSuccessorSqlV1.read).use { statement ->
+            operation.readArguments().forEachIndexed { index, value -> statement.setObject(index + 1, value) }
+            statement.executeQuery().use { row ->
+                check(row.next())
+                TestActiveFirstCutStateV1.copy(row).also { check(!row.next()) }
+            }
+        }
+        requireWork()
+        stage = if (initial) Stage.SAMPLED else Stage.REREAD
+        return observed
+    }
+
+    internal fun captureControl(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.SAMPLED)
+        installLimits(EpochRotationLimits.CONTROL_LOCK_MILLIS)
+        updateTest(TestActiveFirstCutSuccessorSqlV1.capture, operation.captureArguments())
+        updateTest(TestActiveFirstCutSuccessorSqlV1.captureSlot, operation.captureSlotArguments())
+        stage = Stage.WRITTEN
+    }
+
+    internal fun readAccounting(operation: TestActiveFirstCutSuccessorCaptureOperationV1): TestActiveFirstCutSuccessorAccountingV1 {
+        requireOperation(operation)
+        check(stage === Stage.REREAD)
+        val counters = connection.prepareStatement(TestActiveFirstCutSuccessorSqlV1.readCounters).use { statement ->
+            statement.executeQuery().use { rows -> TestActiveFirstCutSuccessorAccountingV1.readCounters(rows, operation.original.process.consumers.capacityPolicy) }
+        }
+        return successorAccounting(operation, counters)
+    }
+
+    private fun successorAccounting(operation: TestActiveFirstCutSuccessorCaptureOperationV1,
+        counters: CatalogTestRunActivationProjectionCountersV1): TestActiveFirstCutSuccessorAccountingV1 {
+        requireOperation(operation)
+        val original = operation.original
+        val run = connection.prepareStatement(TestActiveFirstCutSuccessorSqlV1.runAccounting).use { statement ->
+            statement.setObject(1, operation.expectedScope())
+            statement.executeQuery().use { row ->
+                check(row.next())
+                TestActiveFirstCutSuccessorRunV1(row, original.identity,
+                    original.process.consumers.journalConfiguration.declaration().limits.capacity.maximumRetainedVersions).also { check(!row.next()) }
+            }
+        }
+        requireOperation(operation)
+        val counts = connection.prepareStatement(TestActiveFirstCutSuccessorSqlV1.installationCounts).use { statement ->
+            statement.setObject(1, operation.expectedScope()); statement.setObject(2, operation.expectedScope())
+            statement.executeQuery().use { row ->
+                check(row.next())
+                val ids = row.getLong("ids").also { check(!row.wasNull()) }
+                val credentials = row.getLong("credentials").also { check(!row.wasNull()) }
+                check(!row.next())
+                ids to credentials
+            }
+        }
+        requireOperation(operation)
+        return TestActiveFirstCutSuccessorAccountingV1.bind(counters, run, counts.first, counts.second)
+    }
+
+    internal fun commit(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
+        requireOperation(operation)
+        check(stage === Stage.REREAD && operation.completedFor(this))
+        connection.commit()
+        requireWork()
+        check(context.transaction.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED && !context.transaction.uncertain())
+        stage = Stage.COMMITTED
+    }
+
+    internal fun requireReleased(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
+        if (!caller.isCurrent() || retainedSuccessor !== operation || retained != null || retainedTest != null ||
+            !attempt.owns(operation) || !operation.completedFor(this)) throw failure()
+        if (stage !== Stage.RELEASED || problem.get() != null || !entry.jdbc.terminalCompletion().reclaimed()) throw failure()
+        if (context.transaction.databaseOutcome() !== PersistenceDatabaseOutcome.COMMITTED) throw failure()
+        requireWork()
+    }
+
+    private fun requireOperation(operation: TestActiveFirstCutSuccessorCaptureOperationV1) {
+        requireWork()
+        check(retainedSuccessor === operation && retained == null && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
         attempt.requireCore(resource)
     }
 
@@ -315,7 +462,7 @@ internal class PersistenceEpochRotationSession private constructor(
 
     private fun requireOperation(operation: CatalogEpochRotationCaptureOperation) {
         requireWork()
-        check(retained === operation && retainedTest == null && attempt.owns(operation) && operation.belongsTo(this))
+        check(retained === operation && retainedTest == null && retainedSuccessor == null && attempt.owns(operation) && operation.belongsTo(this))
         attempt.requireCore(resource)
     }
 

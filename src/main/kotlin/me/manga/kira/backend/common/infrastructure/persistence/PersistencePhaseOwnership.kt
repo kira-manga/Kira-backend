@@ -8,6 +8,7 @@ import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintSignedG
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestInitialAdmissionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveFirstCutSuccessorV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRecoveryRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceActiveRegistrationAttemptV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
@@ -110,6 +111,8 @@ internal class PersistencePhaseOwnership private constructor(
 
     internal fun enterTestActiveFirstCut(original: TestActiveFirstCutV1): PersistencePhaseContext =
         enter(original.path, testActiveFirstCut = original)
+    internal fun enterTestActiveFirstCutSuccessor(original: TestActiveFirstCutSuccessorV1): PersistencePhaseContext =
+        enter(original.path, testActiveFirstCutSuccessor = original)
 
     internal fun enterTestNamespaceRecoveryRegistration(original: ComplaintTestNamespaceRecoveryRegistrationAttemptV1): PersistencePhaseContext =
         enter(PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION, testRecoveryRegistration = original)
@@ -527,6 +530,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRegistration: ComplaintTestNamespaceRegistrationAttemptV1? = null,
         testInitialAdmission: ComplaintTestInitialAdmissionV1? = null,
         testActiveFirstCut: TestActiveFirstCutV1? = null,
+        testActiveFirstCutSuccessor: TestActiveFirstCutSuccessorV1? = null,
         testRecoveryRegistration: ComplaintTestNamespaceRecoveryRegistrationAttemptV1? = null,
         testActiveRegistration: ComplaintTestNamespaceActiveRegistrationAttemptV1? = null,
         testRunSealer: TestRunSealingV1? = null,
@@ -557,6 +561,9 @@ internal class PersistencePhaseOwnership private constructor(
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if (path.testActiveFirstCut != (testActiveFirstCut != null)) {
+            throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        }
+        if (path.testActiveFirstCutSuccessor != (testActiveFirstCutSuccessor != null)) {
             throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         }
         if (path.testInitialAdmission != (testInitialAdmission != null)) {
@@ -622,6 +629,7 @@ internal class PersistencePhaseOwnership private constructor(
         testRegistration?.requirePhaseEntry(this, path)
         testInitialAdmission?.requirePhaseEntry(this, path)
         testActiveFirstCut?.requirePhaseEntry(this, path)
+        testActiveFirstCutSuccessor?.requirePhaseEntry(this, path)
         testRecoveryRegistration?.requirePhaseEntry(this, path)
         testActiveRegistration?.requirePhaseEntry(this, path)
         testRunSealer?.requirePhaseEntry(this, path)
@@ -652,6 +660,7 @@ internal class PersistencePhaseOwnership private constructor(
         val testRegistrationWork = testRegistration?.budget?.capped(2_000)
         val testInitialAdmissionWork = testInitialAdmission?.budget?.capped(2_000)
         val testActiveFirstCutWork = testActiveFirstCut?.budget?.capped(2_000)
+        val testActiveFirstCutSuccessorWork = testActiveFirstCutSuccessor?.budget?.capped(2_000)
         val testRecoveryRegistrationWork = testRecoveryRegistration?.budget?.capped(2_000)
         val testActiveRegistrationWork = testActiveRegistration?.budget?.capped(2_000)
         val testRunSealingWork = testRunSealer?.budget?.capped(2_000)
@@ -720,6 +729,8 @@ internal class PersistencePhaseOwnership private constructor(
                 testInitialAdmissionWork,
                 testActiveFirstCut,
                 testActiveFirstCutWork,
+                testActiveFirstCutSuccessor,
+                testActiveFirstCutSuccessorWork,
                 testRecoveryRegistration,
                 testRecoveryRegistrationWork,
                 testActiveRegistration,
@@ -756,6 +767,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRegistration?.retainPhase(prepared)
             testInitialAdmission?.retainPhase(prepared)
             testActiveFirstCut?.retainPhase(prepared)
+            testActiveFirstCutSuccessor?.retainPhase(prepared)
             testRecoveryRegistration?.retainPhase(prepared)
             testActiveRegistration?.retainPhase(prepared)
             testRunSealer?.retainPhase(prepared)
@@ -784,6 +796,7 @@ internal class PersistencePhaseOwnership private constructor(
             testRegistration?.observeFailure(failure)
             testInitialAdmission?.observeFailure(failure)
             testActiveFirstCut?.observeFailure(failure)
+            testActiveFirstCutSuccessor?.observeFailure(failure)
             testRecoveryRegistration?.observeFailure(failure)
             testActiveRegistration?.observeFailure(failure)
             testRunSealer?.observeFailure(failure)
@@ -808,6 +821,7 @@ internal class PersistencePhaseOwnership private constructor(
                 testRegistration?.observeFailure(cleanup)
                 testInitialAdmission?.observeFailure(cleanup)
                 testActiveFirstCut?.observeFailure(cleanup)
+                testActiveFirstCutSuccessor?.observeFailure(cleanup)
                 testRecoveryRegistration?.observeFailure(cleanup)
                 testActiveRegistration?.observeFailure(cleanup)
                 testRunSealer?.observeFailure(cleanup)
@@ -831,6 +845,7 @@ internal class PersistencePhaseOwnership private constructor(
                 phase?.let { testRegistration?.observePhaseCleanup(it) }
                 phase?.let { testInitialAdmission?.observePhaseCleanup(it) }
                 phase?.let { testActiveFirstCut?.observePhaseCleanup(it) }
+                phase?.let { testActiveFirstCutSuccessor?.observePhaseCleanup(it) }
                 phase?.let { testRecoveryRegistration?.observePhaseCleanup(it) }
                 phase?.let { testActiveRegistration?.observePhaseCleanup(it) }
                 phase?.let { testRunSealer?.observePhaseCleanup(it) }
@@ -1056,6 +1071,9 @@ internal class PersistencePhaseOwnership private constructor(
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
                 PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
+                PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ,
+                PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE,
+                PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
                 PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
                 PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_ACTIVE_REGISTRATION,
                 PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
@@ -1254,6 +1272,9 @@ internal class PersistencePhaseOwnership private constructor(
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
             PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE,
+            PersistencePhasePath.COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_NAMESPACE_ACTIVE_REGISTRATION,
             PersistencePhasePath.COMPLAINT_TEST_RUN_SEAL,
@@ -1433,6 +1454,9 @@ internal enum class PersistencePhasePath {
     COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
     COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
     COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
+    COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ,
+    COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE,
+    COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
     COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION,
     COMPLAINT_TEST_NAMESPACE_ACTIVE_REGISTRATION,
     COMPLAINT_TEST_RUN_SEAL,
@@ -1499,6 +1523,10 @@ internal enum class PersistencePhasePath {
         get() = this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ || this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE ||
             this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST
 
+    internal val testActiveFirstCutSuccessor: Boolean
+        get() = this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ || this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE ||
+            this === COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE
+
     internal val testRunSealing: Boolean
         get() = this === COMPLAINT_TEST_RUN_SEAL || this === COMPLAINT_TEST_RUN_SEALED_AUDIT
 
@@ -1522,6 +1550,9 @@ internal enum class PersistencePhasePath {
             COMPLAINT_TEST_ACTIVE_FIRST_CUT_READ,
             COMPLAINT_TEST_ACTIVE_FIRST_CUT_LEASE,
             COMPLAINT_TEST_ACTIVE_FIRST_CUT_REQUEST,
+            COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_READ,
+            COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_LEASE,
+            COMPLAINT_TEST_ACTIVE_FIRST_CUT_SUCCESSOR_RELEASE,
             COMPLAINT_TEST_NAMESPACE_RECOVERY_REGISTRATION, // SELECT FOR UPDATE needs M/RC; only its typed owner admits the closed TEST gate.
             COMPLAINT_TEST_NAMESPACE_ACTIVE_REGISTRATION, // Read/lock-only, already-open identity original; never gate reopening.
             COMPLAINT_TEST_RUN_SEAL,

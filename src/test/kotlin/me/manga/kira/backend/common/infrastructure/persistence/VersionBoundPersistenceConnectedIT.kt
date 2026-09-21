@@ -53,6 +53,11 @@ import me.manga.kira.backend.complaint.catalog.TestRegistrationProjectCut
 import me.manga.kira.backend.complaint.catalog.TestRegistrationProviderCut
 import me.manga.kira.backend.complaint.catalog.TestRunSealingCases
 import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutCasesV1
+import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutSuccessorCasesV1
+import me.manga.kira.backend.complaint.catalog.TestActiveFirstCutColdSuccessorProcessCasesV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutSuccessorDriftV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutSuccessorLeaseRefusalV1
+import me.manga.kira.backend.complaint.catalog.TestFirstCutSuccessorNativeDriftV1
 import me.manga.kira.backend.complaint.catalog.TestFirstCutCaptureDriftV1
 import me.manga.kira.backend.complaint.catalog.TestFirstCutClosedV1
 import me.manga.kira.backend.complaint.catalog.TestFirstCutDriftV1
@@ -1478,6 +1483,85 @@ class VersionBoundPersistenceConnectedIT {
     fun testActiveFirstCutRealNativeEpochTimeoutKeepsPaidRequestAndLease() = withFixture(testActivation = true, activeFirstCut = true) {
         TestActiveFirstCutCasesV1.realNativeEpochWaitTimeoutKeepsPaidRequestAndLease(it)
     }
+
+    @Test
+    fun testActiveFirstCutSuccessorCapturedUnusedRunRetainsPaidSlotAndRequiresCurrentHigherLease() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutSuccessorCasesV1.capturedRequiresOwnCurrentLeaseAndKeepsPaidFingerprint(it, enrolled = false)
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorCapturedEnrolledRunKeepsIdentityAndReserveAccounting() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutSuccessorCasesV1.capturedRequiresOwnCurrentLeaseAndKeepsPaidFingerprint(it, enrolled = true)
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorGenuineRequestedNaturalExpiryUsesNewNativeLineageWithoutRecharge() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutSuccessorCasesV1.requestedNaturalExpiryUsesDistinctNativeLineageWithoutRecharge(it)
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorMissingSlotForeignLeaseAndOverflowNeverMintAuthority() {
+        (listOf(null) + TestFirstCutSuccessorLeaseRefusalV1.entries).forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) {
+                TestActiveFirstCutSuccessorCasesV1.absentSlotAndLiveForeignOrOverflowLeaseNeverMintAuthority(it, cut)
+            }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorRawFullDP22HistoryAndReserveDriftRefuseBeforeLease() {
+        TestFirstCutSuccessorDriftV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutSuccessorCasesV1.rawAndFullCurrentAccountingDriftRefuseBeforeLease(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorCapturedReleaseRechecksAfterFreshLease() = withFixture(testActivation = true, activeFirstCut = true) {
+        TestActiveFirstCutSuccessorCasesV1.capturedReleaseRechecksAfterFreshLease(it)
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorReleaseCompletionAndCleanupFailuresNeverIssueRecovered() {
+        TestFirstCutRequestCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutSuccessorCasesV1.releaseCompletionFailuresNeverIssueRecovered(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorNativeRechecksAfterRealExclusiveEpochWait() {
+        TestFirstCutSuccessorNativeDriftV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutSuccessorCasesV1.nativeRechecksAfterRealEWait(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorNativeDeferredCommitAndLateReturnRemainSpent() {
+        TestFirstCutNativeCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutSuccessorCasesV1.nativeCommitFailureOrLateReturnCannotIssueRecovered(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorRawDeadlineSignalsAndCloseFailureStaySticky() {
+        TestFirstCutProviderCutV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutSuccessorCasesV1.rawSignalDeadlineAndCloseStaySticky(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorClosedRegistrationRootAndTerminalStateRefuse() {
+        TestFirstCutClosedV1.entries.forEach { cut ->
+            withFixture(testActivation = true, activeFirstCut = true) { TestActiveFirstCutSuccessorCasesV1.closedRegistrationRootOrTerminalStateRefuses(it, cut) }
+        }
+    }
+
+    @Test
+    fun testActiveFirstCutSuccessorRequestedRestartUsesTwoJvmsAndNaturalOriginalLeaseExpiry() =
+        TestActiveFirstCutColdSuccessorProcessCasesV1.qualify(requested = true)
+
+    @Test
+    fun testActiveFirstCutSuccessorCapturedRestartUsesTwoJvmsWithoutRewritingPaidSlot() =
+        TestActiveFirstCutColdSuccessorProcessCasesV1.qualify(requested = false)
 
     @Test
     fun testRunSealingBarrierAndPaidAuditReplay() = withFixture(testActivation = true) {
