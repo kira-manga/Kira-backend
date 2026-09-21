@@ -22,6 +22,7 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.security.MessageDigest
 import java.sql.Connection
+import java.sql.Driver
 import java.util.Properties
 import java.util.UUID
 import java.util.concurrent.Executors
@@ -186,7 +187,9 @@ class LogicalBackupCaptureIT {
                 setProperty("gssEncMode", "disable"); setProperty("channelBinding", "require"); setProperty("requireAuth", "scram-sha-256")
                 setProperty("loginTimeout", "0"); setProperty("connectTimeout", "2"); setProperty("socketTimeout", "5")
             }
-            return checkNotNull(org.postgresql.Driver().connect("jdbc:postgresql://", properties))
+            val driver = Class.forName("org.postgresql.Driver").asSubclass(Driver::class.java)
+                .getDeclaredConstructor().newInstance()
+            return checkNotNull(driver.connect("jdbc:postgresql://", properties))
         }
 
         fun withEmptySource(body: () -> Unit) {
