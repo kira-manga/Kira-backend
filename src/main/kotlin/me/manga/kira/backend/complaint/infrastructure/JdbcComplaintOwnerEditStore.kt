@@ -7,6 +7,7 @@ import me.manga.kira.backend.audit.domain.ComplaintAuditActorKind
 import me.manga.kira.backend.audit.domain.ComplaintAuditMutation
 import me.manga.kira.backend.audit.domain.ComplaintAuditResourceSubject
 import me.manga.kira.backend.audit.domain.CountedComplaintAuditEntry
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedDataSource
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
@@ -33,21 +34,47 @@ import me.manga.kira.backend.complaint.domain.ComplaintStatus
 import me.manga.kira.backend.complaint.domain.ComplaintType
 import me.manga.kira.backend.complaint.domain.rejectOwnerOperation
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
+import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointEditV1
+import me.manga.kira.backend.security.ComplaintIngressContext
 import org.springframework.dao.DataAccessException
 import org.springframework.jdbc.core.JdbcTemplate
 import java.sql.ResultSet
 import java.sql.SQLException
 import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
 
 /** Explicit TEST-only operation, independent D/P comparisons and the existing ordinary physical owner. */
-internal class JdbcComplaintOwnerEditStore(
+internal class JdbcComplaintOwnerEditStore private constructor(
     private val jdbc: JdbcTemplate,
     private val capacity: JdbcComplaintCapacityStore,
     private val audit: AuditService,
     private val desired: ComplaintInstallationDesiredSettings.Configured,
+    private val registeredCurrent: TestRegisteredInitialCheckpointEditV1?,
 ) {
+    /** Historical desired-only route cannot borrow a protected registered pool. */
+    constructor(jdbc: JdbcTemplate, capacity: JdbcComplaintCapacityStore, audit: AuditService,
+        desired: ComplaintInstallationDesiredSettings.Configured) : this(jdbc, capacity, audit, desired, null)
+
     private val binding = ComplaintInstallationTestBinding(desired)
+
+    init { requirePoolPolicy() }
+
+    private fun requirePoolPolicy() {
+        val source = jdbc.dataSource
+        if (source is GuardedDataSource) source.requireTestInitialCheckpointCreate(registeredCurrent?.policy)
+        else check(registeredCurrent == null)
+    }
+
+    internal fun requireResources(ownership: PersistencePhaseOwnership) {
+        requireConnectionFree(); requirePoolPolicy(); registeredCurrent?.requireEntry(ownership)
+    }
+
+    internal fun bind(phase: PersistencePhaseContext, context: ComplaintIngressContext? = null) {
+        registeredCurrent?.let { phase.ownerEdit.bindRegisteredInitialCheckpointEdit(it, context) }
+    }
 
     fun authenticate(identity: ComplaintOwnerOperationIdentity): ComplaintOwnerEditOperation =
         capture(PersistencePhasePath.COMPLAINT_OWNER_EDIT_AUTHENTICATION, identity)
@@ -68,11 +95,22 @@ internal class JdbcComplaintOwnerEditStore(
         candidate: ComplaintOwnerEditCandidate? = null,
         platform: ComplaintPlatform? = null,
     ): ComplaintOwnerEditOperation {
+        requirePoolPolicy()
         require(identity.installation.scope == binding.scope)
-        return ComplaintOwnerEditOperation.capture(jdbc, capacity, audit, binding, desired.configurationHashBytes(), path, identity, tuple, candidate, platform)
+        return ComplaintOwnerEditOperation.capture(jdbc, capacity, audit, binding, desired.configurationHashBytes(), path, identity, tuple, candidate, platform, registeredCurrent)
     }
 
     override fun toString(): String = "JdbcComplaintOwnerEditStore(TEST-only,no-mode-authority)"
+
+    companion object {
+        /** Dedicated EDIT selector on the original born-with registered graph, not desired-only authorization. */
+        fun registeredInitialCheckpoint(jdbc: JdbcTemplate, audit: AuditService, ownership: PersistencePhaseOwnership,
+            registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1): JdbcComplaintOwnerEditStore {
+            val current = TestRegisteredInitialCheckpointEditV1.fromRegistered(registration, assembly, ownership, jdbc)
+            val capacity = JdbcComplaintCapacityStore(jdbc, registration.process.consumers.capacityPolicy.digestBytes())
+            return JdbcComplaintOwnerEditStore(jdbc, capacity, audit, registration.process.desiredSettings(), current)
+        }
+    }
 }
 
 /** Only the concrete committed/released phase publishes these bounded facts. */
@@ -93,6 +131,7 @@ internal class ComplaintOwnerEditOperation private constructor(
     private val path: PersistencePhasePath,
     private val identity: ComplaintOwnerOperationIdentity,
     private val tuple: ComplaintOwnerEditTuple?,
+    private val registeredCurrent: TestRegisteredInitialCheckpointEditV1?,
 ) {
     private var stage = Stage.NEW
     private var captured: ComplaintOwnerEditObservation? = null
@@ -100,8 +139,24 @@ internal class ComplaintOwnerEditOperation private constructor(
     private var chargedAudit: JdbcComplaintCapacityStore.ChargedComplaintAudit? = null
     private var mutation: ComplaintAuditMutation.ContentEdited? = null
     private var newClaim = false
+    private var currentBeforeCounters = false
+    private var checkpointTime: Instant? = null
 
     fun belongsTo(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = phase === selected && path === expected
+
+    internal fun registeredWith(selected: TestRegisteredInitialCheckpointEditV1?): Boolean = registeredCurrent === selected
+
+    internal fun requireCurrentCheckpointRead(selected: TestRegisteredInitialCheckpointEditV1, original: PersistencePhaseContext) {
+        requireRetained()
+        check(phase === original && registeredCurrent === selected && path === PersistencePhasePath.COMPLAINT_OWNER_EDIT && newClaim &&
+            stage in setOf(Stage.CLAIMED, Stage.COUNTERS, Stage.LOCKING_DOMAIN, Stage.DOMAIN, Stage.CONTENT, Stage.AUDITING, Stage.REJECTING))
+    }
+
+    internal fun requireCheckpointTime(selected: TestRegisteredInitialCheckpointEditV1, original: PersistencePhaseContext, sampledAt: Instant) {
+        requireCurrentCheckpointRead(selected, original)
+        check(checkpointTime?.let { !sampledAt.isBefore(it) } != false)
+        checkpointTime = sampledAt
+    }
 
     fun completedFor(selected: PersistencePhaseContext, expected: PersistencePhasePath): Boolean = belongsTo(selected, expected) &&
         stage === Stage.COMPLETE && captured != null && (!newClaim || allocation?.completedFor(this, captured?.receipt) == true)
@@ -120,6 +175,7 @@ internal class ComplaintOwnerEditOperation private constructor(
 
     private fun execute(capacity: JdbcComplaintCapacityStore, audit: AuditService, request: ComplaintOwnerEditRequest?, platform: ComplaintPlatform?) {
         requireRetained()
+        registeredCurrent?.requireOperation(this, phase, path)
         captured = if (path === PersistencePhasePath.COMPLAINT_OWNER_EDIT) {
             edit(capacity, audit, checkNotNull(request), checkNotNull(platform))
         } else {
@@ -130,7 +186,7 @@ internal class ComplaintOwnerEditOperation private constructor(
     }
 
     private fun observe(): ComplaintOwnerEditObservation {
-        val actor = arrayOf<Any?>(
+        val actorFacts = arrayOf<Any?>(
             identity.installation.id,
             identity.installation.scope.id,
             identity.credentialVersion,
@@ -138,13 +194,20 @@ internal class ComplaintOwnerEditOperation private constructor(
             Timestamp.from(identity.expiresAt),
             desiredHash,
         )
+        val actor = registeredCurrent?.observationIdentityArguments()?.plus(elements = actorFacts) ?: actorFacts
         val selected = tuple
         val arguments = if (selected == null) {
             actor
         } else {
             actor.plus(elements = arrayOf<Any?>(selected.installation.scope.id, targetArray(selected), selected.fingerprintBytes(), selected.key))
         }
-        return jdbc.query(if (selected == null) AUTH_SQL else OBSERVE_SQL, { row, _ ->
+        val sql = if (registeredCurrent == null) {
+            if (selected == null) AUTH_SQL else OBSERVE_SQL
+        } else {
+            if (selected == null) REGISTERED_AUTH_SQL else REGISTERED_OBSERVE_SQL
+        }
+        return jdbc.query(sql, { row, _ ->
+            if (registeredCurrent != null) check(row.getBoolean("registered_current_identity") && !row.wasNull())
             val platform = row.getString("platform")?.let(ComplaintPlatform::valueOf)
             when {
                 platform == null || selected == null -> ComplaintOwnerEditObservation(platform)
@@ -197,6 +260,8 @@ internal class ComplaintOwnerEditOperation private constructor(
         }
         newClaim = true
         stage = Stage.CLAIMED
+        registeredCurrent?.lockAndCheck(this, phase)
+        currentBeforeCounters = registeredCurrent != null
         val paid = capacity.lockForOwnerEdit(this)
         check(paid.chargedFor(this))
         stage = Stage.LOCKING_DOMAIN
@@ -206,13 +271,16 @@ internal class ComplaintOwnerEditOperation private constructor(
         // Never lock a foreign/System row under only the caller's installation lock. No parent lookup.
         if (jdbc.queryForObject(CANDIDATE, Boolean::class.java, *arguments) != true) {
             requireTokenTime()
+            registeredCurrent?.checkCurrent(this, phase) // Before bounded foreign/System rejection, without locking their content.
             return rejectBusiness(ComplaintOwnerEditRejection.COMPLAINT_NOT_FOUND, paid, platform)
         }
         phase.ownerEdit.checkEditWrite(this, jdbc)
         val resourceState = jdbc.query(LOCK_RESOURCE, { row, _ -> row.getString("state") }, selected.targetId, binding.scope.id).singleOrNull()
+        registeredCurrent?.checkCurrent(this, phase) // AFTER the real resource wait, before content.
         phase.ownerEdit.checkEditWrite(this, jdbc)
         val content = jdbc.query(LOCK_CONTENT, { row, _ -> readContent(row) }, *arguments).singleOrNull()
         requireTokenTime() // Sampling inside a locking SELECT would precede its possible wait.
+        registeredCurrent?.checkCurrent(this, phase) // Before either content mutation or bounded rejection.
         val rejected = when {
             content == null -> ComplaintOwnerEditRejection.COMPLAINT_NOT_FOUND
             resourceState == "DELETION_PENDING" -> ComplaintOwnerEditRejection.COMPLAINT_DELETION_PENDING
@@ -268,6 +336,7 @@ internal class ComplaintOwnerEditOperation private constructor(
                 row.getLong("credential_version") == identity.credentialVersion && row.getString("platform") == platform.name
         }, identity.installation.id).singleOrNull() == true
         requireTokenTime()
+        registeredCurrent?.checkCurrent(this, phase) // AFTER the run/reservation/credential waits.
         if (!reserved || !credential) rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
         phase.ownerEdit.checkEditWrite(this, jdbc)
     }
@@ -297,6 +366,7 @@ internal class ComplaintOwnerEditOperation private constructor(
         val selected = checkNotNull(tuple)
         check(checkNotNull(allocation).completedFor(this, receipt))
         phase.ownerEdit.checkEditWrite(this, jdbc)
+        registeredCurrent?.checkCurrent(this, phase)
         stage = Stage.COMPLETING
         val outcomeArguments = when (receipt) {
             is ComplaintOwnerEditReceipt.Applied -> arrayOf<Any?>(receipt.id, receipt.version, receipt.etag)
@@ -316,8 +386,14 @@ internal class ComplaintOwnerEditOperation private constructor(
 
     internal fun beginCounterLock(selected: JdbcTemplate) {
         requireRetained(selected)
-        check(stage === Stage.CLAIMED && allocation == null)
+        check(stage === Stage.CLAIMED && allocation == null && (registeredCurrent == null || currentBeforeCounters))
         stage = Stage.COUNTERS
+    }
+
+    internal fun afterCounterLock(selected: JdbcTemplate) {
+        requireRetained(selected)
+        check(stage === Stage.COUNTERS && allocation == null)
+        registeredCurrent?.checkCurrent(this, phase) // Before pure quota calculation or persisted charge.
     }
 
     internal fun retainCapacity(paid: JdbcComplaintCapacityStore.LockedOwnerEdit, selected: JdbcTemplate, ledger: ComplaintCapacityLedger) {
@@ -377,6 +453,7 @@ internal class ComplaintOwnerEditOperation private constructor(
             tuple: ComplaintOwnerEditTuple?,
             candidate: ComplaintOwnerEditCandidate?,
             platform: ComplaintPlatform?,
+            registeredCurrent: TestRegisteredInitialCheckpointEditV1? = null,
         ): ComplaintOwnerEditOperation {
             val phase = PersistencePhaseOwnership.current() ?: throw PersistencePhaseException(PersistencePhaseFailureCode.ENTRY_REFUSED)
             try {
@@ -385,7 +462,7 @@ internal class ComplaintOwnerEditOperation private constructor(
                 check(tuple == null || tuple.installation == identity.installation)
                 check((path === PersistencePhasePath.COMPLAINT_OWNER_EDIT) == (candidate != null))
                 check(candidate == null || candidate.tuple === tuple)
-                val operation = ComplaintOwnerEditOperation(phase, jdbc, binding, desiredHash.copyOf(), path, identity, tuple)
+                val operation = ComplaintOwnerEditOperation(phase, jdbc, binding, desiredHash.copyOf(), path, identity, tuple, registeredCurrent)
                 phase.ownerEdit.retain(operation, jdbc)
                 operation.execute(capacity, audit, candidate?.request, platform)
                 return operation
@@ -446,9 +523,39 @@ internal class ComplaintOwnerEditOperation private constructor(
             )
         """.trimIndent()
         private val AUTH_SQL = "$ACTOR_SQL SELECT actor.platform FROM (SELECT 1) seed LEFT JOIN actor ON true"
-        private val OBSERVE_SQL = """
-            $ACTOR_SQL, receipt_time AS MATERIALIZED (SELECT clock_timestamp() AS at)
-            SELECT actor.platform,
+        /** Fixed registered-only desired identity, NOT checkpoint/lease/scan/closed-state eligibility. */
+        private val REGISTERED_IDENTITY_SQL = """
+            WITH d AS MATERIALIZED (SELECT ?::uuid AS scope, ?::bigint AS desired_generation, ?::integer AS implementation_schema,
+                ?::bytea AS configuration_hash, ?::uuid AS database_identity, ?::uuid AS restore_identity,
+                ?::uuid AS event_writer, ?::uuid AS catalog_writer, ?::bytea AS trust_hash, ?::bigint AS generation, ?::bytea AS activation_hash),
+            b AS MATERIALIZED (SELECT ?::bigint AS desired_generation, ?::bytea AS configuration_hash),
+            current_identity AS MATERIALIZED (
+                SELECT (c.test_only AND c.implementation_schema = d.implementation_schema AND c.desired_generation = d.desired_generation
+                    AND c.desired_configuration_hash = d.configuration_hash AND c.database_identity = d.database_identity
+                    AND c.restore_identity = d.restore_identity AND c.event_writer_generation = d.event_writer
+                    AND c.catalog_writer_generation = d.catalog_writer AND c.trust_bundle_hash = d.trust_hash
+                    AND c.accepted_catalog_generation = d.generation AND c.accepted_catalog_hash = d.activation_hash
+                    AND NOT g.test_only AND g.implementation_schema = 1 AND g.desired_generation = b.desired_generation
+                    AND g.desired_configuration_hash IS NOT DISTINCT FROM b.configuration_hash
+                    AND g.database_identity = d.database_identity AND g.restore_identity = d.restore_identity
+                    AND g.event_writer_generation = d.event_writer AND g.catalog_writer_generation = d.catalog_writer
+                    AND g.trust_bundle_hash = d.trust_hash AND g.accepted_catalog_generation = d.generation AND g.accepted_catalog_hash = d.activation_hash
+                ) IS TRUE AS matches
+                FROM d CROSS JOIN b
+                LEFT JOIN complaint_journal_control c ON c.data_scope_id = d.scope
+                LEFT JOIN complaint_journal_control g ON g.data_scope_id = '00000000-0000-0000-0000-000000000000'::uuid
+            )
+        """.trimIndent()
+        private val REGISTERED_ACTOR_SQL = "$REGISTERED_IDENTITY_SQL, ${ACTOR_SQL.removePrefix("WITH ")}"
+        private val REGISTERED_AUTH_SQL = "$REGISTERED_ACTOR_SQL SELECT (SELECT matches FROM current_identity) AS registered_current_identity, " +
+            "actor.platform FROM (SELECT 1) seed LEFT JOIN actor ON true"
+        private val OBSERVE_SQL = observationSql(false)
+        private val REGISTERED_OBSERVE_SQL = observationSql(true)
+
+        // Exactly the existing EDIT receipt projection; current identity is independent of checkpoint freshness.
+        private fun observationSql(registered: Boolean) = """
+            ${if (registered) REGISTERED_ACTOR_SQL else ACTOR_SQL}, receipt_time AS MATERIALIZED (SELECT clock_timestamp() AS at)
+            SELECT actor.platform,${if (registered) " (SELECT matches FROM current_identity) AS registered_current_identity," else ""}
                 r.actor_id IS NOT NULL AND (r.state <> 'COMPLETED' OR r.expires_at > receipt_time.at) AS comparable,
                 r.state = 'COMPLETED' AND r.expires_at > receipt_time.at AS visible,
                 r.data_scope_id = ?::uuid AND r.test_only AND r.operation = 'OWNER_EDIT'

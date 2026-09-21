@@ -14,15 +14,19 @@ import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveInitialCh
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalDurableRowV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalRunContextV1
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditOperation
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.security.EpochSealFramesV1
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerCreate
+import me.manga.kira.backend.security.ComplaintAdmittedOwnerEdit
 import me.manga.kira.backend.security.ComplaintIngressAdmission
 import me.manga.kira.backend.security.ComplaintIngressContext
 import me.manga.kira.backend.security.TestTerminalJsonV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.security.MessageDigest
+import java.sql.Connection
+import java.time.Instant
 import java.util.HexFormat
 import java.util.concurrent.CancellationException
 
@@ -84,6 +88,9 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
     internal fun requireAdmission(handoff: ComplaintAdmittedOwnerCreate) =
         ComplaintIngressAdmission.requireOwnerCreateOwner(handoff, process.consumers.ingressAdmission)
 
+    internal fun requireAdmission(handoff: ComplaintAdmittedOwnerEdit) =
+        ComplaintIngressAdmission.requireOwnerEditOwner(handoff, process.consumers.ingressAdmission)
+
     internal fun requireReadAdmission(context: ComplaintIngressContext) =
         ComplaintIngressAdmission.requireOwnerOperationReadOwner(context, process.consumers.ingressAdmission)
 
@@ -116,9 +123,29 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         operation.requireCurrentCheckpointRead(this, phase)
         requirePhaseOwner(ownership)
         phase.ownerOperation.requireOwner(operation, jdbc, ownership)
-        val connection = phase.ownerOperation.connection(operation, jdbc)
+        operation.requireCheckpointTime(this, phase, readCurrent(phase.ownerOperation.connection(operation, jdbc)))
+        requirePhaseOwner(ownership)
+        operation.requireCurrentCheckpointRead(this, phase)
+    }
+
+    /** EDIT has its own retained boundary; only the fixed signed/current reader is shared, never CREATE's handoff. */
+    internal fun lockAndCheck(operation: ComplaintOwnerEditOperation, phase: PersistencePhaseContext, selected: TestRegisteredInitialCheckpointEditV1) {
+        selected.requireCurrentOperation(this, operation, phase)
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockGlobal, { _, _ -> true }).single())
+        check(jdbc.query(TestActiveInitialCheckpointSqlV1.lockScope, { _, _ -> true }, identity.scope).single())
+        checkCurrent(operation, phase, selected)
+    }
+
+    internal fun checkCurrent(operation: ComplaintOwnerEditOperation, phase: PersistencePhaseContext, selected: TestRegisteredInitialCheckpointEditV1) {
+        selected.requireCurrentOperation(this, operation, phase)
+        operation.requireCheckpointTime(selected, phase, readCurrent(phase.ownerEdit.connection(operation, jdbc)))
+        selected.requireCurrentOperation(this, operation, phase)
+    }
+
+    /** Private fixed initial-checkpoint read only; callers above prove exact typed operation/owner before and after. */
+    private fun readCurrent(connection: Connection): Instant {
         registration.requireActiveIdentityGate(PersistenceComplaintMaintenanceGateV1.read(connection))
-        jdbc.query(TestActiveInitialCheckpointSqlV1.currentForOwnerCreate, { row, _ -> TestActiveInitialCheckpointRowsV1.Current(row) },
+        return jdbc.query(TestActiveInitialCheckpointSqlV1.currentForOwnerCreate, { row, _ -> TestActiveInitialCheckpointRowsV1.Current(row) },
             *identity.arguments()).single().use { current ->
             check(current.leaseOwner == null && current.leaseExpiresAt == null && current.leaseToken > current.preparingToken)
             jdbc.query(TestActiveInitialCheckpointSqlV1.slot, { row, _ ->
@@ -144,13 +171,11 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
                         check(TestActiveInitialCheckpointDocumentV1.time(now) && !now.isBefore(current.sampledAt) &&
                             !document.completedAt.isAfter(now) && !document.completedAt.plusMillis(journal.declaration().limits.deadlines.checkpointMaxAgeMillis.toLong()).isBefore(now) &&
                             control.retainUntil.isAfter(now.plusMillis(checkpoint.retention.retention.utcUncertainty.maximumMillis)))
-                        operation.requireCheckpointTime(this, phase, now)
+                        now
                     } finally { bytes.fill(0) }
                 }
             }
         }
-        requirePhaseOwner(ownership)
-        operation.requireCurrentCheckpointRead(this, phase)
     }
 
     private fun requireSeal(frozen: TestTerminalDurableRowV1, current: TestActiveInitialCheckpointRowsV1.Current,
@@ -210,5 +235,64 @@ internal class TestRegisteredInitialCheckpointCreateV1 private constructor(
         }
 
         private fun hex(bytes: ByteArray): String = try { HexFormat.of().formatHex(bytes) } finally { bytes.fill(0) }
+    }
+}
+
+/** Dedicated original EDIT binding. The retained CREATE reader supplies identity/codec only, not path or handoff authority. */
+internal class TestRegisteredInitialCheckpointEditV1 private constructor(
+    private val current: TestRegisteredInitialCheckpointCreateV1,
+    private val ownership: PersistencePhaseOwnership,
+    private val jdbc: JdbcTemplate,
+) {
+    internal val policy = current.policy
+
+    internal fun requireEntry(selected: PersistencePhaseOwnership) {
+        current.requireEntry(selected)
+        policy.requireEdits()
+    }
+
+    internal fun requirePhaseOwner(selected: PersistencePhaseOwnership) {
+        check(selected === ownership)
+        current.requirePhaseOwner(selected)
+        policy.requireEdits()
+    }
+
+    internal fun requirePath(path: PersistencePhasePath) {
+        if (path !in PATHS) throw PersistencePhaseException(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+    }
+
+    internal fun requireAdmission(handoff: ComplaintAdmittedOwnerEdit) = current.requireAdmission(handoff)
+    internal fun requireReadAdmission(context: ComplaintIngressContext) = current.requireReadAdmission(context)
+    internal fun observationIdentityArguments(): Array<Any?> = current.observationIdentityArguments()
+
+    internal fun requireOperation(operation: ComplaintOwnerEditOperation, phase: PersistencePhaseContext, path: PersistencePhasePath) {
+        requirePhaseOwner(ownership); requirePath(path)
+        phase.ownerEdit.requireOwner(operation, jdbc, ownership)
+        check(operation.registeredWith(this))
+    }
+
+    internal fun requireCurrentOperation(original: TestRegisteredInitialCheckpointCreateV1, operation: ComplaintOwnerEditOperation, phase: PersistencePhaseContext) {
+        check(current === original)
+        requirePhaseOwner(ownership)
+        phase.ownerEdit.requireOwner(operation, jdbc, ownership)
+        operation.requireCurrentCheckpointRead(this, phase)
+    }
+
+    internal fun lockAndCheck(operation: ComplaintOwnerEditOperation, phase: PersistencePhaseContext) = current.lockAndCheck(operation, phase, this)
+    internal fun checkCurrent(operation: ComplaintOwnerEditOperation, phase: PersistencePhaseContext) = current.checkCurrent(operation, phase, this)
+
+    override fun toString(): String = "TestRegisteredInitialCheckpointEditV1(exact-registered-edit,no-cached-eligibility)"
+
+    companion object {
+        private val PATHS = setOf(PersistencePhasePath.COMPLAINT_OWNER_EDIT_AUTHENTICATION, PersistencePhasePath.COMPLAINT_OWNER_EDIT_PREFLIGHT,
+            PersistencePhasePath.COMPLAINT_OWNER_EDIT_STATUS, PersistencePhasePath.COMPLAINT_OWNER_EDIT)
+
+        internal fun fromRegistered(registration: ComplaintTestNamespaceRegistrationV1, assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership, jdbc: JdbcTemplate): TestRegisteredInitialCheckpointEditV1 {
+            requireConnectionFree()
+            checkNotNull(registration.process.initialCheckpointCreate).requireEdits()
+            val current = TestRegisteredInitialCheckpointCreateV1.fromRegistered(registration, assembly, ownership, jdbc)
+            return TestRegisteredInitialCheckpointEditV1(current, ownership, jdbc).also { it.requireEntry(ownership) }
+        }
     }
 }

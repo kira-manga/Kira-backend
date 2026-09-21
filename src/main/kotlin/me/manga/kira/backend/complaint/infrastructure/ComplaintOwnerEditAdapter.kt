@@ -39,14 +39,14 @@ internal class ComplaintOwnerEditAdapter(
         admission.startOwnerEdit(ingress)
         val identity = identity(bearer)
         try {
-            val platform = checked(phases.authenticate(identity)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
+            val platform = checked(phases.authenticate(identity, ingress)).platform ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAUTHORIZED)
             val request = try {
                 ComplaintOwnerEditRequest.normalize(testScope, input)
             } catch (failure: ComplaintReportTextRejected) {
                 rejectOwnerOperation(ComplaintOwnerOperationFailure.INVALID_REQUEST)
             }
             val candidate = ComplaintOwnerEditCandidate.prepare(identity.installation, request)
-            val preflight = checked(phases.preflight(identity, candidate.tuple))
+            val preflight = checked(phases.preflight(identity, candidate.tuple, ingress))
             preflight.receipt?.let { return it }
             val admitted = admission.admitOwnerEdit(ingress, candidate.tuple)
             return checked(phases.edit(identity, candidate, platform, admitted)).receipt
@@ -63,12 +63,12 @@ internal class ComplaintOwnerEditAdapter(
         admission.startOwnerStatus(ingress)
         val identity = identity(bearer)
         try {
-            checked(phases.authenticate(identity))
+            checked(phases.authenticate(identity, ingress))
             val tuple = ComplaintOwnerEditTuple(identity.installation, query.key, query.targetId, query.fingerprintBytes())
             val readAdmission = Any()
             admission.chargeOwnerStatus(ingress, identity.installation, readAdmission)
             admission.consumeOwnerStatus(ingress, readAdmission)
-            return checked(phases.status(identity, tuple)).receipt ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND)
+            return checked(phases.status(identity, tuple, ingress)).receipt ?: rejectOwnerOperation(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND)
         } catch (failure: PersistencePhaseException) {
             rejectOwnerOperation(ComplaintOwnerOperationFailure.UNAVAILABLE)
         }

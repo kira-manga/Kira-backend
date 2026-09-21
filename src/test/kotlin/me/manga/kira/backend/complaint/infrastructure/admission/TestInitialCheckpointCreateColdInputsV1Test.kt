@@ -105,6 +105,35 @@ internal class TestInitialCheckpointCreateColdInputsV1Test {
             CanonicalJson.canonicalize(JsonObject(current - "initialCheckpointCreate")).toByteArray())
     }
 
+    @Test fun editSelectionHasSeparateBornWithProvenanceAndNeitherOlderProfileCanUpgradeItsPoolPin() {
+        val scanner = scanner()
+        val base = document(scanner)
+        val older = listOf(VersionBoundTestInitialCheckpointCreateV1.PROFILE, VersionBoundTestInitialCheckpointCreateV1.REPLY_PROFILE).map { profile ->
+            assembled(scanner, base.copy(initialCheckpointCreate = input().copy(profile = profile))) { process ->
+                val policy = checkNotNull(process.initialCheckpointCreate)
+                assertThrows<IllegalStateException> { policy.requireEdits() }
+                assertEquals(profile, policy.inventory().getValue("profile").jsonPrimitive.content)
+                val newer = VersionBoundTestInitialCheckpointCreateV1.fromIndependentInputs(input().copy(profile = VersionBoundTestInitialCheckpointCreateV1.EDIT_PROFILE),
+                    process.pools, process.consumers.journalRouting, checkNotNull(process.initialCheckpoint))
+                assertThrows<Exception> { process.pools.retainTestInitialCheckpointCreate(newer) }
+                assertThrows<Exception> { process.pools.ordinary.requireTestInitialCheckpointCreate(newer) }
+            }
+        }
+        val bytes = assembled(scanner, base.copy(initialCheckpointCreate = input().copy(profile = VersionBoundTestInitialCheckpointCreateV1.EDIT_PROFILE))) { process ->
+            val policy = checkNotNull(process.initialCheckpointCreate)
+            policy.requireEdits(); policy.requireReplies()
+            process.pools.ordinary.requireTestInitialCheckpointCreate(policy)
+            assertThrows<Exception> { process.pools.ordinary.requireTestInitialCheckpointCreate(null) }
+        }
+        val current = Json.parseToJsonElement(bytes.decodeToString()).jsonObject
+        assertEquals(VersionBoundTestInitialCheckpointCreateV1.EDIT_PROFILE, current.getValue("initialCheckpointCreate").jsonObject.getValue("profile").jsonPrimitive.content)
+        older.forEach { original ->
+            assertFalse(original.contentEquals(bytes))
+            assertArrayEquals(CanonicalJson.canonicalize(JsonObject(Json.parseToJsonElement(original.decodeToString()).jsonObject - "initialCheckpointCreate")).toByteArray(),
+                CanonicalJson.canonicalize(JsonObject(current - "initialCheckpointCreate")).toByteArray())
+        }
+    }
+
     private fun assembled(scanner: TestActiveInitialCheckpointHttpInputV1, document: ComplaintTestDeploymentDocumentV1,
         action: (VersionBoundTestNamespaceProcessV1) -> Unit): ByteArray {
         val http = AwsSecretVersionFixture()

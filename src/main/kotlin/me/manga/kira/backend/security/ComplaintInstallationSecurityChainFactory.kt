@@ -62,7 +62,8 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     init {
         require(core == null || initialCreate == null)
         initialCreate?.let {
-            require(!it.create.hasDeleteStatus() && !it.create.hasEditStatus()) { "Complaint CREATE subset refused." }
+            require(!it.create.hasDeleteStatus() && it.create.hasEditStatus() == (it.edit != null)) { "Complaint CREATE subset refused." }
+            if (it.edit != null) require(it.reply != null && it.create.usesEditStatus(it.edit)) { "Complaint EDIT subset refused." }
             require(it.reply == null || it.reply === it.create) { "Complaint REPLY subset refused." }
         }
         core?.let {
@@ -82,6 +83,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
     private val authentication: ComplaintInstallationBearerAuthenticator? get() = core?.authentication ?: initialCreate?.authentication
     private val detail: ComplaintOwnerDetailHttpHandler? get() = core?.detail ?: initialCreate?.reads?.detail
     private val reply: ComplaintOwnerCreateHttpHandler? get() = core?.reply ?: initialCreate?.reply
+    private val edit: ComplaintOwnerEditHttpHandler? get() = core?.edit ?: initialCreate?.edit
 
     fun build(http: HttpSecurity): SecurityFilterChain {
         http.securityMatcher(ComplaintInstallationRoutes)
@@ -154,7 +156,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
                 else -> if (ComplaintInstallationRoutes.isReply(request)) {
                     checkNotNull(reply).handleWithinIngress(request, response, context)
                 } else if (ComplaintInstallationRoutes.isContent(request)) {
-                    checkNotNull(core?.edit).handleWithinIngress(request, response, context)
+                    checkNotNull(edit).handleWithinIngress(request, response, context)
                 } else if (request.method == "DELETE") {
                     checkNotNull(core?.delete).handleWithinIngress(request, response, context)
                 } else {
@@ -173,7 +175,7 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         (bootstrap != null && request.method == "GET" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.BOOTSTRAP) ||
         (core?.deleteAll != null && request.method == "POST" && ComplaintInstallationRoutes.path(request) == ComplaintInstallationRoutes.DELETE_ALL) ||
         (reply != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
-        (core?.edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
+        (edit != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request)) ||
         (detail != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
         (core?.delete != null && request.method == "DELETE" && ComplaintInstallationRoutes.isDetail(request))
 
@@ -208,13 +210,14 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
         val delete: ComplaintOwnerDeleteHttpHandler?,
     )
 
-    /** Fixed narrower tuple; optional reply is the same concrete creation handler, never me/edit/delete. */
+    /** Fixed narrower tuple: optional reply/create identity and optional exact EDIT/status pair, never me/delete. */
     private class InitialCreate(
         val authentication: ComplaintInstallationBearerAuthenticator,
         val installations: ComplaintInstallationHttpHandler,
         val create: ComplaintOwnerCreateHttpHandler,
         val reads: OwnerReads? = null,
         val reply: ComplaintOwnerCreateHttpHandler? = null,
+        val edit: ComplaintOwnerEditHttpHandler? = null,
     )
 
     private class OwnerReads(val history: ComplaintOwnerHistoryHttpHandler, val detail: ComplaintOwnerDetailHttpHandler)
@@ -247,6 +250,14 @@ internal class ComplaintInstallationSecurityChainFactory private constructor(
             detail: ComplaintOwnerDetailHttpHandler): ComplaintInstallationSecurityChainFactory =
             ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
                 InitialCreate(authentication, installations, create, OwnerReads(history, detail), create))
+
+        /** Separate explicit EDIT/status sibling; old subsets still reject a create handler carrying EDIT status. */
+        fun registeredReadCreateReplyEditSubset(bridge: ComplaintHttpIngressBridge, bootstrap: ComplaintInstallationBootstrapHttpHandler,
+            authentication: ComplaintInstallationBearerAuthenticator, installations: ComplaintInstallationHttpHandler,
+            create: ComplaintOwnerCreateHttpHandler, history: ComplaintOwnerHistoryHttpHandler,
+            detail: ComplaintOwnerDetailHttpHandler, edit: ComplaintOwnerEditHttpHandler): ComplaintInstallationSecurityChainFactory =
+            ComplaintInstallationSecurityChainFactory(bridge, null, bootstrap,
+                InitialCreate(authentication, installations, create, OwnerReads(history, detail), create, edit))
     }
 }
 

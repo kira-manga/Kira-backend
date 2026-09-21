@@ -1380,6 +1380,7 @@ internal class JdbcComplaintCapacityStore(private val jdbc: JdbcTemplate, expect
                 try {
                     operation.beginCounterLock(store.jdbc)
                     val before = store.readLockedLedger()
+                    operation.afterCounterLock(store.jdbc)
                     val after = before.chargeCreation(checkNotNull(store.expectedPolicyDigest), ComplaintCapacityCharges.OWNER_EDIT)
                     val allocation = LockedOwnerEdit(store, operation, after)
                     operation.retainCapacity(allocation, store.jdbc, before)

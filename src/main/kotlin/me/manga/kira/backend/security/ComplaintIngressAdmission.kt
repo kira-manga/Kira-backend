@@ -1716,6 +1716,13 @@ internal class ComplaintIngressAdmission(
             owner.locked { owner.requireCreateState(selected) }
         }
 
+        /** Exact typed EDIT handoff; a CREATE/reply handoff cannot satisfy this original-owner comparison. */
+        internal fun requireOwnerEditOwner(handoff: ComplaintAdmittedOwnerEdit, owner: ComplaintIngressAdmission) {
+            val selected = handoff as? AdmittedEdit ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
+            owner.locked { owner.requireEditState(selected) }
+        }
+
         internal fun requireOwnerDeleteOwner(handoff: ComplaintAdmittedOwnerDelete, owner: ComplaintIngressAdmission) {
             val selected = handoff as? AdmittedDelete ?: refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)
             if (selected.owner !== owner) refuseComplaintAdmission(ComplaintAdmissionFailure.INVALID_CONTEXT)

@@ -14,6 +14,16 @@ import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCounter
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerCreateInput
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditFingerprint
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditInput
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditPrecondition
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditReceipt
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditRequest
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerEditStatusQuery
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditAdapter
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditCandidate
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerEditStore
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerEditPhaseExecutor
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReceipt
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerReplyInput
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerStatusQuery
@@ -47,6 +57,7 @@ import java.util.UUID
 
 internal val REGISTERED_CREATE = PersistencePhasePath.COMPLAINT_OWNER_CREATE
 internal val REGISTERED_REPLY = PersistencePhasePath.COMPLAINT_OWNER_REPLY
+internal val REGISTERED_EDIT = PersistencePhasePath.COMPLAINT_OWNER_EDIT
 
 /**
  * Genuine global G1/full-D/request/capture precedes TEST activation; no global seal/health claim.
@@ -114,6 +125,11 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
         ComplaintOwnerCreateAdapter(actor.scope, jwt, ComplaintOwnerCreatePhaseExecutor(exchange.ordinary.ownership, selected), ingress)
     }
 
+    val editStore by lazy { JdbcComplaintOwnerEditStore.registeredInitialCheckpoint(jdbc, exchange.service, exchange.ordinary.ownership,
+        registration, checkpoint.assembly) }
+    val editExecutor by lazy { ComplaintOwnerEditPhaseExecutor(exchange.ordinary.ownership, editStore) }
+    private val editAdapter by lazy { ComplaintOwnerEditAdapter(actor.scope, jwt, editExecutor, ingress) }
+
     init {
         assertSame(jdbc.dataSource, process.pools.ordinary)
         assertEquals(actor, jwt.verify(token).installation)
@@ -146,6 +162,20 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
         receipt as ComplaintOwnerReceipt.Applied
         assertEquals(attempt.input.id, receipt.id); assertEquals(1L, receipt.version)
     }
+    fun edit(attempt: RegisteredInitialEditAttemptV1): ComplaintOwnerEditReceipt =
+        ingress.withIngress(request()) { editAdapter.edit(it, token, attempt.input) }
+    fun editStatus(attempt: RegisteredInitialEditAttemptV1): ComplaintOwnerEditReceipt = ingress.withIngress(request()) {
+        editAdapter.status(it, token, ComplaintOwnerEditStatusQuery(attempt.input.key.toString(), listOf(attempt.input.targetId.toString()),
+            ComplaintOwnerEditFingerprint.of(attempt.candidate.request).encoded))
+    }
+    fun assertApplied(receipt: ComplaintOwnerEditReceipt, attempt: RegisteredInitialEditAttemptV1) {
+        assertTrue(receipt is ComplaintOwnerEditReceipt.Applied)
+        receipt as ComplaintOwnerEditReceipt.Applied
+        assertEquals(attempt.input.targetId, receipt.id); assertEquals(attempt.input.precondition.version + 1, receipt.version)
+    }
+    fun editSql(): List<String> = jdbc.calls.filter { it.first === REGISTERED_EDIT }.map { it.second }
+    fun editPhases() = jdbc.observations.keys.filter { poolTestField<PersistencePhasePath>(it, "path") === REGISTERED_EDIT }
+
     fun notice(): UUID = checkNotNull(observer.queryForObject("SELECT id FROM complaints WHERE data_scope_id = ? AND ownership = 'SYSTEM' AND kind = 'NOTICE' ORDER BY id LIMIT 1",
         UUID::class.java, scope)) // The genuine activation's scoped notice, never a synthetic seed.
     fun identity(): ComplaintOwnerOperationIdentity = jwt.verify(token).let {
@@ -211,7 +241,7 @@ internal class TestRegisteredInitialCheckpointCreateFixtureV1(
         observer.update("DELETE FROM complaints WHERE data_scope_id = ?", scope)
         observer.update("DELETE FROM complaint_resource_ids WHERE data_scope_id = ?", scope)
         observer.update("DELETE FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND actor_id = ?", scope, actor.id)
-        observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", scope)
+        observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND action IN ('COMPLAINT_CREATED', 'COMPLAINT_CONTENT_EDITED')", scope)
     }
 }
 
@@ -225,4 +255,13 @@ internal fun registeredReplyAttempt(actor: ScopedInstallationId, parent: UUID, i
     val identity = checkNotNull(ComplaintReportIdentity.checked(input.id.toString(), input.key.toString(), actor.scope.id.toString()))
     val normalized = ComplaintReplyRequest.normalize(identity, parent, input.body, input.metadata)
     return RegisteredInitialReplyAttemptV1(input, ComplaintOwnerReplyCandidate.prepare(actor, normalized))
+}
+
+/** Data-only input/candidate; original product adapter still authenticates and normalizes. */
+internal class RegisteredInitialEditAttemptV1(val input: ComplaintOwnerEditInput, val candidate: ComplaintOwnerEditCandidate)
+
+internal fun registeredEditAttempt(actor: ScopedInstallationId, target: UUID, version: Long = 1,
+    subject: String? = " Registered edited subject ", body: String = " Registered edited body\r\nline ", key: UUID = UUID.randomUUID()): RegisteredInitialEditAttemptV1 {
+    val input = ComplaintOwnerEditInput(target, key, subject, body, ComplaintOwnerEditPrecondition.parse(target, "\"complaint-$target-v$version\""))
+    return RegisteredInitialEditAttemptV1(input, ComplaintOwnerEditCandidate.prepare(actor, ComplaintOwnerEditRequest.normalize(actor.scope, input)))
 }

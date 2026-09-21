@@ -12,6 +12,11 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationRejected
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerReplyParentRows
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateStore
+import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransactionManager
+import me.manga.kira.backend.complaint.domain.ComplaintPlatform
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerEditStore
+import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.security.ownerEditTestIngress
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateCasesV1.refused
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -147,6 +152,156 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         assertTrue(f.replySql().isEmpty(), "Expired current checkpoint cannot block exact completed reply receipt reads.")
         refused { f.reply(second) }
         assertFalse(f.replySql().any { "complaint_capacity_counters" in it })
+        assertEquals(before, f.state()); assertEquals(counters, f.counters())
+        assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
+
+    fun editExactGraph(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val report = f.attempt(); f.assertApplied(f.create(report), report); f.assertReleased()
+        val attempt = registeredEditAttempt(f.actor, report.input.id)
+        val before = f.state(); val calls = f.jdbc.calls.size; val providers = f.providerCounts()
+        val p = f.process.consumers.capacityPolicy
+        assertThrows<Exception> { JdbcComplaintOwnerEditStore(f.jdbc, JdbcComplaintCapacityStore(f.jdbc, p.digestBytes()),
+            f.exchange.service, f.process.desiredSettings()) }
+        assertThrows<Exception> { JdbcComplaintOwnerEditStore.registeredInitialCheckpoint(JdbcTemplate(f.process.pools.ordinary), f.exchange.service,
+            f.exchange.ordinary.ownership, f.registration, f.checkpoint.assembly) }
+        val foreignOwner = PersistencePhaseOwnership(f.exchange.ordinary.admission,
+            GuardedJpaTransactionManager(f.exchange.ordinary.entityManagerFactory, f.exchange.ordinary.pool))
+        assertThrows<Exception> { JdbcComplaintOwnerEditStore.registeredInitialCheckpoint(f.jdbc, f.exchange.service,
+            foreignOwner, f.registration, f.checkpoint.assembly) }
+        assertEquals(calls, f.jdbc.calls.size)
+        val foreignIngress = ownerEditTestIngress(p)
+        foreignIngress.withIngress(f.request()) { context ->
+            foreignIngress.startOwnerEdit(context)
+            val handoff = foreignIngress.admitOwnerEdit(context, attempt.candidate.tuple)
+            val failure = assertThrows<PersistencePhaseException> { f.editExecutor.edit(f.identity(), attempt.candidate, ComplaintPlatform.ANDROID, handoff) }
+            assertTrue(failure.cleanupProven); assertEquals(PersistenceDatabaseOutcome.NONE, failure.databaseOutcome)
+        }
+        val missingIngress = assertThrows<PersistencePhaseException> { f.editExecutor.authenticate(f.identity()) }
+        assertTrue(missingIngress.cleanupProven); assertEquals(PersistenceDatabaseOutcome.NONE, missingIngress.databaseOutcome)
+        assertTrue(f.editSql().isEmpty()); assertEquals(before, f.state()); f.assertReleased()
+        f.assertApplied(f.edit(attempt), attempt)
+        val counters = f.counters()
+        val generation = (f.checkpoint.control().getValue("desired_generation") as Number).toLong()
+        assertEquals(1, f.observer.update("UPDATE complaint_journal_control SET desired_generation = ? WHERE data_scope_id = ?", generation + 1, f.scope))
+        val damaged = f.state()
+        try {
+            f.jdbc.calls.clear()
+            refused { f.edit(attempt) }; refused { f.editStatus(attempt) }
+            assertTrue(f.editSql().isEmpty(), "Current desired identity still precedes even exact EDIT receipt replay.")
+            assertEquals(damaged, f.state()); assertEquals(counters, f.counters())
+        } finally {
+            // Restore only this negative scoped drift to the captured original; no successful checkpoint/flag is seeded.
+            assertEquals(1, f.observer.update("UPDATE complaint_journal_control SET desired_generation = ? WHERE data_scope_id = ?", generation, f.scope))
+        }
+        val restored = f.state()
+        f.assertApplied(f.editStatus(attempt), attempt)
+        f.registration.close()
+        refused { f.edit(attempt) }; refused { f.editStatus(attempt) }
+        assertEquals(restored, f.state()); assertEquals(counters, f.counters())
+        assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
+
+    fun editClaimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val report = f.attempt(); f.assertApplied(f.create(report), report)
+        val attempt = registeredEditAttempt(f.actor, report.input.id)
+        val before = f.counters(); val providers = f.providerCounts()
+        val winnerThread = AtomicReference<Thread?>(); val loserPid = AtomicInteger()
+        val loserEntering = CountDownLatch(1); val closedAfterClaim = AtomicBoolean()
+        f.raw { observer ->
+            OwnedCallerTestScope().use { callers ->
+                val completedWinner = callers.gate()
+                f.jdbc.before = { path, sql ->
+                    if (path === REGISTERED_EDIT && sql.startsWith("INSERT INTO complaint_idempotency_receipts") &&
+                        winnerThread.get() != null && Thread.currentThread() !== winnerThread.get()) {
+                        loserPid.set(currentPid(f)); loserEntering.countDown()
+                    }
+                }
+                f.jdbc.after = { path, sql -> if (path === REGISTERED_EDIT) {
+                    if ("UPDATE complaint_idempotency_receipts" in sql && winnerThread.compareAndSet(null, Thread.currentThread())) completedWinner.hold()
+                    if (sql.startsWith("INSERT INTO complaint_idempotency_receipts") && winnerThread.get() != null &&
+                        Thread.currentThread() !== winnerThread.get() && closedAfterClaim.compareAndSet(false, true)) {
+                        assertEquals(1, f.exchange.f.foreignUpdate("UPDATE complaint_journal_control SET creation_closed = true, maintenance_closed = true WHERE data_scope_id = ?", f.scope))
+                    }
+                } }
+                val winner = callers.launch { f.edit(attempt) }
+                completedWinner.awaitEntered()
+                try {
+                    val loser = callers.launch { f.edit(attempt) }
+                    assertTrue(loserEntering.await(1, TimeUnit.SECONDS))
+                    awaitActualLockWait(observer, loserPid.get())
+                    completedWinner.release()
+                    f.assertApplied(winner.value(), attempt); f.assertApplied(loser.value(), attempt)
+                } finally { completedWinner.release() }
+            }
+        }
+        f.jdbc.before = { _, _ -> }; f.jdbc.after = { _, _ -> }
+        assertTrue(closedAfterClaim.get()); f.assertReleased()
+        assertEquals(2, f.editPhases().size)
+        assertTrue(f.editPhases().all { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED })
+        assertEquals(6, f.editSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate }, "Only winner checks new work, never loser or historical If-Match.")
+        assertEquals(1, f.editSql().count { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it })
+        f.assertCharge(before, ComplaintCapacityCharges.OWNER_EDIT)
+        assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM complaint_idempotency_receipts WHERE actor_id = ? AND operation = 'OWNER_EDIT'", Long::class.java, f.actor.id))
+        val state = f.state(); f.jdbc.calls.clear()
+        f.assertApplied(f.edit(attempt), attempt); f.assertApplied(f.editStatus(attempt), attempt)
+        assertTrue(f.editSql().isEmpty()); assertEquals(state, f.state())
+        assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
+
+    fun editWaitedCheckpointExpiry(f: TestRegisteredInitialCheckpointCreateFixtureV1, resource: Boolean) {
+        val deadlines = f.process.consumers.journalConfiguration.declaration().limits.deadlines
+        assertEquals(30_000, deadlines.scanMillis); assertEquals(30_000, deadlines.scanCadenceMillis); assertEquals(30_000, deadlines.checkpointMaxAgeMillis)
+        val report = f.attempt(); f.assertApplied(f.create(report), report)
+        val first = registeredEditAttempt(f.actor, report.input.id)
+        f.assertApplied(f.edit(first), first); f.assertReleased()
+        val before = f.state(); val counters = f.counters(); val providers = f.providerCounts()
+        val expires = (f.checkpoint.control().getValue("checkpoint_completed_at") as Timestamp).toInstant().plusMillis(deadlines.checkpointMaxAgeMillis.toLong())
+        val second = registeredEditAttempt(f.actor, report.input.id, version = 2, body = "Second registered edit")
+        val blockedSql = f.editSql().single { if (resource) it.startsWith("SELECT state FROM complaint_resource_ids") else "FOR UPDATE OF c" in it }
+        val entering = CountDownLatch(1); val reached = AtomicBoolean(); val pid = AtomicInteger()
+        f.raw { locker ->
+            locker.autoCommit = false
+            try {
+                val table = if (resource) "complaint_resource_ids" else "complaints"
+                locker.prepareStatement("SELECT id FROM $table WHERE id = ? FOR UPDATE").use { statement ->
+                    statement.queryTimeout = 1; statement.setObject(1, report.input.id)
+                    statement.executeQuery().use { row -> assertTrue(row.next()); assertFalse(row.next()) }
+                }
+                f.raw { observer ->
+                    waitUntil(observer, expires.minusMillis(800), 31_000) // No original request/admission exists during this wait.
+                    f.jdbc.calls.clear()
+                    OwnedCallerTestScope().use { callers ->
+                        f.jdbc.before = { path, sql -> if (path === REGISTERED_EDIT && sql == blockedSql && reached.compareAndSet(false, true)) {
+                            // Negative stall consumes the same2s original, with actual100ms lock_timeout untouched.
+                            waitUntil(observer, expires.minusMillis(45), 900)
+                            assertTrue(now(observer).isBefore(expires))
+                            pid.set(currentPid(f)); entering.countDown()
+                        } }
+                        val original = callers.launch { f.edit(second) }
+                        assertTrue(entering.await(1, TimeUnit.SECONDS))
+                        awaitActualLockWait(observer, pid.get())
+                        waitUntil(observer, expires.plusNanos(1000), 80)
+                        locker.commit()
+                        val failure = original.problem()
+                        assertTrue(failure is ComplaintOwnerOperationRejected)
+                        assertEquals(ComplaintOwnerOperationFailure.UNAVAILABLE, (failure as ComplaintOwnerOperationRejected).failure)
+                    }
+                }
+            } finally { f.jdbc.before = { _, _ -> }; locker.rollback() }
+        }
+        assertTrue(reached.get()); f.assertReleased()
+        assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, f.editPhases().last().databaseOutcome())
+        assertEquals(if (resource) 4 else 5, f.editSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+        if (resource) assertFalse(f.editSql().any { "FOR UPDATE OF c" in it })
+        assertFalse(f.editSql().any { "UPDATE complaints SET" in it || "UPDATE complaint_idempotency_receipts" in it })
+        assertEquals(before, f.state()); assertEquals(counters, f.counters())
+        f.jdbc.calls.clear()
+        f.assertApplied(f.edit(first), first); f.assertApplied(f.editStatus(first), first)
+        refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { f.editStatus(second) }
+        assertTrue(f.editSql().isEmpty())
+        refused { f.edit(second) }
+        assertFalse(f.editSql().any { "complaint_capacity_counters" in it })
         assertEquals(before, f.state()); assertEquals(counters, f.counters())
         assertEquals(providers, f.providerCounts()); f.assertReleased()
     }

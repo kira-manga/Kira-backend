@@ -71,6 +71,7 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
     private val assembly: ComplaintTestProcessAssemblyV1,
     private val registration: ComplaintTestNamespaceRegistrationV1,
     private val replyPolicy: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1? = null,
+    private val editPolicy: me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestInitialCheckpointCreateV1? = null,
 ) : AutoCloseable {
     private val startupBudget = PersistenceTimeBudget.start(60_000)
     private val ingress = registration.process.consumers.ingressAdmission
@@ -118,6 +119,8 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             requireTestDeployment(registration.process.initialCheckpointCreate != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             requireTestDeployment(replyPolicy == null || replyPolicy === registration.process.initialCheckpointCreate, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
             replyPolicy?.requireReplies()
+            requireTestDeployment(editPolicy == null || editPolicy === replyPolicy, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+            editPolicy?.requireEdits()
             val pool = registration.process.pools.ordinary
             val originalFactory = LocalContainerEntityManagerFactoryBean().also { factory = it }
             originalFactory.dataSource = pool
@@ -150,7 +153,9 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val repositories = JpaRepositoryFactory(SharedEntityManagerCreator.createSharedEntityManager(checkNotNull(emf)))
             val counted = JpaAuditRepositoryAdapter(repositories.getRepository(SpringDataAuditLogRepository::class.java))
             val service = AuditService(counted, CurrentUser(), Clock.systemUTC()).also { audit = it }
-            val composition = if (replyPolicy == null) {
+            val composition = if (editPolicy != null) {
+                ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateReplyEdit(registration, assembly, owner, template, service)
+            } else if (replyPolicy == null) {
                 ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreate(registration, assembly, owner, template, service)
             } else {
                 ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateReply(registration, assembly, owner, template, service)
@@ -309,6 +314,13 @@ internal class ComplaintTestRegisteredHttpStartupV1 private constructor(
             val policy = checkNotNull(registration.process.initialCheckpointCreate)
             policy.requireReplies()
             return ComplaintTestRegisteredHttpStartupV1(assembly, registration, policy)
+        }
+
+        /** Dedicated EDIT birth policy, retaining the same original concrete policy used by its CREATE/REPLY subset. */
+        internal fun retainedWithEdits(assembly: ComplaintTestProcessAssemblyV1, registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+            val policy = checkNotNull(registration.process.initialCheckpointCreate)
+            policy.requireEdits()
+            return ComplaintTestRegisteredHttpStartupV1(assembly, registration, policy, policy)
         }
     }
 }

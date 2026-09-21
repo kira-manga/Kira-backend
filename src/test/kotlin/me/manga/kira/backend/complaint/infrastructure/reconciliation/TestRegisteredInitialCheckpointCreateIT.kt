@@ -12,7 +12,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode
 /**
  * SOURCE ONLY / NOT_COMPILED / NOT_RUN. Actual PG/TLS and genuine registered native fixture chain;
  * only raw provider HTTP is substituted. Initial-only CREATE and separately selected read/CREATE/REPLY,
- * not recurrence/edit/health/queue, default activation or deployment.
+ * separately selected EDIT, not recurrence/health/queue, default activation or deployment.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
@@ -85,6 +85,31 @@ class TestRegisteredInitialCheckpointCreateIT {
             TestRegisteredInitialCheckpointCreateRaceCasesV1.replyWaitedCheckpointExpiry(fixture, resource = false)
         }
     }
+    @Test fun explicitEditStartupUpdatesOnlyOwnReportAndReplaysHistoricalVersionBeforeClosedControls() = withFixture {
+        TestRegisteredHttpStartupCasesV1.ownReportEdit(it)
+    }
+    @Test fun explicitEditStartupUpdatesOwnNoticeReplyWithoutChangingTheScopedNotice() = withFixture {
+        TestRegisteredHttpStartupCasesV1.noticeReplyEdit(it)
+    }
+    @Test fun explicitEditStartupRejectsForeignReportAndSystemNoticeWithoutLockingTheirResourcesOrContent() = withFixture {
+        TestRegisteredHttpStartupCasesV1.foreignAndSystemEdit(it)
+    }
+    @Test fun actualRegisteredEditClaimLoserReplaysBeforeClosedControlAndHistoricalIfMatch() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = editInput(), action = TestRegisteredInitialCheckpointCreateRaceCasesV1::editClaimLoser)
+    }
+    @Test fun actualEditResourceWaitCrossesCheckpointExpiryAndRollsBackAllMutationWhileExactReplaySurvives() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, shortFreshness = true, initialCheckpointCreate = editInput()) { fixture ->
+            TestRegisteredInitialCheckpointCreateRaceCasesV1.editWaitedCheckpointExpiry(fixture, resource = true)
+        }
+    }
+    @Test fun actualEditContentWaitCrossesCheckpointExpiryBeforeMutationOrRejectionWhileExactReplaySurvives() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, shortFreshness = true, initialCheckpointCreate = editInput()) { fixture ->
+            TestRegisteredInitialCheckpointCreateRaceCasesV1.editWaitedCheckpointExpiry(fixture, resource = false)
+        }
+    }
+    @Test fun registeredEditRequiresSameOriginalOwnerTemplateIngressAndCurrentDesiredIdentityBeforeEvenReceiptReplay() = withFixture {
+        withRegisteredInitialCheckpointCreate(it, initialCheckpointCreate = editInput(), action = TestRegisteredInitialCheckpointCreateRaceCasesV1::editExactGraph)
+    }
     @Test fun explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen() = withFixture {
         TestRegisteredHttpStartupCasesV1.heldRequestDrainsBeforeJpaClose(it)
     }
@@ -95,4 +120,5 @@ class TestRegisteredInitialCheckpointCreateIT {
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true, activeFirstCut = true).use { it.bind(); action(it) }
     private fun replyInput() = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.REPLY_PROFILE)
+    private fun editInput() = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.EDIT_PROFILE)
 }

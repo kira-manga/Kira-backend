@@ -26,7 +26,10 @@ internal class VersionBoundTestInitialCheckpointCreateV1 private constructor(
     internal fun requirePool(resources: VersionBoundPersistencePools) = check(resources === pools)
 
     /** Separate born-with declaration; the old CREATE profile never acquires reply semantics. */
-    internal fun requireReplies() = check(profile == REPLY_PROFILE)
+    internal fun requireReplies() = check(profile in setOf(REPLY_PROFILE, EDIT_PROFILE))
+
+    /** Explicit third born-with profile; neither older profile acquires EDIT. */
+    internal fun requireEdits() = check(profile == EDIT_PROFILE)
 
     internal fun inventory(): JsonObject {
         requireConnectionFree(); requireRetained(pools, routing, checkpoint)
@@ -36,8 +39,16 @@ internal class VersionBoundTestInitialCheckpointCreateV1 private constructor(
             put("checkpointProfile", TestActiveInitialCheckpointDocumentV1.PROFILE)
             put("checkpointMaximumAgeMillis", routing.journalConfiguration.declaration().limits.deadlines.checkpointMaxAgeMillis)
             put("provenance", "EXACT_REGISTERED_ASSEMBLY_ORDINARY_OWNER_TEMPLATE_INGRESS_AND_P")
-            put("poolPolicy", if (profile == REPLY_PROFILE) "BORN_WITH_REGISTERED_CREATE_REPLY_NO_DESIRED_ONLY_BYPASS" else "BORN_WITH_NO_DESIRED_ONLY_OR_REPLY_BYPASS")
-            put("newWork", if (profile == REPLY_PROFILE) "OWNER_CREATE_AND_OWNER_REPLY_INITIAL_EPOCH2_CAPTURED_FULL_CURRENT_CHECKPOINT" else "OWNER_CREATE_ONLY_INITIAL_EPOCH2_CAPTURED_FULL_CURRENT_CHECKPOINT")
+            put("poolPolicy", when (profile) {
+                EDIT_PROFILE -> "BORN_WITH_REGISTERED_CREATE_REPLY_EDIT_NO_DESIRED_ONLY_BYPASS"
+                REPLY_PROFILE -> "BORN_WITH_REGISTERED_CREATE_REPLY_NO_DESIRED_ONLY_BYPASS"
+                else -> "BORN_WITH_NO_DESIRED_ONLY_OR_REPLY_BYPASS"
+            })
+            put("newWork", when (profile) {
+                EDIT_PROFILE -> "OWNER_CREATE_OWNER_REPLY_AND_OWNER_EDIT_INITIAL_EPOCH2_CAPTURED_FULL_CURRENT_CHECKPOINT"
+                REPLY_PROFILE -> "OWNER_CREATE_AND_OWNER_REPLY_INITIAL_EPOCH2_CAPTURED_FULL_CURRENT_CHECKPOINT"
+                else -> "OWNER_CREATE_ONLY_INITIAL_EPOCH2_CAPTURED_FULL_CURRENT_CHECKPOINT"
+            })
             put("locking", "ORIGINAL_M_SHARED_GLOBAL_SCOPE_BEFORE_COUNTERS_RUN_ACTOR")
             put("freshness", "DB_TIME_AFTER_WAITS_AND_BEFORE_COMPLETION_NO_RESTART")
             put("replay", "CURRENT_ACTOR_EXACT_TERMINAL_RECEIPT_BEFORE_CURRENT_CHECKPOINT_AND_CAPACITY")
@@ -50,9 +61,10 @@ internal class VersionBoundTestInitialCheckpointCreateV1 private constructor(
     companion object {
         const val PROFILE = "TEST_REGISTERED_CURRENT_INITIAL_CHECKPOINT_OWNER_CREATE_V1"
         const val REPLY_PROFILE = "TEST_REGISTERED_CURRENT_INITIAL_CHECKPOINT_OWNER_CREATE_REPLY_V1"
+        const val EDIT_PROFILE = "TEST_REGISTERED_CURRENT_INITIAL_CHECKPOINT_OWNER_CREATE_REPLY_EDIT_V1"
 
         internal fun requireInput(input: TestInitialCheckpointCreateInputV1) {
-            check(input.schemaVersion == 1 && input.profile in setOf(PROFILE, REPLY_PROFILE))
+            check(input.schemaVersion == 1 && input.profile in setOf(PROFILE, REPLY_PROFILE, EDIT_PROFILE))
         }
 
         fun fromIndependentInputs(input: TestInitialCheckpointCreateInputV1, pools: VersionBoundPersistencePools,

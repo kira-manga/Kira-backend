@@ -116,6 +116,15 @@ internal class ComplaintTestProcessAssemblyV1 private constructor(
         return ComplaintTestRegisteredHttpStartupV1.retainedWithReplies(this, registration).also { httpStartup = it }
     }
 
+    /** Separate EDIT-capable startup; old startup selectors remain narrow on the richer birth profile. */
+    fun beginRegisteredEditHttpStartup(registration: ComplaintTestNamespaceRegistrationV1): ComplaintTestRegisteredHttpStartupV1 {
+        requireConnectionFree()
+        requireTestDeployment(caller === Thread.currentThread() && httpStartup == null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        registration.requireActiveIdentityTarget(this)
+        requireTestDeployment(registration.process === target && target.initialCheckpointCreate != null, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)
+        return ComplaintTestRegisteredHttpStartupV1.retainedWithEdits(this, registration).also { httpStartup = it }
+    }
+
     /** Identity/caller comparison only, also valid during failed child cleanup; never launch/read authority. */
     internal fun requireRegisteredHttpStartup(original: ComplaintTestRegisteredHttpStartupV1) {
         requireTestDeployment(caller === Thread.currentThread() && httpStartup === original, ComplaintTestDeploymentFailureV1.PROCESS_REFUSED)

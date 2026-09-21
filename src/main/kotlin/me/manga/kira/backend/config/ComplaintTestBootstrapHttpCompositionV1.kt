@@ -13,11 +13,14 @@ import me.manga.kira.backend.complaint.api.ComplaintInstallationBootstrapHttpHan
 import me.manga.kira.backend.complaint.api.ComplaintInstallationHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerCreateHttpHandler
 import me.manga.kira.backend.complaint.api.ComplaintOwnerDetailHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerEditHttpHandler
+import me.manga.kira.backend.complaint.api.ComplaintOwnerOperationResponse
 import me.manga.kira.backend.complaint.api.ComplaintOwnerHistoryHttpHandler
 import me.manga.kira.backend.complaint.application.ComplaintInstallationBootstrapService
 import me.manga.kira.backend.complaint.application.ComplaintInstallationService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerCreateService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerDetailService
+import me.manga.kira.backend.complaint.application.ComplaintOwnerEditService
 import me.manga.kira.backend.complaint.application.ComplaintOwnerHistoryService
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailAuthentication
 import me.manga.kira.backend.complaint.domain.ComplaintOwnerDetailFailure
@@ -34,15 +37,18 @@ import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBeare
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationBootstrapReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintInstallationExchangeAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerCreateAdapter
+import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerEditAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDetailReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerHistoryReadAdapter
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerCreateStore
+import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerEditStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDetailStore
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerHistoryStore
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestProcessAssemblyV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerCreatePhaseExecutor
+import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerEditPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerDetailPhaseExecutor
 import me.manga.kira.backend.complaint.infrastructure.transaction.ComplaintOwnerHistoryPhaseExecutor
 import me.manga.kira.backend.security.ComplaintHttpIngressBridge
@@ -65,7 +71,8 @@ import java.util.UUID
  * Bootstrap-only remains the default. The separate explicit initial-checkpoint factory selects only
  * registered identity exchange and current CREATE/status. A further explicit factory adds the two
  * existing owner reads only. A separate born-with reply selection adds only OWNER_REPLY;
- * no /me, edit/delete, LIVE/restart/quarantine or broad Core.
+ * a further explicit EDIT selection retains its own operation boundary.
+ * No /me, delete, LIVE/restart/quarantine or broad Core.
  */
 internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     registration: ComplaintTestNamespaceRegistrationV1,
@@ -75,11 +82,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     audit: AuditService? = null,
     private val reads: RegisteredOwnerReads? = null,
     private val replyStore: JdbcComplaintOwnerCreateStore? = null,
+    private val editStore: JdbcComplaintOwnerEditStore? = null,
 ) {
     init {
         require((assembly == null) == (audit == null))
         require(reads == null || assembly != null)
         require(replyStore == null || reads != null)
+        require(editStore == null || replyStore != null)
     }
 
     private val producer = ComplaintInstallationBootstrapHttpHandler(
@@ -96,8 +105,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         val scope = registration.process.desiredSettings().scope
         val jwt = reads?.jwt ?: InstallationJwtCodec(registration.process.consumers.jwt.installationKeyRing, Clock.systemUTC())
         val store = replyStore ?: JdbcComplaintOwnerCreateStore.registeredInitialCheckpoint(jdbc, selectedAudit, ownership, registration, assembly)
+        val responses = ComplaintOwnerOperationResponse()
+        val edit = editStore?.let {
+            ComplaintOwnerEditHttpHandler(ComplaintOwnerEditService(ComplaintOwnerEditAdapter(scope, jwt,
+                ComplaintOwnerEditPhaseExecutor(ownership, it), ingress)), ingress, responses)
+        }
         val create = ComplaintOwnerCreateHttpHandler(
-            ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(scope, jwt, ComplaintOwnerCreatePhaseExecutor(ownership, store), ingress)), ingress,
+            ComplaintOwnerCreateService(ComplaintOwnerCreateAdapter(scope, jwt, ComplaintOwnerCreatePhaseExecutor(ownership, store), ingress)), ingress, responses, editStatus = edit,
         )
         val enrollmentAudit = ComplaintInstallationEnrollmentAudit { selectedScope, allocation, at ->
             selectedAudit.recordInstallationEnrollment(selectedScope, allocation, at)
@@ -108,7 +122,11 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
         // AUTH remains early rejection only. Direct CREATE constructs no read producer/handler.
         val authentication = ComplaintInstallationBearerAuthenticator(scope, jwt,
             reads?.authenticationPhases ?: ComplaintOwnerHistoryPhaseExecutor(ownership, JdbcComplaintOwnerHistoryStore(jdbc, scope)), ingress)
-        if (replyStore != null) {
+        if (edit != null) {
+            val selectedReads = checkNotNull(reads)
+            ComplaintInstallationSecurityChainFactory.registeredReadCreateReplyEditSubset(
+                bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail, edit)
+        } else if (replyStore != null) {
             val selectedReads = checkNotNull(reads)
             ComplaintInstallationSecurityChainFactory.registeredReadCreateReplySubset(
                 bridge, producer, authentication, installations, create, selectedReads.history, selectedReads.detail)
@@ -125,11 +143,13 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
     /** MVC templates do not grant ingress. Both pre-buffer guards use the concrete method/path predicates below. */
     val mappedPaths: Set<String> = literalPaths +
         (if (reads == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}")) +
-        (if (replyStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/replies"))
+        (if (replyStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/replies")) +
+        (if (editStore == null) emptySet() else setOf("${ComplaintInstallationRoutes.HISTORY}/{id}/content"))
 
     internal fun mapsRequest(request: HttpServletRequest): Boolean = ComplaintInstallationRoutes.path(request) in literalPaths ||
         (reads != null && request.method == "GET" && ComplaintInstallationRoutes.isDetail(request)) ||
-        (replyStore != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request))
+        (replyStore != null && request.method == "POST" && ComplaintInstallationRoutes.isReply(request)) ||
+        (editStore != null && request.method == "PATCH" && ComplaintInstallationRoutes.isContent(request))
 
     /** Original admission surrounds the fixed bodyless check, generic body guard, Spring and MVC. */
     val ingressFilter: Filter = Filter { request, response, chain ->
@@ -148,7 +168,8 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             bridge.doFilter(request, response, FilterChain { admitted, output ->
                 val selected = admitted as HttpServletRequest
                 if ((selected.method == "GET" && (path == ComplaintInstallationRoutes.HISTORY || ComplaintInstallationRoutes.isDetail(selected))) ||
-                    (replyStore != null && selected.method == "POST" && ComplaintInstallationRoutes.isReply(selected))) {
+                    (replyStore != null && selected.method == "POST" && ComplaintInstallationRoutes.isReply(selected)) ||
+                    (editStore != null && selected.method == "PATCH" && ComplaintInstallationRoutes.isContent(selected))) {
                     reads?.requireWithinIngress()
                 }
                 if ((path != ComplaintInstallationRoutes.BOOTSTRAP ||
@@ -272,6 +293,22 @@ internal class ComplaintTestBootstrapHttpCompositionV1 private constructor(
             val replyStore = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, audit, ownership, registration, assembly)
             return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
                 RegisteredOwnerReads(registration, assembly, ownership, jdbc), replyStore)
+        }
+
+        /** Explicit complete read/CREATE/REPLY/EDIT tuple; old factories never receive an EDIT store or status handler. */
+        fun fromRegisteredInitialCheckpointReadCreateReplyEdit(
+            registration: ComplaintTestNamespaceRegistrationV1,
+            assembly: ComplaintTestProcessAssemblyV1,
+            ownership: PersistencePhaseOwnership,
+            jdbc: JdbcTemplate,
+            audit: AuditService,
+        ): ComplaintTestBootstrapHttpCompositionV1 {
+            registration.requireActiveIdentityTarget(assembly)
+            registration.requireInstallationResources(ownership, jdbc)
+            val edit = JdbcComplaintOwnerEditStore.registeredInitialCheckpoint(jdbc, audit, ownership, registration, assembly)
+            val reply = JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(jdbc, audit, ownership, registration, assembly)
+            return ComplaintTestBootstrapHttpCompositionV1(registration, ownership, jdbc, assembly, audit,
+                RegisteredOwnerReads(registration, assembly, ownership, jdbc), reply, edit)
         }
     }
 }
