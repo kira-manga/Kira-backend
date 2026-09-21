@@ -15,6 +15,7 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveI
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveInitialCheckpointSqlV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestInitialCheckpointCurrentCodecV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionSqlV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredRecurrentCheckpointDeletionCurrentV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.VersionBoundTestActiveCutoffPublicationV1
 import me.manga.kira.backend.security.ComplaintAdmittedAdminErasure
 import me.manga.kira.backend.security.ComplaintAdmittedOwnerDelete
@@ -50,6 +51,7 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
     private val publication = checkNotNull(process.activeCutoffPublication)
     private val identity = TestActiveFirstCutIdentityV1.fromRegistration(registration)
     private val journal = process.consumers.journalConfiguration
+    private val recurrent = if (policy.recurrentCurrent) TestRegisteredRecurrentCheckpointDeletionCurrentV1(registration, deletion) else null
     private var retainedGraph: TestOwnerDeleteLocalGraphV1? = null
     val lower = TestOwnerDeleteLocalGraphV1(ordinary, deletion, process.consumers.ingressAdmission,
         process.consumers.journalRouting, process.consumers.capacityPolicy, process.publicationLanes,
@@ -78,7 +80,7 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
         check(graph === retainedGraph && assembly.target === process && process.initialCheckpointDeletion === policy)
         registration.requireInitialMutationAdmission()
         registration.requireActiveIdentityTarget(assembly)
-        policy.requireRetained(process.pools, process.consumers.journalRouting, checkpoint, publication)
+        policy.requireRetained(process.pools, process.consumers.journalRouting, checkpoint, publication, process.activeRecurrent)
         publication.requireRetained(process.consumers.journalRouting, process.publicationLanes)
     }
 
@@ -166,6 +168,11 @@ internal class TestOwnerDeleteProcessBindingV1 private constructor(
         registration.requireActiveDeletionGate(phase.initialDeletionGate(this))
         val args = identity.arguments().plus(elements = owned)
         try {
+            if (recurrent?.selectInitial() == false) {
+                val now = recurrent.readCurrent(owned)
+                phase.requireRegisteredInitialDeletion(lower, deletion)
+                return now
+            }
             return deletion.query(TestRegisteredInitialCheckpointDeletionSqlV1.current, { row, _ -> TestActiveInitialCheckpointRowsV1.Current(row) }, *args).single().use { current ->
                 check(current.leaseOwner == null && current.leaseExpiresAt == null && current.leaseToken > current.preparingToken)
                 deletion.query(TestActiveInitialCheckpointSqlV1.slot, { row, _ ->

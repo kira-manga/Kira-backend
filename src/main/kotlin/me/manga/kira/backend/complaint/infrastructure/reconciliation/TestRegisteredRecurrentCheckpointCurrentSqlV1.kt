@@ -21,7 +21,8 @@ internal object TestRegisteredRecurrentCheckpointCurrentSqlV1 {
                 AND c.rotation_sequence BETWEEN 2 AND 14 AND c.rotation_state = 'CAPTURED' AND NOT c.scan_requested
                 AND c.lease_owner IS NULL AND c.lease_expires_at IS NULL
                 AND c.seal_state = 'SEAL_VERIFIED' AND c.publication_epoch = c.seal_epoch + 1
-                AND c.checkpoint_result = 'SUCCESS' AND c.checkpoint_fencing_token = c.lease_token
+                -- A genuine B holder advances the lease token, not the immutable completed checkpoint.
+                AND c.checkpoint_result = 'SUCCESS' AND c.checkpoint_fencing_token <= c.lease_token
                 AND c.checkpoint_cutoff_epoch = c.seal_epoch AND c.checkpoint_started_at >= c.seal_verified_at
                 AND c.checkpoint_completed_at >= c.checkpoint_started_at AND c.checkpoint_completed_at <= c.updated_at
                 AND c.checkpoint_completed_at <= o.sampled_at
