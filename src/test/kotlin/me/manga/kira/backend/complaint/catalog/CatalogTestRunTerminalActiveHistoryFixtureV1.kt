@@ -199,7 +199,8 @@ internal fun withSealedRecurrentTerminalRun(tls: VersionBoundPersistenceConnecte
             assertEquals(recurrentOrder, r.raw.order); assertEquals(recurrentCalls, r.probe.calls.size)
             assertEquals(recurrentClients, listOf(r.raw.sts.createdClients, r.raw.kms.createdClients, r.raw.s3Created),
                 "D/E owns its readers; the retired recurrent inventory owner is never revived.")
-            r.assertReleased(); b.assertReleased()
+            r.assertReleased()
+            if (b.process.pools.shutdownRequested()) b.assertReleasedAfterRuntimeRetirement() else b.assertReleased()
         } finally { bytes.fill(0) }
     }
 

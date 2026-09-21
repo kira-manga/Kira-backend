@@ -302,11 +302,25 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         assertEquals(raw.sqs.createdClients - 1, raw.sqs.returnedClientCloses,
             "Only this DeleteMessage client is live; the ReceiveMessage graph really retired before APPLY.")
     }
-    fun assertReleased() {
+    private fun assertReleaseObservations() {
         assertSqlReleased(); raw.assertDisposed()
         assertEquals(0L, process.publicationLanes.activeOwners().totalOwners)
         assertEquals(PersistenceLifecycleObservation.READY, epochPreparation, "C's genuine capture already prepared E.")
+    }
+    fun assertReleased() {
+        assertReleaseObservations()
         assertEquals(epochPreparation, checkNotNull(process.pools.epochRotation).observePreparation())
+    }
+    /** Historical terminal handoff only: a shutdown request alone never proves actual retirement. */
+    fun assertReleasedAfterRuntimeRetirement() {
+        assertReleaseObservations()
+        assertSame(runtime.pools, process.pools)
+        assertTrue(process.pools.shutdownRequested())
+        // Existing nonwaiting observations; do not stop, close, await or repair this retired owner.
+        assertEquals(PersistenceLifecycleObservation.TRACKED_LOCAL_ENDED, runtime.scope.root.shutdownObservation())
+        assertTrue(process.pools.poolsEndedForTrust())
+        assertEquals(PersistenceLifecycleObservation.EPOCH_ROTATION_LOCAL_ENDED, runtime.scope.root.epochRotationShutdownObservation())
+        assertEquals(PersistenceLifecycleObservation.UNAVAILABLE, checkNotNull(process.pools.epochRotation).observePreparation())
     }
     fun assertNoAuthority() {
         assertEquals(authoritiesBeforeQueue, authorityImage(), "Queue outcomes do not mint or rewrite the genuine checkpoint/rotation/run history.")
