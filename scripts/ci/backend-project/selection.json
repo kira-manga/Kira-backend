@@ -1,0 +1,49 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_A",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "12773c8f0979262f8d092e19f22d4bfffe8a4cb5",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 1,
+  "expected_total": 1,
+  "selection_basis": {
+    "batch": "FAILED54_N14_ONLY",
+    "carryforward": "Retain all prior passing evidence without replay; no blanket revalidation on the new composition.",
+    "cause_accounting": "N15 passed55 after a diagnostic-only change; prior53 opaque failure cause remains unknown. No behavior repair claim and no reassurance rerun.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "REMAINING_RECURRENT_TERMINAL_BATCH_A": 1
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "failed_gate": "35660902163:FAILED54_N14_SELECTED_HERE",
+    "focused55_carry": "35662666208:2PASS_SOURCE16b16de_MAIN_TEST_COMPILE_FULL2458_ALL348_NATURAL_CLEANUP_ROOT_VERIFIED",
+    "focused55_readback_sha256": "8a4d59bf7c5a84ad5488036539f95716d9282d77ef553dac660294fa07719ee1",
+    "gradle_seconds": 2400,
+    "prerequisite": "Root alone binds the final reviewed source/tree and admits dispatch; this inert draft authorizes neither.",
+    "required_source": "12773c8f0979262f8d092e19f22d4bfffe8a4cb5",
+    "reviewed_composition_reference": "12773c8f0979262f8d092e19f22d4bfffe8a4cb5:INFORMATIONAL_NOT_A_BINDING",
+    "scope": "Exactly failed54 N14; no other selectors, no55 replay, no cold-physical replay, no reassurance rerun or new harness."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax"
+  ]
+}
