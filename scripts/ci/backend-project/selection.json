@@ -1,0 +1,69 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "New diagnostic was compiled but not reached in actual21; serial class isolation prevents unrelated class failures from blocking localization.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "d8c51976a2a16e300934b4714aacf46ebdfaacd1",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund()"
+      ]
+    },
+    {
+      "annotation_line": 18,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT",
+      "cohort": "New me behavior compiled but refused before feature behavior in actual21; independently execute fresh class JVM without replaying a successful check.",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitMeStartupReadsCurrentIdentityDuringMaintenanceWithoutCheckpointOrComplaintMutation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInstallationMeHttpIT.kt",
+      "source_head": "d8c51976a2a16e300934b4714aacf46ebdfaacd1",
+      "source_sha256": "ee03caa8fd98432df939b57f0be0845096c58935b2100b3135d792369e10a3d4",
+      "xml_names": [
+        "explicitMeStartupReadsCurrentIdentityDuringMaintenanceWithoutCheckpointOrComplaintMutation()"
+      ]
+    },
+    {
+      "annotation_line": 21,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT",
+      "cohort": "New me behavior compiled but refused before feature behavior in actual21; independently execute fresh class JVM without replaying a successful check.",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitMeSubsetPreservesOlderRoutesAndOriginalResourcesAndRejectsRetainedAuthenticationAfterClose",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInstallationMeHttpIT.kt",
+      "source_head": "d8c51976a2a16e300934b4714aacf46ebdfaacd1",
+      "source_sha256": "ee03caa8fd98432df939b57f0be0845096c58935b2100b3135d792369e10a3d4",
+      "xml_names": [
+        "explicitMeSubsetPreservesOlderRoutesAndOriginalResourcesAndRejectsRetainedAuthenticationAfterClose()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 3,
+  "expected_total": 3,
+  "selection_basis": {
+    "cohorts": {
+      "New diagnostic was compiled but not reached in actual21; serial class isolation prevents unrelated class failures from blocking localization.": 1,
+      "New me behavior compiled but refused before feature behavior in actual21; independently execute fresh class JVM without replaying a successful check.": 2
+    },
+    "previous_run": "35603509181",
+    "scope": "New registered me2 plus2 previously setup-blocked Catalog specimens and1 newly diagnosed recurrent failure;18priorPASS not replayed. Alias4methods12scenarios and all other failures/deferred requirements retained."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInstallationMeHttpIT.kt": "ee03caa8fd98432df939b57f0be0845096c58935b2100b3135d792369e10a3d4"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT.explicitMeStartupReadsCurrentIdentityDuringMaintenanceWithoutCheckpointOrComplaintMutation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInstallationMeHttpIT.explicitMeSubsetPreservesOlderRoutesAndOriginalResourcesAndRejectsRetainedAuthenticationAfterClose"
+  ]
+}
