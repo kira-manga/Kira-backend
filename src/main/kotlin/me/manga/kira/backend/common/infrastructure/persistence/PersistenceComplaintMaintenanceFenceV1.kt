@@ -40,7 +40,7 @@ internal class PersistenceComplaintMaintenanceFenceV1(private val phase: Persist
             phase.requireComplaintMaintenanceFence(this, connection)
             if (observedLock != true) refuse(PersistencePhaseFailureCode.ENTRY_REFUSED)
             stage = FenceStage.READING_GATE
-            val gate = if (phase.path.catalogTestRunTerminal || phase.path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT)
+            val gate = if (phase.terminalCatalogMaintenanceRead(this, connection))
                 PersistenceComplaintMaintenanceGateV1.readTerminal(connection) else PersistenceComplaintMaintenanceGateV1.read(connection)
             requireRemaining() // The separate gate statement and its original descendants have returned/closed.
             phase.requireComplaintMaintenanceGate(this, connection, gate)

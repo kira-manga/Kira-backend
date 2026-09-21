@@ -1434,6 +1434,12 @@ constructor(
         return true
     }
 
+    /** Fixed terminal-catalog read choice; keeps path private and validates the original fence/holder. */
+    internal fun terminalCatalogMaintenanceRead(fence: PersistenceComplaintMaintenanceFenceV1, selected: Connection): Boolean {
+        selectedHolder.requireMaintenanceFence(fence, selected)
+        return path.catalogTestRunTerminal || path === PersistencePhasePath.COMPLAINT_TEST_RUN_TERMINAL_CATALOG_PREFLIGHT
+    }
+
     internal fun requireComplaintMaintenanceGate(
         fence: PersistenceComplaintMaintenanceFenceV1,
         selected: Connection,

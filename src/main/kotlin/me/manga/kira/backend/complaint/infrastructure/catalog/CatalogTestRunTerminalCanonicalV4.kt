@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.catalog.CatalogChainTrustEvidence
 import me.manga.kira.backend.complaint.domain.catalog.CatalogInventoryDeltaV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackPolicy
+import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerPolicyV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogTestRunTerminalHistoryV1
 import me.manga.kira.backend.complaint.domain.catalog.CatalogTestRunTerminalRecordV1
 import me.manga.kira.backend.complaint.domain.catalog.CheckedOfflineCatalogTestRunActivationChain
@@ -35,7 +36,9 @@ internal class CatalogTestRunTerminalCanonicalV4 private constructor(
 ) {
     private val reader = process.catalogReadback
     private val registry = process.catalogActivation.initialWriterRegistry()
-    private val signer = process.catalogActivation.requiredSignerPolicy()
+    private val signer = process.catalogActivation.requiredSignerPolicy().let {
+        CatalogSignerPolicyV1(it.mode, it.threshold, it.members.toList())
+    }
     val maximumDocumentBytes: Int = minOf(reader.chainPolicy.limits.maximumEnvelopeBytes, OfflineCatalogTestRunTerminalProtocol.MAX_DOCUMENT_BYTES)
 
     fun assemble(
