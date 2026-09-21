@@ -8,6 +8,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseO
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
 import me.manga.kira.backend.complaint.domain.catalog.CatalogReadbackProtocol
+import me.manga.kira.backend.complaint.domain.catalog.CatalogSignerPolicyV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisApprovalV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogGenesisSignatureV1
 import me.manga.kira.backend.complaint.domain.catalog.OfflineCatalogTestRunActivationManifestV3
@@ -174,7 +175,9 @@ internal class CatalogTestRunTerminalFrozenV1 private constructor(
             requireTestTerminalCatalog(context.dataScopeId == run.testRunId && context.configurationSha256 == run.configurationSha256 &&
                 context.terminalEncodingSha256 == TestTerminalProfileV1.encodingSha256 &&
                 parsed.initialWriterRegistry == process.catalogActivation.initialWriterRegistry() &&
-                parsed.requiredSignerPolicy == process.catalogActivation.requiredSignerPolicy() &&
+                parsed.requiredSignerPolicy == process.catalogActivation.requiredSignerPolicy().let {
+                    CatalogSignerPolicyV1(it.mode, it.threshold, it.members.toList())
+                } &&
                 parsed.initialTrustBundleEnvelopeSha256 == process.catalogReadback.initialTrustBundleSha256 &&
                 parsed.generation <= process.catalogReadback.chainPolicy.limits.maximumGenerations &&
                 parsed.terminalRecord.installationManifest.summary.installationCount <= run.installationLimit &&
