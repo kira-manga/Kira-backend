@@ -193,7 +193,8 @@ internal object OfflineCatalogTestRunTerminalParser {
         "manifest.initialWriterRegistry.catalogWriter.catalogApproverIds" -> ArrayRule(2, OfflineTrustBundleProtocol.MAX_SIGNERS, JsonToken.VALUE_STRING)
         "manifest.restoreInventory.sources", "manifest.restoreInventory.copies" -> ArrayRule(0, maximumManifestRecords, JsonToken.START_OBJECT)
         "manifest.inventoryDelta.addedSourceIds", "manifest.inventoryDelta.addedCopyIds" -> ArrayRule(0, 0, JsonToken.VALUE_STRING)
-        "$RECORD_PATH.sealSet.records", "$RECORD_PATH.progress.completedCuts", "$RECORD_PATH.progress.installationReads" ->
+        "$RECORD_PATH.sealSet.records" -> ArrayRule(2, TestTerminalProfileV1.MAX_SEALS, JsonToken.START_OBJECT)
+        "$RECORD_PATH.progress.completedCuts", "$RECORD_PATH.progress.installationReads" ->
             ArrayRule(2, 2, JsonToken.START_OBJECT)
         "$RECORD_PATH.installationManifest.chunks" -> ArrayRule(0, minOf(maximumManifestRecords, TestTerminalProfileV1.MAX_MANIFEST_CHUNKS), JsonToken.START_OBJECT)
 
