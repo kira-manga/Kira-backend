@@ -426,12 +426,16 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
     } }
 
     fun assertSqlReleased() {
+        assertSqlQuiescent()
+        deletion.assertNoLostAssertions(); native.assertNoLostAssertions(); assertEquals(0, noKeys.calls.get())
+    }
+    /** Physical retirement only. Every public result assertion still reports all sticky probe errors. */
+    fun assertSqlQuiescent() {
         exchange.assertReleased(); checkpoint.assertSqlReleased()
         assertNull(PersistencePhaseOwnership.current()); requireConnectionFree()
         assertTrue(TransactionSynchronizationManager.getResourceMap().isEmpty())
         assertEquals(0, admission.activeOwners().totalOwners)
         deletion.observations.values.forEach { assertTrue(it.lease.completion.quiescent()) }
-        deletion.assertNoLostAssertions(); native.assertNoLostAssertions(); assertEquals(0, noKeys.calls.get())
     }
     fun assertReleased() { assertSqlReleased(); assertEquals(0L, process.publicationLanes.activeOwners().totalOwners) }
     private fun closeLanes() { ownerLane?.close(); allLane?.close(); adminLane?.close() }
@@ -440,14 +444,21 @@ internal class TestRegisteredInitialCheckpointDeletionFixtureV1(
             deletion.before = {}; deletion.after = {}; exchange.jdbc.before = { _, _ -> }; exchange.jdbc.after = { _, _ -> }
         }
         closeLanes(); factories.asReversed().forEach { it.close() }
-        assertReleased(); native.detach(this)
-        if (retained != null) return // This distinct request owns no original stores, provider factories or scope teardown.
-        // Explicit disposable-scope teardown AFTER outcomes. No refund or product cleanup proof.
-        listOf("complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_recovery_capacity_reservations",
-            "complaint_deletion_journal_retirements", "complaint_deletion_journal_applied", "complaint_journal_publications").forEach {
-            observer.update("DELETE FROM $it WHERE data_scope_id = ?", scope)
+        // Preserve the recorded test failure while allowing only this retired fixture's owned
+        // children to be removed before the enclosing run/catalog rows. No unrelated reset.
+        AutoCloseable {
+            deletion.assertNoLostAssertions(); native.assertNoLostAssertions(); assertEquals(0, noKeys.calls.get())
+        }.use {
+            assertSqlQuiescent(); assertEquals(0L, process.publicationLanes.activeOwners().totalOwners)
+            native.detach(this)
+            if (retained != null) return // This distinct request owns no original stores, provider factories or scope teardown.
+            // Explicit disposable-scope teardown AFTER outcomes. No refund or product cleanup proof.
+            listOf("complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_recovery_capacity_reservations",
+                "complaint_deletion_journal_retirements", "complaint_deletion_journal_applied", "complaint_journal_publications").forEach {
+                observer.update("DELETE FROM $it WHERE data_scope_id = ?", scope)
+            }
+            observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND id > ?", scope, lastAudit)
         }
-        observer.update("DELETE FROM audit_log WHERE complaint_data_scope_id = ? AND id > ?", scope, lastAudit)
     }
     companion object {
         private val ADMIN_FAMILIES = setOf(ComplaintJournalDeletionKindV1.ADMIN_DELETE, ComplaintJournalDeletionKindV1.ADMIN_BATCH_DELETE)
