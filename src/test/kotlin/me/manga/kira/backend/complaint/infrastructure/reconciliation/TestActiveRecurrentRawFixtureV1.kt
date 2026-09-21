@@ -6,6 +6,7 @@ import me.manga.kira.backend.complaint.catalog.TestActiveOrdinaryRawHttpV1
 import me.manga.kira.backend.complaint.catalog.TestOrdinarySealHttpFixtureV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentInputV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainRowsV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
 import me.manga.kira.backend.complaint.journal.JournalPublisherObject
@@ -33,7 +34,10 @@ import java.util.concurrent.atomic.AtomicReference
  * No encryption/key/proof/marker is synthesized by this reader.
  * Fault functions corrupt raw responses only. Not a real provider or two-process qualification.
  */
-internal class TestActiveRecurrentRawFixtureV1 {
+internal class TestActiveRecurrentRawFixtureV1(
+    initialCheckpointCreate: TestInitialCheckpointCreateInputV1 = TestInitialCheckpointCreateInputV1(1, VersionBoundTestInitialCheckpointCreateV1.PROFILE),
+    shortFreshness: Boolean = false,
+) {
     val queue = TestActiveOwnerDeleteQueueRawFixtureV1()
     val deletion = TestRegisteredInitialCheckpointDeletionRawFixtureV1(queue.input)
     val sts = AwsJournalKmsFixture()
@@ -62,7 +66,8 @@ internal class TestActiveRecurrentRawFixtureV1 {
         { remaining -> if (fixture == null) deletion.checkpoint.input.s3(remaining) else native("S3", remaining, ::s3Client) })
     val factories = deletion.factories.let { original ->
         TestActiveOrdinaryRawHttpV1(original.sts, original.kms, original.s3, initialCheckpoint = input,
-            initialCheckpointCreate = original.initialCheckpointCreate, initialCheckpointDeletion = original.initialCheckpointDeletion,
+            initialCheckpointCreate = initialCheckpointCreate, shortInitialCheckpointFreshness = shortFreshness,
+            initialCheckpointDeletion = original.initialCheckpointDeletion,
             activeOwnerDeleteQueue = original.activeOwnerDeleteQueue,
             activeRecurrent = TestActiveRecurrentInputV1(1, TestActiveRecurrentStorageV1.PROFILE, TestActiveInitialCheckpointHttpInputV1.SESSION))
     }

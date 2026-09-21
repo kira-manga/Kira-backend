@@ -2,12 +2,20 @@ package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
 import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.awaitLifecycleFact
+import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
+import me.manga.kira.backend.common.infrastructure.persistence.poolTestField
+import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityVector
+import me.manga.kira.backend.complaint.domain.ComplaintOwnerOperationFailure
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveCheckpointHistoryV1
 import me.manga.kira.backend.complaint.domain.reconciliation.TestActiveRecurrentStorageV1
+import me.manga.kira.backend.complaint.domain.reconciliation.TestInitialCheckpointCreateInputV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateCasesV1.refused
 import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -18,17 +26,288 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
+import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.jdbc.core.JdbcTemplate
+import org.springframework.jdbc.datasource.ConnectionHolder
+import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.sql.Timestamp
 import java.time.Instant
+import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
+internal enum class RecurrentConsumerPath { CREATE, REPLY, EDIT }
+
 /** Actual PG/native producer cases when selected by the parent; SOURCE_ONLY / NOT_RUN here. */
 internal object TestActiveRecurrentCasesV1 {
+    fun genuineCurrentCreateReplyEdit(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls) { f, c ->
+        assertEquals(3, c.process.consumers.ownerCreatePolicy.globalPerHour, "Exactly one precursor CREATE plus this CREATE and REPLY were declared before D.")
+        val before = c.counters()
+        val immutable = f.immutableImage()
+        val control = f.first.controlImage(); val global = f.first.globalImage()
+        val notices = c.observer.queryForList("SELECT to_jsonb(c)::text FROM complaints c WHERE data_scope_id = ? AND ownership = 'SYSTEM' ORDER BY id",
+            String::class.java, c.scope)
+        val reports = checkNotNull(c.observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, c.scope))
+        val resources = checkNotNull(c.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ?", Long::class.java, c.scope))
+        val createdAudits = checkNotNull(c.observer.queryForObject(
+            "SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", Long::class.java, c.scope))
+        val editedAudits = checkNotNull(c.observer.queryForObject(
+            "SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CONTENT_EDITED'", Long::class.java, c.scope))
+        val seen = mutableSetOf<PersistencePhasePath>()
+        c.jdbc.after = { path, sql -> if (path in setOf(REGISTERED_CREATE, REGISTERED_REPLY, REGISTERED_EDIT) &&
+            sql == TestRegisteredRecurrentCheckpointCurrentSqlV1.current) {
+            val phase = checkNotNull(PersistencePhaseOwnership.current())
+            val holder = TransactionSynchronizationManager.getResource(c.jdbc.dataSource!!) as ConnectionHolder
+            val observed = c.jdbc.observations.getValue(phase)
+            assertSame(observed.lease, ownedPoolLease(holder.connection))
+            assertTrue(f.first.p.advisory(holder.connection, "complaint-maintenance-v1", "ShareLock"))
+            assertFalse(f.first.p.advisory(holder.connection, "complaint-journal-epoch", "ShareLock"))
+            assertEquals(0, f.runtime.pools.catalogCoordinator.activeSnapshotOwners())
+            if (path === REGISTERED_EDIT) {
+                assertTrue(poolTestField<Any?>(phase.ownerEdit, "retained") != null)
+                assertNull(poolTestField<Any?>(phase.ownerOperation, "retained"), "EDIT never borrows CREATE's operation boundary.")
+            } else {
+                assertTrue(poolTestField<Any?>(phase.ownerOperation, "retained") != null)
+                assertNull(poolTestField<Any?>(phase.ownerEdit, "retained"), "CREATE/REPLY never borrow EDIT's handoff.")
+            }
+            seen.add(path)
+        } }
+        val report = c.attempt()
+        val reply = registeredReplyAttempt(c.actor, report.input.id)
+        val edit = registeredEditAttempt(c.actor, report.input.id)
+        try {
+            c.assertApplied(c.create(report), report); c.assertReleased()
+            c.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE)
+            c.assertApplied(c.reply(reply), reply); c.assertReleased()
+            c.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE.scaled(2))
+            c.assertApplied(c.edit(edit), edit); c.assertReleased()
+            c.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE.scaled(2) + ComplaintCapacityCharges.OWNER_EDIT)
+        } finally { c.jdbc.after = { _, _ -> } }
+        assertEquals(setOf(REGISTERED_CREATE, REGISTERED_REPLY, REGISTERED_EDIT), seen)
+        assertConsumerSql(c.createSql(), 5); assertConsumerSql(c.replySql(), 7); assertConsumerSql(c.editSql(), 6)
+        assertTrue((c.createPhases() + c.replyPhases() + c.editPhases()).all { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED })
+        assertEquals(3, c.createPhases().size + c.replyPhases().size + c.editPhases().size)
+        assertEquals(reports + 2, c.observer.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, c.scope))
+        assertEquals(resources + 2, c.observer.queryForObject("SELECT count(*) FROM complaint_resource_ids WHERE data_scope_id = ?", Long::class.java, c.scope))
+        assertEquals(createdAudits + 2, c.observer.queryForObject(
+            "SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CREATED'", Long::class.java, c.scope))
+        assertEquals(editedAudits + 1, c.observer.queryForObject(
+            "SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_CONTENT_EDITED'", Long::class.java, c.scope))
+        assertEquals(true, c.observer.queryForObject("SELECT owner_id = ? AND kind = 'REPORT' AND version = 2 AND subject = 'Registered edited subject' " +
+            "AND body = E'Registered edited body\\nline' FROM complaints WHERE data_scope_id = ? AND id = ?", Boolean::class.java, c.actor.id, c.scope, report.input.id))
+        assertEquals(true, c.observer.queryForObject("SELECT owner_id = ? AND parent_resource_id = ? AND kind = 'REPLY' AND version = 1 " +
+            "AND body = E'Registered reply\\nline' FROM complaints WHERE data_scope_id = ? AND id = ?", Boolean::class.java, c.actor.id, report.input.id, c.scope, reply.input.id))
+        assertEquals(notices, c.observer.queryForList("SELECT to_jsonb(c)::text FROM complaints c WHERE data_scope_id = ? AND ownership = 'SYSTEM' ORDER BY id",
+            String::class.java, c.scope))
+        assertEquals(immutable, f.immutableImage()); assertEquals(control, f.first.controlImage()); assertEquals(global, f.first.globalImage())
+
+        // All three born-with CREATE quota members are now spent. Historical CREATE's v1 receipt
+        // still replays after EDIT's v2, and every exact receipt bypasses closed new-work controls.
+        assertEquals(1, c.observer.update("UPDATE complaint_journal_control SET maintenance_closed = true, creation_closed = true WHERE data_scope_id = ?", c.scope))
+        val closed = c.state(); val counters = c.counters(); val history = f.immutableImage()
+        c.jdbc.calls.clear()
+        c.assertApplied(c.create(report), report); c.assertApplied(c.status(report), report)
+        c.assertApplied(c.reply(reply), reply); c.assertApplied(c.replyStatus(reply), reply)
+        c.assertApplied(c.edit(edit), edit); c.assertApplied(c.editStatus(edit), edit)
+        assertTrue(c.createSql().isEmpty() && c.replySql().isEmpty() && c.editSql().isEmpty())
+        assertFalse(c.jdbc.calls.any { it.second == TestRegisteredRecurrentCheckpointCurrentSqlV1.branch ||
+            it.second == TestRegisteredRecurrentCheckpointCurrentSqlV1.current || "complaint_capacity_counters" in it.second })
+        assertEquals(closed, c.state()); assertEquals(counters, c.counters()); assertEquals(history, f.immutableImage())
+    }
+
+    fun currentConsumerCheckpointDrift(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls) { f, c ->
+        val original = f.control()
+        val attempt = c.attempt()
+        val before = c.counters(); val history = f.immutableImage()
+        val hash = ByteArray(32) { 0x79.toByte() }
+        val changes = linkedMapOf<String, Any>(
+            "checkpoint_generation" to (original.getValue("checkpoint_generation") as Number).toLong() + 1,
+            "checkpoint_fencing_token" to (original.getValue("checkpoint_fencing_token") as Number).toLong() + 1,
+            "checkpoint_catalog_generation" to (original.getValue("checkpoint_catalog_generation") as Number).toLong() + 1,
+            "checkpoint_catalog_hash" to hash, "checkpoint_writer_generation" to UUID.randomUUID(),
+            "checkpoint_cutoff_epoch" to 1L, // Genuine recurrent state cannot fall back to the initial parser.
+            "checkpoint_configuration_hash" to hash, "checkpoint_database_identity" to UUID.randomUUID(), "checkpoint_restore_identity" to UUID.randomUUID(),
+            "checkpoint_started_at" to Timestamp.from((original.getValue("checkpoint_started_at") as Timestamp).toInstant().minusNanos(1000)),
+            "checkpoint_completed_at" to Timestamp.from((original.getValue("checkpoint_completed_at") as Timestamp).toInstant().plusNanos(1000)),
+            "checkpoint_object_count" to (original.getValue("checkpoint_object_count") as Number).toLong() + 1,
+            "checkpoint_byte_count" to (original.getValue("checkpoint_byte_count") as Number).toLong() + 1,
+            "seal_object_version" to "foreign-recurrent-version",
+            "seal_retain_until" to Timestamp.from((original.getValue("seal_retain_until") as Timestamp).toInstant().minusSeconds(1)),
+        )
+        for ((column, value) in changes) {
+            assertEquals(1, c.observer.update("UPDATE complaint_journal_control SET $column = ? WHERE data_scope_id = ?", value, c.scope))
+            try {
+                val damaged = c.state(); c.jdbc.calls.clear()
+                refused { c.create(attempt) }; c.assertReleased()
+                assertEquals(1, c.createSql().count { it == TestRegisteredRecurrentCheckpointCurrentSqlV1.current }, column)
+                assertFalse(c.createSql().contains(TestActiveInitialCheckpointSqlV1.currentForOwnerCreate), column)
+                c.assertNoCounterSql()
+                assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, c.createPhases().last().databaseOutcome())
+                assertEquals(damaged, c.state()); assertEquals(before, c.counters()); assertEquals(history, f.immutableImage())
+                refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { c.status(attempt) }
+            } finally {
+                // Restore only the negative column drift to its captured actual producer value.
+                assertEquals(1, c.observer.update("UPDATE complaint_journal_control SET $column = ? WHERE data_scope_id = ?", original[column], c.scope))
+            }
+        }
+        c.assertApplied(c.create(attempt), attempt); c.assertApplied(c.status(attempt), attempt)
+        c.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE)
+    }
+
+    fun currentConsumerMissingHistory(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls) { f, c ->
+        val completed = c.attempt(); c.assertApplied(c.create(completed), completed); c.assertReleased()
+        val current = f.control(); val archived = f.history()
+        assertEquals(2, archived.size)
+        assertThrows<DataIntegrityViolationException> {
+            c.observer.update("DELETE FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? AND ordinal = 2", c.scope)
+        }
+        // Explicit NEGATIVE disposable-DB restore damage. Ordinary immutable DELETE remains
+        // forbidden above. Never insert/repair a checkpoint or proof; reenable before committing.
+        c.raw { connection ->
+            connection.autoCommit = false
+            try {
+                connection.createStatement().use { it.execute("ALTER TABLE complaint_test_active_checkpoint_history DISABLE TRIGGER complaint_test_active_history_immutable") }
+                connection.prepareStatement("DELETE FROM complaint_test_active_checkpoint_history WHERE data_scope_id = ? AND ordinal = 2").use {
+                    it.setObject(1, c.scope); assertEquals(1, it.executeUpdate())
+                }
+                connection.createStatement().use { it.execute("ALTER TABLE complaint_test_active_checkpoint_history ENABLE TRIGGER complaint_test_active_history_immutable") }
+                connection.commit()
+            } finally { connection.rollback() } // Any pre-COMMIT error also rolls back the trigger change.
+        }
+        assertEquals(1, f.history().size)
+        assertArrayEquals(archived.first()["entry_bytes"] as ByteArray, f.history().single()["entry_bytes"] as ByteArray)
+        assertArrayEquals(archived.first()["checkpoint_bytes"] as ByteArray, f.history().single()["checkpoint_bytes"] as ByteArray)
+        assertArrayEquals(current["checkpoint_bytes"] as ByteArray, f.control()["checkpoint_bytes"] as ByteArray)
+        assertArrayEquals(current["checkpoint_hash"] as ByteArray, f.control()["checkpoint_hash"] as ByteArray)
+        val damaged = c.state(); val history = f.immutableImage(); val counters = c.counters()
+        val next = c.attempt(); c.jdbc.calls.clear()
+        refused { c.create(next) }; c.assertReleased(); c.assertNoCounterSql()
+        assertEquals(1, c.createSql().count { it == TestRegisteredRecurrentCheckpointCurrentSqlV1.current })
+        assertFalse(c.createSql().contains(TestActiveInitialCheckpointSqlV1.currentForOwnerCreate))
+        assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, c.createPhases().last().databaseOutcome())
+        assertEquals(damaged, c.state()); assertEquals(history, f.immutableImage()); assertEquals(counters, c.counters())
+        c.jdbc.calls.clear()
+        c.assertApplied(c.create(completed), completed); c.assertApplied(c.status(completed), completed)
+        refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { c.status(next) }
+        assertTrue(c.createSql().isEmpty(), "A missing current history row is not a reason to withhold an exact committed receipt.")
+        assertEquals(damaged, c.state()); assertEquals(history, f.immutableImage()); assertEquals(counters, c.counters())
+    }
+
+    fun oldInitialProfileRemainsInitialOnly(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath) {
+        val profile = when (path) {
+            RecurrentConsumerPath.CREATE -> VersionBoundTestInitialCheckpointCreateV1.PROFILE
+            RecurrentConsumerPath.REPLY -> VersionBoundTestInitialCheckpointCreateV1.REPLY_PROFILE
+            RecurrentConsumerPath.EDIT -> VersionBoundTestInitialCheckpointCreateV1.EDIT_PROFILE
+        }
+        withCurrentConsumer(tls, profile = profile) { f, c ->
+            assertEquals(2, c.process.consumers.ownerCreatePolicy.globalPerHour)
+            val before = c.state(); val counters = c.counters(); val history = f.immutableImage()
+            when (path) {
+                RecurrentConsumerPath.CREATE -> c.attempt().let { attempt ->
+                    refused { c.create(attempt) }; refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { c.status(attempt) }
+                }
+                RecurrentConsumerPath.REPLY -> registeredReplyAttempt(c.actor, c.notice()).let { attempt ->
+                    refused { c.reply(attempt) }; refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { c.replyStatus(attempt) }
+                }
+                RecurrentConsumerPath.EDIT -> registeredEditAttempt(c.actor, f.precursor.reports.single().input.id).let { attempt ->
+                    refused { c.edit(attempt) }; refused(ComplaintOwnerOperationFailure.OPERATION_NOT_FOUND) { c.editStatus(attempt) }
+                }
+            }
+            val sql = c.createSql() + c.replySql() + c.editSql()
+            assertEquals(1, sql.count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+            assertFalse(sql.any { it == TestRegisteredRecurrentCheckpointCurrentSqlV1.branch || it == TestRegisteredRecurrentCheckpointCurrentSqlV1.current })
+            assertFalse(sql.any { "complaint_capacity_counters" in it })
+            assertEquals(before, c.state()); assertEquals(counters, c.counters()); assertEquals(history, f.immutableImage())
+        }
+    }
+
+    fun currentConsumerClaimLoser(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath) = withCurrentConsumer(tls) { _, c ->
+        when (path) {
+            RecurrentConsumerPath.CREATE -> TestRegisteredInitialCheckpointCreateRaceCasesV1.claimLoser(c)
+            RecurrentConsumerPath.REPLY -> TestRegisteredInitialCheckpointCreateRaceCasesV1.replyClaimLoser(c)
+            RecurrentConsumerPath.EDIT -> TestRegisteredInitialCheckpointCreateRaceCasesV1.editClaimLoser(c)
+        }
+    }
+
+    fun currentConsumerExactGraph(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath) = withCurrentConsumer(tls) { _, c ->
+        when (path) {
+            RecurrentConsumerPath.CREATE -> TestRegisteredInitialCheckpointCreateCasesV1.exactGraphOnly(c)
+            RecurrentConsumerPath.REPLY -> TestRegisteredInitialCheckpointCreateRaceCasesV1.replyExactGraph(c)
+            RecurrentConsumerPath.EDIT -> TestRegisteredInitialCheckpointCreateRaceCasesV1.editExactGraph(c)
+        }
+    }
+
+    fun currentConsumerNarrowFactories(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls) { _, c ->
+        TestRegisteredInitialCheckpointCreateRaceCasesV1.narrowerFactoriesStayNarrow(c)
+    }
+
+    fun currentConsumerNaturalFreshness(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls, shortFreshness = true) { _, c ->
+        TestRegisteredInitialCheckpointCreateRaceCasesV1.naturalFreshness(c)
+    }
+
+    fun currentConsumerWaitedExpiry(tls: VersionBoundPersistenceConnectedFixture, path: RecurrentConsumerPath, resource: Boolean) =
+        withCurrentConsumer(tls, shortFreshness = true) { _, c ->
+            when (path) {
+                RecurrentConsumerPath.REPLY -> TestRegisteredInitialCheckpointCreateRaceCasesV1.replyWaitedCheckpointExpiry(c, resource)
+                RecurrentConsumerPath.EDIT -> TestRegisteredInitialCheckpointCreateRaceCasesV1.editWaitedCheckpointExpiry(c, resource)
+                RecurrentConsumerPath.CREATE -> error("CREATE has its separate actual credential wait and natural-expiry cut.")
+            }
+        }
+
+    fun currentConsumerCredentialWait(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls) { _, c ->
+        TestRegisteredInitialCheckpointCreateRaceCasesV1.credentialWait(c)
+    }
+
+    fun currentConsumerCompletionFailures(tls: VersionBoundPersistenceConnectedFixture) = withCurrentConsumer(tls) { _, c ->
+        TestRegisteredInitialCheckpointCreateRaceCasesV1.completionFailures(c)
+    }
+
+    /** Thin reuse of the actual nonempty producer. The Completed observation is never a consumer argument. */
+    private fun withCurrentConsumer(tls: VersionBoundPersistenceConnectedFixture, shortFreshness: Boolean = false,
+        profile: String = VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE,
+        action: (TestActiveRecurrentFixtureV1, TestRegisteredInitialCheckpointCreateFixtureV1) -> Unit) =
+        withRecurrentFixture(tls, initialCheckpointCreate = TestInitialCheckpointCreateInputV1(1, profile), shortFreshness = shortFreshness) { f ->
+            val initial = (f.control().getValue("checkpoint_bytes") as ByteArray).copyOf()
+            val before = f.counters()
+            val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, f.checkpoint())
+            f.assertSuccessful()
+            assertEquals(2L, completed.cutoffEpoch); assertEquals(3L, f.control()["publication_epoch"])
+            assertEquals(1L, f.document().objectCount); assertEquals(f.record.stored.bytes.size.toLong(), f.document().byteCount)
+            assertEquals(listOf("STS", "PASS1", "GET1", "DECRYPT", "PASS2", "GET2", "DECRYPT"), f.raw.order)
+            assertEquals(2, f.history().size)
+            assertArrayEquals(initial, f.history().first()["checkpoint_bytes"] as ByteArray)
+            assertArrayEquals(f.control()["checkpoint_bytes"] as ByteArray, f.history().last()["checkpoint_bytes"] as ByteArray)
+            f.assertCharge(before, TestActiveRecurrentStorageV1.INTENT + TestActiveRecurrentStorageV1.HISTORY.scaled(2))
+            val c = f.retainedCreator()
+            assertEquals(if (profile == VersionBoundTestInitialCheckpointCreateV1.RECURRENT_PROFILE) TestRegisteredRecurrentCheckpointCurrentSqlV1.current
+                else TestActiveInitialCheckpointSqlV1.currentForOwnerCreate, c.currentCheckpointSql())
+            val providers = f.providerCounts()
+            action(f, c)
+            c.assertReleased(); f.assertReleased()
+            assertEquals(providers, f.providerCounts(), "Registered current consumers cannot run any catalog, seal, queue or ordinary native provider.")
+        }
+
+    private fun assertConsumerSql(sql: List<String>, checks: Int) {
+        val claim = sql.indexOfFirst { it.startsWith("INSERT INTO complaint_idempotency_receipts") }
+        val global = sql.indexOf(TestActiveInitialCheckpointSqlV1.lockGlobal)
+        val scope = sql.indexOf(TestActiveInitialCheckpointSqlV1.lockScope)
+        val current = sql.indexOf(TestRegisteredRecurrentCheckpointCurrentSqlV1.current)
+        val counters = sql.indexOfFirst { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it }
+        assertTrue(claim >= 0 && global > claim && scope > global && current > scope && counters > current)
+        assertEquals(1, sql.count { it == TestActiveInitialCheckpointSqlV1.lockGlobal })
+        assertEquals(1, sql.count { it == TestActiveInitialCheckpointSqlV1.lockScope })
+        assertEquals(checks, sql.count { it == TestRegisteredRecurrentCheckpointCurrentSqlV1.current })
+        assertEquals(checks, sql.count { it == TestRegisteredRecurrentCheckpointCurrentSqlV1.branch })
+        assertFalse(sql.contains(TestActiveInitialCheckpointSqlV1.currentForOwnerCreate), "A recurrent reader never falls back to initial eligibility.")
+        val completion = sql.indexOfLast { "UPDATE complaint_idempotency_receipts" in it }
+        val lastRead = sql.lastIndexOf(TestRegisteredRecurrentCheckpointCurrentSqlV1.current)
+        assertTrue(lastRead > counters && lastRead < completion)
+        assertTrue(sql.subList(lastRead + 1, completion).contains("SELECT clock_timestamp()"), "Final freshness is sampled after the last bounded history read.")
+    }
+
     fun genuineNonempty(tls: VersionBoundPersistenceConnectedFixture, family: ComplaintJournalDeletionKindV1, maximumVersions: Long = 10_000) {
         var stage = "SETUP"
         var observedFixture: TestActiveRecurrentFixtureV1? = null

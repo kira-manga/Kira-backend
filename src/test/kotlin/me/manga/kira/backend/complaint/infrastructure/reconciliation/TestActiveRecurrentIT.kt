@@ -18,12 +18,57 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * Missing alias APPLY, same-key versions, general deferred replay sweep, missing bookkeeping,
  * receiptless retirement, full14 and terminal authority remain unresolved.
  * The ALL setup additionally needs the separately owned B readback-oracle correction composed.
+ * The current-consumer selectors retain the actual original actor through genuine nonempty
+ * SUCCESS, with the combined CREATE/REPLY/EDIT recipe selected before D; no supplied SUCCESS.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Execution(ExecutionMode.SAME_THREAD)
 class TestActiveRecurrentIT {
     private val database = lazy { PgLifecycleDatabaseFixture(TestActiveRecurrentIT::class.java).also { it.start() } }
     @AfterAll fun closeDatabase() { if (database.isInitialized()) database.value.close() }
+
+    @Test fun genuineRecurrentCurrentCheckpointFeedsCountedCreateReplyEditAndExactHistoricalReceipts() = withFixture {
+        TestActiveRecurrentCasesV1.genuineCurrentCreateReplyEdit(it)
+    }
+    @Test fun recurrentCurrentConsumerRejectsCheckpointIdentityCountTimeAndNativeSealDriftWithoutInitialFallback() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerCheckpointDrift(it)
+    }
+    @Test fun missingGenuineRecurrentHistoryRefusesNewWorkButNotExactReceiptReplay() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerMissingHistory(it)
+    }
+    @Test fun allThreeOlderProfilesRemainStrictlyInitialDespiteARealRecurrentSuccess() {
+        RecurrentConsumerPath.entries.forEach { path -> withFixture { TestActiveRecurrentCasesV1.oldInitialProfileRemainsInitialOnly(it, path) } }
+    }
+    @Test fun recurrentCreateReplyAndEditEachRejectForeignOwnerTemplateAndIngressHandoffs() {
+        RecurrentConsumerPath.entries.forEach { path -> withFixture { TestActiveRecurrentCasesV1.currentConsumerExactGraph(it, path) } }
+    }
+    @Test fun recurrentCreateReplyAndEditClaimLosersReplayBeforeClosedControlsWithoutDoubleCharge() {
+        RecurrentConsumerPath.entries.forEach { path -> withFixture { TestActiveRecurrentCasesV1.currentConsumerClaimLoser(it, path) } }
+    }
+    @Test fun recurrentCombinedProfileDoesNotWidenBootstrapCreateOrReplyFactoryRoutes() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerNarrowFactories(it)
+    }
+    @Test fun recurrentCreateRechecksActualDatabaseFreshnessAfterTheOriginalActorBoundary() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerNaturalFreshness(it)
+    }
+    @Test fun recurrentReplyResourceWaitCrossesCheckpointExpiryAndRollsBackTheProvisionalChild() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerWaitedExpiry(it, RecurrentConsumerPath.REPLY, resource = true)
+    }
+    @Test fun recurrentReplyContentWaitCrossesCheckpointExpiryBeforeCompletingAnyReceipt() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerWaitedExpiry(it, RecurrentConsumerPath.REPLY, resource = false)
+    }
+    @Test fun recurrentEditResourceWaitCrossesCheckpointExpiryAndRollsBackItsOriginalAllocation() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerWaitedExpiry(it, RecurrentConsumerPath.EDIT, resource = true)
+    }
+    @Test fun recurrentEditContentWaitCrossesCheckpointExpiryBeforeAnyMutationOrRejectionReceipt() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerWaitedExpiry(it, RecurrentConsumerPath.EDIT, resource = false)
+    }
+    @Test fun recurrentCreateWaitedCredentialChangeCannotAuthorizeTheOriginalWrite() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerCredentialWait(it)
+    }
+    @Test fun recurrentCreateBeforeAfterAndUnknownCommitCutsPreserveFailureAndExactReceiptSemantics() = withFixture {
+        TestActiveRecurrentCasesV1.currentConsumerCompletionFailures(it)
+    }
 
     @Test fun genuineOwnerDeleteRequiresArchivedPredecessorTwoPaidNativePassesApplyAndPhysicalRefund() = withFixture {
         TestActiveRecurrentCasesV1.genuineNonempty(it, ComplaintJournalDeletionKindV1.OWNER_DELETE)

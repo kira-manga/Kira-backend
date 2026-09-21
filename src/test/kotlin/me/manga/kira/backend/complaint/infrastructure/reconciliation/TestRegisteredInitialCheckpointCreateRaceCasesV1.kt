@@ -1,5 +1,7 @@
 package me.manga.kira.backend.complaint.infrastructure.reconciliation
 
+import jakarta.servlet.FilterChain
+import jakarta.servlet.ServletInputStream
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
@@ -16,6 +18,9 @@ import me.manga.kira.backend.common.infrastructure.persistence.GuardedJpaTransac
 import me.manga.kira.backend.complaint.domain.ComplaintPlatform
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerEditStore
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
+import me.manga.kira.backend.config.ComplaintTestBootstrapHttpCompositionV1
+import me.manga.kira.backend.security.ComplaintInstallationRoutes
+import me.manga.kira.backend.security.ownerCreateTestIngress
 import me.manga.kira.backend.security.ownerEditTestIngress
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateCasesV1.refused
@@ -26,6 +31,8 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.springframework.jdbc.core.JdbcTemplate
 import org.springframework.jdbc.datasource.ConnectionHolder
+import org.springframework.mock.web.MockHttpServletRequest
+import org.springframework.mock.web.MockHttpServletResponse
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
@@ -44,7 +51,73 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     fun claimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) = claimLoser(f, desiredDrift = false)
     fun desiredIdentityClaimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) = claimLoser(f, desiredDrift = true)
 
+    fun replyExactGraph(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val attempt = registeredReplyAttempt(f.actor, f.notice())
+        val before = f.state(); val calls = f.jdbc.calls.size; val providers = f.providerCounts()
+        val foreignOwner = PersistencePhaseOwnership(f.exchange.ordinary.admission,
+            GuardedJpaTransactionManager(f.exchange.ordinary.entityManagerFactory, f.exchange.ordinary.pool))
+        assertThrows<Exception> { JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(f.jdbc, f.exchange.service,
+            foreignOwner, f.registration, f.checkpoint.assembly) }
+        assertThrows<Exception> { JdbcComplaintOwnerCreateStore.registeredInitialCheckpointWithReplies(JdbcTemplate(f.process.pools.ordinary),
+            f.exchange.service, f.exchange.ordinary.ownership, f.registration, f.checkpoint.assembly) }
+        assertEquals(calls, f.jdbc.calls.size)
+        val foreignIngress = ownerCreateTestIngress(f.process.consumers.capacityPolicy, creates = f.process.consumers.ownerCreatePolicy)
+        foreignIngress.withIngress(f.request()) { context ->
+            foreignIngress.startOwnerReply(context)
+            val handoff = foreignIngress.admitOwnerReply(context, attempt.candidate.tuple)
+            val failure = assertThrows<PersistencePhaseException> {
+                f.replyExecutor.reply(f.identity(), attempt.candidate, ComplaintPlatform.ANDROID, handoff)
+            }
+            assertTrue(failure.cleanupProven); assertEquals(PersistenceDatabaseOutcome.NONE, failure.databaseOutcome)
+        }
+        val missing = assertThrows<PersistencePhaseException> { f.replyExecutor.replyPreflight(f.identity(), attempt.candidate.tuple) }
+        assertTrue(missing.cleanupProven); assertEquals(PersistenceDatabaseOutcome.NONE, missing.databaseOutcome)
+        assertEquals(calls, f.jdbc.calls.size, "Foreign or missing ingress cannot start any JDBC work.")
+        assertTrue(f.replySql().isEmpty()); assertEquals(before, f.state()); f.assertReleased()
+        f.assertApplied(f.reply(attempt), attempt); f.assertReleased()
+        val applied = f.state(); val counters = f.counters()
+        f.registration.close()
+        refused { f.reply(attempt) }; refused { f.replyStatus(attempt) }
+        assertEquals(applied, f.state()); assertEquals(counters, f.counters())
+        assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
+
+    /** The richer birth recipe is not an implicit route selection or EDIT authority for a narrower factory. */
+    fun narrowerFactoriesStayNarrow(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val before = f.state(); val providers = f.providerCounts()
+        val bootstrap = ComplaintTestBootstrapHttpCompositionV1.fromRegistered(f.registration, f.exchange.ordinary.ownership, f.jdbc)
+        val create = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointCreate(
+            f.registration, f.checkpoint.assembly, f.exchange.ordinary.ownership, f.jdbc, f.exchange.service)
+        val reply = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateReply(
+            f.registration, f.checkpoint.assembly, f.exchange.ordinary.ownership, f.jdbc, f.exchange.service)
+        val edit = ComplaintTestBootstrapHttpCompositionV1.fromRegisteredInitialCheckpointReadCreateReplyEdit(
+            f.registration, f.checkpoint.assembly, f.exchange.ordinary.ownership, f.jdbc, f.exchange.service)
+        val base = ComplaintInstallationRoutes.HISTORY
+        val id = UUID.randomUUID()
+        assertEquals(setOf(ComplaintInstallationRoutes.BOOTSTRAP), bootstrap.mappedPaths)
+        assertFalse("${base}/{id}/replies" in create.mappedPaths); assertFalse("${base}/{id}/content" in create.mappedPaths)
+        assertTrue("${base}/{id}/replies" in reply.mappedPaths); assertFalse("${base}/{id}/content" in reply.mappedPaths)
+        assertTrue("${base}/{id}/content" in edit.mappedPaths)
+        for ((composition, method, path) in listOf(
+            Triple(bootstrap, "POST", base), Triple(create, "POST", "$base/$id/replies"),
+            Triple(create, "PATCH", "$base/$id/content"), Triple(reply, "PATCH", "$base/$id/content"),
+        )) {
+            val request = object : MockHttpServletRequest(method, path) {
+                override fun getInputStream(): ServletInputStream = error("Narrow factory acquired an excluded body")
+            }.apply {
+                servletPath = path; remoteAddr = "192.0.2.43"
+                addHeader("Authorization", "malformed"); addHeader("Content-Length", Long.MAX_VALUE.toString())
+            }
+            val response = MockHttpServletResponse()
+            composition.ingressFilter.doFilter(request, response, FilterChain { _, _ -> error("Excluded route escaped the fixed ingress filter") })
+            assertEquals(404, response.status); assertNull(response.getHeader("WWW-Authenticate"))
+        }
+        assertTrue(f.jdbc.calls.isEmpty(), "Explicitly narrower selectors refuse before AUTH, buffering or new-work SQL.")
+        assertEquals(before, f.state()); assertEquals(providers, f.providerCounts()); f.assertReleased()
+    }
+
     fun replyClaimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val currentSql = f.currentCheckpointSql()
         val attempt = registeredReplyAttempt(f.actor, f.notice())
         val before = f.counters(); val providers = f.providerCounts()
         assertThrows<ComplaintTestNamespaceRegistrationExceptionV1> {
@@ -87,7 +160,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         assertTrue(closedAfterClaim.get()); f.assertReleased()
         assertEquals(2, f.replyPhases().size)
         assertTrue(f.replyPhases().all { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED })
-        assertEquals(7, f.replySql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate }, "Only the winner runs new-work checks, including both resources and parent content.")
+        assertEquals(7, f.replySql().count { it == currentSql }, "Only the winner runs new-work checks, including both resources and parent content.")
         assertEquals(1, f.replySql().count { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it })
         f.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE)
         assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM complaint_idempotency_receipts WHERE actor_id = ? AND operation = 'OWNER_REPLY'", Long::class.java, f.actor.id))
@@ -98,6 +171,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     }
 
     fun replyWaitedCheckpointExpiry(f: TestRegisteredInitialCheckpointCreateFixtureV1, resource: Boolean) {
+        val currentSql = f.currentCheckpointSql()
         val deadlines = f.process.consumers.journalConfiguration.declaration().limits.deadlines
         assertEquals(30_000, deadlines.scanMillis); assertEquals(30_000, deadlines.scanCadenceMillis); assertEquals(30_000, deadlines.checkpointMaxAgeMillis)
         val first = registeredReplyAttempt(f.actor, f.notice())
@@ -142,7 +216,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         assertTrue(reached.get()); f.assertReleased()
         assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, f.replyPhases().last().databaseOutcome())
         assertTrue(f.replySql().any { it.startsWith("INSERT INTO complaint_resource_ids") })
-        assertEquals(if (resource) 5 else 6, f.replySql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+        assertEquals(if (resource) 5 else 6, f.replySql().count { it == currentSql })
         if (resource) assertFalse(f.replySql().contains(ComplaintOwnerReplyParentRows.content))
         assertFalse(f.replySql().any { it.startsWith("INSERT INTO complaints") || "UPDATE complaint_idempotency_receipts" in it })
         assertEquals(before, f.state()); assertEquals(counters, f.counters()) // Includes provisional child, claim, capacity and audit rollback.
@@ -203,6 +277,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     }
 
     fun editClaimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val currentSql = f.currentCheckpointSql()
         val report = f.attempt(); f.assertApplied(f.create(report), report)
         val attempt = registeredEditAttempt(f.actor, report.input.id)
         val before = f.counters(); val providers = f.providerCounts()
@@ -239,7 +314,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         assertTrue(closedAfterClaim.get()); f.assertReleased()
         assertEquals(2, f.editPhases().size)
         assertTrue(f.editPhases().all { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED })
-        assertEquals(6, f.editSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate }, "Only winner checks new work, never loser or historical If-Match.")
+        assertEquals(6, f.editSql().count { it == currentSql }, "Only winner checks new work, never loser or historical If-Match.")
         assertEquals(1, f.editSql().count { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it })
         f.assertCharge(before, ComplaintCapacityCharges.OWNER_EDIT)
         assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM complaint_idempotency_receipts WHERE actor_id = ? AND operation = 'OWNER_EDIT'", Long::class.java, f.actor.id))
@@ -250,6 +325,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     }
 
     fun editWaitedCheckpointExpiry(f: TestRegisteredInitialCheckpointCreateFixtureV1, resource: Boolean) {
+        val currentSql = f.currentCheckpointSql()
         val deadlines = f.process.consumers.journalConfiguration.declaration().limits.deadlines
         assertEquals(30_000, deadlines.scanMillis); assertEquals(30_000, deadlines.scanCadenceMillis); assertEquals(30_000, deadlines.checkpointMaxAgeMillis)
         val report = f.attempt(); f.assertApplied(f.create(report), report)
@@ -292,7 +368,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         }
         assertTrue(reached.get()); f.assertReleased()
         assertEquals(PersistenceDatabaseOutcome.ROLLED_BACK, f.editPhases().last().databaseOutcome())
-        assertEquals(if (resource) 4 else 5, f.editSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+        assertEquals(if (resource) 4 else 5, f.editSql().count { it == currentSql })
         if (resource) assertFalse(f.editSql().any { "FOR UPDATE OF c" in it })
         assertFalse(f.editSql().any { "UPDATE complaints SET" in it || "UPDATE complaint_idempotency_receipts" in it })
         assertEquals(before, f.state()); assertEquals(counters, f.counters())
@@ -307,7 +383,10 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     }
 
     private fun claimLoser(f: TestRegisteredInitialCheckpointCreateFixtureV1, desiredDrift: Boolean) {
+        val currentSql = f.currentCheckpointSql()
         val attempt = f.attempt(); val before = f.counters(); val providers = f.providerCounts()
+        val beforeReceipts = checkNotNull(f.observer.queryForObject(
+            "SELECT count(*) FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND actor_id = ?", Long::class.java, f.scope, f.actor.id))
         val winnerThread = AtomicReference<Thread?>()
         val loserPid = AtomicInteger()
         val loserEntering = CountDownLatch(1)
@@ -353,15 +432,17 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         assertEquals(2, f.createPhases().size)
         assertEquals(if (desiredDrift) 1 else 2, f.createPhases().count { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED })
         assertEquals(if (desiredDrift) 1 else 0, f.createPhases().count { it.databaseOutcome() === PersistenceDatabaseOutcome.ROLLED_BACK })
-        assertEquals(5, f.createSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate }, "Only winner checked new-work eligibility.")
+        assertEquals(5, f.createSql().count { it == currentSql }, "Only winner checked new-work eligibility.")
         assertEquals(1, f.createSql().count { "FROM complaint_capacity_counters" in it && "FOR UPDATE" in it })
         f.assertCharge(before, ComplaintCapacityCharges.OWNER_CREATE)
-        assertEquals(1L, f.observer.queryForObject("SELECT count(*) FROM complaint_idempotency_receipts WHERE actor_id = ?", Long::class.java, f.actor.id))
+        assertEquals(beforeReceipts + 1L, f.observer.queryForObject(
+            "SELECT count(*) FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND actor_id = ?", Long::class.java, f.scope, f.actor.id))
         if (desiredDrift) refused { f.status(attempt) } else f.assertApplied(f.status(attempt), attempt)
         assertEquals(providers, f.providerCounts())
     }
 
     fun naturalFreshness(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val currentSql = f.currentCheckpointSql()
         val deadlines = f.process.consumers.journalConfiguration.declaration().limits.deadlines
         assertEquals(30_000, deadlines.scanMillis); assertEquals(30_000, deadlines.scanCadenceMillis); assertEquals(30_000, deadlines.checkpointMaxAgeMillis)
         val first = f.attempt(); f.assertApplied(f.create(first), first); f.assertReleased()
@@ -376,14 +457,14 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
             f.jdbc.after = { path, sql -> if (path === REGISTERED_CREATE && credentialLock(sql) && heldAfterActor.compareAndSet(false, true)) {
                 // The actual locked credential result and both earlier current checks already exist.
                 // This intentional caller stall consumes the SAME 2s original, no clock/reset shortcut.
-                assertEquals(2, f.createSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+                assertEquals(2, f.createSql().count { it == currentSql })
                 assertTrue(now(observer).isBefore(expires))
                 waitUntil(observer, expires.plusNanos(1000), 900)
             } }
             try { refused { f.create(second) } } finally { f.jdbc.after = { _, _ -> } }
         }
         assertTrue(heldAfterActor.get()); f.assertReleased()
-        assertEquals(3, f.createSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+        assertEquals(3, f.createSql().count { it == currentSql })
         assertFalse(f.createSql().any { it.startsWith("INSERT INTO complaint_resource_ids") })
         assertEquals(before, f.state()); assertEquals(counters, f.counters())
         f.jdbc.calls.clear()
@@ -394,6 +475,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
     }
 
     fun credentialWait(f: TestRegisteredInitialCheckpointCreateFixtureV1) {
+        val currentSql = f.currentCheckpointSql()
         val attempt = f.attempt(); val before = f.state(); val counters = f.counters()
         val entering = CountDownLatch(1); val pid = AtomicInteger()
         f.raw { locker ->
@@ -424,7 +506,7 @@ internal object TestRegisteredInitialCheckpointCreateRaceCasesV1 {
         }
         f.assertReleased(); assertEquals(counters, f.counters())
         assertEquals(before.filterKeys { it != "app_installations" }, f.state().filterKeys { it != "app_installations" })
-        assertEquals(2, f.createSql().count { it == TestActiveInitialCheckpointSqlV1.currentForOwnerCreate })
+        assertEquals(2, f.createSql().count { it == currentSql })
         assertFalse(f.createSql().any { it.startsWith("INSERT INTO complaint_resource_ids") })
     }
 
