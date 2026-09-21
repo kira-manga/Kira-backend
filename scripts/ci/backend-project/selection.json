@@ -1,0 +1,168 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 98,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD()"
+      ]
+    },
+    {
+      "annotation_line": 101,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCatalogCannotReplaceMissingLastPaidCheckpointArchiveWithItsDeclaredSealCount",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentCatalogCannotReplaceMissingLastPaidCheckpointArchiveWithItsDeclaredSealCount()"
+      ]
+    },
+    {
+      "annotation_line": 102,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCatalogRequiresOriginalLastIntentAndItsArchiveRatherThanTheRetainedNativeLocatorAlone",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentCatalogRequiresOriginalLastIntentAndItsArchiveRatherThanTheRetainedNativeLocatorAlone()"
+      ]
+    },
+    {
+      "annotation_line": 103,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCatalogRefusesPartiallyCheckpointedArchiveWithoutRepairSignOrPayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentCatalogRefusesPartiallyCheckpointedArchiveWithoutRepairSignOrPayment()"
+      ]
+    },
+    {
+      "annotation_line": 104,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCatalogRefusesForeignSourceIdentityDespiteTheSameNativeSealAndOrderedCount",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentCatalogRefusesForeignSourceIdentityDespiteTheSameNativeSealAndOrderedCount()"
+      ]
+    },
+    {
+      "annotation_line": 106,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCatalogRefusesIdenticalIntentBytesWithRewrittenXminAgainstOriginalD",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentCatalogRefusesIdenticalIntentBytesWithRewrittenXminAgainstOriginalD()"
+      ]
+    },
+    {
+      "annotation_line": 107,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "REMAINING_RECURRENT_TERMINAL_BATCH_B",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCatalogRefusesIdenticalCheckpointArchiveBytesWithRewrittenXminAgainstOriginalD",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "recurrentCatalogRefusesIdenticalCheckpointArchiveBytesWithRewrittenXminAgainstOriginalD()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 7,
+  "expected_total": 7,
+  "selection_basis": {
+    "active_gate": {
+      "focused52": "6METHODS_ACTIVE_ROOT_REPORTED_NOT_ASSUMED_PASS"
+    },
+    "additional_cold_E_runtimes": 0,
+    "batch": "B_FIRST_SEVEN_ONLY",
+    "bounded_plan": "review/working/app-29-recurrent-terminal-remaining-batch-20260921-01/BATCHES.json",
+    "bounded_plan_sha256": "11cf263666871ce7603b97c3f802e1da3f9f8ac55096120d498416d3b1e03868",
+    "carryforward_selectors": [
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.oldInitialDeletionProfileStillRefusesNewWorkAfterGenuineRecurrentSuccess",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRejectsIdentityPrivacyAndCheckpointDriftBeforeCounters",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRequiresExactPriorPublicationReceiptReservationAndNativeApply",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionOwnClaimCannotBorrowAnyPreviousPNL",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionPendingPriorAndDamagedHistoryRefuseNewWorkButNotExactContinuation",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionClaimLoserReplaysBeforeClosedControlsWithoutDoubleCharge",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionWaitedCredentialChangeCannotAuthorizeTheOriginalClaim",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRechecksDatabaseFreshnessAfterCredentialBoundary",
+      "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentDeletionRetainsExactOwnersTemplatesIngressAndNativeLane"
+    ],
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "REMAINING_RECURRENT_TERMINAL_BATCH_B": 7
+    },
+    "dispatch_authority": "ROOT_ONLY",
+    "focused46_failed_selector": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+    "focused46_selection": "review/working/app-29-backend-focused-20260921-46/focused-selectors.json",
+    "genuine_fixtures": 7,
+    "gradle_seconds": 2400,
+    "held_selectors": [
+      "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentColdPreparedContinuationRefusesChangedArchiveXminAgainstExactOriginalCustody",
+      "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentColdProjectedReplayRefusesChangedIntentXminWithoutNewAuthorityOrCustodyWrites"
+    ],
+    "original_B9_planning_reference_only_seconds": 2220,
+    "passing_evidence_carry": {
+      "focused36": "35635093191:10PASS",
+      "focused37": "35639268313:8PASS",
+      "focused41": "35643583997:4PASS",
+      "focused42": "35643584837:3PASS",
+      "focused46": "35655348378:7PASS_ROOT_REPORTED",
+      "native08": "35645621713:1PASS"
+    },
+    "planned_remaining_union_methods": 17,
+    "prerequisite": "Root alone reviews and binds current1b source for this independently eligible subset; old plan source/prerequisite are not execution pins.",
+    "remaining_deletion_methods": 9,
+    "required_source": "1b110d9cd0fee004f854be7ca4cd6b5e2ca440c4",
+    "scope": "Exact first seven selectors of original47 batch B9. Exclude both cold prepared/projected continuation methods, which remain HELD. Parent-relayed eligibility review established no freshRecovery or new current-deletion call and no required N14 QUIESCE; the fifteenth-attempt method stops before D. No source/chain re-audit here. Root reports46 sevenPASS and one N14 QUIESCE failure; that failed method is not selected. Preserve original17 union as46sevenPASS/46oneFAIL/53sevenPENDING/47twoHELD. No new harness, scope expansion, timeout or retry; root binds final source/tree and coordinates max2hosted while52six remains active.",
+    "union_accounting": {
+      "focused46_fail": 1,
+      "focused46_pass": 7,
+      "focused47_held": 2,
+      "focused53_pending": 7
+    }
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 7
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFifteenthActiveAttemptRefusesBeforeRequestChargeOrAnotherPutAndIsNeverReusedForD",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentCatalogCannotReplaceMissingLastPaidCheckpointArchiveWithItsDeclaredSealCount",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentCatalogRequiresOriginalLastIntentAndItsArchiveRatherThanTheRetainedNativeLocatorAlone",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentCatalogRefusesPartiallyCheckpointedArchiveWithoutRepairSignOrPayment",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentCatalogRefusesForeignSourceIdentityDespiteTheSameNativeSealAndOrderedCount",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentCatalogRefusesIdenticalIntentBytesWithRewrittenXminAgainstOriginalD",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.recurrentCatalogRefusesIdenticalCheckpointArchiveBytesWithRewrittenXminAgainstOriginalD"
+  ]
+}
