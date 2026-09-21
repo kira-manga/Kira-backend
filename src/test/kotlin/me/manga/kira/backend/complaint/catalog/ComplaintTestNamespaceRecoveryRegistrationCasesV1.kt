@@ -28,6 +28,7 @@ import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDr
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingV1
 import me.manga.kira.backend.complaint.infrastructure.transaction.DeletionPersistenceAdmission
 import me.manga.kira.backend.complaint.journal.TestOrdinaryInventoryHttpFixtureV1
+import me.manga.kira.backend.security.TestTerminalJsonV1
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -234,8 +235,14 @@ internal object ComplaintTestNamespaceRecoveryRegistrationCasesV1 {
                 assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
                     original.drain(f.approval(original), f.rawEvidence, f.primaryCredentials, f.readCredentials))
                 assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, original.prepareInstallationManifest())
+                // PREPARE persists two installation reads and canonical chunks, not final run roots/counts or purge state.
+                val progress = TestTerminalJsonV1(f.registration.process.consumers.journalConfiguration)
+                    .progress(TestOrdinaryDrainAccountingObservationV1(f).runBytes("permanent_denial_bytes"))
+                assertEquals(2, progress.installationReads().size)
                 assertTrue(checkNotNull(f.observer.queryForObject(
-                    "SELECT installation_manifest_count IS NOT NULL FROM complaint_test_runs WHERE data_scope_id = ?", Boolean::class.java, f.scope)))
+                    "SELECT state = 'SEALED' AND purging_at IS NULL AND purged_at IS NULL " +
+                        "AND installation_manifest_count IS NULL AND installation_manifest_root IS NULL AND installation_chunk_count IS NULL " +
+                        "FROM complaint_test_runs WHERE data_scope_id = ?", Boolean::class.java, f.scope)))
             }
             withColdRoot(f) { cold ->
                 val before = image(f)

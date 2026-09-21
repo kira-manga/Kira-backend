@@ -20,20 +20,24 @@ internal object TestRetainedOrdinaryCanonicalV1 {
                 is TestAdminDeleteJournalTupleV1 -> TestAdminDeleteJournalJsonV1(limits).let {
                     it.encodePayload(it.payload(bytes).copy(eventId = selected.eventId))
                 }
+                is TestAdminBatchDeleteJournalTupleV1 -> TestAdminBatchDeleteJournalJsonV1(limits).let {
+                    it.encodePayload(it.payload(bytes).copy(eventId = selected.eventId))
+                }
             }
         } finally { bytes.fill(0) }
         try {
             val rebound = when (primary.comparison) {
                 is TestOwnerDeleteJournalTupleV1 -> TestOwnerDeleteJournalCodecV1.restoreCanonical(routing, projected, selected.routingKeyId)
                 is TestAdminDeleteJournalTupleV1 -> TestOwnerDeleteJournalCodecV1.restoreAdminCanonical(routing, projected, selected.routingKeyId)
+                is TestAdminBatchDeleteJournalTupleV1 -> TestOwnerDeleteJournalCodecV1.restoreAdminBatchCanonical(routing, projected, selected.routingKeyId)
             }
             val a = primary.comparison
             val b = rebound.comparison
             requireJournalCodec(rebound.route == selected && a.scope == b.scope && a.epoch == b.epoch && a.eventKind == b.eventKind &&
                 a.actorKind == b.actorKind && a.actorId == b.actorId && a.credentialVersion == b.credentialVersion &&
                 a.operationKey == b.operationKey && a.encodedFingerprint() == b.encodedFingerprint() && primary.complaintIds() == rebound.complaintIds())
-            if (a is TestAdminDeleteJournalTupleV1) requireJournalCodec(b is TestAdminDeleteJournalTupleV1 &&
-                a.consumedGrantId == b.consumedGrantId && a.ownerInstallationId == b.ownerInstallationId)
+            if (a is TestAdminErasureJournalTupleV1) requireJournalCodec(b is TestAdminErasureJournalTupleV1 &&
+                a.consumedGrantId == b.consumedGrantId && a.ownerInstallationIds() == b.ownerInstallationIds())
             return Sha256.hex(projected).also { requireJournalCodec(it == rebound.semanticSha256) }
         } finally { projected.fill(0) }
     }

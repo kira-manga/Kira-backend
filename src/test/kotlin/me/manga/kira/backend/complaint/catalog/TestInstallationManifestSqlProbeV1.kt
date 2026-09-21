@@ -9,6 +9,8 @@ import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestSqlV1
+import me.manga.kira.backend.complaint.infrastructure.journal.OrdinaryJournalRetentionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestInstallationManifestStepV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -23,6 +25,8 @@ import org.springframework.jdbc.datasource.ConnectionHolder
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
+import java.sql.ResultSet
+import java.time.Instant
 import java.util.concurrent.atomic.AtomicReference
 
 /** Observe/inject failures on the actual SQL/holder only; never manufacture a producer or successful completion. */
@@ -37,6 +41,8 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
     private var lastSite = "NOT_ENTERED"
     private var lastSqlHash = "NOT_ENTERED"
     private var lastReturned = false
+    private var databaseClock: Pair<PersistencePhaseContext, Instant>? = null
+    private var sidecarTiming = "NOT_OBSERVED"
     private val executor = f.registration.process.pools.catalogCoordinator.testInstallationManifest
     private val field = executor.javaClass.getDeclaredField("jdbc").apply { check(trySetAccessible()) }
     private val previous = field.get(executor)
@@ -48,7 +54,17 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
     }
 
     override fun <T : Any?> query(sql: String, mapper: RowMapper<T>): List<T> = observed(sql, emptyArray()) { super.query(sql, mapper) }
-    override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql, args) { super.query(sql, mapper, *args) }
+    override fun <T : Any?> query(sql: String, mapper: RowMapper<T>, vararg args: Any?): List<T> = observed(sql, args) {
+        if (sql != TestInstallationManifestSqlV1.ordinarySidecar) super.query(sql, mapper, *args)
+        else super.query(sql, RowMapper<T> { row, index ->
+            try { mapper.mapRow(row, index) }
+            catch (problem: Throwable) {
+                // Existing failure is stackless. Observe this selected row, never query or change the outcome.
+                sidecarTiming = runCatching { timingPredicates(row) }.getOrDefault("UNKNOWN")
+                throw problem
+            }
+        }, *args)
+    }
     override fun <T : Any?> query(sql: String, extractor: ResultSetExtractor<T>, vararg args: Any?): T? =
         if (sql == "SELECT session_user = ? AND current_user = ? AND current_database() = ? AS authenticated") observed(sql, args) { super.query(sql, extractor, *args) }
         else super.query(sql, extractor, *args)
@@ -84,13 +100,32 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
             .take(6).joinToString(";") { "${it.fileName}:${it.methodName}:${it.lineNumber}" }
         lastReturned = false
         before(call)
-        action().also { lastReturned = true; after(call) }
+        action().also { result ->
+            if (sql == "SELECT clock_timestamp()") {
+                val value = (result as? List<*>)?.singleOrNull() as? Instant
+                databaseClock = value?.let { phase to it }
+            }
+            lastReturned = true; after(call)
+        }
     } catch (problem: AssertionError) { assertion.compareAndSet(null, problem); throw problem }
+
+    /** Boolean-only diagnostic from the exact mapper row and preceding same-phase database sample. */
+    private fun timingPredicates(row: ResultSet): String {
+        val (phase, now) = databaseClock ?: return "UNKNOWN"
+        if (phase !== PersistencePhaseOwnership.current()) return "UNKNOWN"
+        val frozen = checkNotNull(row.getTimestamp("frozen_at")).toInstant()
+        val created = checkNotNull(row.getTimestamp("created_at")).toInstant()
+        val retain = checkNotNull(row.getTimestamp("retain_until")).toInstant()
+        val floor = checkNotNull(row.getTimestamp("retention_floor")).toInstant()
+        return "frozenGeCreated=${frozen >= created},frozenLeObserved=${frozen <= now}," +
+            "retainGeFloor=${retain >= floor},retainGtObserved=${retain > now}," +
+            "frozenLeCeilingObserved=${frozen <= OrdinaryJournalRetentionV1.ceilingSecond(now)}"
+    }
 
     /** Unexpected TEST failure only: fixed source locations/hash, never SQL, arguments, rows or throwable prose. */
     fun reportUnexpectedFailure() {
         System.err.println("MANIFEST_PREPARE_UNEXPECTED step=${original?.step} calls=${calls.size} " +
-            "returned=$lastReturned sqlSha256=$lastSqlHash site=$lastSite " +
+            "returned=$lastReturned sqlSha256=$lastSqlHash site=$lastSite sidecarTiming=$sidecarTiming " +
             "outcomes=${observations.keys.toList().takeLast(8).map { it.databaseOutcome().name }}")
     }
 
@@ -109,6 +144,7 @@ internal class TestInstallationManifestSqlProbeV1(private val f: TestRunOrdinary
     fun reset() {
         assertReleased(requireCommitted = false); calls.clear(); observations.clear(); owners.clear()
         lastSite = "NOT_ENTERED"; lastSqlHash = "NOT_ENTERED"; lastReturned = false
+        databaseClock = null; sidecarTiming = "NOT_OBSERVED"
     }
     override fun close() {
         before = {}; after = {}
