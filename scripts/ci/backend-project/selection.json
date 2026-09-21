@@ -1,0 +1,97 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 100,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Remaining D12 fixtures: native authority/fresh recovery fences/framing budget, no replay of passed methods.",
+      "expected_invocations_from_annotation": 1,
+      "method": "ordinaryNativePrincipalVersionWireMetadataRetentionAndLockAreReauthenticated",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5ab12e3c96c6725ffe76b22363f7bfc8f01c376f",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "ordinaryNativePrincipalVersionWireMetadataRetentionAndLockAreReauthenticated()"
+      ]
+    },
+    {
+      "annotation_line": 113,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Remaining D12 fixtures: native authority/fresh recovery fences/framing budget, no replay of passed methods.",
+      "expected_invocations_from_annotation": 1,
+      "method": "lp32HeaderAndTripleFramingUseThePreDBudgetSeparatelyFromCiphertextBytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5ab12e3c96c6725ffe76b22363f7bfc8f01c376f",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "lp32HeaderAndTripleFramingUseThePreDBudgetSeparatelyFromCiphertextBytes()"
+      ]
+    },
+    {
+      "annotation_line": 119,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Remaining D12 fixtures: native authority/fresh recovery fences/framing budget, no replay of passed methods.",
+      "expected_invocations_from_annotation": 1,
+      "method": "newOriginalAfterActualLeaseExpiryPreservesCanonicalAndFrozenNativeWinnersWithoutRecharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5ab12e3c96c6725ffe76b22363f7bfc8f01c376f",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "newOriginalAfterActualLeaseExpiryPreservesCanonicalAndFrozenNativeWinnersWithoutRecharge()"
+      ]
+    },
+    {
+      "annotation_line": 122,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Remaining D12 fixtures: native authority/fresh recovery fences/framing budget, no replay of passed methods.",
+      "expected_invocations_from_annotation": 1,
+      "method": "singlePairAndPartiallyRefundedPaidPrefixesNeedFreshFencesAndBothNewNativePasses",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5ab12e3c96c6725ffe76b22363f7bfc8f01c376f",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "singlePairAndPartiallyRefundedPaidPrefixesNeedFreshFencesAndBothNewNativePasses()"
+      ]
+    },
+    {
+      "annotation_line": 91,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Actual30 failed original masked by test finally. Changed six unwind boundaries preserve original failure; meaningful one-case rerun, not product-fix or cleanup acceptance.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "5ab12e3c96c6725ffe76b22363f7bfc8f01c376f",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 5,
+  "expected_total": 5,
+  "selection_basis": {
+    "cohorts": {
+      "Actual30 failed original masked by test finally. Changed six unwind boundaries preserve original failure; meaningful one-case rerun, not product-fix or cleanup acceptance.": 1,
+      "Remaining D12 fixtures: native authority/fresh recovery fences/framing budget, no replay of passed methods.": 4
+    },
+    "previous_run": "35626472788",
+    "scope": "D4methods12fixtures plus meaningful genuineA rerun after6 unwind masking corrections (1fixture). Shared compile:5methods13fixtures. Replaces never-dispatched34 without skipping any selector. Recurrent retainedALL6-case correction compiled here but its execution deferred to next compatible batch; no passing method replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 4
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.ordinaryNativePrincipalVersionWireMetadataRetentionAndLockAreReauthenticated",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.newOriginalAfterActualLeaseExpiryPreservesCanonicalAndFrozenNativeWinnersWithoutRecharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.singlePairAndPartiallyRefundedPaidPrefixesNeedFreshFencesAndBothNewNativePasses",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.lp32HeaderAndTripleFramingUseThePreDBudgetSeparatelyFromCiphertextBytes",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain"
+  ]
+}
