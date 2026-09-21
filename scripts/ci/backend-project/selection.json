@@ -1,0 +1,55 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 89,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "4 families x3 missing-bookkeeping cuts: prerequisite genuine missing-primary APPLY family paths PASS27; strict refusal must not invent N/P/L, mutate data, or revive original. Independent of active29 commit-fault loop.",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingRecurrentPrimaryBookkeepingIsRefusedWithoutSynthesizingNPL",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc",
+      "xml_names": [
+        "missingRecurrentPrimaryBookkeepingIsRefusedWithoutSynthesizingNPL()"
+      ]
+    },
+    {
+      "annotation_line": 91,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "Actual28 no-A terminal prerequisite PASS, intervening reviewed lifecycle corrections and old25 predecessor-failure absent in A-only Catalog selection; include previously sole-reviewed D7 fixed caught-result diagnostic. Earlier cross-case causality unknown, not assumed fixed.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "5a980967c3bd6b70d3f51133571069472b89f79d",
+      "source_sha256": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+      "xml_names": [
+        "genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 2,
+  "expected_total": 2,
+  "selection_basis": {
+    "cohorts": {
+      "4 families x3 missing-bookkeeping cuts: prerequisite genuine missing-primary APPLY family paths PASS27; strict refusal must not invent N/P/L, mutate data, or revive original. Independent of active29 commit-fault loop.": 1,
+      "Actual28 no-A terminal prerequisite PASS, intervening reviewed lifecycle corrections and old25 predecessor-failure absent in A-only Catalog selection; include previously sole-reviewed D7 fixed caught-result diagnostic. Earlier cross-case causality unknown, not assumed fixed.": 1
+    },
+    "previous_run": "35624658609",
+    "scope": "Actual28 terminal/audit and all three recurrent methods PASS. Only genuineA previously blocked plus twelve missing-bookkeeping scenarios now enabled by four-family actual27 positives; no passing selector replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "cae5d417694dad2fb5750a195c809d1313efacbc6a7843258c79bebf7e990166",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "0c873889a777464975445d5a97f69709ade4e82361a921840cdd5db4a6e2c1cc"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.missingRecurrentPrimaryBookkeepingIsRefusedWithoutSynthesizingNPL"
+  ]
+}
