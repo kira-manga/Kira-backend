@@ -5,6 +5,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestScope
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceTimeBudget
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
@@ -337,15 +338,51 @@ internal object TestActiveRecurrentRecoveryCasesV1 {
         f.assertSuccessful(); assertPrimaryApplied(f)
     }
 
-    fun wrongDeletionTemplatePoisonsOnlyTheAttemptWithoutApplying(tls: VersionBoundPersistenceConnectedFixture) = withRecurrentFixture(tls, applied = false) { f ->
-        val waiting = assertInstanceOf(TestActiveRecurrentV1.RecoveryRequired::class.java, f.checkpoint())
-        val domain = f.domainImage(); val counters = f.counters(); val native = f.raw.order.toList()
-        assertThrows<TestActiveRecurrentExceptionV1> {
-            waiting.apply(f.precursor.deletionOwner, JdbcTemplate(f.runtime.pools.ordinary), f.precursor.audit)
+    fun wrongDeletionTemplatePoisonsOnlyTheAttemptWithoutApplying(tls: VersionBoundPersistenceConnectedFixture) {
+        var stage = "FIXTURE_SETUP"
+        var bodyStage = stage
+        var bodyFailure: Throwable? = null
+        try {
+            withRecurrentFixture(tls, applied = false) { f ->
+                try {
+                    stage = "INITIAL_CHECKPOINT"
+                    val waiting = assertInstanceOf(TestActiveRecurrentV1.RecoveryRequired::class.java, f.checkpoint())
+                    stage = "BASELINE"
+                    val domain = f.domainImage(); val counters = f.counters(); val native = f.raw.order.toList()
+                    stage = "EXPECTED_TEMPLATE_REFUSAL"
+                    assertThrows<TestActiveRecurrentExceptionV1> {
+                        waiting.apply(f.precursor.deletionOwner, JdbcTemplate(f.runtime.pools.ordinary), f.precursor.audit)
+                    }
+                    stage = "RELEASE_POSTCONDITIONS"
+                    f.assertReleased(); assertTrue(f.applyCalls.isEmpty())
+                    assertEquals(domain, f.domainImage()); assertEquals(counters, f.counters()); assertEquals(native, f.raw.order)
+                    assertNull(f.control()["checkpoint_result"])
+                    stage = "FAILED_ORIGINAL_REFUSAL"
+                    assertFailedBridgeRefused(f, waiting)
+                } catch (failure: Throwable) {
+                    bodyStage = stage; bodyFailure = failure
+                    throw failure
+                } finally { stage = "FIXTURE_CLEANUP" }
+            }
+        } catch (failure: Throwable) {
+            // Report only after existing teardown; retain the body stage if unwind replaces its exception.
+            bodyFailure?.let { observeWrongTemplateFailure(bodyStage, it) }
+            if (failure !== bodyFailure) observeWrongTemplateFailure(stage, failure)
+            throw failure
         }
-        f.assertReleased(); assertTrue(f.applyCalls.isEmpty())
-        assertEquals(domain, f.domainImage()); assertEquals(counters, f.counters()); assertEquals(native, f.raw.order)
-        assertNull(f.control()["checkpoint_result"]); assertFailedBridgeRefused(f, waiting)
+    }
+
+    private fun observeWrongTemplateFailure(stage: String, failure: Throwable) {
+        try {
+            val category = when (failure) {
+                is TestActiveRecurrentExceptionV1 -> "RECURRENT"
+                is PersistencePhaseException -> "PHASE"
+                is AssertionError -> "ASSERTION"
+                else -> "OTHER"
+            }
+            val phaseCode = (failure as? PersistencePhaseException)?.code?.name ?: "NONE"
+            println("TEST_ACTIVE_RECURRENT_WRONG_TEMPLATE_FAILURE stage=$stage category=$category phaseCode=$phaseCode")
+        } catch (_: Throwable) { /* Diagnostics never replace the original failure or perform cleanup. */ }
     }
 
     /** Real ownership admission contention, after leaf admission but before any context or checkout. */
