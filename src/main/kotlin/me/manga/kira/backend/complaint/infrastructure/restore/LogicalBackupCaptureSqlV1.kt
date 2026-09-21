@@ -28,8 +28,8 @@ internal object LogicalBackupCaptureSqlV1 {
           'transaction_started',(extract(epoch FROM a.xact_start)*1000000)::bigint,
           'observed',(extract(epoch FROM pg_catalog.clock_timestamp())*1000000)::bigint,
           'xmin',pg_catalog.pg_snapshot_xmin(pg_catalog.pg_current_snapshot())::text,
-          'server_address',pg_catalog.inet_server_addr()::text,'server_port',pg_catalog.inet_server_port(),
-          'client_address',pg_catalog.inet_client_addr()::text,'client_port',pg_catalog.inet_client_port())
+          'server_address',pg_catalog.host(pg_catalog.inet_server_addr()),'server_port',pg_catalog.inet_server_port(),
+          'client_address',pg_catalog.host(pg_catalog.inet_client_addr()),'client_port',pg_catalog.inet_client_port())
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace,
              pg_catalog.pg_stat_activity a
         WHERE n.nspname='public' AND c.relname='complaint_journal_control' AND a.pid=pg_catalog.pg_backend_pid();
