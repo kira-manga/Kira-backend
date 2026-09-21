@@ -1,0 +1,169 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 30,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "New recurrent consumer route: counted writes/replay, physical history/checkpoint refusal, old-profile stability or narrower factory authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRecurrentCurrentCheckpointFeedsCountedCreateReplyEditAndExactHistoricalReceipts",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "genuineRecurrentCurrentCheckpointFeedsCountedCreateReplyEditAndExactHistoricalReceipts()"
+      ]
+    },
+    {
+      "annotation_line": 33,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "New recurrent consumer route: counted writes/replay, physical history/checkpoint refusal, old-profile stability or narrower factory authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCurrentConsumerRejectsCheckpointIdentityCountTimeAndNativeSealDriftWithoutInitialFallback",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCurrentConsumerRejectsCheckpointIdentityCountTimeAndNativeSealDriftWithoutInitialFallback()"
+      ]
+    },
+    {
+      "annotation_line": 36,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "New recurrent consumer route: counted writes/replay, physical history/checkpoint refusal, old-profile stability or narrower factory authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingGenuineRecurrentHistoryRefusesNewWorkButNotExactReceiptReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "missingGenuineRecurrentHistoryRefusesNewWorkButNotExactReceiptReplay()"
+      ]
+    },
+    {
+      "annotation_line": 39,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "New recurrent consumer route: counted writes/replay, physical history/checkpoint refusal, old-profile stability or narrower factory authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "allThreeOlderProfilesRemainStrictlyInitialDespiteARealRecurrentSuccess",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "allThreeOlderProfilesRemainStrictlyInitialDespiteARealRecurrentSuccess()"
+      ]
+    },
+    {
+      "annotation_line": 48,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "New recurrent consumer route: counted writes/replay, physical history/checkpoint refusal, old-profile stability or narrower factory authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentCombinedProfileDoesNotWidenBootstrapCreateOrReplyFactoryRoutes",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentCombinedProfileDoesNotWidenBootstrapCreateOrReplyFactoryRoutes()"
+      ]
+    },
+    {
+      "annotation_line": 112,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Focused31 TEST oracle corrected: preserve archived INITIAL and require exact early-vs-native history shape; rerun whole six-cut method, no partial-loop credit.",
+      "expected_invocations_from_annotation": 1,
+      "method": "retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift()"
+      ]
+    },
+    {
+      "annotation_line": 139,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT",
+      "cohort": "Focused32 observer snapshot defect corrected; actual cause unproven. Same blocker/guards/deadline with fresh pg_stat snapshot.",
+      "expected_invocations_from_annotation": 1,
+      "method": "recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de",
+      "xml_names": [
+        "recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test",
+      "cohort": "New/affected cold registration input and exact policy identity/inventory contract; no live authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingInitialReaderAndUnknownCreatePolicyRefuseBeforeAnySecretOrResourceAcquisition",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "c736abb21d31d8282bfd90fc9aae2ce7041d8c71f78535418796df36683f3f63",
+      "xml_names": [
+        "missingInitialReaderAndUnknownCreatePolicyRefuseBeforeAnySecretOrResourceAcquisition()"
+      ]
+    },
+    {
+      "annotation_line": 148,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test",
+      "cohort": "New/affected cold registration input and exact policy identity/inventory contract; no live authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "allThreeInitialProfilesKeepTheirExactInventoryBytesEvenWhenARecurrentRecipeIsPresent",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "c736abb21d31d8282bfd90fc9aae2ce7041d8c71f78535418796df36683f3f63",
+      "xml_names": [
+        "allThreeInitialProfilesKeepTheirExactInventoryBytesEvenWhenARecurrentRecipeIsPresent()"
+      ]
+    },
+    {
+      "annotation_line": 174,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test",
+      "cohort": "New/affected cold registration input and exact policy identity/inventory contract; no live authority.",
+      "expected_invocations_from_annotation": 1,
+      "method": "oneRecurrentConsumerProfilePinsBothExactReadersAndDeclaresAllThreeTypedOperationsBeforeOpening",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt",
+      "source_head": "902b96f34a21cbf0650f56e8d88688572934e0ee",
+      "source_sha256": "c736abb21d31d8282bfd90fc9aae2ce7041d8c71f78535418796df36683f3f63",
+      "xml_names": [
+        "oneRecurrentConsumerProfilePinsBothExactReadersAndDeclaresAllThreeTypedOperationsBeforeOpening()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 10,
+  "expected_total": 10,
+  "selection_basis": {
+    "cohorts": {
+      "Focused31 TEST oracle corrected: preserve archived INITIAL and require exact early-vs-native history shape; rerun whole six-cut method, no partial-loop credit.": 1,
+      "Focused32 observer snapshot defect corrected; actual cause unproven. Same blocker/guards/deadline with fresh pg_stat snapshot.": 1,
+      "New recurrent consumer route: counted writes/replay, physical history/checkpoint refusal, old-profile stability or narrower factory authority.": 5,
+      "New/affected cold registration input and exact policy identity/inventory contract; no live authority.": 3
+    },
+    "previous_run": "35630009236",
+    "scope": "Five new consumer methods7fixtures plus corrected retainedALL6 and held-wait1, three new/affected cold methods. Shared10-method batch14genuine fixtures; remaining9consumer13fixtures wait prerequisite. No unchanged passing methods rerun."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointCreateColdInputsV1Test.kt": "c736abb21d31d8282bfd90fc9aae2ce7041d8c71f78535418796df36683f3f63",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveRecurrentIT.kt": "ae82c7e31ebb0d8a7a9a712652e253e958239a169ca73cbe0227a6f325d578de"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test": 3,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT": 7
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.genuineRecurrentCurrentCheckpointFeedsCountedCreateReplyEditAndExactHistoricalReceipts",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCurrentConsumerRejectsCheckpointIdentityCountTimeAndNativeSealDriftWithoutInitialFallback",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.missingGenuineRecurrentHistoryRefusesNewWorkButNotExactReceiptReplay",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.allThreeOlderProfilesRemainStrictlyInitialDespiteARealRecurrentSuccess",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentCombinedProfileDoesNotWidenBootstrapCreateOrReplyFactoryRoutes",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.retainedAllManifestRejectsMissingVersionsOverlapForeignRowsAndPhysicalDrift",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveRecurrentIT.recurrentExclusiveEpochWaitOwnsNoPooledHolderAndCaptureUsesFreshDatabaseTime",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test.allThreeInitialProfilesKeepTheirExactInventoryBytesEvenWhenARecurrentRecipeIsPresent",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test.oneRecurrentConsumerProfilePinsBothExactReadersAndDeclaresAllThreeTypedOperationsBeforeOpening",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointCreateColdInputsV1Test.missingInitialReaderAndUnknownCreatePolicyRefuseBeforeAnySecretOrResourceAcquisition"
+  ]
+}
