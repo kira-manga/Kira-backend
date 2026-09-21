@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.OwnedCallerTestSc
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PgLifecycleDatabaseFixture
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
@@ -126,11 +127,31 @@ class TestActiveOwnerDeleteQueueIT {
         }
     }
 
-    @Test fun creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom() = forEachFamily { f ->
-        withPrivacyInput(f, QueuePrivacyInput.CEILING) {
-            val before = f.counters()
-            assertEquals(1, f.poll().primaryAcknowledged)
-            f.assertReleased(); f.assertNoAuthority(); assertApplied(f); assertRecoveryCharge(f, before, f.counters())
+    @Test fun creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom() = ComplaintJournalDeletionKindV1.entries.forEach { family ->
+        var fixture: TestActiveOwnerDeleteQueueFixtureV1? = null
+        var bodyReturned = false
+        try {
+            withQueue(family) { f ->
+                fixture = f
+                withPrivacyInput(f, QueuePrivacyInput.CEILING) {
+                    val before = f.counters()
+                    assertEquals(1, f.poll().primaryAcknowledged)
+                    f.assertReleased(); f.assertNoAuthority(); assertApplied(f); assertRecoveryCharge(f, before, f.counters())
+                }
+                bodyReturned = true
+            }
+        } catch (failure: Throwable) {
+            // Last reached boundary only; never replace the original failure or inspect data/provider values.
+            runCatching {
+                val stage = if (fixture == null) "SETUP" else if (bodyReturned) "TEARDOWN" else "BODY"
+                val phaseFailure = failure as? PersistencePhaseException
+                System.err.println("TEST_ACTIVE_QUEUE_CEILING_FAILURE family=${family.name} stage=$stage " +
+                    "body_entered=${fixture != null} body_returned=$bodyReturned class=${failure.javaClass.name} " +
+                    "code=${phaseFailure?.code?.name ?: "NONE"} database_outcome=${phaseFailure?.databaseOutcome?.name ?: "NONE"} " +
+                    "cleanup_proven=${phaseFailure?.cleanupProven?.toString() ?: "UNOBSERVED"} " +
+                    "original_step=${fixture?.original?.step?.name ?: "NONE"} last_probe_step=${fixture?.calls?.lastOrNull()?.step?.name ?: "NONE"}")
+            }
+            throw failure
         }
     }
 
