@@ -3,6 +3,7 @@ package me.manga.kira.backend.common.infrastructure.persistence
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalCasesV1
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalActiveHistoryCasesV1
 import me.manga.kira.backend.complaint.catalog.CatalogTestRunTerminalRecoveryCasesV1
+import me.manga.kira.backend.complaint.catalog.CatalogRetainedDPrimaryCasesV1
 import me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunTerminalCasesV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogCommitEdgeV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogDeliveryFaultV1
@@ -10,6 +11,7 @@ import me.manga.kira.backend.complaint.catalog.TerminalCatalogEvidenceFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogRecoveryRefusalV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogHistoryNativeFaultV1
 import me.manga.kira.backend.complaint.catalog.TerminalCatalogHistoryRowFaultV1
+import me.manga.kira.backend.complaint.catalog.TerminalCatalogRetainedPrimaryFaultV1
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.TestInstance
@@ -25,6 +27,7 @@ import org.junit.jupiter.api.parallel.ExecutionMode
  * Reconstructed/later-domain/historical-alias ALL histories stop at registered comparison/replay or ordinary D,
  * not E. The missing-bookkeeping dataset deliberately does not claim consistent-restore closure.
  * Alias-only pending ALL cases use a fresh registered primary completion and replay after real sealing, without D/E.
+ * Retained-D single-primary cuts include genuine PREPARED completion and same-holder lease/full-D refusals, stopping at D.
  * No full ACTIVE recurrence, erasure, PURGED or supported-maximum-N qualification.
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -85,6 +88,12 @@ class CatalogTestRunTerminalIT {
     @Test fun genuineSettledBNonemptyPreparedRecoveryAndProjectedReplayKeepOriginalBytesRowsAndSinglePayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.settledQueuePreparedRecoveryAndReplay(it) }
     @Test fun genuineMalformedQueuePollingSurvivesActualDAndRefusesEBeforeAnyNativeOrCatalogPayment() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.genuinePollingQueueRefusesCatalog(it) }
 
+    @Test fun genuinePreparedADeletionUsesRetainedDSelectionAndItsOwnVerifyBeforeExactApplyAndDrain() = withFixture { CatalogRetainedDPrimaryCasesV1.prepared(it) }
+    @Test fun retainedDSelectedPrimaryRefusesStolenLeaseBeforeReloadingItsReceipt() = primaryRefusal(TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER)
+    @Test fun retainedDPreparedPrimaryFinalLeaseExpiryRollsBackItsActualVerification() = primaryRefusal(TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE)
+    @Test fun retainedDVerifiedPrimaryFinalLeaseExpiryRollsBackActualApplyAndRefund() = primaryRefusal(TerminalCatalogRetainedPrimaryFaultV1.APPLY_LEASE)
+    @Test fun retainedDPrimaryFinalFullDDriftRollsBackItsActualApply() = primaryRefusal(TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL)
+
     @Test fun genuinePreparedAllQueuePrimaryReplaysRegisteredAndCompletesTerminalWithSystemAudit() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allQueueSuccessful(it, verifyPublication = false) }
     @Test fun genuineVerifiedAllQueuePrimaryReplaysRegisteredAndCompletesTerminalWithSystemAudit() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allQueueSuccessful(it, verifyPublication = true) }
     @Test fun allSystemPrimaryAuditCannotReplaceMissingOrMismatchedFamilyEvidence() = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.allFamilyEvidenceRefuses(it) }
@@ -108,6 +117,7 @@ class CatalogTestRunTerminalIT {
     private fun lost(edge: TerminalCatalogCommitEdgeV1) = withFixture { CatalogTestRunTerminalRecoveryCasesV1.lostCommitAcknowledgement(it, edge) }
     private fun historyRow(fault: TerminalCatalogHistoryRowFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.rowRefusal(it, fault) }
     private fun historyNative(fault: TerminalCatalogHistoryNativeFaultV1) = withFixture { CatalogTestRunTerminalActiveHistoryCasesV1.nativeRefusal(it, fault) }
+    private fun primaryRefusal(fault: TerminalCatalogRetainedPrimaryFaultV1) = withFixture { CatalogRetainedDPrimaryCasesV1.refuses(it, fault) }
     private fun withFixture(action: (VersionBoundPersistenceConnectedFixture) -> Unit) =
         VersionBoundPersistenceConnectedFixture(database.value, testActivation = true).use { it.bind(); action(it) }
 }

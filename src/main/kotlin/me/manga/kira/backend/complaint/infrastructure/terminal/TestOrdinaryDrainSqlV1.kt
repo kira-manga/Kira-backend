@@ -161,7 +161,7 @@ internal object TestOrdinaryDrainSqlV1 {
     """.trimIndent()
 
     /** Exact A successor lane. The V26/V14 comparator is independently reread under these controls. */
-    val controlWithActiveHistory = """
+    val readControlWithActiveHistory = """
         SELECT c.publication_epoch, c.lease_token, c.rotation_sequence, c.rotation_id, c.rotation_epoch_before,
             c.rotation_capture_token, c.rotation_captured_at, c.scan_requested, c.seal_epoch,
             sha256(convert_to(jsonb_build_array($historyFields)::text, 'UTF8')) AS history_hash,
@@ -186,8 +186,9 @@ internal object TestOrdinaryDrainSqlV1 {
                         AND c.rotation_capture_token <= c.lease_token AND c.rotation_requested_at = c.rotation_captured_at
                         AND c.rotation_captured_at >= c.checkpoint_completed_at AND isfinite(c.rotation_captured_at)))) IS TRUE AS valid
         FROM complaint_journal_control c LEFT JOIN complaint_test_active_seal_intents i ON i.data_scope_id = c.data_scope_id
-        WHERE c.data_scope_id = ?::uuid FOR UPDATE OF c
+        WHERE c.data_scope_id = ?::uuid
     """.trimIndent()
+    val controlWithActiveHistory = "$readControlWithActiveHistory FOR UPDATE OF c"
 
     // Do not clear A's retained seal/checkpoint, fabricate sequence zero, or reuse its earlier capture.
     val captureWithActiveHistory = """

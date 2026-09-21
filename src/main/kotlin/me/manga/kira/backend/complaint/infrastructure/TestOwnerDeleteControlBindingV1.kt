@@ -29,6 +29,12 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
             check(!authorizing && graph.recoveryRegistration != null)
             return Locked(epoch, 0)
         }
+        PersistencePhaseOwnership.current()?.registeredRetainedDrainPrimaryControls(graph, jdbc)?.let { current ->
+            // Only this selected primary's current retained-D owner chain, never initial A's
+            // old lease or registration-wide recovery authority. Historical callers stay below.
+            check(!authorizing && graph.recoveryRegistration != null)
+            return current
+        }
         val global = jdbc.query(LOCK_CONTROL, { row, _ -> read(row) }, ComplaintDataScope.LIVE.id).single()
         val scoped = jdbc.query(LOCK_CONTROL, { row, _ -> read(row) }, desired.scope.id).single()
         check(!global.test && scoped.test)
@@ -64,9 +70,9 @@ internal class TestOwnerDeleteControlBindingV1(private val graph: TestOwnerDelet
         }, desired.scope.id).single()
     }
 
-    class Locked internal constructor(val epoch: Long, val sealedEpoch: Long) {
+    class Locked internal constructor(val epoch: Long, val sealedEpoch: Long, private val minimumEpoch: Long = 1L) {
         fun requireContinuation(frozen: Long, prepared: Boolean) {
-            check(frozen in 1..epoch && (!prepared || frozen > sealedEpoch))
+            check(frozen in minimumEpoch..epoch && (!prepared || frozen > sealedEpoch))
         }
     }
 

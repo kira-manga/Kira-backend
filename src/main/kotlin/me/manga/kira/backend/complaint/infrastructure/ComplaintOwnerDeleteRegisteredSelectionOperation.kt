@@ -9,6 +9,7 @@ import me.manga.kira.backend.common.infrastructure.persistence.requireConnection
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityLedger
 import me.manga.kira.backend.complaint.infrastructure.capacity.JdbcComplaintCapacityStore
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOwnerDeleteContinuationV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryPrimarySelectionV1
 import org.springframework.jdbc.core.JdbcTemplate
 import java.util.UUID
 
@@ -39,10 +40,10 @@ internal class ComplaintOwnerDeleteRegisteredSelectionOperation private construc
     private fun execute(capacity: JdbcComplaintCapacityStore) {
         retained()
         val controls = TestOwnerDeleteControlBindingV1(graph)
-        // Only this actual registered selector may compare a fresh closed drain predecessor.
-        // AUTH/RELOAD/APPLY keep the historical control reader; an empty page is not quiescence.
-        val freshDrain = original.freshDrainSelectionControls(this, jdbc, graph)
-        if (!freshDrain) controls.lock(jdbc, authorizing = false)
+        // A retained-D selector may discover existing primaries, not authorize new ones. The
+        // genuinely fresh no-history exception stays EMPTY-only; an empty page is not quiescence.
+        val selection = original.drainSelectionControls(this, jdbc, graph)
+        if (selection === TestOrdinaryPrimarySelectionV1.HISTORICAL) controls.lock(jdbc, authorizing = false)
         stage = Stage.COUNTERS_READY
         capacity.lockForRegisteredOwnerDeleteSelection(this)
         check(stage === Stage.COUNTERS)
@@ -57,12 +58,13 @@ internal class ComplaintOwnerDeleteRegisteredSelectionOperation private construc
             checkNotNull(row.getObject("actor_id", UUID::class.java)) to checkNotNull(row.getObject("idempotency_key", UUID::class.java))
         }, graph.writer, graph.routing.journalConfiguration.scope.id)
         check(found.size <= OwnerDeletePersistenceSql.REGISTERED_PRIMARY_PAGE_LIMIT + 1 && found.distinct().size == found.size)
-        if (freshDrain) {
+        if (selection === TestOrdinaryPrimarySelectionV1.FRESH_EMPTY) {
             // This narrow no-history exception cannot issue a continuation for a pending primary.
             // In particular it must not filter a malformed, orphan or unexpected row into emptiness.
             check(found.isEmpty())
-            check(original.freshDrainSelectionControls(this, jdbc, graph))
         }
+        if (selection !== TestOrdinaryPrimarySelectionV1.HISTORICAL)
+            check(original.drainSelectionControls(this, jdbc, graph) === selection)
         locators = found
         retained()
         stage = Stage.COMPLETE

@@ -638,26 +638,20 @@ internal class TestRunOrdinaryDrainV1 private constructor(
     }
 
     /**
-     * The released OPEN owns this exact selector. Only fresh epoch-one absent history or exact
-     * retained initial A can skip the historical healthy reader, for a bounded EMPTY page only.
+     * The released OPEN owns this exact selector. Fresh epoch-one absent history remains EMPTY
+     * only; retained A may select existing primaries under this same current D and live lease.
      * Current full-D identities/closed gates, the preserved request and the original live lease are
      * still read on the child's already-fenced holder. No lease or failure ownership is transferred.
      */
-    internal fun freshPrimarySelectionControls(original: TestRunOwnerDeleteContinuationV1, jdbc: JdbcTemplate): Boolean {
+    internal fun primarySelectionControls(original: TestRunOwnerDeleteContinuationV1, jdbc: JdbcTemplate): TestOrdinaryPrimarySelectionV1 {
         requirePrimaryContinuation(original)
         requireDrain(jdbc === deletionJdbc && !phaseEntered && allContinuation == null && adminContinuation == null)
         val captured = checkNotNull(capturedControl)
         if (captured.initialHistory != null) {
-            // A never created global ordinary-health fields. This exact retained-history branch
-            // can inspect an EMPTY pending-primary page only, not authorize/reload a new primary.
-            requireDrain(captured.needsCapture && captured.epoch == 2L && captured.sequence == 1L && checkNotNull(retainedRun).progress == null)
-            TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)
-            requireCapturedControl(TestOrdinaryDrainPersistenceV1.readControl(jdbc, this))
-            TestOrdinaryDrainPersistenceV1.requireLease(jdbc, this)
-            requirePrimaryContinuation(original)
-            return true
+            checkNotNull(retainedPrimaryControls(original, jdbc))
+            return TestOrdinaryPrimarySelectionV1.RETAINED_A
         }
-        if (captured.sequence != 0L || captured.epoch != 1L || captured.previousSealEpoch != 0L) return false
+        if (captured.sequence != 0L || captured.epoch != 1L || captured.previousSealEpoch != 0L) return TestOrdinaryPrimarySelectionV1.HISTORICAL
         requireDrain(checkNotNull(retainedRun).progress == null && captured.cutoff == 1L && leaseToken > 0)
         TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)
         val current = jdbc.query(TestOrdinaryDrainSqlV1.control, { row, _ ->
@@ -668,7 +662,32 @@ internal class TestRunOrdinaryDrainV1 private constructor(
         requireDrain(current.sequence == 0L && current.epoch == 1L && current.previousSealEpoch == 0L)
         TestOrdinaryDrainPersistenceV1.requireLease(jdbc, this)
         requirePrimaryContinuation(original)
-        return true
+        return TestOrdinaryPrimarySelectionV1.FRESH_EMPTY
+    }
+
+    internal fun retainedPrimaryControls(selecting: TestRunOwnerDeleteContinuationV1, jdbc: JdbcTemplate): TestOrdinaryDrainRowsV1.Control? =
+        retainedPrimaryControls(selecting, jdbc, readOnly = false)
+
+    internal fun readRetainedPrimaryControls(selecting: TestRunOwnerDeleteContinuationV1, jdbc: JdbcTemplate): TestOrdinaryDrainRowsV1.Control? =
+        retainedPrimaryControls(selecting, jdbc, readOnly = true)
+
+    /** Comparison on the actual page/child holder, never an A lease, recovery input or new AUTH. */
+    private fun retainedPrimaryControls(selecting: TestRunOwnerDeleteContinuationV1, jdbc: JdbcTemplate,
+        readOnly: Boolean): TestOrdinaryDrainRowsV1.Control? {
+        requirePrimaryContinuation(selecting)
+        requireDrain(jdbc === deletionJdbc && !phaseEntered && allContinuation == null && adminContinuation == null)
+        val captured = checkNotNull(capturedControl)
+        if (captured.initialHistory == null) return null // Fresh no-history selection cannot admit a child.
+        requireDrain(captured.needsCapture && captured.epoch == 2L && captured.sequence == 1L && captured.previousSealEpoch == 1L &&
+            captured.ordinaryStart == 2L && captured.cutoff == 2L && checkNotNull(retainedRun).progress == null && leaseToken > 0)
+        val current = if (readOnly) TestOrdinaryDrainPersistenceV1.readRetainedPrimaryControl(jdbc, this) else {
+            TestOrdinaryDrainPersistenceV1.lockControlIdentities(jdbc, this)
+            TestOrdinaryDrainPersistenceV1.readControl(jdbc, this)
+        }
+        requireCapturedControl(current)
+        TestOrdinaryDrainPersistenceV1.requireLease(jdbc, this)
+        requirePrimaryContinuation(selecting)
+        return current
     }
 
     internal fun retainPrimaryContinuation(original: TestRunOwnerDeleteAllContinuationV1, candidate: ComplaintTestNamespaceRegistrationV1,
@@ -794,6 +813,8 @@ internal enum class TestOrdinaryDrainStepV1 {
     OPEN, PRIMARIES, ALL_PRIMARY_PAGE, ADMIN_PRIMARY_PAGE, CAPTURE, ADMISSION, ABANDON, NATIVE, BEGIN_PASS, APPEND, COMPLETE_PASS, WITNESS,
     RECOVERY_PAGE, RECOVERY_NATIVE, RECOVERY_APPLY, PRIMARY_PAGE, CONVERT, CLOSEOUT, RECYCLE, READY, SEAL,
 }
+/** Branch description only: every use still requires the actual current page/child and D holder. */
+internal enum class TestOrdinaryPrimarySelectionV1 { HISTORICAL, FRESH_EMPTY, RETAINED_A }
 internal enum class TestRunOrdinaryDrainResultV1 { POST_DENIAL_ORDINARY_SEAL_VERIFIED }
 internal class TestOrdinaryDrainExceptionV1 : RuntimeException("TEST ordinary drain refused.", null, false, false)
 internal fun requireDrain(allowed: Boolean) { if (!allowed) throw TestOrdinaryDrainExceptionV1() }

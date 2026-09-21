@@ -4,6 +4,7 @@ import me.manga.kira.backend.common.Sha256
 import me.manga.kira.backend.common.infrastructure.persistence.DeleteAllCounter
 import me.manga.kira.backend.common.infrastructure.persistence.OwnerDeleteLiteralCharges
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceLifecycleObservation
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedFixture
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
 import me.manga.kira.backend.complaint.domain.ComplaintCapacityCharges
@@ -14,6 +15,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDeniedPathV1
 import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialStatementV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEvidenceDigestV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPolicyRefV1
+import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveQueueHistoricalAllObjectV1
@@ -26,10 +28,13 @@ import me.manga.kira.backend.complaint.infrastructure.reconciliation.withRegiste
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinaryDrainExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestOrdinarySealSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunOrdinaryDrainV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunPurgePublicationResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingResultV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunSealingSqlV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalEpochSealResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceResultV1
 import me.manga.kira.backend.complaint.journal.JournalPublisherHttpRequest
@@ -45,6 +50,7 @@ import me.manga.kira.backend.security.aws.JournalKmsHttpRequest
 import org.junit.jupiter.api.Assertions.assertArrayEquals
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
@@ -104,7 +110,7 @@ internal enum class TerminalCatalogAllRecoveryHistoryV1 {
 }
 
 /**
- * Genuine A AUTH -> original PUT/readback -> SQL VERIFY, optionally genuine B APPLY/ACK/SETTLED
+ * Genuine A AUTH -> original PUT/readback -> optional SQL VERIFY, optionally genuine B APPLY/ACK/SETTLED
  * or malformed-message POLLING. Pins are supplied before full D. D keeps A's exact registered
  * deletion owner/template and rereads the original ciphertext; no second publisher or fake D.
  * One OWNER_DELETE or retained-N/P/L ALL primary/one installation. ALL is selected before full
@@ -166,7 +172,8 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
     action: (TestRunPurgeFixtureV1, TestRegisteredInitialCheckpointDeletionFixtureV1, TestActiveOwnerDeleteQueueFixtureV1?,
         TestOrdinaryDrainFixtureInputsV1, TestActiveQueueHistoricalAllObjectV1?) -> Unit) {
     require(family in setOf(ComplaintJournalDeletionKindV1.OWNER_DELETE, ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL))
-    require(if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) queue === TerminalCatalogQueueHistoryV1.SETTLED else verifyPublication)
+    require(if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) queue === TerminalCatalogQueueHistoryV1.SETTLED
+        else verifyPublication || queue === TerminalCatalogQueueHistoryV1.ABSENT)
     require(allRecovery == null || family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL &&
         verifyPublication == (allRecovery !== TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY))
     require(completeHistoricalPrimary || allRecovery in setOf(TerminalCatalogAllRecoveryHistoryV1.HISTORICAL_ALIAS_BEFORE_PRIMARY_VERIFY,
@@ -207,7 +214,7 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
     }
     if (queue === TerminalCatalogQueueHistoryV1.ABSENT) {
         withRegisteredInitialCheckpointDeletion(tls, family, terminalHistory = inputs) { a ->
-            a.authorize(); a.publish(); a.verify(); continueFrom(a, null)
+            a.authorize(); a.publish(); if (verifyPublication) a.verify(); continueFrom(a, null)
         }
     } else withActiveQueueFixture(tls, family, verifyPublication, terminalHistory = inputs) { b ->
         if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
@@ -254,6 +261,195 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
         if (family === ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) assertRetainedAllQueuePrimary(b, "PARTIAL")
         continueFrom(b.precursor, b) // Keep the actual observation alive until every D/E assertion.
     }
+}
+
+internal enum class TerminalCatalogRetainedPrimaryFaultV1 { RELOAD_OWNER, VERIFY_LEASE, APPLY_LEASE, APPLY_CONTROL }
+
+/** Narrow genuine A -> retained D primary cuts. No synthetic healthy history, inventory owner,
+ * proof issuer or completed phase is substituted. Existing VERIFIED D/E/erasure cases stay separate. */
+internal object CatalogRetainedDPrimaryCasesV1 {
+    fun prepared(tls: VersionBoundPersistenceConnectedFixture) =
+        withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.ABSENT,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE, verifyPublication = false) { f, a, _, inputs, _ ->
+            assertEquals("PREPARED", a.publication()["state"])
+            val record = checkNotNull(a.record); val before = a.counters()
+            val identity = a.image().filterKeys { it in setOf("app_installations", "complaint_installation_ids") }
+            val otherControlRows = otherControls(f.observer, f.scope)
+            var completedRows: Map<String, List<String>>? = null
+            var completedRecovery: String? = null
+            CatalogTerminalHistoryDrainProbeV1(f, a, preparedPrimary = true).use { probe ->
+                val primary = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
+                val inventory = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
+                probe.afterPrimary = { call, jdbc ->
+                    if (call.sql == OwnerDeletePersistenceSql.COMPLETE_RECEIPT) {
+                        assertEquals(PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY, call.path)
+                        assertNull(completedRows)
+                        assertCompletedPrimary(jdbc, a, "PARTIAL")
+                        assertApplyAccounting(jdbc, before)
+                        completedRows = primaryRows(jdbc, f.scope) - "complaint_recovery_capacity_reservations"
+                        completedRecovery = terminalCatalogAllRecoveryWithoutState(jdbc, f.scope)
+                    }
+                }
+                val drain = probe.begin(inventory::client, inventory.keys::httpClient, primary::primaryClient, primary.keys::httpClient)
+                val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
+                try {
+                    terminalCatalogHistoryBoundaries(f, probe::assertReleased) {
+                        assertEquals(TestRunOrdinaryDrainResultV1.POST_DENIAL_ORDINARY_SEAL_VERIFIED,
+                            drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS))
+                    }
+                    probe.assertRetainedPrimarySequence(listOf("SELECT", "RELOAD", "VERIFY", "APPLY"))
+                    probe.assertPrimaryApplied(expected = true); probe.assertRetainedInventoryRecovery(record.stored)
+                    primary.assertPrimaryReadback(); inventory.assertReadPairs(2, recovery = true)
+                    assertEquals(checkNotNull(completedRows), primaryRows(f.observer, f.scope) - "complaint_recovery_capacity_reservations",
+                        "Later inventory, conversion and seal never rewrite the actual committed N/P/E/proof/domain/audit, even xmin.")
+                    assertEquals(checkNotNull(completedRecovery), terminalCatalogAllRecoveryWithoutState(f.observer, f.scope))
+                    assertCompletedPrimary(f.observer, a, "CONVERTED")
+                    assertEquals(identity, a.image().filterKeys { it in identity.keys })
+                    assertEquals(otherControlRows, otherControls(f.observer, f.scope), "No global healthy history is synthesized.")
+                    assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                    a.assertReleased(); f.assertReleased()
+                } finally { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }
+            }
+        }
+
+    fun refuses(tls: VersionBoundPersistenceConnectedFixture, fault: TerminalCatalogRetainedPrimaryFaultV1) {
+        val prepared = fault === TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE
+        withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.ABSENT,
+            ComplaintJournalDeletionKindV1.OWNER_DELETE, verifyPublication = !prepared) { f, a, _, inputs, _ ->
+            val before = refusalRows(f.observer, f.scope)
+            val record = checkNotNull(a.record)
+            var controlBeforeFault: String? = null
+            var injected = 0
+            CatalogTerminalHistoryDrainProbeV1(f, a, preparedPrimary = prepared).use { probe ->
+                val primary = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
+                val inventory = CatalogTerminalOriginalOrdinaryHttpV1(a.process.consumers.journalConfiguration, record, probe::assertReleased)
+                val drain = probe.begin(inventory::client, inventory.keys::httpClient, primary::primaryClient, primary.keys::httpClient)
+                val targetSql = when (fault) {
+                    TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> TestRunSealingSqlV1.lockScopeControl
+                    TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE -> OwnerDeletePersistenceSql.RECORD_VERIFIED
+                    else -> OwnerDeletePersistenceSql.COMPLETE_RECEIPT
+                }
+                probe.afterPrimary = { call, jdbc ->
+                    if (injected == 0 && call.sql == targetSql &&
+                        (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER || probe.isSelectedReload(call))) {
+                        probe.expectPrimaryRollback(call)
+                        controlBeforeFault = control(jdbc, f.scope)
+                        if (fault === TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE) {
+                            assertEquals("VERIFIED", jdbc.queryForObject("SELECT state FROM complaint_journal_publications WHERE data_scope_id = ?", String::class.java, f.scope))
+                        } else if (fault !== TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) {
+                            assertCompletedPrimary(jdbc, a, "PARTIAL") // Real domain/E/L/audit/N/P writes already happened on this holder.
+                        }
+                        val change = when (fault) {
+                            TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> "lease_owner = ?::uuid"
+                            TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL -> "maintenance_closed = false"
+                            else -> "lease_expires_at = clock_timestamp() - interval '1 second'"
+                        }
+                        val prefix: Array<out Any> = if (fault === TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER)
+                            arrayOf(UUID.randomUUID().also { assertNotEquals(drain.attemptId, it) }) else emptyArray()
+                        assertEquals(1, jdbc.update("UPDATE complaint_journal_control SET $change WHERE data_scope_id = ? AND test_only " +
+                            "AND lease_owner = ? AND lease_token = ? AND lease_expires_at > clock_timestamp()",
+                            *prefix, f.scope, drain.attemptId, drain.leaseToken))
+                        injected++ // Only after the actual fault SQL returned, never by throwing from the callback.
+                    }
+                }
+                val approval = activeHistoryOrdinaryApproval(f, inputs, drain); val raw = f.rawEvidence
+                try {
+                    assertThrows<TestOrdinaryDrainExceptionV1> {
+                        drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
+                    }
+                    assertEquals(1, injected)
+                    val expected = listOf("SELECT", "RELOAD") + when (fault) {
+                        TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER -> emptyList()
+                        TerminalCatalogRetainedPrimaryFaultV1.VERIFY_LEASE -> listOf("VERIFY")
+                        else -> listOf("APPLY")
+                    }
+                    probe.assertRetainedPrimarySequence(expected)
+                    probe.assertPrimaryRefusal(if (fault === TerminalCatalogRetainedPrimaryFaultV1.APPLY_CONTROL)
+                        TestRunSealingSqlV1.readScopeControl else TestOrdinarySealSqlV1.lease, targetSql,
+                        if (fault === TerminalCatalogRetainedPrimaryFaultV1.RELOAD_OWNER) OwnerDeletePersistenceSql.LOCK_REGISTERED_RECEIPT else null)
+                    assertEquals(before, refusalRows(f.observer, f.scope),
+                        "The actual refused transaction rolls back proof/primary/domain/audit/counters/run/scan rows and xmin; OPEN pays nothing.")
+                    assertEquals(checkNotNull(controlBeforeFault), control(f.observer, f.scope), "The negative comparison drift rolls back too; no lease reset is manufactured.")
+                    if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
+                    inventory.assertUnused(); assertTrue(f.sealHttp.order.isEmpty())
+                    assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
+                    val calls = probe.observedCallCounts()
+                    assertThrows<TestOrdinaryDrainExceptionV1> {
+                        drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
+                    }
+                    assertEquals(calls, probe.observedCallCounts()); inventory.assertUnused()
+                    if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
+                    probe.assertRetainedPrimarySequence(expected) // Consumed original adds no phase/SQL/native attempt.
+                    a.assertReleased(); f.assertReleased()
+                } finally { approval.fill(0); raw.forEach { it.fill(0) }; primary.assertClosed(); inventory.assertClosed() }
+            }
+        }
+    }
+
+    private fun assertApplyAccounting(jdbc: JdbcTemplate, before: Map<ComplaintCapacityCounter, DeleteAllCounter>) {
+        val after = jdbc.query("SELECT name, free_units, actual_units, recovery_reserved_units, test_reserved_units " +
+            "FROM complaint_capacity_counters ORDER BY ordinal", { row, _ -> row.getString(1) to (2..5).map { row.getLong(it) } }).toMap()
+        before.forEach { (counter, old) ->
+            val used = OwnerDeleteLiteralCharges.ordinaryApply[counter]; val refund = OwnerDeleteLiteralCharges.content[counter]
+            assertEquals(listOf(old.free + refund, old.actual + used - refund, old.recovery - used, old.test), after.getValue(counter.storedName),
+                "One real E + one removal audit; exact content refund and no use of TEST reserve: ${counter.storedName}")
+        }
+    }
+
+    private fun assertCompletedPrimary(jdbc: JdbcTemplate, a: TestRegisteredInitialCheckpointDeletionFixtureV1, recoveryState: String) {
+        val record = checkNotNull(a.record)
+        val p = jdbc.queryForMap("SELECT * FROM complaint_journal_publications WHERE data_scope_id = ?", a.scope)
+        val n = jdbc.queryForMap("SELECT * FROM complaint_idempotency_receipts WHERE data_scope_id = ? AND operation = 'OWNER_DELETE'", a.scope)
+        val e = jdbc.queryForMap("SELECT * FROM complaint_deletion_journal_applied WHERE data_scope_id = ?", a.scope)
+        val l = jdbc.queryForMap("SELECT state, reserved_amounts::text, converted_amounts::text, converted_at " +
+            "FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ?", a.scope)
+        assertEquals("APPLIED", p["state"]); assertEquals("COMPLETED", n["state"]); assertEquals("APPLIED", n["outcome"]); assertEquals(204, n["response_status"])
+        assertEquals(record.event.route.eventId, p["event_id"]); assertEquals(record.stored.key, p["object_key"]); assertEquals(record.stored.version, p["object_version"])
+        val canonical = record.event.canonicalBytes()
+        try { assertArrayEquals(canonical, p["event_bytes"] as ByteArray) } finally { canonical.fill(0) }
+        assertEquals(Sha256.hex(record.stored.bytes), HexFormat.of().formatHex(p["ciphertext_hash"] as ByteArray))
+        assertEquals(Sha256.hex(p["verification_bytes"] as ByteArray), HexFormat.of().formatHex(p["verification_hash"] as ByteArray))
+        assertEquals(record.stored.lastModified, (p["object_created_at"] as Timestamp).toInstant())
+        assertEquals(record.stored.retainUntil, (p["retain_until"] as Timestamp).toInstant())
+        assertEquals(p["created_at"], n["authorized_at"]); assertEquals(a.actor.id, n["actor_id"]); assertEquals(a.key, n["idempotency_key"])
+        assertEquals(p["event_id"], n["publication_ref"]); assertEquals(p["event_id"], n["external_event_id"])
+        assertEquals(2L, n["external_epoch"]); assertEquals(record.stored.version, n["external_object_version"])
+        assertArrayEquals(p["ciphertext_hash"] as ByteArray, n["external_ciphertext_hash"] as ByteArray)
+        for (column in listOf("event_id", "object_key", "object_version", "writer_generation", "journal_epoch", "event_kind", "target_count", "data_scope_id", "test_only"))
+            assertEquals(p[column], e[column], column)
+        assertArrayEquals(p["ciphertext_hash"] as ByteArray, e["ciphertext_hash"] as ByteArray)
+        assertEquals(recoveryState, l["state"])
+        assertEquals(OwnerDeleteLiteralCharges.promise.toLongArray().joinToString(",", "{", "}"), l["reserved_amounts"])
+        assertEquals(OwnerDeleteLiteralCharges.ordinaryApply.toLongArray().joinToString(",", "{", "}"), l["converted_amounts"])
+        val at = listOf(p["created_at"], p["verified_at"], e["applied_at"], l["converted_at"], p["applied_at"], n["completed_at"]).map { (it as Timestamp).toInstant() }
+        assertTrue(at.zipWithNext().all { (earlier, later) -> !later.isBefore(earlier) })
+        assertEquals(at.last().plus(Duration.ofHours(192)), (n["expires_at"] as Timestamp).toInstant())
+        assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM complaints WHERE data_scope_id = ?", Long::class.java, a.scope))
+        assertEquals("DELETED", jdbc.queryForObject("SELECT state FROM complaint_resource_ids WHERE data_scope_id = ?", String::class.java, a.scope))
+        assertEquals(true, jdbc.queryForObject("SELECT actor_user_id IS NULL AND complaint_actor_kind = 'INSTALLATION' AND entity_type = 'complaint' " +
+            "AND entity_id = ? AND detail = jsonb_build_object('version', 1) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_DELETED'",
+            Boolean::class.java, record.event.complaintIds().single().toString(), a.scope))
+        assertEquals(0L, jdbc.queryForObject("SELECT count(*) FROM audit_log WHERE complaint_data_scope_id = ? AND action = 'COMPLAINT_RECOVERY_APPLIED'", Long::class.java, a.scope))
+    }
+
+    private fun primaryRows(jdbc: JdbcTemplate, scope: UUID): Map<String, List<String>> = listOf(
+        "complaint_idempotency_receipts", "installation_deletion_receipts", "complaint_journal_publications", "complaint_recovery_capacity_reservations",
+        "complaint_deletion_journal_applied", "complaint_deletion_journal_retirements", "complaints", "complaint_resource_ids", "app_installations", "complaint_installation_ids",
+    ).associateWith { rows(jdbc, it, scope) } + mapOf("audit" to jdbc.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM audit_log t WHERE complaint_data_scope_id = ? ORDER BY id", String::class.java, scope))
+
+    private fun refusalRows(jdbc: JdbcTemplate, scope: UUID): Map<String, List<String>> = primaryRows(jdbc, scope) + listOf(
+        "complaint_test_runs", "complaint_test_active_seal_intents", "complaint_test_active_queue_observations",
+        "complaint_journal_scan_runs", "complaint_journal_scan_entries", "complaint_test_terminal_intents",
+    ).associateWith { rows(jdbc, it, scope) } + mapOf("counters" to jdbc.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM complaint_capacity_counters t ORDER BY ordinal", String::class.java),
+        "other-controls" to otherControls(jdbc, scope))
+
+    private fun rows(jdbc: JdbcTemplate, table: String, scope: UUID): List<String> = jdbc.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM $table t WHERE data_scope_id = ? ORDER BY to_jsonb(t)::text", String::class.java, scope)
+    private fun control(jdbc: JdbcTemplate, scope: UUID): String = rows(jdbc, "complaint_journal_control", scope).single()
+    private fun otherControls(jdbc: JdbcTemplate, scope: UUID): List<String> = jdbc.queryForList(
+        "SELECT jsonb_build_array(to_jsonb(t), t.xmin::text)::text FROM complaint_journal_control t WHERE data_scope_id <> ? ORDER BY data_scope_id", String::class.java, scope)
 }
 
 /** Independent ALL v1 literals: unchanged promise plus exact materialized version/repair costs. */

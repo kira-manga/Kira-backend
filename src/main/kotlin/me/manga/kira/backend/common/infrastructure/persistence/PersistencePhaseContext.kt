@@ -17,6 +17,7 @@ import me.manga.kira.backend.complaint.domain.ComplaintOwnerDeleteTuple
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeletePhaseOperation
 import me.manga.kira.backend.complaint.infrastructure.ComplaintOwnerDeleteReadOperation
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteControlBindingV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteVerificationInputV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationAttemptV1
@@ -1342,6 +1343,16 @@ constructor(
             graph.recoveryRegistration == null) refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
         original.requireRecoveryPersistence(ownership, jdbc, graph)
         return original.requireRecoveryControls(jdbc)
+    }
+
+    /** Existing primary RELOAD/APPLY only. A selected child keeps its actual owner and phase. */
+    internal fun registeredRetainedDrainPrimaryControls(graph: TestOwnerDeleteLocalGraphV1, jdbc: JdbcTemplate): TestOwnerDeleteControlBindingV1.Locked? {
+        val original = testRunOwnerDelete ?: return null
+        if (path !in setOf(PersistencePhasePath.COMPLAINT_OWNER_DELETE_RELOAD, PersistencePhasePath.COMPLAINT_OWNER_DELETE_APPLY) ||
+            testActiveQueue != null || testOrdinaryDrain != null || testRunOwnerDeleteAll != null || testRunAdminDelete != null)
+            refuse(PersistencePhaseFailureCode.RESOURCE_REFUSED)
+        original.requirePersistence(ownership, jdbc, graph)
+        return original.retainedDrainControls(jdbc, graph)
     }
 
     internal fun testRunOwnerDeleteAllCleanupProven(original: TestRunOwnerDeleteAllContinuationV1): Boolean =

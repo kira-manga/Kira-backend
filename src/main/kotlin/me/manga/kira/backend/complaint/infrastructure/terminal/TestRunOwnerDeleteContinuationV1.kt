@@ -24,6 +24,7 @@ import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteSt
 import me.manga.kira.backend.complaint.infrastructure.JdbcComplaintOwnerDeleteVerificationStore
 import me.manga.kira.backend.complaint.infrastructure.OwnerDeletePersistenceSql
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteApplyInputV1
+import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteControlBindingV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteLocalGraphV1
 import me.manga.kira.backend.complaint.infrastructure.TestOwnerDeleteVerificationInputV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
@@ -179,7 +180,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     private fun select(): ComplaintOwnerDeleteRegisteredSelectionOperation {
         val selected = ownership.enterTestRunOwnerDeleteReload(this)
         var operation: ComplaintOwnerDeleteRegisteredSelectionOperation? = null
-        try { selected.begin(); operation = store.selectRegistered(this); selected.commit() }
+        try { selected.begin(); operation = store.selectRegistered(this); requireRetainedDrainCommit(operation); selected.commit() }
         catch (problem: Throwable) { selected.recordFailure(problem) }
         finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
         return operation ?: throw selected.failureException(PersistencePhaseFailureCode.WORK_FAILED)
@@ -207,14 +208,48 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     }
 
     /** Current original-owned SELECT comparison only; never request/RELOAD/APPLY admission. */
-    internal fun freshDrainSelectionControls(operation: ComplaintOwnerDeleteRegisteredSelectionOperation,
-        selectedJdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1): Boolean {
+    internal fun drainSelectionControls(operation: ComplaintOwnerDeleteRegisteredSelectionOperation,
+        selectedJdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1): TestOrdinaryPrimarySelectionV1 {
         requirePersistence(ownership, selectedJdbc, selectedGraph)
         requireContinuation(stage === Stage.SELECT && locator == null && selectedBy == null &&
             retainedOperation === operation && operation.original === this && controlsChecked && phaseEntered &&
             phase === PersistencePhaseOwnership.current() && selectedChild == null && selectedLocator == null)
-        val original = drainBy ?: return false
-        return original.freshPrimarySelectionControls(this, selectedJdbc)
+        val original = drainBy ?: return TestOrdinaryPrimarySelectionV1.HISTORICAL
+        return original.primarySelectionControls(this, selectedJdbc)
+    }
+
+    /** Called only by this actual primary's typed phase bridge, not a registration-wide exception. */
+    internal fun retainedDrainControls(selectedJdbc: JdbcTemplate, selectedGraph: TestOwnerDeleteLocalGraphV1): TestOwnerDeleteControlBindingV1.Locked? {
+        requirePersistence(ownership, selectedJdbc, selectedGraph)
+        if (selectedBy == null) return null // Ordinary selectors/direct continuations keep their historical reader.
+        requireContinuation(stage in setOf(Stage.RELOAD, Stage.APPLY))
+        val current = retainedDrainControl(readOnly = false) ?: return null
+        return TestOwnerDeleteControlBindingV1.Locked(current.epoch, current.previousSealEpoch, current.ordinaryStart)
+    }
+
+    private fun retainedDrainControl(readOnly: Boolean): TestOrdinaryDrainRowsV1.Control? {
+        requirePersistence(ownership, jdbc, graph)
+        requireContinuation(controlsChecked && retainedOperation != null && phaseEntered && phase === PersistencePhaseOwnership.current())
+        val selecting = if (stage === Stage.SELECT) {
+            requireContinuation(locator == null && selectedBy == null && selectedChild == null && selectedLocator == null)
+            this
+        } else {
+            requireContinuation(stage in setOf(Stage.RELOAD, Stage.VERIFY, Stage.APPLY) && locator != null && drainBy == null)
+            val page = selectedBy ?: return null
+            page.requireSelectedRunning(this)
+            requireContinuation(page.selectedBy == null && page.locator == null && page.selectedLocator == locator &&
+                page.registration === registration && page.ownership === ownership && page.jdbc === jdbc && page.budget === budget)
+            page
+        }
+        val original = selecting.drainBy ?: return null
+        requireContinuation(original.budget === budget)
+        return if (readOnly) original.readRetainedPrimaryControls(selecting, jdbc) else original.retainedPrimaryControls(selecting, jdbc)
+    }
+
+    /** Last DB-time lease/full-D check on this same holder, before commit; never SQL after release. */
+    private fun requireRetainedDrainCommit(operation: ComplaintOwnerDeletePhaseOperation) {
+        requireContinuation(retainedOperation === operation)
+        retainedDrainControl(readOnly = true)
     }
 
     private fun publishAndVerify(work: CommittedTestOwnerDeleteWork.Prepared): CommittedTestOwnerDeleteVerificationV1 {
@@ -233,7 +268,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
         stage = Stage.VERIFY
         val selected = ownership.enterTestRunOwnerDeleteVerify(this)
         var operation: ComplaintOwnerDeleteVerificationOperation? = null
-        try { selected.begin(); operation = verification.verify(checkNotNull(verificationInput)); selected.commit() }
+        try { selected.begin(); operation = verification.verify(checkNotNull(verificationInput)); requireRetainedDrainCommit(operation); selected.commit() }
         catch (problem: Throwable) { selected.recordFailure(problem) }
         finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
         val completed = operation ?: throw selected.failureException(PersistencePhaseFailureCode.WORK_FAILED)
@@ -245,7 +280,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     private fun reload(): ComplaintOwnerDeleteRegisteredReloadOperation {
         val selected = ownership.enterTestRunOwnerDeleteReload(this)
         var operation: ComplaintOwnerDeleteRegisteredReloadOperation? = null
-        try { selected.begin(); operation = store.reloadRegistered(this); selected.commit() }
+        try { selected.begin(); operation = store.reloadRegistered(this); requireRetainedDrainCommit(operation); selected.commit() }
         catch (problem: Throwable) { selected.recordFailure(problem) }
         finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
         return operation ?: throw selected.failureException(PersistencePhaseFailureCode.WORK_FAILED)
@@ -254,7 +289,7 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
     private fun applyExisting(): ComplaintOwnerDeleteApplyOperation {
         val selected = ownership.enterTestRunOwnerDeleteApply(this)
         var operation: ComplaintOwnerDeleteApplyOperation? = null
-        try { selected.begin(); operation = apply.apply(checkNotNull(applyInput)); selected.commit() }
+        try { selected.begin(); operation = apply.apply(checkNotNull(applyInput)); requireRetainedDrainCommit(operation); selected.commit() }
         catch (problem: Throwable) { selected.recordFailure(problem) }
         finally { try { selected.finish() } finally { observePhaseCleanup(selected) } }
         return operation ?: throw selected.failureException(PersistencePhaseFailureCode.WORK_FAILED)
@@ -328,6 +363,9 @@ internal sealed class TestRunOwnerDeleteContinuationV1 protected constructor(
             requirePersistence(selected, selectedJdbc, graph)
         }
         controlsChecked = true
+        // VERIFY never takes E or control-row locks. Its actual selected child still compares
+        // current D/A lineage and D's own live lease, not just the previously released RELOAD.
+        if (stage === Stage.VERIFY) retainedDrainControl(readOnly = true)
     }
 
     /** Selection/RELOAD/APPLY lock after counters; short VERIFY observes without a run lock. */

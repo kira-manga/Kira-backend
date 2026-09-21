@@ -81,6 +81,18 @@ internal object TestOrdinaryDrainPersistenceV1 {
         return jdbc.query(sql, { row, _ -> TestOrdinaryDrainRowsV1.Control(row, history) }, original.scope).single()
     }
 
+    /** Actual retained-primary VERIFY/final comparison. No new E or control-row locks after N/P. */
+    fun readRetainedPrimaryControl(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1): TestOrdinaryDrainRowsV1.Control {
+        for (sql in listOf(TestRunSealingSqlV1.readGlobalControl, TestRunSealingSqlV1.readScopeControl)) {
+            tick(original)
+            requireDrain(jdbc.query(sql, { row, _ -> TestOrdinaryDrainRowsV1.boolean(row, "valid") },
+                *original.registration.sealingControlArguments()).single())
+        }
+        val history = checkNotNull(TestOrdinaryDrainActiveHistoryV1.read(jdbc, original))
+        return jdbc.query(TestOrdinaryDrainSqlV1.readControlWithActiveHistory,
+            { row, _ -> TestOrdinaryDrainRowsV1.Control(row, history) }, original.scope).single()
+    }
+
     fun requireLease(jdbc: JdbcTemplate, original: TestRunOrdinaryDrainV1) {
         tick(original)
         requireDrain(jdbc.query(TestOrdinarySealSqlV1.lease, { row, _ -> TestOrdinaryDrainRowsV1.boolean(row, "valid") },
