@@ -1,0 +1,1217 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 15,
+      "class": "me.manga.kira.backend.security.ComplaintRegisteredStartupAdmissionTest",
+      "cohort": "new_startup_cold",
+      "expected_invocations_from_annotation": 1,
+      "method": "startup stop rejects new contexts but cannot assert held original requests released",
+      "path": "src/test/kotlin/me/manga/kira/backend/security/ComplaintRegisteredStartupAdmissionTest.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "c37d48daf1c263730651966c2446206b559a3def6abd2f16eca8577df0454cd8",
+      "xml_names": [
+        "startup stop rejects new contexts but cannot assert held original requests released()"
+      ]
+    },
+    {
+      "annotation_line": 165,
+      "class": "me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunActivationV3Test",
+      "cohort": "affected_existing_V3_closed_chain_regression",
+      "expected_invocations_from_annotation": 1,
+      "method": "rejectsMalformedNoncanonicalAndMixedSchemaDocumentsWithoutWideningOldReaders",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/catalog/OfflineCatalogTestRunActivationV3Test.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "b2fefbc3518c8ae466c8b6f49b68b9267219b01d1b2739954b7b69cac039bcdb",
+      "xml_names": [
+        "rejectsMalformedNoncanonicalAndMixedSchemaDocumentsWithoutWideningOldReaders()"
+      ]
+    },
+    {
+      "annotation_line": 22,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineOwnerDeleteFirstEpochTwoPrimaryPublishesVerifiesAndReplaysWithoutApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "genuineOwnerDeleteFirstEpochTwoPrimaryPublishesVerifiesAndReplaysWithoutApply()"
+      ]
+    },
+    {
+      "annotation_line": 25,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineOwnerDeleteAllFirstEpochTwoPrimaryPublishesVerifiesAndReplaysWithoutApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "genuineOwnerDeleteAllFirstEpochTwoPrimaryPublishesVerifiesAndReplaysWithoutApply()"
+      ]
+    },
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineAdminDeleteUsesRealScopedGrantAndFirstEpochTwoPrimaryWithoutApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "genuineAdminDeleteUsesRealScopedGrantAndFirstEpochTwoPrimaryWithoutApply()"
+      ]
+    },
+    {
+      "annotation_line": 31,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineAdminBatchUsesTwoEnrolledOwnersTwoCreatesAndOneCountedFirstPrimary",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "genuineAdminBatchUsesTwoEnrolledOwnersTwoCreatesAndOneCountedFirstPrimary()"
+      ]
+    },
+    {
+      "annotation_line": 34,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualPreparedOnlyStopKeepsReceiptPublicationReservationWithoutProviderOrVerify",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualPreparedOnlyStopKeepsReceiptPublicationReservationWithoutProviderOrVerify()"
+      ]
+    },
+    {
+      "annotation_line": 37,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "exactRegisteredResourcesIngressThreadReservedLaneAndOpenAuthorityAreMandatory",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "exactRegisteredResourcesIngressThreadReservedLaneAndOpenAuthorityAreMandatory()"
+      ]
+    },
+    {
+      "annotation_line": 40,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "creationOnlyClosureStillAllowsPrivacyWhileMaintenanceScanAndCurrentIdentityRefuse",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "creationOnlyClosureStillAllowsPrivacyWhileMaintenanceScanAndCurrentIdentityRefuse()"
+      ]
+    },
+    {
+      "annotation_line": 43,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "checkpointColumnDocumentAndNativeSealDriftCannotIssueTheFirstPrimary",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "checkpointColumnDocumentAndNativeSealDriftCannotIssueTheFirstPrimary()"
+      ]
+    },
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualNativeLaneExhaustionPrecedesAuthAndGenuinePrimaryRejectsSecondAndMixedClaims",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualNativeLaneExhaustionPrecedesAuthAndGenuinePrimaryRejectsSecondAndMixedClaims()"
+      ]
+    },
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "incorrectInstallationSecretCannotReachAllAuthorizationOrProviders",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "incorrectInstallationSecretCannotReachAllAuthorizationOrProviders()"
+      ]
+    },
+    {
+      "annotation_line": 52,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualIssuedGrantScopeExpiryRevocationAndCurrentAdminAreRechecked",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualIssuedGrantScopeExpiryRevocationAndCurrentAdminAreRechecked()"
+      ]
+    },
+    {
+      "annotation_line": 55,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "realReceiptLockLoserReplaysWinnerBeforeFreshnessWithoutASecondCharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "realReceiptLockLoserReplaysWinnerBeforeFreshnessWithoutASecondCharge()"
+      ]
+    },
+    {
+      "annotation_line": 58,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "realReceiptLockLoserStillRechecksTheCurrentActorAfterWaiting",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "realReceiptLockLoserStillRechecksTheCurrentActorAfterWaiting()"
+      ]
+    },
+    {
+      "annotation_line": 61,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualCredentialRowWaitCannotOutrunTheCurrentCredentialVersion",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualCredentialRowWaitCannotOutrunTheCurrentCredentialVersion()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualCounterAndRunWaitsCannotUseTheEarlierRegisteredRunIdentity",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualCounterAndRunWaitsCannotUseTheEarlierRegisteredRunIdentity()"
+      ]
+    },
+    {
+      "annotation_line": 67,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualTargetRowWaitObservesChangedEtagAndChargesOnlyARejectionReceipt",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualTargetRowWaitObservesChangedEtagAndChargesOnlyARejectionReceipt()"
+      ]
+    },
+    {
+      "annotation_line": 70,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualScopedGrantWaitCannotConsumeAProofExpiredBeforeItsConsumeStatement",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualScopedGrantWaitCannotConsumeAProofExpiredBeforeItsConsumeStatement()"
+      ]
+    },
+    {
+      "annotation_line": 73,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "bornWithShortCheckpointFreshnessExpiresOnActualDatabaseTimeInsideTheSameOriginal",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "bornWithShortCheckpointFreshnessExpiresOnActualDatabaseTimeInsideTheSameOriginal()"
+      ]
+    },
+    {
+      "annotation_line": 76,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualNativeCloseMustReturnBeforeReadbackAndShortSqlVerifyCanEscape",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "actualNativeCloseMustReturnBeforeReadbackAndShortSqlVerifyCanEscape()"
+      ]
+    },
+    {
+      "annotation_line": 79,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "rollbackUnknownDriverCommitAndCommittedTailNeverReleaseTheFailedOriginalWork",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+      "xml_names": [
+        "rollbackUnknownDriverCommitAndCommittedTailNeverReleaseTheFailedOriginalWork()"
+      ]
+    },
+    {
+      "annotation_line": 22,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "reviewed_global_precursor_foundation",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRegisteredCheckpointAllowsRepeatedCountedCreateAndReceiptReplayBeforeClosedControlAndQuotas",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "genuineRegisteredCheckpointAllowsRepeatedCountedCreateAndReceiptReplayBeforeClosedControlAndQuotas()"
+      ]
+    },
+    {
+      "annotation_line": 25,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "actual28_real_foreign_manager_fixture",
+      "expected_invocations_from_annotation": 1,
+      "method": "factoryRejectsDesiredOnlyForeignTemplateOwnerIngressReplyAndClosedRegistration",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "factoryRejectsDesiredOnlyForeignTemplateOwnerIngressReplyAndClosedRegistration()"
+      ]
+    },
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "changed_fixture_removes_wrong_global_gate_masking_scoped_checkpoint_refusal",
+      "expected_invocations_from_annotation": 1,
+      "method": "nativeVerifiedSealAndRegistrationAloneCannotReplaceTheCurrentCheckpoint",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "nativeVerifiedSealAndRegistrationAloneCannotReplaceTheCurrentCheckpoint()"
+      ]
+    },
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "reviewed_global_precursor_direct_HTTP",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus()"
+      ]
+    },
+    {
+      "annotation_line": 52,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "actual28_real_foreign_HTTP_manager_fixture",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources()"
+      ]
+    },
+    {
+      "annotation_line": 55,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "changed_fixture_removes_wrong_global_gate_masking_HTTP_refusal",
+      "expected_invocations_from_annotation": 1,
+      "method": "registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands()"
+      ]
+    },
+    {
+      "annotation_line": 59,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "reviewed_global_precursor_real_startup",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitLoopbackStartupServesRegisteredIdentityCountedCreateAndReceiptsWithOriginalJpa",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "explicitLoopbackStartupServesRegisteredIdentityCountedCreateAndReceiptsWithOriginalJpa()"
+      ]
+    },
+    {
+      "annotation_line": 62,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_registered_owner_read_startup",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitLoopbackStartupReadsOnlyOwnCreatedItemsAndScopedNoticesWithBoundCursorAndNoReadMutation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "explicitLoopbackStartupReadsOnlyOwnCreatedItemsAndScopedNoticesWithBoundCursorAndNoReadMutation()"
+      ]
+    },
+    {
+      "annotation_line": 65,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_startup_lifecycle",
+      "expected_invocations_from_annotation": 1,
+      "method": "explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen()"
+      ]
+    },
+    {
+      "annotation_line": 68,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT",
+      "cohort": "new_startup_lifecycle",
+      "expected_invocations_from_annotation": 1,
+      "method": "originalAssemblyActuallyClosesItsRetainedLoopbackServletAndJpaBeforeNativeTeardown",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+      "xml_names": [
+        "originalAssemblyActuallyClosesItsRetainedLoopbackServletAndJpaBeforeNativeTeardown()"
+      ]
+    },
+    {
+      "annotation_line": 60,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply()"
+      ]
+    },
+    {
+      "annotation_line": 92,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "aFreshAtLeastOnceRedeliveryReauthenticatesEverythingWithoutRechargingOrSecondAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "aFreshAtLeastOnceRedeliveryReauthenticatesEverythingWithoutRechargingOrSecondAudit()"
+      ]
+    },
+    {
+      "annotation_line": 106,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "sameKeyDifferentOpaqueVersionIsNotBorrowedTerminalAliasAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "sameKeyDifferentOpaqueVersionIsNotBorrowedTerminalAliasAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 116,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "creationClosureDoesNotBlockGenuinePrivacyApplyOrSpendAnyCreationReserve",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "creationClosureDoesNotBlockGenuinePrivacyApplyOrSpendAnyCreationReserve()"
+      ]
+    },
+    {
+      "annotation_line": 124,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom()"
+      ]
+    },
+    {
+      "annotation_line": 132,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "oneByteShortOfTheObservationHardCapRefusesBeforeNativeApplyOrAck",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "oneByteShortOfTheObservationHardCapRefusesBeforeNativeApplyOrAck()"
+      ]
+    },
+    {
+      "annotation_line": 143,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "adminRecoveryUsesTheOriginalConsumedGrantNotLaterRoleCredentialOrFreshStepUpAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "adminRecoveryUsesTheOriginalConsumedGrantNotLaterRoleCredentialOrFreshStepUpAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 168,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "allPreparedMissingBookkeepingOrMissingPairRemainExplicitUnackedRecoveryGaps",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "allPreparedMissingBookkeepingOrMissingPairRemainExplicitUnackedRecoveryGaps()"
+      ]
+    },
+    {
+      "annotation_line": 191,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "aSupportedDlqDeliveryWarnsWithValueFreeTextButCreatesNoDlqOrQueueHealthAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "aSupportedDlqDeliveryWarnsWithValueFreeTextButCreatesNoDlqOrQueueHealthAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 205,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "twoEmptyOneSecondLongPollRequestsSettleOnlyTheOneOrdinaryObservation",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "twoEmptyOneSecondLongPollRequestsSettleOnlyTheOneOrdinaryObservation()"
+      ]
+    },
+    {
+      "annotation_line": 216,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "malformedUnknownAndMultiRecordNotificationsRemainUnackedWithoutJournalDispatch",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "malformedUnknownAndMultiRecordNotificationsRemainUnackedWithoutJournalDispatch()"
+      ]
+    },
+    {
+      "annotation_line": 235,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "recoveryRoleIsAuthenticatedBeforeAnyQueueOrJournalRequest",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "recoveryRoleIsAuthenticatedBeforeAnyQueueOrJournalRequest()"
+      ]
+    },
+    {
+      "annotation_line": 243,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "badMetadataAndBadAeadTagOnTheOriginalPutCannotBecomeApplyOrAck",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "badMetadataAndBadAeadTagOnTheOriginalPutCannotBecomeApplyOrAck()"
+      ]
+    },
+    {
+      "annotation_line": 267,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "fullDesiredDatabaseRestoreCatalogAndExactLeaseDriftDuringReceiveRefuseBeforeApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "fullDesiredDatabaseRestoreCatalogAndExactLeaseDriftDuringReceiveRefuseBeforeApply()"
+      ]
+    },
+    {
+      "annotation_line": 281,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "bindingIsRecheckedUnderApplyAndAgainAfterActualApplyReleaseBeforeAck",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "bindingIsRecheckedUnderApplyAndAgainAfterActualApplyReleaseBeforeAck()"
+      ]
+    },
+    {
+      "annotation_line": 302,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "cancelledHeldNativeReceiveKeepsOriginalCustodyUntilLateReturnAndNeverAcks",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "cancelledHeldNativeReceiveKeepsOriginalCustodyUntilLateReturnAndNeverAcks()"
+      ]
+    },
+    {
+      "annotation_line": 333,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "unknownApplyCommitAndUnprovenReleaseNeverAuthorizeAckEvenWhenRowsAreVisible",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "unknownApplyCommitAndUnprovenReleaseNeverAuthorizeAckEvenWhenRowsAreVisible()"
+      ]
+    },
+    {
+      "annotation_line": 337,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "nativeCancellationAndInterruptedIoSurviveSdkWrappingWithoutReleasingTheOriginal",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "nativeCancellationAndInterruptedIoSurviveSdkWrappingWithoutReleasingTheOriginal()"
+      ]
+    },
+    {
+      "annotation_line": 362,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "beforeOrAfterApplyCommitFailureKeepsTheDeliveryUnackedWithoutInventingAnOutcome",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "beforeOrAfterApplyCommitFailureKeepsTheDeliveryUnackedWithoutInventingAnOutcome()"
+      ]
+    },
+    {
+      "annotation_line": 366,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "unknownDeleteMessageResponseKeepsAckCountZeroDespiteAlreadyCommittedApply",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "unknownDeleteMessageResponseKeepsAckCountZeroDespiteAlreadyCommittedApply()"
+      ]
+    },
+    {
+      "annotation_line": 377,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown()"
+      ]
+    },
+    {
+      "annotation_line": 381,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "nativeCloseFailureRetainsLaterErrorOverEarlierInvalidReadbackAndCannotBeCalledReleased",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+      "xml_names": [
+        "nativeCloseFailureRetainsLaterErrorOverEarlierInvalidReadbackAndCannotBeCalledReleased()"
+      ]
+    },
+    {
+      "annotation_line": 44,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueColdInputsV1Test",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "optionalBornWithQueueChangesOnlyItsFullDFieldAndRemainsEntirelyCold",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueColdInputsV1Test.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "92487ce0921abfd351b0513846d70286ec6020aa895ff089cf25223624f03d47",
+      "xml_names": [
+        "optionalBornWithQueueChangesOnlyItsFullDFieldAndRemainsEntirelyCold()"
+      ]
+    },
+    {
+      "annotation_line": 73,
+      "class": "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueColdInputsV1Test",
+      "cohort": "new_genuine_four_family_queue_and_unchanged_security_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingDependenciesMalformedRecipesAndAliasedPublicationCredentialsRefuseBeforeSecrets",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueColdInputsV1Test.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "92487ce0921abfd351b0513846d70286ec6020aa895ff089cf25223624f03d47",
+      "xml_names": [
+        "missingDependenciesMalformedRecipesAndAliasedPublicationCredentialsRefuseBeforeSecrets()"
+      ]
+    },
+    {
+      "annotation_line": 33,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointDeletionColdInputsV1Test",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "optionalDeletionMemberPinsBothExistingPoolsAndRefusesLowerGraphsWithoutOpeningEither",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointDeletionColdInputsV1Test.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e5d51f9b0799fc5d23967dedafea7ae25c200fee420da85051e2416b2faba450",
+      "xml_names": [
+        "optionalDeletionMemberPinsBothExistingPoolsAndRefusesLowerGraphsWithoutOpeningEither()"
+      ]
+    },
+    {
+      "annotation_line": 65,
+      "class": "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointDeletionColdInputsV1Test",
+      "cohort": "new_A_genuine_initial_deletion_security_persistence_native_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "malformedDeletionRecipeAndMissingCheckpointOrOrdinaryRecipeRefuseBeforeSecretsOrProviders",
+      "path": "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointDeletionColdInputsV1Test.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "e5d51f9b0799fc5d23967dedafea7ae25c200fee420da85051e2416b2faba450",
+      "xml_names": [
+        "malformedDeletionRecipeAndMissingCheckpointOrOrdinaryRecipeRefuseBeforeSecretsOrProviders()"
+      ]
+    },
+    {
+      "annotation_line": 22,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunPurgePublicationIT",
+      "cohort": "actual28_unused_sealer_prerequisite",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunPurgePublicationIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "ac76fd8821aabe42ed6e910d8ee0d99a3b760633bd035cfb8c09a70037d7b19c",
+      "xml_names": [
+        "genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge()"
+      ]
+    },
+    {
+      "annotation_line": 32,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "E_foundation_before_deeper_fault_matrix",
+      "expected_invocations_from_annotation": 1,
+      "method": "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging()"
+      ]
+    },
+    {
+      "annotation_line": 46,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "E_foundation_before_deeper_fault_matrix",
+      "expected_invocations_from_annotation": 1,
+      "method": "sourceOnlyRemainsPreparedThenFreshExactResumerAcceptsWithoutSecondSignPutOrPayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "sourceOnlyRemainsPreparedThenFreshExactResumerAcceptsWithoutSecondSignPutOrPayment()"
+      ]
+    },
+    {
+      "annotation_line": 47,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_replay_no_write_or_double_charge_contract",
+      "expected_invocations_from_annotation": 1,
+      "method": "alreadyProjectedFreshReplayIsReadOnlyIncludingGlobalXminAndEveryCustodyFile",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "alreadyProjectedFreshReplayIsReadOnlyIncludingGlobalXminAndEveryCustodyFile()"
+      ]
+    },
+    {
+      "annotation_line": 61,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "E_foundation_before_deeper_fault_matrix",
+      "expected_invocations_from_annotation": 1,
+      "method": "closedSchema4ParserAndFullChainRejectMalformedHistoryLinkAndSuffixSubstitution",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "closedSchema4ParserAndFullChainRejectMalformedHistoryLinkAndSuffixSubstitution()"
+      ]
+    },
+    {
+      "annotation_line": 62,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_signed_envelope_and_independent_reader_security_bounds",
+      "expected_invocations_from_annotation": 1,
+      "method": "unsignedSigned131072AndIndependentReaderBoundsAreEnforcedWithoutTruncatingInventory",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "unsignedSigned131072AndIndependentReaderBoundsAreEnforcedWithoutTruncatingInventory()"
+      ]
+    },
+    {
+      "annotation_line": 64,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge()"
+      ]
+    },
+    {
+      "annotation_line": 65,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "initialAHistoryPreparedFreshContinuationRetainsItsV26BytesAndNeverRepeatsSignPutOrPayment",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "initialAHistoryPreparedFreshContinuationRetainsItsV26BytesAndNeverRepeatsSignPutOrPayment()"
+      ]
+    },
+    {
+      "annotation_line": 66,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "initialAHistoryProjectedFreshReplayIsReadOnlyIncludingV26XminAndEveryCustodyFile",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "initialAHistoryProjectedFreshReplayIsReadOnlyIncludingV26XminAndEveryCustodyFile()"
+      ]
+    },
+    {
+      "annotation_line": 67,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "declaredThreeSealCountCannotReplaceAMissingActualV26Row",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "declaredThreeSealCountCannotReplaceAMissingActualV26Row()"
+      ]
+    },
+    {
+      "annotation_line": 68,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualAHistoryMustKeepItsDatabaseAndFullDIdentity",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "actualAHistoryMustKeepItsDatabaseAndFullDIdentity()"
+      ]
+    },
+    {
+      "annotation_line": 69,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "identicalABytesWithDifferentXminCannotReplaceDsRetainedPhysicalPreimage",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "identicalABytesWithDifferentXminCannotReplaceDsRetainedPhysicalPreimage()"
+      ]
+    },
+    {
+      "annotation_line": 70,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "freshPreparedContinuationRejectsRewrittenAAgainstOriginalCustodyBeforeAuthority",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "freshPreparedContinuationRejectsRewrittenAAgainstOriginalCustodyBeforeAuthority()"
+      ]
+    },
+    {
+      "annotation_line": 71,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "fullTerminalInventoryCannotOmitTheRealInitialASeal",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "fullTerminalInventoryCannotOmitTheRealInitialASeal()"
+      ]
+    },
+    {
+      "annotation_line": 72,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "extraAObjectVersionInSecondFullInventoryPassCannotBeFilteredAway",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "extraAObjectVersionInSecondFullInventoryPassCannotBeFilteredAway()"
+      ]
+    },
+    {
+      "annotation_line": 73,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "initialAActualRetentionIsPreservedExactlyNotMerelyLongEnough",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "initialAActualRetentionIsPreservedExactlyNotMerelyLongEnough()"
+      ]
+    },
+    {
+      "annotation_line": 74,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "initialANativeLastModifiedIsBoundToItsOriginalVerificationBytes",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "initialANativeLastModifiedIsBoundToItsOriginalVerificationBytes()"
+      ]
+    },
+    {
+      "annotation_line": 75,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible()"
+      ]
+    },
+    {
+      "annotation_line": 76,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineThreeSealDeclarationKeepsCompleteContextualHistoryAndTheTwoSealPreterminalRoot",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "genuineThreeSealDeclarationKeepsCompleteContextualHistoryAndTheTwoSealPreterminalRoot()"
+      ]
+    },
+    {
+      "annotation_line": 77,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "new_E_bounded_A_history_and_native_catalog_security",
+      "expected_invocations_from_annotation": 1,
+      "method": "schema4RejectsOmittedReorderedRepeatedWrongWriterAndExtendedActiveSealDeclarations",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+      "xml_names": [
+        "schema4RejectsOmittedReorderedRepeatedWrongWriterAndExtendedActiveSealDeclarations()"
+      ]
+    },
+    {
+      "annotation_line": 49,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT",
+      "cohort": "reviewed_global_precursor_real_A_history_D_foundation",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+      "xml_names": [
+        "genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet()"
+      ]
+    },
+    {
+      "annotation_line": 1577,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT",
+      "cohort": "corrected_exact_sealer_audit_oracle",
+      "expected_invocations_from_annotation": 1,
+      "method": "testRunSealingBarrierAndPaidAuditReplay",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "989e92febd66d4eff1ac9f414dbfe5e846a6e5d76a3c6d05fabc1906afb02712",
+      "xml_names": [
+        "testRunSealingBarrierAndPaidAuditReplay()"
+      ]
+    },
+    {
+      "annotation_line": 10,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test",
+      "cohort": "B_fixed_phase_classification",
+      "expected_invocations_from_annotation": 1,
+      "method": "every admitted phase has an explicit maintenance lock classification",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "c89d9628fc120cbea9da49e7c52666ac21e5c22344fa8e886eae78a9fe043db7",
+      "xml_names": [
+        "every admitted phase has an explicit maintenance lock classification()"
+      ]
+    },
+    {
+      "annotation_line": 28,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT",
+      "cohort": "actual28_enrolled_sealer_prerequisite",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualProtectedIdentityEnrollmentRecordsRetiredDispositionAndPublishesItsChunkBeforeTerminalSeal",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalEpochSealIT.kt",
+      "source_head": "8d31aee4a6decfb83cc7c67ddb09c8021d9dc769",
+      "source_sha256": "115b05c753abcdfe1eb1e2c39d041b25999c08fa61432e633d389dc2cf5bf19d",
+      "xml_names": [
+        "actualProtectedIdentityEnrollmentRecordsRetiredDispositionAndPublishesItsChunkBeforeTerminalSeal()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 82,
+  "expected_total": 82,
+  "selection_basis": {
+    "cohorts": {
+      "B_fixed_phase_classification": 1,
+      "E_foundation_before_deeper_fault_matrix": 3,
+      "actual28_enrolled_sealer_prerequisite": 1,
+      "actual28_real_foreign_HTTP_manager_fixture": 1,
+      "actual28_real_foreign_manager_fixture": 1,
+      "actual28_unused_sealer_prerequisite": 1,
+      "affected_existing_V3_closed_chain_regression": 1,
+      "changed_fixture_removes_wrong_global_gate_masking_HTTP_refusal": 1,
+      "changed_fixture_removes_wrong_global_gate_masking_scoped_checkpoint_refusal": 1,
+      "corrected_exact_sealer_audit_oracle": 1,
+      "new_A_genuine_initial_deletion_security_persistence_native_contract": 22,
+      "new_E_bounded_A_history_and_native_catalog_security": 14,
+      "new_E_replay_no_write_or_double_charge_contract": 1,
+      "new_E_signed_envelope_and_independent_reader_security_bounds": 1,
+      "new_genuine_four_family_queue_and_unchanged_security_contract": 24,
+      "new_registered_owner_read_startup": 1,
+      "new_startup_cold": 1,
+      "new_startup_lifecycle": 2,
+      "reviewed_global_precursor_direct_HTTP": 1,
+      "reviewed_global_precursor_foundation": 1,
+      "reviewed_global_precursor_real_A_history_D_foundation": 1,
+      "reviewed_global_precursor_real_startup": 1
+    },
+    "previous_run": "35569894597",
+    "scope": "Actual41 MAIN compiled but TEST compilation failed before any tests. Reviewed counter-classifier correction plus A initial deletion AUTH/PUB/VERIFY, B genuine queue families, E bounded full history and C registered replies if review completed. Previous unexecuted cohort retained; new tests protect changed security/persistence/native contracts. Deeper outstanding selectors remain explicitly required. No successful unchanged full suite replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "815a0782d50bd9109dd365d55b7a55e07b46d9dc4287d00604989e8252ddf21a",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/PersistenceComplaintMaintenanceFenceV1Test.kt": "c89d9628fc120cbea9da49e7c52666ac21e5c22344fa8e886eae78a9fe043db7",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestOrdinaryDrainConnectedIT.kt": "b6bfdc9cbc64cf1e36d16c2e57a66e1da7f47f7048818a47cc002b006d5ca138",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunPurgePublicationIT.kt": "ac76fd8821aabe42ed6e910d8ee0d99a3b760633bd035cfb8c09a70037d7b19c",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalEpochSealIT.kt": "115b05c753abcdfe1eb1e2c39d041b25999c08fa61432e633d389dc2cf5bf19d",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/VersionBoundPersistenceConnectedIT.kt": "989e92febd66d4eff1ac9f414dbfe5e846a6e5d76a3c6d05fabc1906afb02712",
+    "src/test/kotlin/me/manga/kira/backend/complaint/catalog/OfflineCatalogTestRunActivationV3Test.kt": "b2fefbc3518c8ae466c8b6f49b68b9267219b01d1b2739954b7b69cac039bcdb",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/admission/TestInitialCheckpointDeletionColdInputsV1Test.kt": "e5d51f9b0799fc5d23967dedafea7ae25c200fee420da85051e2416b2faba450",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueColdInputsV1Test.kt": "92487ce0921abfd351b0513846d70286ec6020aa895ff089cf25223624f03d47",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestActiveOwnerDeleteQueueIT.kt": "e07ad028600c0b2805a4e5f58f6192c6a7f98bf07986258799234445d1309b87",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointCreateIT.kt": "d5c1341264ccdde831235f2f4c9edde9633bf3357ee1ffb78bf194d56ea6e9bc",
+    "src/test/kotlin/me/manga/kira/backend/complaint/infrastructure/reconciliation/TestRegisteredInitialCheckpointDeletionIT.kt": "47bc0aa3a456e7c63f017020dcaed5b67cf621bd9361f36394d2c73440972d98",
+    "src/test/kotlin/me/manga/kira/backend/security/ComplaintRegisteredStartupAdmissionTest.kt": "c37d48daf1c263730651966c2446206b559a3def6abd2f16eca8577df0454cd8"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 19,
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunPurgePublicationIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT": 1,
+    "me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunActivationV3Test": 1,
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointDeletionColdInputsV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueColdInputsV1Test": 2,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT": 22,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT": 10,
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT": 20,
+    "me.manga.kira.backend.security.ComplaintRegisteredStartupAdmissionTest": 1
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueColdInputsV1Test.optionalBornWithQueueChangesOnlyItsFullDFieldAndRemainsEntirelyCold",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueColdInputsV1Test.missingDependenciesMalformedRecipesAndAliasedPublicationCredentialsRefuseBeforeSecrets",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.genuineRegisteredFamiliesApplyTheOriginalNativePutAndAckOnlyAfterCommittedReleasedApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.aFreshAtLeastOnceRedeliveryReauthenticatesEverythingWithoutRechargingOrSecondAudit",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.sameKeyDifferentOpaqueVersionIsNotBorrowedTerminalAliasAuthority",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.creationClosureDoesNotBlockGenuinePrivacyApplyOrSpendAnyCreationReserve",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.creationCeilingDoesNotBlockGenuinePrivacyApplyWithUnpromisedHardHeadroom",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.oneByteShortOfTheObservationHardCapRefusesBeforeNativeApplyOrAck",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.adminRecoveryUsesTheOriginalConsumedGrantNotLaterRoleCredentialOrFreshStepUpAuthority",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.allPreparedMissingBookkeepingOrMissingPairRemainExplicitUnackedRecoveryGaps",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.aSupportedDlqDeliveryWarnsWithValueFreeTextButCreatesNoDlqOrQueueHealthAuthority",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.twoEmptyOneSecondLongPollRequestsSettleOnlyTheOneOrdinaryObservation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.malformedUnknownAndMultiRecordNotificationsRemainUnackedWithoutJournalDispatch",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.recoveryRoleIsAuthenticatedBeforeAnyQueueOrJournalRequest",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.badMetadataAndBadAeadTagOnTheOriginalPutCannotBecomeApplyOrAck",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.fullDesiredDatabaseRestoreCatalogAndExactLeaseDriftDuringReceiveRefuseBeforeApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.bindingIsRecheckedUnderApplyAndAgainAfterActualApplyReleaseBeforeAck",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.cancelledHeldNativeReceiveKeepsOriginalCustodyUntilLateReturnAndNeverAcks",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.unknownApplyCommitAndUnprovenReleaseNeverAuthorizeAckEvenWhenRowsAreVisible",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.nativeCancellationAndInterruptedIoSurviveSdkWrappingWithoutReleasingTheOriginal",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.beforeOrAfterApplyCommitFailureKeepsTheDeliveryUnackedWithoutInventingAnOutcome",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.unknownDeleteMessageResponseKeepsAckCountZeroDespiteAlreadyCommittedApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.priorSafeApplyAndAckRemainTruthfulWhenFinalSettlementCommitIsUnknown",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestActiveOwnerDeleteQueueIT.nativeCloseFailureRetainsLaterErrorOverEarlierInvalidReadbackAndCannotBeCalledReleased",
+    "me.manga.kira.backend.security.ComplaintRegisteredStartupAdmissionTest.startup stop rejects new contexts but cannot assert held original requests released",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.explicitLoopbackStartupWaitsForHeldOriginalIngressBeforeClosingJpaAndLeavesBorrowedPoolsOpen",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.originalAssemblyActuallyClosesItsRetainedLoopbackServletAndJpaBeforeNativeTeardown",
+    "me.manga.kira.backend.common.infrastructure.persistence.VersionBoundPersistenceConnectedIT.testRunSealingBarrierAndPaidAuditReplay",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunPurgePublicationIT.genuineUnusedRunCarriesEmptyRootAndZeroChunksThenPaysFreezesAuthenticatesAndReplaysExactPurge",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalEpochSealIT.actualProtectedIdentityEnrollmentRecordsRetiredDispositionAndPublishesItsChunkBeforeTerminalSeal",
+    "me.manga.kira.backend.common.infrastructure.persistence.PersistenceComplaintMaintenanceFenceV1Test.every admitted phase has an explicit maintenance lock classification",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.factoryRejectsDesiredOnlyForeignTemplateOwnerIngressReplyAndClosedRegistration",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.registeredHttpSubsetDeniesUnimplementedAliasesBeforeBodyAndRejectsUnboundResources",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unusedCompletedDPublishesActualSchema4AndSpendsOnlyCatalogPlusOneAuditToPurging",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.sourceOnlyRemainsPreparedThenFreshExactResumerAcceptsWithoutSecondSignPutOrPayment",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.closedSchema4ParserAndFullChainRejectMalformedHistoryLinkAndSuffixSubstitution",
+    "me.manga.kira.backend.complaint.catalog.OfflineCatalogTestRunActivationV3Test.rejectsMalformedNoncanonicalAndMixedSchemaDocumentsWithoutWideningOldReaders",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.alreadyProjectedFreshReplayIsReadOnlyIncludingGlobalXminAndEveryCustodyFile",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.unsignedSigned131072AndIndependentReaderBoundsAreEnforcedWithoutTruncatingInventory",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.genuineRegisteredCheckpointAllowsRepeatedCountedCreateAndReceiptReplayBeforeClosedControlAndQuotas",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.registeredHttpSubsetUsesOneIngressForBootstrapIdentityCreateAndCurrentReceiptStatus",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.explicitLoopbackStartupServesRegisteredIdentityCountedCreateAndReceiptsWithOriginalJpa",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.nativeVerifiedSealAndRegistrationAloneCannotReplaceTheCurrentCheckpoint",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.registeredHttpSubsetCannotCreateBeforeCheckpointAndBootstrapOnlyNeverExpands",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestOrdinaryDrainConnectedIT.genuineActiveSealHistoryReachesDrainManifestPurgeTerminalAndFullQuiescentSealSet",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointCreateIT.explicitLoopbackStartupReadsOnlyOwnCreatedItemsAndScopedNoticesWithBoundCursorAndNoReadMutation",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.genuineOwnerDeleteFirstEpochTwoPrimaryPublishesVerifiesAndReplaysWithoutApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.genuineOwnerDeleteAllFirstEpochTwoPrimaryPublishesVerifiesAndReplaysWithoutApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.genuineAdminDeleteUsesRealScopedGrantAndFirstEpochTwoPrimaryWithoutApply",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.genuineAdminBatchUsesTwoEnrolledOwnersTwoCreatesAndOneCountedFirstPrimary",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualPreparedOnlyStopKeepsReceiptPublicationReservationWithoutProviderOrVerify",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.exactRegisteredResourcesIngressThreadReservedLaneAndOpenAuthorityAreMandatory",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.creationOnlyClosureStillAllowsPrivacyWhileMaintenanceScanAndCurrentIdentityRefuse",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.checkpointColumnDocumentAndNativeSealDriftCannotIssueTheFirstPrimary",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualNativeLaneExhaustionPrecedesAuthAndGenuinePrimaryRejectsSecondAndMixedClaims",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.incorrectInstallationSecretCannotReachAllAuthorizationOrProviders",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualIssuedGrantScopeExpiryRevocationAndCurrentAdminAreRechecked",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.realReceiptLockLoserReplaysWinnerBeforeFreshnessWithoutASecondCharge",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.realReceiptLockLoserStillRechecksTheCurrentActorAfterWaiting",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualCredentialRowWaitCannotOutrunTheCurrentCredentialVersion",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualCounterAndRunWaitsCannotUseTheEarlierRegisteredRunIdentity",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualTargetRowWaitObservesChangedEtagAndChargesOnlyARejectionReceipt",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualScopedGrantWaitCannotConsumeAProofExpiredBeforeItsConsumeStatement",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.bornWithShortCheckpointFreshnessExpiresOnActualDatabaseTimeInsideTheSameOriginal",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.actualNativeCloseMustReturnBeforeReadbackAndShortSqlVerifyCanEscape",
+    "me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionIT.rollbackUnknownDriverCommitAndCommittedTailNeverReleaseTheFailedOriginalWork",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointDeletionColdInputsV1Test.optionalDeletionMemberPinsBothExistingPoolsAndRefusesLowerGraphsWithoutOpeningEither",
+    "me.manga.kira.backend.complaint.infrastructure.admission.TestInitialCheckpointDeletionColdInputsV1Test.malformedDeletionRecipeAndMissingCheckpointOrOrdinaryRecipeRefuseBeforeSecretsOrProviders",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineInitialEmptyAAndRegisteredCreateReachSchema4WithAllThreeSealsAndNoSecondACharge",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.initialAHistoryPreparedFreshContinuationRetainsItsV26BytesAndNeverRepeatsSignPutOrPayment",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.initialAHistoryProjectedFreshReplayIsReadOnlyIncludingV26XminAndEveryCustodyFile",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.declaredThreeSealCountCannotReplaceAMissingActualV26Row",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.actualAHistoryMustKeepItsDatabaseAndFullDIdentity",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.identicalABytesWithDifferentXminCannotReplaceDsRetainedPhysicalPreimage",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.freshPreparedContinuationRejectsRewrittenAAgainstOriginalCustodyBeforeAuthority",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.fullTerminalInventoryCannotOmitTheRealInitialASeal",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.extraAObjectVersionInSecondFullInventoryPassCannotBeFilteredAway",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.initialAActualRetentionIsPreservedExactlyNotMerelyLongEnough",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.initialANativeLastModifiedIsBoundToItsOriginalVerificationBytes",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.oldNoANoBTwoSealPreconditionAndCustodyFramingStayByteCompatible",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineThreeSealDeclarationKeepsCompleteContextualHistoryAndTheTwoSealPreterminalRoot",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.schema4RejectsOmittedReorderedRepeatedWrongWriterAndExtendedActiveSealDeclarations"
+  ]
+}
