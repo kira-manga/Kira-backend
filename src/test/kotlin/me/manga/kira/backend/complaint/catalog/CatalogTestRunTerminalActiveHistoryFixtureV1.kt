@@ -189,7 +189,8 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
         val queueOpenings = queueClients(); val queueSqlCalls = b?.calls?.size
         val sealer = a.checkpoint.sealer
         assertSame(a.runtime, sealer.runtime)
-        TestRunPurgeFixtureV1(sealer.p, a.runtime, a.registration, a.audit, sealer.native, inputs).use { f ->
+        val primaryBeforeChildClose = TestRunPurgeFixtureV1(sealer.p, a.runtime, a.registration, a.audit,
+            sealer.native, inputs, borrowedPrimaryOwner = a).use { f ->
             val history = terminalCatalogActiveRows(f)
             val pending = if (completeHistoricalPrimary) null else terminalCatalogAllPrimaryRows(f.observer, f.scope).filterKeys {
                 it in setOf("installation_deletion_receipts", "complaint_journal_publications")
@@ -205,7 +206,10 @@ internal fun withSealedNonemptyActiveHistoryTerminalRun(tls: VersionBoundPersist
                 "Real sealing preserves the original pending N/P/proof and their xmin.") }
             action(f, a, b, inputs, historical)
             assertEquals(history, terminalCatalogActiveRows(f))
+            a.image()
         }
+        assertEquals(primaryBeforeChildClose, a.image(),
+            "Child teardown preserves the outer A owner's N/L/P and domain rows, including xmin, until its own ordered cleanup.")
         assertArrayEquals(originalBytes, record.stored.bytes); originalBytes.fill(0)
         assertEquals(producerCounts, a.native.counts(), "D/E never re-encrypt, PUT or reopen A's producer graph.")
         assertEquals(queueOrder, b?.raw?.order); assertEquals(acknowledgements, b?.raw?.ackRequests)
@@ -317,6 +321,8 @@ internal object CatalogRetainedDPrimaryCasesV1 {
         withSealedNonemptyActiveHistoryTerminalRun(tls, TerminalCatalogQueueHistoryV1.ABSENT,
             ComplaintJournalDeletionKindV1.OWNER_DELETE, verifyPublication = !prepared) { f, a, _, inputs, _ ->
             val before = refusalRows(f.observer, f.scope)
+            val sealOrderBefore = f.sealHttp.order.toList()
+            assertTrue(sealOrderBefore.isNotEmpty(), "The shared native transport already records the genuine A predecessor.")
             val record = checkNotNull(a.record)
             var controlBeforeFault: String? = null
             var injected = 0
@@ -371,13 +377,15 @@ internal object CatalogRetainedDPrimaryCasesV1 {
                         "The actual refused transaction rolls back proof/primary/domain/audit/counters/run/scan rows and xmin; OPEN pays nothing.")
                     assertEquals(checkNotNull(controlBeforeFault), control(f.observer, f.scope), "The negative comparison drift rolls back too; no lease reset is manufactured.")
                     if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
-                    inventory.assertUnused(); assertTrue(f.sealHttp.order.isEmpty())
+                    inventory.assertUnused(); assertEquals(sealOrderBefore, f.sealHttp.order,
+                        "The refused D cannot append native work to the retained A/first-cut transport.")
                     assertTrue(f.inventoryRequests.isEmpty() && f.inventoryKeys.requests.isEmpty())
                     val calls = probe.observedCallCounts()
                     assertThrows<TestOrdinaryDrainExceptionV1> {
                         drain.drain(approval, raw, AwsJournalKmsFixture.CREDENTIALS, AwsJournalKmsFixture.CREDENTIALS)
                     }
                     assertEquals(calls, probe.observedCallCounts()); inventory.assertUnused()
+                    assertEquals(sealOrderBefore, f.sealHttp.order, "The consumed original cannot append native work either.")
                     if (prepared) primary.assertPrimaryReadback() else primary.assertUnused()
                     probe.assertRetainedPrimarySequence(expected) // Consumed original adds no phase/SQL/native attempt.
                     a.assertReleased(); f.assertReleased()

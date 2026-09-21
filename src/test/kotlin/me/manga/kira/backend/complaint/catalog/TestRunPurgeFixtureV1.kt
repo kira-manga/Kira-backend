@@ -12,6 +12,7 @@ import me.manga.kira.backend.complaint.domain.terminal.TestOrdinaryDenialStateme
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalEvidenceDigestV1
 import me.manga.kira.backend.complaint.domain.terminal.TestTerminalPolicyRefV1
 import me.manga.kira.backend.complaint.infrastructure.admission.ComplaintTestNamespaceRegistrationV1
+import me.manga.kira.backend.complaint.infrastructure.reconciliation.TestRegisteredInitialCheckpointDeletionFixtureV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationResultV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestPublicationV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunInstallationManifestResultV1
@@ -126,6 +127,7 @@ internal class TestRunPurgeFixtureV1(
     private val audit: AuditService,
     val sealHttp: TestOrdinarySealHttpFixtureV1,
     private val inputs: TestOrdinaryDrainFixtureInputsV1,
+    private val borrowedPrimaryOwner: TestRegisteredInitialCheckpointDeletionFixtureV1? = null,
 ) : AutoCloseable {
     val observer = p.f.rows.observer
     val scope = registration.process.consumers.journalConfiguration.scope.id
@@ -152,6 +154,11 @@ internal class TestRunPurgeFixtureV1(
 
     init {
         requireConnectionFree()
+        borrowedPrimaryOwner?.let { original ->
+            assertSame(p, original.checkpoint.sealer.p)
+            assertSame(runtime, original.runtime); assertSame(registration, original.registration)
+            assertSame(sealHttp, original.checkpoint.sealer.native)
+        }
         templates.forEach { (executor, field, previous) -> assertSame(coordinator.dataSource, previous.dataSource); field.set(executor, coordinator) }
         sealHttp.boundary = { beforeBoundary(); assertDatabaseReleased(); coordinator.assertReleased(); deletion.assertReleased() }
         sealHttp.nativeBoundary = { beforeNative(); assertDatabaseReleased() }
@@ -279,8 +286,12 @@ internal class TestRunPurgeFixtureV1(
                     jdbc.execute("ALTER TABLE complaint_test_terminal_intents DISABLE TRIGGER complaint_test_terminal_immutable")
                     jdbc.update("DELETE FROM complaint_test_terminal_intents WHERE data_scope_id = ? AND test_only", scope)
                     jdbc.execute("ALTER TABLE complaint_test_terminal_intents ENABLE TRIGGER complaint_test_terminal_immutable")
-                    jdbc.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ? AND test_only", scope)
-                    jdbc.update("DELETE FROM complaint_journal_publications WHERE data_scope_id = ? AND test_only", scope)
+                    // A's surrounding original fixture owns its retained N/L/P and removes N before P.
+                    // This borrowed child removes only its scan/terminal rows, never A's still-referenced P.
+                    if (borrowedPrimaryOwner == null) {
+                        jdbc.update("DELETE FROM complaint_recovery_capacity_reservations WHERE data_scope_id = ? AND test_only", scope)
+                        jdbc.update("DELETE FROM complaint_journal_publications WHERE data_scope_id = ? AND test_only", scope)
+                    }
                     connection.commit()
                 } catch (problem: Throwable) { connection.rollback(); throw problem }
             }
