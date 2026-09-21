@@ -8,10 +8,21 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.condition.EnabledOnOs
+import org.junit.jupiter.api.condition.OS
 import org.junit.jupiter.api.parallel.ResourceLock
+import java.nio.channels.ClosedByInterruptException
+import java.nio.channels.FileChannel
+import java.nio.file.Files
+import java.nio.file.LinkOption.NOFOLLOW_LINKS
 import java.nio.file.Path
+import java.nio.file.StandardOpenOption.READ
+import java.nio.file.StandardOpenOption.WRITE
+import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.PosixFilePermissions
+import java.security.MessageDigest
 
-/** Pure input/record guards only. No fake command runner, imported=true input or simulated native PASS. */
+/** Input/record and local-file guards only. No command runner, imported=true input or simulated native PASS. */
 @ResourceLock("logical-backup-capture")
 class LogicalBackupCaptureRecordsV1Test {
     @Test
@@ -106,6 +117,98 @@ class LogicalBackupCaptureRecordsV1Test {
         assertFalse(original.toString().contains("credential"))
         assertFalse(input().toString().contains("must-not-run"))
         assertTrue(LogicalBackupCaptureResultV1::class.java.permittedSubclasses.none { it.simpleName.contains("Accepted") })
+    }
+
+    @Test
+    @EnabledOnOs(OS.LINUX)
+    fun `interrupted credential write creates a file but cannot refund cleanup without retained facts`() {
+        val fixtures = ArrayList<Pair<Path, Any>>()
+        var primaryFailure: Throwable? = null
+        val caller = Thread.currentThread()
+        val interruptedOnEntry = Thread.interrupted()
+        try {
+            fun own(path: Path): Path {
+                val key = Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey()
+                fixtures.add(path to checkNotNull(key))
+                return path
+            }
+            fun mode(value: String) = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString(value))
+
+            // Default /tmp ancestry is deliberately forbidden. Refuse an unsafe checkout, never relax custody.
+            val repository = Path.of("").toAbsolutePath().normalize()
+            LogicalCaptureFilesV1.checkedPath(repository, directory = true)
+            val root = own(Files.createTempDirectory(repository, "kira-credential-write-", mode("rwx------")))
+            val stage = own(Files.createDirectory(root.resolve("stage"), mode("rwx------")))
+            val passFile = own(Files.createFile(root.resolve("input.pgpass"), mode("rw-------")))
+            Files.write(passFile, "127.0.0.1:5432:fixture:fixture:unused-synthetic-value\n".toByteArray(Charsets.US_ASCII), WRITE)
+            val writerClass = FileChannel.open(passFile, READ, NOFOLLOW_LINKS).use { it.javaClass.name }
+
+            // Hashed bytes for image preflight only, NOT a simulated executable or native success.
+            val imageBytes = byteArrayOf(0)
+            val imageFile = own(Files.createFile(root.resolve("unexecuted.image"), mode("rwx------")))
+            Files.write(imageFile, imageBytes, WRITE)
+            val imageHash = with(LogicalCaptureFilesV1) { MessageDigest.getInstance("SHA-256").digest(imageBytes).hex() }
+            val image = LogicalCaptureImageV1(imageFile, imageHash)
+            val trustFile = root.resolve("absent-trust.pem")
+            val selected = LocalLogicalBackupInputV1(5432, "fixture", "fixture", passFile, trustFile, "2".repeat(64),
+                root.resolve("absent-media.tar.gz"), "3".repeat(64), root,
+                Pg176CaptureToolsV1(image, image, image, image, repository.resolve("scripts/db/backup_bundle.py")))
+            // Even a missed interrupt must fail credential preparation before any version/process dispatch.
+            assertTrue(Files.notExists(trustFile, NOFOLLOW_LINKS))
+
+            var credentialReadSamples = 0
+            val clock = PersistenceNanoClock {
+                // Count only read()'s two samples, not image/helper hash loops. The second follows stream close.
+                if (caller.stackTrace.any { it.className == LogicalCaptureFilesV1::class.java.name && it.methodName == "read" }) {
+                    if (++credentialReadSamples == 2) caller.interrupt()
+                }
+                0L
+            }
+            val dump = Pg17LogicalBackupDumpV1(selected, stage, "1".repeat(32),
+                PersistenceTimeBudget.start(LogicalCaptureLimitsV1.TOTAL_MILLIS, clock))
+            val target = stage.resolve(".pgpass")
+            assertTrue(Files.notExists(target, NOFOLLOW_LINKS))
+            val failure = runCatching { dump.prepare() }.exceptionOrNull()
+            val interruptedAfterWrite = Thread.interrupted() // Cleanup refusal must not be an interrupt refusal.
+            // Fixture-only teardown identity; these freshly observed facts never enter the production owner.
+            if (Files.exists(target, NOFOLLOW_LINKS)) own(target)
+            assertEquals(ClosedByInterruptException::class.java, failure?.javaClass)
+            assertEquals(2, credentialReadSamples)
+            assertTrue(interruptedAfterWrite)
+            for ((type, method) in listOf(writerClass to "write", LogicalCaptureFilesV1::class.java.name to "write",
+                Pg17LogicalBackupDumpV1::class.java.name to "prepareCredentials")) {
+                assertTrue(checkNotNull(failure).stackTrace.any { it.className == type && it.methodName == method }, "$type.$method failure point")
+            }
+            val created = LogicalCaptureFilesV1.checkedPath(target, requirePrivate = true)
+            assertEquals(0L, created.getValue("size")) // CREATE_NEW happened; no credential bytes were written.
+            assertTrue(dump.stop(PersistenceTimeBudget.start(LogicalCaptureLimitsV1.CLEANUP_MILLIS)))
+            assertFalse(caller.isInterrupted)
+            val cleanup = assertThrows(LogicalCaptureRefusalV1::class.java) { dump.removePrivateAuthentication() }
+            assertEquals(LogicalCaptureFailureV1.CUSTODY, cleanup.code)
+            assertEquals(created, LogicalCaptureFilesV1.checkedPath(target, requirePrivate = true))
+            // Lower credential custody only: this does not qualify fsync faults or top-level capture-slot retention.
+        } catch (failure: Throwable) {
+            primaryFailure = failure
+            throw failure
+        } finally {
+            Thread.interrupted()
+            try {
+                var problem = primaryFailure
+                for ((path, key) in fixtures.asReversed()) {
+                    try {
+                        check(Files.readAttributes(path, BasicFileAttributes::class.java, NOFOLLOW_LINKS).fileKey() == key) {
+                            "Refuse deletion of a changed test fixture"
+                        }
+                        Files.delete(path) // Exact recorded fixtures only; never recursive or ambient-path cleanup.
+                    } catch (cleanup: Throwable) {
+                        if (problem == null) problem = cleanup else problem.addSuppressed(cleanup)
+                    }
+                }
+                if (primaryFailure == null && problem != null) throw problem
+            } finally {
+                if (interruptedOnEntry) caller.interrupt()
+            }
+        }
     }
 
     private fun exported(token: String = "00000004-000000AA-1", xmin: String = "4") =
