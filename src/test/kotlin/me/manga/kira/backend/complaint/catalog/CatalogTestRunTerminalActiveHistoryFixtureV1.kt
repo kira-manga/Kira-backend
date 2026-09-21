@@ -137,7 +137,17 @@ internal fun withCompletedRecurrentTerminalHistory(tls: VersionBoundPersistenceC
                 val physical = terminalCatalogActiveRows(r.observer, r.scope)
                 val before = r.counters(); val puts = r.first.native.requests.count { it.kind == "PUT" }
                 try {
-                    val completed = assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, r.checkpoint())
+                    val previousOriginal = r.original
+                    val completed = try { assertInstanceOf(TestActiveRecurrentV1.Completed::class.java, r.checkpoint()) }
+                    catch (problem: Throwable) {
+                        runCatching {
+                            val observed = r.original?.takeIf { it !== previousOriginal }
+                            val lastSqlStep = if (observed == null) "NONE" else r.probe.calls.lastOrNull()?.step?.name ?: "NONE"
+                            System.err.println("TEST_CATALOG_RECURRENT_HISTORY_UNEXPECTED stage=CHECKPOINT ordinal=$ordinal " +
+                                "step=${observed?.step?.name ?: "BEGIN_NOT_RETURNED"} lastSqlStep=$lastSqlStep")
+                        }
+                        throw problem
+                    }
                     r.assertSuccessful() // Before D only; it requires actual SUCCESS and no V21 rows/staging/lease.
                     assertEquals(r.scope, completed.scope); assertEquals(ordinal.toLong(), completed.cutoffEpoch)
                     assertEquals(ordinal + 1L, r.control()["publication_epoch"])

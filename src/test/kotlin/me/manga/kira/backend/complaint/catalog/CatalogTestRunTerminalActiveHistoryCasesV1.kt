@@ -270,20 +270,36 @@ internal object CatalogTestRunTerminalActiveHistoryCasesV1 {
     }
 
     /** A distinct actual fifteenth ACTIVE attempt fails; it is never repaired/reused as D input. */
-    fun recurrentFifteenthActiveRefuses(tls: VersionBoundPersistenceConnectedFixture) = withCompletedRecurrentTerminalHistory(tls, 14) { r, _ ->
-        val before = terminalCatalogActiveRows(r.observer, r.scope); val domain = r.domainImage(); val counters = r.counters()
-        val puts = r.first.native.requests.count { it.kind == "PUT" }; val ordinary = r.raw.order.toList()
-        val original = r.begin()
-        assertThrows<TestActiveRecurrentExceptionV1> { r.checkpoint(original) }
-        r.assertReleased()
-        assertEquals(before, terminalCatalogActiveRows(r.observer, r.scope)); assertEquals(domain, r.domainImage()); assertEquals(counters, r.counters())
-        assertEquals(14, r.history().size); assertEquals(13, r.intents().size)
-        assertEquals(puts, r.first.native.requests.count { it.kind == "PUT" }); assertEquals(ordinary, r.raw.order)
-        assertTrue(r.probe.calls.none { it.step === TestActiveRecurrentStepV1.REQUEST }, "The bound refuses before a fifteenth request, charge or capture.")
-        assertEquals(0L, r.queue.count("complaint_test_terminal_intents"))
-        val calls = r.probe.calls.size
-        assertThrows<TestActiveRecurrentExceptionV1> { r.checkpoint(original) }
-        assertEquals(calls, r.probe.calls.size)
+    fun recurrentFifteenthActiveRefuses(tls: VersionBoundPersistenceConnectedFixture) {
+        var diagnosticStage = "HISTORY_SETUP"
+        try {
+            withCompletedRecurrentTerminalHistory(tls, 14) { r, _ ->
+                diagnosticStage = "BASELINE"
+                val before = terminalCatalogActiveRows(r.observer, r.scope); val domain = r.domainImage(); val counters = r.counters()
+                val puts = r.first.native.requests.count { it.kind == "PUT" }; val ordinary = r.raw.order.toList()
+                diagnosticStage = "BEGIN_FIFTEENTH"
+                val original = r.begin()
+                diagnosticStage = "FIRST_REFUSAL"
+                assertThrows<TestActiveRecurrentExceptionV1> { r.checkpoint(original) }
+                diagnosticStage = "RELEASE"
+                r.assertReleased()
+                diagnosticStage = "PRESERVED_STATE"
+                assertEquals(before, terminalCatalogActiveRows(r.observer, r.scope)); assertEquals(domain, r.domainImage()); assertEquals(counters, r.counters())
+                assertEquals(14, r.history().size); assertEquals(13, r.intents().size)
+                assertEquals(puts, r.first.native.requests.count { it.kind == "PUT" }); assertEquals(ordinary, r.raw.order)
+                assertTrue(r.probe.calls.none { it.step === TestActiveRecurrentStepV1.REQUEST }, "The bound refuses before a fifteenth request, charge or capture.")
+                assertEquals(0L, r.queue.count("complaint_test_terminal_intents"))
+                val calls = r.probe.calls.size
+                diagnosticStage = "SAME_ORIGINAL_REFUSAL"
+                assertThrows<TestActiveRecurrentExceptionV1> { r.checkpoint(original) }
+                diagnosticStage = "SAME_ORIGINAL_NO_SQL"
+                assertEquals(calls, r.probe.calls.size)
+                diagnosticStage = "FIXTURE_TEARDOWN"
+            }
+        } catch (problem: Throwable) {
+            runCatching { System.err.println("TEST_CATALOG_FIFTEENTH_ACTIVE_UNEXPECTED stage=$diagnosticStage") }
+            throw problem
+        }
     }
 
     fun recurrentRowRefusal(tls: VersionBoundPersistenceConnectedFixture, fault: TerminalCatalogRecurrentRowFaultV1) =
