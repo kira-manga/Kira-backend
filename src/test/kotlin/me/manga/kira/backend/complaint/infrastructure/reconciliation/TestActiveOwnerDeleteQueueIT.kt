@@ -386,7 +386,7 @@ class TestActiveOwnerDeleteQueueIT {
                 } }
                 assertEquals("origin", f.observer.queryForObject("SHOW session_replication_role", String::class.java))
                 if (cut == "missing-credential") {
-                    assertEquals(1L, f.count("complaints")); assertEquals(0L, f.count("app_installations"))
+                    f.assertOriginalContentUnchanged(); assertEquals(0L, f.count("app_installations"))
                     assertEquals("DELETION_PENDING", f.observer.queryForObject("SELECT state FROM complaint_installation_ids WHERE id = ?", String::class.java, f.precursor.actor.id))
                 }
                 val rows = f.domainImage(); val before = f.counters(); val acknowledgements = f.raw.ackRequests.toList(); val original = f.begin()
@@ -667,15 +667,21 @@ class TestActiveOwnerDeleteQueueIT {
         val storage = f.observer.queryForMap("SELECT hard_limit, creation_limit, free_units, actual_units, recovery_reserved_units, test_reserved_units " +
             "FROM complaint_capacity_counters WHERE name = 'storage_bytes'")
         fun amount(name: String) = (storage.getValue(name) as Number).toLong()
+        val promised = amount("recovery_reserved_units") + amount("test_reserved_units")
         val target = when (input) {
             QueuePrivacyInput.CLOSED -> amount("actual_units")
-            QueuePrivacyInput.CEILING -> amount("creation_limit") + 1
+            QueuePrivacyInput.CEILING -> amount("creation_limit") - promised + 1
             QueuePrivacyInput.HARD_CAP -> amount("hard_limit") - amount("recovery_reserved_units") - amount("test_reserved_units") - 8191
             QueuePrivacyInput.BOOKKEEPING_HARD_CAP -> amount("hard_limit") - amount("recovery_reserved_units") - amount("test_reserved_units") - (8192 + 32768 - 1)
         }
         val injected = target - amount("actual_units")
         assertTrue(injected >= 0)
         val free = amount("free_units") - injected
+        assertEquals(amount("hard_limit"), free + target + promised)
+        if (input == QueuePrivacyInput.CEILING) {
+            assertTrue(injected > 0)
+            assertEquals(amount("creation_limit") + 1, target + promised, "Creation headroom counts actual + original Y + original T.")
+        }
         if (input == QueuePrivacyInput.HARD_CAP) assertEquals(8191L, free) else assertTrue(free >= 8192)
         if (input == QueuePrivacyInput.BOOKKEEPING_HARD_CAP) assertEquals(40959L, free)
         assertEquals(1, f.observer.update("UPDATE complaint_capacity_counters SET free_units = ?, actual_units = ? WHERE name = 'storage_bytes'", free, target))
@@ -685,6 +691,7 @@ class TestActiveOwnerDeleteQueueIT {
         }
         try {
             assertEquals(counters, invariantCounters()); assertEquals(controls, invariantControls()); assertEquals(domain, f.domainImage())
+            assertEquals(22, old.size)
             f.counters().forEach { (counter, current) ->
                 val prior = old.getValue(counter); val delta = if (counter == ComplaintCapacityCounter.STORAGE_BYTES) injected else 0
                 assertEquals(prior.free - delta, current.free); assertEquals(prior.actual + delta, current.actual)
@@ -799,7 +806,7 @@ class TestActiveOwnerDeleteQueueIT {
             "complaint_recovery_capacity_reservations", "complaint_installation_ids", "app_installations", "complaint_resource_ids").forEach {
             assertEquals(f.countsBeforeQueue.getValue(it), f.count(it), "No reconstruction/credential synthesis: $it")
         }
-        assertEquals(1L, f.count("complaint_deletion_journal_applied")); assertEquals(0L, f.count("complaints"))
+        assertEquals(1L, f.count("complaint_deletion_journal_applied")); f.assertOnlyAuthorizedReportsErased()
         val expectedAudits = f.auditsBeforeQueue.toMutableMap()
         fun add(action: String, count: Long) { expectedAudits[action] = expectedAudits.getOrDefault(action, 0L) + count }
         add("COMPLAINT_DELETED", targets)

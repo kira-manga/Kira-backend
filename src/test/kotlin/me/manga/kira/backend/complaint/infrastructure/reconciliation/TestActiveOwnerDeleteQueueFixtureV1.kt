@@ -33,6 +33,7 @@ import org.springframework.jdbc.datasource.SingleConnectionDataSource
 import org.springframework.jdbc.support.SQLExceptionSubclassTranslator
 import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.sql.Connection
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicReference
 
@@ -89,6 +90,7 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
     val deletionObservations = linkedMapOf<PersistencePhaseContext, StepUpPhaseObservation>()
     val calls = CopyOnWriteArrayList<TestActiveQueueSqlCallV1>()
     val countsBeforeQueue = TABLES.associateWith(::count)
+    private val contentBeforeQueue = contentImage()
     val auditsBeforeQueue = audits()
     val proofBeforeQueue = publicationProof()
     val receiptBeforeQueue = receiptIdentity()
@@ -153,6 +155,20 @@ internal class TestActiveOwnerDeleteQueueFixtureV1(
         String::class.java, scope) } + ("audit" to observer.queryForList(
         "SELECT to_jsonb(a)::text FROM audit_log a WHERE complaint_data_scope_id = ? ORDER BY id", String::class.java, scope))
     fun domainImage() = image() - "complaint_test_active_queue_observations"
+    private fun contentImage(): Map<UUID, String> = observer.query(
+        "SELECT id, jsonb_build_array(to_jsonb(c), c.xmin::text)::text AS image FROM complaints c WHERE data_scope_id = ? ORDER BY id",
+        { row, _ -> row.getObject("id", UUID::class.java) to row.getString("image") }, scope).toMap()
+    fun assertOriginalContentUnchanged() = assertEquals(contentBeforeQueue, contentImage())
+    fun assertOnlyAuthorizedReportsErased() {
+        val reports = precursor.reports.map { it.input.id }.sortedBy(UUID::toString)
+        assertEquals(reports, record.event.complaintIds())
+        assertTrue(reports.all(contentBeforeQueue::containsKey))
+        val after = contentImage()
+        assertTrue(reports.none(after::containsKey), "Every authorized report is absent.")
+        assertEquals(countsBeforeQueue.getValue("complaints") - reports.size, after.size.toLong())
+        assertEquals(contentBeforeQueue - reports.toSet(), after,
+            "All non-target content, including genuine SYSTEM NOTICE rows and xmin, is unchanged; no new content appears.")
+    }
     fun publicationProof(): String = checkNotNull(observer.queryForObject(
         "SELECT (to_jsonb(p) - ARRAY['state','applied_at'])::text FROM complaint_journal_publications p WHERE event_id = ? AND data_scope_id = ?",
         String::class.java, record.event.route.eventId, scope))

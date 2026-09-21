@@ -10,6 +10,7 @@ import me.manga.kira.backend.complaint.infrastructure.journal.TestOwnerDeleteJou
 import me.manga.kira.backend.complaint.journal.JournalPublisherObject
 import me.manga.kira.backend.complaint.journal.TestOwnerDeleteJournalPublisherFixture
 import me.manga.kira.backend.complaint.journal.journalPublisherRawAssertSigned
+import me.manga.kira.backend.security.ComplaintJournalDeletionKindV1
 import me.manga.kira.backend.security.TestOwnerDeleteJournalEventV1
 import me.manga.kira.backend.security.aws.AwsJournalKmsFixture
 import me.manga.kira.backend.security.aws.JournalKmsHttpReply
@@ -109,7 +110,25 @@ internal class TestRegisteredInitialCheckpointDeletionRawFixtureV1(
         val p = publisher
         val stored = p.objects.single { it.key == event.route.objectKey }
         val put = p.requests.single { it.kind == "PUT" }
-        assertSame(event, readback.event)
+        if (event.comparison.eventKind == ComplaintJournalDeletionKindV1.OWNER_DELETE_ALL) {
+            // ALL's private work is retained, but testEvent restores a fresh comparison value.
+            // Equality here never replaces the real lane/readback or original PUT custody below.
+            val observed = readback.event
+            assertTrue(event.belongsTo(p.routing)); assertTrue(observed.belongsTo(p.routing))
+            assertEquals(event.route, observed.route)
+            assertArrayEquals(event.canonicalBytes(), observed.canonicalBytes())
+            assertEquals(event.semanticSha256, observed.semanticSha256)
+            assertEquals(event.complaintIds(), observed.complaintIds())
+            val expectedTuple = event.tuple; val observedTuple = observed.tuple
+            assertEquals(expectedTuple.eventKind, observedTuple.eventKind)
+            assertEquals(expectedTuple.scope, observedTuple.scope)
+            assertEquals(expectedTuple.epoch, observedTuple.epoch)
+            assertEquals(expectedTuple.actorKind, observedTuple.actorKind)
+            assertEquals(expectedTuple.actorId, observedTuple.actorId)
+            assertEquals(expectedTuple.credentialVersion, observedTuple.credentialVersion)
+            assertEquals(expectedTuple.operationKey, observedTuple.operationKey)
+            assertEquals(expectedTuple.encodedFingerprint(), observedTuple.encodedFingerprint())
+        } else assertSame(event, readback.event)
         assertArrayEquals(put.body, stored.bytes)
         assertEquals(stored.version, readback.versionId)
         assertEquals(Sha256.hex(stored.bytes), readback.wireSha256)
