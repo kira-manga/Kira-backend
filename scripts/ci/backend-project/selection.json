@@ -1,0 +1,196 @@
+{
+  "declarations": [
+    {
+      "annotation_line": 97,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT",
+      "cohort": "FAILED56_N14_REVIEWED_DIAGNOSTIC_ONLY",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+      "xml_names": [
+        "genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax()"
+      ]
+    },
+    {
+      "annotation_line": 68,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "AFFECTED_N1_SUCCESS_AND_COLD_UNKNOWN_CONTINUATION",
+      "expected_invocations_from_annotation": 1,
+      "method": "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+      "xml_names": [
+        "actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund()"
+      ]
+    },
+    {
+      "annotation_line": 127,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT",
+      "cohort": "AFFECTED_N0_SUCCESS_AND_COLD_REPLAY",
+      "expected_invocations_from_annotation": 1,
+      "method": "purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+      "xml_names": [
+        "purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit()"
+      ]
+    },
+    {
+      "annotation_line": 95,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT",
+      "cohort": "AFFECTED_SHARED_V30_TO_V31_3_FINAL_GUARD",
+      "expected_invocations_from_annotation": 1,
+      "method": "v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "2c03b76e0171c1d40d4bea7d878001fc5c8d0628494209470228b74f7785c96a",
+      "xml_names": [
+        "v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix()"
+      ]
+    },
+    {
+      "annotation_line": 35,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "NEW_N2_ERASURE_REFUND_FK_AND_READ_ONLY_REPLAY",
+      "expected_invocations_from_annotation": 1,
+      "method": "genuineN2HistoryPurgesInFkOrderRefundsEveryPhysicalRowOnceAndReplaysReadOnly",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "genuineN2HistoryPurgesInFkOrderRefundsEveryPhysicalRowOnceAndReplaysReadOnly()"
+      ]
+    },
+    {
+      "annotation_line": 112,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "NEW_N2_FINAL_ROLLBACK_AND_COLD_CONTINUATION",
+      "expected_invocations_from_annotation": 1,
+      "method": "expiredLeaseAfterRealRecurrentRemovalRollsBackFinalBeforeFreshExactContinuation",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "expiredLeaseAfterRealRecurrentRemovalRollsBackFinalBeforeFreshExactContinuation()"
+      ]
+    },
+    {
+      "annotation_line": 164,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "NEW_N2_SOURCE_AND_ARCHIVE_XMIN_TWO_CHAINS",
+      "expected_invocations_from_annotation": 1,
+      "method": "sameValueSourceAndArchiveRewritesCannotSupplyOriginalPhysicalCustody",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "sameValueSourceAndArchiveRewritesCannotSupplyOriginalPhysicalCustody()"
+      ]
+    },
+    {
+      "annotation_line": 209,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT",
+      "cohort": "NEW_N2_MISSING_ARCHIVE_REFUSAL",
+      "expected_invocations_from_annotation": 1,
+      "method": "missingLatestArchiveCannotBeInventedFromRetainedNativeHistory",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+      "xml_names": [
+        "missingLatestArchiveCannotBeInventedFromRetainedNativeHistory()"
+      ]
+    },
+    {
+      "annotation_line": 38,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalCapacityIT",
+      "cohort": "AFFECTED_FULL_CURRENT_COLUMN_CAPACITY_MAXIMUMS",
+      "expected_invocations_from_annotation": 1,
+      "method": "legalScopedTerminalRowsInlineAtChosenCanonicalCapAndAllIndexesFitOnlyQualifiedCharges",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalCapacityIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "e268a90dee3496e4044ccc12ea384a64e47d29889f07624b61276c01bf10209e",
+      "xml_names": [
+        "legalScopedTerminalRowsInlineAtChosenCanonicalCapAndAllIndexesFitOnlyQualifiedCharges()"
+      ]
+    },
+    {
+      "annotation_line": 159,
+      "class": "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalCapacityIT",
+      "cohort": "AFFECTED_SYNTHETIC_LEGACY_SIDE_CAR_ROLLBACK_CAPACITY",
+      "expected_invocations_from_annotation": 1,
+      "method": "rollbackMaximumSidecarLifecycleMeasuresHeapIndexesToastAndStorageOnlyHighWater",
+      "path": "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalCapacityIT.kt",
+      "source_head": "99b7004b56e80f3ddae95d197584958af6534b39",
+      "source_sha256": "e268a90dee3496e4044ccc12ea384a64e47d29889f07624b61276c01bf10209e",
+      "xml_names": [
+        "rollbackMaximumSidecarLifecycleMeasuresHeapIndexesToastAndStorageOnlyHighWater()"
+      ]
+    }
+  ],
+  "execution": "NOT_RUN",
+  "expected_selected_methods": 10,
+  "expected_source_paths": 2460,
+  "expected_total": 10,
+  "selection_basis": {
+    "batch": "RECURRENT_ERASURE_FOUR_PLUS_LEGACY_THREE_PLUS_N14_PLUS_CAPACITY_TWO",
+    "carryforward": "Prior passing evidence retained without replay or blanket revalidation.55 N15 passed after scoped source changes;53 opaque failure cause remains unknown. No package or issue closure.",
+    "cleanup_reserve_seconds": 180,
+    "cohorts": {
+      "AFFECTED_FULL_CURRENT_COLUMN_CAPACITY_MAXIMUMS": 1,
+      "AFFECTED_N0_SUCCESS_AND_COLD_REPLAY": 1,
+      "AFFECTED_N1_SUCCESS_AND_COLD_UNKNOWN_CONTINUATION": 1,
+      "AFFECTED_SHARED_V30_TO_V31_3_FINAL_GUARD": 1,
+      "AFFECTED_SYNTHETIC_LEGACY_SIDE_CAR_ROLLBACK_CAPACITY": 1,
+      "FAILED56_N14_REVIEWED_DIAGNOSTIC_ONLY": 1,
+      "NEW_N2_ERASURE_REFUND_FK_AND_READ_ONLY_REPLAY": 1,
+      "NEW_N2_FINAL_ROLLBACK_AND_COLD_CONTINUATION": 1,
+      "NEW_N2_MISSING_ARCHIVE_REFUSAL": 1,
+      "NEW_N2_SOURCE_AND_ARCHIVE_XMIN_TWO_CHAINS": 1
+    },
+    "coverage_limitation": "Otherwise-valid N2 missing-terminal-projection direct history DELETE remains the accepted coverage limitation unless the author adds its probe inside the existing N2 success chain; no extra producer matrix or selector.",
+    "dispatch_authority": "ROOT_ONLY",
+    "expected_source_paths": 2460,
+    "gradle_seconds": 2400,
+    "inventory": "Enumerate every committed path from final reviewed source; match root-pinned complete path count and preserve all348 historical paths. New-file count is pending; no file subset or fixed2458 exclusion.",
+    "legacy_evidence": "No historical erasure PASS established. Focused14/run35586415605/source30bbafab39000b3ff0e8b45a7df10d30355441d4 selected N1 UNKNOWN continuation and failed before F; selected N0/N1 standalone positives also failed before F. N0 cold replay and V30 missing-projection candidate were not selected there. Unselected failures stay open.",
+    "n14_evidence": "Focused56/run35664321465 N14 failed; only a reviewed diagnostic addition is proposed. No cause or behavior repair claim.",
+    "plan": "review/working/app-29-recurrent-erasure-20260921-01/PLAN.md",
+    "prerequisite": "Final author freeze and root actual-diff composition review pending. Root alone binds matching source/tree/committed-path-count in both scripts, then admits dispatch.",
+    "projection_coverage": "Each real N2/N1/N0 erasure setup runs actual E projection before F, covering the affected E projection path. Forthcoming31.3 stores the fixed32-byte recurrent custody commitment there; N0/N1 remain null. Final implementation and source acceptance belong to root.",
+    "required_source": "99b7004b56e80f3ddae95d197584958af6534b39",
+    "required_tree": "a11efc5568402000b73cafd920553a0ae1b345fd",
+    "scope": "Exactly10 declarations: two affected capacity methods, three legacy erasure candidates, four new recurrent erasure methods/five genuine N2 chains, and failed56 N14 diagnostic. No other selector or reassurance replay."
+  },
+  "source_status": "REVIEWED_SOURCE_NOT_VERIFIED",
+  "static_sources": {
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/CatalogTestRunTerminalIT.kt": "fe71629d7a7fb0625101f96c6cd5def99d9e23d45e614c5e9376affa78466609",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureGuardIT.kt": "2c03b76e0171c1d40d4bea7d878001fc5c8d0628494209470228b74f7785c96a",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecoveryIT.kt": "8188de32bf8c6f3e7e12ce373e137698e1c0f673677eaac24a009572ead5a932",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestRunErasureRecurrentIT.kt": "a9ad52f32c020490d1720c9c86b77f55cd661d917d88c2313d719d3fa1f82dc0",
+    "src/test/kotlin/me/manga/kira/backend/common/infrastructure/persistence/TestTerminalCapacityIT.kt": "e268a90dee3496e4044ccc12ea384a64e47d29889f07624b61276c01bf10209e"
+  },
+  "status": "BOUND",
+  "test_counts": {
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT": 1,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT": 2,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT": 4,
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalCapacityIT": 2
+  },
+  "test_selectors": [
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.purgedTwoSealHistoryFreshlyReadsBothNativePairsWithoutRecreatingControlSidecarsOrAudit",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecoveryIT.actualDeferredCommitUnknownRollsBackItsBatchAndFreshOriginNeverSpendsAnUncommittedRefund",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureGuardIT.v30RefusesMissingTerminalProjectionAtActualOtherwiseCompleteFinalPrefix",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.genuineN2HistoryPurgesInFkOrderRefundsEveryPhysicalRowOnceAndReplaysReadOnly",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.expiredLeaseAfterRealRecurrentRemovalRollsBackFinalBeforeFreshExactContinuation",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.sameValueSourceAndArchiveRewritesCannotSupplyOriginalPhysicalCustody",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestRunErasureRecurrentIT.missingLatestArchiveCannotBeInventedFromRetainedNativeHistory",
+    "me.manga.kira.backend.common.infrastructure.persistence.CatalogTestRunTerminalIT.genuineFourteenActiveSealsReachSixteenTotalWithoutRechargingHistoryAndRejectSeventeenRecordSyntax",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalCapacityIT.legalScopedTerminalRowsInlineAtChosenCanonicalCapAndAllIndexesFitOnlyQualifiedCharges",
+    "me.manga.kira.backend.common.infrastructure.persistence.TestTerminalCapacityIT.rollbackMaximumSidecarLifecycleMeasuresHeapIndexesToastAndStorageOnlyHighWater"
+  ]
+}
