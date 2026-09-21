@@ -856,43 +856,70 @@ internal fun assertRetainedAllQueuePrimary(b: TestActiveOwnerDeleteQueueFixtureV
 private fun withDrainedActiveHistoryCatalog(f: TestRunPurgeFixtureV1, inputs: TestOrdinaryDrainFixtureInputsV1,
     drain: TestRunOrdinaryDrainV1, ordinaryApproval: ByteArray, history: Map<String, List<String>>,
     ordinaryRecord: TestRegisteredInitialDeletionNativeRecordV1? = null, action: (CatalogTestRunTerminalFixtureV1) -> Unit) {
-    val preparation = TestRunInstallationManifestV1.begin(drain)
-    TestInstallationManifestSqlProbeV1(f, expectedDrain = drain).use { probe ->
-        probe.original = preparation
-        assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare())
-    }
-    val manifest = preparation.beginPublication()
-    assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish())
-    assertEquals(1L, manifest.authenticatedSummary().installationCount); assertEquals(1, manifest.capturedSource().count)
-    val purge = TestRunPurgeSqlProbeV1(f).use { probe ->
-        val value = manifest.beginPurgePublication().also { probe.original = it }
-        terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
-            assertEquals(TestRunPurgePublicationResultV1.PURGE_AUTHENTICATED_AND_VERIFIED, value.publish())
+    var diagnosticStage = "MANIFEST_BEGIN"
+    try {
+        val preparation = TestRunInstallationManifestV1.begin(drain)
+        diagnosticStage = "MANIFEST_PREPARE"
+        TestInstallationManifestSqlProbeV1(f, expectedDrain = drain).use { probe ->
+            probe.original = preparation
+            try { assertEquals(TestRunInstallationManifestResultV1.ALL_CHUNKS_PREPARED_NO_NETWORK, preparation.prepare()) }
+            catch (problem: Throwable) { runCatching { probe.reportUnexpectedFailure(problem) }; throw problem }
         }
-        probe.assertReleased(); f.assertReleased(); value
-    }
-    val terminalSealCounters = if (inputs.maximumActiveHistorySeals > 1) f.p.counters() else null
-    val terminalSealReserve = terminalSealCounters?.let { terminalCatalogUnusedReserve(f) }
-    val seal = TestTerminalEpochSealSqlProbeV1(f).use { probe ->
-        val value = purge.beginTerminalEpochSeal().also { probe.original = it }
-        terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
-            assertEquals(TestRunTerminalEpochSealResultV1.TERMINAL_EPOCH_AUTHENTICATED_AND_SEALED, value.seal())
+        diagnosticStage = "MANIFEST_PUBLICATION_BEGIN"
+        val manifest = preparation.beginPublication()
+        diagnosticStage = "MANIFEST_PUBLICATION"
+        try { assertEquals(TestRunInstallationManifestPublicationResultV1.ALL_CHUNKS_AUTHENTICATED_AND_VERIFIED, manifest.publish()) }
+        catch (problem: Throwable) {
+            runCatching { System.err.println("MANIFEST_DESCENDANT_UNEXPECTED edge=PUBLICATION step=${manifest.step}") }
+            throw problem
         }
-        probe.assertReleased(); f.assertReleased(); value
-    }
-    terminalSealCounters?.let { assertTerminalCatalogSealCharge(f, it, checkNotNull(terminalSealReserve)) }
-    TestTerminalQuiescenceSqlProbeV1(f).use { probe ->
-        val d = seal.beginTerminalQuiescence().also { probe.original = it }
-        val terminalInputs = checkNotNull(inputs.terminalQuiescence)
-        val approval = terminalInputs.approval(terminalInputs.statement(d)) // One exact PSS input retained through E.
-        val raw = terminalInputs.rawEvidence
-        try {
+        diagnosticStage = "MANIFEST_SUMMARY"
+        assertEquals(1L, manifest.authenticatedSummary().installationCount); assertEquals(1, manifest.capturedSource().count)
+        diagnosticStage = "PURGE"
+        val purge = TestRunPurgeSqlProbeV1(f).use { probe ->
+            val value = manifest.beginPurgePublication().also { probe.original = it }
             terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
-                assertEquals(TestRunTerminalQuiescenceResultV1.TERMINAL_PREFIX_QUIESCENT_AND_SEALED, d.quiesce(approval, raw))
+                assertEquals(TestRunPurgePublicationResultV1.PURGE_AUTHENTICATED_AND_VERIFIED, value.publish())
             }
-            probe.assertReleased(); f.assertReleased(); assertEquals(history, terminalCatalogActiveRows(f))
-            CatalogTestRunTerminalFixtureV1(f, d, approval, raw, ordinaryApproval, ordinaryRecord).use(action)
-        } finally { approval.fill(0); raw.forEach { it.fill(0) } }
+            probe.assertReleased(); f.assertReleased(); value
+        }
+        diagnosticStage = "TERMINAL_SEAL"
+        val terminalSealCounters = if (inputs.maximumActiveHistorySeals > 1) f.p.counters() else null
+        val terminalSealReserve = terminalSealCounters?.let { terminalCatalogUnusedReserve(f) }
+        val seal = TestTerminalEpochSealSqlProbeV1(f).use { probe ->
+            val value = purge.beginTerminalEpochSeal().also { probe.original = it }
+            terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
+                assertEquals(TestRunTerminalEpochSealResultV1.TERMINAL_EPOCH_AUTHENTICATED_AND_SEALED, value.seal())
+            }
+            probe.assertReleased(); f.assertReleased(); value
+        }
+        terminalSealCounters?.let { assertTerminalCatalogSealCharge(f, it, checkNotNull(terminalSealReserve)) }
+        diagnosticStage = "QUIESCENCE_BEGIN"
+        TestTerminalQuiescenceSqlProbeV1(f).use { probe ->
+            val d = seal.beginTerminalQuiescence().also { probe.original = it }
+            diagnosticStage = "QUIESCENCE_APPROVAL"
+            val terminalInputs = checkNotNull(inputs.terminalQuiescence)
+            val approval = terminalInputs.approval(terminalInputs.statement(d)) // One exact PSS input retained through E.
+            val raw = terminalInputs.rawEvidence
+            try {
+                diagnosticStage = "QUIESCE"
+                terminalCatalogHistoryBoundaries(f, { probe.assertReleased(requireCommitted = false) }) {
+                    assertEquals(TestRunTerminalQuiescenceResultV1.TERMINAL_PREFIX_QUIESCENT_AND_SEALED, d.quiesce(approval, raw))
+                }
+                diagnosticStage = "QUIESCENCE_RELEASE"
+                probe.assertReleased(); f.assertReleased(); assertEquals(history, terminalCatalogActiveRows(f))
+                diagnosticStage = "CATALOG_HANDOFF"
+                CatalogTestRunTerminalFixtureV1(f, d, approval, raw, ordinaryApproval, ordinaryRecord).use { catalog ->
+                    diagnosticStage = "CATALOG_CALLBACK" // Includes caller setup/lease wait, not proof E assertions ran.
+                    action(catalog)
+                    diagnosticStage = "CATALOG_RELEASE"
+                }
+            } finally { approval.fill(0); raw.forEach { it.fill(0) } }
+        }
+    } catch (problem: Throwable) {
+        // Failure-only entered-stage labels, not completion proof; no values, SQL or throwable prose.
+        runCatching { System.err.println("TEST_CATALOG_ACTIVE_HISTORY_UNEXPECTED stage=$diagnosticStage") }
+        throw problem
     }
 }
 
