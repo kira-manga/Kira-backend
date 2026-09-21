@@ -1,16 +1,24 @@
 package me.manga.kira.backend.complaint.catalog
 
 import me.manga.kira.backend.common.Sha256
+import me.manga.kira.backend.common.infrastructure.persistence.PersistenceBoundaryException
 import me.manga.kira.backend.common.infrastructure.persistence.PersistenceDatabaseOutcome
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseContext
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseException
+import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseFailureCode
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhaseOwnership
 import me.manga.kira.backend.common.infrastructure.persistence.PersistencePhasePath
 import me.manga.kira.backend.common.infrastructure.persistence.StepUpPhaseObservation
 import me.manga.kira.backend.common.infrastructure.persistence.ownedCutField
 import me.manga.kira.backend.common.infrastructure.persistence.ownedPoolLease
 import me.manga.kira.backend.common.infrastructure.persistence.requireConnectionFree
+import me.manga.kira.backend.complaint.domain.terminal.TestTerminalExceptionV1
+import me.manga.kira.backend.complaint.infrastructure.journal.JournalPublicationExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestRunTerminalQuiescenceV1
+import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceExceptionV1
 import me.manga.kira.backend.complaint.infrastructure.terminal.TestTerminalQuiescenceStepV1
+import me.manga.kira.backend.security.EpochSealExceptionV1
+import me.manga.kira.backend.security.OwnerDeleteAllJournalException
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -116,6 +124,40 @@ internal class TestTerminalQuiescenceSqlProbeV1(private val f: TestRunPurgeFixtu
             "returned=$lastReturned probeFailureObserved=$probeFailureObserved nativeObserved=${f.sealHttp.terminalInventoryRequests.isNotEmpty()} " +
             "observed=${observations.isNotEmpty()} committedObserved=${observations.keys.any { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED }} " +
             "leasesQuiescent=${observations.isNotEmpty() && observations.values.all { it.lease.completion.quiescent() }}")
+        // Failure-only passive reads. The reader state may already reflect cleanup, not the failing edge.
+        val retained = runCatching {
+            val owner = original ?: return@runCatching "inventory=NOT_ENTERED"
+            val ownCalls = calls.filter { owners[it.phase] === owner }
+            val last = ownCalls.lastOrNull()
+            val lastFailure = last?.let { (ownedCutField(it.phase, "failure") as AtomicReference<*>).get() as? PersistencePhaseFailureCode }
+            val begins = ownCalls.filter { it.step === TestTerminalQuiescenceStepV1.BEGIN_PASS }.map { it.phase }.distinct()
+            val appends = ownCalls.drop(ownCalls.indexOfLast { it.step === TestTerminalQuiescenceStepV1.BEGIN_PASS } + 1)
+                .filter { it.step === TestTerminalQuiescenceStepV1.APPEND }.map { it.phase }.distinct()
+            val sql = "inventoryPass=${owner.inventoryPass} targetCount=${owner.targets.size} " +
+                "lastSqlStep=${last?.step?.name ?: "NONE"} lastSqlFailure=${lastFailure?.name ?: "NONE"} " +
+                "lastSqlOutcome=${last?.phase?.databaseOutcome()?.name ?: "NONE"} observedPassBegins=${begins.size} " +
+                "lastObservedPassAppends=${appends.size} " +
+                "lastObservedPassCommittedAppends=${appends.count { it.databaseOutcome() === PersistenceDatabaseOutcome.COMMITTED }}"
+            val reader = ownedCutField(owner, "native") ?: return@runCatching "$sql reader=NOT_ENTERED"
+            val failure = (ownedCutField(reader, "failure") as AtomicReference<*>).get() as? Throwable
+            val entries = ownedCutField(reader, "entries") as Array<*>
+            "$sql readerStateAtReport=${(ownedCutField(reader, "stage") as Enum<*>).name} " +
+                "readerRetainedFailure=${retainedFailureCode(failure)} readerCompletedPasses=${ownedCutField(reader, "completedPasses") as Int} " +
+                "readerEntryCounts=${entries.joinToString(",") { (it as List<*>?)?.size?.toString() ?: "NONE" }}"
+        }.getOrElse { "inventoryDiagnostic=UNAVAILABLE" }
+        System.err.println("TERMINAL_QUIESCENCE_RETAINED $retained")
+    }
+
+    private fun retainedFailureCode(problem: Throwable?): String = when (problem) {
+        null -> "NONE"
+        is JournalPublicationExceptionV1 -> "JOURNAL_PUBLICATION:${problem.code.name}"
+        is TestTerminalExceptionV1 -> "TEST_TERMINAL:${problem.code.name}"
+        is EpochSealExceptionV1 -> "EPOCH_SEAL:${problem.code.name}"
+        is OwnerDeleteAllJournalException -> "OWNER_DELETE_ALL_JOURNAL:${problem.code.name}"
+        is PersistencePhaseException -> "PERSISTENCE_PHASE:${problem.code.name}"
+        is PersistenceBoundaryException -> "PERSISTENCE_BOUNDARY:${problem.code.name}"
+        is TestTerminalQuiescenceExceptionV1 -> "QUIESCENCE"
+        else -> "OTHER"
     }
 
     fun assertReleased(requireCommitted: Boolean = true) {
